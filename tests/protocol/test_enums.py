@@ -2,12 +2,11 @@
 
 Ported from:
 - sidequest-protocol/src/tests.rs (message_type_tests wire string assertions)
-- sidequest-protocol/src/narrator_verbosity_story_14_3_tests.rs (AC1, AC2, AC3, AC6 enum-only)
-- sidequest-protocol/src/narrator_vocabulary_story_14_4_tests.rs (AC1, AC2, AC3, AC6 enum-only)
+- sidequest-protocol/src/narrator_verbosity_story_14_3_tests.rs (AC1, AC2, AC3, AC5, AC6)
+- sidequest-protocol/src/narrator_vocabulary_story_14_4_tests.rs (AC1, AC2, AC3, AC5, AC6)
 
-Tests that exercise GameMessage / SessionEventPayload (AC5 round-trips) are
-skipped here — those payload types are out of scope for this subagent and
-will be ported by subagent 2 alongside the payload structs.
+AC5 round-trips (SessionEvent with verbosity/vocabulary) are now included
+since GameMessage/SessionEventPayload are ported in subagent 2.
 """
 
 from __future__ import annotations
@@ -296,3 +295,157 @@ def test_narrator_vocabulary_defaults_to_literary() -> None:
 def test_narrator_vocabulary_rejects_invalid_value() -> None:
     with pytest.raises(ValueError):
         NarratorVocabulary("flowery")
+
+
+# ===========================================================================
+# AC5: SessionEvent verbosity/vocabulary round-trips (story 14-3 / 14-4)
+# Deferred from subagent 1; ported by subagent 2 alongside payload structs.
+# Ported from narrator_verbosity_story_14_3_tests.rs and
+# narrator_vocabulary_story_14_4_tests.rs (AC5 sections).
+# ===========================================================================
+
+
+def _import_session_types() -> tuple[type, type, type]:
+    """Late import to keep test_enums.py decoupled from messages during SA1."""
+    from sidequest.protocol.messages import (  # noqa: PLC0415
+        GameMessage,
+        SessionEventMessage,
+        SessionEventPayload,
+    )
+    return GameMessage, SessionEventMessage, SessionEventPayload
+
+
+# -- Story 14-3: verbosity on SessionEvent --
+
+
+def test_session_event_connect_with_verbosity_round_trip() -> None:
+    """AC5: SessionEvent connect payload carries narrator_verbosity."""
+    GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
+    msg = GameMessage(root=SessionEventMessage(
+        payload=SessionEventPayload(
+            event="connect",
+            player_name="Alice",
+            genre="mutant_wasteland",
+            world="flickering_reach",
+            narrator_verbosity=NarratorVerbosity.verbose,
+        ),
+        player_id="",
+    ))
+    json_str = msg.model_dump_json()
+    decoded = GameMessage.model_validate_json(json_str)
+    assert decoded.payload.narrator_verbosity == NarratorVerbosity.verbose  # type: ignore[union-attr]
+
+
+def test_session_event_without_verbosity_defaults_to_none() -> None:
+    """Backward compat: old clients without narrator_verbosity → None."""
+    GameMessage, _, _ = _import_session_types()
+    import json as _json
+    wire = _json.dumps({
+        "type": "SESSION_EVENT",
+        "payload": {
+            "event": "connect",
+            "player_name": "Alice",
+            "genre": "mutant_wasteland",
+            "world": "flickering_reach",
+        },
+        "player_id": "",
+    })
+    msg = GameMessage.model_validate_json(wire)
+    assert msg.payload.narrator_verbosity is None  # type: ignore[union-attr]
+
+
+def test_session_event_verbosity_wire_format() -> None:
+    """AC6: wire key 'narrator_verbosity' with lowercase value 'concise'."""
+    GameMessage, _, _ = _import_session_types()
+    import json as _json
+    wire = _json.dumps({
+        "type": "SESSION_EVENT",
+        "payload": {
+            "event": "connect",
+            "player_name": "Alice",
+            "genre": "mutant_wasteland",
+            "world": "flickering_reach",
+            "narrator_verbosity": "concise",
+        },
+        "player_id": "",
+    })
+    msg = GameMessage.model_validate_json(wire)
+    assert msg.payload.narrator_verbosity == NarratorVerbosity.concise  # type: ignore[union-attr]
+
+
+# -- Story 14-4: vocabulary on SessionEvent --
+
+
+def test_session_event_connect_with_vocabulary_round_trip() -> None:
+    """AC5: SessionEvent connect payload carries narrator_vocabulary."""
+    GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
+    msg = GameMessage(root=SessionEventMessage(
+        payload=SessionEventPayload(
+            event="connect",
+            player_name="Alice",
+            genre="mutant_wasteland",
+            world="flickering_reach",
+            narrator_vocabulary=NarratorVocabulary.epic,
+        ),
+        player_id="",
+    ))
+    json_str = msg.model_dump_json()
+    decoded = GameMessage.model_validate_json(json_str)
+    assert decoded.payload.narrator_vocabulary == NarratorVocabulary.epic  # type: ignore[union-attr]
+
+
+def test_session_event_without_vocabulary_defaults_to_none() -> None:
+    """Backward compat: old clients without narrator_vocabulary → None."""
+    GameMessage, _, _ = _import_session_types()
+    import json as _json
+    wire = _json.dumps({
+        "type": "SESSION_EVENT",
+        "payload": {
+            "event": "connect",
+            "player_name": "Alice",
+            "genre": "mutant_wasteland",
+            "world": "flickering_reach",
+        },
+        "player_id": "",
+    })
+    msg = GameMessage.model_validate_json(wire)
+    assert msg.payload.narrator_vocabulary is None  # type: ignore[union-attr]
+
+
+def test_session_event_vocabulary_wire_format() -> None:
+    """AC6: wire key 'narrator_vocabulary' with lowercase value 'accessible'."""
+    GameMessage, _, _ = _import_session_types()
+    import json as _json
+    wire = _json.dumps({
+        "type": "SESSION_EVENT",
+        "payload": {
+            "event": "connect",
+            "player_name": "Alice",
+            "genre": "mutant_wasteland",
+            "world": "flickering_reach",
+            "narrator_vocabulary": "accessible",
+        },
+        "player_id": "",
+    })
+    msg = GameMessage.model_validate_json(wire)
+    assert msg.payload.narrator_vocabulary == NarratorVocabulary.accessible  # type: ignore[union-attr]
+
+
+def test_session_event_with_both_verbosity_and_vocabulary() -> None:
+    """Both vocabulary and verbosity can coexist on the same payload."""
+    GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
+    msg = GameMessage(root=SessionEventMessage(
+        payload=SessionEventPayload(
+            event="connect",
+            player_name="Alice",
+            genre="mutant_wasteland",
+            world="flickering_reach",
+            narrator_verbosity=NarratorVerbosity.concise,
+            narrator_vocabulary=NarratorVocabulary.epic,
+        ),
+        player_id="",
+    ))
+    json_str = msg.model_dump_json()
+    decoded = GameMessage.model_validate_json(json_str)
+    assert decoded.payload.narrator_verbosity == NarratorVerbosity.concise  # type: ignore[union-attr]
+    assert decoded.payload.narrator_vocabulary == NarratorVocabulary.epic  # type: ignore[union-attr]
