@@ -39,6 +39,12 @@ from sidequest.genre.models.character import (
     MechanicalEffects,
 )
 from sidequest.genre.models.rules import EdgeConfig, RulesConfig
+from sidequest.protocol.messages import (
+    CharacterCreationMessage,
+    CharacterCreationPayload,
+)
+from sidequest.protocol.models import CreationChoice, RolledStat
+from sidequest.protocol.types import NonBlankString
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +515,41 @@ def strip_unmatched_placeholders(s: str) -> str:
     return " ".join("".join(out).split())
 
 
+def find_unrecognized_tokens(rendered: str) -> list[str]:
+    """Scan interpolated narration for placeholders the interpolator didn't resolve.
+
+    Port of sidequest_game::builder::find_unrecognized_tokens.
+
+    Used by CharacterBuilder.interpolate_scene_narration to surface author-typo'd
+    or unsupported placeholder keys via one OTEL Warn event per offending token.
+    Returning only the first match would let a second typo in the same narration
+    leak silently to the client; this scanner is exhaustive by contract.
+
+    Recognized tokens are {name}, {class}, {race} — anything else (e.g. a typo'd
+    {nmae}, or an unsupported key like {origin}) is returned literally, including
+    the surrounding braces. An unclosed `{` at the tail is returned as the rest
+    of the string so the malformed token surfaces rather than silently truncates.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(rendered)
+    while i < n:
+        if rendered[i] != "{":
+            i += 1
+            continue
+        close = rendered.find("}", i + 1)
+        if close == -1:
+            # Unclosed — surface the remainder as a single bad token and stop.
+            out.append(rendered[i:])
+            break
+        token_end = close + 1
+        token = rendered[i:token_end]
+        if token not in ("{name}", "{class}", "{race}"):
+            out.append(token)
+        i = token_end
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Internal arithmetic-parse failure — wrapped into InvalidHpFormulaError
 # by the caller. Private to this module.
@@ -843,6 +884,180 @@ class CharacterBuilder:
                 acc.stat_bonuses[stat] = acc.stat_bonuses.get(stat, 0) + bonus
 
         return acc
+
+    # --- Protocol rendering ---
+
+    def interpolate_scene_narration(self, text: str) -> str:
+        """Resolve {name}/{class}/{race} placeholders in scene narration.
+
+        Port of sidequest_game::builder::CharacterBuilder::interpolate_scene_narration.
+
+        Resolution order for {name}: the player's scene-entered name wins, falling
+        back to the lobby name for genres that don't include a name-entry scene.
+        This matches render_confirmation_summary's name resolution.
+
+        OTEL watcher events:
+          - ``chargen.scene_narration_interpolated`` emitted when at least one of
+            the three recognized tokens was present. Attributes record which
+            tokens appeared and whether each resolved to a non-empty string. The
+            event carries ``severity=warn`` when any present token resolved
+            empty (class_hint not set before a scene that templates {class}),
+            otherwise ``severity=info``.
+          - ``chargen.scene_narration_unrecognized_placeholder`` emitted once per
+            unrecognized ``{...}`` token left in the rendered output. One event
+            per offending token surfaces all typos, not just the leftmost
+            (SOUL.md: no silent fallbacks).
+        """
+        if "{" not in text:
+            return text
+
+        acc = self.accumulated()
+        name = self.character_name() or self._lobby_name or ""
+        class_ = acc.class_hint or ""
+        race = acc.race_hint or ""
+
+        had_name = "{name}" in text
+        had_class = "{class}" in text
+        had_race = "{race}" in text
+
+        span = trace.get_current_span()
+
+        if had_name or had_class or had_race:
+            rendered = (
+                text.replace("{name}", name)
+                .replace("{class}", class_)
+                .replace("{race}", race)
+            )
+            any_empty = (
+                (had_name and not name)
+                or (had_class and not class_)
+                or (had_race and not race)
+            )
+            attrs: dict[str, object] = {
+                "action": "scene_narration_interpolated",
+                "severity": "warn" if any_empty else "info",
+            }
+            if had_name:
+                attrs["name_resolved"] = bool(name)
+            if had_class:
+                attrs["class_resolved"] = bool(class_)
+            if had_race:
+                attrs["race_resolved"] = bool(race)
+            span.add_event("chargen.scene_narration_interpolated", attrs)
+        else:
+            rendered = text
+
+        for unrecognized in find_unrecognized_tokens(rendered):
+            span.add_event(
+                "chargen.scene_narration_unrecognized_placeholder",
+                {
+                    "action": "scene_narration_unrecognized_placeholder",
+                    "token": unrecognized,
+                    "severity": "warn",
+                },
+            )
+
+        return rendered
+
+    def to_scene_message(self, player_id: str) -> CharacterCreationMessage:
+        """Render the current builder phase as a CHARACTER_CREATION message.
+
+        Port of sidequest_game::builder::CharacterBuilder::to_scene_message.
+
+        Covers InProgress and AwaitingFollowup. Confirmation-phase rendering
+        requires pack inventory + the lobby-provided name, neither of which the
+        builder owns; the server's chargen_summary module renders confirmation
+        from the outside (Rust parity — sidequest-server's
+        dispatch::chargen_summary::render_confirmation_summary). Calling this
+        method in Confirmation phase is a programmer error and raises
+        RuntimeError with the same diagnostic the Rust source panics with.
+
+        Wire format notes:
+          - scene_index is 0-based on the wire (matches Rust). The payload
+            docstring calls it "1-based" — that's a pre-existing mislabel from
+            the Phase 1 protocol port, not introduced here. UI consumers
+            already display scene_index + 1.
+          - Empty label/description on any CharCreationChoice fails loud via
+            the NonBlankString validator — pack YAML must fix blanks at the
+            source, not silently fall back at render time.
+          - rolled_stats is only populated when the current scene declares
+            stat_generation in its mechanical_effects. The UI renders rolled
+            stats as a structured stat block; the narration text stays clean
+            (no inline "**STR 10** · **DEX 13** · ..." parsing on the client).
+          - Display-only scenes (empty choices, allows_freeform=False) emit
+            input_type="continue" with allows_freeform=False. Name-entry scenes
+            (empty choices, allows_freeform=True) emit input_type="name" with
+            allows_freeform=True. Choice scenes pass through scene.allows_freeform.
+        """
+        match self._phase:
+            case InProgress(scene_index=scene_index):
+                scene = self._scenes[scene_index]
+                choices = [
+                    CreationChoice(
+                        label=NonBlankString(c.label),
+                        description=NonBlankString(c.description),
+                    )
+                    for c in scene.choices
+                ]
+
+                scene_allows_freeform = bool(scene.allows_freeform)
+                if not choices:
+                    if scene_allows_freeform:
+                        input_type = "name"
+                        allows_freeform: bool | None = True
+                    else:
+                        input_type = "continue"
+                        allows_freeform = False
+                else:
+                    input_type = "choice"
+                    allows_freeform = scene.allows_freeform
+
+                scene_has_stat_gen = (
+                    scene.mechanical_effects is not None
+                    and scene.mechanical_effects.stat_generation is not None
+                )
+                rolled_stats_payload: list[RolledStat] | None = None
+                if scene_has_stat_gen and self._rolled_stats is not None:
+                    rolled_stats_payload = [
+                        RolledStat(name=ability, value=value)
+                        for ability, value in self._rolled_stats
+                    ]
+
+                payload = CharacterCreationPayload(
+                    phase="scene",
+                    scene_index=scene_index,
+                    total_scenes=len(self._scenes),
+                    prompt=self.interpolate_scene_narration(scene.narration),
+                    choices=choices,
+                    allows_freeform=allows_freeform,
+                    input_type=input_type,
+                    loading_text=scene.loading_text,
+                    rolled_stats=rolled_stats_payload,
+                )
+                return CharacterCreationMessage(payload=payload, player_id=player_id)
+
+            case AwaitingFollowup(hook_prompt=hook_prompt):
+                payload = CharacterCreationPayload(
+                    phase="scene",
+                    scene_index=None,
+                    total_scenes=len(self._scenes),
+                    prompt=hook_prompt,
+                    allows_freeform=True,
+                    input_type="text",
+                )
+                return CharacterCreationMessage(payload=payload, player_id=player_id)
+
+            case Confirmation():
+                raise RuntimeError(
+                    "CharacterBuilder.to_scene_message called in Confirmation phase. "
+                    "Callers must branch on is_confirmation() and invoke "
+                    "sidequest.server.dispatch.chargen_summary.render_confirmation_summary "
+                    "instead. The builder cannot render a complete summary without pack "
+                    "inventory and the lobby-provided name."
+                )
+
+            case _:  # pragma: no cover — exhaustive
+                raise AssertionError(f"unknown phase: {self._phase!r}")
 
     # --- Actions: scene walking ---
 
@@ -1786,4 +2001,5 @@ __all__ = [
     # String helpers
     "humanize_snake_case",
     "strip_unmatched_placeholders",
+    "find_unrecognized_tokens",
 ]

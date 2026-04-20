@@ -20,14 +20,22 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Callable
 
+from opentelemetry import trace
+
 from sidequest.agents.claude_client import ClaudeLike, ClaudeClient
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.game.builder import (
+    BuilderError,
+    CharacterBuilder,
+)
 from sidequest.game.persistence import SqliteStore, db_path_for_session
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from sidequest.genre.loader import GenreLoader, DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
+    CharacterCreationMessage,
+    CharacterCreationPayload,
     ErrorMessage,
     ErrorPayload,
     NarrationEndMessage,
@@ -38,6 +46,7 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
@@ -68,6 +77,11 @@ class _SessionData:
     store: SqliteStore
     genre_pack: GenrePack
     orchestrator: Orchestrator
+    # Character builder is present only during the Creating state. Initialized
+    # in _handle_connect when has_character=False; consumed (and discarded) by
+    # _handle_character_creation's confirmation commit when the Character lands
+    # on snapshot.characters.
+    builder: CharacterBuilder | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +128,8 @@ class WebSocketSessionHandler:
             return await self._handle_session_event(msg)
         elif msg_type == "PLAYER_ACTION":
             return await self._handle_player_action(msg)
+        elif msg_type == "CHARACTER_CREATION":
+            return await self._handle_character_creation(msg)
         else:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
@@ -224,6 +240,19 @@ class WebSocketSessionHandler:
         # Build orchestrator (one per session, persistent session ADR-066)
         orchestrator = Orchestrator(client=self._client_factory())
 
+        # Initialize chargen builder when entering Creating state. The lobby
+        # name is the fallback the Name line uses when the genre has no
+        # name-entry scene (caverns_and_claudes, etc.).
+        builder: CharacterBuilder | None = None
+        if not has_character and genre_pack.char_creation:
+            builder = CharacterBuilder(
+                scenes=list(genre_pack.char_creation),
+                rules=genre_pack.rules,
+                backstory_tables=genre_pack.backstory_tables,
+            ).with_lobby_name(player_name)
+            if genre_pack.equipment_tables is not None:
+                builder = builder.with_equipment_tables(genre_pack.equipment_tables)
+
         self._session_data = _SessionData(
             genre_slug=genre_slug,
             world_slug=world_slug,
@@ -233,6 +262,7 @@ class WebSocketSessionHandler:
             store=store,
             genre_pack=genre_pack,
             orchestrator=orchestrator,
+            builder=builder,
         )
         self._state = _State.Creating if not has_character else _State.Playing
 
@@ -254,6 +284,262 @@ class WebSocketSessionHandler:
         )
 
         return [connected_msg]
+
+    # ------------------------------------------------------------------
+    # CHARACTER_CREATION dispatch
+    # ------------------------------------------------------------------
+
+    async def _handle_character_creation(self, msg: GameMessage) -> list[object]:
+        """Route CHARACTER_CREATION traffic through the chargen state machine.
+
+        Port of ``dispatch_character_creation`` in
+        ``sidequest-api/crates/sidequest-server/src/dispatch/connect.rs``.
+
+        Navigation actions (back / edit) are handled before phase dispatch;
+        the UI sends them as a separate channel that can fire in any phase.
+        Phase dispatch covers ``scene`` (player submitted a choice or
+        freeform answer), ``continue`` (player acknowledged a display-only
+        scene), and ``confirmation`` (player committed — builder.build()
+        runs and the Character lands on snapshot).
+
+        Every error path returns a structured ERROR message rather than
+        raising — the WebSocket contract says we never leak exceptions to
+        the client (2.2 acceptance: "Invalid inputs produce structured error
+        messages, never exceptions through the WebSocket").
+
+        Starting-equipment wiring from ``pack.inventory.starting_equipment``
+        and archetype-resolver wiring (``resolve_archetype`` into
+        ``character.resolved_archetype``) are deferred to Story 2.3 — their
+        seat is right after ``builder.build()`` below, next to the SQLite
+        save and world-materialization pipeline.
+        """
+        if self._state != _State.Creating:
+            return [
+                _error_msg(
+                    f"Cannot process CHARACTER_CREATION: session state is "
+                    f"{self._state.name}, expected Creating"
+                )
+            ]
+        if self._session_data is None:
+            return [_error_msg("Internal error: session data missing")]
+        sd = self._session_data
+        if sd.builder is None:
+            return [
+                _error_msg(
+                    f"No character builder active for genre '{sd.genre_slug}' "
+                    f"— genre pack has no character_creation scenes"
+                )
+            ]
+
+        builder = sd.builder
+        payload: CharacterCreationPayload = msg.payload  # type: ignore[attr-defined]
+        player_id: str = getattr(msg, "player_id", "") or sd.player_id
+        span = trace.get_current_span()
+
+        # ---- Navigation actions (back / edit / unknown) -------------------
+        if payload.action is not None:
+            action = payload.action
+            if action == "back":
+                span.add_event(
+                    "character_creation.back",
+                    {
+                        "action": "back",
+                        "from_scene": builder.current_scene_index(),
+                        "player_id": player_id,
+                    },
+                )
+                try:
+                    builder.go_back()
+                except BuilderError as exc:
+                    return [_error_msg(f"Cannot go back: {exc!r}")]
+                return [builder.to_scene_message(player_id)]
+
+            if action == "edit":
+                if payload.target_step is None:
+                    return [_error_msg("action:edit requires target_step field")]
+                target = payload.target_step
+                span.add_event(
+                    "character_creation.edit",
+                    {
+                        "action": "edit",
+                        "target_step": target,
+                        "player_id": player_id,
+                    },
+                )
+                try:
+                    builder.go_to_scene(target)
+                except BuilderError as exc:
+                    return [_error_msg(f"Cannot edit scene {target}: {exc!r}")]
+                return [builder.to_scene_message(player_id)]
+
+            return [_error_msg(f"Unknown chargen action: {action}")]
+
+        # ---- Phase dispatch ----------------------------------------------
+        phase = payload.phase
+        logger.info("chargen.phase phase=%s player_id=%s", phase, player_id)
+
+        if phase == "scene":
+            return self._chargen_scene(builder, payload, sd, player_id, span)
+        if phase == "continue":
+            return self._chargen_continue(builder, sd, player_id, span)
+        if phase == "confirmation":
+            return self._chargen_confirmation(builder, sd, player_id, span)
+        return [_error_msg(f"Unknown chargen phase: {phase}")]
+
+    # ---- phase=scene ----------------------------------------------------
+    def _chargen_scene(
+        self,
+        builder: CharacterBuilder,
+        payload: CharacterCreationPayload,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        choice_str = payload.choice if payload.choice is not None else "1"
+
+        resolved_index: int | None
+        try:
+            # 1-based numeric index (Rust: saturating_sub(1))
+            n = int(choice_str)
+            resolved_index = max(0, n - 1)
+        except ValueError:
+            # Label-match (case-insensitive) against the current scene's
+            # choices. Only applies when we're in InProgress; AwaitingFollowup
+            # has no choice list and will fall through to freeform below.
+            resolved_index = None
+            if builder.is_in_progress():
+                current = builder.current_scene()
+                for i, c in enumerate(current.choices):
+                    if c.label.casefold() == choice_str.casefold():
+                        resolved_index = i
+                        break
+
+        span.add_event(
+            "character_creation.scene",
+            {
+                "phase": "scene",
+                "choice_raw": choice_str,
+                "resolved_index": str(resolved_index),
+                "player_id": player_id,
+            },
+        )
+
+        if resolved_index is not None:
+            try:
+                builder.apply_choice(resolved_index)
+            except BuilderError as exc:
+                return [_error_msg(f"Invalid choice: {exc!r}")]
+        else:
+            try:
+                builder.apply_freeform(choice_str)
+            except BuilderError as exc:
+                return [_error_msg(f"Invalid freeform input: {exc!r}")]
+
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=continue -------------------------------------------------
+    def _chargen_continue(
+        self,
+        builder: CharacterBuilder,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        logger.info("chargen.continue player_id=%s", player_id)
+        span.add_event(
+            "character_creation.continue",
+            {"phase": "continue", "player_id": player_id},
+        )
+        try:
+            builder.apply_auto_advance()
+        except BuilderError as exc:
+            return [_error_msg(f"Cannot continue from current scene: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=confirmation (commit) ------------------------------------
+    def _chargen_confirmation(
+        self,
+        builder: CharacterBuilder,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        # Name resolution: scene > lobby > "Player". Do NOT fall back to
+        # payload.choice — that's the UI button index (e.g. "1"), not a
+        # name (Rust comment at connect.rs:1607).
+        name_from_scene = builder.character_name()
+        char_name = name_from_scene or sd.player_name or "Player"
+        source = "name_scene" if name_from_scene is not None else "player_name_fallback"
+        span.add_event(
+            "character_creation.name_resolved",
+            {
+                "event": "name_resolved",
+                "char_name": char_name,
+                "source": source,
+                "player_id": player_id,
+            },
+        )
+
+        try:
+            character = builder.build(char_name)
+        except BuilderError as exc:
+            return [_error_msg(f"Character build failed: {exc!r}")]
+
+        span.add_event(
+            "character_creation.character_built",
+            {
+                "event": "character_built",
+                "name": character.core.name,
+                "class": character.char_class,
+                "race": character.race,
+                "hp": character.core.edge.current,
+                "player_id": player_id,
+            },
+        )
+
+        # Land the character on snapshot.characters so the UI sees
+        # has_character=true on reconnect. Archetype resolution,
+        # starting_equipment wiring, world materialization, SQLite save, and
+        # opening-turn bootstrap all belong to Story 2.3 — the seat is here.
+        sd.snapshot.characters.append(character)
+        sd.builder = None
+        logger.info(
+            "chargen.complete char_name=%s class=%s race=%s hp=%d",
+            character.core.name,
+            character.char_class,
+            character.race,
+            character.core.edge.current,
+        )
+
+        payload = CharacterCreationPayload(
+            phase="complete",
+            total_scenes=builder.total_scenes(),
+            character=character.model_dump(mode="json"),
+        )
+        return [CharacterCreationMessage(payload=payload, player_id=player_id)]
+
+    # ---- helper: next scene message OR confirmation summary -------------
+    def _next_message(
+        self,
+        builder: CharacterBuilder,
+        sd: _SessionData,
+        player_id: str,
+    ) -> list[object]:
+        """After apply_choice / apply_freeform / apply_auto_advance, emit the
+        appropriate next frame: either the next scene message, or the
+        confirmation summary if the builder has transitioned to Confirmation.
+
+        Rust parity: ``dispatch::chargen_summary::render_confirmation_summary``
+        takes the pack + lobby_name directly because the builder does not
+        own them.
+        """
+        if builder.is_confirmation():
+            return [
+                render_confirmation_summary(
+                    builder, sd.genre_pack, sd.player_name, player_id
+                )
+            ]
+        return [builder.to_scene_message(player_id)]
 
     # ------------------------------------------------------------------
     # PLAYER_ACTION dispatch
