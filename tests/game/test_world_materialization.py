@@ -1,0 +1,469 @@
+"""Tests for ``sidequest.game.world_materialization``.
+
+Covers:
+- ``CampaignMaturity.from_snapshot`` — turn + beats → tier bucketing.
+- ``CampaignMaturity.from_chapter_id`` — id string → tier mapping.
+- ``parse_history_chapters`` — raw pack value → typed chapter list,
+  including empty/null cases and malformed-data errors.
+- ``WorldBuilder.build`` — cumulative chapter apply, maturity filter,
+  ``world_history`` populated with applicable chapters, scene context
+  (location/time_of_day/atmosphere) set from the latest declaring
+  chapter, lore dedup, quest log upserts, NPC upsert-by-name, trope
+  upsert-by-id.
+- ``materialize_world`` — in-place update of an existing snapshot.
+- ``materialize_from_genre_pack`` — dispatch-time entry with slugs set.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from sidequest.game.history_chapter import (
+    ChapterCharacter,
+    ChapterNarrativeEntry,
+    ChapterNpc,
+    ChapterTrope,
+    HistoryChapter,
+)
+from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
+from sidequest.game.world_materialization import (
+    CampaignMaturity,
+    HistoryParseError,
+    WorldBuilder,
+    materialize_from_genre_pack,
+    materialize_world,
+    parse_history_chapters,
+)
+
+# ---------------------------------------------------------------------------
+# CampaignMaturity
+# ---------------------------------------------------------------------------
+
+
+class TestCampaignMaturity:
+    def test_ordering_fresh_lt_early_lt_mid_lt_veteran(self) -> None:
+        assert CampaignMaturity.Fresh <= CampaignMaturity.Early
+        assert CampaignMaturity.Early <= CampaignMaturity.Mid
+        assert CampaignMaturity.Mid <= CampaignMaturity.Veteran
+        assert CampaignMaturity.Fresh < CampaignMaturity.Veteran
+        assert not (CampaignMaturity.Veteran <= CampaignMaturity.Fresh)
+
+    def test_from_chapter_id_known_values(self) -> None:
+        assert CampaignMaturity.from_chapter_id("fresh") == CampaignMaturity.Fresh
+        assert CampaignMaturity.from_chapter_id("early") == CampaignMaturity.Early
+        assert CampaignMaturity.from_chapter_id("mid") == CampaignMaturity.Mid
+        assert CampaignMaturity.from_chapter_id("veteran") == CampaignMaturity.Veteran
+
+    def test_from_chapter_id_unknown_returns_none(self) -> None:
+        assert CampaignMaturity.from_chapter_id("legendary") is None
+        assert CampaignMaturity.from_chapter_id("") is None
+        assert CampaignMaturity.from_chapter_id("FRESH") is None  # case-sensitive
+
+    def test_from_snapshot_tier_boundaries(self) -> None:
+        def snap(turn: int, beats: int) -> GameSnapshot:
+            tm = TurnManager()
+            tm.round = turn
+            s = GameSnapshot()
+            s.turn_manager = tm
+            s.total_beats_fired = beats
+            return s
+
+        # effective = round + beats // 2
+        assert CampaignMaturity.from_snapshot(snap(0, 0)) == CampaignMaturity.Fresh
+        assert CampaignMaturity.from_snapshot(snap(5, 0)) == CampaignMaturity.Fresh
+        assert CampaignMaturity.from_snapshot(snap(6, 0)) == CampaignMaturity.Early
+        assert CampaignMaturity.from_snapshot(snap(20, 0)) == CampaignMaturity.Early
+        assert CampaignMaturity.from_snapshot(snap(21, 0)) == CampaignMaturity.Mid
+        assert CampaignMaturity.from_snapshot(snap(50, 0)) == CampaignMaturity.Mid
+        assert CampaignMaturity.from_snapshot(snap(51, 0)) == CampaignMaturity.Veteran
+
+    def test_from_snapshot_beats_accelerate_maturity(self) -> None:
+        def snap(turn: int, beats: int) -> GameSnapshot:
+            tm = TurnManager()
+            tm.round = turn
+            s = GameSnapshot()
+            s.turn_manager = tm
+            s.total_beats_fired = beats
+            return s
+
+        # 4 turns + 4 beats → effective = 4 + 2 = 6 → Early
+        assert CampaignMaturity.from_snapshot(snap(4, 4)) == CampaignMaturity.Early
+        # 4 turns + 3 beats → effective = 4 + 1 = 5 → Fresh (integer div)
+        assert CampaignMaturity.from_snapshot(snap(4, 3)) == CampaignMaturity.Fresh
+
+
+# ---------------------------------------------------------------------------
+# parse_history_chapters
+# ---------------------------------------------------------------------------
+
+
+class TestParseHistoryChapters:
+    def test_none_returns_empty(self) -> None:
+        assert parse_history_chapters(None) == []
+
+    def test_missing_chapters_key_returns_empty(self) -> None:
+        assert parse_history_chapters({"other": "data"}) == []
+
+    def test_empty_chapters_list_returns_empty(self) -> None:
+        assert parse_history_chapters({"chapters": []}) == []
+
+    def test_valid_chapters_parsed(self) -> None:
+        chapters = parse_history_chapters({
+            "chapters": [
+                {"id": "fresh", "label": "Beginnings", "lore": ["a", "b"]},
+                {"id": "early", "label": "Trouble"},
+            ]
+        })
+        assert len(chapters) == 2
+        assert chapters[0].id == "fresh"
+        assert chapters[0].label == "Beginnings"
+        assert chapters[0].lore == ["a", "b"]
+        assert chapters[1].id == "early"
+
+    def test_non_mapping_payload_raises(self) -> None:
+        with pytest.raises(HistoryParseError):
+            parse_history_chapters(["not", "a", "mapping"])
+
+    def test_non_list_chapters_raises(self) -> None:
+        with pytest.raises(HistoryParseError):
+            parse_history_chapters({"chapters": "not a list"})
+
+    def test_malformed_chapter_entry_raises_with_index(self) -> None:
+        with pytest.raises(HistoryParseError, match="index 1"):
+            parse_history_chapters({
+                "chapters": [
+                    {"id": "fresh"},
+                    # trope status is required; a trope entry missing 'id'
+                    # triggers a validation error when pydantic builds.
+                    {"id": "early", "tropes": [{"status": "active"}]},
+                ]
+            })
+
+
+# ---------------------------------------------------------------------------
+# WorldBuilder.build — cumulative chapter application
+# ---------------------------------------------------------------------------
+
+
+def _fresh_chapter(**overrides: object) -> HistoryChapter:
+    kwargs: dict[str, object] = {
+        "id": "fresh",
+        "label": "Fresh Chapter",
+    }
+    kwargs.update(overrides)
+    return HistoryChapter(**kwargs)
+
+
+def _early_chapter(**overrides: object) -> HistoryChapter:
+    kwargs: dict[str, object] = {"id": "early", "label": "Early Chapter"}
+    kwargs.update(overrides)
+    return HistoryChapter(**kwargs)
+
+
+class TestWorldBuilderBuild:
+    def test_fresh_maturity_includes_only_fresh_chapters(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Fresh)
+            .with_chapters([
+                _fresh_chapter(lore=["f1"]),
+                _early_chapter(lore=["e1"]),
+                HistoryChapter(id="mid", lore=["m1"]),
+            ])
+            .build()
+        )
+        assert [ch.id for ch in snap.world_history] == ["fresh"]
+        assert snap.lore_established == ["f1"]
+
+    def test_veteran_maturity_includes_all_tiers(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Veteran)
+            .with_chapters([
+                _fresh_chapter(lore=["f"]),
+                _early_chapter(lore=["e"]),
+                HistoryChapter(id="mid", lore=["m"]),
+                HistoryChapter(id="veteran", lore=["v"]),
+            ])
+            .build()
+        )
+        assert [ch.id for ch in snap.world_history] == [
+            "fresh",
+            "early",
+            "mid",
+            "veteran",
+        ]
+        assert snap.lore_established == ["f", "e", "m", "v"]
+
+    def test_unknown_chapter_id_is_skipped(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Veteran)
+            .with_chapters([
+                _fresh_chapter(),
+                HistoryChapter(id="legendary", lore=["never applied"]),
+            ])
+            .build()
+        )
+        assert [ch.id for ch in snap.world_history] == ["fresh"]
+        assert "never applied" not in snap.lore_established
+
+    def test_scene_context_later_chapter_wins(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(
+                    location="The Threshold",
+                    time_of_day="dawn",
+                    atmosphere="clinical unease",
+                    active_stakes="establish foothold",
+                ),
+                _early_chapter(
+                    location="The Spillway",
+                    atmosphere="louder, more chaotic",
+                ),
+            ])
+            .build()
+        )
+        # Early overrides location + atmosphere; time_of_day keeps Fresh's
+        # value because Early didn't declare it.
+        assert snap.location == "The Spillway"
+        assert snap.atmosphere == "louder, more chaotic"
+        assert snap.time_of_day == "dawn"
+        assert snap.active_stakes == "establish foothold"
+
+    def test_lore_is_deduplicated(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(lore=["shared fact", "fresh-only"]),
+                _early_chapter(lore=["shared fact", "early-only"]),
+            ])
+            .build()
+        )
+        assert snap.lore_established == ["shared fact", "fresh-only", "early-only"]
+
+    def test_quest_log_upserted(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(quests={"q1": "assigned", "q2": "in_progress"}),
+                _early_chapter(quests={"q1": "complete", "q3": "assigned"}),
+            ])
+            .build()
+        )
+        assert snap.quest_log == {
+            "q1": "complete",  # updated by Early
+            "q2": "in_progress",
+            "q3": "assigned",
+        }
+
+    def test_notes_append(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(notes=["a", "b"]),
+                _early_chapter(notes=["c"]),
+            ])
+            .build()
+        )
+        assert snap.notes == ["a", "b", "c"]
+
+    def test_narrative_log_converted_to_entries(self) -> None:
+        snap = (
+            WorldBuilder()
+            .with_chapters([
+                _fresh_chapter(narrative_log=[
+                    ChapterNarrativeEntry(speaker="narrator", text="The threshold."),
+                    ChapterNarrativeEntry(speaker="Rux", text="I enter."),
+                ]),
+            ])
+            .build()
+        )
+        assert len(snap.narrative_log) == 2
+        assert snap.narrative_log[0].author == "narrator"
+        assert snap.narrative_log[0].content == "The threshold."
+        assert snap.narrative_log[0].speaker == "narrator"
+        assert snap.narrative_log[1].author == "Rux"
+
+    def test_npc_upsert_by_name(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(npcs=[
+                    ChapterNpc(name="Drakul", description="A sage."),
+                ]),
+                _early_chapter(npcs=[
+                    ChapterNpc(name="Drakul", disposition=-5, location="Crypt"),
+                    ChapterNpc(name="Mira", description="A scout."),
+                ]),
+            ])
+            .build()
+        )
+        names = [n.core.name for n in snap.npcs]
+        assert names == ["Drakul", "Mira"]
+        drakul = snap.npcs[0]
+        assert drakul.disposition == -5
+        assert drakul.location == "Crypt"
+        # description from Fresh persists (Early didn't declare one)
+        assert drakul.core.description == "A sage."
+
+    def test_blank_npc_name_skipped(self) -> None:
+        snap = (
+            WorldBuilder()
+            .with_chapters([
+                _fresh_chapter(npcs=[
+                    ChapterNpc(name="", description="ignored"),
+                    ChapterNpc(name="Real", description="kept"),
+                ]),
+            ])
+            .build()
+        )
+        assert [n.core.name for n in snap.npcs] == ["Real"]
+
+    def test_trope_upsert_by_id(self) -> None:
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(tropes=[
+                    ChapterTrope(id="t1", status="dormant", progression=0.1),
+                ]),
+                _early_chapter(tropes=[
+                    ChapterTrope(id="t1", status="active", progression=0.6),
+                    ChapterTrope(id="t2", status="progressing"),
+                ]),
+            ])
+            .build()
+        )
+        ids = [t.id for t in snap.active_tropes]
+        assert ids == ["t1", "t2"]
+        assert snap.active_tropes[0].status == "active"
+        assert snap.active_tropes[0].progress == pytest.approx(0.6)
+
+    def test_unknown_trope_status_defaults_to_active(self) -> None:
+        snap = (
+            WorldBuilder()
+            .with_chapters([
+                _fresh_chapter(tropes=[
+                    ChapterTrope(id="t1", status="unknown_word"),
+                ]),
+            ])
+            .build()
+        )
+        assert snap.active_tropes[0].status == "active"
+
+    def test_character_created_when_snapshot_empty(self) -> None:
+        snap = (
+            WorldBuilder()
+            .with_chapters([
+                _fresh_chapter(character=ChapterCharacter(
+                    name="Rux",
+                    race="Gnome",
+                    **{"class": "Delver"},  # YAML alias
+                    level=3,
+                    backstory="Orphan of the Reach.",
+                )),
+            ])
+            .build()
+        )
+        assert len(snap.characters) == 1
+        char = snap.characters[0]
+        assert char.core.name == "Rux"
+        assert char.race == "Gnome"
+        assert char.char_class == "Delver"
+        assert char.core.level == 3
+        assert char.backstory == "Orphan of the Reach."
+
+    def test_character_created_with_defaults_when_blank(self) -> None:
+        snap = (
+            WorldBuilder()
+            .with_chapters([_fresh_chapter(character=ChapterCharacter())])
+            .build()
+        )
+        assert len(snap.characters) == 1
+        char = snap.characters[0]
+        # Rust-parity fallbacks
+        assert char.core.name == "Adventurer"
+        assert char.race == "Human"
+        assert char.char_class == "Fighter"
+        assert char.backstory == "Unknown origins."
+
+
+# ---------------------------------------------------------------------------
+# materialize_world — in-place, Story 6-6 shape
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeWorld:
+    def test_in_place_update_filters_by_current_maturity(self) -> None:
+        snap = GameSnapshot()
+        tm = TurnManager()
+        tm.round = 10  # → Early tier
+        snap.turn_manager = tm
+        chapters = [
+            HistoryChapter(id="fresh", label="A"),
+            HistoryChapter(id="early", label="B"),
+            HistoryChapter(id="mid", label="C"),
+        ]
+        materialize_world(snap, chapters)
+        assert [ch.id for ch in snap.world_history] == ["fresh", "early"]
+        assert snap.campaign_maturity == CampaignMaturity.Early.value
+
+    def test_idempotent(self) -> None:
+        snap = GameSnapshot()
+        chapters = [HistoryChapter(id="fresh", label="A")]
+        materialize_world(snap, chapters)
+        materialize_world(snap, chapters)
+        assert len(snap.world_history) == 1
+
+
+# ---------------------------------------------------------------------------
+# materialize_from_genre_pack — dispatch entry point
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeFromGenrePack:
+    def test_sets_slugs(self) -> None:
+        snap = materialize_from_genre_pack(
+            None, CampaignMaturity.Fresh, "caverns_and_claudes", "grimvault"
+        )
+        assert snap.genre_slug == "caverns_and_claudes"
+        assert snap.world_slug == "grimvault"
+        assert snap.world_history == []  # no history → no chapters
+
+    def test_parses_and_applies_chapters(self) -> None:
+        raw = {
+            "chapters": [
+                {
+                    "id": "fresh",
+                    "label": "First Look",
+                    "lore": ["The vault is clean."],
+                    "location": "The Threshold",
+                    "atmosphere": "clinical unease",
+                },
+            ]
+        }
+        snap = materialize_from_genre_pack(
+            raw, CampaignMaturity.Fresh, "caverns_and_claudes", "grimvault"
+        )
+        assert snap.genre_slug == "caverns_and_claudes"
+        assert snap.world_slug == "grimvault"
+        assert len(snap.world_history) == 1
+        assert snap.lore_established == ["The vault is clean."]
+        assert snap.location == "The Threshold"
+        assert snap.atmosphere == "clinical unease"
+
+    def test_parse_failure_propagates(self) -> None:
+        # Caller (dispatch) is responsible for catch-and-fallback —
+        # the function itself raises rather than silently swallowing.
+        with pytest.raises(HistoryParseError):
+            materialize_from_genre_pack(
+                "not a mapping", CampaignMaturity.Fresh, "g", "w"
+            )

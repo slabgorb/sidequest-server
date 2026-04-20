@@ -32,6 +32,11 @@ from sidequest.game.builder import (
 from sidequest.game.character import Character
 from sidequest.game.persistence import SqliteStore, db_path_for_session
 from sidequest.game.session import GameSnapshot, NarrativeEntry
+from sidequest.game.world_materialization import (
+    CampaignMaturity,
+    HistoryParseError,
+    materialize_from_genre_pack,
+)
 from sidequest.genre.archetype.shim import resolve_archetype
 from sidequest.genre.error import GenreValidationError
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
@@ -629,10 +634,55 @@ class WebSocketSessionHandler:
         # is wired in here. Rust parity: connect.rs:1745-1864.
         apply_starting_loadout(character, sd.genre_pack.inventory)
 
-        # Land the character on snapshot.characters so the UI sees
-        # has_character=true on reconnect. World materialization, SQLite
-        # save, opening-turn bootstrap still queued for later 2.3 slices.
-        sd.snapshot.characters.append(character)
+        # World materialization (Story 2.3 Slice C). Build a fresh
+        # snapshot from pack history at Fresh maturity (chargen is always
+        # Fresh — the player just arrived), then inject the built
+        # character. Replaces ``sd.snapshot`` so history chapters' lore,
+        # NPCs, notes, and scene context (location/time_of_day/atmosphere/
+        # active_stakes) populate the snapshot the narrator will read.
+        # Rust parity: connect.rs:1892-1946.
+        #
+        # Parse failure → log-and-fall-back to an empty snapshot with
+        # just genre/world slugs set (Rust parity: ``unwrap_or_else``
+        # with a warn log). The dispatch must not hard-fail on malformed
+        # pack history — the player is mid-confirm and the character is
+        # already built.
+        try:
+            materialized = materialize_from_genre_pack(
+                _world_history_value(sd.genre_pack, sd.world_slug),
+                CampaignMaturity.Fresh,
+                sd.genre_slug,
+                sd.world_slug,
+            )
+        except HistoryParseError as exc:
+            logger.warning(
+                "world_materialization.parse_failed genre=%s world=%s error=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                exc,
+            )
+            materialized = GameSnapshot(
+                genre_slug=sd.genre_slug, world_slug=sd.world_slug
+            )
+        # The fresh chapter may have authored an "Adventurer" placeholder
+        # character — discard it; the chargen-built character owns that
+        # slot. Inventory on the built character already reflects the
+        # post-loadout state from Slice A.
+        materialized.characters = [character]
+        sd.snapshot = materialized
+        span.add_event(
+            "character_creation.world_materialized",
+            {
+                "event": "world_materialized",
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "chapters_applied": len(materialized.world_history),
+                "maturity": materialized.campaign_maturity,
+                "trigger": "new_player_chargen",
+                "player_id": player_id,
+            },
+        )
+
         sd.builder = None
         logger.info(
             "chargen.complete char_name=%s class=%s race=%s hp=%d",
@@ -800,6 +850,21 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
+    """Extract the raw world ``history.yaml`` payload for a world.
+
+    Rust reads ``pack.worlds.get(world).and_then(|w| w.history.as_ref())``;
+    the Python loader stores ``history`` on ``World`` as an untyped
+    ``Any`` (loader.py:383). Returns ``None`` when the world doesn't
+    declare history — ``materialize_from_genre_pack`` treats ``None`` as
+    zero chapters, producing a snapshot with just genre/world slugs set.
+    """
+    world = pack.worlds.get(world_slug)
+    if world is None:
+        return None
+    return world.history
 
 
 def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:

@@ -19,8 +19,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
+from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.turn import TurnManager
-
 
 # ---------------------------------------------------------------------------
 # NarrativeEntry — narrative log entries
@@ -223,18 +223,6 @@ class TropeState(BaseModel):
     status: str = "dormant"
     progress: float = 0.0
     beats_fired: int = 0
-
-
-class HistoryChapter(BaseModel):
-    """Campaign history chapter (minimal, for JSON round-tripping).
-
-    Port of sidequest_game::world_materialization::HistoryChapter — P3-deferred.
-    """
-
-    model_config = {"extra": "ignore"}
-
-    title: str = ""
-    summary: str = ""
 
 
 class GenieWish(BaseModel):

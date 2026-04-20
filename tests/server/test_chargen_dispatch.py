@@ -541,6 +541,88 @@ class TestSliceAWiring:
         run(body())
 
 
+class TestSliceCWorldMaterialization:
+    """Story 2.3 Slice C: world materialization at chargen confirmation.
+    After confirmation, ``sd.snapshot`` is replaced with a materialized
+    snapshot that carries the genre pack's fresh-tier history chapters
+    (lore, location, atmosphere, time_of_day), plus the built character
+    in the sole ``characters`` slot.
+    """
+
+    def test_grimvault_fresh_chapter_lore_populates_snapshot(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        async def body() -> None:
+            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            await _walk_to_confirmation(handler, freeform_name="Rux")
+
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="confirmation")
+            )
+            assert len(out) == 1
+            assert isinstance(out[0], CharacterCreationMessage)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            snap = sd.snapshot
+
+            # Genre + world slugs set by materialize_from_genre_pack.
+            assert snap.genre_slug == "caverns_and_claudes"
+            assert snap.world_slug == "grimvault"
+
+            # Fresh maturity → exactly one chapter applied (the 'fresh' one).
+            assert len(snap.world_history) == 1
+            assert snap.world_history[0].id == "fresh"
+
+            # grimvault's fresh chapter authored location + atmosphere —
+            # materialize should have stamped them on the snapshot.
+            assert snap.location == "The Threshold"
+            assert "Clinical unease" in snap.atmosphere
+            assert snap.time_of_day == "dawn"
+
+            # Lore from the chapter is in lore_established.
+            assert any("Ashgate" in entry for entry in snap.lore_established), (
+                f"grimvault fresh-tier lore not in snapshot: "
+                f"{snap.lore_established[:2]}"
+            )
+
+            # Character slot holds exactly the built character (not an
+            # Adventurer stub from ``apply_character`` — materialize
+            # runs FIRST, then dispatch replaces with the chargen
+            # character).
+            assert len(snap.characters) == 1
+            assert snap.characters[0].char_class == "Delver"
+
+        run(body())
+
+    def test_pack_without_history_returns_empty_materialization(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        """A world with no history.yaml should still produce a valid
+        snapshot — just with genre/world slugs set and no chapters."""
+        if not (CONTENT_ROOT / "spaghetti_western" / "worlds" / "dust_and_lead").is_dir():
+            pytest.skip("spaghetti_western/dust_and_lead not available")
+
+        async def body() -> None:
+            # Use spaghetti_western/dust_and_lead — confirm pack loads
+            # and the chargen confirmation runs without blowing up even
+            # when history is present but slim.
+            await _connect(
+                handler, genre="spaghetti_western", world="dust_and_lead"
+            )
+            await _walk_to_confirmation(handler, freeform_name="McCoy")
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="confirmation")
+            )
+            assert isinstance(out[0], CharacterCreationMessage)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd.snapshot.genre_slug == "spaghetti_western"
+            assert sd.snapshot.world_slug == "dust_and_lead"
+            assert len(sd.snapshot.characters) == 1
+
+        run(body())
+
+
 class TestActions:
     def test_back_from_first_scene_returns_error(
         self, handler: WebSocketSessionHandler
