@@ -1,0 +1,244 @@
+"""World configuration, cartography, and navigation types.
+
+Port of sidequest-genre/src/models/world.rs.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Annotated, Any, Literal, Union
+
+from pydantic import BaseModel, Field
+
+
+class NavigationMode(str, Enum):
+    """Navigation mode for a world's cartography."""
+
+    region = "region"
+    room_graph = "room_graph"
+    hierarchical = "hierarchical"
+
+
+# ---------------------------------------------------------------------------
+# RoomExit — tagged union (type discriminator)
+# ---------------------------------------------------------------------------
+
+
+class RoomExitDoor(BaseModel):
+    model_config = {"extra": "forbid"}
+    type: Literal["door"]
+    target: str
+    is_locked: bool = False
+
+
+class RoomExitCorridor(BaseModel):
+    model_config = {"extra": "forbid"}
+    type: Literal["corridor"]
+    target: str
+
+
+class RoomExitChuteDown(BaseModel):
+    model_config = {"extra": "forbid"}
+    type: Literal["chute_down"]
+    target: str
+
+
+class RoomExitChuteUp(BaseModel):
+    model_config = {"extra": "forbid"}
+    type: Literal["chute_up"]
+    target: str
+
+
+class RoomExitSecret(BaseModel):
+    model_config = {"extra": "forbid"}
+    type: Literal["secret"]
+    target: str
+    discovered: bool = False
+
+
+# Rust uses serde(tag = "type") on RoomExit.
+RoomExit = Annotated[
+    Union[RoomExitDoor, RoomExitCorridor, RoomExitChuteDown, RoomExitChuteUp, RoomExitSecret],
+    Field(discriminator="type"),
+]
+
+
+class LegendEntry(BaseModel):
+    """A legend entry mapping a glyph character to a feature type and label."""
+
+    model_config = {"extra": "forbid"}
+
+    # "type" is a Python keyword — use alias
+    feature_type: str = Field(alias="type", serialization_alias="type")
+    label: str
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+
+class RoomDef(BaseModel):
+    """A room in the dungeon room graph."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    name: str
+    room_type: str
+    size: list[int] = Field(default_factory=lambda: [1, 1])
+    keeper_awareness_modifier: float = 1.0
+    exits: list[RoomExit] = Field(default_factory=list)
+    description: str | None = None
+    grid: str | None = None
+    tactical_scale: int | None = None
+    legend: dict[str, LegendEntry] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical world graph
+# ---------------------------------------------------------------------------
+
+
+class Terrain(str, Enum):
+    """Terrain type for graph edges."""
+
+    road = "road"
+    wilderness = "wilderness"
+    water = "water"
+    underground = "underground"
+
+
+class WorldGraphNode(BaseModel):
+    """A node in the world graph — a major location."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    name: str
+    description: str = ""
+
+
+class GraphEdge(BaseModel):
+    """An edge between two world graph nodes."""
+
+    model_config = {"extra": "forbid"}
+
+    from_: str = Field(alias="from", serialization_alias="from")
+    to: str
+    danger: int
+    terrain: Terrain = Terrain.road
+    distance: int = 1
+    encounter_table_key: str | None = None
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+
+class SubGraph(BaseModel):
+    """A sub-graph: internal topology for a world graph node."""
+
+    model_config = {"extra": "forbid"}
+
+    nodes: list[WorldGraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+
+
+class WorldGraph(BaseModel):
+    """The top-level world graph."""
+
+    model_config = {"extra": "forbid"}
+
+    nodes: list[WorldGraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Landmark — untagged union (string or detailed object)
+# ---------------------------------------------------------------------------
+
+
+class LandmarkDetailed(BaseModel):
+    """Detailed landmark with type and description."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    landmark_type: str = Field(alias="type", serialization_alias="type")
+    description: str
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+
+# Landmark is either a plain string or a LandmarkDetailed dict.
+# We handle this at the Region level with a custom validator.
+Landmark = Union[str, LandmarkDetailed]
+
+
+class Region(BaseModel):
+    """A map region."""
+
+    # No extra="forbid": uses flatten extras bag (chase_profile, etc.)
+    model_config = {"extra": "allow"}
+
+    name: str
+    summary: str
+    description: str
+    adjacent: list[str] = Field(default_factory=list)
+    landmarks: list[Any] = Field(default_factory=list)
+    origin: str | None = None
+    rivers: list[Any] = Field(default_factory=list)
+    settlements: list[Any] = Field(default_factory=list)
+    terrain: str | None = None
+    controlled_by: str | None = None
+
+
+class Route(BaseModel):
+    """A route between regions."""
+
+    # No extra="forbid": uses flatten extras bag (faction_crossings, etc.)
+    model_config = {"extra": "allow"}
+
+    name: str
+    description: str
+    id: str | None = None
+    from_id: str | None = None
+    to_id: str | None = None
+    distance: str | None = None
+    danger: str | None = None
+    waypoints: list[str] = Field(default_factory=list)
+    difficulty: str | None = None
+
+
+class CartographyConfig(BaseModel):
+    """Map and region configuration."""
+
+    model_config = {"extra": "forbid"}
+
+    world_name: str = ""
+    starting_region: str = ""
+    map_style: str = ""
+    map_resolution: list[int] | None = None
+    navigation_mode: NavigationMode = NavigationMode.region
+    regions: dict[str, Region] = Field(default_factory=dict)
+    routes: list[Route] = Field(default_factory=list)
+    rooms: list[RoomDef] | None = None
+    world_graph: WorldGraph | None = None
+    sub_graphs: dict[str, SubGraph] | None = None
+
+
+# ---------------------------------------------------------------------------
+# WorldConfig — uses flatten extras
+# ---------------------------------------------------------------------------
+
+
+class WorldConfig(BaseModel):
+    """World metadata."""
+
+    # No extra="forbid": uses flatten extras (keeper, tagline, etc.)
+    model_config = {"extra": "allow"}
+
+    name: str
+    slug: str = ""
+    description: str
+    starting_location: str = ""
+    axis_snapshot: dict[str, float] = Field(default_factory=dict)
+    era: str | None = None
+    tone: str | None = None
+    cover_poi: str | None = None
