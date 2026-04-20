@@ -1,0 +1,262 @@
+"""Tests for sidequest.game.character.
+
+Port of tests in sidequest_game::character (character.rs mod tests).
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from sidequest.game.character import AbilityDefinition, AffinityState, Character, KnownFact
+from sidequest.game.creature_core import (
+    PLACEHOLDER_EDGE_BASE_MAX,
+    CreatureCore,
+    EdgePool,
+    Inventory,
+    placeholder_edge_pool,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def make_test_character() -> Character:
+    """Helper to build a valid Character for testing. Mirrors Rust test_character()."""
+    return Character(
+        core=CreatureCore(
+            name="Thorn Ironhide",
+            description="A scarred dwarf warrior",
+            personality="Gruff but loyal",
+            level=3,
+            xp=0,
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+            acquired_advancements=[],
+        ),
+        backstory="Raised in the iron mines",
+        narrative_state="Exploring the wastes",
+        hooks=["nemesis: The Warden"],
+        char_class="Fighter",
+        race="Dwarf",
+        pronouns="he/him",
+        stats={
+            "STR": 16,
+            "DEX": 10,
+            "CON": 14,
+            "INT": 8,
+            "WIS": 12,
+            "CHA": 6,
+        },
+        abilities=[],
+        known_facts=[],
+        affinities=[],
+        is_friendly=True,
+        resolved_archetype=None,
+        archetype_provenance=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Combatant trait equivalents
+# ---------------------------------------------------------------------------
+
+
+def test_combatant_name():
+    """Rust: combatant_name"""
+    c = make_test_character()
+    assert c.name() == "Thorn Ironhide"
+
+
+def test_combatant_edge():
+    """Rust: combatant_edge"""
+    c = make_test_character()
+    assert c.edge() == c.core.edge.current
+
+
+def test_combatant_max_edge():
+    """Rust: combatant_max_edge"""
+    c = make_test_character()
+    assert c.max_edge() == c.core.edge.max
+
+
+def test_combatant_level():
+    """Rust: combatant_level"""
+    c = make_test_character()
+    assert c.level() == 3
+
+
+def test_combatant_not_broken_at_full_edge():
+    """Rust: combatant_not_broken_at_full_edge"""
+    c = make_test_character()
+    assert not c.is_broken()
+
+
+def test_combatant_broken_at_zero_edge():
+    """Rust: combatant_broken_at_zero_edge"""
+    c = make_test_character()
+    c.core.edge.current = 0
+    assert c.is_broken()
+
+
+# ---------------------------------------------------------------------------
+# Edge delta
+# ---------------------------------------------------------------------------
+
+
+def test_apply_damage_via_edge():
+    """Rust: apply_damage_via_edge"""
+    c = make_test_character()
+    before = c.core.edge.current
+    c.core.edge.apply_delta(-3)
+    assert c.core.edge.current == before - 3
+
+
+def test_damage_floored_at_zero():
+    """Rust: damage_floored_at_zero"""
+    c = make_test_character()
+    c.core.edge.apply_delta(-1000)
+    assert c.core.edge.current == 0
+
+
+# ---------------------------------------------------------------------------
+# JSON round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_json_roundtrip():
+    """Rust: json_roundtrip"""
+    c = make_test_character()
+    json_str = c.model_dump_json()
+    back = Character.model_validate_json(json_str)
+    assert back.core.name == "Thorn Ironhide"
+    assert back.core.edge.base_max == c.core.edge.base_max
+    assert back.core.level == 3
+
+
+def test_blank_backstory_rejected():
+    """Rust: blank_name_rejected_in_json — Python equivalent for backstory."""
+    with pytest.raises(Exception):
+        Character(
+            core=CreatureCore(
+                name="X",
+                description="Y",
+                personality="Z",
+                inventory=Inventory(),
+                statuses=[],
+                edge=placeholder_edge_pool(),
+            ),
+            backstory="",
+            char_class="Fighter",
+            race="Dwarf",
+        )
+
+
+def test_blank_char_class_rejected():
+    with pytest.raises(Exception):
+        Character(
+            core=CreatureCore(
+                name="X",
+                description="Y",
+                personality="Z",
+                inventory=Inventory(),
+                statuses=[],
+                edge=placeholder_edge_pool(),
+            ),
+            backstory="A fine backstory",
+            char_class="",
+            race="Dwarf",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Field validation
+# ---------------------------------------------------------------------------
+
+
+def test_nonblank_fields_validated():
+    """Rust: nonblank_fields_validated — core name/description/personality."""
+    from sidequest.game.creature_core import CreatureCore
+    with pytest.raises(Exception):
+        CreatureCore(name="", description="y", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+    with pytest.raises(Exception):
+        CreatureCore(name="x", description="   ", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+    # valid
+    cc = CreatureCore(name="valid", description="desc", personality="calm", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+    assert cc.name == "valid"
+
+
+# ---------------------------------------------------------------------------
+# Optional/deferred fields
+# ---------------------------------------------------------------------------
+
+
+def test_affinities_default_empty():
+    c = make_test_character()
+    assert c.affinities == []
+
+
+def test_known_facts_default_empty():
+    c = make_test_character()
+    assert c.known_facts == []
+
+
+def test_abilities_default_empty():
+    c = make_test_character()
+    assert c.abilities == []
+
+
+def test_is_friendly_default_true():
+    c = make_test_character()
+    assert c.is_friendly is True
+
+
+def test_resolved_archetype_optional():
+    c = make_test_character()
+    assert c.resolved_archetype is None
+
+
+def test_character_with_known_facts():
+    c = make_test_character()
+    c.known_facts.append(KnownFact(content="The Warden is in the mines"))
+    assert len(c.known_facts) == 1
+    json_str = c.model_dump_json()
+    back = Character.model_validate_json(json_str)
+    assert back.known_facts[0].content == "The Warden is in the mines"
+
+
+def test_character_with_abilities():
+    c = make_test_character()
+    c.abilities.append(
+        AbilityDefinition(
+            name="Iron Will",
+            genre_description="An iron resolve that resists breaking",
+            mechanical_effect="Reduce edge damage by 1",
+        )
+    )
+    assert len(c.abilities) == 1
+    json_str = c.model_dump_json()
+    back = Character.model_validate_json(json_str)
+    assert back.abilities[0].name == "Iron Will"
+
+
+def test_edge_fraction_full():
+    c = make_test_character()
+    assert c.edge_fraction() == 1.0
+
+
+def test_edge_fraction_half():
+    c = make_test_character()
+    c.core.edge.current = c.core.edge.max // 2
+    assert abs(c.edge_fraction() - 0.5) < 0.01
+
+
+def test_edge_fraction_zero_max_returns_one():
+    c = make_test_character()
+    c.core.edge.max = 0
+    c.core.edge.current = 0
+    assert c.edge_fraction() == 1.0
