@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 
@@ -30,6 +30,8 @@ from sidequest.game.builder import (
     CharacterBuilder,
 )
 from sidequest.game.character import Character
+from sidequest.game.lore_seeding import seed_lore_from_char_creation
+from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -108,6 +110,12 @@ class _SessionData:
     # opening-hook entries — the first turn runs without a directive.
     opening_seed: str | None = None
     opening_directive: str | None = None
+    # Lore store (Story 2.3 Slice F). Per-session indexed knowledge
+    # collection. Seeded at chargen confirmation from the builder's
+    # scene choices so the narrator's RAG retrieval pipeline can see
+    # the player's backstory decisions. Rust parity: Arc<Mutex<LoreStore>>
+    # on app state — Python single-player keeps it on the session.
+    lore_store: LoreStore = field(default_factory=LoreStore)
     # Active scenario pack (Story 2.3 Slice D). Set at chargen
     # confirmation when the genre pack declares at least one scenario.
     # Rust parity: ``shared_session.active_scenario`` — lives on the
@@ -768,6 +776,35 @@ class WebSocketSessionHandler:
                         "error": str(exc),
                     },
                 )
+
+        # Lore seeding (Story 2.3 Slice F). Must run BEFORE clearing
+        # the builder — the builder owns the scene list, and the
+        # seeder reads per-choice label/description text to build
+        # Character-category lore fragments. Rust parity:
+        # connect.rs:2196-2201 ("seed_lore_from_char_creation BEFORE
+        # clearing the builder"). Without this, backstory choices
+        # made during chargen are invisible to the narrator's RAG
+        # retrieval pipeline.
+        lore_added = seed_lore_from_char_creation(
+            sd.lore_store, list(builder.scenes())
+        )
+        span.add_event(
+            "lore.char_creation_seeded",
+            {
+                "event": "char_creation_lore_seeded",
+                "fragments_added": lore_added,
+                "total_fragments": len(sd.lore_store),
+                "total_tokens": sd.lore_store.total_tokens(),
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "player_id": player_id,
+            },
+        )
+        logger.info(
+            "rag.character_creation_lore_seeded count=%d total=%d",
+            lore_added,
+            len(sd.lore_store),
+        )
 
         sd.builder = None
         logger.info(
