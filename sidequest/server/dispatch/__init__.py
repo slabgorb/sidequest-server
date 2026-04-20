@@ -1,19 +1,12 @@
-"""PLAYER_ACTION → Orchestrator → NARRATION dispatch.
+"""Message dispatch package.
 
-Phase 1 single-function facade used by WebSocketSessionHandler.
-All dispatch logic lives in session_handler.py — this module re-exports
-the handler factory and the dispatch function for test consumers that want
-to drive dispatch directly without going through the WebSocket layer.
+Mirrors ``sidequest-server/src/dispatch/`` in the Rust port — a package of
+submodules keyed on message type and lifecycle concern
+(``chargen_summary``, upcoming ``persistence``, ``opening_turn``, etc.).
+
+This file is intentionally empty of re-exports. Importing
+``WebSocketSessionHandler`` from here would form a cycle with
+``sidequest.server.session_handler`` (which imports the chargen_summary
+submodule). Callers that need the handler import it directly from
+``sidequest.server.session_handler``.
 """
-
-from __future__ import annotations
-
-from sidequest.server.session_handler import (
-    WebSocketSessionHandler,
-    _apply_narration_result_to_snapshot,
-)
-
-__all__ = [
-    "WebSocketSessionHandler",
-    "_apply_narration_result_to_snapshot",
-]

@@ -58,6 +58,11 @@ def _make_mock_genre_pack() -> MagicMock:
     mock_pack.prompts = None
     mock_pack.audio = None
     mock_pack.tropes = []
+    # Empty chargen scenes: session skips builder init. These e2e tests
+    # exercise the narration path with pre-existing characters, not chargen.
+    mock_pack.char_creation = []
+    mock_pack.backstory_tables = None
+    mock_pack.equipment_tables = None
     return mock_pack
 
 

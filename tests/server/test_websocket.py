@@ -46,6 +46,11 @@ def _make_mock_genre_pack() -> MagicMock:
     mock.prompts = None
     mock.audio = None
     mock.tropes = []
+    # Empty chargen scenes: session skips builder init, which is the right
+    # state for websocket-layer tests that don't care about chargen flow.
+    mock.char_creation = []
+    mock.backstory_tables = None
+    mock.equipment_tables = None
     return mock
 
 

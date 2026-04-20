@@ -14,7 +14,7 @@ import pytest
 from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.session import GameSnapshot
-from sidequest.server.dispatch import _apply_narration_result_to_snapshot
+from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -158,15 +158,15 @@ def test_apply_non_narration_result_is_noop():
 # ---------------------------------------------------------------------------
 
 
-def test_dispatch_exports_handler():
-    """dispatch.py re-exports WebSocketSessionHandler."""
-    from sidequest.server.dispatch import WebSocketSessionHandler
+def test_session_handler_exports_handler():
+    """session_handler is the canonical home for the WebSocket handler."""
+    from sidequest.server.session_handler import WebSocketSessionHandler
 
     assert WebSocketSessionHandler is not None
 
 
-def test_dispatch_exports_apply_fn():
-    """dispatch.py re-exports _apply_narration_result_to_snapshot."""
-    from sidequest.server.dispatch import _apply_narration_result_to_snapshot as fn
+def test_session_handler_exports_apply_fn():
+    """_apply_narration_result_to_snapshot is importable from session_handler."""
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot as fn
 
     assert callable(fn)
