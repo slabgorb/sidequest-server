@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel
+from sidequest.protocol.base import ProtocolBase
 
 
 class Tier(str, Enum):
@@ -24,7 +24,7 @@ class Tier(str, Enum):
     culture = "culture"
 
 
-class Span(BaseModel):
+class Span(ProtocolBase):
     """Line range in a YAML source file (1-based lines, 0-based cols)."""
 
     start_line: int
@@ -50,7 +50,7 @@ class ContributionKind(str, Enum):
     """This tier deep-merged a map value."""
 
 
-class MergeStep(BaseModel):
+class MergeStep(ProtocolBase):
     """One step in the merge trail — records which tier and file contributed."""
 
     tier: Tier
@@ -63,7 +63,7 @@ class MergeStep(BaseModel):
     """How this tier's value related to the previous value."""
 
 
-class Provenance(BaseModel):
+class Provenance(ProtocolBase):
     """Full provenance for a resolved content value."""
 
     source_tier: Tier

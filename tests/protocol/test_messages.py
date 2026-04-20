@@ -161,7 +161,9 @@ def test_player_action_wire_type_tag() -> None:
     assert data["type"] == "PLAYER_ACTION"
     assert "payload" in data
     assert data["payload"]["action"] == "go north"
-    assert data["player_id"] == ""
+    # player_id="" is omitted (empty-string default dropped for wire parity);
+    # absent player_id means the empty-string case on this Python port.
+    assert data.get("player_id", "") == ""
 
 
 def test_narration_round_trip() -> None:

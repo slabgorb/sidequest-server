@@ -10,8 +10,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from sidequest.protocol.base import ProtocolBase
 from sidequest.protocol.provenance import Provenance
 from sidequest.protocol.types import NonBlankString
 
@@ -44,7 +45,7 @@ class FactCategory(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class Footnote(BaseModel):
+class Footnote(ProtocolBase):
     """A structured footnote from narrator output.
 
     Port of sidequest_protocol::Footnote.
@@ -67,7 +68,7 @@ class Footnote(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ItemGained(BaseModel):
+class ItemGained(ProtocolBase):
     """An item the player gained during narration.
 
     Port of sidequest_protocol::ItemGained.
@@ -88,13 +89,11 @@ class ItemGained(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CharacterState(BaseModel):
+class CharacterState(ProtocolBase):
     """Character state as seen by the client (UI-facing).
 
     Port of sidequest_protocol::CharacterState.
     """
-
-    model_config = {"extra": "forbid"}
 
     name: NonBlankString
     """Character name (merge key). Non-blank."""
@@ -113,8 +112,6 @@ class CharacterState(BaseModel):
     archetype_provenance: Provenance | None = None
     """Provenance of the resolved archetype, when available."""
 
-    model_config = {"populate_by_name": True, "extra": "forbid"}
-
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
         """Serialize using 'class' as the field name (not class_)."""
         kwargs.setdefault("by_alias", True)
@@ -130,14 +127,12 @@ class CharacterState(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class StateDelta(BaseModel):
+class StateDelta(ProtocolBase):
     """State changes carried in NARRATION and TURN_STATUS.
 
     Port of sidequest_protocol::StateDelta.
     All fields are optional — only changed state is included.
     """
-
-    model_config = {"extra": "forbid"}
 
     location: str | None = None
     """New location, if changed."""
@@ -154,13 +149,11 @@ class StateDelta(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class InitialState(BaseModel):
+class InitialState(ProtocolBase):
     """Initial game state sent on session ready.
 
     Port of sidequest_protocol::InitialState.
     """
-
-    model_config = {"extra": "forbid"}
 
     characters: list[CharacterState]
     """Party characters."""
@@ -177,13 +170,11 @@ class InitialState(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CreationChoice(BaseModel):
+class CreationChoice(ProtocolBase):
     """A choice in the character creation flow.
 
     Port of sidequest_protocol::CreationChoice.
     """
-
-    model_config = {"extra": "forbid"}
 
     label: NonBlankString
     """Display label. Non-blank — rendered as the button text."""
@@ -196,7 +187,7 @@ class CreationChoice(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RolledStat(BaseModel):
+class RolledStat(ProtocolBase):
     """One rolled ability score: ability name + value.
 
     Port of sidequest_protocol::RolledStat.
@@ -213,13 +204,11 @@ class RolledStat(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class InventoryItem(BaseModel):
+class InventoryItem(ProtocolBase):
     """An inventory item.
 
     Port of sidequest_protocol::InventoryItem.
     """
-
-    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     name: NonBlankString
     """Item name. Non-blank — rendered as the inventory row header."""
@@ -246,13 +235,11 @@ class InventoryItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class InventoryPayload(BaseModel):
+class InventoryPayload(ProtocolBase):
     """Full inventory snapshot.
 
     Port of sidequest_protocol::InventoryPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     items: list[InventoryItem]
     """All inventory items."""
@@ -265,13 +252,11 @@ class InventoryPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CharacterSheetDetails(BaseModel):
+class CharacterSheetDetails(ProtocolBase):
     """Character sheet details nested inside PartyMember.
 
     Port of sidequest_protocol::CharacterSheetDetails.
     """
-
-    model_config = {"extra": "forbid"}
 
     race: NonBlankString
     """Character race/origin. Non-blank post-chargen."""
@@ -294,13 +279,11 @@ class CharacterSheetDetails(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PartyMember(BaseModel):
+class PartyMember(ProtocolBase):
     """A party member in PARTY_STATUS.
 
     Port of sidequest_protocol::PartyMember.
     """
-
-    model_config = {"extra": "forbid"}
 
     player_id: NonBlankString
     """Player identifier. Non-blank — identity key."""
@@ -327,8 +310,6 @@ class PartyMember(BaseModel):
     inventory: InventoryPayload | None = None
     """Full inventory snapshot. None until the member has a loadout."""
 
-    model_config = {"populate_by_name": True, "extra": "forbid"}
-
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
         kwargs.setdefault("by_alias", True)
         return super().model_dump(**kwargs)
@@ -343,13 +324,11 @@ class PartyMember(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class TacticalFeaturePayload(BaseModel):
+class TacticalFeaturePayload(ProtocolBase):
     """A named feature placed on the grid via legend glyph.
 
     Port of sidequest_protocol::TacticalFeaturePayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     glyph: str
     """The uppercase letter glyph (A-Z) from the ASCII grid."""
@@ -361,13 +340,11 @@ class TacticalFeaturePayload(BaseModel):
     """Grid positions where this feature appears ([x, y] pairs)."""
 
 
-class TacticalGridPayload(BaseModel):
+class TacticalGridPayload(ProtocolBase):
     """Grid layout — cell types as strings for JSON simplicity.
 
     Port of sidequest_protocol::TacticalGridPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     width: int
     """Grid width in cells."""
@@ -384,13 +361,11 @@ class TacticalGridPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RoomExitInfo(BaseModel):
+class RoomExitInfo(ProtocolBase):
     """Exit descriptor for room graph mode — target room and exit type.
 
     Port of sidequest_protocol::RoomExitInfo.
     """
-
-    model_config = {"extra": "forbid"}
 
     target: NonBlankString
     """Target room ID this exit leads to. Non-blank."""
@@ -403,13 +378,11 @@ class RoomExitInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ExploredLocation(BaseModel):
+class ExploredLocation(ProtocolBase):
     """A location on the explored map.
 
     Port of sidequest_protocol::ExploredLocation.
     """
-
-    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     id: str = ""
     """Stable location identifier. Empty string for legacy saves."""
@@ -448,13 +421,11 @@ class ExploredLocation(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class FogBounds(BaseModel):
+class FogBounds(ProtocolBase):
     """Fog of war bounds for map overlay.
 
     Port of sidequest_protocol::FogBounds.
     """
-
-    model_config = {"extra": "forbid"}
 
     width: int
     """Map width."""
@@ -467,7 +438,7 @@ class FogBounds(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CartographyRegion(BaseModel):
+class CartographyRegion(ProtocolBase):
     """A region in the cartography metadata (wire format for UI).
 
     Port of sidequest_protocol::CartographyRegion.
@@ -486,7 +457,7 @@ class CartographyRegion(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CartographyRoute(BaseModel):
+class CartographyRoute(ProtocolBase):
     """A route between regions in the cartography metadata (wire format for UI).
 
     Port of sidequest_protocol::CartographyRoute.
@@ -507,7 +478,7 @@ class CartographyRoute(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CartographyMetadata(BaseModel):
+class CartographyMetadata(ProtocolBase):
     """Cartography metadata for the map overlay.
 
     Port of sidequest_protocol::CartographyMetadata.

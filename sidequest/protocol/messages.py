@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import Field, RootModel
+
+from sidequest.protocol.base import ProtocolBase
 
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
@@ -45,13 +47,11 @@ from sidequest.protocol.types import NonBlankString
 # ---------------------------------------------------------------------------
 
 
-class PlayerActionPayload(BaseModel):
+class PlayerActionPayload(ProtocolBase):
     """Player action payload.
 
     Port of sidequest_protocol::PlayerActionPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     action: NonBlankString
     """The action text the player typed. Non-blank."""
@@ -64,14 +64,12 @@ class PlayerActionPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class NarrationPayload(BaseModel):
+class NarrationPayload(ProtocolBase):
     """Narration payload with optional state delta and structured footnotes.
 
     Port of sidequest_protocol::NarrationPayload.
     Has exactly 3 fields: text, state_delta, footnotes.
     """
-
-    model_config = {"extra": "forbid"}
 
     text: NonBlankString
     """The narrative text from the AI. Non-blank."""
@@ -86,13 +84,11 @@ class NarrationPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class NarrationEndPayload(BaseModel):
+class NarrationEndPayload(ProtocolBase):
     """Turn-completion payload, optionally carrying the final state delta.
 
     Port of sidequest_protocol::NarrationEndPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     state_delta: StateDelta | None = None
     """Optional state changes at end of narration."""
@@ -103,13 +99,11 @@ class NarrationEndPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ThinkingPayload(BaseModel):
+class ThinkingPayload(ProtocolBase):
     """Thinking indicator (empty payload — just shows spinner).
 
     Port of sidequest_protocol::ThinkingPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
 
 # ---------------------------------------------------------------------------
@@ -117,13 +111,11 @@ class ThinkingPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SessionEventPayload(BaseModel):
+class SessionEventPayload(ProtocolBase):
     """Session lifecycle events.
 
     Port of sidequest_protocol::SessionEventPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     event: str
     """Event type: 'connect', 'connected', 'ready', 'theme_css'."""
@@ -152,13 +144,11 @@ class SessionEventPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CharacterCreationPayload(BaseModel):
+class CharacterCreationPayload(ProtocolBase):
     """Character creation flow payload.
 
     Port of sidequest_protocol::CharacterCreationPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     phase: str
     """Creation phase: 'scene', 'confirmation', 'complete'."""
@@ -199,13 +189,11 @@ class CharacterCreationPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class TurnStatusPayload(BaseModel):
+class TurnStatusPayload(ProtocolBase):
     """Turn/round tracking.
 
     Port of sidequest_protocol::TurnStatusPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     player_name: NonBlankString
     """Which player this turn status is about. Non-blank."""
@@ -220,13 +208,11 @@ class TurnStatusPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PartyStatusPayload(BaseModel):
+class PartyStatusPayload(ProtocolBase):
     """Full party snapshot.
 
     Port of sidequest_protocol::PartyStatusPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     members: list[PartyMember]
     """All party members."""
@@ -237,13 +223,11 @@ class PartyStatusPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class MapUpdatePayload(BaseModel):
+class MapUpdatePayload(ProtocolBase):
     """Map update for the map overlay.
 
     Port of sidequest_protocol::MapUpdatePayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     current_location: NonBlankString
     """Current player location. Non-blank."""
@@ -262,13 +246,11 @@ class MapUpdatePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ChapterMarkerPayload(BaseModel):
+class ChapterMarkerPayload(ProtocolBase):
     """Chapter/scene marker payload.
 
     Port of sidequest_protocol::ChapterMarkerPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     title: str | None = None
     """Chapter title."""
@@ -281,13 +263,11 @@ class ChapterMarkerPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ActionQueuePayload(BaseModel):
+class ActionQueuePayload(ProtocolBase):
     """Action queue payload.
 
     Port of sidequest_protocol::ActionQueuePayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     actions: list[Any] = Field(default_factory=list)
     """Queued actions."""
@@ -298,13 +278,11 @@ class ActionQueuePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ErrorPayload(BaseModel):
+class ErrorPayload(ProtocolBase):
     """Error payload.
 
     Port of sidequest_protocol::ErrorPayload.
     """
-
-    model_config = {"extra": "forbid"}
 
     message: NonBlankString
     """Human-readable error message. Non-blank."""
@@ -329,7 +307,7 @@ class ErrorPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PlayerActionMessage(BaseModel):
+class PlayerActionMessage(ProtocolBase):
     """GameMessage::PlayerAction wire representation."""
 
     type: Literal[MessageType.PLAYER_ACTION] = MessageType.PLAYER_ACTION
@@ -337,7 +315,7 @@ class PlayerActionMessage(BaseModel):
     player_id: str = ""
 
 
-class NarrationMessage(BaseModel):
+class NarrationMessage(ProtocolBase):
     """GameMessage::Narration wire representation."""
 
     type: Literal[MessageType.NARRATION] = MessageType.NARRATION
@@ -345,7 +323,7 @@ class NarrationMessage(BaseModel):
     player_id: str = ""
 
 
-class NarrationEndMessage(BaseModel):
+class NarrationEndMessage(ProtocolBase):
     """GameMessage::NarrationEnd wire representation."""
 
     type: Literal[MessageType.NARRATION_END] = MessageType.NARRATION_END
@@ -353,7 +331,7 @@ class NarrationEndMessage(BaseModel):
     player_id: str = ""
 
 
-class ThinkingMessage(BaseModel):
+class ThinkingMessage(ProtocolBase):
     """GameMessage::Thinking wire representation."""
 
     type: Literal[MessageType.THINKING] = MessageType.THINKING
@@ -361,7 +339,7 @@ class ThinkingMessage(BaseModel):
     player_id: str = ""
 
 
-class SessionEventMessage(BaseModel):
+class SessionEventMessage(ProtocolBase):
     """GameMessage::SessionEvent wire representation."""
 
     type: Literal[MessageType.SESSION_EVENT] = MessageType.SESSION_EVENT
@@ -369,7 +347,7 @@ class SessionEventMessage(BaseModel):
     player_id: str = ""
 
 
-class CharacterCreationMessage(BaseModel):
+class CharacterCreationMessage(ProtocolBase):
     """GameMessage::CharacterCreation wire representation."""
 
     type: Literal[MessageType.CHARACTER_CREATION] = MessageType.CHARACTER_CREATION
@@ -377,7 +355,7 @@ class CharacterCreationMessage(BaseModel):
     player_id: str = ""
 
 
-class TurnStatusMessage(BaseModel):
+class TurnStatusMessage(ProtocolBase):
     """GameMessage::TurnStatus wire representation."""
 
     type: Literal[MessageType.TURN_STATUS] = MessageType.TURN_STATUS
@@ -385,7 +363,7 @@ class TurnStatusMessage(BaseModel):
     player_id: str = ""
 
 
-class PartyStatusMessage(BaseModel):
+class PartyStatusMessage(ProtocolBase):
     """GameMessage::PartyStatus wire representation."""
 
     type: Literal[MessageType.PARTY_STATUS] = MessageType.PARTY_STATUS
@@ -393,7 +371,7 @@ class PartyStatusMessage(BaseModel):
     player_id: str = ""
 
 
-class MapUpdateMessage(BaseModel):
+class MapUpdateMessage(ProtocolBase):
     """GameMessage::MapUpdate wire representation."""
 
     type: Literal[MessageType.MAP_UPDATE] = MessageType.MAP_UPDATE
@@ -401,7 +379,7 @@ class MapUpdateMessage(BaseModel):
     player_id: str = ""
 
 
-class ChapterMarkerMessage(BaseModel):
+class ChapterMarkerMessage(ProtocolBase):
     """GameMessage::ChapterMarker wire representation."""
 
     type: Literal[MessageType.CHAPTER_MARKER] = MessageType.CHAPTER_MARKER
@@ -409,7 +387,7 @@ class ChapterMarkerMessage(BaseModel):
     player_id: str = ""
 
 
-class ActionQueueMessage(BaseModel):
+class ActionQueueMessage(ProtocolBase):
     """GameMessage::ActionQueue wire representation."""
 
     type: Literal[MessageType.ACTION_QUEUE] = MessageType.ACTION_QUEUE
@@ -417,7 +395,7 @@ class ActionQueueMessage(BaseModel):
     player_id: str = ""
 
 
-class ErrorMessage(BaseModel):
+class ErrorMessage(ProtocolBase):
     """GameMessage::Error wire representation."""
 
     type: Literal[MessageType.ERROR] = MessageType.ERROR
