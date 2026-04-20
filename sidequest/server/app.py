@@ -13,6 +13,7 @@ from typing import Callable
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.staticfiles import StaticFiles
 
 from sidequest.agents.claude_client import ClaudeLike
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
@@ -21,6 +22,20 @@ from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.websocket import ws_endpoint
 
 logger = logging.getLogger(__name__)
+
+# Surface INFO from sidequest.* loggers in the uvicorn-driven log. Uvicorn
+# installs its own dictConfig which disables un-attached loggers, so
+# logging.basicConfig() is a no-op here — we must attach a handler directly
+# to the sidequest logger tree and disable propagation to root.
+_sq_logger = logging.getLogger("sidequest")
+_sq_logger.setLevel(logging.INFO)
+if not _sq_logger.handlers:
+    _sq_handler = logging.StreamHandler()
+    _sq_handler.setFormatter(
+        logging.Formatter("%(levelname)s [%(name)s] %(message)s")
+    )
+    _sq_logger.addHandler(_sq_handler)
+    _sq_logger.propagate = False
 
 
 def create_app(
@@ -82,6 +97,19 @@ def create_app(
     # --- REST routes ---
     rest_router = create_rest_router()
     app.include_router(rest_router)
+
+    # --- Static /genre/* mount — serve genre pack assets (POI images, portraits, etc.) ---
+    # URL /genre/<genre>/worlds/<world>/assets/poi/<file> → first-matching genre_packs dir.
+    # Fails loud if no genre_packs dir is found.
+    genre_packs_dir: Path | None = next(
+        (p for p in resolved_search_paths if p.exists() and p.is_dir()), None
+    )
+    if genre_packs_dir is None:
+        raise RuntimeError(
+            f"No genre_packs directory found in {[str(p) for p in resolved_search_paths]}. "
+            f"Cannot serve /genre/* static assets."
+        )
+    app.mount("/genre", StaticFiles(directory=str(genre_packs_dir)), name="genre_assets")
 
     return app
 

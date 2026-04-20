@@ -58,8 +58,12 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 
 DEFAULT_GENRE_PACK_SEARCH_PATHS: list[Path] = [
-    Path("./sidequest-content/genre_packs"),  # relative to CWD
-    Path(__file__).resolve().parents[2] / "sidequest-content" / "genre_packs",  # relative to sidequest-server/
+    # Orchestrator root / sidequest-content — the canonical dev layout.
+    # __file__ = sidequest-server/sidequest/genre/loader.py; parents[3] = orchestrator root.
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs",
+    # CWD fallbacks for when the server is run from elsewhere.
+    Path.cwd() / "sidequest-content" / "genre_packs",
+    Path.cwd().parent / "sidequest-content" / "genre_packs",
     Path.home() / ".sidequest" / "genre_packs",
 ]
 

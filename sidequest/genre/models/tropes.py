@@ -9,7 +9,13 @@ from pydantic import BaseModel, Field
 
 
 class TropeEscalation(BaseModel):
-    """A single escalation step within a trope."""
+    """A single escalation step within a trope.
+
+    ``roles`` targets which player archetype/role this escalation beat
+    applies to (elemental_harmony uses ``the-one-who-sacrifices`` for
+    guest-NPC multiplayer routing). Rust silently dropped it; accepted here
+    as pass-through until a consumer wires it.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -17,6 +23,7 @@ class TropeEscalation(BaseModel):
     event: str
     npcs_involved: list[str] = Field(default_factory=list)
     stakes: str = ""
+    roles: list[str] = Field(default_factory=list)
 
 
 class PassiveProgression(BaseModel):
