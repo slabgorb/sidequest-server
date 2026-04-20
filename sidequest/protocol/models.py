@@ -8,7 +8,6 @@ this single file — do not fragment into sub-modules.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
 
 from pydantic import Field
 
@@ -112,15 +111,6 @@ class CharacterState(ProtocolBase):
     archetype_provenance: Provenance | None = None
     """Provenance of the resolved archetype, when available."""
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        """Serialize using 'class' as the field name (not class_)."""
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
-
 
 # ---------------------------------------------------------------------------
 # StateDelta — state mutations carried in NARRATION and TURN_STATUS
@@ -221,14 +211,6 @@ class InventoryItem(ProtocolBase):
     description: NonBlankString
     """Item description. Non-blank — rendered below the name."""
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
-
 
 # ---------------------------------------------------------------------------
 # InventoryPayload — full inventory snapshot
@@ -309,14 +291,6 @@ class PartyMember(ProtocolBase):
     """Full character sheet. None until chargen completes."""
     inventory: InventoryPayload | None = None
     """Full inventory snapshot. None until the member has a loadout."""
-
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -406,14 +380,6 @@ class ExploredLocation(ProtocolBase):
     """Whether this is the player's current room."""
     tactical_grid: TacticalGridPayload | None = None
     """Tactical grid data for rooms with ASCII grids."""
-
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
 
 
 # ---------------------------------------------------------------------------

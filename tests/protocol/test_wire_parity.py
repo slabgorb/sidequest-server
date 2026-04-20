@@ -21,14 +21,24 @@ from sidequest.protocol import (
     GameMessage,
     NarrationPayload,
     StateDelta,
+    InitialState,
+    CharacterState,
+    ExploredLocation,
+    InventoryItem,
+    InventoryPayload,
+    PartyMember,
 )
 from sidequest.protocol.messages import (
     NarrationEndPayload,
     NarrationMessage,
+    SessionEventMessage,
+    SessionEventPayload,
+    MapUpdateMessage,
+    MapUpdatePayload,
+    PartyStatusMessage,
+    PartyStatusPayload,
 )
 from sidequest.protocol.models import (
-    CharacterState,
-    ExploredLocation,
     Footnote,
     FactCategory,
 )
@@ -226,3 +236,100 @@ def test_narration_end_with_state_delta_includes_it() -> None:
     data = json.loads(p.model_dump_json())
     assert "state_delta" in data
     assert data["state_delta"]["location"] == "end_room"
+
+
+# ---------------------------------------------------------------------------
+# Alias wire-key tests — must hold through GameMessage (RootModel) nesting
+# These guard against the C-level serializer bypassing Python model_dump overrides.
+# Each test serializes through a real message path, not direct model_dump_json.
+# ---------------------------------------------------------------------------
+
+
+def test_character_state_class_wire_key_via_session_event_message() -> None:
+    """CharacterState.class_ must appear as 'class' on the wire, not 'class_'.
+
+    Serialization path: SessionEventMessage -> SessionEventPayload ->
+    InitialState -> CharacterState (3 levels deep into GameMessage).
+    """
+    msg = SessionEventMessage(payload=SessionEventPayload(
+        event="session_start",
+        initial_state=InitialState(
+            characters=[CharacterState.model_validate({
+                "name": "Rux", "hp": 10, "max_hp": 10, "level": 1,
+                "class": "wizard", "statuses": [], "inventory": [],
+            })],
+            location=nbs("start"),
+            quests={},
+            turn_count=0,
+        ),
+    ))
+    wire = json.loads(msg.model_dump_json())
+    char = wire["payload"]["initial_state"]["characters"][0]
+    assert "class" in char, "'class' key missing from CharacterState wire output"
+    assert char["class"] == "wizard"
+    assert "class_" not in char, "'class_' Python name must not appear on the wire"
+
+
+def test_party_member_class_wire_key_via_party_status_message() -> None:
+    """PartyMember.class_ must appear as 'class' on the wire, not 'class_'.
+
+    Serialization path: PartyStatusMessage -> PartyStatusPayload ->
+    PartyMember (2 levels deep into GameMessage).
+    """
+    msg = PartyStatusMessage(payload=PartyStatusPayload(
+        members=[PartyMember.model_validate({
+            "player_id": "p1", "name": "Alice",
+            "current_hp": 20, "max_hp": 20,
+            "statuses": [], "class": "Ranger", "level": 3,
+        })],
+    ))
+    wire = json.loads(msg.model_dump_json())
+    member = wire["payload"]["members"][0]
+    assert "class" in member, "'class' key missing from PartyMember wire output"
+    assert member["class"] == "Ranger"
+    assert "class_" not in member, "'class_' Python name must not appear on the wire"
+
+
+def test_inventory_item_type_wire_key_via_party_status_message() -> None:
+    """InventoryItem.item_type must appear as 'type' on the wire, not 'item_type'.
+
+    Serialization path: PartyStatusMessage -> PartyStatusPayload ->
+    PartyMember -> InventoryPayload -> InventoryItem (4 levels deep).
+    """
+    inv_item = InventoryItem.model_validate({
+        "name": "Torch", "type": "consumable",
+        "equipped": False, "quantity": 3, "description": "Provides light",
+    })
+    member = PartyMember.model_validate({
+        "player_id": "p1", "name": "Alice",
+        "current_hp": 10, "max_hp": 10,
+        "statuses": [], "class": "Ranger", "level": 1,
+    })
+    member.inventory = InventoryPayload(items=[inv_item], gold=50)
+    msg = PartyStatusMessage(payload=PartyStatusPayload(members=[member]))
+    wire = json.loads(msg.model_dump_json())
+    item = wire["payload"]["members"][0]["inventory"]["items"][0]
+    assert "type" in item, "'type' key missing from InventoryItem wire output"
+    assert item["type"] == "consumable"
+    assert "item_type" not in item, "'item_type' Python name must not appear on the wire"
+
+
+def test_explored_location_type_wire_key_via_map_update_message() -> None:
+    """ExploredLocation.location_type must appear as 'type' on the wire, not 'location_type'.
+
+    Serialization path: MapUpdateMessage -> MapUpdatePayload ->
+    ExploredLocation (2 levels deep into GameMessage).
+    """
+    msg = MapUpdateMessage(payload=MapUpdatePayload(
+        current_location=nbs("Dark Cave"),
+        region=nbs("Dungeon"),
+        explored=[ExploredLocation.model_validate({
+            "id": "cave-1", "name": "Dark Cave",
+            "x": 10, "y": 5, "type": "dungeon",
+        })],
+    ))
+    wire = json.loads(msg.model_dump_json())
+    loc = wire["payload"]["explored"][0]
+    assert "type" in loc, "'type' key missing from ExploredLocation wire output"
+    assert loc["type"] == "dungeon"
+    assert "location_type" not in loc, "'location_type' Python name must not appear on the wire"
