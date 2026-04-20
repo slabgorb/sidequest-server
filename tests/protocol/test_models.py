@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.protocol.models import (
     CartographyMetadata,
@@ -170,7 +171,7 @@ def test_footnote_callback_has_fact_id() -> None:
 
 
 def test_footnote_blank_summary_rejected() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Footnote.model_validate(
             {"summary": "", "category": "Lore", "is_new": True}
         )
@@ -235,7 +236,7 @@ def test_character_state_serializes_class_not_class_underscore() -> None:
 
 
 def test_character_state_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         CharacterState.model_validate({
             "name": "Grok",
             "hp": 10,
@@ -279,7 +280,7 @@ def test_state_delta_with_characters() -> None:
 
 
 def test_state_delta_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         StateDelta.model_validate({"bogus": "field"})
 
 
@@ -309,7 +310,7 @@ def test_initial_state_default_turn_count() -> None:
 
 
 def test_initial_state_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         InitialState.model_validate({
             "characters": [],
             "location": "Start",
@@ -330,7 +331,7 @@ def test_creation_choice_basic() -> None:
 
 
 def test_creation_choice_blank_label_rejected() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         CreationChoice.model_validate({"label": "", "description": "desc"})
 
 
@@ -380,7 +381,7 @@ def test_inventory_item_serializes_type_not_item_type() -> None:
 
 
 def test_inventory_item_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         InventoryItem.model_validate({
             "name": "Sword",
             "type": "weapon",
@@ -444,7 +445,7 @@ def test_character_sheet_optional_pronouns() -> None:
 
 
 def test_character_sheet_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         CharacterSheetDetails.model_validate({
             "race": "Elf",
             "stats": {},
@@ -507,7 +508,7 @@ def test_party_member_pre_chargen_has_no_sheet_or_inventory() -> None:
 
 
 def test_party_member_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         PartyMember.model_validate({
             "player_id": "p1",
             "name": "Alice",
@@ -532,7 +533,7 @@ def test_fog_bounds_basic() -> None:
 
 
 def test_fog_bounds_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         FogBounds.model_validate({"width": 100, "height": 100, "depth": 50})
 
 
@@ -548,7 +549,7 @@ def test_room_exit_info_basic() -> None:
 
 
 def test_room_exit_info_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         RoomExitInfo.model_validate({
             "target": "room_a",
             "exit_type": "door",
@@ -595,7 +596,7 @@ def test_explored_location_defaults() -> None:
 
 
 def test_explored_location_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         ExploredLocation.model_validate({
             "name": "Place",
             "bogus": "field",
@@ -632,7 +633,7 @@ def test_tactical_grid_payload_basic() -> None:
 
 
 def test_tactical_grid_deny_unknown_fields() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         TacticalGridPayload.model_validate({
             "width": 5,
             "height": 5,

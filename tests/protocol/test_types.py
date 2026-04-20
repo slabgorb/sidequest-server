@@ -7,6 +7,7 @@ and sidequest-protocol/src/types.rs (unit_tests module).
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.protocol.types import NonBlankString, Stat
 
@@ -17,12 +18,12 @@ from sidequest.protocol.types import NonBlankString, Stat
 
 
 def test_non_blank_string_rejects_empty() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         NonBlankString("")
 
 
 def test_non_blank_string_rejects_whitespace_only() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         NonBlankString("   ")
 
 
@@ -37,7 +38,7 @@ def test_non_blank_string_trims_whitespace() -> None:
 
 
 def test_non_blank_string_deserialize_rejects_empty() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         NonBlankString.model_validate_json('""')
 
 
@@ -82,11 +83,11 @@ def test_stat_equal_across_casing() -> None:
 
 
 def test_stat_rejects_blank() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Stat("")
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Stat("   ")
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Stat("\t\n")
 
 
@@ -108,7 +109,7 @@ def test_stat_deserializes_case_insensitively() -> None:
 
 
 def test_stat_deserialize_rejects_blank() -> None:
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Stat.model_validate_json('""')
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValidationError):
         Stat.model_validate_json('"   "')
