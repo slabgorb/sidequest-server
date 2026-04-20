@@ -12,12 +12,20 @@ from pydantic import BaseModel, Field
 
 
 class CurrencyConfig(BaseModel):
-    """Currency system definition."""
+    """Currency system definition.
+
+    ``abbreviation``, ``description``, and ``secondary`` are authored flavor
+    fields that the Rust engine silently dropped. Accepted here as
+    pass-through so content isn't lossy and future consumers can read them.
+    """
 
     model_config = {"extra": "forbid"}
 
     name: str
     denominations: Any = None  # accepts list[str] or dict[str, float]
+    abbreviation: str | None = None
+    description: str | None = None
+    secondary: Any = None  # some packs declare a secondary currency (dict or string)
 
 
 class CatalogItem(BaseModel):
@@ -49,7 +57,11 @@ class CarryMode(str, Enum):
 
 
 class InventoryPhilosophy(BaseModel):
-    """Inventory philosophy configuration."""
+    """Inventory philosophy configuration.
+
+    ``notes`` is authored prose (space_opera) that Rust dropped. Accepted as
+    pass-through.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -58,6 +70,7 @@ class InventoryPhilosophy(BaseModel):
     weight_limit: float | None = None
     restricted_categories: list[str] = Field(default_factory=list)
     progression_gates: dict[str, Any] = Field(default_factory=dict)
+    notes: str = ""
 
 
 class InventoryConfig(BaseModel):

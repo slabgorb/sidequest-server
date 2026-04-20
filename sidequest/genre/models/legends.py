@@ -37,7 +37,14 @@ class FactionGrudge(BaseModel):
 
 
 class Legend(BaseModel):
-    """A historical legend."""
+    """A historical legend.
+
+    heavy_metal/evropi legends (ported from Keith's 2010 campaign) author a
+    richer shape — ``id``, ``culture``, ``period``, ``details``,
+    ``notable_figures``, ``related_tropes`` — that Rust silently dropped.
+    Accepted here as pass-through so the lore is preserved and narrators
+    can pull from the full record.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -50,6 +57,13 @@ class Legend(BaseModel):
     lost_arts: list[str] = Field(default_factory=list)
     monuments: list[str] = Field(default_factory=list)
     terrain_scars: list[TerrainScar] = Field(default_factory=list)
+    # evropi-authored extensions — unwired, pass-through until a consumer reads them
+    id: str | None = None
+    culture: str | None = None
+    period: str | None = None
+    details: str = ""
+    notable_figures: list[str] = Field(default_factory=list)
+    related_tropes: list[str] = Field(default_factory=list)
 
     model_config = {
         "extra": "forbid",

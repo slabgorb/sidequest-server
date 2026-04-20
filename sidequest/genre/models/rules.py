@@ -305,3 +305,9 @@ class RulesConfig(BaseModel):
     confrontations: list[ConfrontationDef] = Field(default_factory=list)
     xp_affinity: str | None = None
     initiative_rules: dict[str, InitiativeRule] = Field(default_factory=dict)
+    # spaghetti_western authored mechanics — Rust dropped them; accepted as
+    # pass-through until a consumer wires the standoff / reputation systems.
+    standoff_rules: dict[str, Any] = Field(default_factory=dict)
+    reputation_factions: list[dict[str, Any]] = Field(default_factory=list)
+    reputation_effects: dict[str, Any] = Field(default_factory=dict)
+    luck_rules: dict[str, Any] = Field(default_factory=dict)

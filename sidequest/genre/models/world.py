@@ -239,6 +239,7 @@ class WorldConfig(BaseModel):
     description: str
     starting_location: str = ""
     axis_snapshot: dict[str, float] = Field(default_factory=dict)
-    era: str | None = None
+    # Era accepts int (a year like 1878) or str (a named period like "Victorian Era").
+    era: str | int | None = None
     tone: str | None = None
     cover_poi: str | None = None

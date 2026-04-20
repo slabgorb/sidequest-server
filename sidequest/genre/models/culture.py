@@ -30,7 +30,12 @@ class CultureSlot(BaseModel):
 
 
 class Culture(BaseModel):
-    """A name-generation culture."""
+    """A name-generation culture.
+
+    ``dictionary`` is a placeholder for per-culture translation entries
+    (always empty in current content). Rust dropped it; accepted as
+    pass-through so future content can populate it without a schema change.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -40,3 +45,8 @@ class Culture(BaseModel):
     slots: dict[str, CultureSlot] = Field(default_factory=dict)
     person_patterns: list[str] = Field(default_factory=list)
     place_patterns: list[str] = Field(default_factory=list)
+    dictionary: dict[str, str] = Field(default_factory=dict)
+    # heavy_metal flag: when False, culture is lore-only (NPCs, history) and
+    # must not be offered during player chargen. Rust dropped it; chargen UI
+    # is currently unaware — wiring story pending.
+    chargen: bool = True

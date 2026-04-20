@@ -60,6 +60,10 @@ class MechanicalEffects(BaseModel):
     equipment_generation: str | None = None
     jungian_hint: str | None = None
     rpg_role_hint: str | None = None
+    # spaghetti_western: chargen-choice-applied reputation tag
+    # (e.g. "intimidation", "stealth", "network"). Rust dropped it;
+    # reputation system unwired. Pass-through.
+    reputation_bonus: str | None = None
 
     model_config = {"extra": "forbid", "populate_by_name": True}
 
