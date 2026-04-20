@@ -34,13 +34,24 @@ class TestCartographyConfig:
         assert cart.navigation_mode == NavigationMode.region
         assert cart.regions == {}
 
-    def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
-            CartographyConfig.model_validate({
-                "world_name": "T", "starting_region": "s",
-                "map_style": "b", "navigation_mode": "region",
-                "bogus": True,
-            })
+    def test_extras_ignored(self) -> None:
+        """CartographyConfig matches Rust parity: extras (e.g.
+        top-level ``landmarks``, ``train_cars`` on the_real_mccoy) are
+        dropped silently rather than forbidden. The Rust struct does NOT
+        use ``#[serde(deny_unknown_fields)]``; the Python model follows
+        suit so authored flavor fields don't fail the whole pack load.
+        """
+        cart = CartographyConfig.model_validate({
+            "world_name": "T", "starting_region": "s",
+            "map_style": "b", "navigation_mode": "region",
+            "bogus": True,
+            "landmarks": ["Dockside Clocktower"],
+            "train_cars": {"engine": {}},
+        })
+        # Extras are accepted and dropped — no attribute on the model.
+        assert not hasattr(cart, "bogus")
+        assert not hasattr(cart, "train_cars")
+        assert cart.world_name == "T"
 
     def test_roundtrip(self) -> None:
         cart = CartographyConfig(

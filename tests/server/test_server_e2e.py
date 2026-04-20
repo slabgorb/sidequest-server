@@ -63,6 +63,12 @@ def _make_mock_genre_pack() -> MagicMock:
     mock_pack.char_creation = []
     mock_pack.backstory_tables = None
     mock_pack.equipment_tables = None
+    mock_pack.inventory = None
+    # Explicit zero-state for the opening-hook resolver (Story 2.3 Slice B):
+    # without these, ``pack.worlds.get(...)`` returns a MagicMock whose
+    # truthy ``.openings`` hangs ``random.choice``.
+    mock_pack.openings = []
+    mock_pack.worlds = {}
     return mock_pack
 
 

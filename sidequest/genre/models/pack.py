@@ -85,9 +85,17 @@ class PackMeta(BaseModel):
 
 
 class PortraitManifestEntry(BaseModel):
-    """A character entry in a portrait manifest."""
+    """A character entry in a portrait manifest.
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    ``extra="ignore"`` matches Rust parity: the Rust struct doesn't use
+    ``#[serde(deny_unknown_fields)]``, so packs can author Flux-pipeline
+    flavor fields the engine doesn't consume (dress_1878, register,
+    flux_prompt, negative_additions, lora_triggers, references — all
+    present on ``the_real_mccoy``). The Rust loader drops them silently;
+    we match that rather than failing the whole pack load.
+    """
+
+    model_config = {"extra": "ignore", "populate_by_name": True}
 
     name: str
     role: str = ""

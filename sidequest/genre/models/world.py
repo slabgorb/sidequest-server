@@ -207,9 +207,18 @@ class Route(BaseModel):
 
 
 class CartographyConfig(BaseModel):
-    """Map and region configuration."""
+    """Map and region configuration.
 
-    model_config = {"extra": "forbid"}
+    ``extra="ignore"``: the Rust loader does not use ``#[serde(deny_unknown_fields)]``
+    on CartographyConfig, so packs can authorially attach cartography flavor
+    the engine doesn't consume — e.g. ``the_real_mccoy`` declares a top-level
+    ``landmarks`` list and a ``train_cars`` object for narrator color. Those
+    fields are dropped silently on the Rust side; we match that behavior here
+    so content doesn't fail to load. Explicitly-typed fields below still
+    enforce their shapes.
+    """
+
+    model_config = {"extra": "ignore"}
 
     world_name: str = ""
     starting_region: str = ""

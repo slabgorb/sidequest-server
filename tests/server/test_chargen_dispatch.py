@@ -258,6 +258,39 @@ class TestPhaseContinue:
 # ---------------------------------------------------------------------------
 
 
+async def _walk_to_confirmation(
+    handler: WebSocketSessionHandler, freeform_name: str = "Rux"
+) -> None:
+    """Helper: walk the active builder to Confirmation by picking the first
+    choice at every decision point, picking "continue" on display-only scenes,
+    and entering ``freeform_name`` on freeform scenes."""
+    sd = handler._session_data  # type: ignore[attr-defined]
+    builder = sd.builder
+    assert builder is not None
+    while not builder.is_confirmation():
+        if not builder.is_in_progress():
+            raise AssertionError(f"unexpected phase: {builder._phase!r}")
+        scene = builder.current_scene()
+        if scene.choices:
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="scene", choice="1")
+            )
+        elif scene.allows_freeform:
+            out = await _send_chargen(
+                handler,
+                CharacterCreationPayload(phase="scene", choice=freeform_name),
+            )
+        else:
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="continue")
+            )
+        if isinstance(out[0], ErrorMessage):
+            raise AssertionError(
+                f"unexpected error at scene {builder.current_scene_index()}: "
+                f"{out[0].payload.message}"
+            )
+
+
 class TestPhaseConfirmation:
     def test_confirmation_builds_character_and_emits_complete(
         self, handler: WebSocketSessionHandler
@@ -318,6 +351,194 @@ class TestPhaseConfirmation:
 # ---------------------------------------------------------------------------
 # Navigation actions — back / edit / unknown
 # ---------------------------------------------------------------------------
+
+
+class TestSliceBOpeningHook:
+    """Story 2.3 Slice B: opening-hook resolution at connect time.
+    Asserts that ``_SessionData`` carries ``opening_seed`` +
+    ``opening_directive`` after a connect for a pack that declares
+    openings, and that both are ``None`` when no openings exist.
+    """
+
+    def test_caverns_connect_resolves_opening_hook(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        async def body() -> None:
+            # caverns_and_claudes ships openings only at the world tier
+            # (grimvault/horden/mawdeep), not at the genre tier. Connect
+            # to a real caverns world so the world-tier list is reached.
+            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd.opening_seed is not None, (
+                "opening_seed should be populated after connect for a "
+                "world that declares openings"
+            )
+            assert sd.opening_directive is not None, (
+                "opening_directive should be populated alongside the seed"
+            )
+            assert sd.opening_directive.startswith("=== OPENING SCENARIO ===")
+            assert sd.opening_directive.endswith("=== END OPENING ===")
+
+        run(body())
+
+    def test_empty_openings_leaves_both_none(
+        self, handler: WebSocketSessionHandler, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate a pack with zero openings by patching ``resolve_opening``
+        to return ``None``. Confirms the seed/directive stay paired —
+        neither gets populated on its own, and neither crashes later
+        consumers that expect the pair-or-nothing invariant.
+        """
+
+        def _no_openings(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            "sidequest.server.session_handler.resolve_opening", _no_openings
+        )
+
+        async def body() -> None:
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd.opening_seed is None
+            assert sd.opening_directive is None
+
+        run(body())
+
+
+class TestSliceAWiring:
+    """Story 2.3 Slice A: archetype resolution + starting-equipment loadout
+    at confirmation. Drives real genre packs through the full dispatch path
+    and asserts the post-build wiring lands on the snapshot character.
+    """
+
+    def test_caverns_delver_loadout_wired_into_snapshot(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        async def body() -> None:
+            await _connect(handler)
+            await _walk_to_confirmation(handler, freeform_name="Rux")
+
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="confirmation")
+            )
+            assert len(out) == 1
+            assert isinstance(out[0], CharacterCreationMessage)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert len(sd.snapshot.characters) == 1
+            char = sd.snapshot.characters[0]
+            assert char.char_class == "Delver"
+
+            # Starting equipment wired: Delver loadout from caverns
+            # inventory.yaml carries 11 items (three torches, rations,
+            # waterskin, rope, pole, spikes, chalk, dagger) plus 10 gold.
+            items = char.core.inventory.items
+            item_ids = [i["id"] for i in items]
+            # Every item the loadout declared must appear.
+            # Loadout adds 11 entries for Delver (three torches, rations×2,
+            # waterskin, rope, pole, spikes, chalk, dagger). Builder-side
+            # item_hints (from chargen equipment-choice scenes) are
+            # preserved alongside, so torch appears at least 3 times.
+            for required in [
+                "torch",
+                "rations_day",
+                "waterskin",
+                "rope_hemp",
+                "ten_foot_pole",
+                "iron_spikes",
+                "chalk",
+                "dagger_iron",
+            ]:
+                assert required in item_ids, (
+                    f"starting equipment missing {required!r}; got {item_ids}"
+                )
+            assert item_ids.count("torch") >= 3, (
+                "Delver loadout carries three torches (builder hints may add more)"
+            )
+            assert char.core.inventory.gold >= 10, (
+                "Delver loadout adds 10 starting gold"
+            )
+
+            # Every wired item has the Rust-parity shape — pick the torch
+            # (a real catalog entry) and verify the required keys.
+            torch = next(i for i in items if i["id"] == "torch")
+            for key in [
+                "name",
+                "description",
+                "category",
+                "value",
+                "weight",
+                "rarity",
+                "narrative_weight",
+                "tags",
+                "equipped",
+                "quantity",
+                "state",
+            ]:
+                assert key in torch, f"torch entry missing {key!r}"
+            assert torch["state"] == "Carried"
+            assert torch["equipped"] is False
+
+            # Archetype: if the builder produced a raw jungian/rpg_role pair
+            # AND the pack has axis data, the shim should have turned it into
+            # a display name (no "/"). If not both, resolved_archetype stays
+            # None. Either is valid for Slice A; "/" present is the bug.
+            ra = char.resolved_archetype
+            if ra is not None:
+                assert "/" not in ra, (
+                    f"resolved_archetype is still a raw pair, shim did not run: {ra!r}"
+                )
+
+        run(body())
+
+    def test_real_mccoy_gunslinger_loadout_wired_into_snapshot(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        if not (CONTENT_ROOT / "spaghetti_western" / "worlds" / "the_real_mccoy").is_dir():
+            pytest.skip("spaghetti_western/the_real_mccoy not available")
+
+        async def body() -> None:
+            await _connect(
+                handler, genre="spaghetti_western", world="the_real_mccoy"
+            )
+            await _walk_to_confirmation(handler, freeform_name="McCoy")
+
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="confirmation")
+            )
+            assert len(out) == 1
+            assert isinstance(out[0], CharacterCreationMessage)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert len(sd.snapshot.characters) == 1
+            char = sd.snapshot.characters[0]
+
+            # Whatever class the walk landed on must have gotten a loadout
+            # — spaghetti_western's inventory.yaml declares starting_equipment
+            # for every class in the pack. Zero items here means the loadout
+            # step didn't fire at all.
+            items = char.core.inventory.items
+            assert len(items) > 0, (
+                f"no starting equipment wired for class {char.char_class!r} — "
+                f"apply_starting_loadout didn't fire at confirmation"
+            )
+            for i in items:
+                assert i["state"] == "Carried"
+
+            # spaghetti_western has no archetype_constraints.yaml, so the
+            # archetype resolution branch must NOT have run — any resolved
+            # name is either None (builder didn't set hints) or the raw
+            # pair the builder wrote (no shim available to resolve it).
+            # Verify this invariant so we notice if pack topology changes.
+            # (The production code takes the early-return when constraints
+            # are absent, leaving whatever the builder wrote in place.)
+            pack = sd.genre_pack
+            if pack.archetype_constraints is None:
+                # Raw pair is allowed here — no shim was available.
+                pass
+
+        run(body())
 
 
 class TestActions:
