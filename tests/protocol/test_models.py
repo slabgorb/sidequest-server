@@ -45,6 +45,56 @@ def nbs(s: str) -> NonBlankString:
     return NonBlankString.model_validate(s)
 
 
+def make_character_state(**kwargs: object) -> CharacterState:
+    """Construct CharacterState via model_validate to handle 'class' alias."""
+    defaults: dict[str, object] = {
+        "name": "Hero",
+        "hp": 20,
+        "max_hp": 20,
+        "level": 1,
+        "class": "Adventurer",
+        "statuses": [],
+        "inventory": [],
+    }
+    defaults.update(kwargs)
+    return CharacterState.model_validate(defaults)
+
+
+def make_party_member(**kwargs: object) -> PartyMember:
+    """Construct PartyMember via model_validate to handle 'class' alias."""
+    defaults: dict[str, object] = {
+        "player_id": "p1",
+        "name": "Alice",
+        "current_hp": 20,
+        "max_hp": 20,
+        "statuses": [],
+        "class": "Adventurer",
+        "level": 1,
+    }
+    defaults.update(kwargs)
+    return PartyMember.model_validate(defaults)
+
+
+def make_inventory_item(**kwargs: object) -> InventoryItem:
+    """Construct InventoryItem via model_validate to handle 'type' alias."""
+    defaults: dict[str, object] = {
+        "name": "Item",
+        "type": "misc",
+        "equipped": False,
+        "quantity": 1,
+        "description": "A thing",
+    }
+    defaults.update(kwargs)
+    return InventoryItem.model_validate(defaults)
+
+
+def make_explored_location(**kwargs: object) -> ExploredLocation:
+    """Construct ExploredLocation via model_validate to handle 'type' alias."""
+    defaults: dict[str, object] = {"name": "Place", "type": ""}
+    defaults.update(kwargs)
+    return ExploredLocation.model_validate(defaults)
+
+
 # ---------------------------------------------------------------------------
 # FactCategory
 # ---------------------------------------------------------------------------
@@ -121,10 +171,8 @@ def test_footnote_callback_has_fact_id() -> None:
 
 def test_footnote_blank_summary_rejected() -> None:
     with pytest.raises((ValueError, Exception)):
-        Footnote(
-            summary=nbs(""),  # type: ignore[arg-type]
-            category=FactCategory.Lore,
-            is_new=True,
+        Footnote.model_validate(
+            {"summary": "", "category": "Lore", "is_new": True}
         )
 
 
@@ -159,8 +207,8 @@ def test_item_gained_default_category() -> None:
 
 
 def test_character_state_basic() -> None:
-    cs = CharacterState(
-        name=nbs("Grok"),
+    cs = make_character_state(
+        name="Grok",
         hp=15,
         max_hp=20,
         level=3,
@@ -179,14 +227,7 @@ def test_character_state_basic() -> None:
 
 def test_character_state_serializes_class_not_class_underscore() -> None:
     """Wire format must use 'class', not 'class_'."""
-    cs = CharacterState(
-        name=nbs("Hero"),
-        hp=20,
-        max_hp=20,
-        statuses=[],
-        inventory=[],
-        **{"class": "Ranger"},
-    )
+    cs = make_character_state(name="Hero", **{"class": "Ranger"})
     data = json.loads(cs.model_dump_json())
     assert "class" in data
     assert "class_" not in data
@@ -224,8 +265,8 @@ def test_state_delta_with_location() -> None:
 
 
 def test_state_delta_with_characters() -> None:
-    cs = CharacterState(
-        name=nbs("Grok"),
+    cs = make_character_state(
+        name="Grok",
         hp=15,
         max_hp=20,
         statuses=["poisoned"],
@@ -290,7 +331,7 @@ def test_creation_choice_basic() -> None:
 
 def test_creation_choice_blank_label_rejected() -> None:
     with pytest.raises((ValueError, Exception)):
-        CreationChoice(label=nbs(""), description=nbs("desc"))  # type: ignore[arg-type]
+        CreationChoice.model_validate({"label": "", "description": "desc"})
 
 
 # ---------------------------------------------------------------------------
@@ -310,12 +351,12 @@ def test_rolled_stat_basic() -> None:
 
 
 def test_inventory_item_basic() -> None:
-    item = InventoryItem(
-        name=nbs("Iron Sword"),
+    item = make_inventory_item(
+        name="Iron Sword",
         **{"type": "weapon"},
         equipped=True,
         quantity=1,
-        description=nbs("A sturdy blade"),
+        description="A sturdy blade",
     )
     assert str(item.name) == "Iron Sword"
     assert item.item_type == "weapon"
@@ -325,12 +366,12 @@ def test_inventory_item_basic() -> None:
 
 def test_inventory_item_serializes_type_not_item_type() -> None:
     """Wire format must use 'type', not 'item_type'."""
-    item = InventoryItem(
-        name=nbs("Torch"),
+    item = make_inventory_item(
+        name="Torch",
         **{"type": "consumable"},
         equipped=False,
         quantity=3,
-        description=nbs("Provides light"),
+        description="Provides light",
     )
     data = json.loads(item.model_dump_json())
     assert "type" in data
@@ -357,15 +398,13 @@ def test_inventory_item_deny_unknown_fields() -> None:
 
 def test_inventory_payload_basic() -> None:
     payload = InventoryPayload(
-        items=[
-            InventoryItem(
-                name=nbs("Iron Sword"),
-                **{"type": "weapon"},
-                equipped=True,
-                quantity=1,
-                description=nbs("A sturdy blade"),
-            )
-        ],
+        items=[make_inventory_item(
+            name="Iron Sword",
+            **{"type": "weapon"},
+            equipped=True,
+            quantity=1,
+            description="A sturdy blade",
+        )],
         gold=150,
     )
     assert payload.gold == 150
@@ -422,36 +461,29 @@ def test_character_sheet_deny_unknown_fields() -> None:
 
 
 def test_party_member_basic() -> None:
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Alice"),
-        character_name=nbs("Kael"),
+    member = make_party_member(
+        player_id="p1",
+        name="Alice",
+        character_name="Kael",
         current_hp=20,
         max_hp=20,
         statuses=["blessed"],
         **{"class": "Ranger"},
         level=3,
         portrait_url=None,
-        current_location=nbs("Town Square"),
+        current_location="Town Square",
         sheet=None,
         inventory=None,
     )
     assert str(member.player_id) == "p1"
     assert str(member.name) == "Alice"
-    assert str(member.current_location) == "Town Square"  # type: ignore[arg-type]
+    assert member.current_location is not None
+    assert str(member.current_location) == "Town Square"
 
 
 def test_party_member_serializes_class_not_class_underscore() -> None:
     """Wire format must use 'class', not 'class_'."""
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Bob"),
-        current_hp=10,
-        max_hp=10,
-        statuses=[],
-        **{"class": "Warrior"},
-        level=1,
-    )
+    member = make_party_member(player_id="p1", name="Bob", **{"class": "Warrior"})
     data = json.loads(member.model_dump_json())
     assert "class" in data
     assert "class_" not in data
@@ -459,9 +491,9 @@ def test_party_member_serializes_class_not_class_underscore() -> None:
 
 
 def test_party_member_pre_chargen_has_no_sheet_or_inventory() -> None:
-    member = PartyMember(
-        player_id=nbs("p2"),
-        name=nbs("Player2"),
+    member = make_party_member(
+        player_id="p2",
+        name="Player2",
         current_hp=0,
         max_hp=0,
         statuses=[],
@@ -530,9 +562,9 @@ def test_room_exit_info_deny_unknown_fields() -> None:
 
 
 def test_explored_location_basic() -> None:
-    loc = ExploredLocation(
+    loc = make_explored_location(
         id="dark_cave",
-        name=nbs("Dark Cave"),
+        name="Dark Cave",
         x=100,
         y=200,
         **{"type": "dungeon"},
@@ -546,10 +578,7 @@ def test_explored_location_basic() -> None:
 
 def test_explored_location_serializes_type_not_location_type() -> None:
     """Wire format must use 'type', not 'location_type'."""
-    loc = ExploredLocation(
-        name=nbs("Village"),
-        **{"type": "town"},
-    )
+    loc = make_explored_location(name="Village", **{"type": "town"})
     data = json.loads(loc.model_dump_json())
     assert "type" in data
     assert "location_type" not in data
@@ -557,7 +586,7 @@ def test_explored_location_serializes_type_not_location_type() -> None:
 
 
 def test_explored_location_defaults() -> None:
-    loc = ExploredLocation(name=nbs("Somewhere"))
+    loc = make_explored_location(name="Somewhere")
     assert loc.id == ""
     assert loc.x == 0
     assert loc.y == 0

@@ -74,6 +74,52 @@ def nbs(s: str) -> NonBlankString:
     return NonBlankString.model_validate(s)
 
 
+def make_character_state(**kwargs: object) -> CharacterState:
+    defaults: dict[str, object] = {
+        "name": "Hero",
+        "hp": 20,
+        "max_hp": 20,
+        "level": 1,
+        "class": "Adventurer",
+        "statuses": [],
+        "inventory": [],
+    }
+    defaults.update(kwargs)
+    return CharacterState.model_validate(defaults)
+
+
+def make_party_member(**kwargs: object) -> PartyMember:
+    defaults: dict[str, object] = {
+        "player_id": "p1",
+        "name": "Alice",
+        "current_hp": 20,
+        "max_hp": 20,
+        "statuses": [],
+        "class": "Adventurer",
+        "level": 1,
+    }
+    defaults.update(kwargs)
+    return PartyMember.model_validate(defaults)
+
+
+def make_inventory_item(**kwargs: object) -> InventoryItem:
+    defaults: dict[str, object] = {
+        "name": "Item",
+        "type": "misc",
+        "equipped": False,
+        "quantity": 1,
+        "description": "A thing",
+    }
+    defaults.update(kwargs)
+    return InventoryItem.model_validate(defaults)
+
+
+def make_explored_location(**kwargs: object) -> ExploredLocation:
+    defaults: dict[str, object] = {"name": "Place", "type": ""}
+    defaults.update(kwargs)
+    return ExploredLocation.model_validate(defaults)
+
+
 def round_trip(msg: GameMessage) -> GameMessage:
     """Serialize and re-parse a GameMessage."""
     json_str = msg.model_dump_json()
@@ -100,7 +146,9 @@ def test_player_action_round_trip() -> None:
     decoded = GameMessage.model_validate_json(json_str)
     assert decoded.type == MessageType.PLAYER_ACTION
     assert '"type":"PLAYER_ACTION"' in json_str
-    assert str(decoded.payload.action) == "attack the goblin"  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, PlayerActionPayload)
+    assert str(payload.action) == "attack the goblin"
 
 
 def test_player_action_wire_type_tag() -> None:
@@ -128,8 +176,8 @@ def test_narration_round_trip() -> None:
 
 
 def test_narration_with_state_delta_round_trip() -> None:
-    cs = CharacterState(
-        name=nbs("Grok"),
+    cs = make_character_state(
+        name="Grok",
         hp=15,
         max_hp=20,
         level=3,
@@ -149,9 +197,12 @@ def test_narration_with_state_delta_round_trip() -> None:
     ))
     decoded = round_trip(msg)
     payload = decoded.payload
-    assert payload.state_delta is not None  # type: ignore[union-attr]
-    assert payload.state_delta.location == "Dark Cave"  # type: ignore[union-attr]
-    assert str(payload.state_delta.characters[0].name) == "Grok"  # type: ignore[union-attr]
+    assert isinstance(payload, NarrationPayload)
+    assert payload.state_delta is not None
+    delta = payload.state_delta
+    assert delta.location == "Dark Cave"
+    assert delta.characters is not None
+    assert str(delta.characters[0].name) == "Grok"
 
 
 def test_narration_end_round_trip() -> None:
@@ -190,12 +241,14 @@ def test_session_event_connect_round_trip() -> None:
     decoded = round_trip(msg)
     assert decoded.type == MessageType.SESSION_EVENT
     assert '"type":"SESSION_EVENT"' in json_str
-    assert decoded.payload.event == "connect"  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, SessionEventPayload)
+    assert payload.event == "connect"
 
 
 def test_session_event_ready_with_initial_state() -> None:
-    cs = CharacterState(
-        name=nbs("Hero"),
+    cs = make_character_state(
+        name="Hero",
         hp=20,
         max_hp=20,
         level=1,
@@ -215,8 +268,9 @@ def test_session_event_ready_with_initial_state() -> None:
     ))
     decoded = round_trip(msg)
     payload = decoded.payload
-    assert payload.initial_state is not None  # type: ignore[union-attr]
-    assert str(payload.initial_state.location) == "Town Square"  # type: ignore[union-attr]
+    assert isinstance(payload, SessionEventPayload)
+    assert payload.initial_state is not None
+    assert str(payload.initial_state.location) == "Town Square"
 
 
 def test_character_creation_round_trip() -> None:
@@ -249,7 +303,9 @@ def test_chargen_payload_deserializes_action_back() -> None:
     })
     msg = parse_wire(wire)
     assert msg.type == MessageType.CHARACTER_CREATION
-    assert msg.payload.action == "back"  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, CharacterCreationPayload)
+    assert payload.action == "back"
 
 
 def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
@@ -260,8 +316,10 @@ def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
         "player_id": "test-player",
     })
     msg = parse_wire(wire)
-    assert msg.payload.action == "edit"  # type: ignore[union-attr]
-    assert msg.payload.target_step == 2  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, CharacterCreationPayload)
+    assert payload.action == "edit"
+    assert payload.target_step == 2
 
 
 def test_chargen_payload_without_action_still_deserializes() -> None:
@@ -273,7 +331,9 @@ def test_chargen_payload_without_action_still_deserializes() -> None:
     })
     msg = parse_wire(wire)
     assert msg.type == MessageType.CHARACTER_CREATION
-    assert msg.payload.action is None  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, CharacterCreationPayload)
+    assert payload.action is None
 
 
 def test_turn_status_round_trip() -> None:
@@ -285,39 +345,41 @@ def test_turn_status_round_trip() -> None:
     decoded = round_trip(msg)
     assert decoded.type == MessageType.TURN_STATUS
     assert '"type":"TURN_STATUS"' in json_str
-    assert str(decoded.payload.player_name) == "Kael"  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, TurnStatusPayload)
+    assert str(payload.player_name) == "Kael"
 
 
 def test_party_status_round_trip() -> None:
     """Collapsed PARTY_STATUS: sheet + inventory nested inside each PartyMember."""
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Player1"),
-        character_name=nbs("Grok"),
+    member = make_party_member(
+        player_id="p1",
+        name="Player1",
+        character_name="Grok",
         current_hp=20,
         max_hp=20,
         statuses=["blessed"],
         **{"class": "Warrior"},
         level=3,
-        sheet=CharacterSheetDetails(
-            race=nbs("Orc"),
-            stats={"strength": 16, "dexterity": 12},
-            abilities=["Power Strike"],
-            backstory=nbs("A wandering fighter."),
-            personality=nbs("Gruff"),
-            pronouns=nbs("he/him"),
-            equipment=["Iron Sword [equipped]"],
-        ),
-        inventory=InventoryPayload(
-            items=[InventoryItem(
-                name=nbs("Iron Sword"),
-                **{"type": "weapon"},
-                equipped=True,
-                quantity=1,
-                description=nbs("A sturdy blade"),
-            )],
-            gold=150,
-        ),
+        sheet={
+            "race": "Orc",
+            "stats": {"strength": 16, "dexterity": 12},
+            "abilities": ["Power Strike"],
+            "backstory": "A wandering fighter.",
+            "personality": "Gruff",
+            "pronouns": "he/him",
+            "equipment": ["Iron Sword [equipped]"],
+        },
+        inventory={
+            "items": [{
+                "name": "Iron Sword",
+                "type": "weapon",
+                "equipped": True,
+                "quantity": 1,
+                "description": "A sturdy blade",
+            }],
+            "gold": 150,
+        },
     )
     msg = GameMessage(root=PartyStatusMessage(
         payload=PartyStatusPayload(members=[member]),
@@ -329,9 +391,9 @@ def test_party_status_round_trip() -> None:
     assert '"type":"PARTY_STATUS"' in json_str
 
     # Pre-chargen member: sheet and inventory are None
-    pre_chargen = PartyMember(
-        player_id=nbs("p2"),
-        name=nbs("Player2"),
+    pre_chargen = make_party_member(
+        player_id="p2",
+        name="Player2",
         current_hp=0,
         max_hp=0,
         statuses=[],
@@ -339,14 +401,15 @@ def test_party_status_round_trip() -> None:
         level=0,
     )
     pre_json = pre_chargen.model_dump_json()
-    assert '"sheet"' not in pre_json or json.loads(pre_json).get("sheet") is None
-    assert '"inventory"' not in pre_json or json.loads(pre_json).get("inventory") is None
+    parsed = json.loads(pre_json)
+    assert "sheet" not in parsed or parsed.get("sheet") is None
+    assert "inventory" not in parsed or parsed.get("inventory") is None
 
 
 def test_map_update_round_trip() -> None:
-    loc = ExploredLocation(
+    loc = make_explored_location(
         id="dark_cave",
-        name=nbs("Dark Cave"),
+        name="Dark Cave",
         x=100,
         y=200,
         **{"type": "dungeon"},
@@ -398,7 +461,9 @@ def test_error_round_trip() -> None:
     decoded = round_trip(msg)
     assert decoded.type == MessageType.ERROR
     assert '"type":"ERROR"' in json_str
-    assert str(decoded.payload.message) == "something went wrong"  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, ErrorPayload)
+    assert str(payload.message) == "something went wrong"
 
 
 # ===========================================================================
@@ -416,8 +481,10 @@ def test_player_action_wire_format() -> None:
     })
     msg = parse_wire(wire)
     assert msg.type == MessageType.PLAYER_ACTION
-    assert str(msg.payload.action) == "attack the goblin"  # type: ignore[union-attr]
-    assert msg.payload.aside is False  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, PlayerActionPayload)
+    assert str(payload.action) == "attack the goblin"
+    assert payload.aside is False
     assert msg.player_id == ""
 
 
@@ -434,8 +501,10 @@ def test_session_event_connect_wire_format() -> None:
     })
     msg = parse_wire(wire)
     assert msg.type == MessageType.SESSION_EVENT
-    assert msg.payload.event == "connect"  # type: ignore[union-attr]
-    assert msg.payload.player_name == "Alice"  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, SessionEventPayload)
+    assert payload.event == "connect"
+    assert payload.player_name == "Alice"
 
 
 def test_thinking_wire_format() -> None:
@@ -462,10 +531,12 @@ def test_narration_with_delta_wire_format() -> None:
     msg = parse_wire(wire)
     assert msg.type == MessageType.NARRATION
     payload = msg.payload
-    assert str(payload.text) == "The orc lunges..."  # type: ignore[union-attr]
-    delta = payload.state_delta  # type: ignore[union-attr]
+    assert isinstance(payload, NarrationPayload)
+    assert str(payload.text) == "The orc lunges..."
+    delta = payload.state_delta
     assert delta is not None
     assert delta.location == "Dark Cave"
+    assert delta.characters is not None
     assert str(delta.characters[0].name) == "Grok"
     assert delta.characters[0].hp == 15
 
@@ -478,7 +549,9 @@ def test_error_wire_format() -> None:
     })
     msg = parse_wire(wire)
     assert msg.type == MessageType.ERROR
-    assert str(msg.payload.message) == "something broke"  # type: ignore[union-attr]
+    payload = msg.payload
+    assert isinstance(payload, ErrorPayload)
+    assert str(payload.message) == "something broke"
 
 
 def test_unknown_message_type_rejected() -> None:
@@ -534,77 +607,79 @@ def test_narration_chunk_json_does_not_deserialize_as_game_message() -> None:
 
 
 def test_party_member_includes_current_location() -> None:
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Alice"),
-        character_name=nbs("Kael"),
+    member = make_party_member(
+        player_id="p1",
+        name="Alice",
+        character_name="Kael",
         current_hp=20,
         max_hp=20,
         statuses=[],
         **{"class": "Ranger"},
         level=3,
-        current_location=nbs("The Rusty Cantina"),
+        current_location="The Rusty Cantina",
     )
-    assert str(member.current_location) == "The Rusty Cantina"  # type: ignore[arg-type]
+    assert member.current_location is not None
+    assert str(member.current_location) == "The Rusty Cantina"
 
 
 def test_party_member_location_serializes_to_json() -> None:
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Alice"),
-        character_name=nbs("Kael"),
+    member = make_party_member(
+        player_id="p1",
+        name="Alice",
+        character_name="Kael",
         current_hp=20,
         max_hp=20,
         statuses=[],
         **{"class": "Ranger"},
         level=3,
-        current_location=nbs("Market Square"),
+        current_location="Market Square",
     )
     data = json.loads(member.model_dump_json())
     assert data.get("current_location") == "Market Square"
 
 
 def test_party_member_location_round_trips_through_json() -> None:
-    member = PartyMember(
-        player_id=nbs("p1"),
-        name=nbs("Alice"),
-        character_name=nbs("Kael"),
+    member = make_party_member(
+        player_id="p1",
+        name="Alice",
+        character_name="Kael",
         current_hp=20,
         max_hp=20,
         statuses=[],
         **{"class": "Ranger"},
         level=3,
-        current_location=nbs("The Wastes"),
+        current_location="The Wastes",
     )
     json_str = member.model_dump_json()
     decoded = PartyMember.model_validate_json(json_str)
-    assert str(decoded.current_location) == "The Wastes"  # type: ignore[arg-type]
+    assert decoded.current_location is not None
+    assert str(decoded.current_location) == "The Wastes"
 
 
 def test_party_status_with_multiple_locations() -> None:
     """Multiplayer: two players in different locations."""
     members = [
-        PartyMember(
-            player_id=nbs("p1"),
-            name=nbs("Alice"),
-            character_name=nbs("Kael"),
+        make_party_member(
+            player_id="p1",
+            name="Alice",
+            character_name="Kael",
             current_hp=20,
             max_hp=20,
             statuses=[],
             **{"class": "Ranger"},
             level=3,
-            current_location=nbs("The Rusty Cantina"),
+            current_location="The Rusty Cantina",
         ),
-        PartyMember(
-            player_id=nbs("p2"),
-            name=nbs("Bob"),
-            character_name=nbs("Lyra"),
+        make_party_member(
+            player_id="p2",
+            name="Bob",
+            character_name="Lyra",
             current_hp=35,
             max_hp=40,
             statuses=[],
             **{"class": "Cleric"},
             level=5,
-            current_location=nbs("Scrapyard Gate"),
+            current_location="Scrapyard Gate",
         ),
     ]
     msg = GameMessage(root=PartyStatusMessage(
@@ -612,8 +687,12 @@ def test_party_status_with_multiple_locations() -> None:
         player_id="p1",
     ))
     decoded = round_trip(msg)
-    party_members = decoded.payload.members  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, PartyStatusPayload)
+    party_members = payload.members
+    assert party_members[0].current_location is not None
     assert str(party_members[0].current_location) == "The Rusty Cantina"
+    assert party_members[1].current_location is not None
     assert str(party_members[1].current_location) == "Scrapyard Gate"
 
 
@@ -639,9 +718,10 @@ def test_narration_with_footnotes_round_trip() -> None:
     ))
     decoded = round_trip(msg)
     payload = decoded.payload
-    assert len(payload.footnotes) == 1  # type: ignore[union-attr]
-    assert str(payload.footnotes[0].summary) == "A hooded figure watches from the rafters"  # type: ignore[union-attr]
-    assert payload.footnotes[0].category == FactCategory.Person  # type: ignore[union-attr]
+    assert isinstance(payload, NarrationPayload)
+    assert len(payload.footnotes) == 1
+    assert str(payload.footnotes[0].summary) == "A hooded figure watches from the rafters"
+    assert payload.footnotes[0].category == FactCategory.Person
 
 
 def test_narration_with_items_gained() -> None:
@@ -657,7 +737,10 @@ def test_narration_with_items_gained() -> None:
         player_id="",
     ))
     decoded = round_trip(msg)
-    items = decoded.payload.state_delta.items_gained  # type: ignore[union-attr]
+    payload = decoded.payload
+    assert isinstance(payload, NarrationPayload)
+    assert payload.state_delta is not None
+    items = payload.state_delta.items_gained
     assert items is not None
     assert len(items) == 1
     assert str(items[0].name) == "Rusty Key"
@@ -719,6 +802,6 @@ def test_all_phase1_variants_parse_correctly() -> None:
         (MessageType.ERROR, {"payload": {"message": "oops"}}),
     ]
     for msg_type, extra in payloads:
-        wire = {"type": msg_type.value, "player_id": "", **extra}
+        wire: dict[str, object] = {"type": msg_type.value, "player_id": "", **extra}
         msg = GameMessage.model_validate(wire)
         assert msg.type == msg_type, f"Expected {msg_type}, got {msg.type}"
