@@ -11,8 +11,9 @@ Phase 1 exports:
 - AttentionZone, SectionCategory, RuleTier
 - SoulData, SoulPrinciple, parse_soul_md
 - PreprocessorError hierarchy + preprocess_action, preprocess_action_with_client
-
-Phase 2+ (orchestrator, narrator, context_builder) are in subagent B scope.
+- NarratorAgent (Phase 1 — story 41-5)
+- Orchestrator, TurnContext, NarrationTurnResult, run_narration_turn (Phase 1 — story 41-5)
+- ActionRewrite, ActionFlags, BeatSelection, VisualScene, NpcMention (Phase 1 — story 41-5)
 """
 
 from __future__ import annotations
@@ -28,6 +29,20 @@ from sidequest.agents.claude_client import (
     SubprocessFailed,
 )
 from sidequest.agents.claude_client import TimeoutError as ClaudeTimeoutError
+from sidequest.agents.narrator import NarratorAgent, narrator_output_format_text
+from sidequest.agents.orchestrator import (
+    ActionFlags,
+    ActionRewrite,
+    BeatSelection,
+    NarratorPromptTier,
+    NarrationTurnResult,
+    NpcMention,
+    Orchestrator,
+    TurnContext,
+    VisualScene,
+    extract_structured_from_response,
+    run_narration_turn,
+)
 from sidequest.agents.preprocessor import (
     LlmFailed,
     OutputTooLong,
@@ -51,6 +66,20 @@ from sidequest.agents.prompt_framework import (
 )
 
 __all__ = [
+    # narrator + orchestrator (Phase 1 — story 41-5)
+    "NarratorAgent",
+    "narrator_output_format_text",
+    "ActionFlags",
+    "ActionRewrite",
+    "BeatSelection",
+    "NarratorPromptTier",
+    "NarrationTurnResult",
+    "NpcMention",
+    "Orchestrator",
+    "TurnContext",
+    "VisualScene",
+    "extract_structured_from_response",
+    "run_narration_turn",
     # agent
     "Agent",
     "AgentResponse",
