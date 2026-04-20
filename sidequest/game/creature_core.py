@@ -84,6 +84,68 @@ def placeholder_edge_pool() -> EdgePool:
     )
 
 
+class EdgeConfigMissingClassError(KeyError):
+    """Genre pack declared `edge_config` but omitted a `base_max_by_class`
+    entry for the character's class.
+
+    Port of sidequest_game::creature_core::EdgeConfigMissingClassError.
+    Raised loudly by edge_pool_from_config (Story 39-3) — silently
+    reverting to the placeholder pool would hide content bugs. SOUL.md:
+    fail loud at the boundary.
+
+    Subclasses KeyError because this is conceptually a dict lookup miss;
+    callers can still catch it as KeyError.
+    """
+
+    def __init__(self, class_name: str) -> None:
+        self.class_name = class_name
+        super().__init__(
+            f"edge_config.base_max_by_class missing entry for class '{class_name}'"
+        )
+
+
+def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:
+    """Build a genre-authored EdgePool from an EdgeConfig and a class name.
+
+    Port of sidequest_game::creature_core::edge_pool_from_config.
+
+    Resolves base_max from edge_config.base_max_by_class[class] (raises
+    EdgeConfigMissingClassError when absent), converts every
+    EdgeThresholdDecl to an EdgeThreshold, and seeds recovery_triggers
+    with OnResolution. The crossing-direction tag from YAML is
+    informational — all EdgePool thresholds fire on downward crossings
+    by construction.
+
+    The `edge_config` parameter is typed as `object` to avoid a circular
+    import with sidequest.genre.models.rules (which imports from the
+    genre layer). Duck-typing suffices: we rely on `base_max_by_class`
+    and `thresholds` attributes, both typed in the genre EdgeConfig
+    model.
+    """
+    base_max_by_class = getattr(edge_config, "base_max_by_class", {})
+    if class_name not in base_max_by_class:
+        raise EdgeConfigMissingClassError(class_name=class_name)
+    base_max = base_max_by_class[class_name]
+
+    thresholds: list[EdgeThreshold] = []
+    for decl in getattr(edge_config, "thresholds", []):
+        thresholds.append(
+            EdgeThreshold(
+                at=decl.at,
+                event_id=decl.event_id,
+                narrator_hint=decl.narrator_hint,
+            )
+        )
+
+    return EdgePool(
+        current=base_max,
+        max=base_max,
+        base_max=base_max,
+        recovery_triggers=[RecoveryTrigger.OnResolution],
+        thresholds=thresholds,
+    )
+
+
 class Inventory(BaseModel):
     """Character inventory ledger — append-only item history and gold.
 

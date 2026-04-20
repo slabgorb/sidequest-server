@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
+from sidequest.game.ability import AbilitySource
 from sidequest.game.creature_core import CreatureCore
 
 
@@ -23,6 +24,7 @@ class AbilityDefinition(BaseModel):
     genre_description: player-facing narrative description.
     mechanical_effect: engine-facing trigger text.
     involuntary: if True, narrator can trigger without player choice.
+    source: how the character acquired this ability (Race/Class/Item/Play).
     """
 
     model_config = {"extra": "forbid"}
@@ -31,6 +33,7 @@ class AbilityDefinition(BaseModel):
     genre_description: str
     mechanical_effect: str
     involuntary: bool = False
+    source: AbilitySource
 
 
 class KnownFact(BaseModel):

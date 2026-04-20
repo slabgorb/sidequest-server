@@ -21,6 +21,17 @@ import random
 from dataclasses import dataclass, field
 from enum import Enum
 
+from opentelemetry import trace
+
+from sidequest.game.ability import AbilitySource
+from sidequest.game.character import AbilityDefinition, Character
+from sidequest.game.creature_core import (
+    CreatureCore,
+    EdgeConfigMissingClassError as _CoreEdgeConfigMissingClassError,
+    Inventory,
+    edge_pool_from_config,
+    placeholder_edge_pool,
+)
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
@@ -1065,6 +1076,389 @@ class CharacterBuilder:
             raise CannotRevertError()
         self._results.pop()
         self._phase = InProgress(scene_index=len(self._results))
+
+    # --- Finalizer ---
+
+    def build(self, name: str) -> Character:
+        """Build the final Character from accumulated choices.
+
+        Port of sidequest_game::builder::CharacterBuilder::build.
+
+        Only valid from Confirmation phase — raises WrongPhaseError
+        otherwise. Composes the Character from accumulated hints:
+        race/class (accumulated or rules default), stats (via
+        generate_stats), HP (hp_formula OR class_hp_bases fallback),
+        backstory (fragments OR tables OR mechanical labels OR hardcoded
+        fallback), abilities (resolved from mutation / affinity /
+        training hints with an AbilitySource tag), inventory
+        (item_hints first then equipment_tables), edge pool (from
+        edge_config OR placeholder for unmigrated packs), and the
+        Fighter +2 Edge stub from Story 39-4.
+
+        Numeric-name guard (Story 30-1): reject purely numeric names —
+        they indicate a UI choice index leaked into the name fallback.
+        Blank names are caught by the Character pydantic validators.
+
+        OTEL watcher events are emitted via the current span's
+        add_event API — Python's equivalent of Rust's
+        WatcherEventBuilder broadcast channel. Events carry structured
+        attributes so the GM panel can reconstruct decisions: hp
+        resolution path, backstory method, equipment method, edge
+        seeding source, etc. SOUL.md: no silent fallbacks — every path
+        that resolves a default explicitly emits the fallback source
+        and severity.
+        """
+        if not self.is_confirmation():
+            raise WrongPhaseError(
+                expected="Confirmation", actual=self._phase_name()
+            )
+
+        # Numeric-name guard — a purely digit name is a UI index bleed.
+        trimmed = name.strip()
+        if trimmed and trimmed.isdigit():
+            raise NumericNameError(name=trimmed)
+
+        acc = self.accumulated()
+
+        race_str = acc.race_hint or self._default_race or "Human"
+        class_str = acc.class_hint or self._default_class or "Fighter"
+
+        stats = self.generate_stats(acc)
+
+        # HP resolution: hp_formula if set, else class_hp_bases lookup,
+        # else default_hp, else hardcoded 10. Every branch emits a
+        # watcher event with the source tag so the GM panel can audit
+        # which path fired.
+        span = trace.get_current_span()
+        if self._hp_formula is not None:
+            hp_result = self._evaluate_hp_formula(
+                self._hp_formula, stats, self._class_hp_bases, class_str
+            )
+            con = stats.get("CON")
+            con_modifier = int((con - 10) / 2) if con is not None else None
+            span.add_event(
+                "chargen.hp_formula_evaluated",
+                {
+                    "formula": self._hp_formula,
+                    "class": class_str,
+                    "hp_result": hp_result,
+                    **(
+                        {"con_modifier": con_modifier}
+                        if con_modifier is not None
+                        else {}
+                    ),
+                },
+            )
+            base_hp = hp_result
+        else:
+            if class_str in self._class_hp_bases:
+                hp_value = self._class_hp_bases[class_str]
+                source = "class_hp_bases"
+            elif self._default_hp is not None:
+                hp_value = self._default_hp
+                source = "default_hp"
+            else:
+                hp_value = 10
+                source = "hardcoded_10"
+            span.add_event(
+                "chargen.hp_fallback",
+                {
+                    "class": class_str,
+                    "hp_result": hp_value,
+                    "source": source,
+                },
+            )
+            base_hp = hp_value
+
+        ac = self._default_ac if self._default_ac is not None else 10
+        _ = (base_hp, ac)  # wired into OTEL and future subsystems
+
+        # Hooks: collect narrative hooks, excluding mechanical traits
+        # already represented on the sheet (race, class, personality).
+        excluded_keys = {"race_hint", "class_hint", "personality_trait"}
+        hooks: list[str] = []
+        for result in self._results:
+            for h in result.hooks_added:
+                if h.mechanical_key is not None and h.mechanical_key in excluded_keys:
+                    continue
+                hooks.append(h.text)
+
+        # Auto-fill lore anchors for faction / npc / location — if no
+        # scene contributed an anchor of that type, note the gap so the
+        # narrator (or the dispatch layer) can seed from the genre pack.
+        anchor_types = ("faction", "npc", "location")
+        for atype in anchor_types:
+            has_anchor = any(
+                a.anchor_type == atype
+                for r in self._results
+                for a in r.anchors_added
+            )
+            if not has_anchor:
+                hooks.append(f"{atype}: auto-filled from genre pack")
+
+        # Inventory composition: item_hints first, then equipment_tables
+        # when a scene directive opts in (Story 31-3).
+        items: list[dict] = []
+        for i, hint in enumerate(acc.item_hints):
+            id_str = hint.lower().replace(" ", "_") or f"item_{i}"
+            display_name = humanize_snake_case(hint) or "Unknown Item"
+            items.append(
+                {
+                    "id": id_str,
+                    "name": display_name,
+                    "description": f"Starting equipment: {display_name}",
+                    "category": "weapon",
+                    "value": 10,
+                    "weight": 3.0,
+                    "rarity": "common",
+                    "narrative_weight": 0.3,
+                    "tags": [],
+                    "equipped": True,
+                    "quantity": 1,
+                    "uses_remaining": None,
+                    "state": "Carried",
+                }
+            )
+
+        random_table_requested = any(
+            r.effects_applied.equipment_generation == "random_table"
+            for r in self._results
+        )
+        if random_table_requested and self._equipment_tables is not None:
+            added = 0
+            skipped = 0
+            for slot, candidates in self._equipment_tables.tables.items():
+                if not candidates:
+                    continue
+                rolls = self._equipment_tables.rolls_per_slot.get(slot, 1)
+                for _ in range(rolls):
+                    pick = candidates[self._rng.randrange(len(candidates))]
+                    if not pick.strip():
+                        # Blank id — surface the malformed content entry
+                        # instead of silently producing a short inventory.
+                        span.add_event(
+                            "chargen.blank_item_id_skipped",
+                            {"slot": slot, "pick": pick, "severity": "warn"},
+                        )
+                        skipped += 1
+                        continue
+                    display_name = humanize_snake_case(pick) or "Unknown Item"
+                    items.append(
+                        {
+                            "id": pick,
+                            "name": display_name,
+                            "description": f"Starting equipment ({slot}): {display_name}",
+                            "category": slot or "misc",
+                            "value": 0,
+                            "weight": 1.0,
+                            "rarity": "common",
+                            "narrative_weight": 0.3,
+                            "tags": [],
+                            "equipped": False,
+                            "quantity": 1,
+                            "uses_remaining": None,
+                            "state": "Carried",
+                        }
+                    )
+                    added += 1
+            equipment_method = "tables"
+            equipment_added = added
+            equipment_skipped = skipped
+        elif random_table_requested:
+            # Directive present but no equipment_tables wired — this is
+            # a misconfiguration, not graceful degradation. SOUL.md: no
+            # silent fallbacks.
+            span.add_event(
+                "chargen.equipment_tables_missing",
+                {
+                    "reason": (
+                        "scene declared `equipment_generation: random_table` "
+                        "but CharacterBuilder has no equipment_tables wired"
+                    ),
+                    "severity": "warn",
+                },
+            )
+            equipment_method = "none"
+            equipment_added = 0
+            equipment_skipped = 0
+        else:
+            equipment_method = "hints"
+            equipment_added = 0
+            equipment_skipped = 0
+
+        span.add_event(
+            "chargen.equipment_composed",
+            {
+                "method": equipment_method,
+                "items_added": equipment_added,
+                "items_skipped": equipment_skipped,
+            },
+        )
+
+        # Backstory composition: fragments → tables → mechanical labels
+        # → fallback. Every branch emits method + length so the GM
+        # panel sees when a genre silently falls through to the
+        # hardcoded "wanderer with a mysterious past" default.
+        if acc.backstory_fragments:
+            backstory_text = " ".join(acc.backstory_fragments)
+            backstory_method = "fragments"
+        elif self._backstory_tables is not None:
+            tables = self._backstory_tables
+            result = tables.template
+            for key, entries in tables.tables.items():
+                if entries:
+                    pick = entries[self._rng.randrange(len(entries))]
+                    result = result.replace(f"{{{key}}}", pick)
+            backstory_text = strip_unmatched_placeholders(result)
+            backstory_method = "tables"
+        else:
+            parts: list[str] = []
+            if acc.background is not None:
+                parts.append(f"Background: {acc.background}")
+            if acc.personality_trait is not None:
+                parts.append(f"Personality: {acc.personality_trait}")
+            backstory_text = (
+                ". ".join(parts) if parts else "A wanderer with a mysterious past"
+            )
+            backstory_method = "fallback"
+        span.add_event(
+            "chargen.backstory_composed",
+            {"method": backstory_method, "length": len(backstory_text)},
+        )
+
+        # Abilities: resolve from mutation / affinity / training hints.
+        # Each hint type maps to an AbilitySource. The label and
+        # description come from the scene choice the player selected.
+        abilities: list[AbilityDefinition] = []
+        for i, result in enumerate(self._results):
+            eff = result.effects_applied
+            hint_info: tuple[str, AbilitySource] | None = None
+            if eff.mutation_hint is not None and eff.mutation_hint != "none":
+                hint_info = (eff.mutation_hint, AbilitySource.Race)
+            elif eff.affinity_hint is not None and eff.affinity_hint != "none":
+                hint_info = (eff.affinity_hint, AbilitySource.Class)
+            elif eff.training_hint is not None:
+                hint_info = (eff.training_hint, AbilitySource.Class)
+
+            if hint_info is None:
+                continue
+
+            hint_key, source = hint_info
+            # Recover the label from the scene choice. Results are
+            # ordered the same as scenes walked so index matches.
+            label: str | None = None
+            if i < len(self._scenes) and isinstance(result.input_type, ChoiceInput):
+                scene = self._scenes[i]
+                if result.input_type.index < len(scene.choices):
+                    label = scene.choices[result.input_type.index].label
+            if label is None:
+                label = humanize_snake_case(hint_key)
+            description = result.choice_description or (
+                f"Acquired through character creation: {label}"
+            )
+            abilities.append(
+                AbilityDefinition(
+                    name=label,
+                    genre_description=description,
+                    mechanical_effect=hint_key,
+                    involuntary=False,
+                    source=source,
+                )
+            )
+        span.add_event(
+            "chargen.abilities_resolved",
+            {
+                "count": len(abilities),
+                "names": ", ".join(a.name for a in abilities),
+            },
+        )
+
+        # EdgePool seeding: edge_config path OR placeholder for
+        # unmigrated packs (Story 39-3). Missing class → raise the
+        # builder's EdgeConfigMissingClassError per Rust .map_err
+        # pattern, not the core module's error directly.
+        if self._edge_config is not None:
+            try:
+                edge = edge_pool_from_config(self._edge_config, class_str)
+            except _CoreEdgeConfigMissingClassError as e:
+                raise EdgeConfigMissingClassError(class_name=e.class_name) from None
+            span.add_event(
+                "chargen.edge_seeded",
+                {
+                    "source": "edge_config",
+                    "class": class_str,
+                    "base_max": edge.base_max,
+                    "threshold_count": len(edge.thresholds),
+                },
+            )
+        else:
+            edge = placeholder_edge_pool()
+            span.add_event(
+                "chargen.edge_seeded",
+                {
+                    "source": "placeholder",
+                    "class": class_str,
+                    "base_max": edge.base_max,
+                    "reason": "genre pack has no edge_config",
+                    "severity": "warn",
+                },
+            )
+
+        # Story 39-4: hardcoded Fighter +2 Edge stub. Smoke-gate so the
+        # Edge system can be playtested before authored AdvancementTree
+        # lands in 39-5. Preserved verbatim from Rust for parity —
+        # replacing it is a future-story concern, not 2.1's.
+        if class_str == "Fighter":
+            edge.max += 2
+            edge.base_max += 2
+            edge.current = edge.max
+            span.add_event(
+                "chargen.advancement_stub_applied",
+                {
+                    "advancement_id": "fighter_base_plus_2_edge",
+                    "class": class_str,
+                    "edge_max_after": edge.max,
+                    "source": "hardcoded_stub_story_39_4",
+                },
+            )
+
+        # Resolved archetype: pairs jungian_hint / rpg_role_hint if both
+        # are present. archetype_provenance is populated downstream by
+        # dispatch (connect.rs) once the tiered resolver runs.
+        resolved_archetype = None
+        if acc.jungian_hint is not None and acc.rpg_role_hint is not None:
+            resolved_archetype = f"{acc.jungian_hint}/{acc.rpg_role_hint}"
+
+        # Compose the Character. Character / CreatureCore non-blank
+        # validators will catch blank name / description / personality.
+        character = Character(
+            core=CreatureCore(
+                name=name,
+                description=f"A {race_str} {class_str}",
+                personality=acc.personality_trait or "Determined",
+                level=1,
+                xp=0,
+                inventory=Inventory(items=items, gold=0),
+                statuses=[],
+                edge=edge,
+                acquired_advancements=[],
+            ),
+            backstory=backstory_text,
+            narrative_state="Beginning their adventure",
+            hooks=hooks,
+            char_class=class_str,
+            race=race_str,
+            pronouns=acc.pronoun_hint or "",
+            stats=stats,
+            abilities=abilities,
+            known_facts=[],
+            affinities=[],
+            is_friendly=True,
+            resolved_archetype=resolved_archetype,
+            archetype_provenance=None,
+        )
+
+        return character
 
     # --- Stat generation ---
 
