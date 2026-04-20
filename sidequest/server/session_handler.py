@@ -15,23 +15,33 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
-from typing import Callable
 
 from opentelemetry import trace
 
-from sidequest.agents.claude_client import ClaudeLike, ClaudeClient
+from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
     CharacterBuilder,
 )
+from sidequest.game.character import Character
 from sidequest.game.persistence import SqliteStore, db_path_for_session
 from sidequest.game.session import GameSnapshot, NarrativeEntry
-from sidequest.genre.loader import GenreLoader, DEFAULT_GENRE_PACK_SEARCH_PATHS
+from sidequest.game.world_materialization import (
+    CampaignMaturity,
+    HistoryParseError,
+    materialize_from_genre_pack,
+)
+from sidequest.genre.archetype.shim import resolve_archetype
+from sidequest.genre.error import GenreValidationError
+from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -46,7 +56,10 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
+from sidequest.server.dispatch.opening_hook import resolve_opening
+from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
@@ -82,6 +95,22 @@ class _SessionData:
     # _handle_character_creation's confirmation commit when the Character lands
     # on snapshot.characters.
     builder: CharacterBuilder | None = None
+    # Opening-hook seed + directive (Story 2.3 Slice B). Resolved once at
+    # connect time from pack/world.openings. Both consumed together by the
+    # opening-turn bootstrap after chargen confirmation (Slice H): the seed
+    # becomes the first player action, the directive is injected into the
+    # narrator's Early zone on turn 0 only. ``None`` means the pack has no
+    # opening-hook entries — the first turn runs without a directive.
+    opening_seed: str | None = None
+    opening_directive: str | None = None
+    # Active scenario pack (Story 2.3 Slice D). Set at chargen
+    # confirmation when the genre pack declares at least one scenario.
+    # Rust parity: ``shared_session.active_scenario`` — lives on the
+    # shared session in Rust's multi-player model; Python Phase 1 is
+    # single-player so it lands on the connection-scoped state. Later
+    # slices consume this for pressure events, scene-budget gating,
+    # and accusation UI.
+    active_scenario: ScenarioPack | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +282,23 @@ class WebSocketSessionHandler:
             if genre_pack.equipment_tables is not None:
                 builder = builder.with_equipment_tables(genre_pack.equipment_tables)
 
+        # Opening-hook resolution (Story 2.3 Slice B). Pick one hook per
+        # connection from world.openings (preferred) or pack.openings, so
+        # the first narrator turn has an ``opening_directive`` to inject
+        # and an ``opening_seed`` to run as the first action. ``None`` on
+        # both when the pack has no openings configured — first turn
+        # runs without a directive. Returning-player reconnects (has_
+        # character=True) skip chargen, so the directive/seed are dead
+        # weight for them, but resolving here anyway keeps the seat
+        # uniform and costs nothing.
+        opening: tuple[str, str] | None = resolve_opening(
+            genre_pack, world_slug, genre_slug
+        )
+        opening_seed: str | None = None
+        opening_directive: str | None = None
+        if opening is not None:
+            opening_seed, opening_directive = opening
+
         self._session_data = _SessionData(
             genre_slug=genre_slug,
             world_slug=world_slug,
@@ -263,6 +309,8 @@ class WebSocketSessionHandler:
             genre_pack=genre_pack,
             orchestrator=orchestrator,
             builder=builder,
+            opening_seed=opening_seed,
+            opening_directive=opening_directive,
         )
         self._state = _State.Creating if not has_character else _State.Playing
 
@@ -456,6 +504,91 @@ class WebSocketSessionHandler:
             return [_error_msg(f"Cannot continue from current scene: {exc!r}")]
         return self._next_message(builder, sd, player_id)
 
+    # ---- archetype resolution helper (Story 2.3 Slice A) ----------------
+    def _resolve_character_archetype(
+        self,
+        character: Character,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> None:
+        """Resolve a raw ``jungian/rpg_role`` pair through the archetype shim.
+
+        The builder encodes accumulated archetype hints as
+        ``f"{jungian}/{rpg_role}"`` on ``character.resolved_archetype`` (see
+        ``builder.py:1640-1645``). This helper detects that raw form, runs
+        the four-tier resolve (base → constraints → world funnels), and
+        replaces the raw pair with the resolved display name via
+        ``apply_archetype_resolved`` — keeping ``archetype_provenance`` in
+        lockstep.
+
+        Resolution failures emit a ``character_creation.archetype_resolution_failed``
+        span event and leave the raw pair in place (non-fatal for chargen —
+        the GM panel can still see the attempt). Missing axis data on the
+        pack (no ``base_archetypes`` or ``archetype_constraints``) silently
+        no-ops: the pack chose not to use archetype axes.
+
+        Rust parity: ``connect.rs:1644-1737``.
+        """
+        raw = character.resolved_archetype
+        if raw is None or "/" not in raw:
+            return
+
+        jungian, rpg_role = raw.split("/", 1)
+        pack = sd.genre_pack
+        if pack.base_archetypes is None or pack.archetype_constraints is None:
+            return
+
+        world = pack.worlds.get(sd.world_slug)
+        funnels = world.archetype_funnels if world is not None else None
+
+        try:
+            resolution = resolve_archetype(
+                jungian=jungian,
+                rpg_role=rpg_role,
+                base=pack.base_archetypes,
+                constraints=pack.archetype_constraints,
+                funnels=funnels,
+                genre=sd.genre_slug,
+                world=sd.world_slug,
+            )
+        except GenreValidationError as exc:
+            span.add_event(
+                "character_creation.archetype_resolution_failed",
+                {
+                    "event": "archetype.resolution_failed",
+                    "error": str(exc),
+                    "jungian": jungian,
+                    "rpg_role": rpg_role,
+                    "player_id": player_id,
+                },
+            )
+            logger.warning(
+                "chargen.archetype_resolution_failed jungian=%s rpg_role=%s error=%s",
+                jungian,
+                rpg_role,
+                exc,
+            )
+            return
+
+        apply_archetype_resolved(character, resolution)
+        span.add_event(
+            "character_creation.archetype_resolved",
+            {
+                "event": "archetype.resolved",
+                "jungian": jungian,
+                "rpg_role": rpg_role,
+                "resolved_name": resolution.resolved.name,
+                "source": resolution.source.value,
+                "source_tier": resolution.provenance.source_tier.value,
+                "weight": resolution.weight.value,
+                "faction": resolution.resolved.faction or "none",
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "player_id": player_id,
+            },
+        )
+
     # ---- phase=confirmation (commit) ------------------------------------
     def _chargen_confirmation(
         self,
@@ -497,11 +630,85 @@ class WebSocketSessionHandler:
             },
         )
 
-        # Land the character on snapshot.characters so the UI sees
-        # has_character=true on reconnect. Archetype resolution,
-        # starting_equipment wiring, world materialization, SQLite save, and
-        # opening-turn bootstrap all belong to Story 2.3 — the seat is here.
-        sd.snapshot.characters.append(character)
+        # Archetype resolution (Story 2.3 Slice A). The builder writes
+        # a raw "jungian/rpg_role" pair into ``resolved_archetype`` when
+        # both axis hints were accumulated during chargen. Resolve it
+        # through the four-tier shim (base → constraints → world funnels)
+        # and replace the raw pair with the resolved display name, also
+        # stamping ``archetype_provenance`` so the GM panel can show the
+        # source tier. Rust parity: connect.rs:1644-1737.
+        self._resolve_character_archetype(character, sd, player_id, span)
+
+        # Starting equipment loadout (Story 2.3 Slice A). The builder only
+        # holds item_hints; the class-specific loadout from inventory.yaml
+        # is wired in here. Rust parity: connect.rs:1745-1864.
+        apply_starting_loadout(character, sd.genre_pack.inventory)
+
+        # World materialization (Story 2.3 Slice C). Build a fresh
+        # snapshot from pack history at Fresh maturity (chargen is always
+        # Fresh — the player just arrived), then inject the built
+        # character. Replaces ``sd.snapshot`` so history chapters' lore,
+        # NPCs, notes, and scene context (location/time_of_day/atmosphere/
+        # active_stakes) populate the snapshot the narrator will read.
+        # Rust parity: connect.rs:1892-1946.
+        #
+        # Parse failure → log-and-fall-back to an empty snapshot with
+        # just genre/world slugs set (Rust parity: ``unwrap_or_else``
+        # with a warn log). The dispatch must not hard-fail on malformed
+        # pack history — the player is mid-confirm and the character is
+        # already built.
+        try:
+            materialized = materialize_from_genre_pack(
+                _world_history_value(sd.genre_pack, sd.world_slug),
+                CampaignMaturity.Fresh,
+                sd.genre_slug,
+                sd.world_slug,
+            )
+        except HistoryParseError as exc:
+            logger.warning(
+                "world_materialization.parse_failed genre=%s world=%s error=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                exc,
+            )
+            materialized = GameSnapshot(
+                genre_slug=sd.genre_slug, world_slug=sd.world_slug
+            )
+        # The fresh chapter may have authored an "Adventurer" placeholder
+        # character — discard it; the chargen-built character owns that
+        # slot. Inventory on the built character already reflects the
+        # post-loadout state from Slice A.
+        materialized.characters = [character]
+        sd.snapshot = materialized
+        span.add_event(
+            "character_creation.world_materialized",
+            {
+                "event": "world_materialized",
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "chapters_applied": len(materialized.world_history),
+                "maturity": materialized.campaign_maturity,
+                "trigger": "new_player_chargen",
+                "player_id": player_id,
+            },
+        )
+
+        # Scenario binding (Story 2.3 Slice D). When the pack declares a
+        # scenario, bind the first one to a ScenarioState, seed matching
+        # NPC belief states, and stash the chosen pack on the session
+        # for later consumers (pressure events, scene budget, accusation
+        # UI). Rust parity: connect.rs:1948-2023. No-op when the pack
+        # has no scenarios.
+        bind_result = bind_scenario(
+            sd.genre_pack,
+            sd.snapshot,
+            genre_slug=sd.genre_slug,
+            world_slug=sd.world_slug,
+        )
+        if bind_result is not None:
+            _, active_pack = bind_result
+            sd.active_scenario = active_pack
+
         sd.builder = None
         logger.info(
             "chargen.complete char_name=%s class=%s race=%s hp=%d",
@@ -671,6 +878,21 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 
 
+def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
+    """Extract the raw world ``history.yaml`` payload for a world.
+
+    Rust reads ``pack.worlds.get(world).and_then(|w| w.history.as_ref())``;
+    the Python loader stores ``history`` on ``World`` as an untyped
+    ``Any`` (loader.py:383). Returns ``None`` when the world doesn't
+    declare history — ``materialize_from_genre_pack`` treats ``None`` as
+    zero chapters, producing a snapshot with just genre/world slugs set.
+    """
+    world = pack.worlds.get(world_slug)
+    if world is None:
+        return None
+    return world.history
+
+
 def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:
     return ErrorMessage(
         type="ERROR",  # type: ignore[arg-type]
@@ -696,7 +918,7 @@ def _sfx_ids_from_genre(genre_pack: GenrePack) -> list[str]:
 
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
-    result: "object",
+    result: object,
     player_name: str,
 ) -> None:
     """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
