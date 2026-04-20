@@ -1,0 +1,641 @@
+"""Tests for sidequest/agents/orchestrator.py — Phase 1 narration pipeline.
+
+No live Claude CLI calls. All Claude interactions are mocked via ClaudeClient
+with a canned spawn_fn.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+import pytest
+
+from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse
+from sidequest.agents.narrator import NarratorAgent
+from sidequest.agents.orchestrator import (
+    ActionFlags,
+    ActionRewrite,
+    BeatSelection,
+    NarratorPromptTier,
+    NarrationTurnResult,
+    NpcMention,
+    Orchestrator,
+    TurnContext,
+    VisualScene,
+    _extract_game_patch_json,
+    _strip_json_fence,
+    extract_structured_from_response,
+)
+from sidequest.agents.prompt_framework.core import PromptRegistry
+from sidequest.agents.prompt_framework.types import AttentionZone
+
+
+# ---------------------------------------------------------------------------
+# Helpers — fake subprocess process and canned spawn
+# ---------------------------------------------------------------------------
+
+
+class FakeProcess:
+    """Minimal asyncio.subprocess.Process stand-in for tests."""
+
+    def __init__(self, stdout: bytes = b"", returncode: int = 0) -> None:
+        self._stdout = stdout
+        self._stderr = b""
+        self.returncode = returncode
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+    def kill(self) -> None:
+        pass
+
+    async def wait(self) -> int:
+        return self.returncode
+
+
+def make_json_response(text: str, session_id: str = "test-session-001") -> bytes:
+    """Build a minimal Claude CLI JSON envelope from a canned text response."""
+    payload = {
+        "result": text,
+        "session_id": session_id,
+        "usage": {"input_tokens": 10, "output_tokens": 20},
+    }
+    return json.dumps(payload).encode()
+
+
+def make_spawn_fn(text: str, session_id: str = "test-session-001"):
+    """Return a spawn_fn that returns the given canned narrator text."""
+
+    async def spawn_fn(command: str, *args: str, env: Any = None, **kwargs: Any) -> FakeProcess:
+        return FakeProcess(stdout=make_json_response(text, session_id=session_id))
+
+    return spawn_fn
+
+
+def make_canned_client(narration_text: str, session_id: str = "test-session-001") -> ClaudeClient:
+    """Build a ClaudeClient whose subprocess always returns narration_text."""
+    return ClaudeClient(spawn_fn=make_spawn_fn(narration_text, session_id=session_id))
+
+
+# ---------------------------------------------------------------------------
+# _extract_game_patch_json
+# ---------------------------------------------------------------------------
+
+
+def test_extract_game_patch_json_from_game_patch_fence():
+    raw = '**The Tavern**\n\nSome prose.\n\n```game_patch\n{"location": "Tavern"}\n```'
+    result = _extract_game_patch_json(raw)
+    assert result == {"location": "Tavern"}
+
+
+def test_extract_game_patch_json_from_json_fence_fallback():
+    raw = '**The Tavern**\n\nSome prose.\n\n```json\n{"location": "Docks"}\n```'
+    result = _extract_game_patch_json(raw)
+    assert result == {"location": "Docks"}
+
+
+def test_extract_game_patch_json_returns_empty_dict_on_no_fence():
+    raw = "**The Tavern**\n\nSome prose with no JSON block."
+    result = _extract_game_patch_json(raw)
+    assert result == {}
+
+
+def test_extract_game_patch_json_warns_on_malformed_json(caplog):
+    import logging
+    raw = '```game_patch\n{invalid json}\n```'
+    with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+        result = _extract_game_patch_json(raw)
+    assert result == {}
+    assert "failed to parse" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _strip_json_fence
+# ---------------------------------------------------------------------------
+
+
+def test_strip_json_fence_removes_game_patch_block():
+    raw = "**The Tavern**\n\nSome prose.\n\n```game_patch\n{}\n```"
+    assert _strip_json_fence(raw) == "**The Tavern**\n\nSome prose."
+
+
+def test_strip_json_fence_removes_json_block():
+    raw = "Prose here.\n\n```json\n{}\n```"
+    assert _strip_json_fence(raw) == "Prose here."
+
+
+def test_strip_json_fence_returns_text_unchanged_if_no_fence():
+    raw = "**The Tavern**\n\nSome prose only."
+    assert _strip_json_fence(raw) == raw.strip()
+
+
+def test_strip_json_fence_warns_and_discards_post_patch_content(caplog):
+    import logging
+    raw = "Prose.\n\n```game_patch\n{}\n```\n\nNote: I've been helpful."
+    with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+        result = _strip_json_fence(raw)
+    assert result == "Prose."
+    assert "discarding post-patch content" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# extract_structured_from_response
+# ---------------------------------------------------------------------------
+
+
+def test_extract_structured_returns_prose():
+    raw = "**The Docks**\n\nThe smell of brine.\n\n```game_patch\n{}\n```"
+    result = extract_structured_from_response(raw)
+    assert result["prose"] == "**The Docks**\n\nThe smell of brine."
+
+
+def test_extract_structured_extracts_location():
+    raw = '```game_patch\n{"location": "Docks"}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["location"] == "Docks"
+
+
+def test_extract_structured_extracts_footnotes():
+    raw = '```game_patch\n{"footnotes": [{"summary": "The key is lost", "category": "Lore", "is_new": true}]}\n```'
+    result = extract_structured_from_response(raw)
+    assert len(result["footnotes"]) == 1
+    assert result["footnotes"][0]["summary"] == "The key is lost"
+
+
+def test_extract_structured_extracts_items_gained():
+    raw = '```game_patch\n{"items_gained": [{"name": "Rusty Key", "description": "An old key", "category": "misc"}]}\n```'
+    result = extract_structured_from_response(raw)
+    assert len(result["items_gained"]) == 1
+    assert result["items_gained"][0]["name"] == "Rusty Key"
+
+
+def test_extract_structured_extracts_beat_selections():
+    raw = '```game_patch\n{"beat_selections": [{"actor": "Player", "beat_id": "attack", "target": "Goblin"}]}\n```'
+    result = extract_structured_from_response(raw)
+    assert len(result["beat_selections"]) == 1
+    assert result["beat_selections"][0]["actor"] == "Player"
+
+
+def test_extract_structured_extracts_confrontation():
+    raw = '```game_patch\n{"confrontation": "combat"}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["confrontation"] == "combat"
+
+
+def test_extract_structured_extracts_npcs_met_alias():
+    """npcs_met and npcs_present are both valid labels."""
+    raw = '```game_patch\n{"npcs_met": ["Toggler"]}\n```'
+    result = extract_structured_from_response(raw)
+    assert len(result["npcs_present"]) == 1
+
+
+def test_extract_structured_extracts_gold_change():
+    raw = '```game_patch\n{"gold_change": -10}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["gold_change"] == -10
+
+
+def test_extract_structured_extracts_action_rewrite():
+    raw = '```game_patch\n{"action_rewrite": {"you": "You look around", "named": "Kael looks around", "intent": "look around"}}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["action_rewrite"]["you"] == "You look around"
+
+
+def test_extract_structured_extracts_action_flags():
+    raw = '```game_patch\n{"action_flags": {"is_power_grab": false, "references_npc": true}}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["action_flags"]["references_npc"] is True
+    assert result["action_flags"]["is_power_grab"] is False
+
+
+def test_extract_structured_extracts_affinity_progress():
+    raw = '```game_patch\n{"affinity_progress": [{"name": "combat_mastery", "delta": 1}]}\n```'
+    result = extract_structured_from_response(raw)
+    assert result["affinity_progress"] == [("combat_mastery", 1)]
+
+
+def test_extract_structured_empty_patch_returns_defaults():
+    raw = "Some prose.\n\n```game_patch\n{}\n```"
+    result = extract_structured_from_response(raw)
+    assert result["footnotes"] == []
+    assert result["items_gained"] == []
+    assert result["beat_selections"] == []
+    assert result["confrontation"] is None
+    assert result["location"] is None
+
+
+# ---------------------------------------------------------------------------
+# NpcMention.from_value
+# ---------------------------------------------------------------------------
+
+
+def test_npc_mention_from_full_struct():
+    npc = NpcMention.from_value({"name": "Toggler Copperjaw", "role": "blacksmith", "is_new": True})
+    assert npc.name == "Toggler Copperjaw"
+    assert npc.role == "blacksmith"
+    assert npc.is_new is True
+
+
+def test_npc_mention_from_bare_string():
+    npc = NpcMention.from_value("Nub")
+    assert npc.name == "Nub"
+    assert npc.role == ""
+    assert npc.is_new is False
+
+
+def test_npc_mention_vec_mixed_formats():
+    values = [{"name": "Toggler", "role": "smith"}, "Nub", {"name": "Vera"}]
+    npcs = [NpcMention.from_value(v) for v in values]
+    assert len(npcs) == 3
+    assert npcs[0].name == "Toggler"
+    assert npcs[1].name == "Nub"
+    assert npcs[2].name == "Vera"
+
+
+# ---------------------------------------------------------------------------
+# BeatSelection.from_dict
+# ---------------------------------------------------------------------------
+
+
+def test_beat_selection_from_dict():
+    bs = BeatSelection.from_dict({"actor": "Player", "beat_id": "attack", "target": "Goblin"})
+    assert bs.actor == "Player"
+    assert bs.beat_id == "attack"
+    assert bs.target == "Goblin"
+
+
+def test_beat_selection_no_target():
+    bs = BeatSelection.from_dict({"actor": "Goblin", "beat_id": "defend"})
+    assert bs.target is None
+
+
+# ---------------------------------------------------------------------------
+# ActionRewrite / ActionFlags
+# ---------------------------------------------------------------------------
+
+
+def test_action_rewrite_from_dict():
+    ar = ActionRewrite.from_dict({"you": "You draw your sword", "named": "Kael draws their sword", "intent": "draw sword"})
+    assert ar.you == "You draw your sword"
+    assert ar.intent == "draw sword"
+
+
+def test_action_flags_from_dict():
+    af = ActionFlags.from_dict({"is_power_grab": True, "references_npc": True})
+    assert af.is_power_grab is True
+    assert af.references_npc is True
+    assert af.references_inventory is False
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator — session lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_starts_with_no_session():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    assert not orch.has_active_narrator_session()
+
+
+def test_orchestrator_select_prompt_tier_full_when_no_session():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext()
+    assert orch.select_prompt_tier(context) == NarratorPromptTier.Full
+
+
+def test_orchestrator_select_prompt_tier_delta_after_session_set():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    orch.set_narrator_session_id("existing-session")
+    context = TurnContext(genre="caverns_and_claudes")
+    # Also set session genre to avoid genre-switch detection
+    orch._session_genre = "caverns_and_claudes"
+    assert orch.select_prompt_tier(context) == NarratorPromptTier.Delta
+
+
+def test_orchestrator_genre_switch_forces_full_tier():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    orch.set_narrator_session_id("existing-session")
+    orch._session_genre = "mutant_wasteland"
+    context = TurnContext(genre="caverns_and_claudes")
+    tier = orch.select_prompt_tier(context)
+    assert tier == NarratorPromptTier.Full
+    assert not orch.has_active_narrator_session()
+
+
+def test_orchestrator_reset_clears_session():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    orch.set_narrator_session_id("some-session")
+    orch.reset_narrator_session()
+    assert not orch.has_active_narrator_session()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator.build_narrator_prompt — structure
+# ---------------------------------------------------------------------------
+
+
+def test_build_narrator_prompt_full_contains_narrator_identity():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", state_summary="You are in a tavern.")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "Game Master" in prompt
+
+
+def test_build_narrator_prompt_full_contains_output_format():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "game_patch" in prompt
+
+
+def test_build_narrator_prompt_contains_player_action():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = orch.build_narrator_prompt("examine the door", context, tier=NarratorPromptTier.Full)
+    assert "examine the door" in prompt
+    assert "Kael" in prompt
+
+
+def test_build_narrator_prompt_includes_genre_identity():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", genre="caverns_and_claudes")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "caverns and claudes" in prompt
+
+
+def test_build_narrator_prompt_full_contains_verbosity_limit():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", narrator_verbosity="concise")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "400 characters" in prompt
+
+
+def test_build_narrator_prompt_full_contains_vocabulary_section():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", narrator_vocabulary="epic")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "archaic" in prompt
+
+
+def test_build_narrator_prompt_includes_state_summary():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(
+        character_name="Kael",
+        state_summary="You are in a dark cave. HP: 10/10.",
+    )
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "dark cave" in prompt
+
+
+def test_build_narrator_prompt_encounter_rules_when_in_combat():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", in_combat=True)
+    prompt, _ = orch.build_narrator_prompt("attack goblin", context, tier=NarratorPromptTier.Full)
+    assert "COMBAT NARRATION RULES" in prompt
+
+
+def test_build_narrator_prompt_no_encounter_rules_when_not_in_combat():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", in_combat=False, in_chase=False)
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "COMBAT NARRATION RULES" not in prompt
+
+
+def test_build_narrator_prompt_delta_excludes_static_sections():
+    """Delta tier should omit narrator identity (already in session)."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    full_prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    delta_prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    # Full prompt contains identity content; delta does not
+    assert "narrator_identity" not in delta_prompt or len(delta_prompt) < len(full_prompt)
+
+
+def test_build_narrator_prompt_delta_still_contains_output_format():
+    """Output format must be on every tier — narrator needs game_patch schema always."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    assert "game_patch" in prompt
+
+
+def test_build_narrator_prompt_delta_still_contains_genre_identity():
+    """Genre identity must be on every tier (playtest fix 2026-04-05)."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", genre="road_warrior")
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    assert "road warrior" in prompt
+
+
+def test_build_narrator_prompt_player_action_last_in_zone_order():
+    """player_action (Recency) must appear after identity (Primacy) in composed output."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = orch.build_narrator_prompt("cast spell", context, tier=NarratorPromptTier.Full)
+    identity_pos = prompt.find("Game Master")
+    action_pos = prompt.find("cast spell")
+    assert identity_pos < action_pos
+
+
+def test_build_narrator_prompt_trope_context_injected():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(
+        character_name="Kael",
+        pending_trope_context="WEAVE THIS: The ancient curse stirs.",
+    )
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "WEAVE THIS" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator.run_narration_turn — async turn pipeline
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_returns_narration():
+    narration_text = (
+        "**The Tavern**\n\nThe smell of stale ale fills the air.\n\n"
+        "```game_patch\n{}\n```"
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", current_location="The Tavern")
+    result = await orch.run_narration_turn("look around", context)
+    assert "stale ale" in result.narration
+    assert not result.is_degraded
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_stores_session_id():
+    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text, session_id="session-xyz")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    await orch.run_narration_turn("look around", context)
+    assert orch.has_active_narrator_session()
+    with orch._session_lock:
+        assert orch._narrator_session_id == "session-xyz"
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_second_call_uses_delta_tier():
+    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text, session_id="sess-001")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", genre="caverns_and_claudes")
+    # First turn
+    await orch.run_narration_turn("look around", context)
+    # Second turn — should use Delta tier
+    result = await orch.run_narration_turn("move north", context)
+    assert result.prompt_tier == NarratorPromptTier.Delta
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_extracts_location():
+    narration_text = (
+        "**The Docks**\n\nThe sea glitters.\n\n"
+        '```game_patch\n{"location": "The Docks"}\n```'
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    result = await orch.run_narration_turn("look around", context)
+    assert result.location == "The Docks"
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_extracts_confrontation():
+    narration_text = (
+        "**The Alley**\n\nThe bandit draws a knife.\n\n"
+        '```game_patch\n{"confrontation": "combat"}\n```'
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    result = await orch.run_narration_turn("attack the bandit", context)
+    assert result.confrontation == "combat"
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_extracts_npcs():
+    narration_text = (
+        "**The Market**\n\nThe vendor smiles.\n\n"
+        '```game_patch\n{"npcs_met": ["Nub the Vendor"]}\n```'
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    result = await orch.run_narration_turn("talk to vendor", context)
+    assert len(result.npcs_present) == 1
+    assert result.npcs_present[0].name == "Nub the Vendor"
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_degraded_on_claude_error():
+    """ADR-005: CLI failure returns degraded response, not exception."""
+
+    async def failing_spawn(command: str, *args: str, **kwargs: Any) -> Any:
+        raise RuntimeError("Claude binary not found")
+
+    client = ClaudeClient(spawn_fn=failing_spawn)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", current_location="The Tavern")
+    result = await orch.run_narration_turn("look around", context)
+    assert result.is_degraded
+    assert "The Tavern" in result.narration
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_records_otel_fields():
+    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text, session_id="sess-123")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    result = await orch.run_narration_turn("look around", context)
+    assert result.agent_name == "narrator"
+    assert result.classified_intent == "exploration"
+    assert result.agent_duration_ms is not None
+    assert result.token_count_in is not None
+    assert result.token_count_out is not None
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_warns_missing_action_rewrite(caplog):
+    import logging
+    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+        await orch.run_narration_turn("look around", context)
+    assert "action_rewrite absent" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_warns_missing_action_flags(caplog):
+    import logging
+    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+        await orch.run_narration_turn("look around", context)
+    assert "action_flags absent" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_extracts_items_gained():
+    narration_text = (
+        "**The Chest**\n\nYou find a rusty key.\n\n"
+        '```game_patch\n{"items_gained": [{"name": "Rusty Key", "description": "An old key", "category": "misc"}]}\n```'
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    result = await orch.run_narration_turn("open chest", context)
+    assert len(result.items_gained) == 1
+    assert result.items_gained[0]["name"] == "Rusty Key"
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_genre_prompts_injected():
+    """Genre prompts from prompts.yaml appear in the assembled prompt."""
+    from sidequest.genre.models.narrative import Prompts
+    narration_text = "**The Cavern**\n\nProse.\n\n```game_patch\n{}\n```"
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(
+        character_name="Kael",
+        genre="caverns_and_claudes",
+        genre_prompts=Prompts(
+            narrator="Narrate with dungeon grit.",
+            combat="Keep combat brutal.",
+            npc="NPCs speak in riddles.",
+            world_state="Track the dungeon state.",
+        ),
+    )
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "dungeon grit" in prompt
+    assert "NPCs speak in riddles" in prompt

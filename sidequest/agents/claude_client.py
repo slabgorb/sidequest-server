@@ -1,0 +1,499 @@
+"""Claude CLI subprocess client.
+
+Port of sidequest-agents/src/client.rs.
+
+Port lesson #3: Single ClaudeClient with configurable timeout,
+consistent error types, and a standard fallback policy.
+
+The subprocess spawner is dependency-injected so tests can substitute
+a mock without ever launching the real 'claude' binary.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol, runtime_checkable
+
+from sidequest.telemetry.spans import (
+    SPAN_AGENT_CALL,
+    SPAN_AGENT_CALL_SESSION,
+    agent_call_session_span,
+    agent_call_span,
+)
+
+logger = logging.getLogger(__name__)
+
+# Default timeout for Claude CLI invocations (120 seconds).
+DEFAULT_TIMEOUT: float = 120.0
+
+# Default command path for Claude CLI.
+DEFAULT_COMMAND: str = "claude"
+
+# Type alias for the subprocess spawner function.
+# Uses Any return type so tests can inject duck-typed FakeProcess objects
+# without Pyright complaining about structural subtype incompatibility.
+SpawnFn = Callable[..., Awaitable[Any]]
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+class ClaudeClientError(Exception):
+    """Base error from Claude CLI subprocess invocations."""
+
+
+class TimeoutError(ClaudeClientError):
+    """The subprocess exceeded the configured timeout."""
+
+    def __init__(self, elapsed: float) -> None:
+        self.elapsed = elapsed
+        super().__init__(f"Claude CLI timed out after {elapsed:.1f}s")
+
+
+class SubprocessFailed(ClaudeClientError):
+    """The subprocess exited with a non-zero status."""
+
+    def __init__(self, exit_code: int | None, stderr: str) -> None:
+        self.exit_code = exit_code
+        self.stderr = stderr
+        super().__init__(f"Claude CLI failed (exit code: {exit_code}): {stderr}")
+
+
+class EmptyResponse(ClaudeClientError):
+    """The subprocess returned an empty response."""
+
+    def __init__(self) -> None:
+        super().__init__("Claude CLI returned an empty response")
+
+
+# ---------------------------------------------------------------------------
+# Response
+# ---------------------------------------------------------------------------
+
+
+class ClaudeResponse:
+    """Response from a Claude CLI invocation, including token usage telemetry."""
+
+    __slots__ = ("text", "input_tokens", "output_tokens", "session_id")
+
+    def __init__(
+        self,
+        text: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        self.text = text
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.session_id = session_id
+
+    def __repr__(self) -> str:
+        return (
+            f"ClaudeResponse(text={self.text!r:.40}, "
+            f"input_tokens={self.input_tokens}, output_tokens={self.output_tokens}, "
+            f"session_id={self.session_id!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ClaudeResponse):
+            return NotImplemented
+        return (
+            self.text == other.text
+            and self.input_tokens == other.input_tokens
+            and self.output_tokens == other.output_tokens
+            and self.session_id == other.session_id
+        )
+
+
+# ---------------------------------------------------------------------------
+# Default subprocess spawner
+# ---------------------------------------------------------------------------
+
+
+async def _default_spawn(
+    command: str,
+    *args: str,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> asyncio.subprocess.Process:
+    """Spawn the real 'claude' CLI subprocess."""
+    return await asyncio.create_subprocess_exec(
+        command,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeClient
+# ---------------------------------------------------------------------------
+
+
+class ClaudeClient:
+    """Claude CLI subprocess client with configurable timeout and command path.
+
+    Port of sidequest-agents client.rs ClaudeClient.
+
+    The spawn_fn is dependency-injected for testability — production code passes
+    None (default spawner). Tests inject a mock that returns a FakeProcess.
+    """
+
+    def __init__(
+        self,
+        timeout: float = DEFAULT_TIMEOUT,
+        command_path: str = DEFAULT_COMMAND,
+        otel_endpoint: str | None = None,
+        spawn_fn: SpawnFn | None = None,
+    ) -> None:
+        self._timeout = timeout
+        self._command_path = command_path
+        self._otel_endpoint = otel_endpoint or None
+        self._spawn = spawn_fn or _default_spawn
+
+    # ------------------------------------------------------------------
+    # Accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def timeout(self) -> float:
+        return self._timeout
+
+    @property
+    def command_path(self) -> str:
+        return self._command_path
+
+    @property
+    def otel_endpoint(self) -> str | None:
+        return self._otel_endpoint
+
+    # ------------------------------------------------------------------
+    # Builder-style constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def with_timeout(
+        cls,
+        timeout: float,
+        spawn_fn: SpawnFn | None = None,
+    ) -> "ClaudeClient":
+        """Create a new client with a custom timeout."""
+        return cls(timeout=timeout, spawn_fn=spawn_fn)
+
+    @classmethod
+    def builder(cls) -> "ClaudeClientBuilder":
+        """Create a builder for more complex configuration."""
+        return ClaudeClientBuilder()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def send(self, prompt: str) -> ClaudeResponse:
+        """Execute a subprocess call with default settings."""
+        return await self._send_impl(prompt, model=None, allowed_tools=[], extra_env={})
+
+    async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
+        """Execute a subprocess call with a specific model.
+
+        Passes --model <model> before -p <prompt>. Returns stdout on success.
+        """
+        return await self._send_impl(
+            prompt, model=model, allowed_tools=[], extra_env={}
+        )
+
+    async def send_with_session(
+        self,
+        prompt: str,
+        model: str,
+        session_id: str | None = None,
+        system_prompt: str | None = None,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ClaudeResponse:
+        """Execute a persistent session call (ADR-066).
+
+        If session_id is not None, resumes that session via --resume.
+        If None, creates a new session with a fresh UUID via --session-id
+        and includes --system-prompt for session establishment.
+
+        Returns the session ID in ClaudeResponse.session_id for storage.
+        """
+        allowed = allowed_tools or []
+        env = env_vars or {}
+
+        with agent_call_session_span(
+            model=model,
+            prompt_len=len(prompt),
+        ) as span:
+            if not prompt.strip():
+                raise EmptyResponse()
+
+            args: list[str] = ["--model", model]
+
+            is_resume = session_id is not None
+            if is_resume and session_id:
+                args += ["--resume", session_id]
+                logger.info("narrator.session_resume session_id=%s", session_id)
+            else:
+                new_id = str(uuid.uuid4())
+                args += ["--session-id", new_id]
+                if system_prompt:
+                    args += ["--system-prompt", system_prompt]
+                logger.info("narrator.session_create session_id=%s", new_id)
+
+            if allowed:
+                args.append("--allowedTools")
+                args.extend(allowed)
+
+            args += ["-p", prompt, "--output-format", "json"]
+
+            # Build env overlay
+            process_env = self._build_env(env)
+
+            return await self._run_subprocess(args, process_env, span)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _send_impl(
+        self,
+        prompt: str,
+        model: str | None,
+        allowed_tools: list[str],
+        extra_env: dict[str, str],
+    ) -> ClaudeResponse:
+        """Core subprocess execution used by all send methods."""
+        model_label = model or "default"
+
+        with agent_call_span(model=model_label, prompt_len=len(prompt)) as span:
+            if not prompt.strip():
+                raise EmptyResponse()
+
+            args: list[str] = []
+            if model:
+                args += ["--model", model]
+            if allowed_tools:
+                args.append("--allowedTools")
+                args.extend(allowed_tools)
+            args += ["-p", prompt, "--output-format", "json"]
+
+            logger.debug(
+                "claude_cli.command_built command=%s model=%s prompt_len=%d",
+                self._command_path,
+                model_label,
+                len(prompt),
+            )
+
+            process_env = self._build_env(extra_env)
+            return await self._run_subprocess(args, process_env, span)
+
+    def _build_env(self, extra_env: dict[str, str]) -> dict[str, str] | None:
+        """Build the environment dict for the subprocess."""
+        import os
+
+        base = dict(os.environ)
+        if self._otel_endpoint:
+            base.update(
+                {
+                    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                    "OTEL_TRACES_EXPORTER": "otlp",
+                    "OTEL_LOGS_EXPORTER": "otlp",
+                    "OTEL_METRICS_EXPORTER": "otlp",
+                    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                    "OTEL_EXPORTER_OTLP_ENDPOINT": self._otel_endpoint,
+                    "OTEL_LOG_TOOL_CONTENT": "1",
+                    "OTEL_LOG_TOOL_DETAILS": "1",
+                    "CLAUDE_CODE_OTEL_FLUSH_TIMEOUT_MS": "3000",
+                }
+            )
+        base.update(extra_env)
+        return base
+
+    async def _run_subprocess(
+        self,
+        args: list[str],
+        env: dict[str, str] | None,
+        span: object,
+    ) -> ClaudeResponse:
+        """Spawn the subprocess and wait for completion with timeout."""
+        start = time.monotonic()
+
+        try:
+            proc = await self._spawn(
+                self._command_path,
+                *args,
+                env=env,
+            )
+        except Exception as e:
+            logger.error("Failed to spawn subprocess: %s", e)
+            raise SubprocessFailed(exit_code=None, stderr=str(e)) from e
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self._timeout,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            elapsed = time.monotonic() - start
+            logger.warning(
+                "Claude CLI subprocess timed out after %.1fs (timeout=%.1fs)",
+                elapsed,
+                self._timeout,
+            )
+            raise TimeoutError(elapsed=elapsed)
+
+        elapsed = time.monotonic() - start
+        returncode = proc.returncode
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
+        if returncode != 0:
+            raise SubprocessFailed(exit_code=returncode, stderr=stderr)
+
+        trimmed = stdout.strip()
+        if not trimmed:
+            raise EmptyResponse()
+
+        # Parse JSON envelope from --output-format json
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        response_session_id: str | None = None
+
+        try:
+            envelope = json.loads(trimmed)
+        except json.JSONDecodeError:
+            # Not JSON (shouldn't happen with --output-format json, but handle gracefully)
+            text = trimmed
+        else:
+            # Extract token counts from usage block.
+            # Prompt caching (ADR-066) sends most input tokens through
+            # cache_creation_input_tokens / cache_read_input_tokens fields.
+            # Sum all three so the GM panel shows the real input cost.
+            usage = envelope.get("usage")
+            if usage:
+                raw_in = int(usage.get("input_tokens") or 0)
+                cache_create = int(usage.get("cache_creation_input_tokens") or 0)
+                cache_read = int(usage.get("cache_read_input_tokens") or 0)
+                total_in = raw_in + cache_create + cache_read
+                if total_in > 0:
+                    input_tokens = total_in
+                out = usage.get("output_tokens")
+                if out is not None:
+                    output_tokens = int(out)
+
+            sid = envelope.get("session_id")
+            if sid:
+                response_session_id = str(sid)
+
+            result = envelope.get("result")
+            text = result if isinstance(result, str) else trimmed
+
+        if not text:
+            raise EmptyResponse()
+
+        logger.debug(
+            "claude_cli.complete elapsed=%.2fs response_len=%d",
+            elapsed,
+            len(text),
+        )
+
+        return ClaudeResponse(
+            text=text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            session_id=response_session_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeClientBuilder
+# ---------------------------------------------------------------------------
+
+
+class ClaudeClientBuilder:
+    """Builder for ClaudeClient configuration."""
+
+    def __init__(self) -> None:
+        self._timeout = DEFAULT_TIMEOUT
+        self._command_path = DEFAULT_COMMAND
+        self._otel_endpoint: str | None = None
+        self._spawn_fn: SpawnFn | None = None
+
+    def timeout(self, timeout: float) -> "ClaudeClientBuilder":
+        """Set the timeout duration."""
+        self._timeout = timeout
+        return self
+
+    def command_path(self, path: str) -> "ClaudeClientBuilder":
+        """Set the command path."""
+        self._command_path = path
+        return self
+
+    def otel_endpoint(self, endpoint: str) -> "ClaudeClientBuilder":
+        """Set the OTEL endpoint for Claude subprocess telemetry export.
+
+        Empty strings are normalized to None.
+        """
+        self._otel_endpoint = endpoint.strip() or None
+        return self
+
+    def spawn_fn(self, fn: SpawnFn) -> "ClaudeClientBuilder":
+        """Inject a custom subprocess spawner (for testing)."""
+        self._spawn_fn = fn
+        return self
+
+    def build(self) -> ClaudeClient:
+        """Build the ClaudeClient."""
+        return ClaudeClient(
+            timeout=self._timeout,
+            command_path=self._command_path,
+            otel_endpoint=self._otel_endpoint,
+            spawn_fn=self._spawn_fn,
+        )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeLike protocol (DI abstraction for testing — story 40-1)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ClaudeLike(Protocol):
+    """Object-safe abstraction over the Claude CLI client (story 40-1).
+
+    Production code takes ClaudeLike so tests can substitute a mock without
+    spawning a real claude subprocess. This mirrors the Rust ClaudeLike trait.
+    """
+
+    async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
+        """Execute a one-shot subprocess call with an explicit model."""
+        ...
+
+    async def send_with_session(
+        self,
+        prompt: str,
+        model: str,
+        session_id: str | None = None,
+        system_prompt: str | None = None,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ClaudeResponse:
+        """Execute a persistent-session subprocess call (ADR-066)."""
+        ...

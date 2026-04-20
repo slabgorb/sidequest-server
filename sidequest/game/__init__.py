@@ -75,7 +75,7 @@ from sidequest.game.session import (
     TropeState,
     WorldStatePatch,
 )
-from sidequest.game.turn import TurnManager, TurnPhase
+from sidequest.game.turn import PreprocessedAction, TurnManager, TurnPhase
 
 __all__ = [
     # character
@@ -134,6 +134,7 @@ __all__ = [
     "TropeState",
     "WorldStatePatch",
     # turn
+    "PreprocessedAction",
     "TurnManager",
     "TurnPhase",
 ]

@@ -121,3 +121,22 @@ class TurnManager(BaseModel):
     def advance_phase(self) -> None:
         """Advance to the next phase within the current round."""
         self.phase = _PHASE_TRANSITIONS[self.phase]
+
+
+class PreprocessedAction(BaseModel):
+    """Player action after STT cleanup and perspective rewriting.
+
+    Port of sidequest_game::preprocessor::PreprocessedAction.
+    Produced by the action preprocessor before being handed to agents.
+    """
+
+    model_config = {"frozen": True}
+
+    you: str
+    named: str
+    intent: str
+    is_power_grab: bool = False
+    references_inventory: bool = False
+    references_npc: bool = False
+    references_ability: bool = False
+    references_location: bool = False
