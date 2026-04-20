@@ -806,6 +806,88 @@ class WebSocketSessionHandler:
             len(sd.lore_store),
         )
 
+        # NPC registry reset (Story 2.3 Slice G). A fresh character
+        # entering the world must not inherit chargen-tier NPC name
+        # extractions (the character's own name, lobby filler, etc.).
+        # World-level state — lore, tropes, region discovery, world
+        # history — MUST persist; only the per-narration NPC registry
+        # is wiped. Rust parity: connect.rs:2136-2157.
+        prev_registry_len = len(sd.snapshot.npc_registry)
+        sd.snapshot.npc_registry.clear()
+        span.add_event(
+            "npc_registry.cleared_on_chargen_complete",
+            {
+                "event": "npc_registry.cleared_on_chargen_complete",
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "player": sd.player_name,
+                "previous_len": prev_registry_len,
+                "reason": "fresh_character_narrative_reset",
+            },
+        )
+        logger.info(
+            "npc_registry.cleared genre=%s world=%s player=%s prev_len=%d",
+            sd.genre_slug,
+            sd.world_slug,
+            sd.player_name,
+            prev_registry_len,
+        )
+
+        # Persist (Story 2.3 Slice G). Writes the fully-populated
+        # snapshot — character in characters[], NPCs from world
+        # materialization, scenario bound, room-graph entrance set
+        # — to SQLite so a reconnect hits has_character=True and
+        # skips chargen. Without this, the player walks chargen
+        # again on every connect. Rust parity: connect.rs:2174-2180.
+        try:
+            sd.store.save(sd.snapshot)
+            span.add_event(
+                "session.persisted_at_chargen_complete",
+                {
+                    "event": "session.persisted",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player": sd.player_name,
+                    "turn": sd.snapshot.turn_manager.interaction,
+                },
+            )
+            logger.info(
+                "session.persisted_at_chargen_complete genre=%s world=%s player=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                sd.player_name,
+            )
+        except Exception as exc:
+            # Persistence failure must NOT strand the player mid-
+            # commit — log loudly (not silent) and proceed. On next
+            # reconnect the save will be absent so chargen repeats;
+            # the OTEL event surfaces the underlying fault for the
+            # GM panel / ops review.
+            logger.error(
+                "session.persist_failed_at_chargen_complete genre=%s world=%s error=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                exc,
+            )
+            span.add_event(
+                "session.persist_failed_at_chargen_complete",
+                {
+                    "event": "session.persist_failed",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player": sd.player_name,
+                    "error": str(exc),
+                },
+            )
+
+        # Flip state to Playing (Story 2.3 Slice G). Before this, the
+        # session stayed in Creating until the first PLAYER_ACTION —
+        # which meant a disconnect-between-confirmation-and-first-
+        # action lost the save state flag. Now the transition happens
+        # atomically with persistence. Rust parity: connect.rs:2183
+        # (session.complete_character_creation).
+        self._state = _State.Playing
+
         sd.builder = None
         logger.info(
             "chargen.complete char_name=%s class=%s race=%s hp=%d",
