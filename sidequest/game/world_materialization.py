@@ -433,7 +433,6 @@ class WorldBuilder:
                 height=None,
                 distinguishing_features=[],
                 ocean=None,
-                belief_state={},
                 resolution_tier="spawn",
                 non_transactional_interactions=0,
                 jungian_id=None,

@@ -17,9 +17,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from sidequest.game.belief_state import BeliefState
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.history_chapter import HistoryChapter
+from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
 
 # ---------------------------------------------------------------------------
@@ -92,8 +94,12 @@ class Npc(BaseModel):
 
     # P5-deferred: OCEAN personality (story 10-1, scenario system)
     ocean: dict | None = None
-    # P5-deferred: BeliefState (Epic 7, scenario system)
-    belief_state: dict = Field(default_factory=dict)
+    # Scenario system (Epic 7): per-NPC knowledge bubble. Ported in
+    # Story 2.3 Slice D — seeded from ScenarioPack.npcs.initial_beliefs
+    # at chargen confirmation and mutated between turns by gossip /
+    # narrator-driven learning. Gossip + accusation logic defer to a
+    # later slice; the data model and mutation surface are live.
+    belief_state: BeliefState = Field(default_factory=BeliefState)
     # P2-deferred: ResolutionTier (NPC enrichment system)
     resolution_tier: str = "spawn"
     non_transactional_interactions: int = 0
@@ -301,7 +307,8 @@ class GameSnapshot(BaseModel):
     - genie_wishes: P5-deferred (consequence engine)
     - axis_values: P2-deferred (tone system)
     - achievement_tracker: P6-deferred
-    - scenario_state: P5-deferred (Epic 7)
+    - scenario_state: runtime holder live (Story 2.3 Slice D); gossip/
+      accusation logic defers to a later slice
     - discovered_rooms: P3-deferred (room-graph navigation)
     - resources: P4-deferred (resource pools)
 
@@ -371,8 +378,12 @@ class GameSnapshot(BaseModel):
     # P6-deferred: achievement tracker (F7)
     achievement_tracker: AchievementTracker = Field(default_factory=AchievementTracker)
 
-    # P5-deferred: scenario state (Epic 7 — whodunit, belief state, clues)
-    scenario_state: dict | None = None
+    # Scenario state (Epic 7 — whodunit, belief state, clues). Bound at
+    # chargen confirmation when the genre pack declares a scenario
+    # (Story 2.3 Slice D). Between-turn processing (gossip, NPC actions,
+    # clue availability) and accusation evaluation defer to a later
+    # slice — the runtime holder is live now.
+    scenario_state: ScenarioState | None = None
 
     # P3-deferred: room-graph navigation (story 19-2)
     discovered_rooms: list[str] = Field(default_factory=list)

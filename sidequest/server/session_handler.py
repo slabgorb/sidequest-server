@@ -41,6 +41,7 @@ from sidequest.genre.archetype.shim import resolve_archetype
 from sidequest.genre.error import GenreValidationError
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -58,6 +59,7 @@ from sidequest.protocol.types import NonBlankString
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.opening_hook import resolve_opening
+from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
@@ -101,6 +103,14 @@ class _SessionData:
     # opening-hook entries — the first turn runs without a directive.
     opening_seed: str | None = None
     opening_directive: str | None = None
+    # Active scenario pack (Story 2.3 Slice D). Set at chargen
+    # confirmation when the genre pack declares at least one scenario.
+    # Rust parity: ``shared_session.active_scenario`` — lives on the
+    # shared session in Rust's multi-player model; Python Phase 1 is
+    # single-player so it lands on the connection-scoped state. Later
+    # slices consume this for pressure events, scene-budget gating,
+    # and accusation UI.
+    active_scenario: ScenarioPack | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -682,6 +692,22 @@ class WebSocketSessionHandler:
                 "player_id": player_id,
             },
         )
+
+        # Scenario binding (Story 2.3 Slice D). When the pack declares a
+        # scenario, bind the first one to a ScenarioState, seed matching
+        # NPC belief states, and stash the chosen pack on the session
+        # for later consumers (pressure events, scene budget, accusation
+        # UI). Rust parity: connect.rs:1948-2023. No-op when the pack
+        # has no scenarios.
+        bind_result = bind_scenario(
+            sd.genre_pack,
+            sd.snapshot,
+            genre_slug=sd.genre_slug,
+            world_slug=sd.world_slug,
+        )
+        if bind_result is not None:
+            _, active_pack = bind_result
+            sd.active_scenario = active_pack
 
         sd.builder = None
         logger.info(
