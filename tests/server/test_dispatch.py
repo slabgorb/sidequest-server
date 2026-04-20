@@ -1,0 +1,172 @@
+"""Unit tests for sidequest.server.dispatch (PLAYER_ACTION → NARRATION path).
+
+Tests the dispatch layer in isolation using mocked ClaudeClient.
+No real Claude CLI calls.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from sidequest.agents.claude_client import ClaudeResponse
+from sidequest.agents.orchestrator import NarrationTurnResult
+from sidequest.game.session import GameSnapshot
+from sidequest.server.dispatch import _apply_narration_result_to_snapshot
+
+
+# ---------------------------------------------------------------------------
+# _apply_narration_result_to_snapshot unit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_result(**kwargs) -> NarrationTurnResult:
+    defaults = {
+        "narration": "The wind howls outside.",
+        "is_degraded": False,
+    }
+    defaults.update(kwargs)
+    return NarrationTurnResult(**defaults)
+
+
+def test_apply_location_update():
+    """location from game_patch is applied to snapshot.location."""
+    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Old Place")
+    result = _make_result(narration="You arrive.", location="New Dungeon")
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert snapshot.location == "New Dungeon"
+    assert "New Dungeon" in snapshot.discovered_regions
+
+
+def test_apply_location_added_to_discovered_regions_once():
+    """Location is only added to discovered_regions once (no duplicates)."""
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        location="Town",
+        discovered_regions=["Town"],
+    )
+    result = _make_result(narration="You stay in town.", location="Town")
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert snapshot.discovered_regions.count("Town") == 1
+
+
+def test_apply_quest_updates():
+    """Quest updates from game_patch are merged into snapshot.quest_log."""
+    snapshot = GameSnapshot(genre_slug="test", world_slug="test")
+    result = _make_result(narration="Quest started.", quest_updates={"find_crystal": "active"})
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert snapshot.quest_log["find_crystal"] == "active"
+
+
+def test_apply_lore_established_no_duplicates():
+    """Lore established items are appended without duplicates."""
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        lore_established=["The ruins are ancient."],
+    )
+    result = _make_result(
+        narration="You learn more.",
+        lore_established=["The ruins are ancient.", "The crystal glows at night."],
+    )
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert snapshot.lore_established.count("The ruins are ancient.") == 1
+    assert "The crystal glows at night." in snapshot.lore_established
+
+
+def test_apply_npc_registry_new_npc():
+    """New NPCs from npcs_present are added to the NPC registry."""
+    from sidequest.agents.orchestrator import NpcMention
+
+    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Tavern")
+    result = _make_result(
+        narration="A stranger approaches.",
+        npcs_present=[NpcMention(name="Zara", role="barkeep", pronouns="she/her")],
+    )
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert len(snapshot.npc_registry) == 1
+    assert snapshot.npc_registry[0].name == "Zara"
+    assert snapshot.npc_registry[0].role == "barkeep"
+
+
+def test_apply_npc_registry_updates_existing():
+    """Existing NPCs in the registry are updated (not duplicated)."""
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.game.session import NpcRegistryEntry
+
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        location="Tavern",
+        npc_registry=[
+            NpcRegistryEntry(name="Zara", role="stranger", last_seen_turn=1)
+        ],
+    )
+    result = _make_result(
+        narration="Zara speaks.",
+        npcs_present=[NpcMention(name="Zara", role="barkeep")],
+    )
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    # Should still be 1 entry, role updated
+    assert len(snapshot.npc_registry) == 1
+    assert snapshot.npc_registry[0].role == "barkeep"
+
+
+def test_apply_no_mutation_on_empty_result():
+    """Empty NarrationTurnResult does not mutate snapshot."""
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        location="Start",
+        quest_log={"q1": "active"},
+    )
+    original_location = snapshot.location
+    original_quest_log = dict(snapshot.quest_log)
+
+    result = _make_result(narration="Nothing happens.")
+
+    _apply_narration_result_to_snapshot(snapshot, result, "player")
+
+    assert snapshot.location == original_location
+    assert snapshot.quest_log == original_quest_log
+
+
+def test_apply_non_narration_result_is_noop():
+    """Non-NarrationTurnResult argument is a no-op (type guard)."""
+    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="X")
+    _apply_narration_result_to_snapshot(snapshot, object(), "player")
+    assert snapshot.location == "X"
+
+
+# ---------------------------------------------------------------------------
+# Dispatch module re-exports
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_exports_handler():
+    """dispatch.py re-exports WebSocketSessionHandler."""
+    from sidequest.server.dispatch import WebSocketSessionHandler
+
+    assert WebSocketSessionHandler is not None
+
+
+def test_dispatch_exports_apply_fn():
+    """dispatch.py re-exports _apply_narration_result_to_snapshot."""
+    from sidequest.server.dispatch import _apply_narration_result_to_snapshot as fn
+
+    assert callable(fn)
