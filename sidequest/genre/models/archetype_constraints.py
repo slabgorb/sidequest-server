@@ -65,3 +65,33 @@ class ArchetypeConstraints(BaseModel):
     valid_pairings: ValidPairings
     genre_flavor: GenreFlavor
     npc_roles_available: list[str] = Field(default_factory=list)
+
+    def pairing_weight(self, jungian: str, rpg_role: str) -> PairingWeight | None:
+        """Look up the weight of a [jungian, rpg_role] pairing.
+
+        Returns None if the pairing is not listed in any weight category.
+        Port of Rust ArchetypeConstraints::pairing_weight().
+        """
+        def matches(pair: list[str]) -> bool:
+            return len(pair) == 2 and pair[0] == jungian and pair[1] == rpg_role
+
+        if any(matches(p) for p in self.valid_pairings.common):
+            return PairingWeight.common
+        if any(matches(p) for p in self.valid_pairings.uncommon):
+            return PairingWeight.uncommon
+        if any(matches(p) for p in self.valid_pairings.rare):
+            return PairingWeight.rare
+        if any(matches(p) for p in self.valid_pairings.forbidden):
+            return PairingWeight.forbidden
+        return None
+
+    def fallback_name(self, rpg_role: str) -> str | None:
+        """Get the fallback name for an RPG role in this genre.
+
+        Returns None if no genre flavor is registered for the given role id.
+        Port of Rust ArchetypeConstraints::fallback_name().
+        """
+        flavor = self.genre_flavor.rpg_roles.get(rpg_role)
+        if flavor is not None:
+            return flavor.fallback_name
+        return None
