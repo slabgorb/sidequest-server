@@ -1,7 +1,6 @@
 """sidequest.genre — genre pack loading, resolution, and models.
 
-Public re-exports from foundation layer (Story 41-2, subagent A).
-Subagent B will add GenrePack and other model types.
+Public re-exports from foundation layer (Story 41-2).
 Subagent C will add GenreLoader and the archetype shim.
 """
 
@@ -17,6 +16,47 @@ from sidequest.genre.error import (
     SchemaValidationError,
     ValidationErrors,
 )
+from sidequest.genre.genre_code import GenreCode
+from sidequest.genre.models import (
+    AdvancementEffect,
+    AdvancementTier,
+    AdvancementTree,
+    ArchetypeConstraints,
+    ArchetypeFunnels,
+    ArchetypeResolved,
+    AudioConfig,
+    AxesConfig,
+    BackstoryTables,
+    BaseArchetypes,
+    BeatDef,
+    BeatVocabulary,
+    CartographyConfig,
+    CharCreationScene,
+    ConfrontationDef,
+    Culture,
+    DramaThresholds,
+    GenrePack,
+    GenreTheme,
+    InventoryConfig,
+    Legend,
+    Lore,
+    MixerConfig,
+    NpcArchetype,
+    NpcTraitsDatabase,
+    OceanProfile,
+    OpeningHook,
+    PackMeta,
+    Prompts,
+    ProgressionConfig,
+    RecoveryTrigger,
+    RulesConfig,
+    ScenarioPack,
+    TropeDefinition,
+    VisualStyle,
+    World,
+    WorldConfig,
+    WorldLore,
+)
 from sidequest.genre.resolver import (
     LayeredMerge,
     MergeStrategy,
@@ -26,6 +66,8 @@ from sidequest.genre.resolver import (
 )
 
 __all__ = [
+    # genre_code
+    "GenreCode",
     # resolver
     "LayeredMerge",
     "MergeStrategy",
@@ -44,4 +86,43 @@ __all__ = [
     "ValidationErrors",
     # cache
     "GenreCache",
+    # models — key public types
+    "AdvancementEffect",
+    "AdvancementTier",
+    "AdvancementTree",
+    "ArchetypeConstraints",
+    "ArchetypeFunnels",
+    "ArchetypeResolved",
+    "AudioConfig",
+    "AxesConfig",
+    "BackstoryTables",
+    "BaseArchetypes",
+    "BeatDef",
+    "BeatVocabulary",
+    "CartographyConfig",
+    "CharCreationScene",
+    "ConfrontationDef",
+    "Culture",
+    "DramaThresholds",
+    "GenrePack",
+    "GenreTheme",
+    "InventoryConfig",
+    "Legend",
+    "Lore",
+    "MixerConfig",
+    "NpcArchetype",
+    "NpcTraitsDatabase",
+    "OceanProfile",
+    "OpeningHook",
+    "PackMeta",
+    "Prompts",
+    "ProgressionConfig",
+    "RecoveryTrigger",
+    "RulesConfig",
+    "ScenarioPack",
+    "TropeDefinition",
+    "VisualStyle",
+    "World",
+    "WorldConfig",
+    "WorldLore",
 ]

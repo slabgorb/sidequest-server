@@ -1,0 +1,337 @@
+"""sidequest.genre.models — all genre pack model types.
+
+Re-exports everything so `from sidequest.genre.models import X` works for any type.
+"""
+
+from sidequest.genre.models.advancement import (
+    AdvancementEffect,
+    AdvancementEffectBeatDiscount,
+    AdvancementEffectEdgeMaxBonus,
+    AdvancementEffectEdgeRecovery,
+    AdvancementEffectLeverageBonus,
+    AdvancementEffectLoreRevealBonus,
+    AdvancementTier,
+    AdvancementTree,
+    LoreRevealScope,
+    RecoveryTrigger,
+    RecoveryTriggerOnAllyRescue,
+    RecoveryTriggerOnBeatSuccess,
+    RecoveryTriggerOnResolution,
+)
+from sidequest.genre.models.archetype import ArchetypeResolved
+from sidequest.genre.models.archetype_axes import (
+    BaseArchetypes,
+    JungianArchetype,
+    NpcRole,
+    OceanTendencies,
+    RpgRole,
+)
+from sidequest.genre.models.archetype_constraints import (
+    ArchetypeConstraints,
+    GenreFlavor,
+    JungianFlavor,
+    PairingWeight,
+    RpgRoleFlavor,
+    ValidPairings,
+)
+from sidequest.genre.models.archetype_funnels import (
+    ArchetypeFunnels,
+    Funnel,
+    WorldConstraints,
+)
+from sidequest.genre.models.audio import (
+    AudioAiGeneration,
+    AudioConfig,
+    AudioEffect,
+    AudioTheme,
+    AudioVariation,
+    CreatureVoicePreset,
+    FactionThemeDef,
+    FactionTriggers,
+    MixerConfig,
+    MoodTrack,
+    TrackVariation,
+    VoiceConfig,
+    VoicePresets,
+)
+from sidequest.genre.models.axes import AxesConfig, AxisDefinition, AxisPreset
+from sidequest.genre.models.character import (
+    BackstoryTables,
+    CharCreationChoice,
+    CharCreationScene,
+    EquipmentTables,
+    MechanicalEffects,
+    NpcArchetype,
+    VisualStyle,
+)
+from sidequest.genre.models.culture import CorpusRef, Culture, CultureSlot
+from sidequest.genre.models.inventory import (
+    CarryMode,
+    CatalogItem,
+    CurrencyConfig,
+    InventoryConfig,
+    InventoryPhilosophy,
+)
+from sidequest.genre.models.legends import FactionGrudge, Legend, TerrainScar
+from sidequest.genre.models.lore import Faction, Lore, WorldLore
+from sidequest.genre.models.narrative import (
+    Achievement,
+    BeatObstacle,
+    BeatVocabulary,
+    OpeningHook,
+    PowerTier,
+    Prompts,
+)
+from sidequest.genre.models.npc_traits import NpcTrait, NpcTraitsDatabase
+from sidequest.genre.models.ocean import (
+    DramaThresholds,
+    OceanDimension,
+    OceanProfile,
+    OceanShift,
+    OceanShiftLog,
+)
+from sidequest.genre.models.pack import (
+    GenrePack,
+    Inspiration,
+    PackMeta,
+    PortraitManifestEntry,
+    RecommendedPlayers,
+    World,
+)
+from sidequest.genre.models.progression import (
+    Ability,
+    Affinity,
+    AffinityTier,
+    AffinityUnlocks,
+    ItemEvolution,
+    LevelBonuses,
+    ProgressionConfig,
+    WealthTier,
+)
+from sidequest.genre.models.rules import (
+    BeatDef,
+    ConfrontationDef,
+    CrossingDirection,
+    EdgeConfig,
+    EdgeRecoveryDefaults,
+    EdgeThresholdDecl,
+    InitiativeRule,
+    InteractionCell,
+    InteractionTable,
+    MetricDef,
+    RecoveryBehaviour,
+    ResolutionMode,
+    ResourceDeclaration,
+    ResourceThresholdDecl,
+    RulesConfig,
+    SecondaryStatDef,
+)
+from sidequest.genre.models.scenario import (
+    Act,
+    AssignmentMatrix,
+    AtmosphereMatrix,
+    AtmosphereVariant,
+    ClueGraph,
+    ClueNode,
+    EscalationBeat,
+    InitialBeliefs,
+    Pacing,
+    PlayerRole,
+    PressureEvent,
+    RoleHook,
+    ScenarioNpc,
+    ScenarioPack,
+    Suspect,
+    Suspicion,
+    WhenGuilty,
+    WhenInnocent,
+)
+from sidequest.genre.models.theme import Dinkus, GenreTheme, SessionOpener
+from sidequest.genre.models.tropes import (
+    PassiveProgression,
+    TropeDefinition,
+    TropeEscalation,
+)
+from sidequest.genre.models.world import (
+    CartographyConfig,
+    GraphEdge,
+    LegendEntry,
+    NavigationMode,
+    Region,
+    RoomDef,
+    Route,
+    SubGraph,
+    Terrain,
+    WorldConfig,
+    WorldGraph,
+    WorldGraphNode,
+)
+
+__all__ = [
+    # advancement
+    "AdvancementEffect",
+    "AdvancementEffectBeatDiscount",
+    "AdvancementEffectEdgeMaxBonus",
+    "AdvancementEffectEdgeRecovery",
+    "AdvancementEffectLeverageBonus",
+    "AdvancementEffectLoreRevealBonus",
+    "AdvancementTier",
+    "AdvancementTree",
+    "LoreRevealScope",
+    "RecoveryTrigger",
+    "RecoveryTriggerOnAllyRescue",
+    "RecoveryTriggerOnBeatSuccess",
+    "RecoveryTriggerOnResolution",
+    # archetype
+    "ArchetypeResolved",
+    # archetype_axes
+    "BaseArchetypes",
+    "JungianArchetype",
+    "NpcRole",
+    "OceanTendencies",
+    "RpgRole",
+    # archetype_constraints
+    "ArchetypeConstraints",
+    "GenreFlavor",
+    "JungianFlavor",
+    "PairingWeight",
+    "RpgRoleFlavor",
+    "ValidPairings",
+    # archetype_funnels
+    "ArchetypeFunnels",
+    "Funnel",
+    "WorldConstraints",
+    # audio
+    "AudioAiGeneration",
+    "AudioConfig",
+    "AudioEffect",
+    "AudioTheme",
+    "AudioVariation",
+    "CreatureVoicePreset",
+    "FactionThemeDef",
+    "FactionTriggers",
+    "MixerConfig",
+    "MoodTrack",
+    "TrackVariation",
+    "VoiceConfig",
+    "VoicePresets",
+    # axes
+    "AxesConfig",
+    "AxisDefinition",
+    "AxisPreset",
+    # character
+    "BackstoryTables",
+    "CharCreationChoice",
+    "CharCreationScene",
+    "EquipmentTables",
+    "MechanicalEffects",
+    "NpcArchetype",
+    "VisualStyle",
+    # culture
+    "CorpusRef",
+    "Culture",
+    "CultureSlot",
+    # inventory
+    "CarryMode",
+    "CatalogItem",
+    "CurrencyConfig",
+    "InventoryConfig",
+    "InventoryPhilosophy",
+    # legends
+    "FactionGrudge",
+    "Legend",
+    "TerrainScar",
+    # lore
+    "Faction",
+    "Lore",
+    "WorldLore",
+    # narrative
+    "Achievement",
+    "BeatObstacle",
+    "BeatVocabulary",
+    "OpeningHook",
+    "PowerTier",
+    "Prompts",
+    # npc_traits
+    "NpcTrait",
+    "NpcTraitsDatabase",
+    # ocean
+    "DramaThresholds",
+    "OceanDimension",
+    "OceanProfile",
+    "OceanShift",
+    "OceanShiftLog",
+    # pack
+    "GenrePack",
+    "Inspiration",
+    "PackMeta",
+    "PortraitManifestEntry",
+    "RecommendedPlayers",
+    "World",
+    # progression
+    "Ability",
+    "Affinity",
+    "AffinityTier",
+    "AffinityUnlocks",
+    "ItemEvolution",
+    "LevelBonuses",
+    "ProgressionConfig",
+    "WealthTier",
+    # rules
+    "BeatDef",
+    "ConfrontationDef",
+    "CrossingDirection",
+    "EdgeConfig",
+    "EdgeRecoveryDefaults",
+    "EdgeThresholdDecl",
+    "InitiativeRule",
+    "InteractionCell",
+    "InteractionTable",
+    "MetricDef",
+    "RecoveryBehaviour",
+    "ResolutionMode",
+    "ResourceDeclaration",
+    "ResourceThresholdDecl",
+    "RulesConfig",
+    "SecondaryStatDef",
+    # scenario
+    "Act",
+    "AssignmentMatrix",
+    "AtmosphereMatrix",
+    "AtmosphereVariant",
+    "ClueGraph",
+    "ClueNode",
+    "EscalationBeat",
+    "InitialBeliefs",
+    "Pacing",
+    "PlayerRole",
+    "PressureEvent",
+    "RoleHook",
+    "ScenarioNpc",
+    "ScenarioPack",
+    "Suspect",
+    "Suspicion",
+    "WhenGuilty",
+    "WhenInnocent",
+    # theme
+    "Dinkus",
+    "GenreTheme",
+    "SessionOpener",
+    # tropes
+    "PassiveProgression",
+    "TropeDefinition",
+    "TropeEscalation",
+    # world
+    "CartographyConfig",
+    "GraphEdge",
+    "LegendEntry",
+    "NavigationMode",
+    "Region",
+    "RoomDef",
+    "Route",
+    "SubGraph",
+    "Terrain",
+    "WorldConfig",
+    "WorldGraph",
+    "WorldGraphNode",
+]
