@@ -1,0 +1,136 @@
+"""sidequest.protocol — WebSocket protocol types for the SideQuest game engine.
+
+Re-exports all public symbols from the protocol sub-modules so callers can
+import directly from sidequest.protocol without knowing the internal layout.
+
+Port of sidequest-protocol (Rust crate) to Python via pydantic.
+"""
+
+from __future__ import annotations
+
+# Foundation types
+from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
+from sidequest.protocol.provenance import (
+    ContributionKind,
+    MergeStep,
+    Provenance,
+    Span,
+    Tier,
+)
+from sidequest.protocol.sanitize import sanitize_player_text
+from sidequest.protocol.types import NonBlankString, Stat
+
+# Nested model types
+from sidequest.protocol.models import (
+    CartographyMetadata,
+    CartographyRegion,
+    CartographyRoute,
+    CharacterSheetDetails,
+    CharacterState,
+    CreationChoice,
+    ExploredLocation,
+    FactCategory,
+    FogBounds,
+    Footnote,
+    InitialState,
+    InventoryItem,
+    InventoryPayload,
+    ItemGained,
+    PartyMember,
+    RolledStat,
+    RoomExitInfo,
+    StateDelta,
+    TacticalFeaturePayload,
+    TacticalGridPayload,
+)
+
+# Phase 1 payload classes
+from sidequest.protocol.messages import (
+    ActionQueueMessage,
+    ActionQueuePayload,
+    CharacterCreationMessage,
+    CharacterCreationPayload,
+    ChapterMarkerMessage,
+    ChapterMarkerPayload,
+    ErrorMessage,
+    ErrorPayload,
+    GameMessage,
+    MapUpdateMessage,
+    MapUpdatePayload,
+    NarrationEndMessage,
+    NarrationEndPayload,
+    NarrationMessage,
+    NarrationPayload,
+    PartyStatusMessage,
+    PartyStatusPayload,
+    PlayerActionMessage,
+    PlayerActionPayload,
+    SessionEventMessage,
+    SessionEventPayload,
+    ThinkingMessage,
+    ThinkingPayload,
+    TurnStatusMessage,
+    TurnStatusPayload,
+)
+
+__all__ = [
+    # Foundation
+    "MessageType",
+    "NarratorVerbosity",
+    "NarratorVocabulary",
+    "ContributionKind",
+    "MergeStep",
+    "Provenance",
+    "Span",
+    "Tier",
+    "sanitize_player_text",
+    "NonBlankString",
+    "Stat",
+    # Nested models
+    "CartographyMetadata",
+    "CartographyRegion",
+    "CartographyRoute",
+    "CharacterSheetDetails",
+    "CharacterState",
+    "CreationChoice",
+    "ExploredLocation",
+    "FactCategory",
+    "FogBounds",
+    "Footnote",
+    "InitialState",
+    "InventoryItem",
+    "InventoryPayload",
+    "ItemGained",
+    "PartyMember",
+    "RolledStat",
+    "RoomExitInfo",
+    "StateDelta",
+    "TacticalFeaturePayload",
+    "TacticalGridPayload",
+    # Phase 1 payloads + messages
+    "ActionQueueMessage",
+    "ActionQueuePayload",
+    "CharacterCreationMessage",
+    "CharacterCreationPayload",
+    "ChapterMarkerMessage",
+    "ChapterMarkerPayload",
+    "ErrorMessage",
+    "ErrorPayload",
+    "GameMessage",
+    "MapUpdateMessage",
+    "MapUpdatePayload",
+    "NarrationEndMessage",
+    "NarrationEndPayload",
+    "NarrationMessage",
+    "NarrationPayload",
+    "PartyStatusMessage",
+    "PartyStatusPayload",
+    "PlayerActionMessage",
+    "PlayerActionPayload",
+    "SessionEventMessage",
+    "SessionEventPayload",
+    "ThinkingMessage",
+    "ThinkingPayload",
+    "TurnStatusMessage",
+    "TurnStatusPayload",
+]
