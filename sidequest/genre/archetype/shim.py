@@ -23,6 +23,7 @@ from sidequest.genre.error import GenreValidationError
 from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints, PairingWeight
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
+from sidequest.protocol.provenance import ContributionKind, MergeStep, Provenance, Tier
 
 
 class ResolutionSource(str, Enum):
@@ -44,7 +45,8 @@ class ArchetypeResolution(BaseModel):
     Port of Rust ArchetypeResolution struct (archetype/shim.rs).
 
     `resolved` is the archetype value. `source` and `weight` are lookup
-    metadata describing where the resolution came from.
+    metadata describing where the resolution came from. `provenance` is
+    the tier-annotated source record for GM-panel display.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -55,6 +57,8 @@ class ArchetypeResolution(BaseModel):
     """Tier that supplied the final display name."""
     weight: PairingWeight
     """Pairing-weight classification from the genre's constraint table."""
+    provenance: Provenance
+    """Tier + file + merge-trail of the final resolution, for GM-panel display."""
 
 
 def resolve_archetype(
@@ -123,18 +127,34 @@ def resolve_archetype(
                 faction=funnel.faction,
                 cultural_status=funnel.cultural_status,
             )
+            source_file = f"{genre}/worlds/{world or '<unknown>'}/archetype_funnels.yaml"
+            provenance = Provenance(
+                source_tier=Tier.world,
+                source_file=source_file,
+                source_span=None,
+                merge_trail=[
+                    MergeStep(
+                        tier=Tier.world,
+                        file=source_file,
+                        span=None,
+                        contribution=ContributionKind.initial,
+                    )
+                ],
+            )
             return ArchetypeResolution(
                 resolved=resolved,
                 source=ResolutionSource.world_funnel,
                 weight=weight,
+                provenance=provenance,
             )
 
     # Genre fallback
-    resolved, source = _genre_fallback(jungian, rpg_role, constraints)
+    resolved, source, provenance = _genre_fallback(jungian, rpg_role, constraints, genre)
     return ArchetypeResolution(
         resolved=resolved,
         source=source,
         weight=weight,
+        provenance=provenance,
     )
 
 
@@ -142,7 +162,8 @@ def _genre_fallback(
     jungian: str,
     rpg_role: str,
     constraints: ArchetypeConstraints,
-) -> tuple[ArchetypeResolved, ResolutionSource]:
+    genre: str,
+) -> tuple[ArchetypeResolved, ResolutionSource, Provenance]:
     """Build a genre-level fallback resolution.
 
     Port of Rust genre_fallback() helper in archetype/shim.rs.
@@ -160,4 +181,18 @@ def _genre_fallback(
         faction=None,
         cultural_status=None,
     )
-    return resolved, ResolutionSource.genre_fallback
+    source_file = f"{genre}/archetype_constraints.yaml"
+    provenance = Provenance(
+        source_tier=Tier.genre,
+        source_file=source_file,
+        source_span=None,
+        merge_trail=[
+            MergeStep(
+                tier=Tier.genre,
+                file=source_file,
+                span=None,
+                contribution=ContributionKind.initial,
+            )
+        ],
+    )
+    return resolved, ResolutionSource.genre_fallback, provenance

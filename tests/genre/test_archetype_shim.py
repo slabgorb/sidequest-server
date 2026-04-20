@@ -27,6 +27,7 @@ from sidequest.genre.error import GenreValidationError
 from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints, PairingWeight
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
+from sidequest.protocol.provenance import Tier
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +193,7 @@ def test_resolves_via_world_funnel() -> None:
     assert result.resolved.faction == "Thornwall Convocation"
     assert "Itinerant" in result.resolved.lore
     assert result.source == ResolutionSource.world_funnel
+    assert result.provenance.source_tier == Tier.world
 
 
 def test_falls_back_to_genre() -> None:
@@ -203,6 +205,7 @@ def test_falls_back_to_genre() -> None:
     assert result.resolved.name == "Shield-Bearer"
     assert result.resolved.faction is None
     assert result.source == ResolutionSource.genre_fallback
+    assert result.provenance.source_tier == Tier.genre
 
 
 def test_falls_back_to_genre_when_funnel_no_match() -> None:
@@ -313,6 +316,47 @@ def test_resolution_type_is_archetype_resolution() -> None:
         "test_genre", None,
     )
     assert isinstance(result, ArchetypeResolution)
+
+
+# ---------------------------------------------------------------------------
+# Provenance tests
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_genre_fallback_tier_and_file() -> None:
+    """Genre fallback sets source_tier=Genre and file path ending in archetype_constraints.yaml."""
+    result = resolve_archetype(
+        "hero", "tank",
+        _base(), _constraints(), None,
+        "caverns_and_claudes", None,
+    )
+    assert result.provenance.source_tier == Tier.genre
+    assert result.provenance.source_file.endswith("archetype_constraints.yaml")
+    assert len(result.provenance.merge_trail) == 1
+    assert result.provenance.merge_trail[0].tier == Tier.genre
+
+
+def test_provenance_world_funnel_tier_and_file() -> None:
+    """World funnel sets source_tier=World and file path containing archetype_funnels.yaml."""
+    result = resolve_archetype(
+        "sage", "healer",
+        _base(), _constraints(), _funnels(),
+        "caverns_and_claudes", "grimvault",
+    )
+    assert result.provenance.source_tier == Tier.world
+    assert "archetype_funnels.yaml" in result.provenance.source_file
+    assert len(result.provenance.merge_trail) == 1
+    assert result.provenance.merge_trail[0].tier == Tier.world
+
+
+def test_provenance_world_fallback_uses_genre_tier_when_funnel_misses() -> None:
+    """When funnels don't match, provenance falls back to Genre tier."""
+    result = resolve_archetype(
+        "hero", "tank",
+        _base(), _constraints(), _funnels(),  # no hero+tank funnel
+        "caverns_and_claudes", "grimvault",
+    )
+    assert result.provenance.source_tier == Tier.genre
 
 
 # ---------------------------------------------------------------------------
