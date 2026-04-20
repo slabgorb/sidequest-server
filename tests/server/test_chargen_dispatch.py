@@ -39,10 +39,7 @@ CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genr
 # ---------------------------------------------------------------------------
 
 
-def _mock_claude_client_factory():
-    mock = MagicMock()
-    mock.send_with_session = AsyncMock()
-    return lambda: mock
+from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402
 
 
 @pytest.fixture
@@ -331,11 +328,14 @@ class TestPhaseConfirmation:
                 else:
                     pytest.fail(f"unexpected phase: {builder._phase!r}")
 
-            # Now commit.
+            # Now commit. Slice H routes an opening narration turn
+            # + PARTY_STATUS snapshot through confirmation, so the
+            # return list is CHARACTER_CREATION{complete} followed by
+            # PARTY_STATUS then NARRATION + NARRATION_END.
             out = await _send_chargen(
                 handler, CharacterCreationPayload(phase="confirmation")
             )
-            assert len(out) == 1
+            assert len(out) >= 1
             msg = out[0]
             assert isinstance(msg, CharacterCreationMessage)
             assert msg.payload.phase == "complete"
@@ -422,7 +422,7 @@ class TestSliceAWiring:
             out = await _send_chargen(
                 handler, CharacterCreationPayload(phase="confirmation")
             )
-            assert len(out) == 1
+            assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -507,7 +507,7 @@ class TestSliceAWiring:
             out = await _send_chargen(
                 handler, CharacterCreationPayload(phase="confirmation")
             )
-            assert len(out) == 1
+            assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -559,7 +559,7 @@ class TestSliceCWorldMaterialization:
             out = await _send_chargen(
                 handler, CharacterCreationPayload(phase="confirmation")
             )
-            assert len(out) == 1
+            assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
             sd = handler._session_data  # type: ignore[attr-defined]
