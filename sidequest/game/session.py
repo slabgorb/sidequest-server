@@ -217,14 +217,12 @@ class TropeState(BaseModel):
     Port of sidequest_game::trope::TropeState — P2-deferred full port.
     """
 
-    model_config = {"extra": "forbid", "extra": "ignore"}  # type: ignore[dict-item]
+    model_config = {"extra": "ignore"}
 
     id: str = ""
     status: str = "dormant"
     progress: float = 0.0
     beats_fired: int = 0
-
-    model_config = {"extra": "ignore"}
 
 
 class HistoryChapter(BaseModel):
