@@ -33,6 +33,6 @@ def init_tracer(service_name: str = "sidequest-server") -> None:
     _initialized = True
 
 
-def tracer():
+def tracer() -> trace.Tracer:
     """Return the sidequest-server tracer."""
     return trace.get_tracer("sidequest-server")
