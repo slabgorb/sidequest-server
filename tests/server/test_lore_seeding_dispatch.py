@@ -43,10 +43,7 @@ from sidequest.server.session_handler import WebSocketSessionHandler
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
-def _mock_claude_client_factory():
-    mock = MagicMock()
-    mock.send_with_session = AsyncMock()
-    return lambda: mock
+from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402
 
 
 @pytest.fixture

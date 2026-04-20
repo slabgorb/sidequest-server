@@ -59,8 +59,16 @@ from sidequest.protocol.messages import (
     NarrationEndPayload,
     NarrationMessage,
     NarrationPayload,
+    PartyStatusMessage,
+    PartyStatusPayload,
     SessionEventMessage,
     SessionEventPayload,
+)
+from sidequest.protocol.models import (
+    CharacterSheetDetails,
+    InventoryItem,
+    InventoryPayload,
+    PartyMember,
 )
 from sidequest.protocol.types import NonBlankString
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
@@ -444,7 +452,7 @@ class WebSocketSessionHandler:
         if phase == "continue":
             return self._chargen_continue(builder, sd, player_id, span)
         if phase == "confirmation":
-            return self._chargen_confirmation(builder, sd, player_id, span)
+            return await self._chargen_confirmation(builder, sd, player_id, span)
         return [_error_msg(f"Unknown chargen phase: {phase}")]
 
     # ---- phase=scene ----------------------------------------------------
@@ -603,7 +611,7 @@ class WebSocketSessionHandler:
         )
 
     # ---- phase=confirmation (commit) ------------------------------------
-    def _chargen_confirmation(
+    async def _chargen_confirmation(
         self,
         builder: CharacterBuilder,
         sd: _SessionData,
@@ -902,7 +910,63 @@ class WebSocketSessionHandler:
             total_scenes=builder.total_scenes(),
             character=character.model_dump(mode="json"),
         )
-        return [CharacterCreationMessage(payload=payload, player_id=player_id)]
+        out: list[object] = [
+            CharacterCreationMessage(payload=payload, player_id=player_id)
+        ]
+
+        # PARTY_STATUS snapshot (Story 2.3 Slice H / Rust connect.rs:2533-2609).
+        # Emits the populated character sheet so the client Character
+        # tab lands populated at session-start without waiting for the
+        # first turn's PARTY_STATUS update.
+        try:
+            out.append(
+                self._build_session_start_party_status(sd, character, player_id)
+            )
+            span.add_event(
+                "session.start.character_snapshot_emitted",
+                {
+                    "event": "session.start.character_snapshot_emitted",
+                    "player_id": player_id,
+                    "character_name": character.core.name,
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "sheet_class": character.char_class,
+                    "inventory_count": len(
+                        [
+                            i for i in character.core.inventory.items
+                            if str(i.get("state", "Carried")) == "Carried"
+                        ]
+                    ),
+                },
+            )
+        except Exception as exc:
+            # The character-snapshot frame is a convenience for the UI;
+            # a failure to build it MUST NOT block the player from
+            # entering the world. Log loud and continue.
+            logger.error(
+                "session.start.character_snapshot_failed player=%s error=%s",
+                sd.player_name,
+                exc,
+            )
+            span.add_event(
+                "session.start.character_snapshot_failed",
+                {
+                    "event": "session.start.character_snapshot_failed",
+                    "error": str(exc),
+                    "player_id": player_id,
+                },
+            )
+
+        # Opening-turn bootstrap (Story 2.3 Slice H / Rust connect.rs:2270-2529).
+        # Fires the narrator using ``opening_seed`` (or a generic look-
+        # around fallback) and ``opening_directive`` injected into the
+        # Early zone. Consumes both fields on the session so subsequent
+        # PLAYER_ACTION turns run directive-free.
+        opening_messages = await self._run_opening_turn_narration(
+            sd, player_id, span
+        )
+        out.extend(opening_messages)
+        return out
 
     # ---- helper: next scene message OR confirmation summary -------------
     def _next_message(
@@ -959,36 +1023,30 @@ class WebSocketSessionHandler:
             self._state = _State.Playing
 
         sd = self._session_data
+        turn_context = _build_turn_context(sd)
+        return await self._execute_narration_turn(sd, action, turn_context)
+
+    # ------------------------------------------------------------------
+    # Narration execution — shared between player_action and opening turn
+    # ------------------------------------------------------------------
+
+    async def _execute_narration_turn(
+        self,
+        sd: _SessionData,
+        action: str,
+        turn_context: TurnContext,
+    ) -> list[object]:
+        """Run one narration turn: orchestrator call, snapshot mutation,
+        persistence, NARRATION + NARRATION_END message build.
+
+        Shared by :meth:`_handle_player_action` and
+        :meth:`_run_opening_turn_narration` (Story 2.3 Slice H). The
+        caller owns TurnContext construction so each entrypoint can
+        set per-turn fields (opening_directive on turn 0, pending
+        trope beats on subsequent turns) without leaking responsibility.
+        """
         snapshot = sd.snapshot
 
-        # Build state summary for narrator context
-        state_summary = snapshot.model_dump_json(indent=2)
-
-        # Resolve character name
-        char_name: str
-        if snapshot.characters:
-            char_name = snapshot.characters[0].core.name
-        else:
-            char_name = sd.player_name
-
-        # Build TurnContext
-        turn_context = TurnContext(
-            in_combat=False,
-            in_chase=False,
-            in_encounter=False,
-            state_summary=state_summary,
-            narrator_verbosity="standard",
-            narrator_vocabulary="literary",
-            genre=sd.genre_slug,
-            genre_prompts=sd.genre_pack.prompts,
-            character_name=char_name,
-            current_location=snapshot.location or "Unknown",
-            available_sfx=_sfx_ids_from_genre(sd.genre_pack),
-            npc_registry=list(snapshot.npc_registry),
-            npcs=list(snapshot.npcs),
-        )
-
-        # Run narration turn
         with orchestrator_process_action_span(action_len=len(action)):
             result = await sd.orchestrator.run_narration_turn(action, turn_context)
 
@@ -1000,16 +1058,11 @@ class WebSocketSessionHandler:
             result.agent_duration_ms,
         )
 
-        # Apply state delta from game_patch extraction
         _apply_narration_result_to_snapshot(snapshot, result, sd.player_name)
-
-        # Increment turn counter
         snapshot.turn_manager.record_interaction()
 
-        # Persist after turn
         try:
             sd.store.save(snapshot)
-            # Append narrative entry
             narrative_entry = NarrativeEntry(
                 timestamp=0,
                 round=snapshot.turn_manager.interaction,
@@ -1026,35 +1079,203 @@ class WebSocketSessionHandler:
         except Exception as exc:
             logger.error("session.persist_failed error=%s", exc)
 
-        # Build outbound messages: NARRATION + NARRATION_END
         narration_text = result.narration or "(The world holds its breath...)"
         try:
             narration_nbs = NonBlankString(narration_text)
         except Exception:
             narration_nbs = NonBlankString("The world holds its breath...")
 
-        narration_msg = NarrationMessage(
-            type="NARRATION",  # type: ignore[arg-type]
-            payload=NarrationPayload(
-                text=narration_nbs,
-                state_delta=None,
-                footnotes=[],
+        return [
+            NarrationMessage(
+                type="NARRATION",  # type: ignore[arg-type]
+                payload=NarrationPayload(
+                    text=narration_nbs,
+                    state_delta=None,
+                    footnotes=[],
+                ),
+                player_id=sd.player_id,
             ),
-            player_id=sd.player_id,
+            NarrationEndMessage(
+                type="NARRATION_END",  # type: ignore[arg-type]
+                payload=NarrationEndPayload(state_delta=None),
+                player_id=sd.player_id,
+            ),
+        ]
+
+    async def _run_opening_turn_narration(
+        self,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        """Fire the opening narration turn at the end of chargen.
+
+        Consumes ``sd.opening_seed`` + ``sd.opening_directive`` exactly
+        once. The seed becomes the first "action" string; the directive
+        is injected into the narrator's Early zone for this turn only.
+        Both fields are zeroed on the session after the turn runs so
+        the next PLAYER_ACTION turn sees a fresh context.
+
+        When no opening hook was resolved at connect time (pack has no
+        openings) the Rust dispatcher substitutes a generic
+        "I look around and take in my surroundings." Match that — the
+        narrator still fires so the player lands in the world rather
+        than at a blank UI.
+
+        Rust parity: connect.rs:2270-2529.
+        """
+        action = sd.opening_seed or "I look around and take in my surroundings."
+        source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
+
+        turn_context = _build_turn_context(
+            sd, opening_directive=sd.opening_directive
         )
 
-        narration_end_msg = NarrationEndMessage(
-            type="NARRATION_END",  # type: ignore[arg-type]
-            payload=NarrationEndPayload(state_delta=None),
-            player_id=sd.player_id,
+        span.add_event(
+            "opening_turn.dispatched",
+            {
+                "event": "opening_turn.dispatched",
+                "has_directive": sd.opening_directive is not None,
+                "seed_source": source_tier,
+                "action_len": len(action),
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+            },
         )
 
-        return [narration_msg, narration_end_msg]
+        messages = await self._execute_narration_turn(sd, action, turn_context)
+
+        # Consume once — Rust uses `opening_directive.take()`; subsequent
+        # turns must run directive-free. Same for the seed: it's a
+        # one-shot bootstrap action, not a recurring input.
+        sd.opening_seed = None
+        sd.opening_directive = None
+
+        return messages
+
+    def _build_session_start_party_status(
+        self,
+        sd: _SessionData,
+        character: Character,
+        player_id: str,
+    ) -> PartyStatusMessage:
+        """Build the PARTY_STATUS frame emitted at the end of chargen.
+
+        Carries a fully populated :class:`CharacterSheetDetails` so the
+        client's Character tab lands populated on session-start. Rust
+        parity: connect.rs:2533-2609 (`session_start_party_status`).
+        """
+        # Inventory is stored as list[dict] in Phase 1 (creature_core.py:158).
+        # Filter to Carried items — identical to Rust's inventory.carried()
+        # iterator, which skips Stored/Dropped.
+        carried = [
+            item for item in character.core.inventory.items
+            if str(item.get("state", "Carried")) == "Carried"
+        ]
+
+        stats = dict(character.stats)
+        abilities = [a.name for a in character.abilities]
+        equipment = [
+            f"{item['name']} [equipped]" if item.get("equipped") else item["name"]
+            for item in carried
+        ]
+
+        sheet = CharacterSheetDetails(
+            race=NonBlankString(character.race),
+            stats=stats,
+            abilities=abilities,
+            backstory=NonBlankString(character.backstory or "(no backstory)"),
+            personality=NonBlankString(character.core.personality),
+            pronouns=NonBlankString(character.pronouns) if character.pronouns else None,
+            equipment=equipment,
+        )
+
+        inventory_payload = InventoryPayload(
+            items=[
+                InventoryItem(
+                    name=NonBlankString(str(item["name"])),
+                    # Protocol alias: "type". Dicts carry "category" from
+                    # the loadout encoder; map and keep a non-blank string.
+                    **{"type": str(item.get("category", "equipment") or "equipment")},  # type: ignore[arg-type]
+                    equipped=bool(item.get("equipped", False)),
+                    quantity=int(item.get("quantity", 1)),
+                    description=NonBlankString(
+                        str(item.get("description") or item["name"])
+                    ),
+                )
+                for item in carried
+            ],
+            gold=character.core.inventory.gold,
+        )
+
+        location_nbs: NonBlankString | None = None
+        loc_value = sd.snapshot.location or ""
+        if loc_value:
+            try:
+                location_nbs = NonBlankString(loc_value)
+            except Exception:
+                location_nbs = None
+
+        class_nbs = NonBlankString(character.char_class or "Adventurer")
+        char_name_nbs = NonBlankString(character.core.name)
+
+        member = PartyMember(
+            player_id=NonBlankString(player_id or "anon"),
+            name=NonBlankString(sd.player_name or "Player"),
+            character_name=char_name_nbs,
+            current_hp=character.core.edge.current,
+            max_hp=character.core.edge.max,
+            statuses=list(character.core.statuses),
+            **{"class": class_nbs},  # type: ignore[arg-type]
+            level=character.core.level,
+            portrait_url=None,
+            current_location=location_nbs,
+            sheet=sheet,
+            inventory=inventory_payload,
+        )
+
+        return PartyStatusMessage(
+            type="PARTY_STATUS",  # type: ignore[arg-type]
+            payload=PartyStatusPayload(members=[member]),
+            player_id=player_id,
+        )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_turn_context(
+    sd: _SessionData, *, opening_directive: str | None = None
+) -> TurnContext:
+    """Assemble the :class:`TurnContext` for a single narration turn.
+
+    Shared by :meth:`_handle_player_action` and the opening-turn
+    bootstrap (Slice H). ``opening_directive`` is consumed by the
+    narrator on turn 0 only — the caller is responsible for clearing
+    the session-level directive after the turn runs.
+    """
+    snapshot = sd.snapshot
+    char_name = (
+        snapshot.characters[0].core.name if snapshot.characters else sd.player_name
+    )
+    return TurnContext(
+        in_combat=False,
+        in_chase=False,
+        in_encounter=False,
+        state_summary=snapshot.model_dump_json(indent=2),
+        narrator_verbosity="standard",
+        narrator_vocabulary="literary",
+        genre=sd.genre_slug,
+        genre_prompts=sd.genre_pack.prompts,
+        character_name=char_name,
+        current_location=snapshot.location or "Unknown",
+        available_sfx=_sfx_ids_from_genre(sd.genre_pack),
+        npc_registry=list(snapshot.npc_registry),
+        npcs=list(snapshot.npcs),
+        opening_directive=opening_directive,
+    )
 
 
 def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:

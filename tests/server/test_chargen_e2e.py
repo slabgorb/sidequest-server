@@ -30,13 +30,7 @@ CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genr
 # ---------------------------------------------------------------------------
 
 
-def _mock_claude_client_factory():
-    """Chargen never calls Claude — a bare AsyncMock is enough to satisfy
-    the session handler's client factory contract without risking a real
-    ``claude -p`` subprocess if something accidentally fires."""
-    mock = MagicMock()
-    mock.send_with_session = AsyncMock()
-    return lambda: mock
+from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402
 
 
 def _make_client(tmp_path: Path) -> TestClient:

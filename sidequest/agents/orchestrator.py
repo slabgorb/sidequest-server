@@ -284,6 +284,14 @@ class TurnContext:
     # Trope beat directives from previous turn (Early zone)
     pending_trope_context: str | None = None
 
+    # Opening-turn narrator directive (Early zone, turn 0 only).
+    # Story 2.3 Slice H / ADR-082: the session handler resolves an
+    # opening hook at connect time and stashes the rendered directive
+    # here for the first narration turn. Subsequent turns re-build the
+    # TurnContext without it (the handler zeroes opening_directive
+    # after consumption), matching Rust's `opening_directive.take()`.
+    opening_directive: str | None = None
+
     # Active trope summary for background context (Valley zone)
     active_trope_summary: str | None = None
 
@@ -828,6 +836,24 @@ class Orchestrator:
         # Phase 1 slice: lore filter (world_graph) deferred to Story 41-7
         # Phase 1 slice: world-builder history chapter injection deferred to Story 41-8
         # Phase 1 slice: merchant context injection deferred to Story 41-7
+
+        # Opening-turn directive (Early zone, turn 0 only).
+        # Story 2.3 Slice H: the session handler feeds the resolved
+        # opening hook's prompt into the narrator's Early zone for
+        # the opening turn, then clears the field so later turns run
+        # directive-free. Placed ahead of trope directives because the
+        # opening always wins when both are set — there shouldn't be
+        # trope carryover on turn 0 anyway.
+        if context.opening_directive:
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "opening_directive",
+                    context.opening_directive,
+                    AttentionZone.Early,
+                    SectionCategory.State,
+                ),
+            )
 
         # Trope beat directives (Early zone)
         if context.pending_trope_context:
