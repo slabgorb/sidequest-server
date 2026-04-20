@@ -1,9 +1,13 @@
 """sidequest.genre — genre pack loading, resolution, and models.
 
-Public re-exports from foundation layer (Story 41-2).
-Subagent C will add GenreLoader and the archetype shim.
+Public re-exports for the full genre layer (Story 41-2).
 """
 
+from sidequest.genre.archetype.shim import (
+    ArchetypeResolution,
+    ResolutionSource,
+    resolve_archetype,
+)
 from sidequest.genre.cache import GenreCache
 from sidequest.genre.error import (
     GenreCycleError,
@@ -17,6 +21,13 @@ from sidequest.genre.error import (
     ValidationErrors,
 )
 from sidequest.genre.genre_code import GenreCode
+from sidequest.genre.loader import (
+    DEFAULT_GENRE_PACK_SEARCH_PATHS,
+    GenreLoader,
+    find_pack_dir,
+    load_genre_pack,
+    load_genre_pack_cached,
+)
 from sidequest.genre.models import (
     AdvancementEffect,
     AdvancementTier,
@@ -57,6 +68,7 @@ from sidequest.genre.models import (
     WorldConfig,
     WorldLore,
 )
+from sidequest.genre.resolve import resolve_trope_inheritance
 from sidequest.genre.resolver import (
     LayeredMerge,
     MergeStrategy,
@@ -68,6 +80,18 @@ from sidequest.genre.resolver import (
 __all__ = [
     # genre_code
     "GenreCode",
+    # loader
+    "DEFAULT_GENRE_PACK_SEARCH_PATHS",
+    "GenreLoader",
+    "find_pack_dir",
+    "load_genre_pack",
+    "load_genre_pack_cached",
+    # resolve (trope inheritance)
+    "resolve_trope_inheritance",
+    # archetype shim
+    "ArchetypeResolution",
+    "ResolutionSource",
+    "resolve_archetype",
     # resolver
     "LayeredMerge",
     "MergeStrategy",
