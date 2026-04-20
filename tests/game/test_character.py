@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from sidequest.game.ability import AbilitySource
 from sidequest.game.character import AbilityDefinition, AffinityState, Character, KnownFact
 from sidequest.game.creature_core import (
     PLACEHOLDER_EDGE_BASE_MAX,
@@ -236,6 +237,7 @@ def test_character_with_abilities():
             name="Iron Will",
             genre_description="An iron resolve that resists breaking",
             mechanical_effect="Reduce edge damage by 1",
+            source=AbilitySource.Class,
         )
     )
     assert len(c.abilities) == 1

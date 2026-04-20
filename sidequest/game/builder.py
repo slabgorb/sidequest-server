@@ -1,0 +1,1789 @@
+"""CharacterBuilder — state machine for genre-driven character creation.
+
+Port of sidequest_game::builder (builder.rs, 903 LOC implementation).
+ADR-015: builder FSM — builder doesn't exist before new(), conceptually
+consumed by build(). No IDLE or COMPLETE states; construction and
+consumption are the boundaries.
+
+This module is ported in slices:
+- Slice 1: pure types — BuilderPhase, SceneInputType, SceneResult,
+  AccumulatedChoices, NarrativeHook, HookType, LoreAnchor, BuilderError.
+- Slice 2 (this commit): CharacterBuilder core + scene walking +
+  accumulated() + extract_hooks/anchors + helper formatters.
+- Slice 3: stat generation + HP formula.
+- Slice 4: build() finalizer + to_scene_message + OTEL watcher events.
+- Slice 5: integration test walking a real genre pack end-to-end.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass, field
+from enum import Enum
+
+from opentelemetry import trace
+
+from sidequest.game.ability import AbilitySource
+from sidequest.game.character import AbilityDefinition, Character
+from sidequest.game.creature_core import (
+    CreatureCore,
+    EdgeConfigMissingClassError as _CoreEdgeConfigMissingClassError,
+    Inventory,
+    edge_pool_from_config,
+    placeholder_edge_pool,
+)
+from sidequest.genre.models.character import (
+    BackstoryTables,
+    CharCreationScene,
+    EquipmentTables,
+    MechanicalEffects,
+)
+from sidequest.genre.models.rules import EdgeConfig, RulesConfig
+
+
+# ---------------------------------------------------------------------------
+# Narrative hook extraction
+# ---------------------------------------------------------------------------
+
+
+class HookType(str, Enum):
+    """Category of narrative hook.
+
+    Port of sidequest_game::builder::HookType.
+    """
+
+    ORIGIN = "Origin"
+    """From race_hint."""
+    WOUND = "Wound"
+    """From backstory trauma."""
+    RELATIONSHIP = "Relationship"
+    """From relationship effects."""
+    GOAL = "Goal"
+    """From goals effects."""
+    TRAIT = "Trait"
+    """From class_hint or personality_trait."""
+    DEBT = "Debt"
+    """From obligation effects."""
+    SECRET = "Secret"
+    """From hidden knowledge."""
+    POSSESSION = "Possession"
+    """From equipment_hints / item_hint."""
+
+
+@dataclass
+class NarrativeHook:
+    """A narrative hook derived from character creation choices.
+
+    Port of sidequest_game::builder::NarrativeHook.
+    """
+
+    hook_type: HookType
+    source_scene: str
+    text: str
+    mechanical_key: str | None = None
+
+
+@dataclass
+class LoreAnchor:
+    """A connection to the game world (faction, NPC, location).
+
+    Port of sidequest_game::builder::LoreAnchor.
+
+    anchor_type: "faction", "npc_relationship", "location" or similar.
+    """
+
+    anchor_type: str
+    value: str
+    source_scene: str
+
+
+# ---------------------------------------------------------------------------
+# Scene input — tagged union for "how the player responded"
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SceneInputType:
+    """Sealed base for scene input variants. Use the concrete subclasses."""
+
+
+@dataclass(frozen=True)
+class ChoiceInput(SceneInputType):
+    """Player selected a numbered choice.
+
+    Port of Rust SceneInputType::Choice(usize).
+    """
+
+    index: int
+
+
+@dataclass(frozen=True)
+class FreeformInput(SceneInputType):
+    """Player typed freeform text.
+
+    Port of Rust SceneInputType::Freeform(String).
+    """
+
+    text: str
+
+
+# ---------------------------------------------------------------------------
+# SceneResult — unit of revert for go_back
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SceneResult:
+    """What a single scene produced — the unit of revert.
+
+    Port of sidequest_game::builder::SceneResult.
+
+    choice_description stores the flavor description text from the chosen
+    option so we can compose a narrative backstory instead of only keeping
+    the mechanical label.
+    """
+
+    input_type: SceneInputType
+    effects_applied: MechanicalEffects
+    hooks_added: list[NarrativeHook] = field(default_factory=list)
+    anchors_added: list[LoreAnchor] = field(default_factory=list)
+    choice_description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# AccumulatedChoices — compacted view across all completed scenes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AccumulatedChoices:
+    """Accumulated mechanical effects across all completed scenes.
+
+    Port of sidequest_game::builder::AccumulatedChoices.
+
+    Most hint fields follow last-one-wins semantics (a later scene overrides
+    an earlier one). Lists and stat_bonuses accumulate.
+
+    reputation_bonus wires the Phase 1 IOU (character.py:66) —
+    spaghetti_western chargen choices tag reputation_bonus; the builder now
+    accumulates it alongside other hints. Downstream reputation system is
+    still post-Phase-2; the value simply flows through for now.
+    """
+
+    class_hint: str | None = None
+    race_hint: str | None = None
+    personality_trait: str | None = None
+    item_hints: list[str] = field(default_factory=list)
+    affinity_hint: str | None = None
+    background: str | None = None
+    mutation_hint: str | None = None
+    training_hint: str | None = None
+    emotional_state: str | None = None
+    relationship: str | None = None
+    goals: str | None = None
+    rig_type_hint: str | None = None
+    rig_trait: str | None = None
+    catch_phrase: str | None = None
+    backstory_fragments: list[str] = field(default_factory=list)
+    stat_bonuses: dict[str, int] = field(default_factory=dict)
+    pronoun_hint: str | None = None
+    jungian_hint: str | None = None
+    rpg_role_hint: str | None = None
+    reputation_bonus: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# BuilderPhase — tagged state machine
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BuilderPhase:
+    """Sealed base for builder phase variants. Use the concrete subclasses."""
+
+
+@dataclass(frozen=True)
+class InProgress(BuilderPhase):
+    """Processing genre-defined scenes.
+
+    Port of Rust BuilderPhase::InProgress { scene_index }.
+    """
+
+    scene_index: int
+
+
+@dataclass(frozen=True)
+class AwaitingFollowup(BuilderPhase):
+    """Scene has a hook_prompt — waiting for player's followup text.
+
+    Port of Rust BuilderPhase::AwaitingFollowup { scene_index, hook_prompt }.
+    """
+
+    scene_index: int
+    hook_prompt: str
+
+
+@dataclass(frozen=True)
+class Confirmation(BuilderPhase):
+    """All scenes done, showing summary for confirmation.
+
+    Port of Rust BuilderPhase::Confirmation.
+    """
+
+
+# Singleton instance of Confirmation — it carries no data, so sharing is fine.
+CONFIRMATION: Confirmation = Confirmation()
+
+
+# ---------------------------------------------------------------------------
+# BuilderError — typed exceptions matching Rust BuilderError enum
+# ---------------------------------------------------------------------------
+
+
+class BuilderError(Exception):
+    """Base class for CharacterBuilder errors.
+
+    Port of sidequest_game::builder::BuilderError enum. Each Rust variant
+    maps to a subclass so callers can catch specific failure modes:
+
+        try:
+            builder.apply_choice(idx)
+        except BuilderError.InvalidChoice as e:
+            ...
+
+    The nested subclass attributes (BuilderError.InvalidChoice, etc.) are
+    aliases for the module-level classes; they exist so call sites don't
+    need to import every variant separately.
+    """
+
+
+class InvalidChoiceError(BuilderError):
+    """Choice index out of range."""
+
+    def __init__(self, index: int, max_index: int) -> None:
+        self.index = index
+        self.max_index = max_index
+        super().__init__(f"invalid choice: index {index} but max is {max_index}")
+
+
+class WrongPhaseError(BuilderError):
+    """Operation not valid in the current phase."""
+
+    def __init__(self, expected: str, actual: str) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"wrong phase: expected {expected}, got {actual}")
+
+
+class FreeformNotAllowedError(BuilderError):
+    """Freeform input not allowed for this scene."""
+
+    def __init__(self) -> None:
+        super().__init__("freeform input not allowed for this scene")
+
+
+class NoScenesError(BuilderError):
+    """No scenes provided to the builder."""
+
+    def __init__(self) -> None:
+        super().__init__("no scenes provided")
+
+
+class CannotRevertError(BuilderError):
+    """Cannot revert — already at the first scene."""
+
+    def __init__(self) -> None:
+        super().__init__("cannot revert: already at first scene")
+
+
+class UnknownStatGenerationError(BuilderError):
+    """Unrecognized stat generation method."""
+
+    def __init__(self, method: str) -> None:
+        self.method = method
+        super().__init__(f"unknown stat generation method: {method}")
+
+
+class InvalidHpFormulaError(BuilderError):
+    """HP formula evaluation failed."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"hp_formula error: {detail}")
+
+
+class NumericNameError(BuilderError):
+    """Name is purely numeric — likely a UI index, not a real character name.
+
+    Story 30-1: Reject purely numeric names — they indicate a UI choice
+    index was used as the name fallback instead of a real character name.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(
+            f"invalid character name: '{name}' is purely numeric "
+            "(likely a UI index, not a name)"
+        )
+
+
+class EdgeConfigMissingClassError(BuilderError):
+    """Genre pack declared `edge_config` but omitted a `base_max_by_class`
+    entry for the character's class. Fails chargen loudly (story 39-3) —
+    silently reverting to the placeholder would hide content bugs.
+    """
+
+    def __init__(self, class_name: str) -> None:
+        self.class_name = class_name
+        super().__init__(
+            f"edge_config.base_max_by_class missing entry for class '{class_name}'"
+        )
+
+
+# Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
+# in catch blocks, matching the Rust `BuilderError::InvalidChoice { .. }`
+# read pattern.
+BuilderError.InvalidChoice = InvalidChoiceError  # type: ignore[attr-defined]
+BuilderError.WrongPhase = WrongPhaseError  # type: ignore[attr-defined]
+BuilderError.FreeformNotAllowed = FreeformNotAllowedError  # type: ignore[attr-defined]
+BuilderError.NoScenes = NoScenesError  # type: ignore[attr-defined]
+BuilderError.CannotRevert = CannotRevertError  # type: ignore[attr-defined]
+BuilderError.UnknownStatGeneration = UnknownStatGenerationError  # type: ignore[attr-defined]
+BuilderError.InvalidHpFormula = InvalidHpFormulaError  # type: ignore[attr-defined]
+BuilderError.NumericName = NumericNameError  # type: ignore[attr-defined]
+BuilderError.EdgeConfigMissingClass = EdgeConfigMissingClassError  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Hook / anchor extraction (pure helpers)
+# ---------------------------------------------------------------------------
+
+
+def extract_hooks(scene_id: str, effects: MechanicalEffects) -> list[NarrativeHook]:
+    """Derive narrative hooks from mechanical effects on a chosen option.
+
+    Port of sidequest_game::builder::extract_hooks (module-private in Rust).
+    Each produced hook records the mechanical_key that generated it so the
+    build() finalizer can filter hooks already represented on the character
+    sheet (race, class, personality).
+    """
+    hooks: list[NarrativeHook] = []
+
+    if effects.race_hint is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.ORIGIN,
+                source_scene=scene_id,
+                text=f"Origin: {effects.race_hint}",
+                mechanical_key="race_hint",
+            )
+        )
+
+    if effects.class_hint is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.TRAIT,
+                source_scene=scene_id,
+                text=f"Class: {effects.class_hint}",
+                mechanical_key="class_hint",
+            )
+        )
+
+    if effects.personality_trait is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.TRAIT,
+                source_scene=scene_id,
+                text=f"Personality: {effects.personality_trait}",
+                mechanical_key="personality_trait",
+            )
+        )
+
+    if effects.relationship is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.RELATIONSHIP,
+                source_scene=scene_id,
+                text=f"Relationship: {effects.relationship}",
+                mechanical_key="relationship",
+            )
+        )
+
+    if effects.goals is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.GOAL,
+                source_scene=scene_id,
+                text=f"Goal: {effects.goals}",
+                mechanical_key="goals",
+            )
+        )
+
+    if effects.item_hint is not None:
+        hooks.append(
+            NarrativeHook(
+                hook_type=HookType.POSSESSION,
+                source_scene=scene_id,
+                text=f"Item: {effects.item_hint}",
+                mechanical_key="item_hint",
+            )
+        )
+
+    return hooks
+
+
+def extract_anchors(scene_id: str, effects: MechanicalEffects) -> list[LoreAnchor]:
+    """Derive lore anchors (world-graph links) from mechanical effects.
+
+    Port of sidequest_game::builder::extract_anchors (module-private in
+    Rust). Relationship effects imply NPC anchors — if the choice names a
+    mentor or rival, that name becomes a future lore seed.
+    """
+    anchors: list[LoreAnchor] = []
+    if effects.relationship is not None:
+        anchors.append(
+            LoreAnchor(
+                anchor_type="npc",
+                value=effects.relationship,
+                source_scene=scene_id,
+            )
+        )
+    return anchors
+
+
+# ---------------------------------------------------------------------------
+# String helpers (module-level, pure)
+# ---------------------------------------------------------------------------
+
+
+def humanize_snake_case(s: str) -> str:
+    """Convert a snake_case identifier to Title Case display name.
+
+    Port of sidequest_game::builder::humanize_snake_case.
+    E.g. "natural_armor" → "Natural Armor",
+         "mystery_compass" → "Mystery Compass".
+    """
+    return " ".join(word.capitalize() if word else "" for word in s.split("_"))
+
+
+def strip_unmatched_placeholders(s: str) -> str:
+    """Strip any unmatched `{key}` placeholders and orphan trailing
+    punctuation/whitespace from a substituted template.
+
+    Port of sidequest_game::builder::strip_unmatched_placeholders.
+
+    After a template has had every known table key substituted, any
+    remaining `{key}` placeholders correspond to keys the genre pack didn't
+    supply. The literal "{feature}" would otherwise leak into user-facing
+    prose. Drop the placeholder and consume any immediately-following `. `,
+    `, `, or bare whitespace so we don't leave "Former ratcatcher. . ." in
+    the output.
+
+    Unbalanced placeholders (no closing `}`) preserve the literal `{` so
+    the bug is visible rather than silently swallowed — SOUL.md: "Fail
+    loud at the boundary."
+
+    Reviewer finding from story 31-2.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c != "{":
+            out.append(c)
+            i += 1
+            continue
+        # Skip to the matching '}' (or end of string if unbalanced).
+        close = s.find("}", i + 1)
+        if close == -1:
+            # Unbalanced — keep the literal '{' and stop scanning.
+            out.append("{")
+            break
+        # Advance past the '}' and eat orphan trailing punctuation/whitespace.
+        i = close + 1
+        while i < n and s[i] in (".", ",", " "):
+            i += 1
+
+    # Collapse internal whitespace runs and trim leading/trailing whitespace.
+    return " ".join("".join(out).split())
+
+
+# ---------------------------------------------------------------------------
+# Internal arithmetic-parse failure — wrapped into InvalidHpFormulaError
+# by the caller. Private to this module.
+# ---------------------------------------------------------------------------
+
+
+class _ArithmeticParseError(Exception):
+    """Raised by _eval_simple_arithmetic when a token fails to parse.
+
+    Carries the offending token so the HP formula error message can
+    surface it — SOUL.md: "Fail loud at the boundary."
+    """
+
+    def __init__(self, token: str) -> None:
+        self.token = token
+        super().__init__(f"unparseable token: {token!r}")
+
+
+# ---------------------------------------------------------------------------
+# CharacterBuilder — the state machine
+# ---------------------------------------------------------------------------
+
+
+class CharacterBuilder:
+    """State machine for character creation driven by genre-pack scenes.
+
+    Port of sidequest_game::builder::CharacterBuilder. Tracks scene
+    progression, accumulates mechanical effects, extracts narrative hooks,
+    and ultimately produces a Character (build() lands in Slice 4).
+
+    Slice 2 scope: construction, phase queries, scene walking
+    (apply_choice / apply_freeform / answer_followup / apply_auto_advance /
+    go_back / go_to_scene / revert), accumulated() view computation.
+
+    Out of scope for Slice 2: stat_generation (Slice 3), hp_formula
+    evaluation (Slice 3), build() finalizer (Slice 4), to_scene_message
+    protocol rendering (Slice 4), scene narration interpolation + OTEL
+    watcher events (Slice 4). Rolling of 3d6 strict stats at construction
+    is also deferred to Slice 3 — the rolled_stats field is reserved and
+    reads as None in Slice 2.
+    """
+
+    def __init__(
+        self,
+        scenes: list[CharCreationScene],
+        rules: RulesConfig,
+        backstory_tables: BackstoryTables | None = None,
+        *,
+        rng: random.Random | None = None,
+    ) -> None:
+        """Create a new builder.
+
+        Raises NoScenesError if `scenes` is empty. The Rust API exposed a
+        panicking `new` and a fallible `try_new`; Python collapses those to
+        a single constructor that raises — matching Python's exception-
+        first idiom and removing a duplicate code path.
+
+        `rng` is a seeded RNG source for deterministic stat generation in
+        tests. Production callers should omit it (defaults to a fresh
+        `random.Random()`). Rust rolls via `rand::rng()` — which is process-
+        local and non-deterministic — so production parity is preserved;
+        the explicit parameter is only for test seeding.
+        """
+        if not scenes:
+            raise NoScenesError()
+
+        self._scenes: list[CharCreationScene] = scenes
+        self._results: list[SceneResult] = []
+        self._phase: BuilderPhase = InProgress(scene_index=0)
+        self._rng: random.Random = rng if rng is not None else random.Random()
+
+        # Configuration sourced from RulesConfig. Keep these as attributes
+        # (not a stored reference) so scene directives can override
+        # stat_generation at apply time (Rust apply_freeform semantics).
+        self._stat_generation: str = rules.stat_generation
+        self._ability_score_names: list[str] = list(rules.ability_score_names)
+        self._default_class: str | None = rules.default_class
+        self._default_race: str | None = rules.default_race
+        self._default_hp: int | None = rules.default_hp
+        self._default_ac: int | None = rules.default_ac
+        self._class_hp_bases: dict[str, int] = dict(rules.class_hp_bases)
+        self._hp_formula: str | None = rules.hp_formula
+        self._edge_config: EdgeConfig | None = rules.edge_config
+        self._point_buy_budget: int = rules.point_buy_budget
+        self._race_label: str = rules.race_label or "Race"
+        self._class_label: str = rules.class_label or "Class"
+
+        # Eager roll at construction — scan scenes for the first
+        # `stat_generation: roll_3d6_strict` directive. Rust rolls eagerly
+        # so stat values are available for narration injection when the
+        # declaring scene is first rendered (the scene content is
+        # authoritative: if a scene declares roll_3d6_strict, that scene's
+        # narration gets stat values).
+        self._rolled_stats: list[tuple[str, int]] | None = None
+        for s in scenes:
+            eff = s.mechanical_effects
+            if eff is None or eff.stat_generation is None:
+                continue
+            if eff.stat_generation == "roll_3d6_strict":
+                self._rolled_stats = self._roll_3d6_stats()
+            break
+
+        self._backstory_tables: BackstoryTables | None = backstory_tables
+        self._equipment_tables: EquipmentTables | None = None
+        self._lobby_name: str | None = None
+
+    # --- Fluent setters ---
+
+    def with_lobby_name(self, name: str) -> "CharacterBuilder":
+        """Attach the lobby-provided player name.
+
+        Used as a fallback for the `{name}` placeholder in scene narration
+        when the genre has no name-entry scene (heavy_metal,
+        caverns_and_claudes). Fluent setter — chain after construction.
+
+        Blank / whitespace-only names clear the attribute so interpolation
+        falls through to the scene-entered name.
+        """
+        trimmed = name.strip()
+        self._lobby_name = trimmed if trimmed else None
+        return self
+
+    def with_equipment_tables(self, tables: EquipmentTables) -> "CharacterBuilder":
+        """Attach random equipment tables.
+
+        When set AND a scene declares `equipment_generation: random_table`,
+        the Slice 4 build() finalizer will roll starting inventory from
+        these tables. Story 31-3.
+        """
+        self._equipment_tables = tables
+        return self
+
+    # --- Phase queries ---
+
+    def is_in_progress(self) -> bool:
+        """Whether the builder is in InProgress phase."""
+        return isinstance(self._phase, InProgress)
+
+    def is_awaiting_followup(self) -> bool:
+        """Whether the builder is awaiting a followup answer."""
+        return isinstance(self._phase, AwaitingFollowup)
+
+    def is_confirmation(self) -> bool:
+        """Whether the builder is in Confirmation phase."""
+        return isinstance(self._phase, Confirmation)
+
+    def current_scene_index(self) -> int:
+        """Current scene index (0-based). Returns len(scenes) at Confirmation."""
+        match self._phase:
+            case InProgress(scene_index=i):
+                return i
+            case AwaitingFollowup(scene_index=i):
+                return i
+            case Confirmation():
+                return len(self._scenes)
+            case _:  # pragma: no cover — exhaustive
+                raise AssertionError(f"unknown phase: {self._phase!r}")
+
+    def current_scene(self) -> CharCreationScene:
+        """Reference to the current scene definition.
+
+        In Confirmation phase the builder is past the last scene; callers
+        should branch on is_confirmation() before reading current_scene().
+        """
+        return self._scenes[self.current_scene_index()]
+
+    def total_scenes(self) -> int:
+        """Total number of scenes."""
+        return len(self._scenes)
+
+    def scenes(self) -> list[CharCreationScene]:
+        """The raw scene definitions (used for lore seeding).
+
+        Returns a shallow copy so callers cannot mutate builder state.
+        """
+        return list(self._scenes)
+
+    def scene_results(self) -> list[SceneResult]:
+        """The accumulated scene results stack.
+
+        Returns a shallow copy so callers cannot mutate builder state.
+        """
+        return list(self._results)
+
+    def current_hook_prompt(self) -> str | None:
+        """Get the current hook prompt text, if awaiting followup."""
+        if isinstance(self._phase, AwaitingFollowup):
+            return self._phase.hook_prompt
+        return None
+
+    def rolled_stats(self) -> list[tuple[str, int]] | None:
+        """Pre-rolled stats from roll_3d6_strict generation, if any.
+
+        Exposed so external renderers (e.g. the confirmation summary
+        composer) can read stats without reaching into private fields.
+
+        Slice 3 wires the actual roll at construction — this reads None
+        in Slice 2.
+        """
+        return list(self._rolled_stats) if self._rolled_stats is not None else None
+
+    def race_label(self) -> str:
+        """Genre-specific label for the "race" field (e.g., "Species", "Origin")."""
+        return self._race_label
+
+    def class_label(self) -> str:
+        """Genre-specific label for the "class" field (e.g., "Archetype", "Path")."""
+        return self._class_label
+
+    def default_class(self) -> str | None:
+        """Default class from the genre pack's rules, if defined.
+
+        Used by external renderers to resolve starting equipment when
+        chargen doesn't set an explicit class_hint.
+        """
+        return self._default_class
+
+    def character_name(self) -> str | None:
+        """Extract the character name from the name-entry scene.
+
+        The name scene is the last scene with no choices — if the player
+        typed freeform text there, that's the name. Blank text falls
+        through to None so callers can substitute the lobby name.
+        """
+        if not self._scenes:
+            return None
+        last_scene = self._scenes[-1]
+        if last_scene.choices:
+            return None
+        if not self._results:
+            return None
+        last_result = self._results[-1]
+        if not isinstance(last_result.input_type, FreeformInput):
+            return None
+        trimmed = last_result.input_type.text.strip()
+        return trimmed if trimmed else None
+
+    # --- Accumulated view ---
+
+    def accumulated(self) -> AccumulatedChoices:
+        """Compute accumulated choices from scene results.
+
+        Most hint fields follow last-one-wins (a later scene overrides an
+        earlier one). Lists and stat_bonuses accumulate additively.
+
+        Port of sidequest_game::builder::CharacterBuilder::accumulated.
+
+        The reputation_bonus accumulation here closes the Phase 1 IOU
+        from docs/plans/phase-2-chargen-port.md — the field was accepted
+        as pass-through on MechanicalEffects in Phase 1; this is the
+        first consumer. Last-one-wins like other single-value hints.
+
+        The pronoun-only-choice filter for backstory_fragments excludes
+        "He.", "She.", etc. — single-token pronoun picks that aren't
+        narrative-bearing. Any other hint field on the same result
+        re-qualifies the fragment so meaningful descriptions like "the
+        armed woman with murder in her eyes" survive (reviewer finding
+        from story 31-2).
+        """
+        acc = AccumulatedChoices()
+        for result in self._results:
+            eff = result.effects_applied
+
+            # Single-value hints — last one wins.
+            if eff.class_hint is not None:
+                acc.class_hint = eff.class_hint
+            if eff.race_hint is not None:
+                acc.race_hint = eff.race_hint
+            if eff.personality_trait is not None:
+                acc.personality_trait = eff.personality_trait
+            if eff.affinity_hint is not None:
+                acc.affinity_hint = eff.affinity_hint
+            if eff.background is not None:
+                acc.background = eff.background
+            if eff.mutation_hint is not None:
+                acc.mutation_hint = eff.mutation_hint
+            if eff.training_hint is not None:
+                acc.training_hint = eff.training_hint
+            if eff.emotional_state is not None:
+                acc.emotional_state = eff.emotional_state
+            if eff.relationship is not None:
+                acc.relationship = eff.relationship
+            if eff.goals is not None:
+                acc.goals = eff.goals
+            if eff.rig_type_hint is not None:
+                acc.rig_type_hint = eff.rig_type_hint
+            if eff.rig_trait is not None:
+                acc.rig_trait = eff.rig_trait
+            if eff.catch_phrase is not None:
+                acc.catch_phrase = eff.catch_phrase
+            if eff.pronoun_hint is not None:
+                acc.pronoun_hint = eff.pronoun_hint
+            if eff.jungian_hint is not None:
+                acc.jungian_hint = eff.jungian_hint
+            if eff.rpg_role_hint is not None:
+                acc.rpg_role_hint = eff.rpg_role_hint
+            # Phase 1 IOU — spaghetti_western chargen-choice reputation tag.
+            if eff.reputation_bonus is not None:
+                acc.reputation_bonus = eff.reputation_bonus
+
+            # Multi-value accumulation — item_hints skips sentinel "none" /
+            # empty strings to match the Rust filter.
+            if eff.item_hint is not None and eff.item_hint not in ("", "none"):
+                acc.item_hints.append(eff.item_hint)
+
+            # Backstory fragment collection with pronoun-only filter.
+            if result.choice_description is not None:
+                is_pronoun_only = eff.pronoun_hint is not None and all(
+                    v is None
+                    for v in (
+                        eff.class_hint,
+                        eff.race_hint,
+                        eff.mutation_hint,
+                        eff.item_hint,
+                        eff.affinity_hint,
+                        eff.training_hint,
+                        eff.background,
+                        eff.personality_trait,
+                        eff.emotional_state,
+                        eff.relationship,
+                        eff.goals,
+                        eff.rig_type_hint,
+                        eff.rig_trait,
+                        eff.catch_phrase,
+                    )
+                )
+                if not is_pronoun_only:
+                    acc.backstory_fragments.append(result.choice_description)
+
+            # Stat bonuses accumulate additively across all scenes.
+            for stat, bonus in eff.stat_bonuses.items():
+                acc.stat_bonuses[stat] = acc.stat_bonuses.get(stat, 0) + bonus
+
+        return acc
+
+    # --- Actions: scene walking ---
+
+    def apply_choice(self, index: int) -> None:
+        """Apply a numbered choice to the current scene.
+
+        Raises WrongPhaseError if not in InProgress, InvalidChoiceError if
+        index is out of range.
+
+        Transitions: if the scene has a hook_prompt, moves to
+        AwaitingFollowup; otherwise advances to the next scene (or
+        Confirmation if this was the last scene).
+        """
+        match self._phase:
+            case InProgress(scene_index=scene_index):
+                pass
+            case AwaitingFollowup():
+                raise WrongPhaseError(expected="InProgress", actual="AwaitingFollowup")
+            case Confirmation():
+                raise WrongPhaseError(expected="InProgress", actual="Confirmation")
+            case _:  # pragma: no cover
+                raise AssertionError(f"unknown phase: {self._phase!r}")
+
+        scene = self._scenes[scene_index]
+        if index >= len(scene.choices):
+            # Rust uses saturating_sub on max; we mirror for parity.
+            max_index = max(len(scene.choices) - 1, 0)
+            raise InvalidChoiceError(index=index, max_index=max_index)
+
+        choice = scene.choices[index]
+        effects = choice.mechanical_effects
+        hooks = extract_hooks(scene.id, effects)
+        anchors = extract_anchors(scene.id, effects)
+
+        self._results.append(
+            SceneResult(
+                input_type=ChoiceInput(index=index),
+                effects_applied=effects,
+                hooks_added=hooks,
+                anchors_added=anchors,
+                choice_description=choice.description,
+            )
+        )
+
+        if scene.hook_prompt is not None:
+            self._phase = AwaitingFollowup(
+                scene_index=scene_index,
+                hook_prompt=scene.hook_prompt,
+            )
+        else:
+            self._advance_scene(scene_index)
+
+    def apply_freeform(self, text: str) -> None:
+        """Apply freeform text input to the current scene.
+
+        Allowed when `scene.allows_freeform` is True OR the scene has no
+        choices (name-entry scenes at the end of chargen). Raises
+        FreeformNotAllowedError otherwise.
+
+        Uses scene-level `mechanical_effects` if present (e.g. name/stat
+        scenes declaring stat_generation or equipment_generation). The
+        actual stat roll re-execution based on scene directives lands
+        in Slice 3; Slice 2 records the effects but does not re-roll.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+
+        # Allow freeform only when the scene explicitly allows it, OR when
+        # the scene has no choices (name-entry scenes at the end of chargen).
+        if not scene.allows_freeform and scene.choices:
+            raise FreeformNotAllowedError()
+
+        # Use scene-level mechanical_effects if present, otherwise empty.
+        effects = (
+            scene.mechanical_effects
+            if scene.mechanical_effects is not None
+            else MechanicalEffects()
+        )
+
+        # Scene-level stat_generation directive applies at freeform input
+        # (Rust parity): roll_3d6_strict re-rolls; any other method
+        # overrides the builder's default stat_generation for later
+        # generate_stats() calls.
+        if effects.stat_generation is not None:
+            if effects.stat_generation == "roll_3d6_strict":
+                self._rolled_stats = self._roll_3d6_stats()
+            else:
+                self._stat_generation = effects.stat_generation
+
+        hooks = extract_hooks(scene.id, effects)
+        anchors = extract_anchors(scene.id, effects)
+
+        self._results.append(
+            SceneResult(
+                input_type=FreeformInput(text=text),
+                effects_applied=effects,
+                hooks_added=hooks,
+                anchors_added=anchors,
+                choice_description=None,
+            )
+        )
+
+        if scene.hook_prompt is not None:
+            self._phase = AwaitingFollowup(
+                scene_index=scene_index,
+                hook_prompt=scene.hook_prompt,
+            )
+        else:
+            self._advance_scene(scene_index)
+
+    def answer_followup(self, text: str) -> None:
+        """Answer a followup prompt while in AwaitingFollowup state.
+
+        Inserts a Wound hook at position 0 of the most recent result — the
+        followup answer is the player's primary hook (trauma description,
+        motive elaboration, backstory beat). Advances to the next scene
+        (or Confirmation).
+        """
+        if not isinstance(self._phase, AwaitingFollowup):
+            raise WrongPhaseError(
+                expected="AwaitingFollowup", actual=self._phase_name()
+            )
+        scene_index = self._phase.scene_index
+        scene_id = self._scenes[scene_index].id
+
+        # Insert the followup hook at position 0 on the most recent result.
+        if self._results:
+            self._results[-1].hooks_added.insert(
+                0,
+                NarrativeHook(
+                    hook_type=HookType.WOUND,
+                    source_scene=scene_id,
+                    text=text,
+                    mechanical_key=None,
+                ),
+            )
+
+        self._advance_scene(scene_index)
+
+    def apply_auto_advance(self) -> None:
+        """Auto-advance a display-only scene (no choices, no freeform).
+
+        For scenes that narrate and wait for the player's Continue ack.
+        Applies scene-level mechanical_effects and advances. Raises
+        InvalidChoiceError if the scene requires input.
+
+        Slice 2 records the effects but does not re-execute stat rolling
+        — that lands in Slice 3.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+
+        if scene.choices or scene.allows_freeform:
+            raise InvalidChoiceError(index=0, max_index=len(scene.choices))
+
+        effects = (
+            scene.mechanical_effects
+            if scene.mechanical_effects is not None
+            else MechanicalEffects()
+        )
+
+        # Scene-level stat_generation directive: roll_3d6_strict only rolls
+        # if we don't already have rolled stats (unlike apply_freeform which
+        # unconditionally re-rolls). This mirrors Rust's behavior where
+        # auto_advance guards `if self.rolled_stats.is_none()` but
+        # apply_freeform always re-rolls.
+        if effects.stat_generation is not None:
+            if effects.stat_generation == "roll_3d6_strict":
+                if self._rolled_stats is None:
+                    self._rolled_stats = self._roll_3d6_stats()
+            else:
+                self._stat_generation = effects.stat_generation
+
+        self._results.append(
+            SceneResult(
+                input_type=ChoiceInput(index=0),
+                effects_applied=effects,
+                hooks_added=[],
+                anchors_added=[],
+                choice_description=None,
+            )
+        )
+
+        self._advance_scene(scene_index)
+
+    def go_back(self) -> None:
+        """Navigate backward, undoing the last scene result.
+
+        Pops the most recent SceneResult and sets the phase back to that
+        scene's index. Raises WrongPhaseError if there are no results to
+        revert (we're at the first scene with no history).
+        """
+        if not self._results:
+            raise WrongPhaseError(
+                expected="InProgress with history",
+                actual="no previous scenes to return to",
+            )
+        self._results.pop()
+        target = len(self._results)
+        self._phase = InProgress(scene_index=target)
+
+    def go_to_scene(self, target: int) -> None:
+        """Jump to a specific scene index, discarding results from that
+        scene onward.
+
+        Used by the "edit" action from the review/confirmation screen.
+        Raises WrongPhaseError if target is out of range.
+        """
+        if target >= len(self._scenes):
+            raise WrongPhaseError(
+                expected=f"scene index < {len(self._scenes)}",
+                actual=f"target scene index {target}",
+            )
+        self._results = self._results[:target]
+        self._phase = InProgress(scene_index=target)
+
+    def revert(self) -> None:
+        """Revert the last scene — pop the SceneResult and go back one.
+
+        Port of sidequest_game::builder::CharacterBuilder::revert. Distinct
+        from go_back in that go_back's "at-the-first-scene" guard raises
+        WrongPhaseError; revert raises CannotRevertError. The semantic
+        difference is cosmetic in Rust but callers depend on the specific
+        error variant — keep them distinct in Python too.
+        """
+        if not self._results:
+            raise CannotRevertError()
+        self._results.pop()
+        self._phase = InProgress(scene_index=len(self._results))
+
+    # --- Finalizer ---
+
+    def build(self, name: str) -> Character:
+        """Build the final Character from accumulated choices.
+
+        Port of sidequest_game::builder::CharacterBuilder::build.
+
+        Only valid from Confirmation phase — raises WrongPhaseError
+        otherwise. Composes the Character from accumulated hints:
+        race/class (accumulated or rules default), stats (via
+        generate_stats), HP (hp_formula OR class_hp_bases fallback),
+        backstory (fragments OR tables OR mechanical labels OR hardcoded
+        fallback), abilities (resolved from mutation / affinity /
+        training hints with an AbilitySource tag), inventory
+        (item_hints first then equipment_tables), edge pool (from
+        edge_config OR placeholder for unmigrated packs), and the
+        Fighter +2 Edge stub from Story 39-4.
+
+        Numeric-name guard (Story 30-1): reject purely numeric names —
+        they indicate a UI choice index leaked into the name fallback.
+        Blank names are caught by the Character pydantic validators.
+
+        OTEL watcher events are emitted via the current span's
+        add_event API — Python's equivalent of Rust's
+        WatcherEventBuilder broadcast channel. Events carry structured
+        attributes so the GM panel can reconstruct decisions: hp
+        resolution path, backstory method, equipment method, edge
+        seeding source, etc. SOUL.md: no silent fallbacks — every path
+        that resolves a default explicitly emits the fallback source
+        and severity.
+        """
+        if not self.is_confirmation():
+            raise WrongPhaseError(
+                expected="Confirmation", actual=self._phase_name()
+            )
+
+        # Numeric-name guard — a purely digit name is a UI index bleed.
+        trimmed = name.strip()
+        if trimmed and trimmed.isdigit():
+            raise NumericNameError(name=trimmed)
+
+        acc = self.accumulated()
+
+        race_str = acc.race_hint or self._default_race or "Human"
+        class_str = acc.class_hint or self._default_class or "Fighter"
+
+        stats = self.generate_stats(acc)
+
+        # HP resolution: hp_formula if set, else class_hp_bases lookup,
+        # else default_hp, else hardcoded 10. Every branch emits a
+        # watcher event with the source tag so the GM panel can audit
+        # which path fired.
+        span = trace.get_current_span()
+        if self._hp_formula is not None:
+            hp_result = self._evaluate_hp_formula(
+                self._hp_formula, stats, self._class_hp_bases, class_str
+            )
+            con = stats.get("CON")
+            con_modifier = int((con - 10) / 2) if con is not None else None
+            span.add_event(
+                "chargen.hp_formula_evaluated",
+                {
+                    "formula": self._hp_formula,
+                    "class": class_str,
+                    "hp_result": hp_result,
+                    **(
+                        {"con_modifier": con_modifier}
+                        if con_modifier is not None
+                        else {}
+                    ),
+                },
+            )
+            base_hp = hp_result
+        else:
+            if class_str in self._class_hp_bases:
+                hp_value = self._class_hp_bases[class_str]
+                source = "class_hp_bases"
+            elif self._default_hp is not None:
+                hp_value = self._default_hp
+                source = "default_hp"
+            else:
+                hp_value = 10
+                source = "hardcoded_10"
+            span.add_event(
+                "chargen.hp_fallback",
+                {
+                    "class": class_str,
+                    "hp_result": hp_value,
+                    "source": source,
+                },
+            )
+            base_hp = hp_value
+
+        ac = self._default_ac if self._default_ac is not None else 10
+        _ = (base_hp, ac)  # wired into OTEL and future subsystems
+
+        # Hooks: collect narrative hooks, excluding mechanical traits
+        # already represented on the sheet (race, class, personality).
+        excluded_keys = {"race_hint", "class_hint", "personality_trait"}
+        hooks: list[str] = []
+        for result in self._results:
+            for h in result.hooks_added:
+                if h.mechanical_key is not None and h.mechanical_key in excluded_keys:
+                    continue
+                hooks.append(h.text)
+
+        # Auto-fill lore anchors for faction / npc / location — if no
+        # scene contributed an anchor of that type, note the gap so the
+        # narrator (or the dispatch layer) can seed from the genre pack.
+        anchor_types = ("faction", "npc", "location")
+        for atype in anchor_types:
+            has_anchor = any(
+                a.anchor_type == atype
+                for r in self._results
+                for a in r.anchors_added
+            )
+            if not has_anchor:
+                hooks.append(f"{atype}: auto-filled from genre pack")
+
+        # Inventory composition: item_hints first, then equipment_tables
+        # when a scene directive opts in (Story 31-3).
+        items: list[dict] = []
+        for i, hint in enumerate(acc.item_hints):
+            id_str = hint.lower().replace(" ", "_") or f"item_{i}"
+            display_name = humanize_snake_case(hint) or "Unknown Item"
+            items.append(
+                {
+                    "id": id_str,
+                    "name": display_name,
+                    "description": f"Starting equipment: {display_name}",
+                    "category": "weapon",
+                    "value": 10,
+                    "weight": 3.0,
+                    "rarity": "common",
+                    "narrative_weight": 0.3,
+                    "tags": [],
+                    "equipped": True,
+                    "quantity": 1,
+                    "uses_remaining": None,
+                    "state": "Carried",
+                }
+            )
+
+        random_table_requested = any(
+            r.effects_applied.equipment_generation == "random_table"
+            for r in self._results
+        )
+        if random_table_requested and self._equipment_tables is not None:
+            added = 0
+            skipped = 0
+            for slot, candidates in self._equipment_tables.tables.items():
+                if not candidates:
+                    continue
+                rolls = self._equipment_tables.rolls_per_slot.get(slot, 1)
+                for _ in range(rolls):
+                    pick = candidates[self._rng.randrange(len(candidates))]
+                    if not pick.strip():
+                        # Blank id — surface the malformed content entry
+                        # instead of silently producing a short inventory.
+                        span.add_event(
+                            "chargen.blank_item_id_skipped",
+                            {"slot": slot, "pick": pick, "severity": "warn"},
+                        )
+                        skipped += 1
+                        continue
+                    display_name = humanize_snake_case(pick) or "Unknown Item"
+                    items.append(
+                        {
+                            "id": pick,
+                            "name": display_name,
+                            "description": f"Starting equipment ({slot}): {display_name}",
+                            "category": slot or "misc",
+                            "value": 0,
+                            "weight": 1.0,
+                            "rarity": "common",
+                            "narrative_weight": 0.3,
+                            "tags": [],
+                            "equipped": False,
+                            "quantity": 1,
+                            "uses_remaining": None,
+                            "state": "Carried",
+                        }
+                    )
+                    added += 1
+            equipment_method = "tables"
+            equipment_added = added
+            equipment_skipped = skipped
+        elif random_table_requested:
+            # Directive present but no equipment_tables wired — this is
+            # a misconfiguration, not graceful degradation. SOUL.md: no
+            # silent fallbacks.
+            span.add_event(
+                "chargen.equipment_tables_missing",
+                {
+                    "reason": (
+                        "scene declared `equipment_generation: random_table` "
+                        "but CharacterBuilder has no equipment_tables wired"
+                    ),
+                    "severity": "warn",
+                },
+            )
+            equipment_method = "none"
+            equipment_added = 0
+            equipment_skipped = 0
+        else:
+            equipment_method = "hints"
+            equipment_added = 0
+            equipment_skipped = 0
+
+        span.add_event(
+            "chargen.equipment_composed",
+            {
+                "method": equipment_method,
+                "items_added": equipment_added,
+                "items_skipped": equipment_skipped,
+            },
+        )
+
+        # Backstory composition: fragments → tables → mechanical labels
+        # → fallback. Every branch emits method + length so the GM
+        # panel sees when a genre silently falls through to the
+        # hardcoded "wanderer with a mysterious past" default.
+        if acc.backstory_fragments:
+            backstory_text = " ".join(acc.backstory_fragments)
+            backstory_method = "fragments"
+        elif self._backstory_tables is not None:
+            tables = self._backstory_tables
+            result = tables.template
+            for key, entries in tables.tables.items():
+                if entries:
+                    pick = entries[self._rng.randrange(len(entries))]
+                    result = result.replace(f"{{{key}}}", pick)
+            backstory_text = strip_unmatched_placeholders(result)
+            backstory_method = "tables"
+        else:
+            parts: list[str] = []
+            if acc.background is not None:
+                parts.append(f"Background: {acc.background}")
+            if acc.personality_trait is not None:
+                parts.append(f"Personality: {acc.personality_trait}")
+            backstory_text = (
+                ". ".join(parts) if parts else "A wanderer with a mysterious past"
+            )
+            backstory_method = "fallback"
+        span.add_event(
+            "chargen.backstory_composed",
+            {"method": backstory_method, "length": len(backstory_text)},
+        )
+
+        # Abilities: resolve from mutation / affinity / training hints.
+        # Each hint type maps to an AbilitySource. The label and
+        # description come from the scene choice the player selected.
+        abilities: list[AbilityDefinition] = []
+        for i, result in enumerate(self._results):
+            eff = result.effects_applied
+            hint_info: tuple[str, AbilitySource] | None = None
+            if eff.mutation_hint is not None and eff.mutation_hint != "none":
+                hint_info = (eff.mutation_hint, AbilitySource.Race)
+            elif eff.affinity_hint is not None and eff.affinity_hint != "none":
+                hint_info = (eff.affinity_hint, AbilitySource.Class)
+            elif eff.training_hint is not None:
+                hint_info = (eff.training_hint, AbilitySource.Class)
+
+            if hint_info is None:
+                continue
+
+            hint_key, source = hint_info
+            # Recover the label from the scene choice. Results are
+            # ordered the same as scenes walked so index matches.
+            label: str | None = None
+            if i < len(self._scenes) and isinstance(result.input_type, ChoiceInput):
+                scene = self._scenes[i]
+                if result.input_type.index < len(scene.choices):
+                    label = scene.choices[result.input_type.index].label
+            if label is None:
+                label = humanize_snake_case(hint_key)
+            description = result.choice_description or (
+                f"Acquired through character creation: {label}"
+            )
+            abilities.append(
+                AbilityDefinition(
+                    name=label,
+                    genre_description=description,
+                    mechanical_effect=hint_key,
+                    involuntary=False,
+                    source=source,
+                )
+            )
+        span.add_event(
+            "chargen.abilities_resolved",
+            {
+                "count": len(abilities),
+                "names": ", ".join(a.name for a in abilities),
+            },
+        )
+
+        # EdgePool seeding: edge_config path OR placeholder for
+        # unmigrated packs (Story 39-3). Missing class → raise the
+        # builder's EdgeConfigMissingClassError per Rust .map_err
+        # pattern, not the core module's error directly.
+        if self._edge_config is not None:
+            try:
+                edge = edge_pool_from_config(self._edge_config, class_str)
+            except _CoreEdgeConfigMissingClassError as e:
+                raise EdgeConfigMissingClassError(class_name=e.class_name) from None
+            span.add_event(
+                "chargen.edge_seeded",
+                {
+                    "source": "edge_config",
+                    "class": class_str,
+                    "base_max": edge.base_max,
+                    "threshold_count": len(edge.thresholds),
+                },
+            )
+        else:
+            edge = placeholder_edge_pool()
+            span.add_event(
+                "chargen.edge_seeded",
+                {
+                    "source": "placeholder",
+                    "class": class_str,
+                    "base_max": edge.base_max,
+                    "reason": "genre pack has no edge_config",
+                    "severity": "warn",
+                },
+            )
+
+        # Story 39-4: hardcoded Fighter +2 Edge stub. Smoke-gate so the
+        # Edge system can be playtested before authored AdvancementTree
+        # lands in 39-5. Preserved verbatim from Rust for parity —
+        # replacing it is a future-story concern, not 2.1's.
+        if class_str == "Fighter":
+            edge.max += 2
+            edge.base_max += 2
+            edge.current = edge.max
+            span.add_event(
+                "chargen.advancement_stub_applied",
+                {
+                    "advancement_id": "fighter_base_plus_2_edge",
+                    "class": class_str,
+                    "edge_max_after": edge.max,
+                    "source": "hardcoded_stub_story_39_4",
+                },
+            )
+
+        # Resolved archetype: pairs jungian_hint / rpg_role_hint if both
+        # are present. archetype_provenance is populated downstream by
+        # dispatch (connect.rs) once the tiered resolver runs.
+        resolved_archetype = None
+        if acc.jungian_hint is not None and acc.rpg_role_hint is not None:
+            resolved_archetype = f"{acc.jungian_hint}/{acc.rpg_role_hint}"
+
+        # Compose the Character. Character / CreatureCore non-blank
+        # validators will catch blank name / description / personality.
+        character = Character(
+            core=CreatureCore(
+                name=name,
+                description=f"A {race_str} {class_str}",
+                personality=acc.personality_trait or "Determined",
+                level=1,
+                xp=0,
+                inventory=Inventory(items=items, gold=0),
+                statuses=[],
+                edge=edge,
+                acquired_advancements=[],
+            ),
+            backstory=backstory_text,
+            narrative_state="Beginning their adventure",
+            hooks=hooks,
+            char_class=class_str,
+            race=race_str,
+            pronouns=acc.pronoun_hint or "",
+            stats=stats,
+            abilities=abilities,
+            known_facts=[],
+            affinities=[],
+            is_friendly=True,
+            resolved_archetype=resolved_archetype,
+            archetype_provenance=None,
+        )
+
+        return character
+
+    # --- Stat generation ---
+
+    def _roll_3d6_stats(self) -> list[tuple[str, int]]:
+        """Roll 3d6 for each ability score in order. Returns (name, total)
+        pairs in ability_score_names order.
+
+        Port of sidequest_game::builder::CharacterBuilder::roll_3d6_stats.
+        Uses the builder's seedable RNG so tests can drive deterministic
+        outputs.
+        """
+        rng = self._rng
+        results: list[tuple[str, int]] = []
+        for name in self._ability_score_names:
+            dice = (rng.randint(1, 6), rng.randint(1, 6), rng.randint(1, 6))
+            total = sum(dice)
+            results.append((name, total))
+        return results
+
+    @staticmethod
+    def _allocate_point_buy(n: int, budget: int) -> list[int]:
+        """Allocate a point-buy budget across `n` stats.
+
+        Port of sidequest_game::builder::CharacterBuilder::allocate_point_buy.
+
+        All stats start at 8. Points distributed round-robin, raising each
+        stat by 1 at a time (cheapest-first) until budget is spent. No
+        stat can exceed 15. Cost table (cumulative from 8):
+          8→9..12: 1pt each; 13→14..15: 2pt each.
+        """
+
+        def marginal_cost(value: int) -> int:
+            if 9 <= value <= 13:
+                return 1
+            if value in (14, 15):
+                return 2
+            # Outside [9, 15] — effectively infinite; callers filter via
+            # the next_val > 15 guard before reaching this branch.
+            return 1 << 30
+
+        stats = [8] * n
+        remaining = budget
+        while True:
+            any_raised = False
+            for i in range(n):
+                next_val = stats[i] + 1
+                if next_val > 15:
+                    continue
+                cost = marginal_cost(next_val)
+                if cost <= remaining:
+                    stats[i] = next_val
+                    remaining -= cost
+                    any_raised = True
+            if not any_raised or remaining == 0:
+                break
+        return stats
+
+    def generate_stats(self, acc: AccumulatedChoices) -> dict[str, int]:
+        """Generate ability scores per the declared stat_generation method.
+
+        Port of sidequest_game::builder::CharacterBuilder::generate_stats.
+
+        Strategies:
+        - roll_3d6_strict: reuse pre-rolled stats from construction or
+          scene directive; re-roll inline if absent (defensive — the
+          eager roll should have fired).
+        - standard_array: [15, 14, 13, 12, 10, 8] mapped to the
+          ability_score_names in declaration order. When no explicit
+          stat_bonuses were set by chargen choices, derive bonuses from
+          accumulated hints (race/mutation/class) to differentiate stat
+          spreads across builds.
+        - point_buy: distribute point_buy_budget across ability scores.
+
+        Accumulated `acc.stat_bonuses` are applied additively on top of
+        the generated baseline (every strategy).
+
+        Raises UnknownStatGenerationError for any other method string.
+        """
+        method = self._stat_generation
+
+        if method == "roll_3d6_strict":
+            if self._rolled_stats is not None:
+                stats = dict(self._rolled_stats)
+            else:
+                # Defensive re-roll — shouldn't fire in practice because
+                # the eager construction roll covers this path. Mirrors
+                # Rust's fallback.
+                rolled = self._roll_3d6_stats()
+                stats = dict(rolled)
+
+        elif method == "standard_array":
+            base_values = [15, 14, 13, 12, 10, 8]
+            stats = {
+                name: val
+                for name, val in zip(self._ability_score_names, base_values)
+            }
+
+        elif method == "point_buy":
+            values = self._allocate_point_buy(
+                len(self._ability_score_names), self._point_buy_budget
+            )
+            stats = {
+                name: val
+                for name, val in zip(self._ability_score_names, values)
+            }
+
+        else:
+            raise UnknownStatGenerationError(method=method)
+
+        # Apply explicit stat bonuses from chargen choices (origin,
+        # mutation, artifact).
+        for stat, bonus in acc.stat_bonuses.items():
+            if stat in stats:
+                stats[stat] += bonus
+
+        # Standard-array derivation: when no explicit bonuses were
+        # authored and we have at least 3 stats, differentiate the spread
+        # using accumulated hints. Mirrors Rust's behavior exactly.
+        if (
+            not acc.stat_bonuses
+            and method == "standard_array"
+            and len(self._ability_score_names) >= 3
+        ):
+            names = self._ability_score_names
+            # Origin/race → boost first stat
+            if acc.race_hint is not None:
+                stats[names[0]] = stats[names[0]] + 3
+            # Mutation/affinity → boost second stat, reduce last
+            if acc.mutation_hint is not None or acc.affinity_hint is not None:
+                stats[names[1]] = stats[names[1]] + 2
+                stats[names[-1]] = stats[names[-1]] - 1
+            # Class/training → boost third stat (floor at last index if
+            # fewer than 3 names, though the guard above already rejects
+            # that case).
+            if acc.class_hint is not None or acc.training_hint is not None:
+                idx = min(2, len(names) - 1)
+                stats[names[idx]] = stats[names[idx]] + 2
+
+        return stats
+
+    # --- HP formula ---
+
+    @staticmethod
+    def _evaluate_hp_formula(
+        formula: str,
+        stats: dict[str, int],
+        class_hp_bases: dict[str, int],
+        class_str: str,
+    ) -> int:
+        """Evaluate an hp_formula string using stats and class config.
+
+        Port of sidequest_game::builder::CharacterBuilder::evaluate_hp_formula.
+
+        Supported variables:
+        - `XXX_modifier` — D&D-style ability modifier: trunc((stat - 10) / 2)
+          where XXX matches any key in stats (e.g. CON, STR, body).
+        - `xxx_mod` — lowercase alias of `XXX_modifier`.
+        - `class_base` — class_hp_bases lookup (default 8 if unset).
+        - `level` — always 1 at creation.
+        - Integer literals (positive or negative).
+
+        Supported operators: +, -, * (left-to-right, no precedence).
+        Parentheses are stripped before evaluation. Returns max(1, result)
+        — HP floors at 1, never zero or negative.
+
+        Raises InvalidHpFormulaError for empty or unparseable formulas.
+
+        Integer division note: Rust uses truncation (toward zero); Python
+        `//` is floor (toward negative infinity). For negative modifiers
+        (stat < 10 after bonuses) the two disagree — e.g. `(5 - 10) / 2`
+        is `-2` in Rust but `-3` with Python `//`. We use `int(a / b)` to
+        truncate toward zero for Rust parity.
+        """
+        if not formula.strip():
+            raise InvalidHpFormulaError(detail="hp_formula is empty")
+
+        class_base = class_hp_bases.get(class_str, 8)
+        level = 1
+
+        expr = formula
+        # Replace stat_modifier and stat_mod tokens. Longest-first: do
+        # `{NAME}_modifier` before `{name}_mod` so "CON_modifier" doesn't
+        # accidentally match the shorter `con_mod` prefix inside
+        # "CON_modifier"'s lowercase form. Order of dict iteration is
+        # insertion order in 3.7+; we iterate a stable list.
+        for stat_name, stat_value in stats.items():
+            modifier = int((stat_value - 10) / 2)  # Rust-style trunc
+            expr = expr.replace(f"{stat_name}_modifier", str(modifier))
+            expr = expr.replace(f"{stat_name.lower()}_mod", str(modifier))
+
+        expr = expr.replace("class_base", str(class_base))
+        expr = expr.replace("level", str(level))
+        expr = expr.replace("(", "").replace(")", "")
+
+        try:
+            result = CharacterBuilder._eval_simple_arithmetic(expr)
+        except _ArithmeticParseError as e:
+            raise InvalidHpFormulaError(
+                detail=(
+                    f"unparseable token '{e.token}' in formula '{formula}' "
+                    f"(after substitution: '{expr}')"
+                )
+            ) from None
+
+        # Floor at 1 — no zero or negative HP.
+        return max(1, result)
+
+    @staticmethod
+    def _eval_simple_arithmetic(expr: str) -> int:
+        """Evaluate a simple arithmetic expression with +, -, * operators.
+
+        Port of sidequest_game::builder::CharacterBuilder::eval_simple_arithmetic.
+
+        Left-to-right, no operator precedence. Handles negative literals
+        from variable substitution — a '-' at the start of the expression
+        (or immediately after an operator) is part of a negative literal,
+        not a binary operator.
+
+        Raises _ArithmeticParseError (wrapping the offending token) when
+        any token fails to parse as int.
+        """
+        expr = expr.strip()
+
+        # Tokenize: split on +/-/* but preserve them as tokens. A binary
+        # operator only splits when the current buffer is non-empty after
+        # trimming — so a leading '-' or a '-' right after an operator
+        # stays glued to the following digits as a signed literal.
+        tokens: list[str] = []
+        current = ""
+        for ch in expr:
+            if ch in ("+", "-", "*") and current.strip() != "":
+                tokens.append(current.strip())
+                tokens.append(ch)
+                current = ""
+            else:
+                current += ch
+        if current.strip() != "":
+            tokens.append(current.strip())
+
+        if not tokens:
+            raise _ArithmeticParseError(token="")
+
+        try:
+            result = int(tokens[0])
+        except ValueError:
+            raise _ArithmeticParseError(token=tokens[0]) from None
+
+        i = 1
+        while i + 1 < len(tokens):
+            op = tokens[i]
+            operand_token = tokens[i + 1]
+            try:
+                operand = int(operand_token)
+            except ValueError:
+                raise _ArithmeticParseError(token=operand_token) from None
+            if op == "+":
+                result += operand
+            elif op == "-":
+                result -= operand
+            elif op == "*":
+                result *= operand
+            else:
+                raise _ArithmeticParseError(token=op)
+            i += 2
+
+        return result
+
+    # --- Private helpers ---
+
+    def _advance_scene(self, current: int) -> None:
+        """Advance to the next scene, or transition to Confirmation if
+        `current` was the last scene."""
+        next_index = current + 1
+        if next_index >= len(self._scenes):
+            self._phase = CONFIRMATION
+        else:
+            self._phase = InProgress(scene_index=next_index)
+
+    def _phase_name(self) -> str:
+        """Human-readable phase name for error messages."""
+        match self._phase:
+            case InProgress():
+                return "InProgress"
+            case AwaitingFollowup():
+                return "AwaitingFollowup"
+            case Confirmation():
+                return "Confirmation"
+            case _:  # pragma: no cover
+                return "Unknown"
+
+
+__all__ = [
+    # Hooks and anchors
+    "HookType",
+    "NarrativeHook",
+    "LoreAnchor",
+    "extract_hooks",
+    "extract_anchors",
+    # Scene input variants
+    "SceneInputType",
+    "ChoiceInput",
+    "FreeformInput",
+    # Scene result and accumulation
+    "SceneResult",
+    "AccumulatedChoices",
+    # Phase state machine
+    "BuilderPhase",
+    "InProgress",
+    "AwaitingFollowup",
+    "Confirmation",
+    "CONFIRMATION",
+    # Errors
+    "BuilderError",
+    "InvalidChoiceError",
+    "WrongPhaseError",
+    "FreeformNotAllowedError",
+    "NoScenesError",
+    "CannotRevertError",
+    "UnknownStatGenerationError",
+    "InvalidHpFormulaError",
+    "NumericNameError",
+    "EdgeConfigMissingClassError",
+    # Builder
+    "CharacterBuilder",
+    # String helpers
+    "humanize_snake_case",
+    "strip_unmatched_placeholders",
+]
