@@ -87,7 +87,7 @@ class PackMeta(BaseModel):
 class PortraitManifestEntry(BaseModel):
     """A character entry in a portrait manifest."""
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     name: str
     role: str = ""
@@ -95,8 +95,6 @@ class PortraitManifestEntry(BaseModel):
     appearance: str = ""
     culture_aesthetic: str = ""
     element_visual: str = ""
-
-    model_config = {"extra": "forbid", "populate_by_name": True}
 
 
 class World(BaseModel):

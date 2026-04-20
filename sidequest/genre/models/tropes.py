@@ -35,7 +35,7 @@ class PassiveProgression(BaseModel):
 class TropeDefinition(BaseModel):
     """A narrative trope definition (genre-level or world-level)."""
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     id: str | None = None
     name: str
@@ -51,5 +51,3 @@ class TropeDefinition(BaseModel):
     passive_progression: PassiveProgression | None = None
     is_abstract: bool = Field(default=False, alias="abstract")
     extends: str | None = None
-
-    model_config = {"extra": "forbid", "populate_by_name": True}

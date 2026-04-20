@@ -24,12 +24,10 @@ class MoodTrack(BaseModel):
 class AudioEffect(BaseModel):
     """An audio effect in a processing chain."""
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     effect_type: str = Field(alias="type", serialization_alias="type")
     params: dict[str, float] = Field(default_factory=dict)
-
-    model_config = {"extra": "forbid", "populate_by_name": True}
 
 
 class CreatureVoicePreset(BaseModel):
@@ -58,12 +56,10 @@ class MixerConfig(BaseModel):
 class AudioVariation(BaseModel):
     """A single variation within an audio theme."""
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     variation_type: str = Field(alias="type", serialization_alias="type")
     path: str
-
-    model_config = {"extra": "forbid", "populate_by_name": True}
 
 
 class AudioTheme(BaseModel):
