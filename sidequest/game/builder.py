@@ -17,6 +17,7 @@ This module is ported in slices:
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -498,6 +499,24 @@ def strip_unmatched_placeholders(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Internal arithmetic-parse failure — wrapped into InvalidHpFormulaError
+# by the caller. Private to this module.
+# ---------------------------------------------------------------------------
+
+
+class _ArithmeticParseError(Exception):
+    """Raised by _eval_simple_arithmetic when a token fails to parse.
+
+    Carries the offending token so the HP formula error message can
+    surface it — SOUL.md: "Fail loud at the boundary."
+    """
+
+    def __init__(self, token: str) -> None:
+        self.token = token
+        super().__init__(f"unparseable token: {token!r}")
+
+
+# ---------------------------------------------------------------------------
 # CharacterBuilder — the state machine
 # ---------------------------------------------------------------------------
 
@@ -526,6 +545,8 @@ class CharacterBuilder:
         scenes: list[CharCreationScene],
         rules: RulesConfig,
         backstory_tables: BackstoryTables | None = None,
+        *,
+        rng: random.Random | None = None,
     ) -> None:
         """Create a new builder.
 
@@ -533,6 +554,12 @@ class CharacterBuilder:
         panicking `new` and a fallible `try_new`; Python collapses those to
         a single constructor that raises — matching Python's exception-
         first idiom and removing a duplicate code path.
+
+        `rng` is a seeded RNG source for deterministic stat generation in
+        tests. Production callers should omit it (defaults to a fresh
+        `random.Random()`). Rust rolls via `rand::rng()` — which is process-
+        local and non-deterministic — so production parity is preserved;
+        the explicit parameter is only for test seeding.
         """
         if not scenes:
             raise NoScenesError()
@@ -540,11 +567,11 @@ class CharacterBuilder:
         self._scenes: list[CharCreationScene] = scenes
         self._results: list[SceneResult] = []
         self._phase: BuilderPhase = InProgress(scene_index=0)
+        self._rng: random.Random = rng if rng is not None else random.Random()
 
         # Configuration sourced from RulesConfig. Keep these as attributes
-        # (not a stored reference) so later slices can mutate stat_generation
-        # when a scene directive overrides the default (see Rust
-        # apply_freeform handling of scene-level stat_generation).
+        # (not a stored reference) so scene directives can override
+        # stat_generation at apply time (Rust apply_freeform semantics).
         self._stat_generation: str = rules.stat_generation
         self._ability_score_names: list[str] = list(rules.ability_score_names)
         self._default_class: str | None = rules.default_class
@@ -558,8 +585,20 @@ class CharacterBuilder:
         self._race_label: str = rules.race_label or "Race"
         self._class_label: str = rules.class_label or "Class"
 
-        # Stat rolling at construction lands in Slice 3. Reserved field.
+        # Eager roll at construction — scan scenes for the first
+        # `stat_generation: roll_3d6_strict` directive. Rust rolls eagerly
+        # so stat values are available for narration injection when the
+        # declaring scene is first rendered (the scene content is
+        # authoritative: if a scene declares roll_3d6_strict, that scene's
+        # narration gets stat values).
         self._rolled_stats: list[tuple[str, int]] | None = None
+        for s in scenes:
+            eff = s.mechanical_effects
+            if eff is None or eff.stat_generation is None:
+                continue
+            if eff.stat_generation == "roll_3d6_strict":
+                self._rolled_stats = self._roll_3d6_stats()
+            break
 
         self._backstory_tables: BackstoryTables | None = backstory_tables
         self._equipment_tables: EquipmentTables | None = None
@@ -874,10 +913,15 @@ class CharacterBuilder:
             else MechanicalEffects()
         )
 
-        # Slice 2: scene-level stat_generation directive is recorded via
-        # effects_applied but the re-roll is deferred to Slice 3. Scene
-        # walking does not re-execute stat generation — only construction-
-        # time eager rolling does (Slice 3).
+        # Scene-level stat_generation directive applies at freeform input
+        # (Rust parity): roll_3d6_strict re-rolls; any other method
+        # overrides the builder's default stat_generation for later
+        # generate_stats() calls.
+        if effects.stat_generation is not None:
+            if effects.stat_generation == "roll_3d6_strict":
+                self._rolled_stats = self._roll_3d6_stats()
+            else:
+                self._stat_generation = effects.stat_generation
 
         hooks = extract_hooks(scene.id, effects)
         anchors = extract_anchors(scene.id, effects)
@@ -953,6 +997,18 @@ class CharacterBuilder:
             else MechanicalEffects()
         )
 
+        # Scene-level stat_generation directive: roll_3d6_strict only rolls
+        # if we don't already have rolled stats (unlike apply_freeform which
+        # unconditionally re-rolls). This mirrors Rust's behavior where
+        # auto_advance guards `if self.rolled_stats.is_none()` but
+        # apply_freeform always re-rolls.
+        if effects.stat_generation is not None:
+            if effects.stat_generation == "roll_3d6_strict":
+                if self._rolled_stats is None:
+                    self._rolled_stats = self._roll_3d6_stats()
+            else:
+                self._stat_generation = effects.stat_generation
+
         self._results.append(
             SceneResult(
                 input_type=ChoiceInput(index=0),
@@ -1009,6 +1065,272 @@ class CharacterBuilder:
             raise CannotRevertError()
         self._results.pop()
         self._phase = InProgress(scene_index=len(self._results))
+
+    # --- Stat generation ---
+
+    def _roll_3d6_stats(self) -> list[tuple[str, int]]:
+        """Roll 3d6 for each ability score in order. Returns (name, total)
+        pairs in ability_score_names order.
+
+        Port of sidequest_game::builder::CharacterBuilder::roll_3d6_stats.
+        Uses the builder's seedable RNG so tests can drive deterministic
+        outputs.
+        """
+        rng = self._rng
+        results: list[tuple[str, int]] = []
+        for name in self._ability_score_names:
+            dice = (rng.randint(1, 6), rng.randint(1, 6), rng.randint(1, 6))
+            total = sum(dice)
+            results.append((name, total))
+        return results
+
+    @staticmethod
+    def _allocate_point_buy(n: int, budget: int) -> list[int]:
+        """Allocate a point-buy budget across `n` stats.
+
+        Port of sidequest_game::builder::CharacterBuilder::allocate_point_buy.
+
+        All stats start at 8. Points distributed round-robin, raising each
+        stat by 1 at a time (cheapest-first) until budget is spent. No
+        stat can exceed 15. Cost table (cumulative from 8):
+          8→9..12: 1pt each; 13→14..15: 2pt each.
+        """
+
+        def marginal_cost(value: int) -> int:
+            if 9 <= value <= 13:
+                return 1
+            if value in (14, 15):
+                return 2
+            # Outside [9, 15] — effectively infinite; callers filter via
+            # the next_val > 15 guard before reaching this branch.
+            return 1 << 30
+
+        stats = [8] * n
+        remaining = budget
+        while True:
+            any_raised = False
+            for i in range(n):
+                next_val = stats[i] + 1
+                if next_val > 15:
+                    continue
+                cost = marginal_cost(next_val)
+                if cost <= remaining:
+                    stats[i] = next_val
+                    remaining -= cost
+                    any_raised = True
+            if not any_raised or remaining == 0:
+                break
+        return stats
+
+    def generate_stats(self, acc: AccumulatedChoices) -> dict[str, int]:
+        """Generate ability scores per the declared stat_generation method.
+
+        Port of sidequest_game::builder::CharacterBuilder::generate_stats.
+
+        Strategies:
+        - roll_3d6_strict: reuse pre-rolled stats from construction or
+          scene directive; re-roll inline if absent (defensive — the
+          eager roll should have fired).
+        - standard_array: [15, 14, 13, 12, 10, 8] mapped to the
+          ability_score_names in declaration order. When no explicit
+          stat_bonuses were set by chargen choices, derive bonuses from
+          accumulated hints (race/mutation/class) to differentiate stat
+          spreads across builds.
+        - point_buy: distribute point_buy_budget across ability scores.
+
+        Accumulated `acc.stat_bonuses` are applied additively on top of
+        the generated baseline (every strategy).
+
+        Raises UnknownStatGenerationError for any other method string.
+        """
+        method = self._stat_generation
+
+        if method == "roll_3d6_strict":
+            if self._rolled_stats is not None:
+                stats = dict(self._rolled_stats)
+            else:
+                # Defensive re-roll — shouldn't fire in practice because
+                # the eager construction roll covers this path. Mirrors
+                # Rust's fallback.
+                rolled = self._roll_3d6_stats()
+                stats = dict(rolled)
+
+        elif method == "standard_array":
+            base_values = [15, 14, 13, 12, 10, 8]
+            stats = {
+                name: val
+                for name, val in zip(self._ability_score_names, base_values)
+            }
+
+        elif method == "point_buy":
+            values = self._allocate_point_buy(
+                len(self._ability_score_names), self._point_buy_budget
+            )
+            stats = {
+                name: val
+                for name, val in zip(self._ability_score_names, values)
+            }
+
+        else:
+            raise UnknownStatGenerationError(method=method)
+
+        # Apply explicit stat bonuses from chargen choices (origin,
+        # mutation, artifact).
+        for stat, bonus in acc.stat_bonuses.items():
+            if stat in stats:
+                stats[stat] += bonus
+
+        # Standard-array derivation: when no explicit bonuses were
+        # authored and we have at least 3 stats, differentiate the spread
+        # using accumulated hints. Mirrors Rust's behavior exactly.
+        if (
+            not acc.stat_bonuses
+            and method == "standard_array"
+            and len(self._ability_score_names) >= 3
+        ):
+            names = self._ability_score_names
+            # Origin/race → boost first stat
+            if acc.race_hint is not None:
+                stats[names[0]] = stats[names[0]] + 3
+            # Mutation/affinity → boost second stat, reduce last
+            if acc.mutation_hint is not None or acc.affinity_hint is not None:
+                stats[names[1]] = stats[names[1]] + 2
+                stats[names[-1]] = stats[names[-1]] - 1
+            # Class/training → boost third stat (floor at last index if
+            # fewer than 3 names, though the guard above already rejects
+            # that case).
+            if acc.class_hint is not None or acc.training_hint is not None:
+                idx = min(2, len(names) - 1)
+                stats[names[idx]] = stats[names[idx]] + 2
+
+        return stats
+
+    # --- HP formula ---
+
+    @staticmethod
+    def _evaluate_hp_formula(
+        formula: str,
+        stats: dict[str, int],
+        class_hp_bases: dict[str, int],
+        class_str: str,
+    ) -> int:
+        """Evaluate an hp_formula string using stats and class config.
+
+        Port of sidequest_game::builder::CharacterBuilder::evaluate_hp_formula.
+
+        Supported variables:
+        - `XXX_modifier` — D&D-style ability modifier: trunc((stat - 10) / 2)
+          where XXX matches any key in stats (e.g. CON, STR, body).
+        - `xxx_mod` — lowercase alias of `XXX_modifier`.
+        - `class_base` — class_hp_bases lookup (default 8 if unset).
+        - `level` — always 1 at creation.
+        - Integer literals (positive or negative).
+
+        Supported operators: +, -, * (left-to-right, no precedence).
+        Parentheses are stripped before evaluation. Returns max(1, result)
+        — HP floors at 1, never zero or negative.
+
+        Raises InvalidHpFormulaError for empty or unparseable formulas.
+
+        Integer division note: Rust uses truncation (toward zero); Python
+        `//` is floor (toward negative infinity). For negative modifiers
+        (stat < 10 after bonuses) the two disagree — e.g. `(5 - 10) / 2`
+        is `-2` in Rust but `-3` with Python `//`. We use `int(a / b)` to
+        truncate toward zero for Rust parity.
+        """
+        if not formula.strip():
+            raise InvalidHpFormulaError(detail="hp_formula is empty")
+
+        class_base = class_hp_bases.get(class_str, 8)
+        level = 1
+
+        expr = formula
+        # Replace stat_modifier and stat_mod tokens. Longest-first: do
+        # `{NAME}_modifier` before `{name}_mod` so "CON_modifier" doesn't
+        # accidentally match the shorter `con_mod` prefix inside
+        # "CON_modifier"'s lowercase form. Order of dict iteration is
+        # insertion order in 3.7+; we iterate a stable list.
+        for stat_name, stat_value in stats.items():
+            modifier = int((stat_value - 10) / 2)  # Rust-style trunc
+            expr = expr.replace(f"{stat_name}_modifier", str(modifier))
+            expr = expr.replace(f"{stat_name.lower()}_mod", str(modifier))
+
+        expr = expr.replace("class_base", str(class_base))
+        expr = expr.replace("level", str(level))
+        expr = expr.replace("(", "").replace(")", "")
+
+        try:
+            result = CharacterBuilder._eval_simple_arithmetic(expr)
+        except _ArithmeticParseError as e:
+            raise InvalidHpFormulaError(
+                detail=(
+                    f"unparseable token '{e.token}' in formula '{formula}' "
+                    f"(after substitution: '{expr}')"
+                )
+            ) from None
+
+        # Floor at 1 — no zero or negative HP.
+        return max(1, result)
+
+    @staticmethod
+    def _eval_simple_arithmetic(expr: str) -> int:
+        """Evaluate a simple arithmetic expression with +, -, * operators.
+
+        Port of sidequest_game::builder::CharacterBuilder::eval_simple_arithmetic.
+
+        Left-to-right, no operator precedence. Handles negative literals
+        from variable substitution — a '-' at the start of the expression
+        (or immediately after an operator) is part of a negative literal,
+        not a binary operator.
+
+        Raises _ArithmeticParseError (wrapping the offending token) when
+        any token fails to parse as int.
+        """
+        expr = expr.strip()
+
+        # Tokenize: split on +/-/* but preserve them as tokens. A binary
+        # operator only splits when the current buffer is non-empty after
+        # trimming — so a leading '-' or a '-' right after an operator
+        # stays glued to the following digits as a signed literal.
+        tokens: list[str] = []
+        current = ""
+        for ch in expr:
+            if ch in ("+", "-", "*") and current.strip() != "":
+                tokens.append(current.strip())
+                tokens.append(ch)
+                current = ""
+            else:
+                current += ch
+        if current.strip() != "":
+            tokens.append(current.strip())
+
+        if not tokens:
+            raise _ArithmeticParseError(token="")
+
+        try:
+            result = int(tokens[0])
+        except ValueError:
+            raise _ArithmeticParseError(token=tokens[0]) from None
+
+        i = 1
+        while i + 1 < len(tokens):
+            op = tokens[i]
+            operand_token = tokens[i + 1]
+            try:
+                operand = int(operand_token)
+            except ValueError:
+                raise _ArithmeticParseError(token=operand_token) from None
+            if op == "+":
+                result += operand
+            elif op == "-":
+                result -= operand
+            elif op == "*":
+                result *= operand
+            else:
+                raise _ArithmeticParseError(token=op)
+            i += 2
+
+        return result
 
     # --- Private helpers ---
 
