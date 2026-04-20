@@ -31,6 +31,10 @@ from sidequest.game.builder import (
 )
 from sidequest.game.character import Character
 from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.room_movement import (
+    RoomGraphInitError,
+    init_room_graph_location,
+)
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -42,6 +46,7 @@ from sidequest.genre.error import GenreValidationError
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
+from sidequest.genre.models.world import NavigationMode
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -708,6 +713,61 @@ class WebSocketSessionHandler:
         if bind_result is not None:
             _, active_pack = bind_result
             sd.active_scenario = active_pack
+
+        # Room-graph init (Story 2.3 Slice E). When the selected world
+        # uses ``navigation_mode: room_graph`` and loaded a non-empty
+        # rooms list, set ``snap.location`` to the entrance room. Rust
+        # parity: connect.rs:2025-2069. No-op for region-mode worlds
+        # (the rules-based default_location path handles those; lands
+        # with a later slice when the snapshot currently leaves it
+        # blank). RoomGraphInitError is a pack authoring bug — log
+        # loudly at error level and leave ``snap.location`` blank
+        # rather than hard-fail the confirmation frame.
+        world = sd.genre_pack.worlds.get(sd.world_slug)
+        if (
+            world is not None
+            and world.cartography.navigation_mode == NavigationMode.room_graph
+            and world.cartography.rooms
+        ):
+            try:
+                entrance_id = init_room_graph_location(
+                    sd.snapshot, list(world.cartography.rooms)
+                )
+                span.add_event(
+                    "location.initialized",
+                    {
+                        "event": "location.initialized",
+                        "location": entrance_id,
+                        "mode": "room_graph",
+                        "source": "entrance_room",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                    },
+                )
+                logger.info(
+                    "room_graph.init genre=%s world=%s entrance=%s discovered_rooms=%d",
+                    sd.genre_slug,
+                    sd.world_slug,
+                    entrance_id,
+                    len(sd.snapshot.discovered_rooms),
+                )
+            except RoomGraphInitError as exc:
+                logger.error(
+                    "room_graph.init_failed genre=%s world=%s error=%s",
+                    sd.genre_slug,
+                    sd.world_slug,
+                    exc,
+                )
+                span.add_event(
+                    "location.init_failed",
+                    {
+                        "event": "location.init_failed",
+                        "mode": "room_graph",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "error": str(exc),
+                    },
+                )
 
         sd.builder = None
         logger.info(

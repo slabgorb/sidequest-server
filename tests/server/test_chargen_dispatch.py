@@ -574,8 +574,13 @@ class TestSliceCWorldMaterialization:
             assert snap.world_history[0].id == "fresh"
 
             # grimvault's fresh chapter authored location + atmosphere —
-            # materialize should have stamped them on the snapshot.
-            assert snap.location == "The Threshold"
+            # materialize stamps them; Slice E's room-graph init then
+            # replaces ``location`` with the canonical entrance room id
+            # (``threshold``) because grimvault uses navigation_mode:
+            # room_graph. The chapter's display name ("The Threshold")
+            # only survives in atmosphere / history_chapter.
+            assert snap.location == "threshold"
+            assert "threshold" in snap.discovered_rooms
             assert "Clinical unease" in snap.atmosphere
             assert snap.time_of_day == "dawn"
 
