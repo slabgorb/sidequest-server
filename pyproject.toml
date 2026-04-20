@@ -1,0 +1,52 @@
+[project]
+name = "sidequest-server"
+version = "0.1.0"
+description = "SideQuest Python API server — port target of sidequest-api (Rust). See ADR-082."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3",
+    "pyright>=1.1.358",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+sidequest-server = "sidequest.server.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sidequest"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["sidequest", "tests"]
+pythonVersion = "3.12"
