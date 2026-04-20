@@ -46,6 +46,7 @@ from sidequest.genre.models.progression import ProgressionConfig
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioPack, ScenarioNpc
 from sidequest.genre.models.theme import GenreTheme
+from sidequest.genre.cache import GenreCache
 from sidequest.genre.models.tropes import TropeDefinition
 from sidequest.genre.models.world import CartographyConfig, NavigationMode, WorldConfig
 from sidequest.genre.resolve import resolve_trope_inheritance
@@ -681,9 +682,23 @@ def find_pack_dir(code: str | GenreCode, search_paths: list[Path]) -> Path:
 # Cached loader
 # ---------------------------------------------------------------------------
 
-_process_cache: GenrePack | None = None
-_process_cache_store: dict[str, GenrePack] = {}
-_process_cache_lock: object = None
+_default_cache: GenreCache | None = None
+
+
+def _get_default_cache() -> GenreCache:
+    global _default_cache
+    if _default_cache is None:
+        _default_cache = GenreCache()
+    return _default_cache
+
+
+def clear_default_cache() -> None:
+    """Evict all entries from the default process-lifetime cache.
+
+    Exposed for test isolation; not present in the Rust original.
+    """
+    _get_default_cache().clear()
+
 
 def load_genre_pack_cached(
     genre_code: str | GenreCode,
@@ -698,18 +713,6 @@ def load_genre_pack_cached(
     Returns:
         GenrePack — same object returned on repeated calls for the same code.
     """
-    import threading
-
-    global _process_cache_lock
-    if _process_cache_lock is None:
-        _process_cache_lock = threading.Lock()
-
     code_str = str(genre_code)
-    lock = _process_cache_lock  # type: ignore[assignment]
-    with lock:  # type: ignore[union-attr]
-        if code_str in _process_cache_store:
-            return _process_cache_store[code_str]
-        loader = GenreLoader(search_paths=search_paths)
-        pack = loader.load(genre_code)
-        _process_cache_store[code_str] = pack
-        return pack
+    loader = GenreLoader(search_paths=search_paths)
+    return _get_default_cache().get_or_load(code_str, loader)
