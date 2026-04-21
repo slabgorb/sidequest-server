@@ -292,6 +292,17 @@ class TurnContext:
     # after consumption), matching Rust's `opening_directive.take()`.
     opening_directive: str | None = None
 
+    # Persistent narrator world context (Valley zone, every turn).
+    # Story 41-11 / ADR-082 Phase 2.2 IOU: resolved once at connect time
+    # in the session handler. Currently contains the ``AVAILABLE
+    # CULTURES`` block produced by
+    # :func:`sidequest.server.dispatch.culture_context.resolve_culture_reference`
+    # (with lore-only cultures filtered out via ``Culture.chargen``).
+    # Phase 3 work will prepend the setting + world-lore blocks here.
+    # Rust parity: ``world_context`` string threaded through
+    # ``connect.rs`` and consumed by ``WorldBuilder::inject_world_context``.
+    world_context: str | None = None
+
     # Active trope summary for background context (Valley zone)
     active_trope_summary: str | None = None
 
@@ -877,6 +888,23 @@ class Orchestrator:
                 PromptSection.new(
                     "game_state",
                     f"<game_state>\n{context.state_summary}\n</game_state>",
+                    AttentionZone.Valley,
+                    SectionCategory.State,
+                ),
+            )
+
+        # World context (Valley zone) — persistent across turns.
+        # Currently carries the AVAILABLE CULTURES block with
+        # ``Culture.chargen=False`` entries filtered out (Story 41-11,
+        # closing the Phase 2.2 IOU). Strip the leading newline the
+        # helper emits for Rust-style concat — the registry handles
+        # section separation.
+        if context.world_context:
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "world_context",
+                    context.world_context.lstrip("\n"),
                     AttentionZone.Valley,
                     SectionCategory.State,
                 ),
