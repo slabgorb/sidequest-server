@@ -44,16 +44,16 @@ from sidequest.agents.prompt_framework.types import (
     PromptSection,
     SectionCategory,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry, Npc
+from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
 from sidequest.game.tension_tracker import PacingHint
-from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.narrative import Prompts
+from sidequest.genre.models.pack import GenrePack
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,
+    SPAN_RAG_PROSE_CLEANUP,
     SPAN_TURN_AGENT_LLM_INFERENCE,
     SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
     SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
-    SPAN_RAG_PROSE_CLEANUP,
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
 )
@@ -583,8 +583,9 @@ class Orchestrator:
             self._soul_data = soul_data
         else:
             # Attempt to load SOUL.md from CWD
-            from sidequest.agents.prompt_framework.soul import parse_soul_md
             import pathlib
+
+            from sidequest.agents.prompt_framework.soul import parse_soul_md
             soul_path = pathlib.Path("SOUL.md")
             loaded = parse_soul_md(soul_path)
             self._soul_data = loaded if loaded else None

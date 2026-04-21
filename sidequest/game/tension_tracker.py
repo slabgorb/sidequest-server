@@ -41,10 +41,12 @@ narrator wiring), Epic 42 / 42-3 (Python port).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+from sidequest.genre.models.ocean import DramaThresholds
 
 # ---------------------------------------------------------------------------
 # Constants — mirror Rust file-private const items
@@ -517,9 +519,12 @@ def classify_combat_outcome(
     total_damage: int = sum(max(e.damage, 0) for e in round.damage_events)
 
     # Near miss — target survived at low HP.
-    if lowest_hp_ratio is not None:
-        if lowest_hp_ratio <= _NEAR_MISS_HP_THRESHOLD and total_damage > 0:
-            return TurnClassification.dramatic(DetailedCombatEvent.NearMiss)
+    if (
+        lowest_hp_ratio is not None
+        and lowest_hp_ratio <= _NEAR_MISS_HP_THRESHOLD
+        and total_damage > 0
+    ):
+        return TurnClassification.dramatic(DetailedCombatEvent.NearMiss)
 
     # Critical hit — high total damage.
     if total_damage >= _DRAMATIC_DAMAGE_THRESHOLD:
@@ -535,18 +540,6 @@ def classify_combat_outcome(
 
     # Some damage but not dramatic.
     return TurnClassification.normal()
-
-
-# ---------------------------------------------------------------------------
-# Forward-declared import to avoid a circular dependency at module load
-# (``DramaThresholds`` lives in ``sidequest.genre.models.ocean`` which
-# transitively imports nothing from the game module — safe to import at
-# top-level, but kept here for clarity of the type used in
-# :meth:`TensionTracker.pacing_hint`).
-# ---------------------------------------------------------------------------
-
-
-from sidequest.genre.models.ocean import DramaThresholds  # noqa: E402  (cycle-safety placement)
 
 
 __all__ = [
