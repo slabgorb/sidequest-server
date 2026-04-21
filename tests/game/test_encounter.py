@@ -359,18 +359,20 @@ def test_encounter_actor_per_actor_state_preserves_shape() -> None:
 
 
 def test_encounter_phase_variants() -> None:
-    # The universal narrative arc: Setup -> Opening -> Escalation -> Climax -> Resolution
-    phases = [
+    # The universal narrative arc: Setup -> Opening -> Escalation -> Climax -> Resolution.
+    # Enumerate membership (not list length) so the test fails if a variant is
+    # dropped or renamed upstream.
+    assert set(EncounterPhase) == {
         EncounterPhase.Setup,
         EncounterPhase.Opening,
         EncounterPhase.Escalation,
         EncounterPhase.Climax,
         EncounterPhase.Resolution,
-    ]
-
-    assert len(phases) == 5
-    assert phases[0] == EncounterPhase.Setup
-    assert phases[4] == EncounterPhase.Resolution
+    }
+    # Rust-verbatim values — guards against value drift (these strings are
+    # what serde emits for the Rust enum).
+    assert EncounterPhase.Setup.value == "Setup"
+    assert EncounterPhase.Resolution.value == "Resolution"
 
 
 def test_encounter_phase_serde_roundtrip() -> None:
@@ -591,15 +593,21 @@ def test_structured_encounter_combat_with_empty_combatants() -> None:
 
 def test_metric_direction_is_non_exhaustive() -> None:
     """Rust enum has #[non_exhaustive] — future variants may land.
-    In Python, StrEnum membership is the equivalent. The test asserts the
-    three known variants exist; new variants may be added without breaking
-    this test."""
-    known_variants = [
+
+    Asserts membership set (not list length), so removing/renaming a
+    variant upstream breaks this test. Adding a new variant to the
+    Python enum will also break this — that's desired: the port author
+    must consciously widen the known set when a new Rust variant lands.
+    """
+    assert set(MetricDirection) == {
         MetricDirection.Ascending,
         MetricDirection.Descending,
         MetricDirection.Bidirectional,
-    ]
-    assert len(known_variants) == 3
+    }
+    # Rust-verbatim serde values — guards against value drift.
+    assert MetricDirection.Ascending.value == "Ascending"
+    assert MetricDirection.Descending.value == "Descending"
+    assert MetricDirection.Bidirectional.value == "Bidirectional"
 
 
 def test_metric_direction_unknown_variant_fails_validation() -> None:
@@ -1074,10 +1082,17 @@ def test_encounter_resolved_flag_persists() -> None:
 
 
 def test_game_module_exports_structured_encounter() -> None:
-    """Verifies new types are re-exported from sidequest.game package."""
+    """Verifies new 42-1 types are re-exported from the sidequest.game package.
+
+    Every symbol added by 42-1 MUST be reachable via ``sidequest.game.X`` so
+    downstream modules (42-2 ResourcePool, 42-3 TensionTracker, 42-4 dispatch
+    + narrator + GM panel) can import from one canonical place without
+    reaching into sub-modules.
+    """
     import sidequest.game as game
 
     expected = [
+        # encounter module
         "StructuredEncounter",
         "EncounterMetric",
         "EncounterActor",
@@ -1085,6 +1100,9 @@ def test_game_module_exports_structured_encounter() -> None:
         "MetricDirection",
         "SecondaryStats",
         "StatValue",
+        "RigType",
+        # combatant module
+        "Combatant",
     ]
     for symbol in expected:
         assert hasattr(game, symbol), (

@@ -163,6 +163,8 @@ class StatValue(BaseModel):
     Port of ``sidequest_game::encounter::StatValue``.
     """
 
+    model_config = {"extra": "forbid"}  # CLAUDE.md "No Silent Fallbacks"
+
     current: int
     max: int
 
@@ -176,6 +178,8 @@ class SecondaryStats(BaseModel):
     armor/maneuver for vehicles, shields/hull/engines for ships, focus/nerve
     for standoffs, etc.
     """
+
+    model_config = {"extra": "forbid"}  # CLAUDE.md "No Silent Fallbacks"
 
     stats: dict[str, StatValue] = Field(default_factory=dict)
     damage_tier: str | None = None
@@ -215,6 +219,8 @@ class EncounterActor(BaseModel):
     Lookup logic stays in Rust for Phase 3; Python preserves the shape.
     """
 
+    model_config = {"extra": "forbid"}  # CLAUDE.md "No Silent Fallbacks"
+
     name: str
     role: str
     per_actor_state: dict[str, Any] = Field(default_factory=dict)
@@ -225,6 +231,8 @@ class EncounterMetric(BaseModel):
 
     Port of ``sidequest_game::encounter::EncounterMetric``.
     """
+
+    model_config = {"extra": "forbid"}  # CLAUDE.md "No Silent Fallbacks"
 
     name: str
     current: int
@@ -247,6 +255,8 @@ class StructuredEncounter(BaseModel):
     One string-keyed ``encounter_type`` ("combat", "chase", "standoff",
     "negotiation", ...) replaces the old hardcoded per-type state structs.
     """
+
+    model_config = {"extra": "forbid"}  # CLAUDE.md "No Silent Fallbacks"
 
     encounter_type: str
     metric: EncounterMetric
