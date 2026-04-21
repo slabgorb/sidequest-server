@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from sidequest.game.belief_state import BeliefState
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
+from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
@@ -301,7 +302,8 @@ class GameSnapshot(BaseModel):
 
     All fields ported to match the Rust JSON schema for save compatibility.
     Deferred-subsystem fields are present but noted:
-    - encounter: P3-deferred (StructuredEncounter / combat engine)
+    - encounter: typed StructuredEncounter | None as of story 42-1 (ADR-082
+      Phase 3). Dispatch-side wiring and OTEL emission land in 42-4.
     - active_tropes: P2-deferred (trope engine)
     - campaign_maturity / world_history: P3-deferred (world materialization)
     - genie_wishes: P5-deferred (consequence engine)
@@ -336,8 +338,8 @@ class GameSnapshot(BaseModel):
     notes: list[str] = Field(default_factory=list)
     narrative_log: list[NarrativeEntry] = Field(default_factory=list)
 
-    # P3-deferred: StructuredEncounter (ADR-033 confrontation engine)
-    encounter: dict | None = None
+    # StructuredEncounter (ADR-033 confrontation engine) — typed in story 42-1.
+    encounter: StructuredEncounter | None = None
 
     # P2-deferred: trope engine state
     active_tropes: list[TropeState] = Field(default_factory=list)

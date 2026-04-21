@@ -162,11 +162,21 @@ class Character(BaseModel):
         return self.core.level
 
     def is_broken(self) -> bool:
-        """True when edge has reached zero (combatant is down)."""
-        return self.core.edge.current == 0
+        """True when edge is at or below zero (combatant is down).
+
+        Port of Rust ``Combatant::is_broken`` default: ``self.edge() <= 0``.
+        Negative edge counts as broken; ``== 0`` would drift from Rust.
+        Fixed in story 42-1 (see session Delivery Findings).
+        """
+        return self.core.edge.current <= 0
 
     def edge_fraction(self) -> float:
-        """HP fraction as float in [0.0, 1.0]. Returns 1.0 if max_edge == 0."""
+        """Edge fraction as float in [0.0, 1.0].
+
+        Port of Rust ``Combatant::edge_fraction`` default: returns ``0.0``
+        when ``max_edge == 0`` (NOT ``1.0``, NOT ``ZeroDivisionError``).
+        Fixed in story 42-1 (see session Delivery Findings).
+        """
         if self.core.edge.max == 0:
-            return 1.0
+            return 0.0
         return self.core.edge.current / self.core.edge.max
