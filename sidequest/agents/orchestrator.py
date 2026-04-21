@@ -45,6 +45,7 @@ from sidequest.agents.prompt_framework.types import (
     SectionCategory,
 )
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry, Npc
+from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.narrative import Prompts
 from sidequest.telemetry.spans import (
@@ -311,6 +312,16 @@ class TurnContext:
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
     npcs: list[Npc] = field(default_factory=list)
+
+    # PacingHint from TensionTracker (Late zone — Rust parity at
+    # sidequest-api/crates/sidequest-agents/src/prompt_framework/mod.rs:108).
+    # Story 42-3 / ADR-082 Phase 3. When ``None``, no pacing section is
+    # registered into the narrator prompt — zero byte leak.
+    # Spec deviation logged in 42-3 session: context-doc says ``str | None``
+    # but the typed object preserves ``escalation_beat`` without a
+    # string-marshalling layer; matches Rust which passes ``&PacingHint``
+    # to ``register_pacing_section``.
+    pacing_hint: PacingHint | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -990,6 +1001,19 @@ class Orchestrator:
                     AttentionZone.Late,
                     SectionCategory.Format,
                 ),
+            )
+
+        # PacingHint (Late zone, every tier — combat pacing can change
+        # mid-session, so per-turn dynamic state must reach Delta tier too).
+        # Rust parity: sidequest-agents/src/prompt_framework/mod.rs:89
+        # ``register_pacing_section`` filters to PACING_AGENTS = ["narrator"]
+        # internally; safe to call unconditionally when a hint is set.
+        if context.pacing_hint is not None:
+            hint = context.pacing_hint
+            registry.register_pacing_section(
+                agent_name,
+                hint.narrator_directive(),
+                hint.escalation_beat,
             )
 
         # Player action (Recency zone — highest attention, every tier)
