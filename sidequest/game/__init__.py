@@ -70,6 +70,17 @@ from sidequest.game.persistence import (
     SqliteStore,
     db_path_for_session,
 )
+from sidequest.game.resource_pool import (
+    NotVoluntary,
+    ResourcePatch,
+    ResourcePatchError,
+    ResourcePatchOp,
+    ResourcePatchResult,
+    ResourcePool,
+    ResourceThreshold,
+    UnknownResource,
+    mint_threshold_lore,
+)
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
@@ -82,7 +93,6 @@ from sidequest.game.session import (
     Npc,
     NpcPatch,
     NpcRegistryEntry,
-    ResourcePool,
     TropeState,
     WorldStatePatch,
 )
@@ -140,6 +150,16 @@ __all__ = [
     "SessionMeta",
     "SqliteStore",
     "db_path_for_session",
+    # resource_pool (story 42-2 — ADR-033 port)
+    "NotVoluntary",
+    "ResourcePatch",
+    "ResourcePatchError",
+    "ResourcePatchOp",
+    "ResourcePatchResult",
+    "ResourcePool",
+    "ResourceThreshold",
+    "UnknownResource",
+    "mint_threshold_lore",
     # session
     "AchievementTracker",
     "AxisValue",
@@ -152,7 +172,6 @@ __all__ = [
     "Npc",
     "NpcPatch",
     "NpcRegistryEntry",
-    "ResourcePool",
     "TropeState",
     "WorldStatePatch",
     # turn

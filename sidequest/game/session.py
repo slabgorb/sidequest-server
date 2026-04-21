@@ -15,15 +15,28 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from sidequest.game.belief_state import BeliefState
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
+from sidequest.game.lore_store import LoreStore
+from sidequest.game.resource_pool import (
+    NotVoluntary,
+    ResourcePatch,
+    ResourcePatchOp,
+    ResourcePatchResult,
+    ResourcePool,
+    ResourceThreshold,
+    UnknownResource,
+    detect_crossings,
+    mint_threshold_lore,
+)
 from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
+from sidequest.genre.models.rules import ResourceDeclaration
 
 # ---------------------------------------------------------------------------
 # NarrativeEntry — narrative log entries
@@ -268,22 +281,9 @@ class AchievementTracker(BaseModel):
     achievements: list[dict] = Field(default_factory=list)
 
 
-class ResourcePool(BaseModel):
-    """Named resource pool with thresholds (story 16-10) — P4-deferred.
-
-    Port of sidequest_game::resource_pool::ResourcePool.
-    """
-
-    model_config = {"extra": "ignore"}
-
-    name: str = ""
-    label: str = ""
-    current: float = 0.0
-    min: float = 0.0
-    max: float = 100.0
-    voluntary: bool = False
-    decay_per_turn: float = 0.0
-    thresholds: list[dict] = Field(default_factory=list)
+# ResourcePool lives in sidequest.game.resource_pool (story 42-2 port of
+# ADR-033 resource_pool.rs). Imported at module top for use in
+# ``GameSnapshot.resources`` and the patch-application methods below.
 
 
 # ScenarioState is fully deferred (P5 — Epic 7 / scenario system)
@@ -395,6 +395,100 @@ class GameSnapshot(BaseModel):
 
     # P4-deferred: named resource pools (story 16-10)
     resources: dict[str, ResourcePool] = Field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Legacy save migration (story 42-2 / resource-consolidation phase 4)
+    #
+    # Port of the ``impl From<GameSnapshotRaw> for GameSnapshot`` block in
+    # ``sidequest-api/crates/sidequest-game/src/state.rs``. Old saves stored
+    # resources in ``resource_state: dict[str, float]`` with metadata in a
+    # parallel ``resource_declarations`` vec. New saves store them as
+    # ``resources: dict[str, ResourcePool]``. The migration is performed in
+    # a ``@model_validator(mode="before")`` so the legacy fields never touch
+    # the validated model (they are not declared fields on GameSnapshot).
+    # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_resource_fields(cls, data):
+        """Migrate legacy ``resource_state`` + ``resource_declarations`` into ``resources``.
+
+        Port of Rust ``From<GameSnapshotRaw> for GameSnapshot`` migration shim.
+
+        Precedence mirrors the Rust logic:
+
+        1. If ``resources`` is populated in the payload, use it directly
+           (new save — takes precedence over any stale legacy fields).
+        2. Else if ``resource_state`` is non-empty, synthesize minimal
+           :class:`ResourcePool` entries. When a matching entry exists in
+           ``resource_declarations``, copy its metadata (label, min, max,
+           voluntary, decay_per_turn, thresholds); otherwise produce an
+           unbounded pool with empty label that the next
+           :meth:`init_resource_pools` call will upsert from the genre pack.
+        3. Else leave ``resources`` empty.
+
+        Legacy fields are stripped from the payload so Pydantic does not
+        re-ingest them (they are not declared on the model).
+        """
+        if not isinstance(data, dict):
+            return data
+
+        # Always pop legacy fields — they must not reach model validation.
+        legacy_state = data.pop("resource_state", None) or {}
+        legacy_decls = data.pop("resource_declarations", None) or []
+        resources = data.get("resources")
+
+        if resources:
+            # New-save path — resources wins outright; legacy fields discarded.
+            return data
+
+        if not legacy_state:
+            return data
+
+        # Migrate legacy_state → resources, consulting legacy_decls for metadata.
+        import sys as _sys
+
+        decls_by_name = {d["name"]: d for d in legacy_decls if isinstance(d, dict)}
+        migrated: dict[str, dict] = {}
+        for name, current in legacy_state.items():
+            decl = decls_by_name.get(name)
+            if decl is not None:
+                migrated[name] = {
+                    "name": decl["name"],
+                    "label": decl.get("label", ""),
+                    "current": float(current),
+                    "min": decl["min"],
+                    "max": decl["max"],
+                    "voluntary": decl["voluntary"],
+                    "decay_per_turn": decl["decay_per_turn"],
+                    "thresholds": [
+                        {
+                            "at": t["at"],
+                            "event_id": t["event_id"],
+                            "narrator_hint": t["narrator_hint"],
+                        }
+                        for t in decl.get("thresholds", [])
+                    ],
+                }
+            else:
+                # No declaration — synthesize unbounded defaults. Rust uses
+                # ``f64::MIN`` / ``f64::MAX``; Python matches with
+                # ``sys.float_info.min`` / ``sys.float_info.max`` (magnitudes).
+                # Rust ``f64::MIN`` is the most-negative finite value, so use
+                # ``-sys.float_info.max`` to match that semantic.
+                migrated[name] = {
+                    "name": name,
+                    "label": "",
+                    "current": float(current),
+                    "min": -_sys.float_info.max,
+                    "max": _sys.float_info.max,
+                    "voluntary": False,
+                    "decay_per_turn": 0.0,
+                    "thresholds": [],
+                }
+
+        data["resources"] = migrated
+        return data
 
     # ------------------------------------------------------------------
     # State mutation methods
@@ -516,3 +610,151 @@ class GameSnapshot(BaseModel):
         """Lowest edge fraction among friendly characters. Returns 1.0 if none."""
         fracs = [ch.edge_fraction() for ch in self.characters if ch.is_friendly]
         return min(fracs) if fracs else 1.0
+
+    # ------------------------------------------------------------------
+    # Resource pool mutation (story 42-2 — ADR-033 port)
+    #
+    # Port of the ``impl GameSnapshot`` block in
+    # ``sidequest-api/crates/sidequest-game/src/resource_pool.rs``. These
+    # methods are the public surface for ResourcePool mutation; the
+    # per-pool clamp + crossing-detection primitive lives in
+    # ``ResourcePool._apply_and_clamp``.
+    # ------------------------------------------------------------------
+
+    def apply_resource_patch(self, patch: ResourcePatch) -> ResourcePatchResult:
+        """Apply a resource patch (engine-level — ignores ``voluntary`` flag).
+
+        Port of Rust ``GameSnapshot::apply_resource_patch``. Raises
+        :class:`UnknownResource` if no pool matches ``patch.resource_name``.
+        """
+        pool = self.resources.get(patch.resource_name)
+        if pool is None:
+            raise UnknownResource(patch.resource_name)
+        return pool._apply_and_clamp(patch.operation, patch.value)
+
+    def apply_resource_patch_player(
+        self, patch: ResourcePatch
+    ) -> ResourcePatchResult:
+        """Apply a resource patch as a player action.
+
+        Port of Rust ``GameSnapshot::apply_resource_patch_player``. Rejects
+        ``Subtract`` against non-voluntary pools with :class:`NotVoluntary`;
+        ``Add`` and ``Set`` bypass the voluntary check (voluntary only gates
+        player-initiated spend). Raises :class:`UnknownResource` if no pool
+        matches ``patch.resource_name``.
+        """
+        if patch.operation is ResourcePatchOp.Subtract:
+            pool = self.resources.get(patch.resource_name)
+            if pool is None:
+                raise UnknownResource(patch.resource_name)
+            if not pool.voluntary:
+                raise NotVoluntary(patch.resource_name)
+        return self.apply_resource_patch(patch)
+
+    def apply_pool_decay(self) -> list[ResourceThreshold]:
+        """Apply ``decay_per_turn`` to all resource pools.
+
+        Port of Rust ``GameSnapshot::apply_pool_decay``. Skips pools whose
+        ``decay_per_turn`` is effectively zero (``abs < sys.float_info.epsilon``
+        mirrors Rust's ``f64::EPSILON`` guard). Returns a flat list of all
+        thresholds crossed across all pools this tick.
+        """
+        import sys
+
+        all_crossings: list[ResourceThreshold] = []
+        eps = sys.float_info.epsilon
+        for pool in self.resources.values():
+            if abs(pool.decay_per_turn) < eps:
+                continue
+            old_value = pool.current
+            raw = pool.current + pool.decay_per_turn
+            pool.current = max(pool.min, min(pool.max, raw))
+            crossed = detect_crossings(pool.thresholds, old_value, pool.current)
+            all_crossings.extend(crossed)
+        return all_crossings
+
+    def init_resource_pools(
+        self, declarations: list[ResourceDeclaration]
+    ) -> None:
+        """Initialize or upsert resource pools from genre pack declarations.
+
+        Port of Rust ``GameSnapshot::init_resource_pools``. Upsert semantics
+        (critical for save migration):
+
+        - If a pool with this name already exists (e.g., from a loaded save),
+          update its declaration-derived fields (``label``, ``min``, ``max``,
+          ``voluntary``, ``decay_per_turn``, ``thresholds``) but **preserve
+          the existing** ``current``. Re-clamp ``current`` into the possibly
+          new bounds.
+        - If no pool exists, create a new one with ``current = decl.starting``.
+
+        This is what makes old saves migrate correctly: the deserializer
+        creates minimal :class:`ResourcePool` entries with the saved
+        ``current``, then this call populates the genre-pack metadata
+        without clobbering the player's progress.
+        """
+        for decl in declarations:
+            thresholds = [
+                ResourceThreshold(
+                    at=t.at,
+                    event_id=t.event_id,
+                    narrator_hint=t.narrator_hint,
+                )
+                for t in decl.thresholds
+            ]
+            existing = self.resources.get(decl.name)
+            if existing is not None:
+                # Preserve ``current`` — refresh everything else from pack.
+                existing.label = decl.label
+                existing.min = decl.min
+                existing.max = decl.max
+                existing.voluntary = decl.voluntary
+                existing.decay_per_turn = decl.decay_per_turn
+                existing.thresholds = thresholds
+                # Re-clamp in case the new bounds invalidate the saved value.
+                existing.current = max(
+                    existing.min, min(existing.max, existing.current)
+                )
+            else:
+                self.resources[decl.name] = ResourcePool(
+                    name=decl.name,
+                    label=decl.label,
+                    current=decl.starting,
+                    min=decl.min,
+                    max=decl.max,
+                    voluntary=decl.voluntary,
+                    decay_per_turn=decl.decay_per_turn,
+                    thresholds=thresholds,
+                )
+
+    def apply_resource_patch_by_name(
+        self,
+        name: str,
+        op: ResourcePatchOp,
+        value: float,
+    ) -> ResourcePatchResult:
+        """Convenience: apply a resource patch by name, op, and value.
+
+        Port of Rust ``GameSnapshot::apply_resource_patch_by_name``.
+        """
+        return self.apply_resource_patch(
+            ResourcePatch(resource_name=name, operation=op, value=value)
+        )
+
+    def process_resource_patch_with_lore(
+        self,
+        name: str,
+        op: ResourcePatchOp,
+        value: float,
+        store: LoreStore,
+        turn: int,
+    ) -> ResourcePatchResult:
+        """Apply a resource patch and mint LoreFragments for crossings.
+
+        Port of Rust ``GameSnapshot::process_resource_patch_with_lore``
+        (story 16-11). Threshold crossings are minted into ``store`` via
+        :func:`mint_threshold_lore`; duplicate event_ids are idempotent.
+        """
+        result = self.apply_resource_patch_by_name(name, op, value)
+        mint_threshold_lore(result.crossed_thresholds, store, turn)
+        return result
