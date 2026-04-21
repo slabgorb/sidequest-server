@@ -46,7 +46,6 @@ import json
 
 import pytest
 
-from sidequest.game.lore_store import LoreCategory, LoreSource, LoreStore
 from sidequest.game.resource_pool import (
     ResourcePatch,
     ResourcePatchError,
@@ -837,168 +836,10 @@ def test_resource_pool_with_thresholds_survives_snapshot_roundtrip() -> None:
 
 
 # ===========================================================================
-# Story 16-11: mint_threshold_lore → LoreStore
+# Story 16-11 threshold-lore minting tests live in
+# tests/game/test_resource_threshold_lore.py (per architect pre-red
+# reconciled AC6 — 1:1 file mapping with Rust source layout).
 # ===========================================================================
-#
-# AC1: apply_resource_patch crossing → LoreFragment minted
-
-
-def test_patch_crossing_threshold_mints_lore_fragment() -> None:
-    pool = make_pool_with_thresholds(
-        "humanity",
-        50.0,
-        0.0,
-        100.0,
-        [make_threshold(25.0, "humanity_low", "Humanity has dropped dangerously low.")],
-    )
-    snap = snapshot_with_pools([pool])
-    lore = LoreStore()
-
-    patch = ResourcePatch(
-        resource_name="humanity",
-        operation=ResourcePatchOp.Set,
-        value=20.0,
-    )
-    result = snap.apply_resource_patch(patch)
-    assert len(result.crossed_thresholds) == 1
-
-    mint_threshold_lore(result.crossed_thresholds, lore, 5)
-
-    assert len(lore) == 1
-
-
-# AC2: LoreFragment has event_id and narrator_hint
-
-
-def test_minted_fragment_carries_event_id_and_narrator_hint() -> None:
-    threshold = make_threshold(25.0, "humanity_low", "Humanity has dropped dangerously low.")
-    lore = LoreStore()
-
-    mint_threshold_lore([threshold], lore, 10)
-
-    results = lore.query_by_category(LoreCategory.Event)
-    assert len(results) == 1
-    frag = results[0]
-    assert frag.id == "humanity_low"
-    assert frag.content == "Humanity has dropped dangerously low."
-
-
-def test_minted_fragment_source_is_game_event() -> None:
-    threshold = make_threshold(10.0, "heat_critical", "Heat is at critical levels.")
-    lore = LoreStore()
-
-    mint_threshold_lore([threshold], lore, 3)
-
-    results = lore.query_by_category(LoreCategory.Event)
-    assert len(results) == 1
-    assert results[0].source == LoreSource.GameEvent
-
-
-# AC3: High relevance — Event category + turn_created
-
-
-def test_minted_fragment_has_event_category_for_high_relevance() -> None:
-    threshold = make_threshold(50.0, "morale_half", "Morale has fallen to half.")
-    lore = LoreStore()
-
-    mint_threshold_lore([threshold], lore, 7)
-
-    results = lore.query_by_category(LoreCategory.Event)
-    assert len(results) == 1, "Fragment must be in Event category for high relevance"
-
-
-def test_minted_fragment_has_turn_created_for_recency_sorting() -> None:
-    threshold = make_threshold(50.0, "morale_half", "Morale has fallen to half.")
-    lore = LoreStore()
-
-    mint_threshold_lore([threshold], lore, 42)
-
-    results = lore.query_by_category(LoreCategory.Event)
-    assert len(results) == 1
-    assert results[0].turn_created == 42, "turn_created must be set for recency-based selection"
-
-
-# AC4: apply_pool_decay crossings also mint LoreFragments
-
-
-def test_decay_crossing_threshold_mints_lore_fragment() -> None:
-    pool = make_pool_with_thresholds(
-        "fuel",
-        12.0,
-        0.0,
-        100.0,
-        [make_threshold(10.0, "fuel_low", "Fuel reserves are running low.")],
-    )
-    pool.decay_per_turn = -5.0
-    snap = snapshot_with_pools([pool])
-    lore = LoreStore()
-
-    crossings = snap.apply_pool_decay()
-    assert len(crossings) == 1, "decay should cross the fuel_low threshold"
-
-    mint_threshold_lore(crossings, lore, 15)
-
-    assert len(lore) == 1
-    results = lore.query_by_category(LoreCategory.Event)
-    assert results[0].id == "fuel_low"
-    assert results[0].content == "Fuel reserves are running low."
-
-
-# AC5: Duplicate event_id → no second fragment (idempotency)
-
-
-def test_duplicate_threshold_crossing_does_not_mint_second_fragment() -> None:
-    """A crossed threshold's ``event_id`` is the LoreFragment id — a second
-    mint with the same id must be silently rejected by the store (Rust
-    ``LoreStore.add`` returns an error, ``mint_threshold_lore`` logs
-    ``tracing::warn!`` and does not propagate)."""
-    threshold = make_threshold(25.0, "humanity_low", "Humanity has dropped dangerously low.")
-    lore = LoreStore()
-
-    # First crossing — mints.
-    mint_threshold_lore([threshold], lore, 5)
-    assert len(lore) == 1
-
-    # Second crossing with same event_id — must NOT add, and MUST NOT raise.
-    mint_threshold_lore([threshold], lore, 10)
-    assert len(lore) == 1, "duplicate event_id must not create a second fragment"
-
-
-# AC6: Multiple thresholds → multiple fragments
-
-
-def test_multiple_thresholds_crossed_mints_multiple_fragments() -> None:
-    pool = make_pool_with_thresholds(
-        "humanity",
-        80.0,
-        0.0,
-        100.0,
-        [
-            make_threshold(75.0, "humanity_warning", "Humanity is declining."),
-            make_threshold(50.0, "humanity_half", "Humanity has fallen to half."),
-            make_threshold(25.0, "humanity_low", "Humanity is dangerously low."),
-        ],
-    )
-    snap = snapshot_with_pools([pool])
-    lore = LoreStore()
-
-    patch = ResourcePatch(
-        resource_name="humanity",
-        operation=ResourcePatchOp.Set,
-        value=20.0,
-    )
-    result = snap.apply_resource_patch(patch)
-    assert len(result.crossed_thresholds) == 3
-
-    mint_threshold_lore(result.crossed_thresholds, lore, 8)
-
-    assert len(lore) == 3, "each crossed threshold should mint one fragment"
-
-    events = lore.query_by_category(LoreCategory.Event)
-    ids = [f.id for f in events]
-    assert "humanity_warning" in ids
-    assert "humanity_half" in ids
-    assert "humanity_low" in ids
 
 
 # ===========================================================================
