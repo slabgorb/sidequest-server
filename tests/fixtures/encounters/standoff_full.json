@@ -1,0 +1,26 @@
+{
+  "encounter_type": "standoff",
+  "metric": {
+    "name": "tension",
+    "current": 0,
+    "starting": 0,
+    "direction": "Ascending",
+    "threshold_high": 10,
+    "threshold_low": null
+  },
+  "beat": 3,
+  "structured_phase": "Escalation",
+  "secondary_stats": {
+    "stats": {
+      "focus": {"current": 5, "max": 8}
+    },
+    "damage_tier": null
+  },
+  "actors": [
+    {"name": "Clint", "role": "duelist", "per_actor_state": {}}
+  ],
+  "outcome": null,
+  "resolved": false,
+  "mood_override": "standoff",
+  "narrator_hints": ["Sweat beads on his brow"]
+}

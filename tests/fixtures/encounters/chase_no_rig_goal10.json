@@ -1,0 +1,19 @@
+{
+  "encounter_type": "chase",
+  "metric": {
+    "name": "separation",
+    "current": 0,
+    "starting": 0,
+    "direction": "Ascending",
+    "threshold_high": 10,
+    "threshold_low": null
+  },
+  "beat": 0,
+  "structured_phase": "Setup",
+  "secondary_stats": null,
+  "actors": [],
+  "outcome": null,
+  "resolved": false,
+  "mood_override": null,
+  "narrator_hints": []
+}

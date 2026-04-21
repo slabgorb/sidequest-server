@@ -1,0 +1,22 @@
+{
+  "encounter_type": "combat",
+  "metric": {
+    "name": "hp",
+    "current": 30,
+    "starting": 30,
+    "direction": "Descending",
+    "threshold_high": null,
+    "threshold_low": 0
+  },
+  "beat": 0,
+  "structured_phase": "Setup",
+  "secondary_stats": null,
+  "actors": [
+    {"name": "Alice", "role": "combatant", "per_actor_state": {}},
+    {"name": "Bob", "role": "combatant", "per_actor_state": {}}
+  ],
+  "outcome": null,
+  "resolved": false,
+  "mood_override": null,
+  "narrator_hints": []
+}

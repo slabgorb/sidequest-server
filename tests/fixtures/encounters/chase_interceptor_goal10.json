@@ -1,0 +1,28 @@
+{
+  "encounter_type": "chase",
+  "metric": {
+    "name": "separation",
+    "current": 0,
+    "starting": 0,
+    "direction": "Ascending",
+    "threshold_high": 10,
+    "threshold_low": null
+  },
+  "beat": 0,
+  "structured_phase": "Setup",
+  "secondary_stats": {
+    "stats": {
+      "hp": {"current": 15, "max": 15},
+      "speed": {"current": 5, "max": 5},
+      "armor": {"current": 1, "max": 1},
+      "maneuver": {"current": 3, "max": 3},
+      "fuel": {"current": 8, "max": 8}
+    },
+    "damage_tier": "PRISTINE"
+  },
+  "actors": [],
+  "outcome": null,
+  "resolved": false,
+  "mood_override": null,
+  "narrator_hints": []
+}
