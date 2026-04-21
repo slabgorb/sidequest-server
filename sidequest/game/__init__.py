@@ -4,12 +4,18 @@ Port of sidequest_game crate (selected modules).
 ADR-082: Python server narration vertical slice.
 
 Phase 1 exports:
-- Character, CreatureCore, EdgePool, Inventory
+- Character, CreatureCore, EdgePool, EdgeThreshold, Inventory
 - GameSnapshot, WorldStatePatch, NpcPatch, NpcRegistryEntry, NarrativeEntry
 - StateDelta (game-layer), StateSnapshot, snapshot, compute_delta
 - TurnManager, TurnPhase
 - CommandHandler, CommandResult, BUILTIN_COMMANDS
 - SqliteStore, SavedSession, SessionMeta, PersistError
+- Resource pools (story 42-2 — ADR-033): ResourcePool, ResourceThreshold,
+  ResourcePatch, ResourcePatchOp, ResourcePatchResult, ResourcePatchError,
+  UnknownResource, NotVoluntary, detect_crossings, mint_threshold_lore
+- Encounter (story 42-1 — ADR-082 Phase 3): StructuredEncounter,
+  EncounterActor, EncounterMetric, EncounterPhase, MetricDirection,
+  RigType, SecondaryStats, StatValue
 
 Phase 2+ (combat, dice, advancement) are deferred — not exported here.
 """
@@ -70,6 +76,17 @@ from sidequest.game.persistence import (
     SqliteStore,
     db_path_for_session,
 )
+from sidequest.game.resource_pool import (
+    NotVoluntary,
+    ResourcePatch,
+    ResourcePatchError,
+    ResourcePatchOp,
+    ResourcePatchResult,
+    ResourcePool,
+    ResourceThreshold,
+    UnknownResource,
+    mint_threshold_lore,
+)
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
@@ -82,10 +99,10 @@ from sidequest.game.session import (
     Npc,
     NpcPatch,
     NpcRegistryEntry,
-    ResourcePool,
     TropeState,
     WorldStatePatch,
 )
+from sidequest.game.thresholds import detect_crossings
 from sidequest.game.turn import PreprocessedAction, TurnManager, TurnPhase
 
 __all__ = [
@@ -140,6 +157,17 @@ __all__ = [
     "SessionMeta",
     "SqliteStore",
     "db_path_for_session",
+    # resource_pool (story 42-2 — ADR-033 port)
+    "NotVoluntary",
+    "ResourcePatch",
+    "ResourcePatchError",
+    "ResourcePatchOp",
+    "ResourcePatchResult",
+    "ResourcePool",
+    "ResourceThreshold",
+    "UnknownResource",
+    "detect_crossings",
+    "mint_threshold_lore",
     # session
     "AchievementTracker",
     "AxisValue",
@@ -152,7 +180,6 @@ __all__ = [
     "Npc",
     "NpcPatch",
     "NpcRegistryEntry",
-    "ResourcePool",
     "TropeState",
     "WorldStatePatch",
     # turn
