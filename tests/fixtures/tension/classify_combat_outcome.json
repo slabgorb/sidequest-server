@@ -1,0 +1,263 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "event": "KillingBlow",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.0,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 100,
+              "round": 1,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [
+            "bleeding"
+          ],
+          "effects_expired": [],
+          "killed": "orc",
+          "round": 1
+        }
+      },
+      "name": "killed_yields_killing_blow_top_priority"
+    },
+    {
+      "expected": {
+        "event": "NearMiss",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.15,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 3,
+              "round": 2,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 2
+        }
+      },
+      "name": "near_miss_when_low_hp_and_some_damage"
+    },
+    {
+      "expected": {
+        "event": "NearMiss",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.2,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 3,
+              "round": 3,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 3
+        }
+      },
+      "name": "near_miss_at_exact_threshold"
+    },
+    {
+      "expected": {
+        "kind": "Normal"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.21,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 3,
+              "round": 4,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 4
+        }
+      },
+      "name": "no_near_miss_just_above_threshold"
+    },
+    {
+      "expected": {
+        "kind": "Boring"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.1,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 5
+        }
+      },
+      "name": "near_miss_only_when_some_damage_dealt"
+    },
+    {
+      "expected": {
+        "event": "CriticalHit",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": null,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 15,
+              "round": 6,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 6
+        }
+      },
+      "name": "critical_hit_at_dramatic_damage_threshold"
+    },
+    {
+      "expected": {
+        "event": "CriticalHit",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.5,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 50,
+              "round": 7,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 7
+        }
+      },
+      "name": "critical_hit_high_damage_no_low_hp"
+    },
+    {
+      "expected": {
+        "event": "FirstBlood",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": null,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [
+            "dazed"
+          ],
+          "effects_expired": [],
+          "killed": null,
+          "round": 8
+        }
+      },
+      "name": "first_blood_when_only_effects_no_damage"
+    },
+    {
+      "expected": {
+        "kind": "Boring"
+      },
+      "input": {
+        "lowest_hp_ratio": null,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 9
+        }
+      },
+      "name": "boring_no_damage_no_effects_no_kill"
+    },
+    {
+      "expected": {
+        "kind": "Normal"
+      },
+      "input": {
+        "lowest_hp_ratio": 0.6,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 5,
+              "round": 10,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 10
+        }
+      },
+      "name": "normal_some_damage_no_kill_no_effects"
+    },
+    {
+      "expected": {
+        "kind": "Normal"
+      },
+      "input": {
+        "lowest_hp_ratio": null,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 3,
+              "round": 11,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 11
+        }
+      },
+      "name": "lowest_hp_none_skips_near_miss_check"
+    },
+    {
+      "expected": {
+        "event": "KillingBlow",
+        "kind": "Dramatic"
+      },
+      "input": {
+        "lowest_hp_ratio": null,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": "",
+          "round": 12
+        }
+      },
+      "name": "killed_empty_string_still_killing_blow"
+    }
+  ]
+}

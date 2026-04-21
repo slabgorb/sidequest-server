@@ -1,0 +1,194 @@
+{
+  "name": "reversal",
+  "steps": [
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.0,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.9,
+        "pacing_hint": {
+          "delivery_mode": "Streaming",
+          "drama_weight": 0.9,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 5 sentence(s) for this narration. Drama level: 90%.",
+          "target_sentences": 5
+        },
+        "stakes_tension": 0.9
+      },
+      "step": {
+        "current_hp": 10,
+        "kind": "update_stakes",
+        "max_hp": 100
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.5,
+        "boring_streak": 0,
+        "classification": {
+          "event": "NearMiss",
+          "kind": "Dramatic"
+        },
+        "drama_weight": 0.9,
+        "pacing_hint": {
+          "delivery_mode": "Streaming",
+          "drama_weight": 0.9,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 5 sentence(s) for this narration. Drama level: 90%.",
+          "target_sentences": 5
+        },
+        "stakes_tension": 0.9
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.05,
+        "round": {
+          "damage_events": [
+            {
+              "attacker": "hero",
+              "damage": 30,
+              "round": 1,
+              "target": "orc"
+            }
+          ],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 1
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.5,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.5,
+        "pacing_hint": {
+          "delivery_mode": "Sentence",
+          "drama_weight": 0.5,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 3 sentence(s) for this narration. Drama level: 50%.",
+          "target_sentences": 3
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "current_hp": 75,
+        "kind": "update_stakes",
+        "max_hp": 100
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.4,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.4,
+        "pacing_hint": {
+          "delivery_mode": "Sentence",
+          "drama_weight": 0.4,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 3 sentence(s) for this narration. Drama level: 40%.",
+          "target_sentences": 3
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "kind": "tick"
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.3,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.3,
+        "pacing_hint": {
+          "delivery_mode": "Sentence",
+          "drama_weight": 0.3,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 2 sentence(s) for this narration. Drama level: 30%.",
+          "target_sentences": 2
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "kind": "tick"
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.19999999999999996,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.25,
+        "pacing_hint": {
+          "delivery_mode": "Instant",
+          "drama_weight": 0.25,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 2 sentence(s) for this narration. Drama level: 25%.",
+          "target_sentences": 2
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "kind": "tick"
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.09999999999999998,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.25,
+        "pacing_hint": {
+          "delivery_mode": "Instant",
+          "drama_weight": 0.25,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 2 sentence(s) for this narration. Drama level: 25%.",
+          "target_sentences": 2
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "kind": "tick"
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.0,
+        "active_spike": 0.0,
+        "boring_streak": 0,
+        "classification": null,
+        "drama_weight": 0.25,
+        "pacing_hint": {
+          "delivery_mode": "Instant",
+          "drama_weight": 0.25,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 2 sentence(s) for this narration. Drama level: 25%.",
+          "target_sentences": 2
+        },
+        "stakes_tension": 0.25
+      },
+      "step": {
+        "kind": "tick"
+      }
+    }
+  ],
+  "thresholds": {
+    "escalation_streak": 5,
+    "ramp_length": 8,
+    "render_threshold": 0.4,
+    "sentence_delivery_min": 0.3,
+    "streaming_delivery_min": 0.7
+  }
+}
