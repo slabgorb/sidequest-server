@@ -1,0 +1,189 @@
+{
+  "cases": [
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": "orc",
+        "round": 1
+      },
+      "name": "kill_is_dramatic_even_with_no_damage"
+    },
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": "",
+        "round": 2
+      },
+      "name": "kill_with_empty_string_is_still_dramatic"
+    },
+    {
+      "expected": "Boring",
+      "input": {
+        "damage_events": [],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 3
+      },
+      "name": "killed_none_no_events_no_damage_is_boring"
+    },
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [],
+        "effects_applied": [
+          "poisoned"
+        ],
+        "effects_expired": [],
+        "killed": null,
+        "round": 4
+      },
+      "name": "effects_applied_makes_dramatic"
+    },
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": 15,
+            "round": 5,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 5
+      },
+      "name": "high_damage_at_threshold_is_dramatic"
+    },
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": 30,
+            "round": 6,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 6
+      },
+      "name": "high_damage_above_threshold_is_dramatic"
+    },
+    {
+      "expected": "Normal",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": 5,
+            "round": 7,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 7
+      },
+      "name": "low_damage_is_normal"
+    },
+    {
+      "expected": "Boring",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": -10,
+            "round": 8,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 8
+      },
+      "name": "negative_damage_clamped_to_zero_so_boring"
+    },
+    {
+      "expected": "Dramatic",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": 5,
+            "round": 9,
+            "target": "orc"
+          },
+          {
+            "attacker": "rogue",
+            "damage": 5,
+            "round": 9,
+            "target": "orc"
+          },
+          {
+            "attacker": "mage",
+            "damage": 5,
+            "round": 9,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 9
+      },
+      "name": "multiple_small_damage_summed_to_dramatic"
+    },
+    {
+      "expected": "Normal",
+      "input": {
+        "damage_events": [
+          {
+            "attacker": "hero",
+            "damage": 4,
+            "round": 10,
+            "target": "orc"
+          },
+          {
+            "attacker": "rogue",
+            "damage": 4,
+            "round": 10,
+            "target": "orc"
+          }
+        ],
+        "effects_applied": [],
+        "effects_expired": [],
+        "killed": null,
+        "round": 10
+      },
+      "name": "multiple_small_damage_below_threshold_is_normal"
+    },
+    {
+      "expected": "Boring",
+      "input": {
+        "damage_events": [],
+        "effects_applied": [],
+        "effects_expired": [
+          "poisoned"
+        ],
+        "killed": null,
+        "round": 11
+      },
+      "name": "expired_effects_do_not_count_as_dramatic"
+    }
+  ]
+}

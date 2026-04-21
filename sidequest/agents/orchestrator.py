@@ -44,15 +44,16 @@ from sidequest.agents.prompt_framework.types import (
     PromptSection,
     SectionCategory,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry, Npc
-from sidequest.genre.models.pack import GenrePack
+from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
+from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
+from sidequest.genre.models.pack import GenrePack
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,
+    SPAN_RAG_PROSE_CLEANUP,
     SPAN_TURN_AGENT_LLM_INFERENCE,
     SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
     SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
-    SPAN_RAG_PROSE_CLEANUP,
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
 )
@@ -311,6 +312,22 @@ class TurnContext:
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
     npcs: list[Npc] = field(default_factory=list)
+
+    # PacingHint from TensionTracker (Late zone — Rust parity at
+    # sidequest-api/crates/sidequest-agents/src/prompt_framework/mod.rs:108).
+    # Story 42-3 / ADR-082 Phase 3. When ``None``, no pacing section is
+    # registered into the narrator prompt — zero byte leak.
+    #
+    # Spec deviation logged in 42-3 session: context-doc says ``str | None``,
+    # but a string field would discard ``escalation_beat`` and force the
+    # caller to pre-render the directive. Storing the typed object lets the
+    # call site marshal exactly what the Python ``register_pacing_section``
+    # helper requires — ``(narrator_directive: str, escalation_beat: str | None)``.
+    # Note: Rust's helper takes ``&PacingHint`` directly and does the
+    # marshalling internally; Python's helper takes two derived strings, so
+    # the call site at ``build_narrator_prompt`` does the marshalling. The
+    # *field* mirrors Rust's typed seam; the *helper signatures* differ.
+    pacing_hint: PacingHint | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -572,8 +589,9 @@ class Orchestrator:
             self._soul_data = soul_data
         else:
             # Attempt to load SOUL.md from CWD
-            from sidequest.agents.prompt_framework.soul import parse_soul_md
             import pathlib
+
+            from sidequest.agents.prompt_framework.soul import parse_soul_md
             soul_path = pathlib.Path("SOUL.md")
             loaded = parse_soul_md(soul_path)
             self._soul_data = loaded if loaded else None
@@ -990,6 +1008,19 @@ class Orchestrator:
                     AttentionZone.Late,
                     SectionCategory.Format,
                 ),
+            )
+
+        # PacingHint (Late zone, every tier — combat pacing can change
+        # mid-session, so per-turn dynamic state must reach Delta tier too).
+        # Rust parity: sidequest-agents/src/prompt_framework/mod.rs:89
+        # ``register_pacing_section`` filters to PACING_AGENTS = ["narrator"]
+        # internally; safe to call unconditionally when a hint is set.
+        if context.pacing_hint is not None:
+            hint = context.pacing_hint
+            registry.register_pacing_section(
+                agent_name,
+                hint.narrator_directive(),
+                hint.escalation_beat,
             )
 
         # Player action (Recency zone — highest attention, every tier)

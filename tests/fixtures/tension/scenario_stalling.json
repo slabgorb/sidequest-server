@@ -1,0 +1,212 @@
+{
+  "name": "stalling",
+  "steps": [
+    {
+      "after": {
+        "action_tension": 0.05,
+        "active_spike": 0.0,
+        "boring_streak": 1,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 0.05,
+        "pacing_hint": {
+          "delivery_mode": "Instant",
+          "drama_weight": 0.05,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 1 sentence(s) for this narration. Drama level: 5%.",
+          "target_sentences": 1
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 1
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.15000000000000002,
+        "active_spike": 0.0,
+        "boring_streak": 2,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 0.15000000000000002,
+        "pacing_hint": {
+          "delivery_mode": "Instant",
+          "drama_weight": 0.15000000000000002,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 1 sentence(s) for this narration. Drama level: 15%.",
+          "target_sentences": 1
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 2
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.30000000000000004,
+        "active_spike": 0.0,
+        "boring_streak": 3,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 0.30000000000000004,
+        "pacing_hint": {
+          "delivery_mode": "Sentence",
+          "drama_weight": 0.30000000000000004,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 2 sentence(s) for this narration. Drama level: 30%.",
+          "target_sentences": 2
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 3
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.5,
+        "active_spike": 0.0,
+        "boring_streak": 4,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 0.5,
+        "pacing_hint": {
+          "delivery_mode": "Sentence",
+          "drama_weight": 0.5,
+          "escalation_beat": null,
+          "narrator_directive": "Target approximately 3 sentence(s) for this narration. Drama level: 50%.",
+          "target_sentences": 3
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 4
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.75,
+        "active_spike": 0.0,
+        "boring_streak": 5,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 0.75,
+        "pacing_hint": {
+          "delivery_mode": "Streaming",
+          "drama_weight": 0.75,
+          "escalation_beat": "The environment shifts — introduce a new element to break the monotony.",
+          "narrator_directive": "Target approximately 4 sentence(s) for this narration. Drama level: 75%.",
+          "target_sentences": 4
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 5
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 1.0,
+        "active_spike": 0.0,
+        "boring_streak": 6,
+        "classification": {
+          "kind": "Boring"
+        },
+        "drama_weight": 1.0,
+        "pacing_hint": {
+          "delivery_mode": "Streaming",
+          "drama_weight": 1.0,
+          "escalation_beat": "The environment shifts — introduce a new element to break the monotony.",
+          "narrator_directive": "Target approximately 6 sentence(s) for this narration. Drama level: 100%.",
+          "target_sentences": 6
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "observe",
+        "lowest_hp_ratio": 0.9,
+        "round": {
+          "damage_events": [],
+          "effects_applied": [],
+          "effects_expired": [],
+          "killed": null,
+          "round": 6
+        }
+      }
+    },
+    {
+      "after": {
+        "action_tension": 0.9,
+        "active_spike": 0.0,
+        "boring_streak": 6,
+        "classification": null,
+        "drama_weight": 0.9,
+        "pacing_hint": {
+          "delivery_mode": "Streaming",
+          "drama_weight": 0.9,
+          "escalation_beat": "The environment shifts — introduce a new element to break the monotony.",
+          "narrator_directive": "Target approximately 5 sentence(s) for this narration. Drama level: 90%.",
+          "target_sentences": 5
+        },
+        "stakes_tension": 0.0
+      },
+      "step": {
+        "kind": "tick"
+      }
+    }
+  ],
+  "thresholds": {
+    "escalation_streak": 5,
+    "ramp_length": 8,
+    "render_threshold": 0.4,
+    "sentence_delivery_min": 0.3,
+    "streaming_delivery_min": 0.7
+  }
+}
