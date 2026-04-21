@@ -73,6 +73,7 @@ from sidequest.protocol.models import (
 from sidequest.protocol.types import NonBlankString
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
+from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
@@ -118,6 +119,15 @@ class _SessionData:
     # opening-hook entries — the first turn runs without a directive.
     opening_seed: str | None = None
     opening_directive: str | None = None
+    # Narrator world context (Story 41-11 — closes the Phase 2.2 IOU
+    # ``Culture.chargen`` filter). Resolved once at connect time from
+    # pack/world.cultures with lore-only cultures filtered out; injected
+    # into the narrator prompt's Valley zone on every turn. ``None`` when
+    # the pack declares no cultures (empty reference string also
+    # normalised to ``None`` so the zone section is skipped cleanly).
+    # Phase 3 will extend this field to include setting + world-lore
+    # blocks alongside the culture reference.
+    world_context: str | None = None
     # Lore store (Story 2.3 Slice F). Per-session indexed knowledge
     # collection. Seeded at chargen confirmation from the builder's
     # scene choices so the narrator's RAG retrieval pipeline can see
@@ -320,6 +330,13 @@ class WebSocketSessionHandler:
         if opening is not None:
             opening_seed, opening_directive = opening
 
+        # World context (Story 41-11): resolve once at connect time so
+        # the filter engages consistently across every turn. Empty
+        # reference → ``None`` so the orchestrator skips the section
+        # instead of registering an empty block.
+        culture_ref = resolve_culture_reference(genre_pack, world_slug)
+        world_context: str | None = culture_ref if culture_ref else None
+
         self._session_data = _SessionData(
             genre_slug=genre_slug,
             world_slug=world_slug,
@@ -332,6 +349,7 @@ class WebSocketSessionHandler:
             builder=builder,
             opening_seed=opening_seed,
             opening_directive=opening_directive,
+            world_context=world_context,
         )
         self._state = _State.Creating if not has_character else _State.Playing
 
@@ -1275,6 +1293,7 @@ def _build_turn_context(
         npc_registry=list(snapshot.npc_registry),
         npcs=list(snapshot.npcs),
         opening_directive=opening_directive,
+        world_context=sd.world_context,
     )
 
 
