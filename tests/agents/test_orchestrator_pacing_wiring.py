@@ -15,9 +15,6 @@ Valley" zone; Rust source uses ``Late``. We follow Rust per spec authority
 from __future__ import annotations
 
 import json
-from typing import Any
-
-import pytest
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
@@ -25,9 +22,12 @@ from sidequest.agents.orchestrator import (
     Orchestrator,
     TurnContext,
 )
-from sidequest.agents.prompt_framework import AttentionZone
+from sidequest.agents.prompt_framework import (
+    AttentionZone,
+    PromptRegistry,
+    PromptSection,
+)
 from sidequest.game.tension_tracker import DeliveryMode, PacingHint
-
 
 # ---------------------------------------------------------------------------
 # Minimal canned ClaudeClient — copied small to avoid cross-test coupling.
@@ -57,7 +57,13 @@ def _make_client() -> ClaudeClient:
         }
     )
 
-    async def spawn_fn(command: str, *args: str, env: Any = None, **kwargs: Any) -> _FakeProcess:
+    # ``object`` (rather than ``Any``) keeps the spawn-protocol signature
+    # honest: ClaudeClient's spawn_fn accepts heterogeneous env / kwargs
+    # shapes, but the test never inspects them. Annotated as ``object``
+    # so type-checkers reject attribute access without an explicit cast.
+    async def spawn_fn(
+        command: str, *args: str, env: object = None, **kwargs: object
+    ) -> _FakeProcess:
         return _FakeProcess(stdout=payload)
 
     return ClaudeClient(spawn_fn=spawn_fn)
@@ -68,15 +74,17 @@ def _agent_name(orch: Orchestrator) -> str:
     return orch._narrator.name()  # type: ignore[attr-defined]
 
 
-def _section(registry: Any, agent_name: str, section_name: str) -> Any | None:
+def _section(
+    registry: PromptRegistry, agent_name: str, section_name: str
+) -> PromptSection | None:
     """Locate a registered section by name on the registry, or None.
 
-    The PromptRegistry stores sections keyed by agent. We look up the
-    agent's section list and return the first match by name.
+    Uses the public ``get_sections()`` API rather than reaching into the
+    private ``_sections`` dict so tests survive a PromptRegistry storage
+    refactor.
     """
-    sections = registry._sections.get(agent_name, [])  # type: ignore[attr-defined]
-    for section in sections:
-        if getattr(section, "name", None) == section_name:
+    for section in registry.get_sections(agent_name):
+        if section.name == section_name:
             return section
     return None
 

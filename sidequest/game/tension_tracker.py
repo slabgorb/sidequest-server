@@ -43,6 +43,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -183,6 +184,13 @@ _DECAY_RATE: dict[DetailedCombatEvent, float] = {
 # ---------------------------------------------------------------------------
 
 
+#: The three valid TurnClassification kinds — closed set, mirror of the
+#: Rust algebraic enum's variant tags. Constructing with any other string
+#: is a type-checker error; the factory methods are the only sanctioned
+#: construction path.
+TurnClassificationKind = Literal["Boring", "Normal", "Dramatic"]
+
+
 @dataclass(frozen=True)
 class TurnClassification:
     """Classification of a combat turn for pacing decisions.
@@ -195,12 +203,15 @@ class TurnClassification:
             Normal,
         }
 
-    Modeled as a frozen dataclass with a discriminator (``kind``) and an
-    optional payload (``event``, only set when ``kind == "Dramatic"``).
-    Use the ``boring()``, ``normal()``, ``dramatic(event)`` factories.
+    Modeled as a frozen dataclass with a discriminator (``kind``, typed
+    as a closed Literal) and an optional payload (``event``, only set
+    when ``kind == "Dramatic"``). Use the ``boring()``, ``normal()``,
+    ``dramatic(event)`` factories — they are the only sanctioned
+    construction path and structurally guarantee that ``Dramatic``
+    always carries a non-None ``event``.
     """
 
-    kind: str
+    kind: TurnClassificationKind
     event: DetailedCombatEvent | None = None
 
     @classmethod
@@ -260,11 +271,14 @@ class PacingHint:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class _EventSpike:
     """A single event-driven tension spike with per-event decay.
 
-    Port of private Rust ``EventSpike`` struct.
+    Port of private Rust ``EventSpike`` struct. ``frozen=True`` mirrors
+    Rust's value-type semantics — magnitude and decay_rate are never
+    mutated after construction; the tracker replaces the spike whole
+    when a new event fires.
     """
 
     magnitude: float
@@ -355,10 +369,13 @@ class TensionTracker:
     def update_stakes(self, current_hp: int, max_hp: int) -> None:
         """Update stakes tension from HP values.
 
-        ``stakes = 1.0 - (current / max)``. Mirrors Rust ``debug_assert!``
-        on positive max_hp via Python ``assert``.
+        ``stakes = 1.0 - (current / max)``. Rust uses ``debug_assert!``
+        on positive max_hp; the Python equivalent must survive ``-O``
+        (per CLAUDE.md "no silent fallbacks"), so the guard is an
+        explicit ``ValueError`` raise rather than ``assert``.
         """
-        assert max_hp > 0, "max_hp must be positive"
+        if max_hp <= 0:
+            raise ValueError(f"max_hp must be positive, got {max_hp}")
         self._stakes_tension = _clamp01(1.0 - float(current_hp) / float(max_hp))
 
     def tick(self) -> None:
@@ -423,12 +440,22 @@ class TensionTracker:
         if classification.kind == "Boring":
             self.record_event(CombatEvent.Boring)
         elif classification.kind == "Dramatic":
+            # The Dramatic factory (TurnClassification.dramatic) requires
+            # a non-None event argument, and classify_combat_outcome only
+            # constructs Dramatic via that factory — so event is
+            # structurally guaranteed non-None here. The Literal-typed
+            # kind makes "Dramatic" the only path that can reach this
+            # branch with event=None impossible at construction time.
             self.record_event(CombatEvent.Dramatic)
-            # Replace spike with per-event magnitude and decay rate.
-            assert classification.event is not None
+            event = classification.event
+            if event is None:  # pragma: no cover — structurally impossible
+                raise RuntimeError(
+                    "TurnClassification(kind='Dramatic') reached observe() with event=None — "
+                    "factory invariant violated"
+                )
             self._last_event_spike = _EventSpike(
-                magnitude=classification.event.spike_magnitude(),
-                decay_rate=classification.event.decay_rate(),
+                magnitude=event.spike_magnitude(),
+                decay_rate=event.decay_rate(),
             )
             self._spike_decay_age = 0
         else:  # Normal

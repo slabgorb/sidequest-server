@@ -28,8 +28,8 @@ The Python ``TensionTracker`` API mirrors Rust:
 
 Free functions:
 
-- ``classify_round(round_result, killed) -> CombatEvent``
-- ``classify_combat_outcome(round_result, killed, lowest_hp_ratio) -> TurnClassification``
+- ``classify_round(round, killed) -> CombatEvent``
+- ``classify_combat_outcome(round, killed, lowest_hp_ratio) -> TurnClassification``
 
 Spec deviations vs context-story-42-3.md (logged in session file):
 
@@ -52,7 +52,6 @@ from sidequest.game.tension_tracker import (
     DamageEvent,
     DeliveryMode,
     DetailedCombatEvent,
-    PacingHint,
     RoundResult,
     TensionTracker,
     TurnClassification,
@@ -60,7 +59,6 @@ from sidequest.game.tension_tracker import (
     classify_round,
 )
 from sidequest.genre.models.ocean import DramaThresholds
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -349,10 +347,12 @@ def test_both_tensions_at_zero():
 
 
 def test_combat_event_variants_exist():
-    # Ensure the enum has the expected variants.
-    assert CombatEvent.Boring is not None
-    assert CombatEvent.Dramatic is not None
-    assert CombatEvent.Normal is not None
+    # Ensure the enum has the expected string-stable values (StrEnum
+    # members compare to their string value — this also catches a typo
+    # in the variant declaration that ``is not None`` would miss).
+    assert CombatEvent.Boring == "Boring"
+    assert CombatEvent.Dramatic == "Dramatic"
+    assert CombatEvent.Normal == "Normal"
     # And they are distinct.
     assert CombatEvent.Boring != CombatEvent.Dramatic
     assert CombatEvent.Boring != CombatEvent.Normal
@@ -453,6 +453,13 @@ def _replay_scenario(fixture_name: str) -> None:
     fixture = _load_fixture(fixture_name)
     th = DramaThresholds(**fixture["thresholds"])
     tracker = TensionTracker()
+
+    # Guard against an empty fixture silently passing the parity gate
+    # (matches the len(cases) > 0 guard in the classify_*_fixture_parity
+    # tests above).
+    assert len(fixture["steps"]) > 0, (
+        f"scenario fixture {fixture_name} has no steps"
+    )
 
     failures: list[str] = []
 
@@ -617,8 +624,11 @@ RUST_SOURCE = (
 
 
 def _rust_test_names() -> list[str]:
-    if not RUST_SOURCE.exists():
-        pytest.skip(f"Rust source not present at {RUST_SOURCE}")
+    """Parse Rust ``#[test] fn <name>()`` declarations from the live source.
+
+    Caller is responsible for skipping the test if ``RUST_SOURCE`` is
+    absent — see the ``@pytest.mark.skipif`` decorator on the test.
+    """
     text = RUST_SOURCE.read_text(encoding="utf-8")
     names: list[str] = []
     lines = text.splitlines()
@@ -633,12 +643,20 @@ def _rust_test_names() -> list[str]:
     return names
 
 
+@pytest.mark.skipif(
+    not RUST_SOURCE.exists(),
+    reason=(
+        "1:1 Rust port parity check requires sidequest-api co-located at "
+        "../sidequest-api. Skip is visible in the pytest report rather "
+        "than buried inside a helper (CLAUDE.md no-silent-fallbacks)."
+    ),
+)
 def test_every_rust_test_has_python_counterpart():
     rust_names = _rust_test_names()
     assert rust_names, "expected to find Rust test names"
     module_globals = globals()
     missing = [n for n in rust_names if f"test_{n}" not in module_globals]
     assert not missing, (
-        f"Rust tests not ported 1:1 to Python (need test_<name> for each):\n"
+        "Rust tests not ported 1:1 to Python (need test_<name> for each):\n"
         + "\n".join(f"  - {n}" for n in missing)
     )

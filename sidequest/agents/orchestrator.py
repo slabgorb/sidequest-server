@@ -317,10 +317,16 @@ class TurnContext:
     # sidequest-api/crates/sidequest-agents/src/prompt_framework/mod.rs:108).
     # Story 42-3 / ADR-082 Phase 3. When ``None``, no pacing section is
     # registered into the narrator prompt — zero byte leak.
-    # Spec deviation logged in 42-3 session: context-doc says ``str | None``
-    # but the typed object preserves ``escalation_beat`` without a
-    # string-marshalling layer; matches Rust which passes ``&PacingHint``
-    # to ``register_pacing_section``.
+    #
+    # Spec deviation logged in 42-3 session: context-doc says ``str | None``,
+    # but a string field would discard ``escalation_beat`` and force the
+    # caller to pre-render the directive. Storing the typed object lets the
+    # call site marshal exactly what the Python ``register_pacing_section``
+    # helper requires — ``(narrator_directive: str, escalation_beat: str | None)``.
+    # Note: Rust's helper takes ``&PacingHint`` directly and does the
+    # marshalling internally; Python's helper takes two derived strings, so
+    # the call site at ``build_narrator_prompt`` does the marshalling. The
+    # *field* mirrors Rust's typed seam; the *helper signatures* differ.
     pacing_hint: PacingHint | None = None
 
 
