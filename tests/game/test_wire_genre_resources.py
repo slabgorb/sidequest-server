@@ -93,6 +93,48 @@ def find_resource(rules: RulesConfig, name: str) -> ResourceDeclaration:
 
 
 # ═══════════════════════════════════════════════════════════
+# Conditional skip markers — workshopping packs
+#
+# Four of the five genre packs referenced by this file (``neon_dystopia``,
+# ``pulp_noir``, ``road_warrior``, ``low_fantasy``) were moved from
+# ``sidequest-content/genre_packs/`` to ``sidequest-content/genre_workshopping/``
+# in content commit ``acc89a3`` ("chore: move incomplete genre packs to
+# genre_workshopping"). Team-lead + architect decision (2026-04-21): tests
+# depending on those packs get conditional skips that auto-unskip when a
+# pack graduates back to ``genre_packs/``. ``spaghetti_western`` stays
+# canonical and is NEVER skipped — it's the anchor fixture for 42-2's
+# pack-integration coverage, and for the 42-4 pack-integration smoke test.
+#
+# Grep recipe at pack-promotion time:
+#     grep -rn 'genre_workshopping/' tests/
+# ═══════════════════════════════════════════════════════════
+
+def _pack_missing_reason(name: str) -> str:
+    return (
+        f"pack '{name}' relocated to sidequest-content/genre_workshopping/ "
+        f"(commit acc89a3); re-enable when promoted back to genre_packs/"
+    )
+
+
+_requires_neon_dystopia = pytest.mark.skipif(
+    not genre_pack_path("neon_dystopia").exists(),
+    reason=_pack_missing_reason("neon_dystopia"),
+)
+_requires_pulp_noir = pytest.mark.skipif(
+    not genre_pack_path("pulp_noir").exists(),
+    reason=_pack_missing_reason("pulp_noir"),
+)
+_requires_road_warrior = pytest.mark.skipif(
+    not genre_pack_path("road_warrior").exists(),
+    reason=_pack_missing_reason("road_warrior"),
+)
+_requires_low_fantasy = pytest.mark.skipif(
+    not genre_pack_path("low_fantasy").exists(),
+    reason=_pack_missing_reason("low_fantasy"),
+)
+
+
+# ═══════════════════════════════════════════════════════════
 # AC1: spaghetti_western — Luck (0-6, voluntary, thresholds at 1 and 0)
 # ═══════════════════════════════════════════════════════════
 
@@ -151,6 +193,7 @@ def test_spaghetti_western_luck_thresholds_have_event_ids():
 # AC2: neon_dystopia — Humanity (0-100, involuntary, thresholds at 50/25/0)
 # ═══════════════════════════════════════════════════════════
 
+@_requires_neon_dystopia
 def test_neon_dystopia_has_humanity_resource():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
@@ -161,6 +204,7 @@ def test_neon_dystopia_has_humanity_resource():
     assert not humanity.voluntary, "humanity should be involuntary"
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_has_threshold_at_50():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
@@ -170,6 +214,7 @@ def test_neon_dystopia_humanity_has_threshold_at_50():
     )
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_has_threshold_at_25():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
@@ -179,6 +224,7 @@ def test_neon_dystopia_humanity_has_threshold_at_25():
     )
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_has_threshold_at_0():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
@@ -188,6 +234,7 @@ def test_neon_dystopia_humanity_has_threshold_at_0():
     )
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_thresholds_have_narrator_hints():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
@@ -205,6 +252,7 @@ def test_neon_dystopia_humanity_thresholds_have_narrator_hints():
 # AC3: pulp_noir — Heat (0-5, involuntary, decay 0.1/turn)
 # ═══════════════════════════════════════════════════════════
 
+@_requires_pulp_noir
 def test_pulp_noir_has_heat_resource():
     rules = load_rules_yaml("pulp_noir")
     heat = find_resource(rules, "heat")
@@ -215,6 +263,7 @@ def test_pulp_noir_has_heat_resource():
     assert not heat.voluntary, "heat should be involuntary"
 
 
+@_requires_pulp_noir
 def test_pulp_noir_heat_has_decay():
     rules = load_rules_yaml("pulp_noir")
     heat = find_resource(rules, "heat")
@@ -224,6 +273,7 @@ def test_pulp_noir_heat_has_decay():
     )
 
 
+@_requires_pulp_noir
 def test_pulp_noir_heat_starts_at_zero():
     rules = load_rules_yaml("pulp_noir")
     heat = find_resource(rules, "heat")
@@ -237,6 +287,7 @@ def test_pulp_noir_heat_starts_at_zero():
 # AC4: road_warrior — Fuel (0-100, resource-at-rest → RigStats transfer)
 # ═══════════════════════════════════════════════════════════
 
+@_requires_road_warrior
 def test_road_warrior_has_fuel_resource():
     rules = load_rules_yaml("road_warrior")
     fuel = find_resource(rules, "fuel")
@@ -249,6 +300,7 @@ def test_road_warrior_has_fuel_resource():
     )
 
 
+@_requires_road_warrior
 def test_road_warrior_fuel_starting_value():
     rules = load_rules_yaml("road_warrior")
     fuel = find_resource(rules, "fuel")
@@ -278,6 +330,7 @@ def test_genre_loader_parses_spaghetti_western_resources():
     )
 
 
+@_requires_neon_dystopia
 def test_genre_loader_parses_neon_dystopia_resources():
     path = genre_pack_path("neon_dystopia")
     pack = load_genre_pack(path)
@@ -304,6 +357,7 @@ def test_init_pools_from_spaghetti_western_declarations():
     assert pool.voluntary
 
 
+@_requires_neon_dystopia
 def test_init_pools_from_neon_dystopia_declarations():
     rules = load_rules_yaml("neon_dystopia")
     snap = GameSnapshot()
@@ -319,6 +373,7 @@ def test_init_pools_from_neon_dystopia_declarations():
     )
 
 
+@_requires_pulp_noir
 def test_init_pools_from_pulp_noir_declarations():
     rules = load_rules_yaml("pulp_noir")
     snap = GameSnapshot()
@@ -330,6 +385,7 @@ def test_init_pools_from_pulp_noir_declarations():
     assert abs(pool.decay_per_turn - (-0.1)) < 1e-9
 
 
+@_requires_road_warrior
 def test_init_pools_from_road_warrior_declarations():
     rules = load_rules_yaml("road_warrior")
     snap = GameSnapshot()
@@ -357,6 +413,7 @@ def test_spaghetti_western_luck_validates_bounds():
     )
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_validates_bounds():
     rules = load_rules_yaml("neon_dystopia")
     snap = GameSnapshot()
@@ -371,6 +428,7 @@ def test_neon_dystopia_humanity_validates_bounds():
     )
 
 
+@_requires_pulp_noir
 def test_pulp_noir_heat_validates_bounds():
     rules = load_rules_yaml("pulp_noir")
     snap = GameSnapshot()
@@ -383,6 +441,7 @@ def test_pulp_noir_heat_validates_bounds():
     )
 
 
+@_requires_road_warrior
 def test_road_warrior_fuel_validates_bounds():
     rules = load_rules_yaml("road_warrior")
     snap = GameSnapshot()
@@ -420,6 +479,7 @@ def test_spaghetti_western_luck_threshold_fires_known_fact():
     )
 
 
+@_requires_neon_dystopia
 def test_neon_dystopia_humanity_threshold_fires_known_fact():
     rules = load_rules_yaml("neon_dystopia")
     snap = GameSnapshot()
@@ -437,6 +497,7 @@ def test_neon_dystopia_humanity_threshold_fires_known_fact():
     )
 
 
+@_requires_pulp_noir
 def test_pulp_noir_heat_decay_integration():
     rules = load_rules_yaml("pulp_noir")
     snap = GameSnapshot()
@@ -547,6 +608,7 @@ resources:
 # Edge: genres without resources still load fine
 # ═══════════════════════════════════════════════════════════
 
+@_requires_low_fantasy
 def test_genre_without_resources_loads_empty():
     # low_fantasy doesn't declare resources
     rules = load_rules_yaml("low_fantasy")
@@ -555,6 +617,7 @@ def test_genre_without_resources_loads_empty():
     )
 
 
+@_requires_low_fantasy
 def test_init_pools_from_empty_declarations_no_crash():
     rules = load_rules_yaml("low_fantasy")
     snap = GameSnapshot()
