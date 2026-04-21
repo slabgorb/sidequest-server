@@ -186,6 +186,10 @@ __all__ = [
     "ResourcePool",
     "ResourceThreshold",
     "UnknownResource",
-    "detect_crossings",
+    # ``mint_threshold_lore`` is re-exported here to mirror the Rust
+    # ``pub use`` shim in ``resource_pool.rs``. ``detect_crossings`` is
+    # NOT re-exported — it is structurally a threshold-module helper,
+    # not a resource-pool primitive. Package-level access is via
+    # ``sidequest.game.detect_crossings``.
     "mint_threshold_lore",
 ]

@@ -44,12 +44,16 @@ logger = logging.getLogger(__name__)
 class ThresholdAt(Protocol):
     """Protocol for threshold types that fire when a pool value crosses downward.
 
-    Port of Rust ``trait ThresholdAt``. Implemented by
-    :class:`sidequest.game.resource_pool.ResourceThreshold` (Value = float)
-    and :class:`sidequest.game.creature_core.EdgeThreshold` (Value = int).
+    Port of Rust ``trait ThresholdAt`` (``type Value: PartialOrd + Copy``).
+    Implemented by :class:`sidequest.game.resource_pool.ResourceThreshold`
+    (``at: float``) and :class:`sidequest.game.creature_core.EdgeThreshold`
+    (``at: int``). The attribute is widened to ``int | float`` so both
+    concrete threshold types satisfy the Protocol structurally — Python's
+    Protocol attribute annotations are invariant, so ``at: float`` would
+    reject ``EdgeThreshold.at: int`` under strict checkers.
     """
 
-    at: float
+    at: int | float
     event_id: str
     narrator_hint: str
 
@@ -59,13 +63,15 @@ T = TypeVar("T", bound=ThresholdAt)
 
 def detect_crossings(
     thresholds: list[T],
-    old_value: float,
-    new_value: float,
+    old_value: int | float,
+    new_value: int | float,
 ) -> list[T]:
     """Return thresholds crossed by a value change (downward only).
 
     A threshold ``t`` is crossed when ``old_value > t.at`` and
-    ``new_value <= t.at``. Port of Rust ``detect_crossings``.
+    ``new_value <= t.at``. Port of Rust ``detect_crossings``. Values may
+    be ``int`` or ``float`` — mirrors Rust's generic ``Value: PartialOrd
+    + Copy``.
     """
     return [t for t in thresholds if old_value > t.at and new_value <= t.at]
 

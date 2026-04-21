@@ -53,10 +53,8 @@ from sidequest.game.resource_pool import (
     ResourcePatchResult,
     ResourcePool,
     ResourceThreshold,
-    mint_threshold_lore,
 )
 from sidequest.game.session import GameSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Test helpers — mirror Rust test-helper shapes verbatim
@@ -882,8 +880,11 @@ def test_resource_pool_single_source_of_truth() -> None:
 def test_sidequest_game_re_exports_resource_pool_symbols() -> None:
     """Downstream consumers (dispatch, narrator, GM panel) import via
     ``from sidequest.game import ...`` — every new 42-2 symbol must be
-    re-exported from the package root."""
+    re-exported from the package root. Per 42-1 binding rule, wiring
+    tests cover every re-exported symbol plus every method-surface
+    contract declared in the module docstring."""
     import sidequest.game as game
+    from sidequest.game import GameSnapshot
 
     for sym in (
         "ResourcePool",
@@ -892,9 +893,25 @@ def test_sidequest_game_re_exports_resource_pool_symbols() -> None:
         "ResourcePatchOp",
         "ResourcePatchResult",
         "ResourcePatchError",
+        "UnknownResource",
+        "NotVoluntary",
+        "detect_crossings",
         "mint_threshold_lore",
     ):
         assert hasattr(game, sym), f"sidequest.game must re-export {sym!r}"
+
+    # Method surface per the test-file's module docstring contract.
+    for method_name in (
+        "apply_resource_patch",
+        "apply_resource_patch_player",
+        "apply_pool_decay",
+        "init_resource_pools",
+        "apply_resource_patch_by_name",
+        "process_resource_patch_with_lore",
+    ):
+        assert callable(getattr(GameSnapshot, method_name, None)), (
+            f"GameSnapshot must expose {method_name!r} as a callable"
+        )
 
 
 def test_resource_pool_model_config_is_forbid() -> None:

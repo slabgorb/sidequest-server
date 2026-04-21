@@ -96,6 +96,7 @@ from sidequest.game.session import (
     TropeState,
     WorldStatePatch,
 )
+from sidequest.game.thresholds import detect_crossings
 from sidequest.game.turn import PreprocessedAction, TurnManager, TurnPhase
 
 __all__ = [
@@ -159,6 +160,7 @@ __all__ = [
     "ResourcePool",
     "ResourceThreshold",
     "UnknownResource",
+    "detect_crossings",
     "mint_threshold_lore",
     # session
     "AchievementTracker",

@@ -42,7 +42,6 @@ from sidequest.game.resource_pool import (
 )
 from sidequest.game.session import GameSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Test helpers — identical shape to test_resource_pool.py helpers
 # ---------------------------------------------------------------------------

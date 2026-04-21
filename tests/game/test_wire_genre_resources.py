@@ -50,7 +50,6 @@ from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models.rules import ResourceDeclaration, RulesConfig
 
-
 # ═══════════════════════════════════════════════════════════
 # Test helpers (port of Rust helpers)
 # ═══════════════════════════════════════════════════════════
@@ -830,6 +829,53 @@ def test_migration_without_declarations_produces_minimal_pool():
         "no declaration → empty label for upsert to fill"
     )
     assert mana.name == "mana"
+
+
+def test_migration_raises_on_malformed_legacy_declaration():
+    """CLAUDE.md No Silent Fallbacks: a non-dict entry in
+    ``resource_declarations`` must raise with context, not be silently
+    filtered out (which previously synthesized unbounded defaults for
+    the matching ``resource_state`` entry and lost all metadata)."""
+    import json as _json
+
+    import pytest
+    from pydantic import ValidationError
+
+    payload = _json.loads("""{
+        "genre_slug": "test",
+        "world_slug": "test",
+        "resource_state": { "luck": 2.0 },
+        "resource_declarations": [
+            "not a dict — malformed legacy save",
+            { "name": "luck", "label": "Luck", "min": 0.0, "max": 6.0,
+              "starting": 3.0, "voluntary": true, "decay_per_turn": 0.0 }
+        ]
+    }""")
+
+    with pytest.raises((ValueError, ValidationError)) as excinfo:
+        GameSnapshot.model_validate(payload)
+    assert "malformed legacy resource_declaration" in str(excinfo.value)
+
+
+def test_migration_raises_on_non_numeric_legacy_current():
+    """CLAUDE.md No Silent Fallbacks: a non-numeric value in
+    ``resource_state`` must raise with the pool name in the error
+    message, not silently crash with a bare ``TypeError``."""
+    import json as _json
+
+    import pytest
+    from pydantic import ValidationError
+
+    payload = _json.loads("""{
+        "genre_slug": "test",
+        "world_slug": "test",
+        "resource_state": { "luck": "not a number" }
+    }""")
+
+    with pytest.raises((ValueError, ValidationError)) as excinfo:
+        GameSnapshot.model_validate(payload)
+    assert "luck" in str(excinfo.value)
+    assert "numeric" in str(excinfo.value)
 
 
 def test_migration_then_init_populates_metadata_without_resetting_current():

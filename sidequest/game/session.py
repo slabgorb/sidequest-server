@@ -31,7 +31,6 @@ from sidequest.game.resource_pool import (
     ResourcePool,
     ResourceThreshold,
     UnknownResource,
-    detect_crossings,
     mint_threshold_lore,
 )
 from sidequest.game.scenario_state import ScenarioState
@@ -312,7 +311,9 @@ class GameSnapshot(BaseModel):
     - scenario_state: runtime holder live (Story 2.3 Slice D); gossip/
       accusation logic defers to a later slice
     - discovered_rooms: P3-deferred (room-graph navigation)
-    - resources: P4-deferred (resource pools)
+    - resources: typed dict[str, ResourcePool] as of story 42-2
+      (ADR-033 port). Dispatch-side wiring and OTEL emission land
+      in 42-4.
 
     P1-required: genre_slug, world_slug, characters, npcs, location,
                  time_of_day, quest_log, notes, narrative_log, atmosphere,
@@ -393,7 +394,7 @@ class GameSnapshot(BaseModel):
     # Combat state (P1-required: permadeath / death detection)
     player_dead: bool = False
 
-    # P4-deferred: named resource pools (story 16-10)
+    # Named resource pools (story 42-2 — ADR-033 port)
     resources: dict[str, ResourcePool] = Field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -446,9 +447,27 @@ class GameSnapshot(BaseModel):
             return data
 
         # Migrate legacy_state → resources, consulting legacy_decls for metadata.
+        # Fail loud per CLAUDE.md "No Silent Fallbacks" — malformed legacy
+        # payloads must raise, never be dropped.
         import sys as _sys
 
-        decls_by_name = {d["name"]: d for d in legacy_decls if isinstance(d, dict)}
+        decls_by_name: dict[str, dict] = {}
+        for d in legacy_decls:
+            if not isinstance(d, dict):
+                raise ValueError(
+                    f"malformed legacy resource_declaration (expected dict): {d!r}"
+                )
+            decls_by_name[d["name"]] = d
+
+        def _coerce_current(pool_name: str, raw_current: object) -> float:
+            try:
+                return float(raw_current)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"malformed legacy resource_state[{pool_name!r}]: "
+                    f"current must be numeric (got {raw_current!r})"
+                ) from e
+
         migrated: dict[str, dict] = {}
         for name, current in legacy_state.items():
             decl = decls_by_name.get(name)
@@ -456,7 +475,7 @@ class GameSnapshot(BaseModel):
                 migrated[name] = {
                     "name": decl["name"],
                     "label": decl.get("label", ""),
-                    "current": float(current),
+                    "current": _coerce_current(name, current),
                     "min": decl["min"],
                     "max": decl["max"],
                     "voluntary": decl["voluntary"],
@@ -473,13 +492,13 @@ class GameSnapshot(BaseModel):
             else:
                 # No declaration — synthesize unbounded defaults. Rust uses
                 # ``f64::MIN`` / ``f64::MAX``; Python matches with
-                # ``sys.float_info.min`` / ``sys.float_info.max`` (magnitudes).
-                # Rust ``f64::MIN`` is the most-negative finite value, so use
-                # ``-sys.float_info.max`` to match that semantic.
+                # ``sys.float_info.max`` (magnitude) and negates for the
+                # lower bound. Rust ``f64::MIN`` is the most-negative finite
+                # value, so ``-sys.float_info.max`` matches that semantic.
                 migrated[name] = {
                     "name": name,
                     "label": "",
-                    "current": float(current),
+                    "current": _coerce_current(name, current),
                     "min": -_sys.float_info.max,
                     "max": _sys.float_info.max,
                     "voluntary": False,
@@ -618,7 +637,12 @@ class GameSnapshot(BaseModel):
     # ``sidequest-api/crates/sidequest-game/src/resource_pool.rs``. These
     # methods are the public surface for ResourcePool mutation; the
     # per-pool clamp + crossing-detection primitive lives in
-    # ``ResourcePool._apply_and_clamp``.
+    # ``ResourcePool._apply_and_clamp`` and is the single invariant-
+    # enforcing path for all pool mutation (including decay).
+    #
+    # OTEL: span emission for resource-pool mutations is deferred to
+    # story 42-4 (dispatch + OTEL). See context-epic-42.md. The GM-panel
+    # lie-detector picks up these methods once 42-4 wires the spans.
     # ------------------------------------------------------------------
 
     def apply_resource_patch(self, patch: ResourcePatch) -> ResourcePatchResult:
@@ -656,8 +680,12 @@ class GameSnapshot(BaseModel):
 
         Port of Rust ``GameSnapshot::apply_pool_decay``. Skips pools whose
         ``decay_per_turn`` is effectively zero (``abs < sys.float_info.epsilon``
-        mirrors Rust's ``f64::EPSILON`` guard). Returns a flat list of all
-        thresholds crossed across all pools this tick.
+        mirrors Rust's ``f64::EPSILON`` guard). Routes each non-zero decay
+        through :meth:`ResourcePool._apply_and_clamp` so clamp + crossing
+        detection share the same invariant-enforcing primitive as the
+        patch path. Returns a flat list of all thresholds crossed across
+        all pools this tick (also available via
+        :attr:`ResourcePatchResult.crossed_thresholds` per-pool).
         """
         import sys
 
@@ -666,11 +694,10 @@ class GameSnapshot(BaseModel):
         for pool in self.resources.values():
             if abs(pool.decay_per_turn) < eps:
                 continue
-            old_value = pool.current
-            raw = pool.current + pool.decay_per_turn
-            pool.current = max(pool.min, min(pool.max, raw))
-            crossed = detect_crossings(pool.thresholds, old_value, pool.current)
-            all_crossings.extend(crossed)
+            result = pool._apply_and_clamp(
+                ResourcePatchOp.Add, pool.decay_per_turn
+            )
+            all_crossings.extend(result.crossed_thresholds)
         return all_crossings
 
     def init_resource_pools(
