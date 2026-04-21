@@ -4,12 +4,18 @@ Port of sidequest_game crate (selected modules).
 ADR-082: Python server narration vertical slice.
 
 Phase 1 exports:
-- Character, CreatureCore, EdgePool, Inventory
+- Character, CreatureCore, EdgePool, EdgeThreshold, Inventory
 - GameSnapshot, WorldStatePatch, NpcPatch, NpcRegistryEntry, NarrativeEntry
 - StateDelta (game-layer), StateSnapshot, snapshot, compute_delta
 - TurnManager, TurnPhase
 - CommandHandler, CommandResult, BUILTIN_COMMANDS
 - SqliteStore, SavedSession, SessionMeta, PersistError
+- Resource pools (story 42-2 — ADR-033): ResourcePool, ResourceThreshold,
+  ResourcePatch, ResourcePatchOp, ResourcePatchResult, ResourcePatchError,
+  UnknownResource, NotVoluntary, detect_crossings, mint_threshold_lore
+- Encounter (story 42-1 — ADR-082 Phase 3): StructuredEncounter,
+  EncounterActor, EncounterMetric, EncounterPhase, MetricDirection,
+  RigType, SecondaryStats, StatValue
 
 Phase 2+ (combat, dice, advancement) are deferred — not exported here.
 """
