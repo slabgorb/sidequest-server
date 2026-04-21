@@ -20,6 +20,7 @@ from sidequest.game.character import (
     Character,
     KnownFact,
 )
+from sidequest.game.combatant import Combatant
 from sidequest.game.commands import (
     BUILTIN_COMMANDS,
     CommandHandler,
@@ -48,6 +49,16 @@ from sidequest.game.delta import (
     StateSnapshot,
     compute_delta,
     snapshot,
+)
+from sidequest.game.encounter import (
+    EncounterActor,
+    EncounterMetric,
+    EncounterPhase,
+    MetricDirection,
+    RigType,
+    SecondaryStats,
+    StatValue,
+    StructuredEncounter,
 )
 from sidequest.game.persistence import (
     DatabaseError,
@@ -83,6 +94,8 @@ __all__ = [
     "AffinityState",
     "Character",
     "KnownFact",
+    # combatant
+    "Combatant",
     # commands
     "BUILTIN_COMMANDS",
     "CommandHandler",
@@ -109,6 +122,15 @@ __all__ = [
     "StateSnapshot",
     "compute_delta",
     "snapshot",
+    # encounter
+    "EncounterActor",
+    "EncounterMetric",
+    "EncounterPhase",
+    "MetricDirection",
+    "RigType",
+    "SecondaryStats",
+    "StatValue",
+    "StructuredEncounter",
     # persistence
     "DatabaseError",
     "NotFoundError",

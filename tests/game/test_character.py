@@ -257,8 +257,10 @@ def test_edge_fraction_half():
     assert abs(c.edge_fraction() - 0.5) < 0.01
 
 
-def test_edge_fraction_zero_max_returns_one():
+def test_edge_fraction_zero_max_returns_zero():
+    """Rust-verbatim: ``Combatant::edge_fraction`` returns ``0.0`` when
+    ``max_edge == 0`` (NOT ``1.0``). Drift fixed in story 42-1."""
     c = make_test_character()
     c.core.edge.max = 0
     c.core.edge.current = 0
-    assert c.edge_fraction() == 1.0
+    assert c.edge_fraction() == 0.0
