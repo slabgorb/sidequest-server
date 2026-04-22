@@ -13,17 +13,22 @@ State machine: AwaitingConnect → Creating → Playing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace
 
+if TYPE_CHECKING:
+    from sidequest.server.session_room import RoomRegistry, SessionRoom
+
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
-from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
 from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
@@ -37,7 +42,7 @@ from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
 )
-from sidequest.game.session import GameSnapshot, NarrativeEntry
+from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -49,18 +54,27 @@ from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
+from sidequest.game.event_log import EventLog
+from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
     ErrorMessage,
     ErrorPayload,
+    GamePausedMessage,
+    GamePausedPayload,
+    GameResumedMessage,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
     NarrationPayload,
     PartyStatusMessage,
     PartyStatusPayload,
+    PlayerPresenceMessage,
+    PlayerPresencePayload,
+    SeatConfirmedMessage,
+    SeatConfirmedPayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -77,11 +91,54 @@ from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
+    SPAN_NPC_AUTO_REGISTERED,
+    SPAN_NPC_REINVENTED,
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Event-kind → message class mapping (MP-03 Task 3)
+# Extend this dict as additional kinds are routed through _emit_event.
+# ---------------------------------------------------------------------------
+
+_KIND_TO_MESSAGE_CLS: dict[str, type] = {
+    "NARRATION": NarrationMessage,
+}
+
+
+# ---------------------------------------------------------------------------
+# Replay helper (MP-03 Task 4)
+# Reconstructs a typed protocol message from a persisted EventRow on reconnect.
+# Distinct from _emit_event (live fan-out) but reuses _KIND_TO_MESSAGE_CLS as
+# the single source of truth for kind → message class mapping.
+# ---------------------------------------------------------------------------
+
+def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object:
+    """Build a typed protocol message from a persisted event row for replay.
+
+    Raises ValueError on unknown kinds — no silent fallback.
+    Caller: slug-connect branch, after SESSION_CONNECTED is built, to
+    reconstruct missed events since last_seen_seq.
+    """
+    import json
+
+    message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
+    if message_cls is None:
+        raise ValueError(f"_build_message_for_kind: unknown event kind {kind!r}")
+
+    data = json.loads(payload_json)
+    data["seq"] = seq
+
+    if kind == "NARRATION":
+        from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
+        return message_cls(payload=_NarrationPayload(**data))
+
+    # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
+    # Kept as a belt-and-suspenders hard fail.
+    raise ValueError(f"_build_message_for_kind: no payload constructor for kind {kind!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +199,10 @@ class _SessionData:
     # slices consume this for pressure events, scene-budget gating,
     # and accusation UI.
     active_scenario: ScenarioPack | None = None
+    # MP-01 Task 4: slug-based connect fields. Set when connecting via
+    # game_slug rather than the legacy genre+world path.
+    game_slug: str | None = None
+    mode: "GameMode | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +238,128 @@ class WebSocketSessionHandler:
         self._session_data: _SessionData | None = None
 
     # ------------------------------------------------------------------
+    # Room context (MP-02 Task 2)
+    # ------------------------------------------------------------------
+
+    def attach_room_context(
+        self,
+        *,
+        registry: "RoomRegistry",
+        socket_id: str,
+        out_queue: "asyncio.Queue[object] | None" = None,
+    ) -> None:
+        """Attach the process-wide RoomRegistry, socket_id, and per-socket outbound queue.
+
+        Called by ws_endpoint immediately after accept(). Sets _room to None;
+        _room is assigned in the slug-connect branch when a room is joined.
+        out_queue is the asyncio.Queue that the writer task in ws_endpoint drains.
+        """
+        from sidequest.server.session_room import RoomRegistry as _RoomRegistry  # noqa: F401
+        self._room_registry = registry
+        self._socket_id = socket_id
+        self._out_queue: "asyncio.Queue[object] | None" = out_queue
+        self._room: "SessionRoom | None" = None
+
+    def current_room(self) -> "SessionRoom | None":
+        """Return the room this handler is currently registered in, or None."""
+        return getattr(self, "_room", None)
+
+    # ------------------------------------------------------------------
+    # EventLog fan-out helper (MP-03 Task 3)
+    # ------------------------------------------------------------------
+
+    def _emit_event(self, kind: str, payload_model: object) -> object:
+        """Persist an event to the EventLog and fan-out to all connected players.
+
+        Invariants (per Plan 03):
+        1. EventLog.append fires BEFORE any socket send.
+        2. Fan-out consults ProjectionFilter per recipient.
+        3. The emitter (self) receives the raw, unfiltered event.
+
+        Returns the outbound message object for the calling player (the emitter).
+        Falls back to a plain message without seq when EventLog is unavailable
+        (legacy non-slug connect path doesn't initialize _event_log).
+        """
+        import json
+
+        from pydantic import BaseModel
+
+        message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
+        if message_cls is None:
+            raise ValueError(f"_emit_event: unknown kind {kind!r}")
+
+        event_log: EventLog | None = getattr(self, "_event_log", None)
+        projection_filter: PassThroughFilter | None = getattr(self, "_projection_filter", None)
+
+        # Serialize payload excluding seq (seq is assigned from the DB row)
+        if isinstance(payload_model, BaseModel):
+            payload_json = payload_model.model_dump_json(exclude={"seq"})
+        else:
+            payload_json = json.dumps(payload_model)  # type: ignore[arg-type]
+
+        if event_log is not None:
+            # Invariant 1: persist first
+            row = event_log.append(kind=kind, payload_json=payload_json)
+            seq = row.seq
+
+            # Build emitter's message with raw, unfiltered payload + seq (Invariant 3)
+            if isinstance(payload_model, BaseModel):
+                emitter_payload = payload_model.model_copy(update={"seq": seq})
+            else:
+                emitter_payload = payload_model  # type: ignore[assignment]
+            out_to_self = message_cls(payload=emitter_payload)
+
+            # Fan-out to other connected players (Invariant 2)
+            room: "SessionRoom | None" = getattr(self, "_room", None)
+            if room is not None and projection_filter is not None:
+                emitter_player_id = (
+                    self._session_data.player_id if self._session_data else None
+                )
+                for other_pid in room.connected_player_ids():
+                    if other_pid == emitter_player_id:
+                        continue
+                    decision = projection_filter.project(event=row, player_id=other_pid)
+                    if not decision.include:
+                        continue
+                    # Build per-recipient payload: merge filtered payload_json + seq
+                    try:
+                        filtered_data = json.loads(decision.payload_json)
+                        filtered_data["seq"] = seq
+                        if isinstance(payload_model, BaseModel):
+                            recipient_payload = payload_model.model_copy(
+                                update={**json.loads(decision.payload_json), "seq": seq}
+                            )
+                        else:
+                            recipient_payload = filtered_data  # type: ignore[assignment]
+                        recipient_msg = message_cls(payload=recipient_payload)
+                    except Exception:
+                        # Never silently fail fan-out; log and skip this recipient
+                        logger.error(
+                            "emit_event.fanout_failed kind=%s other_pid=%s",
+                            kind,
+                            other_pid,
+                        )
+                        continue
+                    socket_id = room.socket_for_player(other_pid)
+                    if socket_id is None:
+                        continue
+                    queue = room.queue_for_socket(socket_id)
+                    if queue is not None:
+                        queue.put_nowait(recipient_msg)
+        else:
+            # Legacy path (non-slug connect): no EventLog, no seq
+            out_to_self = message_cls(payload=payload_model)
+
+        return out_to_self
+
+    # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
+
+    @property
+    def session_data(self) -> _SessionData | None:
+        """Public read accessor for session state (used by tests and GM panel)."""
+        return self._session_data
 
     async def handle_message(self, msg: GameMessage) -> list[object]:
         """Dispatch an inbound message; return list of outbound protocol message objects."""
@@ -190,6 +371,8 @@ class WebSocketSessionHandler:
             return await self._handle_player_action(msg)
         elif msg_type == "CHARACTER_CREATION":
             return await self._handle_character_creation(msg)
+        elif msg_type == "PLAYER_SEAT":
+            return self._handle_player_seat(msg)
         else:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
@@ -218,6 +401,51 @@ class WebSocketSessionHandler:
                     pass
 
     # ------------------------------------------------------------------
+    # PLAYER_SEAT dispatch (MP-02 Task 5)
+    # ------------------------------------------------------------------
+
+    def _handle_player_seat(self, msg: GameMessage) -> list[object]:
+        """Handle a PLAYER_SEAT message (character slot claim).
+
+        Seats the player in the room and broadcasts SEAT_CONFIRMED to all players.
+        Returns empty list — the broadcast handles fan-out via the room.
+        """
+        payload = msg.payload  # type: ignore[attr-defined]
+        player_id = getattr(msg, "player_id", "") or (
+            self._session_data.player_id if self._session_data else ""
+        )
+        character_slot = payload.character_slot
+
+        # Seat the player in the room (thread-safe, idempotent)
+        if self._room is not None:
+            self._room.seat(player_id, character_slot=character_slot)
+            logger.info(
+                "session.player_seated player_id=%s character_slot=%s slug=%s",
+                player_id,
+                character_slot,
+                self._room.slug,
+            )
+        else:
+            logger.warning(
+                "session.player_seat_no_room player_id=%s character_slot=%s",
+                player_id,
+                character_slot,
+            )
+
+        # Build and broadcast SEAT_CONFIRMED to all players
+        confirmed_msg = SeatConfirmedMessage(
+            payload=SeatConfirmedPayload(
+                player_id=player_id,
+                character_slot=character_slot,
+            ),
+        )
+
+        if self._room is not None:
+            self._room.broadcast(confirmed_msg, exclude_socket_id=None)
+
+        return []
+
+    # ------------------------------------------------------------------
     # SESSION_EVENT dispatch
     # ------------------------------------------------------------------
 
@@ -236,6 +464,145 @@ class WebSocketSessionHandler:
         payload: SessionEventPayload,
         player_id: str,
     ) -> list[object]:
+        # New slug-based path (preferred). Legacy genre+world path below remains for now.
+        if getattr(payload, "game_slug", None):
+            from sidequest.game.persistence import (
+                GameMode,
+                db_path_for_slug,
+                get_game,
+            )
+            slug = payload.game_slug
+            db = db_path_for_slug(self._save_dir, slug)
+            if not db.exists():
+                return [_error_msg(f"unknown game slug: {slug}")]
+            store = SqliteStore(db)
+            store.initialize()
+            row = get_game(store, slug)
+            if row is None:
+                return [_error_msg(f"unknown game slug: {slug}")]
+            if not player_id:
+                player_id = str(uuid.uuid4())
+
+            # Room registry wiring (MP-02 Task 2). Only runs when
+            # attach_room_context was called (i.e. via the real WebSocket
+            # lifecycle). Unit tests that construct the handler directly
+            # without ws_endpoint skip this branch gracefully.
+            if hasattr(self, "_room_registry"):
+                from sidequest.server.session_room import SoloSlotConflict
+                room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
+                # Snapshot pause state BEFORE connecting so we can detect
+                # whether this connect resolved an existing pause (MP-02 Task 6).
+                was_paused_before_connect = room.is_paused()
+                try:
+                    room.connect(player_id, socket_id=self._socket_id)
+                except SoloSlotConflict as exc:
+                    return [_error_msg(str(exc))]
+                self._room = room
+                # Attach the outbound queue and broadcast join presence to others.
+                # out_queue is None when the handler is constructed directly in tests
+                # without going through ws_endpoint — skip silently in that case.
+                if self._out_queue is not None:
+                    room.attach_outbound(self._socket_id, self._out_queue)
+                    room.broadcast(
+                        _presence_msg(player_id, "connected"),
+                        exclude_socket_id=self._socket_id,
+                    )
+                    # If this connect resolved the pause (was paused before, not
+                    # paused now), broadcast GAME_RESUMED to all players
+                    # including the reconnecting socket (MP-02 Task 6).
+                    if was_paused_before_connect and not room.is_paused():
+                        room.broadcast(
+                            GameResumedMessage(),
+                            exclude_socket_id=None,
+                        )
+
+            # Load genre pack (Bug 1 fix: genre_pack must not be None).
+            try:
+                loader = GenreLoader(search_paths=self._search_paths)
+                genre_pack = loader.load(row.genre_slug)
+            except Exception as exc:
+                logger.error(
+                    "session.genre_load_failed genre=%s slug=%s error=%s",
+                    row.genre_slug, slug, exc,
+                )
+                return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
+
+            # Restore saved snapshot, or start fresh (Bug 2 fix: resume semantics).
+            saved = store.load()
+            if saved is not None:
+                snapshot = saved.snapshot
+                has_character = bool(snapshot.characters)
+                logger.info(
+                    "session.slug_resumed genre=%s world=%s slug=%s turn=%s",
+                    row.genre_slug,
+                    row.world_slug,
+                    slug,
+                    snapshot.turn_manager.interaction,
+                )
+            else:
+                snapshot = GameSnapshot(
+                    genre_slug=row.genre_slug,
+                    world_slug=row.world_slug,
+                    location="Unknown",
+                )
+                store.init_session(row.genre_slug, row.world_slug)
+                has_character = False
+                logger.info(
+                    "session.slug_new_session genre=%s world=%s slug=%s",
+                    row.genre_slug,
+                    row.world_slug,
+                    slug,
+                )
+
+            self._session_data = _SessionData(
+                genre_slug=row.genre_slug,
+                world_slug=row.world_slug,
+                player_name=player_id,
+                player_id=player_id,
+                snapshot=snapshot,
+                store=store,
+                genre_pack=genre_pack,
+                orchestrator=Orchestrator(client=self._client_factory()),
+                game_slug=slug,
+                mode=GameMode(row.mode),
+            )
+            # MP-03 Task 3: initialize EventLog + ProjectionFilter for sync layer.
+            self._event_log = EventLog(store)
+            self._projection_filter = PassThroughFilter()
+            self._last_seen_seq = payload.last_seen_seq or 0
+            self._current_player_id = player_id
+            self._state = _State.Creating if not has_character else _State.Playing
+            connected_msg = SessionEventMessage(
+                type="SESSION_EVENT",  # type: ignore[arg-type]
+                payload=SessionEventPayload(
+                    event="connected",
+                    player_name=player_id,
+                    genre=row.genre_slug,
+                    world=row.world_slug,
+                    has_character=has_character,
+                ),
+                player_id=player_id,
+            )
+
+            # MP-03 Task 4: replay missed events since last_seen_seq.
+            # SESSION_CONNECTED is always first; replay follows in seq ASC order.
+            missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+            replay_msgs: list[object] = []
+            for event_row in missed:
+                dec = self._projection_filter.project(
+                    event=event_row, player_id=self._current_player_id
+                )
+                if not dec.include:
+                    continue
+                replay_msgs.append(
+                    _build_message_for_kind(
+                        kind=event_row.kind,
+                        payload_json=dec.payload_json,
+                        seq=event_row.seq,
+                    )
+                )
+            return [connected_msg, *replay_msgs]
+
         genre_slug = payload.genre or ""
         world_slug = payload.world or ""
         player_name = payload.player_name or "player"
@@ -1036,6 +1403,22 @@ class WebSocketSessionHandler:
             len(action),
         )
 
+        # Pause gate (MP-02 Task 6): if any seated player is absent, return
+        # GAME_PAUSED and do NOT dispatch to the narrator. This must run
+        # BEFORE _execute_narration_turn so the monkeypatch gate in tests
+        # confirms the method is never reached when paused.
+        # Use getattr to guard against tests that construct the handler
+        # directly without calling attach_room_context (which initialises _room).
+        _current_room = getattr(self, "_room", None)
+        if _current_room is not None and _current_room.is_paused():
+            absent = _current_room.absent_seated_player_ids()
+            logger.info(
+                "session.player_action_blocked_paused absent=%s slug=%s",
+                absent,
+                _current_room.slug,
+            )
+            return [GamePausedMessage(payload=GamePausedPayload(waiting_for=absent))]
+
         # Transition to Playing on first action (handles chargen via narration)
         if self._state == _State.Creating:
             self._state = _State.Playing
@@ -1103,16 +1486,16 @@ class WebSocketSessionHandler:
         except Exception:
             narration_nbs = NonBlankString("The world holds its breath...")
 
+        narration_payload = NarrationPayload(
+            text=narration_nbs,
+            state_delta=None,
+            footnotes=[],
+        )
+        # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
+        narration_msg = self._emit_event("NARRATION", narration_payload)
+
         return [
-            NarrationMessage(
-                type="NARRATION",  # type: ignore[arg-type]
-                payload=NarrationPayload(
-                    text=narration_nbs,
-                    state_delta=None,
-                    footnotes=[],
-                ),
-                player_id=sd.player_id,
-            ),
+            narration_msg,
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]
                 payload=NarrationEndPayload(state_delta=None),
@@ -1323,6 +1706,13 @@ def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:
     )
 
 
+def _presence_msg(player_id: str, state: str) -> PlayerPresenceMessage:
+    """Build a PLAYER_PRESENCE message for connect/disconnect events (MP-02 Task 4)."""
+    return PlayerPresenceMessage(
+        payload=PlayerPresencePayload(player_id=player_id, state=state),  # type: ignore[arg-type]
+    )
+
+
 def _sfx_ids_from_genre(genre_pack: GenrePack) -> list[str]:
     """Extract SFX IDs from genre audio config."""
     if genre_pack.audio is None:
@@ -1379,8 +1769,10 @@ def _apply_narration_result_to_snapshot(
             if lore not in snapshot.lore_established:
                 snapshot.lore_established.append(lore)
 
-    # NPC registry — upsert from npcs_present
-    from sidequest.game.session import NpcRegistryEntry
+    # NPC registry — upsert from npcs_present (story 37-44: auto-register +
+    # drift detection). Fires `npc.auto_registered` for new entries and
+    # `npc.reinvented` when narrator-provided pronouns/role diverge from the
+    # canonical registry entry, so the GM panel can surface identity drift.
     turn_num = snapshot.turn_manager.interaction
     for npc_mention in result.npcs_present:
         existing = next(
@@ -1398,13 +1790,55 @@ def _apply_narration_result_to_snapshot(
                     last_seen_turn=turn_num,
                 )
             )
-            logger.info("state.npc_registry_add name=%r turn=%d", npc_mention.name, turn_num)
+            logger.info(
+                "%s name=%r pronouns=%r role=%r turn=%d",
+                SPAN_NPC_AUTO_REGISTERED,
+                npc_mention.name,
+                npc_mention.pronouns or "",
+                npc_mention.role or "",
+                turn_num,
+            )
         else:
+            _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
             existing.last_seen_location = snapshot.location or None
-            if npc_mention.role:
+            # Additive-only upsert: never overwrite a canonical field once set.
+            # Without this guard, _detect_npc_identity_drift logs drift and then
+            # the drifted value silently canonicalizes — warning fires once,
+            # then the registry permanently holds the wrong identity.
+            if npc_mention.role and not existing.role:
                 existing.role = npc_mention.role
-            if npc_mention.pronouns:
+            if npc_mention.pronouns and not existing.pronouns:
                 existing.pronouns = npc_mention.pronouns
-            if npc_mention.appearance:
+            if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+
+def _detect_npc_identity_drift(
+    existing: NpcRegistryEntry,
+    mention: NpcMention,
+    turn_num: int,
+) -> None:
+    """Warn when a narrator-provided NPC mention disagrees with the canonical
+    registry entry on pronouns or role. Fires `npc.reinvented` at WARNING
+    level so the GM panel can surface drift (story 37-44).
+
+    Empty fields on the mention are treated as "no opinion" and never trigger
+    drift — only explicit disagreement counts. Pronoun and role comparisons
+    are case-insensitive. No return value; side-effect only (logger.warning).
+    Does not mutate `existing` or `mention`.
+    """
+    for field, m_val, e_val in (
+        ("pronouns", mention.pronouns, existing.pronouns),
+        ("role", mention.role, existing.role),
+    ):
+        if m_val and e_val and m_val.strip().lower() != e_val.strip().lower():
+            logger.warning(
+                "%s name=%r field=%s expected=%r narrator=%r turn=%d",
+                SPAN_NPC_REINVENTED,
+                existing.name,
+                field,
+                e_val,
+                m_val,
+                turn_num,
+            )

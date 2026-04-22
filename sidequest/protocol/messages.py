@@ -68,7 +68,6 @@ class NarrationPayload(ProtocolBase):
     """Narration payload with optional state delta and structured footnotes.
 
     Port of sidequest_protocol::NarrationPayload.
-    Has exactly 3 fields: text, state_delta, footnotes.
     """
 
     text: NonBlankString
@@ -77,6 +76,9 @@ class NarrationPayload(ProtocolBase):
     """Optional state changes resulting from this narration."""
     footnotes: list[Footnote] = Field(default_factory=list)
     """Structured footnotes — new discoveries and callbacks to prior knowledge."""
+    seq: int = 0
+    """Event-log sequence number assigned when this narration was persisted (MP-03 Task 3).
+    Clients use this value as last_seen_seq on reconnect to catch up on missed events."""
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +139,12 @@ class SessionEventPayload(ProtocolBase):
     """Narrator vocabulary/complexity setting (story 14-4). Optional for backward compat."""
     image_cooldown_seconds: int | None = None
     """Image generation cooldown in seconds (story 14-6). Optional."""
+    game_slug: str | None = None
+    """Slug-based game identifier (MP-01 Task 4). When set, server looks up the
+    game by slug instead of the legacy genre+world+player path."""
+    last_seen_seq: int = 0
+    """Last event-log sequence number the client has seen (MP-03 Task 3).
+    Used on reconnect so the server can replay missed events."""
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +299,73 @@ class ErrorPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# PlayerPresencePayload
+# ---------------------------------------------------------------------------
+
+
+class PlayerPresencePayload(ProtocolBase):
+    """Multiplayer presence event payload (MP-02 Task 4).
+
+    Emitted when a player connects to or disconnects from a room so other
+    connected players can update their party display in real time.
+    """
+
+    player_id: str
+    """The player whose connection state changed."""
+    state: Literal["connected", "disconnected"]
+    """Whether the player just connected or disconnected."""
+
+
+# ---------------------------------------------------------------------------
+# PlayerSeatPayload
+# ---------------------------------------------------------------------------
+
+
+class PlayerSeatPayload(ProtocolBase):
+    """Player seat claim payload (MP-02 Task 5).
+
+    Sent by a player to claim a character slot (e.g., "rux" in caverns_and_claudes).
+    """
+
+    character_slot: str
+    """The character slot being claimed."""
+
+
+# ---------------------------------------------------------------------------
+# SeatConfirmedPayload
+# ---------------------------------------------------------------------------
+
+
+class SeatConfirmedPayload(ProtocolBase):
+    """Seat confirmation broadcast payload (MP-02 Task 5).
+
+    Broadcast to all players when a player claims a character slot.
+    """
+
+    player_id: str
+    """The player who claimed the seat."""
+    character_slot: str
+    """The character slot that was claimed."""
+
+
+# ---------------------------------------------------------------------------
+# GamePausedPayload / GameResumedPayload
+# ---------------------------------------------------------------------------
+
+
+class GamePausedPayload(ProtocolBase):
+    """Payload for GAME_PAUSED messages (MP-02 Task 6).
+
+    Emitted when the room detects that one or more seated players are absent.
+    The narrator will not process PLAYER_ACTION until all seated players are
+    present again.
+    """
+
+    waiting_for: list[str]
+    """Player IDs of seated-but-absent players causing the pause."""
+
+
+# ---------------------------------------------------------------------------
 # GameMessage — discriminated union over Phase 1 messages
 #
 # Rust wire format: {"type": "PLAYER_ACTION", "payload": {...}, "player_id": ""}
@@ -403,6 +478,54 @@ class ErrorMessage(ProtocolBase):
     player_id: str = ""
 
 
+class PlayerPresenceMessage(ProtocolBase):
+    """GameMessage::PlayerPresence wire representation (MP-02 Task 4)."""
+
+    type: Literal[MessageType.PLAYER_PRESENCE] = MessageType.PLAYER_PRESENCE
+    payload: PlayerPresencePayload
+    player_id: str = ""
+
+
+class PlayerSeatMessage(ProtocolBase):
+    """GameMessage::PlayerSeat wire representation (MP-02 Task 5)."""
+
+    type: Literal[MessageType.PLAYER_SEAT] = MessageType.PLAYER_SEAT
+    payload: PlayerSeatPayload
+    player_id: str = ""
+
+
+class SeatConfirmedMessage(ProtocolBase):
+    """GameMessage::SeatConfirmed wire representation (MP-02 Task 5)."""
+
+    type: Literal[MessageType.SEAT_CONFIRMED] = MessageType.SEAT_CONFIRMED
+    payload: SeatConfirmedPayload
+    player_id: str = ""
+
+
+class GamePausedMessage(ProtocolBase):
+    """GameMessage::GamePaused wire representation (MP-02 Task 6).
+
+    Broadcast when one or more seated players are absent. The narrator will not
+    process PLAYER_ACTION until all seated players reconnect.
+    """
+
+    type: Literal[MessageType.GAME_PAUSED] = MessageType.GAME_PAUSED
+    payload: GamePausedPayload
+    player_id: str = ""
+
+
+class GameResumedMessage(ProtocolBase):
+    """GameMessage::GameResumed wire representation (MP-02 Task 6).
+
+    Broadcast when the last absent seated player reconnects and the room is no
+    longer paused.
+    """
+
+    type: Literal[MessageType.GAME_RESUMED] = MessageType.GAME_RESUMED
+    payload: dict = {}  # noqa: RUF012 — intentionally empty payload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -416,7 +539,12 @@ _Phase1Variant = Annotated[
     | MapUpdateMessage
     | ChapterMarkerMessage
     | ActionQueueMessage
-    | ErrorMessage,
+    | ErrorMessage
+    | PlayerPresenceMessage
+    | PlayerSeatMessage
+    | SeatConfirmedMessage
+    | GamePausedMessage
+    | GameResumedMessage,
     Field(discriminator="type"),
 ]
 

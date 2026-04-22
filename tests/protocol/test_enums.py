@@ -151,15 +151,31 @@ def test_message_type_scrapbook_entry_wire_string() -> None:
     assert MessageType.SCRAPBOOK_ENTRY == "SCRAPBOOK_ENTRY"
 
 
+def test_message_type_player_seat_wire_string() -> None:
+    assert MessageType.PLAYER_SEAT == "PLAYER_SEAT"
+
+
+def test_message_type_seat_confirmed_wire_string() -> None:
+    assert MessageType.SEAT_CONFIRMED == "SEAT_CONFIRMED"
+
+
 def test_message_type_unknown_string_rejected() -> None:
     """Unknown type string must not be a valid MessageType."""
     with pytest.raises(ValueError):
         MessageType("BOGUS_TYPE")
 
 
+def test_message_type_game_paused_wire_string() -> None:
+    assert MessageType.GAME_PAUSED == "GAME_PAUSED"
+
+
+def test_message_type_game_resumed_wire_string() -> None:
+    assert MessageType.GAME_RESUMED == "GAME_RESUMED"
+
+
 def test_message_type_complete_count() -> None:
-    """All 32 GameMessage variants must be represented."""
-    assert len(MessageType) == 32
+    """All 37 GameMessage variants must be represented."""
+    assert len(MessageType) == 37
 
 
 # ===========================================================================

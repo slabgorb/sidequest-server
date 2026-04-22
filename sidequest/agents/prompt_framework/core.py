@@ -25,7 +25,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from sidequest.game.session import NpcRegistryEntry
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +336,59 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
                 "genre_resources",
                 "\n".join(lines),
                 AttentionZone.Valley,
+                SectionCategory.State,
+            ),
+        )
+
+    def register_npc_roster_section(
+        self,
+        agent_name: str,
+        npc_registry: list[NpcRegistryEntry],
+    ) -> None:
+        """Inject canonical NPC identity data into the narrator prompt.
+
+        Story 37-44: without this section the narrator cannot see the
+        registry and reinvents pronouns / role / appearance each turn
+        (playtest 3: Frandrew drifted from "she/her captain" to "he/him
+        grease monkey" across 10 turns).
+
+        Empty registry produces no section (zero-byte leak). Entries are
+        rendered one-per-line with name, pronouns, role, appearance, and
+        last_seen_location so the narrator has ground truth every turn.
+
+        Placed in the Early zone (not Valley): identity is acute data,
+        not background lore — if it drifts to Valley the narrator attends
+        to it less over long sessions, which is the exact drift we saw.
+        """
+        if not npc_registry:
+            return
+
+        lines = ["## KNOWN NPCS — Canonical Identity (do not contradict)"]
+        for entry in npc_registry:
+            parts: list[str] = [entry.name]
+            tags: list[str] = []
+            if entry.pronouns:
+                tags.append(entry.pronouns)
+            if entry.role:
+                tags.append(entry.role)
+            if tags:
+                parts.append(f"({', '.join(tags)})")
+            if entry.appearance:
+                parts.append(f"— {entry.appearance}")
+            if entry.last_seen_location:
+                parts.append(f"[last seen: {entry.last_seen_location}]")
+            lines.append("- " + " ".join(parts))
+        lines.append(
+            "Use these exact pronouns and roles. Physical identity is "
+            "canonical; only emotional perception is POV."
+        )
+
+        self.register_section(
+            agent_name,
+            PromptSection.new(
+                "npc_roster",
+                "\n".join(lines),
+                AttentionZone.Early,
                 SectionCategory.State,
             ),
         )

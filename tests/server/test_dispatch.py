@@ -102,8 +102,19 @@ def test_apply_npc_registry_new_npc():
     assert snapshot.npc_registry[0].role == "barkeep"
 
 
-def test_apply_npc_registry_updates_existing():
-    """Existing NPCs in the registry are updated (not duplicated)."""
+def test_apply_npc_registry_existing_is_additive_only():
+    """Existing NPCs are not duplicated, and canonical fields are frozen.
+
+    Story 37-44 reviewer fix: once a canonical field (role, pronouns,
+    appearance) is set, a narrator re-mention MUST NOT overwrite it — that
+    was the exact drift path (Frandrew she/her captain → he/him grease
+    monkey). Narrator-driven reinterpretation is detected by
+    `_detect_npc_identity_drift` and logged as `npc.reinvented`, but the
+    canonical value stays.
+
+    Fields that are still empty on the existing entry CAN be filled in
+    additively (first-time population is not drift).
+    """
     from sidequest.agents.orchestrator import NpcMention
     from sidequest.game.session import NpcRegistryEntry
 
@@ -117,14 +128,21 @@ def test_apply_npc_registry_updates_existing():
     )
     result = _make_result(
         narration="Zara speaks.",
-        npcs_present=[NpcMention(name="Zara", role="barkeep")],
+        npcs_present=[
+            NpcMention(name="Zara", role="barkeep", pronouns="she/her")
+        ],
     )
 
     _apply_narration_result_to_snapshot(snapshot, result, "player")
 
-    # Should still be 1 entry, role updated
+    # Still 1 entry (no duplicate)
     assert len(snapshot.npc_registry) == 1
-    assert snapshot.npc_registry[0].role == "barkeep"
+    entry = snapshot.npc_registry[0]
+    # Canonical role is frozen — not overwritten by narrator re-interpretation
+    assert entry.role == "stranger"
+    # Pronouns were empty on the existing entry, so the additive-update
+    # path fills them in on first assertion
+    assert entry.pronouns == "she/her"
 
 
 def test_apply_no_mutation_on_empty_result():

@@ -899,6 +899,15 @@ class Orchestrator:
                 ),
             )
 
+        # NPC roster — canonical identity anchor (Early zone). Story 37-44.
+        # Without this the narrator cannot see the registry and reinvents
+        # pronouns/role each turn (playtest 3: Frandrew she/her captain →
+        # he/him grease monkey in 10 turns).
+        if context.npc_registry:
+            registry.register_npc_roster_section(
+                agent_name, context.npc_registry
+            )
+
         # Game state (Valley zone)
         if context.state_summary:
             registry.register_section(

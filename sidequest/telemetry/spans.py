@@ -32,7 +32,9 @@ Span groups mirror the Rust source crate that emits them:
   - reminder_*        sidequest-server/dispatch/connect.rs, sidequest-server/lib.rs
   - pregen.*          sidequest-server/dispatch/pregen.rs
   - catch_up.*        sidequest-server/dispatch/catch_up.rs
-  - npc.registration  sidequest-server/dispatch/npc_registry.rs
+  - npc.registration      sidequest-server/dispatch/npc_registry.rs
+  - npc.auto_registered   sidequest-server/session_handler.py (story 37-44)
+  - npc.reinvented        sidequest-server/session_handler.py (story 37-44)
   - scenario.*        sidequest-server/dispatch/mod.rs, dispatch/slash.rs
   - monster_manual.*  sidequest-server/dispatch/mod.rs
   - turn.slash_command sidequest-server/dispatch/slash.rs
@@ -142,6 +144,8 @@ SPAN_CHARGEN_BACKSTORY_COMPOSED = "chargen.backstory_composed"
 # ---------------------------------------------------------------------------
 SPAN_NPC_MERGE_PATCH = "npc_merge_patch"
 SPAN_NPC_REGISTRATION = "npc.registration"
+SPAN_NPC_AUTO_REGISTERED = "npc.auto_registered"
+SPAN_NPC_REINVENTED = "npc.reinvented"
 
 # ---------------------------------------------------------------------------
 # Creature — sidequest-game/creature_core.rs
