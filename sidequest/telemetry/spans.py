@@ -233,6 +233,16 @@ SPAN_SCENARIO_ACCUSATION = "scenario.accusation"
 SPAN_MONSTER_MANUAL_INJECTED = "monster_manual.injected"
 
 # ---------------------------------------------------------------------------
+# Multiplayer lifecycle — sidequest-server/rest.py, session_handler.py
+# Emitted on REST /api/games, WS slug-connect, PLAYER_SEAT, and pause gate
+# decisions so the GM panel can verify MP wiring without divining from logs.
+# ---------------------------------------------------------------------------
+SPAN_MP_GAME_CREATED = "mp.game_created"
+SPAN_MP_SLUG_CONNECT = "mp.slug_connect"
+SPAN_MP_SEAT = "mp.seat"
+SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
+
+# ---------------------------------------------------------------------------
 # Helpers — context managers for Phase 1 spans
 #
 # Each helper accepts an optional ``_tracer`` parameter.  When omitted the
@@ -401,5 +411,122 @@ def turn_agent_llm_inference_span(
     with t.start_as_current_span(
         SPAN_TURN_AGENT_LLM_INFERENCE,
         attributes={"model": model, "prompt_len": prompt_len, **attrs},
+    ) as span:
+        yield span
+
+
+# ---------------------------------------------------------------------------
+# Multiplayer lifecycle helpers
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def mp_game_created_span(
+    slug: str,
+    mode: str,
+    genre_slug: str,
+    world_slug: str,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_MP_GAME_CREATED.
+
+    Emitted for every POST /api/games call. The ``resumed`` attr tells the GM
+    panel whether this returned an existing game (200) or created a new one (201).
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_MP_GAME_CREATED,
+        attributes={
+            "slug": slug,
+            "mode": mode,
+            "genre_slug": genre_slug,
+            "world_slug": world_slug,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def mp_slug_connect_span(
+    slug: str,
+    player_id: str,
+    mode: str,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_MP_SLUG_CONNECT.
+
+    Emitted when a WebSocket performs the slug-based connect handshake.
+    Carries pause-resolution attrs (``was_paused_before``, ``resolved_pause``)
+    so the GM panel can see which reconnects woke the room up.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_MP_SLUG_CONNECT,
+        attributes={
+            "slug": slug,
+            "player_id": player_id,
+            "mode": mode,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def mp_seat_span(
+    slug: str,
+    player_id: str,
+    character_slot: str | None,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_MP_SEAT.
+
+    Emitted on PLAYER_SEAT. ``character_slot`` may be None for observer seats.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_MP_SEAT,
+        attributes={
+            "slug": slug,
+            "player_id": player_id,
+            "character_slot": character_slot if character_slot is not None else "",
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def mp_player_action_paused_span(
+    slug: str,
+    player_id: str,
+    absent_player_ids: list[str],
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_MP_PLAYER_ACTION_PAUSED.
+
+    Emitted when the pause gate blocks a PLAYER_ACTION because a seated
+    player is absent. The GM panel uses this to verify the pause mechanism
+    is actually running (not just that the UI rendered a paused banner).
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_MP_PLAYER_ACTION_PAUSED,
+        attributes={
+            "slug": slug,
+            "player_id": player_id,
+            "absent_count": len(absent_player_ids),
+            "absent_player_ids": ",".join(absent_player_ids),
+            **attrs,
+        },
     ) as span:
         yield span

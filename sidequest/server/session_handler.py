@@ -236,6 +236,21 @@ class WebSocketSessionHandler:
         self._save_dir = save_dir
         self._state = _State.AwaitingConnect
         self._session_data: _SessionData | None = None
+        # Room context fields — populated by attach_room_context() during the
+        # WebSocket lifecycle (ws_endpoint). Absent here means the handler is
+        # being driven outside that lifecycle (e.g. unit tests that exercise
+        # non-slug-connect code paths). The slug-connect branch rejects this
+        # loudly rather than silently skipping room wiring.
+        self._room_registry: "RoomRegistry | None" = None
+        self._socket_id: str | None = None
+        self._out_queue: "asyncio.Queue[object] | None" = None
+        self._room: "SessionRoom | None" = None
+        # EventLog + projection filter are bound in the slug-connect branch.
+        # The legacy genre/world connect path leaves them None; _emit_event
+        # falls back to a plain message without seq in that case. This is a
+        # real production code path (not a test-only skip), documented below.
+        self._event_log: EventLog | None = None
+        self._projection_filter: PassThroughFilter | None = None
 
     # ------------------------------------------------------------------
     # Room context (MP-02 Task 2)
@@ -246,23 +261,24 @@ class WebSocketSessionHandler:
         *,
         registry: "RoomRegistry",
         socket_id: str,
-        out_queue: "asyncio.Queue[object] | None" = None,
+        out_queue: "asyncio.Queue[object]",
     ) -> None:
         """Attach the process-wide RoomRegistry, socket_id, and per-socket outbound queue.
 
-        Called by ws_endpoint immediately after accept(). Sets _room to None;
-        _room is assigned in the slug-connect branch when a room is joined.
-        out_queue is the asyncio.Queue that the writer task in ws_endpoint drains.
+        Called by ws_endpoint immediately after accept(). _room is assigned in
+        the slug-connect branch when a room is joined. out_queue is the
+        asyncio.Queue that the writer task in ws_endpoint drains.
+
+        All three fields are required. The slug-connect branch fails loudly if
+        this method was not called — there is no silent test-only path.
         """
-        from sidequest.server.session_room import RoomRegistry as _RoomRegistry  # noqa: F401
         self._room_registry = registry
         self._socket_id = socket_id
-        self._out_queue: "asyncio.Queue[object] | None" = out_queue
-        self._room: "SessionRoom | None" = None
+        self._out_queue = out_queue
 
     def current_room(self) -> "SessionRoom | None":
         """Return the room this handler is currently registered in, or None."""
-        return getattr(self, "_room", None)
+        return self._room
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -288,8 +304,8 @@ class WebSocketSessionHandler:
         if message_cls is None:
             raise ValueError(f"_emit_event: unknown kind {kind!r}")
 
-        event_log: EventLog | None = getattr(self, "_event_log", None)
-        projection_filter: PassThroughFilter | None = getattr(self, "_projection_filter", None)
+        event_log = self._event_log
+        projection_filter = self._projection_filter
 
         # Serialize payload excluding seq (seq is assigned from the DB row)
         if isinstance(payload_model, BaseModel):
@@ -310,7 +326,7 @@ class WebSocketSessionHandler:
             out_to_self = message_cls(payload=emitter_payload)
 
             # Fan-out to other connected players (Invariant 2)
-            room: "SessionRoom | None" = getattr(self, "_room", None)
+            room = self._room
             if room is not None and projection_filter is not None:
                 emitter_player_id = (
                     self._session_data.player_id if self._session_data else None
@@ -410,38 +426,48 @@ class WebSocketSessionHandler:
         Seats the player in the room and broadcasts SEAT_CONFIRMED to all players.
         Returns empty list — the broadcast handles fan-out via the room.
         """
+        from sidequest.telemetry.spans import mp_seat_span
+
         payload = msg.payload  # type: ignore[attr-defined]
         player_id = getattr(msg, "player_id", "") or (
             self._session_data.player_id if self._session_data else ""
         )
         character_slot = payload.character_slot
 
-        # Seat the player in the room (thread-safe, idempotent)
-        if self._room is not None:
-            self._room.seat(player_id, character_slot=character_slot)
-            logger.info(
-                "session.player_seated player_id=%s character_slot=%s slug=%s",
-                player_id,
-                character_slot,
-                self._room.slug,
-            )
-        else:
-            logger.warning(
-                "session.player_seat_no_room player_id=%s character_slot=%s",
-                player_id,
-                character_slot,
+        slug_attr = self._room.slug if self._room is not None else ""
+        with mp_seat_span(
+            slug=slug_attr,
+            player_id=player_id,
+            character_slot=character_slot,
+            room_bound=self._room is not None,
+        ) as _seat_span:
+            # Seat the player in the room (thread-safe, idempotent)
+            if self._room is not None:
+                self._room.seat(player_id, character_slot=character_slot)
+                logger.info(
+                    "session.player_seated player_id=%s character_slot=%s slug=%s",
+                    player_id,
+                    character_slot,
+                    self._room.slug,
+                )
+                _seat_span.set_attribute("seated_count", len(self._room.seated_player_ids()))
+            else:
+                logger.warning(
+                    "session.player_seat_no_room player_id=%s character_slot=%s",
+                    player_id,
+                    character_slot,
+                )
+
+            # Build and broadcast SEAT_CONFIRMED to all players
+            confirmed_msg = SeatConfirmedMessage(
+                payload=SeatConfirmedPayload(
+                    player_id=player_id,
+                    character_slot=character_slot,
+                ),
             )
 
-        # Build and broadcast SEAT_CONFIRMED to all players
-        confirmed_msg = SeatConfirmedMessage(
-            payload=SeatConfirmedPayload(
-                player_id=player_id,
-                character_slot=character_slot,
-            ),
-        )
-
-        if self._room is not None:
-            self._room.broadcast(confirmed_msg, exclude_socket_id=None)
+            if self._room is not None:
+                self._room.broadcast(confirmed_msg, exclude_socket_id=None)
 
         return []
 
@@ -483,12 +509,29 @@ class WebSocketSessionHandler:
             if not player_id:
                 player_id = str(uuid.uuid4())
 
-            # Room registry wiring (MP-02 Task 2). Only runs when
-            # attach_room_context was called (i.e. via the real WebSocket
-            # lifecycle). Unit tests that construct the handler directly
-            # without ws_endpoint skip this branch gracefully.
-            if hasattr(self, "_room_registry"):
-                from sidequest.server.session_room import SoloSlotConflict
+            # Room registry wiring (MP-02 Task 2). attach_room_context must
+            # have been called — slug-connect cannot proceed without a room
+            # registry, socket id, and outbound queue. Fail loudly if the
+            # WebSocket lifecycle was bypassed (no silent test-only path).
+            if (
+                self._room_registry is None
+                or self._socket_id is None
+                or self._out_queue is None
+            ):
+                raise RuntimeError(
+                    "slug-connect requires attach_room_context() to have been "
+                    "called first — WebSocket lifecycle wiring is missing. "
+                    "Production: ws_endpoint calls it immediately after accept(). "
+                    "Tests: construct a RoomRegistry and call attach_room_context."
+                )
+            from sidequest.server.session_room import SoloSlotConflict
+            from sidequest.telemetry.spans import mp_slug_connect_span
+
+            with mp_slug_connect_span(
+                slug=slug,
+                player_id=player_id,
+                mode=str(row.mode.value) if hasattr(row.mode, "value") else str(row.mode),
+            ) as _mp_span:
                 room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
                 # Snapshot pause state BEFORE connecting so we can detect
                 # whether this connect resolved an existing pause (MP-02 Task 6).
@@ -496,25 +539,26 @@ class WebSocketSessionHandler:
                 try:
                     room.connect(player_id, socket_id=self._socket_id)
                 except SoloSlotConflict as exc:
+                    _mp_span.set_attribute("solo_slot_conflict", True)
                     return [_error_msg(str(exc))]
                 self._room = room
-                # Attach the outbound queue and broadcast join presence to others.
-                # out_queue is None when the handler is constructed directly in tests
-                # without going through ws_endpoint — skip silently in that case.
-                if self._out_queue is not None:
-                    room.attach_outbound(self._socket_id, self._out_queue)
+                room.attach_outbound(self._socket_id, self._out_queue)
+                room.broadcast(
+                    _presence_msg(player_id, "connected"),
+                    exclude_socket_id=self._socket_id,
+                )
+                # If this connect resolved the pause (was paused before, not
+                # paused now), broadcast GAME_RESUMED to all players
+                # including the reconnecting socket (MP-02 Task 6).
+                resolved_pause = was_paused_before_connect and not room.is_paused()
+                if resolved_pause:
                     room.broadcast(
-                        _presence_msg(player_id, "connected"),
-                        exclude_socket_id=self._socket_id,
+                        GameResumedMessage(),
+                        exclude_socket_id=None,
                     )
-                    # If this connect resolved the pause (was paused before, not
-                    # paused now), broadcast GAME_RESUMED to all players
-                    # including the reconnecting socket (MP-02 Task 6).
-                    if was_paused_before_connect and not room.is_paused():
-                        room.broadcast(
-                            GameResumedMessage(),
-                            exclude_socket_id=None,
-                        )
+                _mp_span.set_attribute("was_paused_before", was_paused_before_connect)
+                _mp_span.set_attribute("resolved_pause", resolved_pause)
+                _mp_span.set_attribute("connected_count", len(room.connected_player_ids()))
 
             # Load genre pack (Bug 1 fix: genre_pack must not be None).
             try:
@@ -1406,17 +1450,26 @@ class WebSocketSessionHandler:
         # Pause gate (MP-02 Task 6): if any seated player is absent, return
         # GAME_PAUSED and do NOT dispatch to the narrator. This must run
         # BEFORE _execute_narration_turn so the monkeypatch gate in tests
-        # confirms the method is never reached when paused.
-        # Use getattr to guard against tests that construct the handler
-        # directly without calling attach_room_context (which initialises _room).
-        _current_room = getattr(self, "_room", None)
-        if _current_room is not None and _current_room.is_paused():
-            absent = _current_room.absent_seated_player_ids()
-            logger.info(
-                "session.player_action_blocked_paused absent=%s slug=%s",
-                absent,
-                _current_room.slug,
+        # confirms the method is never reached when paused. _room is None
+        # when slug-connect hasn't bound a room (legacy connect path or
+        # pre-connect test paths) — pause gate is a no-op in that case.
+        if self._room is not None and self._room.is_paused():
+            from sidequest.telemetry.spans import mp_player_action_paused_span
+
+            absent = self._room.absent_seated_player_ids()
+            player_id_attr = (
+                self._session_data.player_id if self._session_data else ""
             )
+            with mp_player_action_paused_span(
+                slug=self._room.slug,
+                player_id=player_id_attr,
+                absent_player_ids=absent,
+            ):
+                logger.info(
+                    "session.player_action_blocked_paused absent=%s slug=%s",
+                    absent,
+                    self._room.slug,
+                )
             return [GamePausedMessage(payload=GamePausedPayload(waiting_for=absent))]
 
         # Transition to Playing on first action (handles chargen via narration)

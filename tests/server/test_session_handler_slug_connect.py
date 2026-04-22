@@ -9,6 +9,7 @@ Verifies that SESSION_EVENT{connect} with a game_slug field:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,27 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
+
+
+def _make_handler(save_dir: Path, search_paths: list[Path]) -> WebSocketSessionHandler:
+    """Construct a handler with room-context wiring.
+
+    Mirrors what ws_endpoint does: build the handler, then immediately call
+    attach_room_context with a fresh RoomRegistry, a unique socket_id, and an
+    asyncio.Queue for outbound messages. The slug-connect branch requires
+    all three — there is no silent test-only bypass.
+    """
+    handler = WebSocketSessionHandler(
+        save_dir=save_dir,
+        genre_pack_search_paths=search_paths,
+    )
+    handler.attach_room_context(
+        registry=RoomRegistry(),
+        socket_id="sock-test",
+        out_queue=asyncio.Queue(),
+    )
+    return handler
 
 # Use a genre pack that exists in the content repo.
 _GENRE = "caverns_and_claudes"
@@ -50,10 +72,7 @@ def seeded_game(tmp_path: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_connect_by_slug_loads_existing_game(seeded_game: Path):
-    handler = WebSocketSessionHandler(
-        save_dir=seeded_game,
-        genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
-    )
+    handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
         type="SESSION_EVENT",
         player_id="alice",
@@ -86,10 +105,7 @@ async def test_connect_by_slug_loads_existing_game(seeded_game: Path):
 
 @pytest.mark.asyncio
 async def test_connect_by_unknown_slug_errors(seeded_game: Path):
-    handler = WebSocketSessionHandler(
-        save_dir=seeded_game,
-        genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
-    )
+    handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
         type="SESSION_EVENT",
         player_id="alice",
@@ -136,10 +152,7 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
     store.save(snap)
     store.close()
 
-    handler = WebSocketSessionHandler(
-        save_dir=tmp_path,
-        genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
-    )
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
         type="SESSION_EVENT",
         player_id="rux-player",
@@ -163,3 +176,75 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
     assert sd is not None
     assert sd.snapshot.characters, "Snapshot must carry the saved character after resume"
     assert sd.snapshot.characters[0].core.name == "Rux"
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_emits_mp_span(seeded_game: Path):
+    """Wiring test: mp.slug_connect span fires with the expected attrs.
+
+    Per CLAUDE.md OTEL mandate — GM panel must be able to tell that
+    slug-connect actually ran (vs. Claude improvising a plausible-looking
+    narration). This test is the lie-detector for that claim.
+    """
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
+        msg = SessionEventMessage(
+            type="SESSION_EVENT",
+            player_id="alice",
+            payload=SessionEventPayload(event="connect", game_slug=_SLUG),
+        )
+        await handler.handle_message(msg)
+
+        mp_spans = [s for s in exporter.get_finished_spans() if s.name == "mp.slug_connect"]
+        assert len(mp_spans) == 1, (
+            f"Expected exactly one mp.slug_connect span, got {[s.name for s in exporter.get_finished_spans()]}"
+        )
+        span = mp_spans[0]
+        assert span.attributes["slug"] == _SLUG
+        assert span.attributes["player_id"] == "alice"
+        # row.mode is GameMode.MULTIPLAYER → "multiplayer"
+        assert span.attributes["mode"] == "multiplayer"
+        # Fresh connect — no one was paused before.
+        assert span.attributes["was_paused_before"] is False
+        assert span.attributes["resolved_pause"] is False
+        assert span.attributes["connected_count"] == 1
+    finally:
+        processor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_without_room_context_raises(seeded_game: Path):
+    """Wiring test: slug-connect must fail loudly when attach_room_context was skipped.
+
+    Regression test for the removed `hasattr(self, "_room_registry")` silent
+    fallback. Any code path that reaches slug-connect without the WebSocket
+    lifecycle having called attach_room_context() is a wiring bug — the
+    handler must refuse to proceed, not silently skip room registration.
+    """
+    handler = WebSocketSessionHandler(
+        save_dir=seeded_game,
+        genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
+    )
+    # Deliberately do NOT call attach_room_context.
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="alice",
+        payload=SessionEventPayload(event="connect", game_slug=_SLUG),
+    )
+    with pytest.raises(RuntimeError, match="attach_room_context"):
+        await handler.handle_message(msg)
