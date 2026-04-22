@@ -56,6 +56,7 @@ class MessageType(str, Enum):
     DICE_RESULT = "DICE_RESULT"
     BEAT_SELECTION = "BEAT_SELECTION"
     SCRAPBOOK_ENTRY = "SCRAPBOOK_ENTRY"
+    PLAYER_PRESENCE = "PLAYER_PRESENCE"
 
 
 class NarratorVerbosity(str, Enum):

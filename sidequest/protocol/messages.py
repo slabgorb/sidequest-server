@@ -294,6 +294,24 @@ class ErrorPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# PlayerPresencePayload
+# ---------------------------------------------------------------------------
+
+
+class PlayerPresencePayload(ProtocolBase):
+    """Multiplayer presence event payload (MP-02 Task 4).
+
+    Emitted when a player connects to or disconnects from a room so other
+    connected players can update their party display in real time.
+    """
+
+    player_id: str
+    """The player whose connection state changed."""
+    state: Literal["connected", "disconnected"]
+    """Whether the player just connected or disconnected."""
+
+
+# ---------------------------------------------------------------------------
 # GameMessage — discriminated union over Phase 1 messages
 #
 # Rust wire format: {"type": "PLAYER_ACTION", "payload": {...}, "player_id": ""}
@@ -406,6 +424,14 @@ class ErrorMessage(ProtocolBase):
     player_id: str = ""
 
 
+class PlayerPresenceMessage(ProtocolBase):
+    """GameMessage::PlayerPresence wire representation (MP-02 Task 4)."""
+
+    type: Literal[MessageType.PLAYER_PRESENCE] = MessageType.PLAYER_PRESENCE
+    payload: PlayerPresencePayload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -419,7 +445,8 @@ _Phase1Variant = Annotated[
     | MapUpdateMessage
     | ChapterMarkerMessage
     | ActionQueueMessage
-    | ErrorMessage,
+    | ErrorMessage
+    | PlayerPresenceMessage,
     Field(discriminator="type"),
 ]
 

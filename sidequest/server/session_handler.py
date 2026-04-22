@@ -13,6 +13,7 @@ State machine: AwaitingConnect → Creating → Playing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
@@ -65,6 +66,8 @@ from sidequest.protocol.messages import (
     NarrationPayload,
     PartyStatusMessage,
     PartyStatusPayload,
+    PlayerPresenceMessage,
+    PlayerPresencePayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -190,27 +193,28 @@ class WebSocketSessionHandler:
     # Room context (MP-02 Task 2)
     # ------------------------------------------------------------------
 
-    def attach_room_context(self, *, registry: "RoomRegistry", socket_id: str) -> None:
-        """Attach the process-wide RoomRegistry and this connection's socket_id.
+    def attach_room_context(
+        self,
+        *,
+        registry: "RoomRegistry",
+        socket_id: str,
+        out_queue: "asyncio.Queue[object] | None" = None,
+    ) -> None:
+        """Attach the process-wide RoomRegistry, socket_id, and per-socket outbound queue.
 
         Called by ws_endpoint immediately after accept(). Sets _room to None;
         _room is assigned in the slug-connect branch when a room is joined.
+        out_queue is the asyncio.Queue that the writer task in ws_endpoint drains.
         """
         from sidequest.server.session_room import RoomRegistry as _RoomRegistry  # noqa: F401
         self._room_registry = registry
         self._socket_id = socket_id
+        self._out_queue: "asyncio.Queue[object] | None" = out_queue
         self._room: "SessionRoom | None" = None
 
     def current_room(self) -> "SessionRoom | None":
         """Return the room this handler is currently registered in, or None."""
         return getattr(self, "_room", None)
-
-    async def broadcast_presence_change(self, *, left_player: str) -> None:
-        """Broadcast a presence-change event to the room.
-
-        Minimal no-op for Task 2 — Task 4 fills in the real broadcast.
-        """
-        pass
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -308,6 +312,15 @@ class WebSocketSessionHandler:
                 except SoloSlotConflict as exc:
                     return [_error_msg(str(exc))]
                 self._room = room
+                # Attach the outbound queue and broadcast join presence to others.
+                # out_queue is None when the handler is constructed directly in tests
+                # without going through ws_endpoint — skip silently in that case.
+                if self._out_queue is not None:
+                    room.attach_outbound(self._socket_id, self._out_queue)
+                    room.broadcast(
+                        _presence_msg(player_id, "connected"),
+                        exclude_socket_id=self._socket_id,
+                    )
 
             # Load genre pack (Bug 1 fix: genre_pack must not be None).
             try:
@@ -1457,6 +1470,13 @@ def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:
             reconnect_required=reconnect_required,
         ),
         player_id="",
+    )
+
+
+def _presence_msg(player_id: str, state: str) -> PlayerPresenceMessage:
+    """Build a PLAYER_PRESENCE message for connect/disconnect events (MP-02 Task 4)."""
+    return PlayerPresenceMessage(
+        payload=PlayerPresencePayload(player_id=player_id, state=state),  # type: ignore[arg-type]
     )
 
 

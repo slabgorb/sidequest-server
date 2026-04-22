@@ -6,22 +6,26 @@ session_handler, write outbound messages.
 Port of the WebSocket layer in sidequest-server/src/lib.rs
 (handle_ws_connection, the reader/writer split).
 Phase 1 only — no dice dispatch, no shared session sync, no multiplayer.
+
+MP-02 Task 4: per-socket write queue + PLAYER_PRESENCE broadcast.
+Each connection has a dedicated writer task that drains an asyncio.Queue.
+The reader loop puts outbound messages into the queue instead of sending
+directly, so room.broadcast() can reach other sockets' queues safely.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from sidequest.protocol import GameMessage
-from sidequest.protocol.messages import ErrorMessage, ErrorPayload
+from sidequest.protocol.messages import ErrorMessage, ErrorPayload, PlayerPresenceMessage, PlayerPresencePayload
 from sidequest.protocol.types import NonBlankString  # noqa: F401
-
-from typing import Any
 
 if TYPE_CHECKING:
     from sidequest.server.session_handler import WebSocketSessionHandler
@@ -35,13 +39,23 @@ async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") 
     On PLAYER_ACTION: dispatch through session_handler → emit NARRATION.
     On SESSION_EVENT{connect}: bind genre/world, load or create session.
     On malformed JSON: send ERROR and close (no silent fallback).
-    On disconnect: persist and clean up.
+    On disconnect: detach outbound queue, disconnect from room, broadcast
+      PLAYER_PRESENCE{disconnected} to remaining players, then persist and clean up.
     """
     await websocket.accept()
     socket_id = uuid.uuid4().hex
     registry = websocket.app.state.room_registry
-    handler.attach_room_context(registry=registry, socket_id=socket_id)
+    out_queue: asyncio.Queue[Any] = asyncio.Queue()
+    handler.attach_room_context(registry=registry, socket_id=socket_id, out_queue=out_queue)
     logger.info("ws.connection_accepted remote=%s socket=%s", websocket.client, socket_id)
+
+    async def _writer() -> None:
+        """Drain the per-socket outbound queue and send each message."""
+        while True:
+            msg = await out_queue.get()
+            await _send_message(websocket, msg)
+
+    writer_task = asyncio.create_task(_writer())
 
     try:
         while True:
@@ -61,20 +75,32 @@ async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") 
             logger.debug("ws.message_received type=%s", msg.type)
             outbound: list[Any] = await handler.handle_message(msg)
             for outbound_msg in outbound:
-                await _send_message(websocket, outbound_msg)
+                out_queue.put_nowait(outbound_msg)
 
     except WebSocketDisconnect as exc:
         logger.info("ws.disconnected code=%s", exc.code)
     except Exception as exc:
         logger.exception("ws.unexpected_error error=%s", exc)
     finally:
+        writer_task.cancel()
         room = handler.current_room()
         if room is not None:
+            room.detach_outbound(socket_id)
             left_player = room.disconnect(socket_id=socket_id)
             if left_player is not None:
-                await handler.broadcast_presence_change(left_player=left_player)
+                room.broadcast(
+                    _presence_msg(left_player, "disconnected"),
+                    exclude_socket_id=socket_id,
+                )
         await handler.cleanup()
         logger.info("ws.session_cleanup_complete")
+
+
+def _presence_msg(player_id: str, state: str) -> PlayerPresenceMessage:
+    """Build a PLAYER_PRESENCE message for connect/disconnect events."""
+    return PlayerPresenceMessage(
+        payload=PlayerPresencePayload(player_id=player_id, state=state),  # type: ignore[arg-type]
+    )
 
 
 async def _send_message(websocket: WebSocket, msg: Any) -> None:

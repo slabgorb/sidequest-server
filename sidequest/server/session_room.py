@@ -6,9 +6,10 @@ and re-seat).
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 from sidequest.game.persistence import GameMode
 
@@ -32,6 +33,8 @@ class SessionRoom:
     _sockets: Dict[str, str] = field(default_factory=dict)  # socket_id -> player_id
     _seated: Dict[str, _Seat] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, repr=False)
+    # socket_id -> asyncio.Queue for per-socket outbound message fan-out (MP-02 Task 4)
+    _outbound_queues: Dict[str, "asyncio.Queue[Any]"] = field(default_factory=dict)
 
     def connect(self, player_id: str, *, socket_id: str) -> None:
         with self._lock:
@@ -81,6 +84,35 @@ class SessionRoom:
     def is_paused(self) -> bool:
         """Game is paused if any seated player is not currently connected."""
         return len(self.absent_seated_player_ids()) > 0
+
+    # ------------------------------------------------------------------
+    # Outbound queue management (MP-02 Task 4)
+    # ------------------------------------------------------------------
+
+    def attach_outbound(self, socket_id: str, queue: "asyncio.Queue[Any]") -> None:
+        """Register a per-socket outbound queue for broadcast delivery."""
+        with self._lock:
+            self._outbound_queues[socket_id] = queue
+
+    def detach_outbound(self, socket_id: str) -> None:
+        """Deregister a per-socket outbound queue (called on disconnect)."""
+        with self._lock:
+            self._outbound_queues.pop(socket_id, None)
+
+    def broadcast(self, msg: Any, *, exclude_socket_id: str | None = None) -> None:
+        """Put msg into every registered outbound queue except exclude_socket_id.
+
+        Thread-safe: snapshot the target list under the lock, then put_nowait
+        outside (put_nowait never blocks and the queues are asyncio-safe).
+        """
+        with self._lock:
+            targets = [
+                (sid, q)
+                for sid, q in self._outbound_queues.items()
+                if sid != exclude_socket_id
+            ]
+        for _sid, q in targets:
+            q.put_nowait(msg)
 
 
 class RoomRegistry:

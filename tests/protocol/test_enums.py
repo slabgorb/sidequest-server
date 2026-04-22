@@ -158,8 +158,8 @@ def test_message_type_unknown_string_rejected() -> None:
 
 
 def test_message_type_complete_count() -> None:
-    """All 32 GameMessage variants must be represented."""
-    assert len(MessageType) == 32
+    """All 33 GameMessage variants must be represented."""
+    assert len(MessageType) == 33
 
 
 # ===========================================================================
