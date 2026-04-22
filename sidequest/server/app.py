@@ -19,6 +19,7 @@ from sidequest.agents.claude_client import ClaudeLike
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
 from sidequest.server.websocket import ws_endpoint
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ def create_app(
     app.state.claude_client_factory = resolved_client_factory
     app.state.genre_pack_search_paths = resolved_search_paths
     app.state.save_dir = resolved_save_dir
+    app.state.room_registry = RoomRegistry()
 
     # --- /health ---
     @app.get("/health")
@@ -117,7 +119,7 @@ def create_app(
 def main() -> None:
     """Entry point for `sidequest-server` CLI script."""
     app = create_app()
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
 
 
 if __name__ == "__main__":

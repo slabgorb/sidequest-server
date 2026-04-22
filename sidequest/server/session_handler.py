@@ -19,8 +19,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace
+
+if TYPE_CHECKING:
+    from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
@@ -181,6 +185,32 @@ class WebSocketSessionHandler:
         self._session_data: _SessionData | None = None
 
     # ------------------------------------------------------------------
+    # Room context (MP-02 Task 2)
+    # ------------------------------------------------------------------
+
+    def attach_room_context(self, *, registry: "RoomRegistry", socket_id: str) -> None:
+        """Attach the process-wide RoomRegistry and this connection's socket_id.
+
+        Called by ws_endpoint immediately after accept(). Sets _room to None;
+        _room is assigned in the slug-connect branch when a room is joined.
+        """
+        from sidequest.server.session_room import RoomRegistry as _RoomRegistry  # noqa: F401
+        self._room_registry = registry
+        self._socket_id = socket_id
+        self._room: "SessionRoom | None" = None
+
+    def current_room(self) -> "SessionRoom | None":
+        """Return the room this handler is currently registered in, or None."""
+        return getattr(self, "_room", None)
+
+    async def broadcast_presence_change(self, *, left_player: str) -> None:
+        """Broadcast a presence-change event to the room.
+
+        Minimal no-op for Task 2 — Task 4 fills in the real broadcast.
+        """
+        pass
+
+    # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
 
@@ -263,6 +293,19 @@ class WebSocketSessionHandler:
                 return [_error_msg(f"unknown game slug: {slug}")]
             if not player_id:
                 player_id = str(uuid.uuid4())
+
+            # Room registry wiring (MP-02 Task 2). Only runs when
+            # attach_room_context was called (i.e. via the real WebSocket
+            # lifecycle). Unit tests that construct the handler directly
+            # without ws_endpoint skip this branch gracefully.
+            if hasattr(self, "_room_registry"):
+                from sidequest.server.session_room import SoloSlotConflict
+                room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
+                try:
+                    room.connect(player_id, socket_id=self._socket_id)
+                except SoloSlotConflict as exc:
+                    return [_error_msg(str(exc))]
+                self._room = room
 
             # Load genre pack (Bug 1 fix: genre_pack must not be None).
             try:

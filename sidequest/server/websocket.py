@@ -11,6 +11,7 @@ Phase 1 only — no dice dispatch, no shared session sync, no multiplayer.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -37,7 +38,10 @@ async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") 
     On disconnect: persist and clean up.
     """
     await websocket.accept()
-    logger.info("ws.connection_accepted remote=%s", websocket.client)
+    socket_id = uuid.uuid4().hex
+    registry = websocket.app.state.room_registry
+    handler.attach_room_context(registry=registry, socket_id=socket_id)
+    logger.info("ws.connection_accepted remote=%s socket=%s", websocket.client, socket_id)
 
     try:
         while True:
@@ -64,6 +68,11 @@ async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") 
     except Exception as exc:
         logger.exception("ws.unexpected_error error=%s", exc)
     finally:
+        room = handler.current_room()
+        if room is not None:
+            left_player = room.disconnect(socket_id=socket_id)
+            if left_player is not None:
+                await handler.broadcast_presence_change(left_player=left_player)
         await handler.cleanup()
         logger.info("ws.session_cleanup_complete")
 
