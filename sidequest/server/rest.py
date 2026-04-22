@@ -268,13 +268,14 @@ def create_rest_router() -> APIRouter:
 
         return genres
 
-    @router.get("/api/saves")
+    @router.get("/api/saves", deprecated=True)
     async def list_saves(request: Request) -> dict[str, Any]:
         """List save files matching optional genre/world/player filters.
 
         Query params: ?genre=..., ?world=..., ?player=...
         Returns { saves: [SaveEntry, ...] }.
         """
+        logger.warning("legacy GET /api/saves called — prefer POST /api/games")
         save_dir: Path = getattr(
             request.app.state,
             "save_dir",
@@ -349,13 +350,14 @@ def create_rest_router() -> APIRouter:
 
         return {"saves": saves}
 
-    @router.post("/api/saves/new")
+    @router.post("/api/saves/new", deprecated=True)
     async def create_save(request: Request) -> dict[str, Any]:
         """Create a new save slot (initialize empty session).
 
         Body JSON: { genre_slug, world_slug, player_name }
         Returns { db_path: "..." }.
         """
+        logger.warning("legacy POST /api/saves/new called — prefer POST /api/games")
         save_dir: Path = getattr(
             request.app.state,
             "save_dir",
@@ -401,7 +403,7 @@ def create_rest_router() -> APIRouter:
         )
         return {"db_path": str(db_path), "genre_slug": genre_slug, "world_slug": world_slug, "player_name": player_name}
 
-    @router.delete("/api/saves/{genre_slug}/{world_slug}/{player_name}")
+    @router.delete("/api/saves/{genre_slug}/{world_slug}/{player_name}", deprecated=True)
     async def delete_save(
         genre_slug: str,
         world_slug: str,
@@ -412,6 +414,7 @@ def create_rest_router() -> APIRouter:
 
         Raises 404 if the save does not exist.
         """
+        logger.warning("legacy DELETE /api/saves/{%s}/{%s}/{%s} called — prefer POST /api/games", genre_slug, world_slug, player_name)
         save_dir: Path = getattr(
             request.app.state,
             "save_dir",
