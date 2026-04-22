@@ -54,6 +54,8 @@ from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
+from sidequest.game.event_log import EventLog
+from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -96,6 +98,15 @@ from sidequest.telemetry.spans import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Event-kind → message class mapping (MP-03 Task 3)
+# Extend this dict as additional kinds are routed through _emit_event.
+# ---------------------------------------------------------------------------
+
+_KIND_TO_MESSAGE_CLS: dict[str, type] = {
+    "NARRATION": NarrationMessage,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +231,94 @@ class WebSocketSessionHandler:
     def current_room(self) -> "SessionRoom | None":
         """Return the room this handler is currently registered in, or None."""
         return getattr(self, "_room", None)
+
+    # ------------------------------------------------------------------
+    # EventLog fan-out helper (MP-03 Task 3)
+    # ------------------------------------------------------------------
+
+    def _emit_event(self, kind: str, payload_model: object) -> object:
+        """Persist an event to the EventLog and fan-out to all connected players.
+
+        Invariants (per Plan 03):
+        1. EventLog.append fires BEFORE any socket send.
+        2. Fan-out consults ProjectionFilter per recipient.
+        3. The emitter (self) receives the raw, unfiltered event.
+
+        Returns the outbound message object for the calling player (the emitter).
+        Falls back to a plain message without seq when EventLog is unavailable
+        (legacy non-slug connect path doesn't initialize _event_log).
+        """
+        import json
+
+        from pydantic import BaseModel
+
+        message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
+        if message_cls is None:
+            raise ValueError(f"_emit_event: unknown kind {kind!r}")
+
+        event_log: EventLog | None = getattr(self, "_event_log", None)
+        projection_filter: PassThroughFilter | None = getattr(self, "_projection_filter", None)
+
+        # Serialize payload excluding seq (seq is assigned from the DB row)
+        if isinstance(payload_model, BaseModel):
+            payload_json = payload_model.model_dump_json(exclude={"seq"})
+        else:
+            payload_json = json.dumps(payload_model)  # type: ignore[arg-type]
+
+        if event_log is not None:
+            # Invariant 1: persist first
+            row = event_log.append(kind=kind, payload_json=payload_json)
+            seq = row.seq
+
+            # Build emitter's message with raw, unfiltered payload + seq (Invariant 3)
+            if isinstance(payload_model, BaseModel):
+                emitter_payload = payload_model.model_copy(update={"seq": seq})
+            else:
+                emitter_payload = payload_model  # type: ignore[assignment]
+            out_to_self = message_cls(payload=emitter_payload)
+
+            # Fan-out to other connected players (Invariant 2)
+            room: "SessionRoom | None" = getattr(self, "_room", None)
+            if room is not None and projection_filter is not None:
+                emitter_player_id = (
+                    self._session_data.player_id if self._session_data else None
+                )
+                for other_pid in room.connected_player_ids():
+                    if other_pid == emitter_player_id:
+                        continue
+                    decision = projection_filter.project(event=row, player_id=other_pid)
+                    if not decision.include:
+                        continue
+                    # Build per-recipient payload: merge filtered payload_json + seq
+                    try:
+                        filtered_data = json.loads(decision.payload_json)
+                        filtered_data["seq"] = seq
+                        if isinstance(payload_model, BaseModel):
+                            recipient_payload = payload_model.model_copy(
+                                update={**json.loads(decision.payload_json), "seq": seq}
+                            )
+                        else:
+                            recipient_payload = filtered_data  # type: ignore[assignment]
+                        recipient_msg = message_cls(payload=recipient_payload)
+                    except Exception:
+                        # Never silently fail fan-out; log and skip this recipient
+                        logger.error(
+                            "emit_event.fanout_failed kind=%s other_pid=%s",
+                            kind,
+                            other_pid,
+                        )
+                        continue
+                    socket_id = room.socket_for_player(other_pid)
+                    if socket_id is None:
+                        continue
+                    queue = room.queue_for_socket(socket_id)
+                    if queue is not None:
+                        queue.put_nowait(recipient_msg)
+        else:
+            # Legacy path (non-slug connect): no EventLog, no seq
+            out_to_self = message_cls(payload=payload_model)
+
+        return out_to_self
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -435,6 +534,10 @@ class WebSocketSessionHandler:
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
+            # MP-03 Task 3: initialize EventLog + ProjectionFilter for sync layer.
+            self._event_log = EventLog(store)
+            self._projection_filter = PassThroughFilter()
+            self._last_seen_seq = payload.last_seen_seq or 0
             self._state = _State.Creating if not has_character else _State.Playing
             connected_msg = SessionEventMessage(
                 type="SESSION_EVENT",  # type: ignore[arg-type]
@@ -1332,16 +1435,16 @@ class WebSocketSessionHandler:
         except Exception:
             narration_nbs = NonBlankString("The world holds its breath...")
 
+        narration_payload = NarrationPayload(
+            text=narration_nbs,
+            state_delta=None,
+            footnotes=[],
+        )
+        # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
+        narration_msg = self._emit_event("NARRATION", narration_payload)
+
         return [
-            NarrationMessage(
-                type="NARRATION",  # type: ignore[arg-type]
-                payload=NarrationPayload(
-                    text=narration_nbs,
-                    state_delta=None,
-                    footnotes=[],
-                ),
-                player_id=sd.player_id,
-            ),
+            narration_msg,
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]
                 payload=NarrationEndPayload(state_delta=None),

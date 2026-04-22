@@ -99,6 +99,16 @@ class SessionRoom:
         with self._lock:
             self._outbound_queues.pop(socket_id, None)
 
+    def socket_for_player(self, player_id: str) -> str | None:
+        """Return the socket_id for a connected player, or None if not connected."""
+        with self._lock:
+            return self._connected.get(player_id)
+
+    def queue_for_socket(self, socket_id: str) -> "asyncio.Queue[Any] | None":
+        """Return the outbound queue for a socket, or None if not registered."""
+        with self._lock:
+            return self._outbound_queues.get(socket_id)
+
     def broadcast(self, msg: Any, *, exclude_socket_id: str | None = None) -> None:
         """Put msg into every registered outbound queue except exclude_socket_id.
 

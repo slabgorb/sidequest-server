@@ -68,7 +68,6 @@ class NarrationPayload(ProtocolBase):
     """Narration payload with optional state delta and structured footnotes.
 
     Port of sidequest_protocol::NarrationPayload.
-    Has exactly 3 fields: text, state_delta, footnotes.
     """
 
     text: NonBlankString
@@ -77,6 +76,9 @@ class NarrationPayload(ProtocolBase):
     """Optional state changes resulting from this narration."""
     footnotes: list[Footnote] = Field(default_factory=list)
     """Structured footnotes — new discoveries and callbacks to prior knowledge."""
+    seq: int = 0
+    """Event-log sequence number assigned when this narration was persisted (MP-03 Task 3).
+    Clients use this value as last_seen_seq on reconnect to catch up on missed events."""
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +142,9 @@ class SessionEventPayload(ProtocolBase):
     game_slug: str | None = None
     """Slug-based game identifier (MP-01 Task 4). When set, server looks up the
     game by slug instead of the legacy genre+world+player path."""
+    last_seen_seq: int = 0
+    """Last event-log sequence number the client has seen (MP-03 Task 3).
+    Used on reconnect so the server can replay missed events."""
 
 
 # ---------------------------------------------------------------------------
