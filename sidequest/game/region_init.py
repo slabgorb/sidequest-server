@@ -10,8 +10,10 @@ room-level position.
 No silent fallback per project principle: a world that declares no
 ``starting_region`` — or one that does not match any declared region
 — is a pack authoring bug. :func:`init_region_location` raises
-:class:`RegionInitError` and the dispatch caller decides whether to
-log-and-continue (chargen must not hard-fail) or propagate.
+:class:`RegionInitError`; the wired call site logs at error level,
+emits an OTEL ``region.init_failed`` event, and continues so chargen
+never hard-fails mid-commit. Mirrors the :class:`RoomGraphInitError`
+handling pattern.
 """
 
 from __future__ import annotations

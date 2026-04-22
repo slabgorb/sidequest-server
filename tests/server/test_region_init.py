@@ -16,7 +16,9 @@ tab is useless on turn 1.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from opentelemetry import trace as otel_trace
@@ -35,15 +37,16 @@ from sidequest.protocol.messages import (
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
 
-
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
-from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402
+# E402 is expected: the conftest import intentionally follows CONTENT_ROOT so
+# the fixture can early-skip when content is absent before touching the pack.
+from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402, I001
 
 
 @pytest.fixture
-def handler_factory(tmp_path: Path):
+def handler_factory(tmp_path: Path) -> Callable[[], WebSocketSessionHandler]:
     if not (CONTENT_ROOT / "caverns_and_claudes").is_dir():
         pytest.skip("content pack not found")
 
@@ -58,7 +61,7 @@ def handler_factory(tmp_path: Path):
 
 
 @pytest.fixture
-def otel_capture():
+def otel_capture() -> Generator[InMemorySpanExporter, None, None]:
     from sidequest.telemetry.setup import init_tracer
 
     init_tracer()  # idempotent
@@ -91,7 +94,7 @@ async def _connect(
     assert isinstance(out[0], SessionEventMessage)
 
 
-async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
+async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list[Any]:
     sd = handler._session_data  # type: ignore[attr-defined]
     builder = sd.builder
     assert builder is not None
@@ -120,13 +123,47 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
         )
 
 
-def _events(exporter: InMemorySpanExporter, name: str) -> list:
+def _events(exporter: InMemorySpanExporter, name: str) -> list[Any]:
     return [
         e
         for span in exporter.get_finished_spans()
         for e in span.events
         if e.name == name
     ]
+
+
+class TestRegionInitUnit:
+    """Unit tests for ``init_region_location`` — boundary contracts that
+    don't need the full chargen walk."""
+
+    def test_dedup_does_not_duplicate_already_discovered_region(self) -> None:
+        """If ``snap.discovered_regions`` already contains the starting
+        region (e.g. resumed save that previously initialized), a second
+        init call must not append a duplicate and must preserve order."""
+        from sidequest.game.region_init import init_region_location
+        from sidequest.game.session import GameSnapshot
+        from sidequest.genre.models.world import CartographyConfig, Region
+
+        snap = GameSnapshot()
+        snap.discovered_regions = ["ashgate_square", "ledger_row"]
+        cartography = CartographyConfig(
+            starting_region="ashgate_square",
+            regions={
+                "ashgate_square": Region(
+                    name="Ashgate Square", summary="", description=""
+                ),
+                "ledger_row": Region(
+                    name="Ledger Row", summary="", description=""
+                ),
+            },
+        )
+
+        returned = init_region_location(snap, cartography)
+
+        assert returned == "ashgate_square"
+        assert snap.current_region == "ashgate_square"
+        # Dedup: list length and order preserved exactly.
+        assert snap.discovered_regions == ["ashgate_square", "ledger_row"]
 
 
 class TestRegionInit:
@@ -192,8 +229,10 @@ class TestRegionInit:
 
             world = sd.genre_pack.worlds.get("evropi")
             assert world is not None
-            expected_region = world.cartography.starting_region
-            assert expected_region
+            # Anchor against the known evropi content fixture so a regression
+            # that swaps starting_region for an empty/garbage value fails here.
+            assert world.cartography.starting_region == "egzami_frontier"
+            expected_region = "egzami_frontier"
 
             out = await _walk_and_confirm(handler)
             assert isinstance(out[0], CharacterCreationMessage)
@@ -207,6 +246,9 @@ class TestRegionInit:
             attrs = dict(events[0].attributes or {})
             assert attrs["region"] == expected_region
             assert attrs["mode"] == "region"
+
+            # Mirror grimvault happy-path: init_failed must not fire.
+            assert _events(otel_capture, "region.init_failed") == []
 
         asyncio.run(body())
 
@@ -268,6 +310,9 @@ class TestRegionInit:
             assert out[0].payload.phase == "complete"
 
             assert sd.snapshot.current_region == ""
+            # Parallel invariant with test_blank_starting_region_logs_and_continues:
+            # region_init must not mutate discovered_regions on the error path.
+            assert sd.snapshot.discovered_regions == []
             assert _events(otel_capture, "region.initialized") == []
             failed = _events(otel_capture, "region.init_failed")
             assert len(failed) == 1
