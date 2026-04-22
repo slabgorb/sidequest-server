@@ -25,7 +25,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from sidequest.game.session import NpcRegistryEntry
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
     def register_npc_roster_section(
         self,
         agent_name: str,
-        npc_registry: list,
+        npc_registry: list[NpcRegistryEntry],
     ) -> None:
         """Inject canonical NPC identity data into the narrator prompt.
 

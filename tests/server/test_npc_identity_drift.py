@@ -457,15 +457,16 @@ def test_auto_register_emits_span_on_new_npc(caplog, monkeypatch):
             "Felix",
         )
 
-    # Look for either an "npc.auto_registered" event marker or the pre-existing
-    # "state.npc_registry_add" line upgraded to carry pronouns and role.
     all_logs = caplog.text
-    assert "npc.auto_registered" in all_logs or (
-        "state.npc_registry_add" in all_logs and "she/her" in all_logs
-    ), (
-        "Auto-registration produced no GM-visible event. Either emit "
-        "'npc.auto_registered' or extend 'state.npc_registry_add' with "
-        "pronouns/role so the panel can verify it fired."
+    assert "npc.auto_registered" in all_logs, (
+        "Auto-registration produced no `npc.auto_registered` event. The GM "
+        "panel filter won't see anything fire. Story 37-44 AC-3."
+    )
+    # Identity fields must be present in the event so the panel can distinguish
+    # first-registration from a later no-op mention.
+    assert "she/her" in all_logs and "captain" in all_logs, (
+        "`npc.auto_registered` event fired but carried no pronouns/role — "
+        "panel cannot verify the registration captured canonical identity."
     )
 
 
@@ -535,7 +536,160 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
         )
 
     all_logs = caplog.text
-    assert "npc.reinvented" in all_logs or "drift" in all_logs.lower(), (
+    assert "npc.reinvented" in all_logs, (
         "Drift detector did not fire when pronouns changed she/her → he/him. "
         "This is the exact Frandrew drift from playtest-3."
+    )
+
+
+def test_explicit_drift_does_not_overwrite_canonical_pronouns(caplog, monkeypatch):
+    """After drift is detected, the canonical registry field must stay frozen.
+    The Frandrew scenario: turn 17 registers her as she/her captain; turn 21
+    the narrator says he/him grease monkey. The drift detector fires a warning
+    — and then the upsert path MUST NOT silently overwrite the canonical
+    pronouns/role with the drifted values. Otherwise the warning fires once,
+    the drifted value becomes canonical, and subsequent drift goes undetected.
+    This is reviewer finding [CRITICAL] from the 37-44 review.
+    """
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
+
+    snapshot = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="aureate_span",
+        location="Bridge",
+        npc_registry=[
+            NpcRegistryEntry(
+                name="Frandrew",
+                role="captain",
+                pronouns="she/her",
+                appearance="tall, scarred eyebrow",
+                last_seen_turn=17,
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        _apply_narration_result_to_snapshot(
+            snapshot,
+            NarrationTurnResult(
+                narration="Frandrew scratches his neck — 'grease monkey work,' he mutters.",
+                npcs_present=[
+                    NpcMention(
+                        name="Frandrew",
+                        pronouns="he/him",
+                        role="grease monkey",
+                        appearance="oil-streaked coveralls",
+                    )
+                ],
+                is_degraded=False,
+            ),
+            "Felix",
+        )
+
+    # Drift detector must have fired
+    assert "npc.reinvented" in caplog.text, (
+        "Drift detector did not fire — precondition for this test failed."
+    )
+
+    # Canonical fields MUST remain untouched
+    entry = snapshot.npc_registry[0]
+    assert entry.pronouns == "she/her", (
+        f"Canonical pronouns overwritten by drifted value: got {entry.pronouns!r}, "
+        "expected 'she/her'. Drift detection is theatre if the drifted value "
+        "silently canonicalizes — on turn N+1 the narrator will see he/him "
+        "in the roster and drift will be permanent."
+    )
+    assert entry.role == "captain", (
+        f"Canonical role overwritten by drifted value: got {entry.role!r}, "
+        "expected 'captain'."
+    )
+    assert entry.appearance == "tall, scarred eyebrow", (
+        f"Canonical appearance overwritten: got {entry.appearance!r}."
+    )
+
+
+def test_drift_detector_fires_on_role_mismatch(caplog, monkeypatch):
+    """The drift detector has an independent role branch. A pronoun-only test
+    leaves this path unverified — a broken role-drift detector would ship
+    without any test catching it.
+    """
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
+
+    snapshot = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="aureate_span",
+        location="Bridge",
+        npc_registry=[
+            NpcRegistryEntry(
+                name="Frandrew",
+                role="captain",
+                pronouns="she/her",
+                last_seen_turn=17,
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        _apply_narration_result_to_snapshot(
+            snapshot,
+            NarrationTurnResult(
+                narration="Frandrew greases a bolt.",
+                # Matching pronouns (no pronoun drift) but mismatched role.
+                npcs_present=[
+                    NpcMention(
+                        name="Frandrew", pronouns="she/her", role="grease monkey"
+                    )
+                ],
+                is_degraded=False,
+            ),
+            "Felix",
+        )
+
+    assert "npc.reinvented" in caplog.text
+    assert "field=role" in caplog.text, (
+        "Drift detector fired but did not identify `role` as the drifted field."
+    )
+
+
+def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
+    """`She/Her` vs `she/her` must NOT fire drift. Protects against accidental
+    removal of `.lower()` normalization in the detector.
+    """
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
+
+    snapshot = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="aureate_span",
+        location="Bridge",
+        npc_registry=[
+            NpcRegistryEntry(
+                name="Frandrew",
+                role="Captain",
+                pronouns="She/Her",
+                last_seen_turn=17,
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        _apply_narration_result_to_snapshot(
+            snapshot,
+            NarrationTurnResult(
+                narration="Frandrew nods.",
+                npcs_present=[
+                    NpcMention(
+                        name="Frandrew", pronouns="she/her", role="captain"
+                    )
+                ],
+                is_degraded=False,
+            ),
+            "Felix",
+        )
+
+    assert "npc.reinvented" not in caplog.text, (
+        "Drift detector fired on case-only difference — case-insensitive "
+        "comparison broken."
     )

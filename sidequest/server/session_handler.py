@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
-from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
 from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
@@ -41,7 +41,7 @@ from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
 )
-from sidequest.game.session import GameSnapshot, NarrativeEntry
+from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -81,6 +81,8 @@ from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
+    SPAN_NPC_AUTO_REGISTERED,
+    SPAN_NPC_REINVENTED,
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
 )
@@ -1518,7 +1520,6 @@ def _apply_narration_result_to_snapshot(
     # drift detection). Fires `npc.auto_registered` for new entries and
     # `npc.reinvented` when narrator-provided pronouns/role diverge from the
     # canonical registry entry, so the GM panel can surface identity drift.
-    from sidequest.game.session import NpcRegistryEntry
     turn_num = snapshot.turn_manager.interaction
     for npc_mention in result.npcs_present:
         existing = next(
@@ -1537,14 +1538,8 @@ def _apply_narration_result_to_snapshot(
                 )
             )
             logger.info(
-                "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
-                npc_mention.name,
-                npc_mention.pronouns or "",
-                npc_mention.role or "",
-                turn_num,
-            )
-            logger.info(
-                "state.npc_registry_add name=%r pronouns=%r role=%r turn=%d",
+                "%s name=%r pronouns=%r role=%r turn=%d",
+                SPAN_NPC_AUTO_REGISTERED,
                 npc_mention.name,
                 npc_mention.pronouns or "",
                 npc_mention.role or "",
@@ -1554,17 +1549,21 @@ def _apply_narration_result_to_snapshot(
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
             existing.last_seen_location = snapshot.location or None
-            if npc_mention.role:
+            # Additive-only upsert: never overwrite a canonical field once set.
+            # Without this guard, _detect_npc_identity_drift logs drift and then
+            # the drifted value silently canonicalizes — warning fires once,
+            # then the registry permanently holds the wrong identity.
+            if npc_mention.role and not existing.role:
                 existing.role = npc_mention.role
-            if npc_mention.pronouns:
+            if npc_mention.pronouns and not existing.pronouns:
                 existing.pronouns = npc_mention.pronouns
-            if npc_mention.appearance:
+            if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
 
 
 def _detect_npc_identity_drift(
-    existing: "NpcRegistryEntry",
-    mention: "NpcMention",
+    existing: NpcRegistryEntry,
+    mention: NpcMention,
     turn_num: int,
 ) -> None:
     """Warn when a narrator-provided NPC mention disagrees with the canonical
@@ -1573,25 +1572,20 @@ def _detect_npc_identity_drift(
 
     Empty fields on the mention are treated as "no opinion" and never trigger
     drift — only explicit disagreement counts. Pronoun and role comparisons
-    are case-insensitive.
+    are case-insensitive. No return value; side-effect only (logger.warning).
+    Does not mutate `existing` or `mention`.
     """
-    if mention.pronouns and existing.pronouns and (
-        mention.pronouns.strip().lower() != existing.pronouns.strip().lower()
+    for field, m_val, e_val in (
+        ("pronouns", mention.pronouns, existing.pronouns),
+        ("role", mention.role, existing.role),
     ):
-        logger.warning(
-            "npc.reinvented name=%r field=pronouns expected=%r narrator=%r turn=%d",
-            existing.name,
-            existing.pronouns,
-            mention.pronouns,
-            turn_num,
-        )
-    if mention.role and existing.role and (
-        mention.role.strip().lower() != existing.role.strip().lower()
-    ):
-        logger.warning(
-            "npc.reinvented name=%r field=role expected=%r narrator=%r turn=%d",
-            existing.name,
-            existing.role,
-            mention.role,
-            turn_num,
-        )
+        if m_val and e_val and m_val.strip().lower() != e_val.strip().lower():
+            logger.warning(
+                "%s name=%r field=%s expected=%r narrator=%r turn=%d",
+                SPAN_NPC_REINVENTED,
+                existing.name,
+                field,
+                e_val,
+                m_val,
+                turn_num,
+            )
