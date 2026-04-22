@@ -100,6 +100,13 @@ class TestCavernsAndClaudesFlow:
             assert connected["payload"]["event"] == "connected"
             assert connected["payload"]["has_character"] is False
 
+            # ---- Initial chargen scene 0 (the_roll): emitted alongside the
+            # connected event so the client has scene 0 without sending
+            # anything extra. display-only (phase=continue).
+            initial = _recv(ws)
+            assert initial["type"] == "CHARACTER_CREATION"
+            assert initial["payload"]["scene_index"] == 0
+
             # ---- Scene 0 (the_roll): display-only, phase=continue ---------
             ws.send_json({
                 "type": "CHARACTER_CREATION",
@@ -195,6 +202,7 @@ class TestElementalHarmonyFlow:
             connected = _recv(ws)
             assert connected["payload"]["event"] == "connected"
             assert connected["payload"]["has_character"] is False
+            _recv(ws)  # initial chargen scene 0 kickoff
 
             # scene 0 has choices — send choice=1
             ws.send_json(_chargen_payload(choice="1"))
@@ -215,6 +223,7 @@ class TestElementalHarmonyFlow:
         with client.websocket_connect("/ws") as ws:
             ws.send_json(_connect_payload("elemental_harmony", "burning_peace"))
             _recv(ws)  # connected
+            _recv(ws)  # initial chargen scene 0 kickoff
 
             # Out-of-range numeric index
             ws.send_json(_chargen_payload(choice="999"))
@@ -248,6 +257,7 @@ class TestBackActionFlow:
         with client.websocket_connect("/ws") as ws:
             ws.send_json(_connect_payload("elemental_harmony", "burning_peace"))
             _recv(ws)  # connected
+            _recv(ws)  # initial chargen scene 0 kickoff
 
             # Advance one scene.
             ws.send_json(_chargen_payload(choice="1"))
@@ -298,6 +308,7 @@ class TestStructuredErrors:
         with client.websocket_connect("/ws") as ws:
             ws.send_json(_connect_payload("caverns_and_claudes", "flickering_reach"))
             _recv(ws)
+            _recv(ws)  # initial chargen scene 0 kickoff
 
             ws.send_json({
                 "type": "CHARACTER_CREATION",

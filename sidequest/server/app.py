@@ -20,6 +20,11 @@ from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import RoomRegistry
+from sidequest.server.watcher import (
+    WatcherHub,
+    WatcherSpanProcessor,
+    watcher_endpoint,
+)
 from sidequest.server.websocket import ws_endpoint
 
 logger = logging.getLogger(__name__)
@@ -81,6 +86,35 @@ def create_app(
     app.state.save_dir = resolved_save_dir
     app.state.room_registry = RoomRegistry()
 
+    # --- Watcher hub — OTEL span broadcast for the GM dashboard. ---
+    watcher_hub = WatcherHub()
+    app.state.watcher_hub = watcher_hub
+
+    @app.on_event("startup")
+    async def _wire_watcher() -> None:
+        import asyncio
+
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+
+        from sidequest.telemetry.setup import init_tracer
+
+        watcher_hub.bind_loop(asyncio.get_running_loop())
+
+        # Ensure the global tracer provider is a real SDK TracerProvider
+        # (not the default proxy) so add_span_processor is available.
+        init_tracer()
+
+        provider = trace.get_tracer_provider()
+        if isinstance(provider, TracerProvider):
+            provider.add_span_processor(WatcherSpanProcessor(watcher_hub))
+            logger.info("watcher.span_processor_registered")
+        else:
+            logger.warning(
+                "watcher.span_processor_skipped reason=tracer_provider_is_%s",
+                type(provider).__name__,
+            )
+
     # --- /health ---
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -95,6 +129,11 @@ def create_app(
             save_dir=app.state.save_dir,
         )
         await ws_endpoint(websocket, handler)
+
+    # --- /ws/watcher WebSocket endpoint — OTEL span stream to GM dashboard. ---
+    @app.websocket("/ws/watcher")
+    async def websocket_watcher(websocket: WebSocket) -> None:
+        await watcher_endpoint(websocket, watcher_hub)
 
     # --- REST routes ---
     rest_router = create_rest_router()
