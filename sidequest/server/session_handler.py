@@ -68,6 +68,8 @@ from sidequest.protocol.messages import (
     PartyStatusPayload,
     PlayerPresenceMessage,
     PlayerPresencePayload,
+    SeatConfirmedMessage,
+    SeatConfirmedPayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -235,6 +237,8 @@ class WebSocketSessionHandler:
             return await self._handle_player_action(msg)
         elif msg_type == "CHARACTER_CREATION":
             return await self._handle_character_creation(msg)
+        elif msg_type == "PLAYER_SEAT":
+            return self._handle_player_seat(msg)
         else:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
@@ -261,6 +265,51 @@ class WebSocketSessionHandler:
                     self._session_data.store.close()
                 except Exception:
                     pass
+
+    # ------------------------------------------------------------------
+    # PLAYER_SEAT dispatch (MP-02 Task 5)
+    # ------------------------------------------------------------------
+
+    def _handle_player_seat(self, msg: GameMessage) -> list[object]:
+        """Handle a PLAYER_SEAT message (character slot claim).
+
+        Seats the player in the room and broadcasts SEAT_CONFIRMED to all players.
+        Returns empty list — the broadcast handles fan-out via the room.
+        """
+        payload = msg.payload  # type: ignore[attr-defined]
+        player_id = getattr(msg, "player_id", "") or (
+            self._session_data.player_id if self._session_data else ""
+        )
+        character_slot = payload.character_slot
+
+        # Seat the player in the room (thread-safe, idempotent)
+        if self._room is not None:
+            self._room.seat(player_id, character_slot=character_slot)
+            logger.info(
+                "session.player_seated player_id=%s character_slot=%s slug=%s",
+                player_id,
+                character_slot,
+                self._room.slug,
+            )
+        else:
+            logger.warning(
+                "session.player_seat_no_room player_id=%s character_slot=%s",
+                player_id,
+                character_slot,
+            )
+
+        # Build and broadcast SEAT_CONFIRMED to all players
+        confirmed_msg = SeatConfirmedMessage(
+            payload=SeatConfirmedPayload(
+                player_id=player_id,
+                character_slot=character_slot,
+            ),
+        )
+
+        if self._room is not None:
+            self._room.broadcast(confirmed_msg, exclude_socket_id=None)
+
+        return []
 
     # ------------------------------------------------------------------
     # SESSION_EVENT dispatch

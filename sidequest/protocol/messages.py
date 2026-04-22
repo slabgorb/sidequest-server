@@ -312,6 +312,38 @@ class PlayerPresencePayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# PlayerSeatPayload
+# ---------------------------------------------------------------------------
+
+
+class PlayerSeatPayload(ProtocolBase):
+    """Player seat claim payload (MP-02 Task 5).
+
+    Sent by a player to claim a character slot (e.g., "rux" in caverns_and_claudes).
+    """
+
+    character_slot: str
+    """The character slot being claimed."""
+
+
+# ---------------------------------------------------------------------------
+# SeatConfirmedPayload
+# ---------------------------------------------------------------------------
+
+
+class SeatConfirmedPayload(ProtocolBase):
+    """Seat confirmation broadcast payload (MP-02 Task 5).
+
+    Broadcast to all players when a player claims a character slot.
+    """
+
+    player_id: str
+    """The player who claimed the seat."""
+    character_slot: str
+    """The character slot that was claimed."""
+
+
+# ---------------------------------------------------------------------------
 # GameMessage — discriminated union over Phase 1 messages
 #
 # Rust wire format: {"type": "PLAYER_ACTION", "payload": {...}, "player_id": ""}
@@ -432,6 +464,22 @@ class PlayerPresenceMessage(ProtocolBase):
     player_id: str = ""
 
 
+class PlayerSeatMessage(ProtocolBase):
+    """GameMessage::PlayerSeat wire representation (MP-02 Task 5)."""
+
+    type: Literal[MessageType.PLAYER_SEAT] = MessageType.PLAYER_SEAT
+    payload: PlayerSeatPayload
+    player_id: str = ""
+
+
+class SeatConfirmedMessage(ProtocolBase):
+    """GameMessage::SeatConfirmed wire representation (MP-02 Task 5)."""
+
+    type: Literal[MessageType.SEAT_CONFIRMED] = MessageType.SEAT_CONFIRMED
+    payload: SeatConfirmedPayload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -446,7 +494,9 @@ _Phase1Variant = Annotated[
     | ChapterMarkerMessage
     | ActionQueueMessage
     | ErrorMessage
-    | PlayerPresenceMessage,
+    | PlayerPresenceMessage
+    | PlayerSeatMessage
+    | SeatConfirmedMessage,
     Field(discriminator="type"),
 ]
 
