@@ -27,10 +27,31 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 from sidequest.game.session import GameSnapshot, NarrativeEntry
+
+
+# ---------------------------------------------------------------------------
+# GameMode
+# ---------------------------------------------------------------------------
+
+
+class GameMode(str, Enum):
+    SOLO = "solo"
+    MULTIPLAYER = "multiplayer"
+
+
+@dataclass
+class GameRow:
+    slug: str
+    mode: GameMode
+    genre_slug: str
+    world_slug: str
+    claude_session_id: Optional[str]
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +110,14 @@ CREATE TABLE IF NOT EXISTS scrapbook_entries (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_scrapbook_turn ON scrapbook_entries(turn_id);
+CREATE TABLE IF NOT EXISTS games (
+    slug TEXT PRIMARY KEY,
+    mode TEXT NOT NULL CHECK (mode IN ('solo', 'multiplayer')),
+    genre_slug TEXT NOT NULL,
+    world_slug TEXT NOT NULL,
+    claude_session_id TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -156,8 +185,15 @@ class SqliteStore:
     Rust compatibility note: see module docstring.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self._conn = conn
+    def __init__(self, conn: sqlite3.Connection | Path) -> None:
+        if isinstance(conn, Path):
+            c = sqlite3.connect(str(conn))
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA foreign_keys=ON")
+            self._conn = c
+        else:
+            self._conn = conn
         self._init_schema()
 
     @classmethod
@@ -179,6 +215,10 @@ class SqliteStore:
     def _init_schema(self) -> None:
         self._conn.executescript(SCHEMA_SQL)
         self._conn.commit()
+
+    def initialize(self) -> None:
+        """Public alias for _init_schema — re-runs schema creation (idempotent)."""
+        self._init_schema()
 
     def init_session(self, genre_slug: str, world_slug: str) -> None:
         """Initialize session metadata (genre + world). Call once for new sessions."""
@@ -334,6 +374,54 @@ def _parse_rfc3339(s: str) -> datetime:
         return datetime.fromisoformat(s)
     except Exception:
         return datetime.now(tz=timezone.utc)
+
+
+def db_path_for_slug(save_dir: Path, slug: str) -> Path:
+    """New slug-keyed DB path. One .db per game slug."""
+    return save_dir / "games" / slug / "save.db"
+
+
+def upsert_game(
+    store: SqliteStore,
+    *,
+    slug: str,
+    mode: GameMode,
+    genre_slug: str,
+    world_slug: str,
+) -> None:
+    """Insert a game row if absent. Mode is frozen at creation; later upserts do NOT change it."""
+    with store._conn:
+        store._conn.execute(
+            """INSERT INTO games (slug, mode, genre_slug, world_slug, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(slug) DO NOTHING""",
+            (slug, mode.value, genre_slug, world_slug, _now_rfc3339()),
+        )
+
+
+def get_game(store: SqliteStore, slug: str) -> Optional[GameRow]:
+    row = store._conn.execute(
+        "SELECT slug, mode, genre_slug, world_slug, claude_session_id, created_at FROM games WHERE slug = ?",
+        (slug,),
+    ).fetchone()
+    if row is None:
+        return None
+    return GameRow(
+        slug=row[0],
+        mode=GameMode(row[1]),
+        genre_slug=row[2],
+        world_slug=row[3],
+        claude_session_id=row[4],
+        created_at=row[5],
+    )
+
+
+def set_claude_session_id(store: SqliteStore, slug: str, claude_session_id: str) -> None:
+    with store._conn:
+        store._conn.execute(
+            "UPDATE games SET claude_session_id = ? WHERE slug = ?",
+            (claude_session_id, slug),
+        )
 
 
 def _generate_recap(
