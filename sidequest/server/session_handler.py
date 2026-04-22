@@ -38,6 +38,7 @@ from sidequest.game.character import Character
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
@@ -1169,6 +1170,55 @@ class WebSocketSessionHandler:
         # loudly at error level and leave ``snap.location`` blank
         # rather than hard-fail the confirmation frame.
         world = sd.genre_pack.worlds.get(sd.world_slug)
+
+        # Region init (Story 37-31). Runs for every world that carries
+        # cartography, regardless of navigation mode: region-mode worlds
+        # need current_region to be their canonical location, and
+        # room_graph worlds still surface a region label alongside the
+        # room-level position so the Map tab is load-bearing from turn
+        # 1. RegionInitError is a pack authoring bug (missing / stale
+        # starting_region) — log loudly at error level and leave
+        # current_region blank rather than strand the player mid-
+        # commit, matching the room_graph error path.
+        if world is not None:
+            try:
+                region_id = init_region_location(sd.snapshot, world.cartography)
+                span.add_event(
+                    "region.initialized",
+                    {
+                        "event": "region.initialized",
+                        "region": region_id,
+                        "mode": world.cartography.navigation_mode.value,
+                        "source": "starting_region",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                    },
+                )
+                logger.info(
+                    "region.init genre=%s world=%s region=%s discovered_regions=%d",
+                    sd.genre_slug,
+                    sd.world_slug,
+                    region_id,
+                    len(sd.snapshot.discovered_regions),
+                )
+            except RegionInitError as exc:
+                logger.error(
+                    "region.init_failed genre=%s world=%s error=%s",
+                    sd.genre_slug,
+                    sd.world_slug,
+                    exc,
+                )
+                span.add_event(
+                    "region.init_failed",
+                    {
+                        "event": "region.init_failed",
+                        "mode": world.cartography.navigation_mode.value,
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "error": str(exc),
+                    },
+                )
+
         if (
             world is not None
             and world.cartography.navigation_mode == NavigationMode.room_graph
