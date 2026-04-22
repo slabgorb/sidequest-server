@@ -16,14 +16,24 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import date as _date_cls
 from pathlib import Path
 from typing import Any
 
 import yaml
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.game_slug import generate_slug
+from sidequest.game.persistence import (
+    GameMode,
+    SqliteStore,
+    db_path_for_session,
+    db_path_for_slug,
+    get_game,
+    upsert_game,
+)
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 
@@ -86,6 +96,20 @@ class ActiveSession(BaseModel):
     current_turn: int = 0
     current_location: str = ""
     turn_mode: str = "free_play"
+
+
+class CreateGameRequest(BaseModel):
+    genre_slug: str
+    world_slug: str
+    mode: GameMode  # pydantic rejects unknown enum values with 422
+
+
+class GameResponse(BaseModel):
+    slug: str
+    mode: GameMode
+    genre_slug: str
+    world_slug: str
+    resumed: bool
 
 
 # ---------------------------------------------------------------------------
@@ -430,5 +454,60 @@ def create_rest_router() -> APIRouter:
         Phase N: multiplayer SharedGameSession sync.
         """
         return {"sessions": []}
+
+    @router.post("/api/games", status_code=201)
+    async def create_or_resume_game(req: CreateGameRequest, request: Request) -> Any:
+        """Create a new game (201) or resume an existing same-slug game (200, resumed=True).
+
+        The slug is derived from world_slug + today's date. If a game already
+        exists for that slug, it is returned in frozen mode — the original mode,
+        genre_slug, and world_slug are preserved and the new request's mode is
+        ignored.
+        """
+        save_dir: Path = request.app.state.save_dir
+        today_fn = getattr(request.app.state, "today_fn", _date_cls.today)
+        slug = generate_slug(world_slug=req.world_slug, today=today_fn())
+        db = db_path_for_slug(save_dir, slug)
+        db.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteStore(db)
+        store.initialize()
+
+        existing = get_game(store, slug)
+        if existing is not None:
+            payload = GameResponse(
+                slug=slug, mode=existing.mode,
+                genre_slug=existing.genre_slug, world_slug=existing.world_slug,
+                resumed=True,
+            )
+            return JSONResponse(status_code=200, content=payload.model_dump())
+
+        upsert_game(store, slug=slug, mode=req.mode,
+                    genre_slug=req.genre_slug, world_slug=req.world_slug)
+        return GameResponse(
+            slug=slug, mode=req.mode,
+            genre_slug=req.genre_slug, world_slug=req.world_slug,
+            resumed=False,
+        )
+
+    @router.get("/api/games/{slug}")
+    async def get_game_endpoint(slug: str, request: Request) -> GameResponse:
+        """Return metadata for a game by slug.
+
+        Raises 404 if no game with that slug exists.
+        """
+        save_dir: Path = request.app.state.save_dir
+        db = db_path_for_slug(save_dir, slug)
+        if not db.exists():
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        store = SqliteStore(db)
+        store.initialize()
+        row = get_game(store, slug)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        return GameResponse(
+            slug=row.slug, mode=row.mode,
+            genre_slug=row.genre_slug, world_slug=row.world_slug,
+            resumed=True,
+        )
 
     return router
