@@ -142,6 +142,10 @@ class _SessionData:
     # slices consume this for pressure events, scene-budget gating,
     # and accusation UI.
     active_scenario: ScenarioPack | None = None
+    # MP-01 Task 4: slug-based connect fields. Set when connecting via
+    # game_slug rather than the legacy genre+world path.
+    game_slug: str | None = None
+    mode: "GameMode | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +183,11 @@ class WebSocketSessionHandler:
     # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
+
+    @property
+    def session_data(self) -> _SessionData | None:
+        """Public read accessor for session state (used by tests and GM panel)."""
+        return self._session_data
 
     async def handle_message(self, msg: GameMessage) -> list[object]:
         """Dispatch an inbound message; return list of outbound protocol message objects."""
@@ -236,6 +245,54 @@ class WebSocketSessionHandler:
         payload: SessionEventPayload,
         player_id: str,
     ) -> list[object]:
+        # New slug-based path (preferred). Legacy genre+world path below remains for now.
+        if getattr(payload, "game_slug", None):
+            from sidequest.game.persistence import (
+                GameMode,
+                db_path_for_slug,
+                get_game,
+            )
+            slug = payload.game_slug
+            db = db_path_for_slug(self._save_dir, slug)
+            if not db.exists():
+                return [_error_msg(f"unknown game slug: {slug}")]
+            store = SqliteStore(db)
+            store.initialize()
+            row = get_game(store, slug)
+            if row is None:
+                return [_error_msg(f"unknown game slug: {slug}")]
+            if not player_id:
+                player_id = str(uuid.uuid4())
+            self._session_data = _SessionData(
+                genre_slug=row.genre_slug,
+                world_slug=row.world_slug,
+                player_name=player_id,
+                player_id=player_id,
+                snapshot=GameSnapshot(
+                    genre_slug=row.genre_slug,
+                    world_slug=row.world_slug,
+                    location="Unknown",
+                ),
+                store=store,
+                genre_pack=None,  # type: ignore[arg-type]
+                orchestrator=Orchestrator(client=self._client_factory()),
+                game_slug=slug,
+                mode=GameMode(row.mode),
+            )
+            self._state = _State.Playing
+            connected_msg = SessionEventMessage(
+                type="SESSION_EVENT",  # type: ignore[arg-type]
+                payload=SessionEventPayload(
+                    event="connected",
+                    player_name=player_id,
+                    genre=row.genre_slug,
+                    world=row.world_slug,
+                    has_character=False,
+                ),
+                player_id=player_id,
+            )
+            return [connected_msg]
+
         genre_slug = payload.genre or ""
         world_slug = payload.world or ""
         player_name = payload.player_name or "player"
@@ -1379,7 +1436,10 @@ def _apply_narration_result_to_snapshot(
             if lore not in snapshot.lore_established:
                 snapshot.lore_established.append(lore)
 
-    # NPC registry — upsert from npcs_present
+    # NPC registry — upsert from npcs_present (story 37-44: auto-register +
+    # drift detection). Fires `npc.auto_registered` for new entries and
+    # `npc.reinvented` when narrator-provided pronouns/role diverge from the
+    # canonical registry entry, so the GM panel can surface identity drift.
     from sidequest.game.session import NpcRegistryEntry
     turn_num = snapshot.turn_manager.interaction
     for npc_mention in result.npcs_present:
@@ -1398,8 +1458,22 @@ def _apply_narration_result_to_snapshot(
                     last_seen_turn=turn_num,
                 )
             )
-            logger.info("state.npc_registry_add name=%r turn=%d", npc_mention.name, turn_num)
+            logger.info(
+                "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
+                npc_mention.name,
+                npc_mention.pronouns or "",
+                npc_mention.role or "",
+                turn_num,
+            )
+            logger.info(
+                "state.npc_registry_add name=%r pronouns=%r role=%r turn=%d",
+                npc_mention.name,
+                npc_mention.pronouns or "",
+                npc_mention.role or "",
+                turn_num,
+            )
         else:
+            _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
             existing.last_seen_location = snapshot.location or None
             if npc_mention.role:
@@ -1408,3 +1482,38 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance:
                 existing.appearance = npc_mention.appearance
+
+
+def _detect_npc_identity_drift(
+    existing: "NpcRegistryEntry",
+    mention: "NpcMention",
+    turn_num: int,
+) -> None:
+    """Warn when a narrator-provided NPC mention disagrees with the canonical
+    registry entry on pronouns or role. Fires `npc.reinvented` at WARNING
+    level so the GM panel can surface drift (story 37-44).
+
+    Empty fields on the mention are treated as "no opinion" and never trigger
+    drift — only explicit disagreement counts. Pronoun and role comparisons
+    are case-insensitive.
+    """
+    if mention.pronouns and existing.pronouns and (
+        mention.pronouns.strip().lower() != existing.pronouns.strip().lower()
+    ):
+        logger.warning(
+            "npc.reinvented name=%r field=pronouns expected=%r narrator=%r turn=%d",
+            existing.name,
+            existing.pronouns,
+            mention.pronouns,
+            turn_num,
+        )
+    if mention.role and existing.role and (
+        mention.role.strip().lower() != existing.role.strip().lower()
+    ):
+        logger.warning(
+            "npc.reinvented name=%r field=role expected=%r narrator=%r turn=%d",
+            existing.name,
+            existing.role,
+            mention.role,
+            turn_num,
+        )

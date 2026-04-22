@@ -137,6 +137,9 @@ class SessionEventPayload(ProtocolBase):
     """Narrator vocabulary/complexity setting (story 14-4). Optional for backward compat."""
     image_cooldown_seconds: int | None = None
     """Image generation cooldown in seconds (story 14-6). Optional."""
+    game_slug: str | None = None
+    """Slug-based game identifier (MP-01 Task 4). When set, server looks up the
+    game by slug instead of the legacy genre+world+player path."""
 
 
 # ---------------------------------------------------------------------------
