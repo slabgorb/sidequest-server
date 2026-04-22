@@ -151,14 +151,17 @@ class TestOpeningTurnFrames:
             await _connect(handler)
             out = await _walk_and_confirm(handler)
 
-            # Expect 4 frames: CHARACTER_CREATION, PARTY_STATUS, NARRATION,
-            # NARRATION_END — in that order.
-            assert len(out) == 4, [type(m).__name__ for m in out]
+            # Expect 5 frames: CHARACTER_CREATION, PARTY_STATUS (session-
+            # start), NARRATION, NARRATION_END, PARTY_STATUS (post-turn
+            # refresh carrying current_location landed by the opening
+            # narration) — in that order.
+            assert len(out) == 5, [type(m).__name__ for m in out]
             assert isinstance(out[0], CharacterCreationMessage)
             assert out[0].payload.phase == "complete"
             assert isinstance(out[1], PartyStatusMessage)
             assert isinstance(out[2], NarrationMessage)
             assert isinstance(out[3], NarrationEndMessage)
+            assert isinstance(out[4], PartyStatusMessage)
 
         asyncio.run(body())
 

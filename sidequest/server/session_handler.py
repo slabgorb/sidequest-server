@@ -791,6 +791,52 @@ class WebSocketSessionHandler:
         if self._state is _State.Creating and builder is not None:
             outbound.append(builder.to_scene_message(player_id))
 
+        # Resume path: when has_character=True the client needs a
+        # `SESSION_EVENT{event:"ready"}` to flip sessionPhase from
+        # "connect" to "game". Without this the returning player stays
+        # on the ConnectScreen forever even though the server has
+        # resumed their save (playtest 2026-04-22). App.tsx handles
+        # chargen-complete → "game" directly, so the ready event is
+        # only needed on the resume branch.
+        if self._state is _State.Playing:
+            ready_msg = SessionEventMessage(
+                type="SESSION_EVENT",  # type: ignore[arg-type]
+                payload=SessionEventPayload(
+                    event="ready",
+                    player_name=player_name,
+                    genre=genre_slug,
+                    world=world_slug,
+                    has_character=True,
+                    initial_state=None,
+                    css=None,
+                    narrator_verbosity=None,
+                    narrator_vocabulary=None,
+                    image_cooldown_seconds=None,
+                ),
+                player_id=player_id,
+            )
+            outbound.append(ready_msg)
+            logger.info(
+                "session.ready_emitted reason=resume player=%s turn=%d",
+                player_name,
+                snapshot.turn_manager.interaction,
+            )
+            # Also refresh PARTY_STATUS so the resumed client's header /
+            # sheet / location update from the saved snapshot. Without
+            # this the UI has no character data until the next narration
+            # turn fires.
+            if snapshot.characters:
+                try:
+                    outbound.append(
+                        self._build_session_start_party_status(
+                            self._session_data, snapshot.characters[0], player_id
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "session.resume_party_status_failed error=%s", exc
+                    )
+
         return outbound
 
     # ------------------------------------------------------------------
@@ -1630,7 +1676,7 @@ class WebSocketSessionHandler:
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
-        return [
+        outbound: list[object] = [
             narration_msg,
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]
@@ -1638,6 +1684,30 @@ class WebSocketSessionHandler:
                 player_id=sd.player_id,
             ),
         ]
+
+        # Refresh PARTY_STATUS so `current_location` and any HP/inventory
+        # mutations landed by the narration apply propagate to the client
+        # header / CharacterSheet / MapOverlay. Previously PARTY_STATUS
+        # was emitted exactly once at chargen-end (before the opening
+        # turn), which froze the location at its pre-opening value
+        # (typically empty). Playtest 2026-04-22.
+        if snapshot.characters:
+            try:
+                party_status = self._build_session_start_party_status(
+                    sd, snapshot.characters[0], sd.player_id
+                )
+                outbound.append(party_status)
+                logger.info(
+                    "state.party_status_emitted reason=turn_end location=%r turn=%d",
+                    snapshot.location or "",
+                    snapshot.turn_manager.interaction,
+                )
+            except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
+                logger.warning(
+                    "state.party_status_refresh_failed error=%s", exc
+                )
+
+        return outbound
 
     async def _run_opening_turn_narration(
         self,
