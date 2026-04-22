@@ -68,10 +68,16 @@ async def _connect(
     )
     msg = SessionEventMessage(payload=payload, player_id="")
     out = await handler.handle_message(msg)
-    assert len(out) == 1
+    # When entering Creating state, the handler emits two messages:
+    # the connected SessionEvent and the initial chargen scene kickoff
+    # (CharacterCreationMessage). Returning players skip chargen and
+    # receive only the connected event.
+    assert len(out) in (1, 2)
     connected = out[0]
     assert isinstance(connected, SessionEventMessage)
     assert connected.payload.event == "connected"
+    if len(out) == 2:
+        assert isinstance(out[1], CharacterCreationMessage)
     return connected
 
 

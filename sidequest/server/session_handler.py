@@ -782,7 +782,15 @@ class WebSocketSessionHandler:
             player_id=player_id,
         )
 
-        return [connected_msg]
+        # Kick off chargen by emitting the first scene alongside the
+        # connected event when we're entering Creating state. Without
+        # this the client lands on an empty <CharacterCreation/> and
+        # has no way to advance — there is no client-side kickoff.
+        outbound: list[object] = [connected_msg]
+        if self._state is _State.Creating and builder is not None:
+            outbound.append(builder.to_scene_message(player_id))
+
+        return outbound
 
     # ------------------------------------------------------------------
     # CHARACTER_CREATION dispatch
