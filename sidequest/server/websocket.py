@@ -24,7 +24,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from sidequest.protocol import GameMessage
-from sidequest.protocol.messages import ErrorMessage, ErrorPayload, PlayerPresenceMessage, PlayerPresencePayload
+from sidequest.protocol.messages import ErrorMessage, ErrorPayload, GamePausedMessage, GamePausedPayload, PlayerPresenceMessage, PlayerPresencePayload
 from sidequest.protocol.types import NonBlankString  # noqa: F401
 
 if TYPE_CHECKING:
@@ -92,6 +92,18 @@ async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") 
                     _presence_msg(left_player, "disconnected"),
                     exclude_socket_id=socket_id,
                 )
+                # After the disconnect presence broadcast, check whether the room
+                # is now paused (MP-02 Task 6). If so, broadcast GAME_PAUSED to
+                # all remaining connected players so they know narration is
+                # suspended until the absent player(s) return.
+                if room.is_paused():
+                    absent = room.absent_seated_player_ids()
+                    room.broadcast(
+                        GamePausedMessage(
+                            payload=GamePausedPayload(waiting_for=absent)
+                        ),
+                        exclude_socket_id=None,
+                    )
         await handler.cleanup()
         logger.info("ws.session_cleanup_complete")
 

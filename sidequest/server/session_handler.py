@@ -60,6 +60,9 @@ from sidequest.protocol.messages import (
     CharacterCreationPayload,
     ErrorMessage,
     ErrorPayload,
+    GamePausedMessage,
+    GamePausedPayload,
+    GameResumedMessage,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -356,6 +359,9 @@ class WebSocketSessionHandler:
             if hasattr(self, "_room_registry"):
                 from sidequest.server.session_room import SoloSlotConflict
                 room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
+                # Snapshot pause state BEFORE connecting so we can detect
+                # whether this connect resolved an existing pause (MP-02 Task 6).
+                was_paused_before_connect = room.is_paused()
                 try:
                     room.connect(player_id, socket_id=self._socket_id)
                 except SoloSlotConflict as exc:
@@ -370,6 +376,14 @@ class WebSocketSessionHandler:
                         _presence_msg(player_id, "connected"),
                         exclude_socket_id=self._socket_id,
                     )
+                    # If this connect resolved the pause (was paused before, not
+                    # paused now), broadcast GAME_RESUMED to all players
+                    # including the reconnecting socket (MP-02 Task 6).
+                    if was_paused_before_connect and not room.is_paused():
+                        room.broadcast(
+                            GameResumedMessage(),
+                            exclude_socket_id=None,
+                        )
 
             # Load genre pack (Bug 1 fix: genre_pack must not be None).
             try:
@@ -1234,6 +1248,22 @@ class WebSocketSessionHandler:
             self._session_data.player_name,
             len(action),
         )
+
+        # Pause gate (MP-02 Task 6): if any seated player is absent, return
+        # GAME_PAUSED and do NOT dispatch to the narrator. This must run
+        # BEFORE _execute_narration_turn so the monkeypatch gate in tests
+        # confirms the method is never reached when paused.
+        # Use getattr to guard against tests that construct the handler
+        # directly without calling attach_room_context (which initialises _room).
+        _current_room = getattr(self, "_room", None)
+        if _current_room is not None and _current_room.is_paused():
+            absent = _current_room.absent_seated_player_ids()
+            logger.info(
+                "session.player_action_blocked_paused absent=%s slug=%s",
+                absent,
+                _current_room.slug,
+            )
+            return [GamePausedMessage(payload=GamePausedPayload(waiting_for=absent))]
 
         # Transition to Playing on first action (handles chargen via narration)
         if self._state == _State.Creating:

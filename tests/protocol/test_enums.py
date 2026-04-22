@@ -165,9 +165,17 @@ def test_message_type_unknown_string_rejected() -> None:
         MessageType("BOGUS_TYPE")
 
 
+def test_message_type_game_paused_wire_string() -> None:
+    assert MessageType.GAME_PAUSED == "GAME_PAUSED"
+
+
+def test_message_type_game_resumed_wire_string() -> None:
+    assert MessageType.GAME_RESUMED == "GAME_RESUMED"
+
+
 def test_message_type_complete_count() -> None:
-    """All 35 GameMessage variants must be represented."""
-    assert len(MessageType) == 35
+    """All 37 GameMessage variants must be represented."""
+    assert len(MessageType) == 37
 
 
 # ===========================================================================

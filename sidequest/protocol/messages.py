@@ -344,6 +344,23 @@ class SeatConfirmedPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# GamePausedPayload / GameResumedPayload
+# ---------------------------------------------------------------------------
+
+
+class GamePausedPayload(ProtocolBase):
+    """Payload for GAME_PAUSED messages (MP-02 Task 6).
+
+    Emitted when the room detects that one or more seated players are absent.
+    The narrator will not process PLAYER_ACTION until all seated players are
+    present again.
+    """
+
+    waiting_for: list[str]
+    """Player IDs of seated-but-absent players causing the pause."""
+
+
+# ---------------------------------------------------------------------------
 # GameMessage — discriminated union over Phase 1 messages
 #
 # Rust wire format: {"type": "PLAYER_ACTION", "payload": {...}, "player_id": ""}
@@ -480,6 +497,30 @@ class SeatConfirmedMessage(ProtocolBase):
     player_id: str = ""
 
 
+class GamePausedMessage(ProtocolBase):
+    """GameMessage::GamePaused wire representation (MP-02 Task 6).
+
+    Broadcast when one or more seated players are absent. The narrator will not
+    process PLAYER_ACTION until all seated players reconnect.
+    """
+
+    type: Literal[MessageType.GAME_PAUSED] = MessageType.GAME_PAUSED
+    payload: GamePausedPayload
+    player_id: str = ""
+
+
+class GameResumedMessage(ProtocolBase):
+    """GameMessage::GameResumed wire representation (MP-02 Task 6).
+
+    Broadcast when the last absent seated player reconnects and the room is no
+    longer paused.
+    """
+
+    type: Literal[MessageType.GAME_RESUMED] = MessageType.GAME_RESUMED
+    payload: dict = {}  # noqa: RUF012 — intentionally empty payload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -496,7 +537,9 @@ _Phase1Variant = Annotated[
     | ErrorMessage
     | PlayerPresenceMessage
     | PlayerSeatMessage
-    | SeatConfirmedMessage,
+    | SeatConfirmedMessage
+    | GamePausedMessage
+    | GameResumedMessage,
     Field(discriminator="type"),
 ]
 
