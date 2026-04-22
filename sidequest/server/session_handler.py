@@ -263,23 +263,58 @@ class WebSocketSessionHandler:
                 return [_error_msg(f"unknown game slug: {slug}")]
             if not player_id:
                 player_id = str(uuid.uuid4())
+
+            # Load genre pack (Bug 1 fix: genre_pack must not be None).
+            try:
+                loader = GenreLoader(search_paths=self._search_paths)
+                genre_pack = loader.load(row.genre_slug)
+            except Exception as exc:
+                logger.error(
+                    "session.genre_load_failed genre=%s slug=%s error=%s",
+                    row.genre_slug, slug, exc,
+                )
+                return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
+
+            # Restore saved snapshot, or start fresh (Bug 2 fix: resume semantics).
+            saved = store.load()
+            if saved is not None:
+                snapshot = saved.snapshot
+                has_character = bool(snapshot.characters)
+                logger.info(
+                    "session.slug_resumed genre=%s world=%s slug=%s turn=%s",
+                    row.genre_slug,
+                    row.world_slug,
+                    slug,
+                    snapshot.turn_manager.interaction,
+                )
+            else:
+                snapshot = GameSnapshot(
+                    genre_slug=row.genre_slug,
+                    world_slug=row.world_slug,
+                    location="Unknown",
+                )
+                store.init_session(row.genre_slug, row.world_slug)
+                has_character = False
+                logger.info(
+                    "session.slug_new_session genre=%s world=%s slug=%s",
+                    row.genre_slug,
+                    row.world_slug,
+                    slug,
+                )
+
             self._session_data = _SessionData(
                 genre_slug=row.genre_slug,
                 world_slug=row.world_slug,
                 player_name=player_id,
                 player_id=player_id,
-                snapshot=GameSnapshot(
-                    genre_slug=row.genre_slug,
-                    world_slug=row.world_slug,
-                    location="Unknown",
-                ),
+                snapshot=snapshot,
                 store=store,
-                genre_pack=None,  # type: ignore[arg-type]
+                genre_pack=genre_pack,
                 orchestrator=Orchestrator(client=self._client_factory()),
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
-            self._state = _State.Playing
+            self._state = _State.Creating if not has_character else _State.Playing
             connected_msg = SessionEventMessage(
                 type="SESSION_EVENT",  # type: ignore[arg-type]
                 payload=SessionEventPayload(
@@ -287,7 +322,7 @@ class WebSocketSessionHandler:
                     player_name=player_id,
                     genre=row.genre_slug,
                     world=row.world_slug,
-                    has_character=False,
+                    has_character=has_character,
                 ),
                 player_id=player_id,
             )
