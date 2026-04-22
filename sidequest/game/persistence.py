@@ -170,6 +170,22 @@ class SerializationError(PersistError):
 
 
 # ---------------------------------------------------------------------------
+# PRAGMA Configuration
+# ---------------------------------------------------------------------------
+
+
+def _configure_connection(conn: sqlite3.Connection) -> None:
+    """Configure a SQLite connection with standard PRAGMAs.
+
+    Sets WAL journal mode, enables foreign keys, and configures row factory.
+    Called from both __init__ and open() to prevent PRAGMA drift.
+    """
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+
+# ---------------------------------------------------------------------------
 # SqliteStore
 # ---------------------------------------------------------------------------
 
@@ -188,9 +204,7 @@ class SqliteStore:
     def __init__(self, conn: sqlite3.Connection | Path) -> None:
         if isinstance(conn, Path):
             c = sqlite3.connect(str(conn))
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA foreign_keys=ON")
+            _configure_connection(c)
             self._conn = c
         else:
             self._conn = conn
@@ -207,9 +221,7 @@ class SqliteStore:
     def open(cls, path: str) -> "SqliteStore":
         """Open a file-backed store."""
         conn = sqlite3.connect(path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        _configure_connection(conn)
         return cls(conn)
 
     def _init_schema(self) -> None:
@@ -389,7 +401,14 @@ def upsert_game(
     genre_slug: str,
     world_slug: str,
 ) -> None:
-    """Insert a game row if absent. Mode is frozen at creation; later upserts do NOT change it."""
+    """Insert a game row if the slug is new; no-op if it exists.
+
+    All creation-time fields (mode, genre_slug, world_slug) are frozen — a
+    subsequent call with different values is intentionally ignored via
+    ``ON CONFLICT(slug) DO NOTHING``. Same-day, same-world collisions are the
+    resume path by design; the caller can re-invoke without branching on
+    "already exists?".
+    """
     with store._conn:
         store._conn.execute(
             """INSERT INTO games (slug, mode, genre_slug, world_slug, created_at)
