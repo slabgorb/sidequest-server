@@ -653,6 +653,78 @@ def test_drift_detector_fires_on_role_mismatch(caplog, monkeypatch):
     )
 
 
+# ---------------------------------------------------------------------------
+# Story 37-48: Test-lock module-level run_narration_turn preserves
+# session.npc_registry when building TurnContext (orchestrator.py:1324).
+# ---------------------------------------------------------------------------
+
+
+async def test_run_narration_turn_passes_npc_registry_to_turn_context(monkeypatch):
+    """Lock in ``orchestrator.py:1324`` — the module-level
+    ``run_narration_turn`` wrapper MUST forward ``session.npc_registry`` into
+    the ``TurnContext`` it assembles. Without this test, a future refactor
+    could silently drop the ``npc_registry=`` kwarg, the narrator would stop
+    seeing the canonical roster, and the Frandrew-style identity drift bug
+    from playtest-3 would return with no CI signal.
+
+    Story 37-48 (follow-up from 37-44 reviewer round-2). The additive-only
+    guard in session_handler protects the registry *contents*; this test
+    protects the *wiring* that gets them into the prompt.
+    """
+    from sidequest.agents import orchestrator as orch_module
+
+    registry_entries = [
+        NpcRegistryEntry(
+            name="Frandrew",
+            role="captain",
+            pronouns="she/her",
+            last_seen_turn=17,
+        )
+    ]
+    session = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="aureate_span",
+        location="Bridge",
+        npc_registry=registry_entries,
+    )
+    client = MagicMock(spec=ClaudeClient)
+
+    # Minimal genre stub — the wrapper only touches `audio` (probed via
+    # hasattr for `sfx_library`) and `prompts`. `spec=[]` makes hasattr
+    # return False for sfx_library so the SFX branch is skipped.
+    genre = MagicMock()
+    genre.audio = MagicMock(spec=[])
+    genre.prompts = MagicMock()
+
+    captured: dict[str, TurnContext] = {}
+
+    async def fake_method(self, player_action, context):  # noqa: ARG001
+        captured["context"] = context
+        return NarrationTurnResult(narration="", is_degraded=False)
+
+    monkeypatch.setattr(
+        orch_module.Orchestrator, "run_narration_turn", fake_method
+    )
+
+    await orch_module.run_narration_turn(
+        client=client,
+        session=session,
+        genre=genre,
+        player_action="look around",
+    )
+
+    assert "context" in captured, (
+        "Orchestrator.run_narration_turn was not invoked — wrapper short-circuited."
+    )
+    assert captured["context"].npc_registry == registry_entries, (
+        "Module-level run_narration_turn dropped session.npc_registry when "
+        "building TurnContext. orchestrator.py:1324 refactored away the "
+        "npc_registry= kwarg — NPC identity drift (playtest-3 Frandrew bug) "
+        f"will return. Got npc_registry={captured['context'].npc_registry!r}, "
+        f"expected {registry_entries!r}."
+    )
+
+
 def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
     """`She/Her` vs `she/her` must NOT fire drift. Protects against accidental
     removal of `.lower()` normalization in the detector.
