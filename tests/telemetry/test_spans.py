@@ -601,3 +601,112 @@ def test_span_name_drift_regression() -> None:
     for constant in phase1_constants:
         assert isinstance(constant, str), f"span constant {constant!r} is not a string"
         assert len(constant) > 0, "span constant must not be empty"
+
+
+# ---------------------------------------------------------------------------
+# Multiplayer span helpers — emission + attribute wiring
+# ---------------------------------------------------------------------------
+
+
+def test_mp_span_names() -> None:
+    from sidequest.telemetry.spans import (
+        SPAN_MP_GAME_CREATED,
+        SPAN_MP_PLAYER_ACTION_PAUSED,
+        SPAN_MP_SEAT,
+        SPAN_MP_SLUG_CONNECT,
+    )
+    assert SPAN_MP_GAME_CREATED == "mp.game_created"
+    assert SPAN_MP_SLUG_CONNECT == "mp.slug_connect"
+    assert SPAN_MP_SEAT == "mp.seat"
+    assert SPAN_MP_PLAYER_ACTION_PAUSED == "mp.player_action_paused"
+
+
+def test_mp_game_created_span_emits_attributes() -> None:
+    from sidequest.telemetry.spans import mp_game_created_span
+
+    provider, exporter = _fresh_provider()
+    t = _local_tracer(provider)
+    with mp_game_created_span(
+        slug="2026-04-22-grimvault",
+        mode="multiplayer",
+        genre_slug="caverns_and_claudes",
+        world_slug="grimvault",
+        resumed=False,
+        _tracer=t,
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert span.name == "mp.game_created"
+    assert span.attributes["slug"] == "2026-04-22-grimvault"
+    assert span.attributes["mode"] == "multiplayer"
+    assert span.attributes["genre_slug"] == "caverns_and_claudes"
+    assert span.attributes["world_slug"] == "grimvault"
+    assert span.attributes["resumed"] is False
+
+
+def test_mp_slug_connect_span_carries_pause_resolution() -> None:
+    from sidequest.telemetry.spans import mp_slug_connect_span
+
+    provider, exporter = _fresh_provider()
+    t = _local_tracer(provider)
+    with mp_slug_connect_span(
+        slug="2026-04-22-grimvault",
+        player_id="alice",
+        mode="multiplayer",
+        _tracer=t,
+    ) as span:
+        span.set_attribute("was_paused_before", True)
+        span.set_attribute("resolved_pause", True)
+    [emitted] = exporter.get_finished_spans()
+    assert emitted.name == "mp.slug_connect"
+    assert emitted.attributes["slug"] == "2026-04-22-grimvault"
+    assert emitted.attributes["player_id"] == "alice"
+    assert emitted.attributes["was_paused_before"] is True
+    assert emitted.attributes["resolved_pause"] is True
+
+
+def test_mp_seat_span_handles_none_slot() -> None:
+    from sidequest.telemetry.spans import mp_seat_span
+
+    provider, exporter = _fresh_provider()
+    t = _local_tracer(provider)
+    with mp_seat_span(
+        slug="2026-04-22-grimvault",
+        player_id="alice",
+        character_slot="fighter-01",
+        _tracer=t,
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert span.name == "mp.seat"
+    assert span.attributes["character_slot"] == "fighter-01"
+
+    # None character_slot must not crash OTEL (attrs reject None values).
+    exporter.clear()
+    with mp_seat_span(
+        slug="2026-04-22-grimvault",
+        player_id="observer",
+        character_slot=None,
+        _tracer=t,
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert span.attributes["character_slot"] == ""
+
+
+def test_mp_player_action_paused_span_emits_absent_list() -> None:
+    from sidequest.telemetry.spans import mp_player_action_paused_span
+
+    provider, exporter = _fresh_provider()
+    t = _local_tracer(provider)
+    with mp_player_action_paused_span(
+        slug="2026-04-22-grimvault",
+        player_id="alice",
+        absent_player_ids=["bob", "carol"],
+        _tracer=t,
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert span.name == "mp.player_action_paused"
+    assert span.attributes["absent_count"] == 2
+    assert span.attributes["absent_player_ids"] == "bob,carol"

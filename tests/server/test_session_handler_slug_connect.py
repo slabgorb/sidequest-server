@@ -179,6 +179,55 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_slug_connect_emits_mp_span(seeded_game: Path):
+    """Wiring test: mp.slug_connect span fires with the expected attrs.
+
+    Per CLAUDE.md OTEL mandate — GM panel must be able to tell that
+    slug-connect actually ran (vs. Claude improvising a plausible-looking
+    narration). This test is the lie-detector for that claim.
+    """
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
+        msg = SessionEventMessage(
+            type="SESSION_EVENT",
+            player_id="alice",
+            payload=SessionEventPayload(event="connect", game_slug=_SLUG),
+        )
+        await handler.handle_message(msg)
+
+        mp_spans = [s for s in exporter.get_finished_spans() if s.name == "mp.slug_connect"]
+        assert len(mp_spans) == 1, (
+            f"Expected exactly one mp.slug_connect span, got {[s.name for s in exporter.get_finished_spans()]}"
+        )
+        span = mp_spans[0]
+        assert span.attributes["slug"] == _SLUG
+        assert span.attributes["player_id"] == "alice"
+        # row.mode is GameMode.MULTIPLAYER → "multiplayer"
+        assert span.attributes["mode"] == "multiplayer"
+        # Fresh connect — no one was paused before.
+        assert span.attributes["was_paused_before"] is False
+        assert span.attributes["resolved_pause"] is False
+        assert span.attributes["connected_count"] == 1
+    finally:
+        processor.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_slug_connect_without_room_context_raises(seeded_game: Path):
     """Wiring test: slug-connect must fail loudly when attach_room_context was skipped.
 

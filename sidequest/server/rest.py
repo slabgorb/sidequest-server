@@ -467,6 +467,8 @@ def create_rest_router() -> APIRouter:
         genre_slug, and world_slug are preserved and the new request's mode is
         ignored.
         """
+        from sidequest.telemetry.spans import mp_game_created_span
+
         save_dir: Path = request.app.state.save_dir
         today_fn = getattr(request.app.state, "today_fn", _date_cls.today)
         slug = generate_slug(world_slug=req.world_slug, today=today_fn())
@@ -477,20 +479,37 @@ def create_rest_router() -> APIRouter:
 
         existing = get_game(store, slug)
         if existing is not None:
-            payload = GameResponse(
-                slug=slug, mode=existing.mode,
-                genre_slug=existing.genre_slug, world_slug=existing.world_slug,
+            # Existing row "wins" — emit span with the frozen metadata so GM
+            # panel sees which mode/genre/world are actually in effect, not
+            # what the client requested.
+            with mp_game_created_span(
+                slug=slug,
+                mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
+                genre_slug=existing.genre_slug,
+                world_slug=existing.world_slug,
                 resumed=True,
-            )
-            return JSONResponse(status_code=200, content=payload.model_dump())
+            ):
+                payload = GameResponse(
+                    slug=slug, mode=existing.mode,
+                    genre_slug=existing.genre_slug, world_slug=existing.world_slug,
+                    resumed=True,
+                )
+                return JSONResponse(status_code=200, content=payload.model_dump())
 
-        upsert_game(store, slug=slug, mode=req.mode,
-                    genre_slug=req.genre_slug, world_slug=req.world_slug)
-        return GameResponse(
-            slug=slug, mode=req.mode,
-            genre_slug=req.genre_slug, world_slug=req.world_slug,
+        with mp_game_created_span(
+            slug=slug,
+            mode=str(req.mode.value) if hasattr(req.mode, "value") else str(req.mode),
+            genre_slug=req.genre_slug,
+            world_slug=req.world_slug,
             resumed=False,
-        )
+        ):
+            upsert_game(store, slug=slug, mode=req.mode,
+                        genre_slug=req.genre_slug, world_slug=req.world_slug)
+            return GameResponse(
+                slug=slug, mode=req.mode,
+                genre_slug=req.genre_slug, world_slug=req.world_slug,
+                resumed=False,
+            )
 
     @router.get("/api/games/{slug}")
     async def get_game_endpoint(slug: str, request: Request) -> GameResponse:

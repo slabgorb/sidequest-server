@@ -426,38 +426,48 @@ class WebSocketSessionHandler:
         Seats the player in the room and broadcasts SEAT_CONFIRMED to all players.
         Returns empty list — the broadcast handles fan-out via the room.
         """
+        from sidequest.telemetry.spans import mp_seat_span
+
         payload = msg.payload  # type: ignore[attr-defined]
         player_id = getattr(msg, "player_id", "") or (
             self._session_data.player_id if self._session_data else ""
         )
         character_slot = payload.character_slot
 
-        # Seat the player in the room (thread-safe, idempotent)
-        if self._room is not None:
-            self._room.seat(player_id, character_slot=character_slot)
-            logger.info(
-                "session.player_seated player_id=%s character_slot=%s slug=%s",
-                player_id,
-                character_slot,
-                self._room.slug,
-            )
-        else:
-            logger.warning(
-                "session.player_seat_no_room player_id=%s character_slot=%s",
-                player_id,
-                character_slot,
+        slug_attr = self._room.slug if self._room is not None else ""
+        with mp_seat_span(
+            slug=slug_attr,
+            player_id=player_id,
+            character_slot=character_slot,
+            room_bound=self._room is not None,
+        ) as _seat_span:
+            # Seat the player in the room (thread-safe, idempotent)
+            if self._room is not None:
+                self._room.seat(player_id, character_slot=character_slot)
+                logger.info(
+                    "session.player_seated player_id=%s character_slot=%s slug=%s",
+                    player_id,
+                    character_slot,
+                    self._room.slug,
+                )
+                _seat_span.set_attribute("seated_count", len(self._room.seated_player_ids()))
+            else:
+                logger.warning(
+                    "session.player_seat_no_room player_id=%s character_slot=%s",
+                    player_id,
+                    character_slot,
+                )
+
+            # Build and broadcast SEAT_CONFIRMED to all players
+            confirmed_msg = SeatConfirmedMessage(
+                payload=SeatConfirmedPayload(
+                    player_id=player_id,
+                    character_slot=character_slot,
+                ),
             )
 
-        # Build and broadcast SEAT_CONFIRMED to all players
-        confirmed_msg = SeatConfirmedMessage(
-            payload=SeatConfirmedPayload(
-                player_id=player_id,
-                character_slot=character_slot,
-            ),
-        )
-
-        if self._room is not None:
-            self._room.broadcast(confirmed_msg, exclude_socket_id=None)
+            if self._room is not None:
+                self._room.broadcast(confirmed_msg, exclude_socket_id=None)
 
         return []
 
@@ -515,28 +525,40 @@ class WebSocketSessionHandler:
                     "Tests: construct a RoomRegistry and call attach_room_context."
                 )
             from sidequest.server.session_room import SoloSlotConflict
-            room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
-            # Snapshot pause state BEFORE connecting so we can detect
-            # whether this connect resolved an existing pause (MP-02 Task 6).
-            was_paused_before_connect = room.is_paused()
-            try:
-                room.connect(player_id, socket_id=self._socket_id)
-            except SoloSlotConflict as exc:
-                return [_error_msg(str(exc))]
-            self._room = room
-            room.attach_outbound(self._socket_id, self._out_queue)
-            room.broadcast(
-                _presence_msg(player_id, "connected"),
-                exclude_socket_id=self._socket_id,
-            )
-            # If this connect resolved the pause (was paused before, not
-            # paused now), broadcast GAME_RESUMED to all players
-            # including the reconnecting socket (MP-02 Task 6).
-            if was_paused_before_connect and not room.is_paused():
+            from sidequest.telemetry.spans import mp_slug_connect_span
+
+            with mp_slug_connect_span(
+                slug=slug,
+                player_id=player_id,
+                mode=str(row.mode.value) if hasattr(row.mode, "value") else str(row.mode),
+            ) as _mp_span:
+                room = self._room_registry.get_or_create(slug, mode=GameMode(row.mode))
+                # Snapshot pause state BEFORE connecting so we can detect
+                # whether this connect resolved an existing pause (MP-02 Task 6).
+                was_paused_before_connect = room.is_paused()
+                try:
+                    room.connect(player_id, socket_id=self._socket_id)
+                except SoloSlotConflict as exc:
+                    _mp_span.set_attribute("solo_slot_conflict", True)
+                    return [_error_msg(str(exc))]
+                self._room = room
+                room.attach_outbound(self._socket_id, self._out_queue)
                 room.broadcast(
-                    GameResumedMessage(),
-                    exclude_socket_id=None,
+                    _presence_msg(player_id, "connected"),
+                    exclude_socket_id=self._socket_id,
                 )
+                # If this connect resolved the pause (was paused before, not
+                # paused now), broadcast GAME_RESUMED to all players
+                # including the reconnecting socket (MP-02 Task 6).
+                resolved_pause = was_paused_before_connect and not room.is_paused()
+                if resolved_pause:
+                    room.broadcast(
+                        GameResumedMessage(),
+                        exclude_socket_id=None,
+                    )
+                _mp_span.set_attribute("was_paused_before", was_paused_before_connect)
+                _mp_span.set_attribute("resolved_pause", resolved_pause)
+                _mp_span.set_attribute("connected_count", len(room.connected_player_ids()))
 
             # Load genre pack (Bug 1 fix: genre_pack must not be None).
             try:
@@ -1432,12 +1454,22 @@ class WebSocketSessionHandler:
         # when slug-connect hasn't bound a room (legacy connect path or
         # pre-connect test paths) — pause gate is a no-op in that case.
         if self._room is not None and self._room.is_paused():
+            from sidequest.telemetry.spans import mp_player_action_paused_span
+
             absent = self._room.absent_seated_player_ids()
-            logger.info(
-                "session.player_action_blocked_paused absent=%s slug=%s",
-                absent,
-                self._room.slug,
+            player_id_attr = (
+                self._session_data.player_id if self._session_data else ""
             )
+            with mp_player_action_paused_span(
+                slug=self._room.slug,
+                player_id=player_id_attr,
+                absent_player_ids=absent,
+            ):
+                logger.info(
+                    "session.player_action_blocked_paused absent=%s slug=%s",
+                    absent,
+                    self._room.slug,
+                )
             return [GamePausedMessage(payload=GamePausedPayload(waiting_for=absent))]
 
         # Transition to Playing on first action (handles chargen via narration)
