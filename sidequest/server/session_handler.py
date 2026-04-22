@@ -110,6 +110,38 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
 
 
 # ---------------------------------------------------------------------------
+# Replay helper (MP-03 Task 4)
+# Reconstructs a typed protocol message from a persisted EventRow on reconnect.
+# Distinct from _emit_event (live fan-out) but reuses _KIND_TO_MESSAGE_CLS as
+# the single source of truth for kind → message class mapping.
+# ---------------------------------------------------------------------------
+
+def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object:
+    """Build a typed protocol message from a persisted event row for replay.
+
+    Raises ValueError on unknown kinds — no silent fallback.
+    Caller: slug-connect branch, after SESSION_CONNECTED is built, to
+    reconstruct missed events since last_seen_seq.
+    """
+    import json
+
+    message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
+    if message_cls is None:
+        raise ValueError(f"_build_message_for_kind: unknown event kind {kind!r}")
+
+    data = json.loads(payload_json)
+    data["seq"] = seq
+
+    if kind == "NARRATION":
+        from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
+        return message_cls(payload=_NarrationPayload(**data))
+
+    # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
+    # Kept as a belt-and-suspenders hard fail.
+    raise ValueError(f"_build_message_for_kind: no payload constructor for kind {kind!r}")
+
+
+# ---------------------------------------------------------------------------
 # Session state machine
 # ---------------------------------------------------------------------------
 
@@ -538,6 +570,7 @@ class WebSocketSessionHandler:
             self._event_log = EventLog(store)
             self._projection_filter = PassThroughFilter()
             self._last_seen_seq = payload.last_seen_seq or 0
+            self._current_player_id = player_id
             self._state = _State.Creating if not has_character else _State.Playing
             connected_msg = SessionEventMessage(
                 type="SESSION_EVENT",  # type: ignore[arg-type]
@@ -550,7 +583,25 @@ class WebSocketSessionHandler:
                 ),
                 player_id=player_id,
             )
-            return [connected_msg]
+
+            # MP-03 Task 4: replay missed events since last_seen_seq.
+            # SESSION_CONNECTED is always first; replay follows in seq ASC order.
+            missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+            replay_msgs: list[object] = []
+            for event_row in missed:
+                dec = self._projection_filter.project(
+                    event=event_row, player_id=self._current_player_id
+                )
+                if not dec.include:
+                    continue
+                replay_msgs.append(
+                    _build_message_for_kind(
+                        kind=event_row.kind,
+                        payload_json=dec.payload_json,
+                        seq=event_row.seq,
+                    )
+                )
+            return [connected_msg, *replay_msgs]
 
         genre_slug = payload.genre or ""
         world_slug = payload.world or ""
