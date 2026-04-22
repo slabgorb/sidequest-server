@@ -81,6 +81,7 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.models import (
     CharacterSheetDetails,
+    Footnote,
     InventoryItem,
     InventoryPayload,
     PartyMember,
@@ -1597,10 +1598,34 @@ class WebSocketSessionHandler:
         except Exception:
             narration_nbs = NonBlankString("The world holds its breath...")
 
+        # Forward extracted footnotes into the NarrationPayload so the UI
+        # Knowledge journal fills. Narrator produces them every turn
+        # (see `game_patch.extracted footnotes=N` in the server log) and
+        # the UI's useStateMirror was already wired to consume them — the
+        # session handler was the only missing link. Coerce raw dicts
+        # from the extraction into typed Footnote models, skipping any
+        # that fail validation rather than crashing the turn.
+        forwarded_footnotes: list[Footnote] = []
+        for fn in result.footnotes or []:
+            if not isinstance(fn, dict):
+                continue
+            try:
+                forwarded_footnotes.append(Footnote(**fn))
+            except Exception as exc:  # noqa: BLE001 — drop-and-log is safer than a mid-turn crash
+                logger.warning(
+                    "state.footnote_coerce_failed error=%s payload=%r",
+                    exc,
+                    fn,
+                )
+        logger.info(
+            "state.footnotes_forwarded count=%d player=%s",
+            len(forwarded_footnotes),
+            sd.player_name,
+        )
         narration_payload = NarrationPayload(
             text=narration_nbs,
             state_delta=None,
-            footnotes=[],
+            footnotes=forwarded_footnotes,
         )
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
