@@ -417,7 +417,7 @@ def test_npc_reinvented_span_is_defined_in_catalog():
     assert spans_module.SPAN_NPC_REINVENTED == "npc.reinvented"
 
 
-def test_auto_register_emits_span_on_new_npc(caplog):
+def test_auto_register_emits_span_on_new_npc(caplog, monkeypatch):
     """When a new NPC lands in the registry, the code path must log at a
     level that a GM watching the panel can see (info or warn, not debug).
 
@@ -428,12 +428,19 @@ def test_auto_register_emits_span_on_new_npc(caplog):
     """
     import logging
 
+    # app.py disables propagation on the sidequest logger at import time
+    # (so uvicorn's dictConfig doesn't silence us). pytest's caplog attaches
+    # at the root logger, so re-enable propagation for the duration of this test.
+    monkeypatch.setattr(
+        logging.getLogger("sidequest"), "propagate", True
+    )
+
     snapshot = GameSnapshot(
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
     )
-    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+    with caplog.at_level(logging.INFO):
         _apply_narration_result_to_snapshot(
             snapshot,
             NarrationTurnResult(
@@ -452,7 +459,7 @@ def test_auto_register_emits_span_on_new_npc(caplog):
 
     # Look for either an "npc.auto_registered" event marker or the pre-existing
     # "state.npc_registry_add" line upgraded to carry pronouns and role.
-    all_logs = " ".join(rec.getMessage() for rec in caplog.records)
+    all_logs = caplog.text
     assert "npc.auto_registered" in all_logs or (
         "state.npc_registry_add" in all_logs and "she/her" in all_logs
     ), (
@@ -486,13 +493,19 @@ def test_drift_detector_exists_as_callable():
     )
 
 
-def test_drift_detector_fires_on_pronoun_mismatch(caplog):
+def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
     """When narrator output mentions an NPC with pronouns that disagree
     with the canonical registry entry, a ``npc.reinvented`` event must
     fire. Using caplog here because the detector can log-with-span or
     pure-log; both are acceptable wiring.
     """
     import logging
+
+    # See comment in test_auto_register_emits_span_on_new_npc — app.py
+    # disables propagation on the sidequest logger at import time.
+    monkeypatch.setattr(
+        logging.getLogger("sidequest"), "propagate", True
+    )
 
     snapshot = GameSnapshot(
         genre_slug="space_opera",
@@ -508,9 +521,7 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog):
         ],
     )
     # Narrator now says Frandrew is he/him — this is drift
-    with caplog.at_level(
-        logging.WARNING, logger="sidequest.server.session_handler"
-    ):
+    with caplog.at_level(logging.WARNING):
         _apply_narration_result_to_snapshot(
             snapshot,
             NarrationTurnResult(
@@ -523,7 +534,7 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog):
             "Felix",
         )
 
-    all_logs = " ".join(rec.getMessage() for rec in caplog.records)
+    all_logs = caplog.text
     assert "npc.reinvented" in all_logs or "drift" in all_logs.lower(), (
         "Drift detector did not fire when pronouns changed she/her → he/him. "
         "This is the exact Frandrew drift from playtest-3."
