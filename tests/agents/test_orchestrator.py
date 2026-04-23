@@ -401,6 +401,34 @@ def test_build_narrator_prompt_includes_state_summary():
     assert "dark cave" in prompt
 
 
+def test_build_narrator_prompt_includes_lore_context_when_provided():
+    # Story 37-33: retrieved lore from semantic search should land in
+    # the Valley zone so the narrator has canonical world detail to
+    # weave in without asking the player.
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(
+        character_name="Kael",
+        lore_context=(
+            "<lore>\n"
+            "# Relevant lore retrieved for this turn\n"
+            "- [history · id=castle · similarity=0.92] An ancient castle stands on the hill.\n"
+            "</lore>"
+        ),
+    )
+    prompt, _ = orch.build_narrator_prompt("approach the castle", context, tier=NarratorPromptTier.Full)
+    assert "<lore>" in prompt
+    assert "ancient castle" in prompt
+
+
+def test_build_narrator_prompt_omits_lore_section_when_none():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", lore_context=None)
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "<lore>" not in prompt
+
+
 def test_build_narrator_prompt_encounter_rules_when_in_combat():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
