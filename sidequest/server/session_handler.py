@@ -1664,6 +1664,7 @@ class WebSocketSessionHandler:
         )
 
         _apply_narration_result_to_snapshot(snapshot, result, sd.player_name)
+        apply_encounter_updates(snapshot, result, sd.genre_pack, sd.player_name)
         snapshot.turn_manager.record_interaction()
 
         try:
@@ -2235,10 +2236,26 @@ def _build_turn_context(
     char_name = (
         snapshot.characters[0].core.name if snapshot.characters else sd.player_name
     )
+    # Encounter state — when ``snapshot.encounter`` is set, flip the
+    # per-type flags and look up the matching ``ConfrontationDef`` from
+    # the genre pack's rules so the narrator prompt can list beats.
+    # Without this pairing, ``in_combat`` was hardcoded False and every
+    # combat turn emitted ``beat_selections=[]``.
+    in_combat = False
+    in_chase = False
+    in_encounter = False
+    confrontation_def: object | None = None
+    encounter_state = snapshot.encounter
+    if encounter_state is not None:
+        etype = encounter_state.encounter_type
+        in_combat = etype == "combat"
+        in_chase = etype == "chase"
+        in_encounter = True
+        confrontation_def = _find_confrontation_def(sd.genre_pack, etype)
     return TurnContext(
-        in_combat=False,
-        in_chase=False,
-        in_encounter=False,
+        in_combat=in_combat,
+        in_chase=in_chase,
+        in_encounter=in_encounter,
         state_summary=snapshot.model_dump_json(indent=2),
         narrator_verbosity="standard",
         narrator_vocabulary="literary",
@@ -2251,7 +2268,26 @@ def _build_turn_context(
         npcs=list(snapshot.npcs),
         opening_directive=opening_directive,
         world_context=sd.world_context,
+        confrontation_def=confrontation_def,
+        encounter_state=encounter_state,
     )
+
+
+def _find_confrontation_def(pack: GenrePack, confrontation_type: str) -> object | None:
+    """Look up the ConfrontationDef matching the narrator's hint.
+
+    Returns ``None`` when the pack doesn't declare that confrontation
+    type; the caller skips encounter context injection and the narrator
+    will run without beats (narration-only fallback).
+    """
+    rules = getattr(pack, "rules", None)
+    if rules is None:
+        return None
+    confrontations = getattr(rules, "confrontations", None) or []
+    for cd in confrontations:
+        if getattr(cd, "confrontation_type", None) == confrontation_type:
+            return cd
+    return None
 
 
 def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
@@ -2421,6 +2457,236 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+
+def apply_encounter_updates(
+    snapshot: GameSnapshot,
+    result: object,
+    genre_pack: GenrePack,
+    player_name: str,
+) -> None:
+    """Materialize, advance, and resolve encounter state from narrator output.
+
+    Three cases, in order:
+
+    1. No encounter active + narrator hinted a confrontation type: look up
+       the matching :class:`ConfrontationDef` in ``genre_pack.rules`` and
+       instantiate a :class:`StructuredEncounter` from the def's metric +
+       actor list (player + recently-mentioned hostile NPCs). Writes to
+       ``snapshot.encounter``.
+    2. Encounter active + narrator emitted ``beat_selections``: for each
+       selection, find the matching :class:`BeatDef` and apply its
+       ``metric_delta`` to the encounter's metric. Resolution beats (and
+       any metric crossing a threshold) mark ``encounter.resolved`` and
+       clear ``snapshot.encounter``.
+    3. Encounter active + narrator hinted a new confrontation type: no-op.
+       The narrator should not be starting a second encounter while one
+       is running; we trust the existing state.
+
+    Each step emits a ``state_transition`` watcher event tagged
+    ``component=encounter`` so the dashboard Subsystems tab surfaces the
+    mechanical loop Sebastien wants to see.
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        EncounterPhase,
+        MetricDirection,
+        StructuredEncounter,
+    )
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+
+    confrontation_hint = result.confrontation
+    turn_num = snapshot.turn_manager.interaction
+
+    # Case 1 — start a new encounter.
+    if snapshot.encounter is None and confrontation_hint:
+        conf_def = _find_confrontation_def(genre_pack, confrontation_hint)
+        if conf_def is None:
+            logger.warning(
+                "encounter.skipped reason=no_matching_def type=%s player=%s",
+                confrontation_hint,
+                player_name,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "skipped",
+                    "reason": "no_matching_def",
+                    "confrontation_type": confrontation_hint,
+                },
+                component="encounter",
+                severity="warning",
+            )
+            return
+        # Build actors from the player character and any hostile NPCs the
+        # narrator referenced this turn. Keeps per-turn state simple —
+        # tactical grid is Phase 4. Hostile-role detection is a rough
+        # heuristic (anything whose role contains "combat", "hostile",
+        # "enemy", or a named role like "bandit"/"creature"); the
+        # narrator also gets a chance to refine this via later turns.
+        actors: list[EncounterActor] = []
+        if snapshot.characters:
+            player_actor_name = snapshot.characters[0].core.name or player_name
+        else:
+            player_actor_name = player_name
+        actors.append(
+            EncounterActor(name=player_actor_name, role="player", per_actor_state={})
+        )
+        hostile_keywords = {"combat", "hostile", "enemy", "combatant"}
+        for npc in result.npcs_present or []:
+            role = (npc.role or "").lower()
+            if any(k in role for k in hostile_keywords) or role in {"brood-mother", "predator"}:
+                actors.append(
+                    EncounterActor(name=npc.name, role="combatant", per_actor_state={})
+                )
+        # Convert the pack metric def into the live EncounterMetric.
+        md = conf_def.metric
+        direction_map = {
+            "ascending": MetricDirection.Ascending,
+            "descending": MetricDirection.Descending,
+            "bidirectional": MetricDirection.Bidirectional,
+        }
+        metric = EncounterMetric(
+            name=md.name,
+            current=md.starting,
+            starting=md.starting,
+            direction=direction_map.get(md.direction, MetricDirection.Bidirectional),
+            threshold_high=md.threshold_high,
+            threshold_low=md.threshold_low,
+        )
+        snapshot.encounter = StructuredEncounter(
+            encounter_type=conf_def.confrontation_type,
+            metric=metric,
+            beat=0,
+            structured_phase=EncounterPhase.Setup,
+            actors=actors,
+            outcome=None,
+            resolved=False,
+            mood_override=conf_def.mood,
+            narrator_hints=[],
+        )
+        logger.info(
+            "encounter.started type=%s metric=%s=%d actors=%d player=%s",
+            conf_def.confrontation_type,
+            metric.name,
+            metric.current,
+            len(actors),
+            player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "started",
+                "confrontation_type": conf_def.confrontation_type,
+                "metric_name": metric.name,
+                "metric_current": metric.current,
+                "actors": [a.name for a in actors],
+                "turn_number": turn_num,
+            },
+            component="encounter",
+        )
+
+    # Case 2 — advance an active encounter via beat_selections.
+    if snapshot.encounter is not None and result.beat_selections:
+        conf_def = _find_confrontation_def(
+            genre_pack, snapshot.encounter.encounter_type
+        )
+        if conf_def is None:
+            return
+        beat_lookup = {b.id: b for b in conf_def.beats}
+        resolved_this_turn = False
+        for selection in result.beat_selections:
+            beat_id = getattr(selection, "beat_id", None) or ""
+            actor = getattr(selection, "actor", None) or ""
+            beat_def = beat_lookup.get(beat_id)
+            if beat_def is None:
+                logger.warning(
+                    "encounter.beat_skipped reason=unknown_beat_id beat_id=%r actor=%r",
+                    beat_id,
+                    actor,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "beat_skipped",
+                        "reason": "unknown_beat_id",
+                        "beat_id": beat_id,
+                        "actor": actor,
+                    },
+                    component="encounter",
+                    severity="warning",
+                )
+                continue
+            before = snapshot.encounter.metric.current
+            snapshot.encounter.metric.current += int(beat_def.metric_delta or 0)
+            snapshot.encounter.beat += 1
+            logger.info(
+                "encounter.beat_applied beat=%s actor=%s metric=%s %d->%d",
+                beat_id,
+                actor,
+                snapshot.encounter.metric.name,
+                before,
+                snapshot.encounter.metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_applied",
+                    "beat_id": beat_id,
+                    "actor": actor,
+                    "metric_before": before,
+                    "metric_after": snapshot.encounter.metric.current,
+                    "metric_delta": beat_def.metric_delta,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            if beat_def.resolution:
+                resolved_this_turn = True
+                snapshot.encounter.outcome = beat_def.id
+        # Threshold crossing — resolve the encounter.
+        metric = snapshot.encounter.metric
+        hit_high = (
+            metric.threshold_high is not None
+            and metric.current >= metric.threshold_high
+        )
+        hit_low = (
+            metric.threshold_low is not None
+            and metric.current <= metric.threshold_low
+        )
+        if resolved_this_turn or hit_high or hit_low:
+            etype = snapshot.encounter.encounter_type
+            outcome = (
+                snapshot.encounter.outcome
+                or ("threshold_high" if hit_high else "threshold_low" if hit_low else "resolved")
+            )
+            logger.info(
+                "encounter.resolved type=%s outcome=%s final_metric=%d",
+                etype,
+                outcome,
+                metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "resolved",
+                    "confrontation_type": etype,
+                    "outcome": outcome,
+                    "final_metric": metric.current,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            snapshot.encounter = None
 
 
 def _render_url_from_path(image_path: str) -> str:
