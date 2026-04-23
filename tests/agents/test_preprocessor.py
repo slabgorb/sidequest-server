@@ -34,22 +34,12 @@ def make_preprocessed_json(
     you: str = "You draw your sword",
     named: str = "Kael draws their sword",
     intent: str = "draw sword",
-    is_power_grab: bool = False,
-    references_inventory: bool = False,
-    references_npc: bool = False,
-    references_ability: bool = False,
-    references_location: bool = False,
 ) -> str:
     return json.dumps(
         {
             "you": you,
             "named": named,
             "intent": intent,
-            "is_power_grab": is_power_grab,
-            "references_inventory": references_inventory,
-            "references_npc": references_npc,
-            "references_ability": references_ability,
-            "references_location": references_location,
         }
     )
 
@@ -91,11 +81,6 @@ def test_parse_response_direct_json():
             "you": "You draw your sword",
             "named": "Kael draws their sword",
             "intent": "draw sword",
-            "is_power_grab": False,
-            "references_inventory": False,
-            "references_npc": False,
-            "references_ability": False,
-            "references_location": False,
         }
     )
     result = parse_response(json_str)
@@ -118,26 +103,23 @@ def test_parse_response_garbage():
 
 
 def test_parse_response_minimal_fields():
-    """PreprocessedAction should accept minimal JSON (defaults for booleans)."""
+    """PreprocessedAction should accept minimal JSON."""
     payload = json.dumps({"you": "You look", "named": "Kael looks", "intent": "look"})
     result = parse_response(payload)
     assert result is not None
-    assert result.is_power_grab is False
-    assert result.references_inventory is False
+    assert result.you == "You look"
 
 
-def test_parse_response_with_booleans():
+def test_parse_response_with_valid_json():
     payload = make_preprocessed_json(
         you="You wish for gold",
         named="Kael wishes for gold",
         intent="wish for gold",
-        is_power_grab=True,
-        references_location=True,
     )
     result = parse_response(payload)
     assert result is not None
-    assert result.is_power_grab is True
-    assert result.references_location is True
+    assert result.you == "You wish for gold"
+    assert result.intent == "wish for gold"
 
 
 # =========================================================================
@@ -160,17 +142,12 @@ def test_build_prompt_contains_char_name_twice():
     assert prompt.count("Rux") >= 2
 
 
-def test_build_prompt_all_eight_keys_mentioned():
+def test_build_prompt_contains_three_required_keys():
     prompt = build_prompt("I go north", "Alex")
     for key in [
         '"you"',
         '"named"',
         '"intent"',
-        '"is_power_grab"',
-        '"references_inventory"',
-        '"references_npc"',
-        '"references_ability"',
-        '"references_location"',
     ]:
         assert key in prompt, f"Missing key {key} in prompt"
 
@@ -224,42 +201,39 @@ async def test_preprocess_action_output_too_long_raises():
 
 
 @pytest.mark.asyncio
-async def test_preprocess_action_boolean_flags_parsed():
+async def test_preprocess_action_creates_valid_object():
     payload = make_preprocessed_json(
         you="You use your healing potion",
         named="Rux uses their healing potion",
         intent="use healing potion",
-        references_inventory=True,
     )
     client = FixedResponseClient(payload)
     action = await preprocess_action_with_client(client, "use healing potion", "Rux")
-    assert action.references_inventory is True
+    assert action.intent == "use healing potion"
 
 
 @pytest.mark.asyncio
-async def test_preprocess_action_npc_reference_flag():
+async def test_preprocess_action_interprets_action():
     payload = make_preprocessed_json(
         you="You talk to the bartender",
         named="James talks to the bartender",
         intent="talk to bartender",
-        references_npc=True,
     )
     client = FixedResponseClient(payload)
     action = await preprocess_action_with_client(client, "talk to bartender", "James")
-    assert action.references_npc is True
+    assert action.intent == "talk to bartender"
 
 
 @pytest.mark.asyncio
-async def test_preprocess_action_location_reference_flag():
+async def test_preprocess_action_parses_location_intent():
     payload = make_preprocessed_json(
         you="You head to the market",
         named="Kael heads to the market",
         intent="go to market",
-        references_location=True,
     )
     client = FixedResponseClient(payload)
     action = await preprocess_action_with_client(client, "go to market", "Kael")
-    assert action.references_location is True
+    assert action.intent == "go to market"
 
 
 # =========================================================================
@@ -267,13 +241,11 @@ async def test_preprocess_action_location_reference_flag():
 # =========================================================================
 
 
-def test_preprocessed_action_default_booleans():
+def test_preprocessed_action_requires_three_fields():
     action = PreprocessedAction(you="You look", named="Rux looks", intent="look")
-    assert action.is_power_grab is False
-    assert action.references_inventory is False
-    assert action.references_npc is False
-    assert action.references_ability is False
-    assert action.references_location is False
+    assert action.you == "You look"
+    assert action.named == "Rux looks"
+    assert action.intent == "look"
 
 
 def test_preprocessed_action_is_frozen():
