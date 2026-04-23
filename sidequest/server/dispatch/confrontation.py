@@ -5,6 +5,9 @@ confrontation-def resolution and payload construction. Story 3.4.
 """
 from __future__ import annotations
 
+from typing import Any
+
+from sidequest.game.encounter import StructuredEncounter
 from sidequest.genre.models.rules import ConfrontationDef
 
 
@@ -22,3 +25,55 @@ def find_confrontation_def(
         if d.confrontation_type == encounter_type:
             return d
     return None
+
+
+def build_confrontation_payload(
+    *,
+    encounter: StructuredEncounter,
+    cdef: ConfrontationDef,
+    genre_slug: str,
+) -> dict[str, Any]:
+    """Assemble the CONFRONTATION payload the UI overlay consumes.
+
+    Shape fixed by sidequest-ui/src/components/ConfrontationOverlay.tsx:42-58.
+    Encounter mood_override beats the confrontation-def default mood.
+    """
+    mood = encounter.mood_override or cdef.mood
+    return {
+        "type": encounter.encounter_type,
+        "label": cdef.label,
+        "category": cdef.category,
+        "actors": [a.model_dump(mode="json") for a in encounter.actors],
+        "metric": encounter.metric.model_dump(mode="json"),
+        "beats": [b.model_dump(mode="json") for b in cdef.beats],
+        "secondary_stats": (
+            encounter.secondary_stats.model_dump(mode="json")
+            if encounter.secondary_stats is not None else None
+        ),
+        "genre_slug": genre_slug,
+        "mood": mood,
+        "active": not encounter.resolved,
+    }
+
+
+def build_clear_confrontation_payload(
+    *, encounter_type: str, genre_slug: str,
+) -> dict[str, Any]:
+    """Minimal payload that tells the UI to unmount the overlay.
+
+    App.tsx:435 — ``payload.active !== false`` is the dispatch branch; an
+    explicit ``false`` is what clears the overlay. Other fields are
+    required by the TS interface but ignored when active=false.
+    """
+    return {
+        "type": encounter_type,
+        "label": "",
+        "category": "",
+        "actors": [],
+        "metric": {},
+        "beats": [],
+        "secondary_stats": None,
+        "genre_slug": genre_slug,
+        "mood": None,
+        "active": False,
+    }
