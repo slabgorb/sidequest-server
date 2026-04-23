@@ -28,7 +28,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Category / source enums — match Rust string serialization
@@ -81,6 +81,18 @@ class LoreFragment(BaseModel):
     content: str = Field(min_length=1)
     token_estimate: int
     source: str
+
+    @field_validator("content")
+    @classmethod
+    def _content_must_not_be_blank(cls, v: str) -> str:
+        """Pydantic ``min_length=1`` counts characters; a whitespace-only
+        string like ``"   "`` passes that check but would produce a
+        degenerate embedding. Reject those too, at the construction
+        boundary closest to the authoring mistake.
+        """
+        if not v.strip():
+            raise ValueError("content must not be blank or whitespace-only")
+        return v
     turn_created: int | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     # Semantic-search fields populated asynchronously by the embedding
@@ -203,7 +215,7 @@ class LoreStore(BaseModel):
         candidates.sort(key=lambda item: (-item[0], item[1].id))
         return candidates[: max(0, top_k)]
 
-    def requeue_dimension_mismatched(self, current_dim: int) -> list[str]:
+    def requeue_dimension_mismatched(self, current_dim: int) -> int:
         """Flip ``embedding_pending`` back to ``True`` for every fragment
         whose stored embedding dimension differs from ``current_dim``.
 
@@ -214,38 +226,86 @@ class LoreStore(BaseModel):
         this re-queue, ``update_embedding`` permanently clears the
         pending flag — no log, no span attribute, no GM-panel signal.
 
-        Returns the ids that were re-queued so the caller can emit a
-        ``lore.dimension_mismatch_count`` OTEL span attribute. Called
-        from :func:`retrieve_lore_context` before the similarity query;
-        the next post-turn worker pass picks up the re-queued fragments
-        and re-embeds them on the current model.
+        Returns the number of fragments that were re-queued so the
+        caller can emit a ``lore.dimension_mismatch_count`` OTEL span
+        attribute. Called from :func:`retrieve_lore_context` before the
+        similarity query; the next post-turn worker pass picks up the
+        re-queued fragments and re-embeds them on the current model.
+
+        ``current_dim`` must be positive. A zero-or-negative value means
+        the caller got a zero-length embedding from the daemon — a
+        no-op return protects the store from a cascade wipe on a single
+        malformed daemon reply. (DaemonClient.embed should reject zero-
+        length embeddings at the boundary, but this is belt-and-braces.)
         """
-        requeued: list[str] = []
-        for fid, frag in self.fragments.items():
+        if current_dim <= 0:
+            return 0
+        count = 0
+        for frag in self.fragments.values():
             if frag.embedding is None:
                 continue
             if len(frag.embedding) != current_dim:
                 frag.embedding = None
                 frag.embedding_pending = True
                 frag.embedding_retry_count = 0
-                requeued.append(fid)
-        return sorted(requeued)
+                count += 1
+        return count
 
     # ------------------------------------------------------------------
     # Embedding worker write-back
     # ------------------------------------------------------------------
 
-    def update_embedding(self, fragment_id: str, embedding: list[float]) -> None:
+    def update_embedding(
+        self,
+        fragment_id: str,
+        embedding: list[float],
+        *,
+        expected_dim: int | None = None,
+    ) -> bool:
         """Attach an embedding vector to an existing fragment.
 
         Clears ``embedding_pending`` and resets ``embedding_retry_count``.
         Raises ``KeyError`` if the id is unknown — silent no-op on
         missing fragments would hide a genuine bug in the worker.
+
+        ``expected_dim`` defends against the retrieve/worker race where
+        :meth:`requeue_dimension_mismatched` flips a fragment's pending
+        flag back to ``True`` while the worker is mid-embed. When the
+        worker's ``await client.embed()`` resumes, it would otherwise
+        write back the old-dimension vector and clear the pending flag
+        — undoing the re-queue. Passing ``expected_dim`` causes the
+        write-back to be refused when the vector's length does not
+        match the caller's current-model expectation. Returns ``True``
+        on a successful write, ``False`` when the write was refused.
+
+        If ``expected_dim`` is not supplied, the method derives the
+        expectation from any already-embedded fragment in the store
+        (all stored embeddings must share a dimension — if any do not,
+        :meth:`requeue_dimension_mismatched` should be called first).
+        This keeps callers that predate the dim-race fix correct by
+        default: an inconsistent write-back is refused even when the
+        worker did not explicitly track a session-level dim.
         """
+        if expected_dim is None:
+            expected_dim = self._current_embedding_dim()
+        if expected_dim is not None and len(embedding) != expected_dim:
+            return False
         frag = self.fragments[fragment_id]
         frag.embedding = list(embedding)
         frag.embedding_pending = False
         frag.embedding_retry_count = 0
+        return True
+
+    def _current_embedding_dim(self) -> int | None:
+        """The dimension of the first already-embedded fragment, or
+        ``None`` if no fragment has an embedding. Used by
+        :meth:`update_embedding` to refuse cross-dim write-backs when
+        the caller does not explicitly thread ``expected_dim``.
+        """
+        for frag in self.fragments.values():
+            if frag.embedding is not None:
+                return len(frag.embedding)
+        return None
 
     def mark_embedding_failed(self, fragment_id: str) -> int:
         """Increment the retry counter for a fragment whose embed
@@ -288,7 +348,15 @@ class LoreStore(BaseModel):
     def is_empty(self) -> bool:
         return not self.fragments
 
-    def __iter__(self) -> Iterator[LoreFragment]:  # type: ignore[override]
+    def fragments_iter(self) -> Iterator[LoreFragment]:
+        """Iterate the store's fragments in insertion order.
+
+        Prefer this over ``for frag in store`` — Pydantic v1's
+        ``BaseModel.__iter__`` yields ``(field_name, value)`` tuples,
+        so overriding it to yield :class:`LoreFragment` instances is a
+        Liskov violation that requires a ``type: ignore``. Keeping the
+        method under its own name avoids the override entirely.
+        """
         return iter(self.fragments.values())
 
 

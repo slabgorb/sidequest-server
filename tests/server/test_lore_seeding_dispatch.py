@@ -138,7 +138,7 @@ class TestLoreSeedingDispatch:
             # Post-confirmation: lore store has fragments from every
             # chargen scene's choices.
             assert not sd.lore_store.is_empty()
-            for frag in sd.lore_store:
+            for frag in sd.lore_store.fragments_iter():
                 assert frag.source == LoreSource.CharacterCreation
                 assert frag.id.startswith("lore_char_creation_")
                 assert frag.content  # label + ": " + description

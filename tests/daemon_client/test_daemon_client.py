@@ -320,3 +320,114 @@ async def test_client_issues_concurrent_render_and_embed_connections(
     methods = [req["method"] for req in daemon.requests]
     assert "render" in methods
     assert "embed" in methods
+
+
+# ---------------------------------------------------------------------------
+# Round-5: INVALID_RESPONSE runtime validation (Story 37-33 round-5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embed_missing_embedding_key_surfaces_invalid_response(
+    short_sock: Path,
+) -> None:
+    """A malformed reply missing ``embedding`` raises INVALID_RESPONSE, not KeyError."""
+    daemon = _FakeDaemon(reply={"result": {"model": "m", "latency_ms": 1}})
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as exc:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert exc.value.code == "INVALID_RESPONSE"
+    assert "embedding" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_embed_zero_length_embedding_surfaces_invalid_response(
+    short_sock: Path,
+) -> None:
+    """HIGH fix: [] would otherwise propagate to requeue_dimension_mismatched(0)
+    and wipe the entire store. Refuse at the client boundary."""
+    daemon = _FakeDaemon(
+        reply={"result": {"embedding": [], "model": "m", "latency_ms": 1}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as exc:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert exc.value.code == "INVALID_RESPONSE"
+    assert "zero-length" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_embed_non_list_embedding_surfaces_invalid_response(
+    short_sock: Path,
+) -> None:
+    daemon = _FakeDaemon(
+        reply={"result": {"embedding": "oops", "model": "m", "latency_ms": 1}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as exc:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert exc.value.code == "INVALID_RESPONSE"
+
+
+@pytest.mark.asyncio
+async def test_embed_bool_elements_surface_invalid_response(
+    short_sock: Path,
+) -> None:
+    """``bool`` is a subclass of ``int``; a daemon returning ``[True, False]``
+    must not silently pass as a valid 1.0 / 0.0 embedding."""
+    daemon = _FakeDaemon(
+        reply={"result": {"embedding": [True, False, True], "model": "m", "latency_ms": 1}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as exc:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert exc.value.code == "INVALID_RESPONSE"
+    assert "non-numeric" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_embed_wrong_model_type_surfaces_invalid_response(
+    short_sock: Path,
+) -> None:
+    daemon = _FakeDaemon(
+        reply={"result": {"embedding": [0.1], "model": 42, "latency_ms": 1}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as exc:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert exc.value.code == "INVALID_RESPONSE"
+
+
+@pytest.mark.asyncio
+async def test_embed_mixed_int_float_embedding_accepted(short_sock: Path) -> None:
+    """Valid numeric elements (int or float, but not bool) round-trip cleanly."""
+    daemon = _FakeDaemon(
+        reply={"result": {"embedding": [1, 0.5, 0], "model": "m", "latency_ms": 1}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        response = await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert response["embedding"] == [1, 0.5, 0]

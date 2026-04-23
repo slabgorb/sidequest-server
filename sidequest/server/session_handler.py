@@ -427,17 +427,27 @@ class WebSocketSessionHandler:
         """Called on disconnect — persist current state if in Playing."""
         if self._session_data is not None:
             # Cancel any in-flight embed worker first so it cannot write
-            # to an orphaned in-memory lore_store after store.close(). The
-            # worker catches CancelledError implicitly via the coroutine's
-            # normal unwinding; its ``except Exception`` is narrow enough
-            # to let CancelledError propagate.
+            # to an orphaned in-memory lore_store after store.close().
+            # CancelledError is a BaseException in Python 3.8+, so it
+            # escapes every `except Exception` in the worker; we await
+            # and swallow it here so disconnect never raises to the
+            # WebSocket layer. Non-cancel exceptions (a real worker bug
+            # that happened to surface during cancellation) are logged
+            # at warning with exc_info — cleanup still proceeds.
             embed_task = self._session_data.embed_task
             if embed_task is not None and not embed_task.done():
                 embed_task.cancel()
                 try:
                     await embed_task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                except asyncio.CancelledError:
                     pass
+                except Exception as exc:  # noqa: BLE001 — cleanup must proceed
+                    logger.warning(
+                        "session.embed_task_cleanup_error type=%s error=%s",
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
             try:
                 self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
@@ -2113,8 +2123,20 @@ class WebSocketSessionHandler:
         workers from racing at the ``await client.embed()`` yield point
         and double-incrementing the retry counter on the same fragment.
         """
+        tracer = trace.get_tracer("sidequest.server.session_handler")
         previous = sd.embed_task
         if previous is not None and not previous.done():
+            # Emit a span for the skip so the GM panel's OTEL audit trail
+            # shows it alongside the worker's own ``lore_embedding.worker``
+            # span. Watcher event stays as well for the live state_transition
+            # stream.
+            with tracer.start_as_current_span(
+                "lore_embedding.dispatch_skipped"
+            ) as skip_span:
+                skip_span.set_attribute("lore.skip_reason", "worker_still_running")
+                skip_span.set_attribute(
+                    "lore.turn_number", sd.snapshot.turn_manager.interaction
+                )
             _watcher_publish(
                 "state_transition",
                 {

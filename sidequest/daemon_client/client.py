@@ -146,14 +146,35 @@ class DaemonClient:
             raise DaemonRequestError(
                 "INVALID_RESPONSE", f"embed reply missing key {exc}"
             ) from exc
-        if not isinstance(embedding, list) or not all(
-            isinstance(v, (int, float)) for v in embedding
+        if not isinstance(embedding, list):
+            raise DaemonRequestError(
+                "INVALID_RESPONSE",
+                "embed reply 'embedding' is not a list",
+            )
+        if not embedding:
+            # Zero-length embedding would propagate to
+            # LoreStore.requeue_dimension_mismatched(0) and wipe every
+            # stored vector. Refuse at the boundary.
+            raise DaemonRequestError(
+                "INVALID_RESPONSE",
+                "embed reply 'embedding' is zero-length",
+            )
+        # ``bool`` is a subclass of ``int`` in Python; exclude it so a
+        # daemon returning ``[True, False]`` does not silently pass as
+        # a valid embedding of 1.0 / 0.0 floats.
+        if not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool)
+            for v in embedding
         ):
             raise DaemonRequestError(
                 "INVALID_RESPONSE",
-                "embed reply 'embedding' is not a list of numbers",
+                "embed reply 'embedding' contains non-numeric values",
             )
-        if not isinstance(model, str) or not isinstance(latency_ms, int):
+        if (
+            not isinstance(model, str)
+            or not isinstance(latency_ms, int)
+            or isinstance(latency_ms, bool)
+        ):
             raise DaemonRequestError(
                 "INVALID_RESPONSE",
                 "embed reply 'model'/'latency_ms' have wrong types",

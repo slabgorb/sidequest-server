@@ -243,12 +243,14 @@ async def test_worker_respects_max_retries_and_skips_poisoned_fragments() -> Non
 
 
 def test_embed_worker_result_as_dict_shape() -> None:
+    # ``failed`` is a derived @property — callers construct with the
+    # sub-counters and the total must equal their sum.
     r = EmbedWorkerResult(
         embedded=3,
-        failed=2,
         failed_embed_error=1,
         failed_text_too_large=1,
     )
+    assert r.failed == 2
     assert r.as_dict() == {
         "embedded": 3,
         "failed": 2,
@@ -257,6 +259,18 @@ def test_embed_worker_result_as_dict_shape() -> None:
         "skipped_daemon_unavailable": False,
         "skipped_empty_queue": False,
     }
+
+
+def test_embed_worker_result_failed_property_invariant() -> None:
+    """``failed`` is always the sum of the two sub-counters, never drifts."""
+    r = EmbedWorkerResult()
+    assert r.failed == 0
+    r.failed_embed_error = 3
+    assert r.failed == 3
+    r.failed_text_too_large = 2
+    assert r.failed == 5
+    # No independent setter — the sum-of-parts is the single source of truth.
+    assert r.as_dict()["failed"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -405,3 +419,119 @@ async def test_retrieve_returns_none_on_blank_query() -> None:
     section = await retrieve_lore_context(store, "   ", client=client)
     assert section is None
     assert client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Round-5: sub-counter accounting, retrieve INVALID_RESPONSE, dim-race
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_worker_failed_embed_error_counter_matches_daemon_error_path() -> None:
+    """Sub-counter accounting: DaemonRequestError increments failed_embed_error only."""
+    store = LoreStore()
+    store.add(_frag("a", "alpha"))
+    client = _FakeClient(
+        responses={"alpha": DaemonRequestError("EMBED_FAILED", "model offline")}
+    )
+    result = await embed_pending_fragments(store, client=client)
+    assert result.failed == 1
+    assert result.failed_embed_error == 1
+    assert result.failed_text_too_large == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_failed_text_too_large_counter_matches_value_error_path() -> None:
+    """Sub-counter accounting: ValueError increments failed_text_too_large only."""
+    store = LoreStore()
+    store.add(_frag("a", "alpha"))
+    client = _FakeClient(
+        responses={"alpha": ValueError("embed() text exceeds 32768-byte UTF-8 limit")}
+    )
+    result = await embed_pending_fragments(store, client=client)
+    assert result.failed == 1
+    assert result.failed_embed_error == 0
+    assert result.failed_text_too_large == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_mixed_error_types_split_counters_correctly() -> None:
+    """Two distinct error types across the same run produce a consistent total."""
+    store = LoreStore()
+    store.add(_frag("a", "alpha"))
+    store.add(_frag("b", "beta"))
+    client = _FakeClient(
+        responses={
+            "alpha": DaemonRequestError("EMBED_FAILED", "model offline"),
+            "beta": ValueError("too large"),
+        }
+    )
+    result = await embed_pending_fragments(store, client=client)
+    assert result.failed == 2
+    assert result.failed_embed_error == 1
+    assert result.failed_text_too_large == 1
+    # Watcher payload invariant: total always equals sum of parts.
+    payload = result.as_dict()
+    assert payload["failed"] == (
+        payload["failed_embed_error"] + payload["failed_text_too_large"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_returns_none_on_daemon_invalid_response() -> None:
+    """Round-5: INVALID_RESPONSE from client-side validation surfaces as
+    DaemonRequestError and is caught by the (DaemonUnavailableError, DaemonRequestError)
+    handler — no need for a separate (KeyError, TypeError) catch."""
+    store = LoreStore()
+    store.add(_frag("x", "content"))
+    store.update_embedding("x", [1.0, 0.0])
+    client = _FakeClient(
+        responses={
+            "query": DaemonRequestError(
+                "INVALID_RESPONSE", "embed reply 'embedding' is zero-length"
+            )
+        }
+    )
+    section = await retrieve_lore_context(store, "query", client=client)
+    assert section is None
+
+
+@pytest.mark.asyncio
+async def test_worker_refuses_dim_mismatched_writeback() -> None:
+    """Round-5 retrieve/worker race guard: first successful embed pins
+    ``expected_dim``; a subsequent embed returning a different-dim vector
+    is refused (write_back=False) and counted as a daemon error."""
+    store = LoreStore()
+    store.add(_frag("a", "alpha"))
+    store.add(_frag("b", "beta"))
+    client = _FakeClient(
+        responses={
+            # First iteration: 2-d vector — pins expected_dim=2.
+            "alpha": {"embedding": [1.0, 0.0], "model": "m", "latency_ms": 1},
+            # Second iteration: daemon changed to a 3-d model.
+            "beta": {"embedding": [0.1, 0.2, 0.3], "model": "m2", "latency_ms": 2},
+        }
+    )
+    result = await embed_pending_fragments(store, client=client)
+    assert result.embedded == 1
+    assert result.failed_embed_error == 1  # the 3-d write-back was refused
+    assert store.fragments["a"].embedding == [1.0, 0.0]
+    # The mismatched fragment stays pending — the next worker pass will
+    # pick it up with the new expected_dim=3.
+    assert store.fragments["b"].embedding is None
+    assert store.fragments["b"].embedding_pending is True
+
+
+@pytest.mark.asyncio
+async def test_retrieve_emits_dimension_mismatch_count_span_attr() -> None:
+    """Regression: the round-4 fix emits lore.dimension_mismatch_count on retrieve."""
+    store = LoreStore()
+    store.add(_frag("stale", "content"))
+    # Stale 3-d embedding; current model is 2-d.
+    store.update_embedding("stale", [1.0, 0.0, 0.5])
+    client = _FakeClient()  # default returns 2-d [1.0, 0.0]
+    section = await retrieve_lore_context(store, "query", client=client)
+    # The stale fragment got re-queued, so query_by_similarity finds no hits.
+    assert section is None
+    assert store.fragments["stale"].embedding is None
+    assert store.fragments["stale"].embedding_pending is True

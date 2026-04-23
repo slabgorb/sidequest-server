@@ -395,11 +395,27 @@ class TestLoreRagWiring:
                 )
             )
 
+            # Capture every _watcher_publish call the dispatcher fires so
+            # we can assert the double-dispatch-skipped event is actually
+            # emitted (round-5 fix: the skip path gets OTEL visibility).
+            watcher_calls: list[tuple[str, dict[str, Any]]] = []
+
+            def _capture_publish(kind: str, payload: dict[str, Any], **kwargs: Any) -> None:
+                watcher_calls.append((kind, dict(payload)))
+
+            monkeypatch.setattr(
+                "sidequest.server.session_handler._watcher_publish",
+                _capture_publish,
+            )
+
             handler._dispatch_embed_worker(sd)  # type: ignore[attr-defined]
             first_task = sd.embed_task
             assert first_task is not None
-            # Yield so the worker enters ``await blocker.wait()`` and is
-            # observably not-done when we re-dispatch.
+            # Cooperative yield: give the event loop enough ticks to let
+            # the worker enter ``await blocker.wait()`` before we re-
+            # dispatch. 5 ticks exceeds the worker's current yield depth
+            # from task creation to the first blocking await; bump if a
+            # future worker refactor adds intermediate awaits.
             for _ in range(5):
                 await asyncio.sleep(0)
             assert not first_task.done()
@@ -408,6 +424,19 @@ class TestLoreRagWiring:
             # skipped so ``sd.embed_task`` keeps pointing at the live task.
             handler._dispatch_embed_worker(sd)  # type: ignore[attr-defined]
             assert sd.embed_task is first_task
+
+            # The skip path must emit a watcher event so the GM panel
+            # state_transition stream sees the backpressure signal.
+            skip_events = [
+                p for kind, p in watcher_calls
+                if kind == "state_transition"
+                and p.get("op") == "skipped"
+                and p.get("reason") == "worker_still_running"
+            ]
+            assert skip_events, (
+                "double-dispatch skip must publish a state_transition watcher "
+                f"event; saw: {watcher_calls}"
+            )
 
             # Unblock and drain.
             blocker.set()
