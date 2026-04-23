@@ -40,6 +40,9 @@ SELF_AUTHORED_KINDS: frozenset[str] = frozenset({
     "CHARACTER_CREATION",
 })
 
+# Kinds never routed to non-GM players. GM gets them via the GM invariant.
+GM_ONLY_KINDS: frozenset[str] = frozenset({"THINKING"})
+
 
 @dataclass(frozen=True)
 class InvariantOutcome:
@@ -89,6 +92,13 @@ class CoreInvariantStage:
                     include=included,
                     payload_json=envelope.payload_json if included else "",
                 ),
+            )
+
+        # 4. GM-only kinds: never route to players.
+        if envelope.kind in GM_ONLY_KINDS:
+            return InvariantOutcome(
+                terminal=True,
+                decision=FilterDecision(include=False, payload_json=""),
             )
 
         return InvariantOutcome(terminal=False, decision=None)

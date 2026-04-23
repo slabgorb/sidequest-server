@@ -89,3 +89,11 @@ def test_self_authored_missing_author_field_omits_for_all_non_gm() -> None:
     outcome = stage.evaluate(envelope=env, view=_view(), player_id="alice")
     assert outcome.terminal is True
     assert outcome.decision.include is False
+
+
+def test_thinking_is_gm_only_never_routed_to_players() -> None:
+    stage = CoreInvariantStage()
+    env = MessageEnvelope(kind="THINKING", payload_json='{"thought":"hmm"}', origin_seq=8)
+    outcome = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert outcome.terminal is True
+    assert outcome.decision.include is False
