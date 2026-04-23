@@ -19,7 +19,7 @@ def test_instantiate_combat_creates_encounter(cac_pack) -> None:
     snap = GameSnapshot(genre="caverns_and_claudes")
     enc = instantiate_encounter_from_trigger(
         snapshot=snap, pack=cac_pack, encounter_type="combat",
-        combatants=["Rux", "Goblin"], hp=10,
+        combatants=["Rux", "Goblin"], hp=10, genre_slug="caverns_and_claudes",
     )
     assert enc is not None
     assert snap.encounter is enc
@@ -41,7 +41,7 @@ def test_instantiate_unknown_type_raises(cac_pack) -> None:
     with pytest.raises(ValueError, match="unknown encounter_type"):
         instantiate_encounter_from_trigger(
             snapshot=snap, pack=cac_pack, encounter_type="spelling_bee",
-            combatants=["Rux"], hp=10,
+            combatants=["Rux"], hp=10, genre_slug="caverns_and_claudes",
         )
 
 
@@ -56,7 +56,7 @@ def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     snap.encounter = prior
     enc = instantiate_encounter_from_trigger(
         snapshot=snap, pack=cac_pack, encounter_type="combat",
-        combatants=["Rux"], hp=10,
+        combatants=["Rux"], hp=10, genre_slug="caverns_and_claudes",
     )
     assert snap.encounter is enc
     assert enc is not prior
@@ -72,7 +72,7 @@ def test_instantiate_active_encounter_is_noop(cac_pack) -> None:
     snap.encounter = active
     result = instantiate_encounter_from_trigger(
         snapshot=snap, pack=cac_pack, encounter_type="combat",
-        combatants=["Rux"], hp=10,
+        combatants=["Rux"], hp=10, genre_slug="caverns_and_claudes",
     )
     assert result is None
     assert snap.encounter is active

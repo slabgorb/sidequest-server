@@ -49,6 +49,7 @@ def instantiate_encounter_from_trigger(
     encounter_type: str,
     combatants: list[str],
     hp: int,
+    genre_slug: str,
 ) -> StructuredEncounter | None:
     """Create a StructuredEncounter when the narrator emits ``confrontation=T``.
 
@@ -63,8 +64,9 @@ def instantiate_encounter_from_trigger(
     combat packs declare their own metric (e.g. caverns_and_claudes uses
     "momentum" bidirectional, not generic HP).
 
-    Note: ``GenrePack`` has no ``.slug`` attribute; the genre identifier is
-    taken from ``snapshot.genre_slug`` for OTEL emission.
+    Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
+    passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
+    ``snapshot.genre_slug``).
     """
     current = snapshot.encounter
     if current is not None and not current.resolved:
@@ -77,8 +79,6 @@ def instantiate_encounter_from_trigger(
             f"unknown encounter_type {encounter_type!r} — "
             f"not in pack confrontations"
         )
-
-    genre_slug = snapshot.genre_slug
 
     with encounter_confrontation_initiated_span(
         encounter_type=encounter_type,
