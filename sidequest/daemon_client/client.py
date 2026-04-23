@@ -21,7 +21,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from opentelemetry import trace
 
@@ -31,6 +31,27 @@ tracer = trace.get_tracer("sidequest.daemon_client")
 DEFAULT_SOCKET_PATH = Path("/tmp/sidequest-renderer.sock")
 DEFAULT_TIMEOUT_SECONDS = 180.0
 """Z-Image renders take 10-60s on M-series; 3 min is a generous cap."""
+
+MAX_EMBED_BYTES = 32_768
+"""Upper bound on embed() text payload (UTF-8 bytes).
+
+SentenceTransformer MiniLM caps input at 256 tokens (~1 KB of English); 32 KB
+is a generous ceiling that keeps a buggy caller from blocking the asyncio
+event loop inside ``json.dumps`` / ``writer.write`` while still accommodating
+any realistic lore fragment."""
+
+
+class EmbedResponse(TypedDict):
+    """Shape of a successful daemon embed reply.
+
+    The daemon returns this dict verbatim at the ``result`` key of the
+    JSON-RPC envelope. Keeping it typed (rather than ``dict[str, Any]``)
+    lets mypy catch daemon-side schema drift at the client call site.
+    """
+
+    embedding: list[float]
+    model: str
+    latency_ms: int
 
 
 class DaemonClientError(Exception):
@@ -82,31 +103,44 @@ class DaemonClient:
         """
         return await self._call("render", params)
 
-    async def embed(self, text: str) -> dict[str, Any]:
-        """Send an embed request and return the result dict.
+    async def embed(self, text: str) -> EmbedResponse:
+        """Send an embed request and return the daemon's reply dict.
 
-        The daemon dispatches embeds on ``embed_lock`` (story 37-23), which
-        runs independently from the MPS-bound render lock. A slow 60s Flux
-        render no longer serializes a 10ms sentence embedding behind it, so
-        callers can await ``embed()`` concurrently with render requests.
+        Each call opens its own socket connection, so callers can await
+        ``embed()`` concurrently with ``render()`` without client-side
+        serialization. Daemon-side scheduling of embed vs. render is
+        daemon-internal (see sidequest-daemon, story 37-23) — the client
+        does not model or guarantee that concurrency.
 
-        Returns a dict with ``embedding`` (``list[float]``), ``model``
-        (``str``), and ``latency_ms`` (``int``). Empty ``text`` is rejected
-        by the daemon with ``INVALID_REQUEST``.
-
+        :raises ValueError: ``text`` exceeds ``MAX_EMBED_BYTES`` (UTF-8).
         :raises DaemonUnavailableError: socket missing, connection refused,
             or response timed out.
         :raises DaemonRequestError: daemon returned ``{"error": {...}}``
-            (e.g. ``EMBED_FAILED``, ``INVALID_REQUEST``).
+            (e.g. ``EMBED_FAILED``; empty ``text`` surfaces here as
+            ``INVALID_REQUEST``).
         """
-        return await self._call("embed", {"text": text})
+        if len(text.encode("utf-8")) > MAX_EMBED_BYTES:
+            raise ValueError(
+                f"embed() text exceeds {MAX_EMBED_BYTES}-byte UTF-8 limit"
+            )
+        result = await self._call("embed", {"text": text})
+        return EmbedResponse(
+            embedding=result["embedding"],
+            model=result["model"],
+            latency_ms=result["latency_ms"],
+        )
 
     async def _call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = uuid.uuid4().hex[:12]
         with tracer.start_as_current_span("daemon_client.request") as span:
             span.set_attribute("daemon.method", method)
             span.set_attribute("daemon.request_id", request_id)
-            span.set_attribute("daemon.tier", str(params.get("tier", "")))
+            if "tier" in params:
+                span.set_attribute("daemon.tier", str(params["tier"]))
+            if method == "embed":
+                span.set_attribute(
+                    "daemon.text_len", len(str(params.get("text", "")))
+                )
             if not self.is_available():
                 span.set_attribute("daemon.outcome", "socket_missing")
                 raise DaemonUnavailableError(

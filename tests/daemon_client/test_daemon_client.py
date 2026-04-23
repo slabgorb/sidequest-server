@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from sidequest.daemon_client import (
+    MAX_EMBED_BYTES,
     DaemonClient,
     DaemonRequestError,
     DaemonUnavailableError,
@@ -53,12 +54,23 @@ class _FakeDaemon:
         self.delays_by_method = delays_by_method or {}
         self.crash = crash
         self.requests: list[dict[str, Any]] = []
+        # Signals fired when the handler first receives a request for the
+        # named method, before any configured delay is applied. Tests use
+        # these to gate follow-on concurrent requests on "the slow handler
+        # is actually running" rather than guessing with a wall-clock sleep.
+        self.method_entered: dict[str, asyncio.Event] = {}
         self._server: asyncio.AbstractServer | None = None
         self._path: Path | None = None
 
     async def start(self, path: Path) -> None:
         self._path = path
         self._server = await asyncio.start_unix_server(self._handle, path=str(path))
+
+    def signal_for(self, method: str) -> asyncio.Event:
+        """Return (lazily creating) the Event fired when `method` is handled."""
+        if method not in self.method_entered:
+            self.method_entered[method] = asyncio.Event()
+        return self.method_entered[method]
 
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -73,8 +85,10 @@ class _FakeDaemon:
                 writer.close()
                 return
             method = req.get("method", "")
+            if method in self.method_entered:
+                self.method_entered[method].set()
             delay = self.delays_by_method.get(method)
-            if delay:
+            if delay is not None:
                 await asyncio.sleep(delay)
             reply_body = self.replies_by_method.get(method, self.reply)
             reply = {"id": req.get("id"), **reply_body}
@@ -211,18 +225,56 @@ async def test_embed_daemon_error_surfaces_structured_exception(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_render_and_embed_do_not_block_each_other(
+async def test_embed_empty_text_surfaces_invalid_request(short_sock: Path) -> None:
+    """The daemon rejects empty text with INVALID_REQUEST; the client must
+    surface that as a DaemonRequestError with the same code rather than
+    swallowing it or returning a default."""
+    daemon = _FakeDaemon(
+        reply={"error": {"code": "INVALID_REQUEST", "message": "empty text"}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as excinfo:
+            await client.embed("")
+    finally:
+        await daemon.stop()
+    assert excinfo.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_embed_rejects_oversized_text_before_network_call(
     short_sock: Path,
 ) -> None:
-    """Story 37-33 diagnostic.
+    """The client enforces MAX_EMBED_BYTES locally so a runaway caller can't
+    block the event loop on json.dumps or balloon the daemon's readline
+    buffer. The daemon is never contacted — the socket path doesn't even
+    need to exist for this guard to fire."""
+    client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+    oversized = "a" * (MAX_EMBED_BYTES + 1)
+    with pytest.raises(ValueError, match="UTF-8 limit"):
+        await client.embed(oversized)
 
-    Story 37-23 split the daemon's render_lock and embed_lock so an embed
-    request (~10ms on CPU) no longer serializes behind a slow render
-    (~5–60s on MPS). This asserts the client exposes that independence
-    end-to-end: a slow render in flight must not stall a concurrent
-    embed call.
+
+@pytest.mark.asyncio
+async def test_client_issues_concurrent_render_and_embed_connections(
+    short_sock: Path,
+) -> None:
+    """Verifies the *client-side* concurrency property only.
+
+    A slow render in flight must not stall a concurrent embed call at
+    ``DaemonClient`` itself — i.e. the client opens an independent socket
+    connection per request rather than serializing calls through a shared
+    resource.
+
+    Intentionally does **not** verify daemon-side lock behavior. The fake
+    daemon used here (_FakeDaemon) processes each connection in its own
+    coroutine with no shared lock, so it cannot model the render_lock /
+    embed_lock split introduced by story 37-23. True end-to-end 37-23
+    verification requires an integration test against a live sidequest
+    daemon and is tracked as a follow-up delivery finding.
     """
-    slow_render_delay = 0.25
+    slow_render_delay = 2.0
     daemon = _FakeDaemon(
         replies_by_method={
             "render": {"result": {"image_url": "/tmp/x.png"}},
@@ -236,31 +288,34 @@ async def test_concurrent_render_and_embed_do_not_block_each_other(
         },
         delays_by_method={"render": slow_render_delay},
     )
+    render_started = daemon.signal_for("render")
     await daemon.start(short_sock)
     try:
-        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
-        loop = asyncio.get_running_loop()
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=5.0)
         render_task = asyncio.create_task(
             client.render({"tier": "scene_illustration", "subject": "x"})
         )
-        # Let the slow render get into flight before firing embed so the
-        # test exercises the concurrent case, not a serial one.
-        await asyncio.sleep(0.02)
-        embed_start = loop.time()
+        # Wait for the fake daemon to confirm the render handler is running
+        # before firing embed. This replaces a wall-clock guess with a real
+        # synchronisation point: we know render is genuinely in flight when
+        # the event fires.
+        await asyncio.wait_for(render_started.wait(), timeout=2.0)
+        embed_start = time.monotonic()
         embed_result = await client.embed("short fragment")
-        embed_elapsed = loop.time() - embed_start
+        embed_elapsed = time.monotonic() - embed_start
         render_result = await render_task
     finally:
         await daemon.stop()
 
     assert embed_result["embedding"] == [0.4, 0.5, 0.6]
     assert render_result["image_url"] == "/tmp/x.png"
-    # Embed must finish well before the render delay — the whole point of
-    # the 37-23 lock split. Generous margin for CI noise; the real signal
-    # is that embed isn't gated on slow_render_delay.
-    assert embed_elapsed < slow_render_delay, (
-        f"embed took {embed_elapsed:.3f}s — should be independent of the "
-        f"{slow_render_delay}s render in flight"
+    # With a 2s render delay, an embed that completes in anything under
+    # ~1s proves the client is not serializing behind render. The margin
+    # is generous so scheduler jitter on loaded CI does not cause spurious
+    # failures.
+    assert embed_elapsed < slow_render_delay / 2, (
+        f"embed took {embed_elapsed:.3f}s — client appears to be serializing "
+        f"behind the {slow_render_delay}s render in flight"
     )
     methods = [req["method"] for req in daemon.requests]
     assert "render" in methods
