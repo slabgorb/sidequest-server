@@ -29,15 +29,27 @@ if TYPE_CHECKING:
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.daemon_client import (
+    DaemonClient,
+    DaemonRequestError,
+    DaemonUnavailableError,
+    render_enabled,
+)
 from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
     CharacterBuilder,
 )
 from sidequest.game.character import Character
+from sidequest.game.event_log import EventLog
+from sidequest.game.lore_embedding import (
+    embed_pending_fragments,
+    retrieve_lore_context,
+)
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -55,8 +67,6 @@ from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
-from sidequest.game.event_log import EventLog
-from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
@@ -92,24 +102,18 @@ from sidequest.protocol.models import (
     PartyMember,
 )
 from sidequest.protocol.types import NonBlankString
-from sidequest.daemon_client import (
-    DaemonClient,
-    DaemonRequestError,
-    DaemonUnavailableError,
-    render_enabled,
-)
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
-from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 from sidequest.telemetry.spans import (
     SPAN_NPC_AUTO_REGISTERED,
     SPAN_NPC_REINVENTED,
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +220,15 @@ class _SessionData:
     # MP-01 Task 4: slug-based connect fields. Set when connecting via
     # game_slug rather than the legacy genre+world path.
     game_slug: str | None = None
-    mode: "GameMode | None" = None
+    mode: GameMode | None = None
+    # Lore embed worker lifecycle (Story 37-33 round-trip #4). A live
+    # reference to the most recent background embed task so cleanup() can
+    # cancel it before the SQLite store closes and so _dispatch_embed_worker
+    # can skip dispatch while a previous worker is still running. Both
+    # guards prevent the fire-and-forget task from writing to an orphaned
+    # in-memory lore_store after disconnect and from racing a sibling worker
+    # at the ``await client.embed()`` yield point on rapid successive turns.
+    embed_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -255,10 +267,10 @@ class WebSocketSessionHandler:
         # being driven outside that lifecycle (e.g. unit tests that exercise
         # non-slug-connect code paths). The slug-connect branch rejects this
         # loudly rather than silently skipping room wiring.
-        self._room_registry: "RoomRegistry | None" = None
+        self._room_registry: RoomRegistry | None = None
         self._socket_id: str | None = None
-        self._out_queue: "asyncio.Queue[object] | None" = None
-        self._room: "SessionRoom | None" = None
+        self._out_queue: asyncio.Queue[object] | None = None
+        self._room: SessionRoom | None = None
         # EventLog + projection filter are bound in the slug-connect branch.
         # The legacy genre/world connect path leaves them None; _emit_event
         # falls back to a plain message without seq in that case. This is a
@@ -273,9 +285,9 @@ class WebSocketSessionHandler:
     def attach_room_context(
         self,
         *,
-        registry: "RoomRegistry",
+        registry: RoomRegistry,
         socket_id: str,
-        out_queue: "asyncio.Queue[object]",
+        out_queue: asyncio.Queue[object],
     ) -> None:
         """Attach the process-wide RoomRegistry, socket_id, and per-socket outbound queue.
 
@@ -290,7 +302,7 @@ class WebSocketSessionHandler:
         self._socket_id = socket_id
         self._out_queue = out_queue
 
-    def current_room(self) -> "SessionRoom | None":
+    def current_room(self) -> SessionRoom | None:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
@@ -414,6 +426,28 @@ class WebSocketSessionHandler:
     async def cleanup(self) -> None:
         """Called on disconnect — persist current state if in Playing."""
         if self._session_data is not None:
+            # Cancel any in-flight embed worker first so it cannot write
+            # to an orphaned in-memory lore_store after store.close().
+            # CancelledError is a BaseException in Python 3.8+, so it
+            # escapes every `except Exception` in the worker; we await
+            # and swallow it here so disconnect never raises to the
+            # WebSocket layer. Non-cancel exceptions (a real worker bug
+            # that happened to surface during cancellation) are logged
+            # at warning with exc_info — cleanup still proceeds.
+            embed_task = self._session_data.embed_task
+            if embed_task is not None and not embed_task.done():
+                embed_task.cancel()
+                try:
+                    await embed_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 — cleanup must proceed
+                    logger.warning(
+                        "session.embed_task_cleanup_error type=%s error=%s",
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
             try:
                 self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
@@ -1628,7 +1662,8 @@ class WebSocketSessionHandler:
             self._state = _State.Playing
 
         sd = self._session_data
-        turn_context = _build_turn_context(sd)
+        lore_context = await self._retrieve_lore_for_turn(sd, action)
+        turn_context = _build_turn_context(sd, lore_context=lore_context)
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
@@ -1684,6 +1719,13 @@ class WebSocketSessionHandler:
             )
         except Exception as exc:
             logger.error("session.persist_failed error=%s", exc)
+
+        # Story 37-33: embed newly-seeded / pending lore fragments in the
+        # background so the *next* turn's RAG retrieval can find them.
+        # Spawns a fire-and-forget task — the narration turn returns to
+        # the player immediately; embeds populate during the human's
+        # reading time.
+        self._dispatch_embed_worker(sd)
 
         narration_text = result.narration or "(The world holds its breath...)"
         try:
@@ -1876,8 +1918,11 @@ class WebSocketSessionHandler:
         action = sd.opening_seed or "I look around and take in my surroundings."
         source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
 
+        lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(
-            sd, opening_directive=sd.opening_directive
+            sd,
+            opening_directive=sd.opening_directive,
+            lore_context=lore_context,
         )
 
         span.add_event(
@@ -2022,12 +2067,134 @@ class WebSocketSessionHandler:
             player_id=player_id,
         )
 
+    # ------------------------------------------------------------------
+    # Lore embedding — RAG retrieval (pre-turn) + worker dispatch (post-turn)
+    # ------------------------------------------------------------------
+
+    async def _retrieve_lore_for_turn(
+        self, sd: _SessionData, action: str
+    ) -> str | None:
+        """Fetch the pre-turn lore block via semantic search.
+
+        Always returns ``None`` on empty stores, missing daemons, or
+        embed failures — the narrator will run without RAG injection,
+        which is strictly better than crashing the turn. Expected failure
+        modes (empty store, daemon unavailable, embed error, query too
+        large) are logged inside :func:`retrieve_lore_context` and surface
+        their own OTEL span attribute. The blanket ``except Exception``
+        below exists precisely for paths those guards do not cover (e.g.
+        a malformed daemon reply that raises ``KeyError`` from
+        ``EmbedResponse`` construction) so a buggy codepath never crashes
+        the turn.
+        """
+        try:
+            return await retrieve_lore_context(sd.lore_store, action)
+        except Exception as exc:  # noqa: BLE001 — RAG must never crash a turn
+            logger.warning(
+                "lore_retrieval.unexpected_exception action_len=%d error=%s",
+                len(action),
+                exc,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_retrieval",
+                    "op": "failed",
+                    "reason": "unexpected_exception",
+                    "error": type(exc).__name__,
+                },
+                component="lore",
+                severity="error",
+            )
+            return None
+
+    def _dispatch_embed_worker(self, sd: _SessionData) -> None:
+        """Spawn a background embed worker for any newly-added lore.
+
+        Fire-and-forget, but lifecycle-tracked. The worker itself checks
+        :meth:`DaemonClient.is_available` before opening any connection
+        and returns early with ``skipped_daemon_unavailable=True`` when
+        the sidecar is absent — matching the render-dispatch graceful
+        degradation pattern.
+
+        Double-dispatch gate: if a previous worker for this session is
+        still running, skip this turn's dispatch. The next turn will pick
+        up the remaining pending fragments. This prevents two concurrent
+        workers from racing at the ``await client.embed()`` yield point
+        and double-incrementing the retry counter on the same fragment.
+        """
+        tracer = trace.get_tracer("sidequest.server.session_handler")
+        previous = sd.embed_task
+        if previous is not None and not previous.done():
+            # Emit a span for the skip so the GM panel's OTEL audit trail
+            # shows it alongside the worker's own ``lore_embedding.worker``
+            # span. Watcher event stays as well for the live state_transition
+            # stream.
+            with tracer.start_as_current_span(
+                "lore_embedding.dispatch_skipped"
+            ) as skip_span:
+                skip_span.set_attribute("lore.skip_reason", "worker_still_running")
+                skip_span.set_attribute(
+                    "lore.turn_number", sd.snapshot.turn_manager.interaction
+                )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_embedding",
+                    "op": "skipped",
+                    "reason": "worker_still_running",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="lore",
+            )
+            return
+        pending = sd.lore_store.pending_embedding_ids(max_retries=3)
+        if not pending:
+            return
+        turn_number = sd.snapshot.turn_manager.interaction
+        sd.embed_task = asyncio.create_task(
+            self._run_embed_worker(sd, len(pending), turn_number)
+        )
+
+    async def _run_embed_worker(
+        self, sd: _SessionData, pending_count: int, turn_number: int
+    ) -> None:
+        """Background embed worker — never raises, always emits telemetry."""
+        try:
+            result = await embed_pending_fragments(sd.lore_store)
+        except Exception as exc:  # noqa: BLE001 — worker cannot crash the loop
+            logger.exception("lore_embedding.worker_exception")
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_embedding",
+                    "op": "failed",
+                    "reason": "exception",
+                    "error": type(exc).__name__,
+                    "turn_number": turn_number,
+                },
+                component="lore",
+                severity="error",
+            )
+            return
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "lore_embedding",
+                "op": "completed",
+                "pending_at_dispatch": pending_count,
+                "turn_number": turn_number,
+                **result.as_dict(),
+            },
+            component="lore",
+        )
+
     async def _run_render(
         self,
         client: DaemonClient,
         params: dict[str, object],
         render_id: str,
-        out_queue: "asyncio.Queue[object]",
+        out_queue: asyncio.Queue[object],
         player_id: str,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
@@ -2223,14 +2390,20 @@ class WebSocketSessionHandler:
 
 
 def _build_turn_context(
-    sd: _SessionData, *, opening_directive: str | None = None
+    sd: _SessionData,
+    *,
+    opening_directive: str | None = None,
+    lore_context: str | None = None,
 ) -> TurnContext:
     """Assemble the :class:`TurnContext` for a single narration turn.
 
     Shared by :meth:`_handle_player_action` and the opening-turn
     bootstrap (Slice H). ``opening_directive`` is consumed by the
     narrator on turn 0 only — the caller is responsible for clearing
-    the session-level directive after the turn runs.
+    the session-level directive after the turn runs. ``lore_context``
+    (story 37-33) is the pre-rendered ``<lore>`` block from
+    :func:`sidequest.game.lore_embedding.retrieve_lore_context`;
+    ``None`` means no lore section is registered on this turn.
     """
     snapshot = sd.snapshot
     char_name = (
@@ -2270,6 +2443,7 @@ def _build_turn_context(
         world_context=sd.world_context,
         confrontation_def=confrontation_def,
         encounter_state=encounter_state,
+        lore_context=lore_context,
     )
 
 

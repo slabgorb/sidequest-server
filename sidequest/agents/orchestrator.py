@@ -340,6 +340,16 @@ class TurnContext:
     confrontation_def: object | None = None
     encounter_state: object | None = None
 
+    # Retrieved lore fragments for the current turn (Valley zone, Story
+    # 37-33). Pre-rendered by the session handler via
+    # :func:`sidequest.game.lore_embedding.retrieve_lore_context` before
+    # the turn fires. ``None`` means no lore section is registered —
+    # keeps the prompt zone-clean when the daemon is unavailable or the
+    # store is empty. The retrieval helper never returns an empty string
+    # (all non-producing paths return ``None``; the producing path
+    # returns a non-empty ``<lore>`` block).
+    lore_context: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -1036,6 +1046,22 @@ class Orchestrator:
                 PromptSection.new(
                     "world_context",
                     context.world_context.lstrip("\n"),
+                    AttentionZone.Valley,
+                    SectionCategory.State,
+                ),
+            )
+
+        # Retrieved lore (Valley zone) — Story 37-33. Semantic-search
+        # results from the player's action embedded against the lore
+        # store. Only registered when a non-empty block was produced;
+        # ``None`` means the daemon was unavailable or no fragments
+        # cleared the similarity floor, and the prompt stays quiet.
+        if context.lore_context:
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "retrieved_lore",
+                    context.lore_context,
                     AttentionZone.Valley,
                     SectionCategory.State,
                 ),
