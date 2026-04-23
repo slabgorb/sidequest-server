@@ -317,3 +317,58 @@ async def test_full_turn_absence_path_injects_reflect_absence_directives(session
     # and "the empty room answering back — the absence itself is the scene".
     assert "follower" in prompt_text.lower()
     assert "empty" in prompt_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — degraded decomposer (client exception) does not block the turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_turn_decomposer_timeout_narrator_still_runs(session_fixture):
+    """A TimeoutError inside LocalDM.decompose falls back to a degraded
+    package; the narrator runs anyway and the turn completes.
+
+    Extra check: the TurnContext observed by the narrator must carry a
+    degraded DispatchPackage with degraded_reason starting with
+    ``client_exception:`` (LocalDM's canonical exception-path reason)."""
+    sd, handler = session_fixture
+    _install_real_orchestrator(sd)
+
+    from sidequest.agents.claude_client import ClaudeResponse
+
+    sd.local_dm._client = AsyncMock()
+    sd.local_dm._client.send_with_session = AsyncMock(side_effect=TimeoutError("Haiku slow"))
+
+    narrator_ran = False
+    captured: dict = {}
+
+    orig_build = sd.orchestrator.build_narrator_prompt
+
+    async def spying_build(action, context, *, tier):
+        # Snapshot the DispatchPackage reaching the narrator prompt builder —
+        # this is the real wiring the handler must still populate even when
+        # the decomposer client blew up.
+        captured["dispatch_package"] = context.dispatch_package
+        return await orig_build(action, context, tier=tier)
+
+    sd.orchestrator.build_narrator_prompt = spying_build
+
+    async def fake_narrator_call(*args, **kwargs):
+        nonlocal narrator_ran
+        narrator_ran = True
+        return ClaudeResponse(text='{"narration": "ok"}', session_id="n")
+
+    sd.orchestrator._client = AsyncMock()
+    sd.orchestrator._client.send_with_session = AsyncMock(side_effect=fake_narrator_call)
+
+    await handler._execute_narration_turn(sd, "look around", _build_turn_context_for_test(sd))
+
+    assert narrator_ran is True, "narrator must still run when decomposer times out"
+
+    pkg = captured.get("dispatch_package")
+    assert pkg is not None, "TurnContext.dispatch_package must be set even on decomposer timeout"
+    assert pkg.degraded is True, f"expected degraded=True, got {pkg.degraded!r}"
+    assert "client_exception" in (pkg.degraded_reason or ""), (
+        f"expected 'client_exception' in degraded_reason, got: {pkg.degraded_reason!r}"
+    )
