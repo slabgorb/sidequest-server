@@ -92,6 +92,7 @@ from sidequest.server.dispatch.chargen_summary import render_confirmation_summar
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 from sidequest.telemetry.spans import (
     SPAN_NPC_AUTO_REGISTERED,
     SPAN_NPC_REINVENTED,
@@ -821,6 +822,27 @@ class WebSocketSessionHandler:
                 player_name,
                 snapshot.turn_manager.interaction,
             )
+            # Snapshot the resumed session so the dashboard State tab and
+            # Subsystems "session" component light up on reconnect without
+            # waiting for the next narration turn.
+            _watcher_publish(
+                "game_state_snapshot",
+                {
+                    "reason": "resume",
+                    "genre_slug": genre_slug,
+                    "world_slug": world_slug,
+                    "player_name": player_name,
+                    "player_id": player_id,
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "current_location": snapshot.location or "",
+                    "discovered_regions": list(snapshot.discovered_regions),
+                    "npc_registry_count": len(snapshot.npc_registry),
+                    "quest_log_count": len(snapshot.quest_log),
+                    "lore_established_count": len(snapshot.lore_established),
+                    "character_count": len(snapshot.characters),
+                },
+                component="session",
+            )
             # Also refresh PARTY_STATUS so the resumed client's header /
             # sheet / location update from the saved snapshot. Without
             # this the UI has no character data until the next narration
@@ -1347,6 +1369,19 @@ class WebSocketSessionHandler:
             lore_added,
             len(sd.lore_store),
         )
+        _watcher_publish(
+            "lore_retrieval",
+            {
+                "reason": "character_creation_seed",
+                "fragments_added": lore_added,
+                "total_fragments": len(sd.lore_store),
+                "total_tokens": sd.lore_store.total_tokens(),
+                "genre_slug": sd.genre_slug,
+                "world_slug": sd.world_slug,
+                "player_id": player_id,
+            },
+            component="rag",
+        )
 
         # NPC registry reset (Story 2.3 Slice G). A fresh character
         # entering the world must not inherit chargen-tier NPC name
@@ -1668,6 +1703,17 @@ class WebSocketSessionHandler:
             len(forwarded_footnotes),
             sd.player_name,
         )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "footnotes",
+                "count": len(forwarded_footnotes),
+                "player_id": sd.player_id,
+                "turn_number": snapshot.turn_manager.interaction,
+                "summaries": [fn.summary for fn in forwarded_footnotes][:10],
+            },
+            component="footnotes",
+        )
         narration_payload = NarrationPayload(
             text=narration_nbs,
             state_delta=None,
@@ -1702,10 +1748,83 @@ class WebSocketSessionHandler:
                     snapshot.location or "",
                     snapshot.turn_manager.interaction,
                 )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "party_status",
+                        "reason": "turn_end",
+                        "location": snapshot.location or "",
+                        "turn_number": snapshot.turn_manager.interaction,
+                        "player_id": sd.player_id,
+                    },
+                    component="party_status",
+                )
             except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
                 logger.warning(
                     "state.party_status_refresh_failed error=%s", exc
                 )
+
+        # Semantic watcher event — `turn_complete` is the highest-leverage
+        # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
+        # turn-buckets, Timing p95, and the Turn counter all at once.
+        # Field shape mirrors `TurnCompleteFields` in
+        # `sidequest-ui/src/types/watcher.ts`.
+        try:
+            patches: list[dict[str, object]] = []
+            if result.location:
+                patches.append({"patch_type": "location", "fields_changed": ["location"]})
+            if result.quest_updates:
+                patches.append(
+                    {"patch_type": "quest", "fields_changed": list(result.quest_updates)}
+                )
+            if result.lore_established:
+                patches.append({"patch_type": "lore", "fields_changed": ["lore_established"]})
+            if result.npcs_present:
+                patches.append(
+                    {
+                        "patch_type": "npc_registry",
+                        "fields_changed": [n.name for n in result.npcs_present],
+                    }
+                )
+            if result.items_gained or result.items_lost:
+                patches.append({"patch_type": "inventory", "fields_changed": []})
+
+            beats_fired: list[dict[str, object]] = []
+            for beat in result.beat_selections or []:
+                beats_fired.append(
+                    {
+                        "trope": getattr(beat, "trope_id", None)
+                        or getattr(beat, "beat_id", None)
+                        or "unknown",
+                        "threshold": getattr(beat, "threshold", None),
+                    }
+                )
+
+            _watcher_publish(
+                "turn_complete",
+                {
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "classified_intent": result.classified_intent,
+                    "agent_name": result.agent_name,
+                    "agent_duration_ms": result.agent_duration_ms,
+                    "total_duration_ms": result.agent_duration_ms,
+                    "is_degraded": result.is_degraded,
+                    "token_count_in": result.token_count_in,
+                    "token_count_out": result.token_count_out,
+                    "extraction_tier": str(result.prompt_tier),
+                    "player_input": action,
+                    "player_id": sd.player_id,
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "patches": patches,
+                    "beats_fired": beats_fired,
+                    "delta_empty": not patches and not beats_fired,
+                },
+                component="orchestrator",
+                severity="warning" if result.is_degraded else "info",
+            )
+        except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
+            logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
 
         return outbound
 
@@ -1958,6 +2077,18 @@ def _apply_narration_result_to_snapshot(
             result.location,
             player_name,
         )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "location",
+                "before": old_loc,
+                "after": result.location,
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+                "discovered_count": len(snapshot.discovered_regions),
+            },
+            component="state.location",
+        )
 
     # Quest updates
     if result.quest_updates:
@@ -1967,6 +2098,16 @@ def _apply_narration_result_to_snapshot(
             "state.quest_update count=%d player=%s",
             len(result.quest_updates),
             player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "quest_log",
+                "updates": dict(result.quest_updates),
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+            },
+            component="quest_log",
         )
 
     # Lore established
@@ -2003,6 +2144,19 @@ def _apply_narration_result_to_snapshot(
                 npc_mention.pronouns or "",
                 npc_mention.role or "",
                 turn_num,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "auto_registered",
+                    "name": npc_mention.name,
+                    "pronouns": npc_mention.pronouns or "",
+                    "role": npc_mention.role or "",
+                    "turn_number": turn_num,
+                    "registry_len": len(snapshot.npc_registry),
+                },
+                component="npc_registry",
             )
         else:
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
@@ -2047,4 +2201,18 @@ def _detect_npc_identity_drift(
                 e_val,
                 m_val,
                 turn_num,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "reinvented",
+                    "name": existing.name,
+                    "drift_field": field,
+                    "expected": e_val,
+                    "narrator": m_val,
+                    "turn_number": turn_num,
+                },
+                component="npc_registry",
+                severity="warning",
             )

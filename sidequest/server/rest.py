@@ -458,6 +458,114 @@ def create_rest_router() -> APIRouter:
         """
         return {"sessions": []}
 
+    @router.get("/api/debug/state")
+    async def debug_state(request: Request) -> list[dict[str, Any]]:
+        """Enumerate persisted game sessions for the GM dashboard State tab.
+
+        Walks ``<save_dir>/games/<slug>/save.db`` and projects each loaded
+        :class:`GameSnapshot` onto the ``SessionStateView`` shape defined in
+        ``sidequest-ui/src/types/watcher.ts``. Read-only; broken / empty DB
+        files are skipped rather than failing the request.
+        """
+        save_dir: Path = request.app.state.save_dir
+        games_root = save_dir / "games"
+        views: list[dict[str, Any]] = []
+        if not games_root.exists():
+            return views
+        for slug_dir in sorted(games_root.iterdir()):
+            db_file = slug_dir / "save.db"
+            if not db_file.is_file():
+                continue
+            try:
+                store = SqliteStore.open(str(db_file))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "debug_state.store_open_failed slug=%s error=%s",
+                    slug_dir.name,
+                    exc,
+                )
+                continue
+            try:
+                saved = store.load()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "debug_state.snapshot_load_failed slug=%s error=%s",
+                    slug_dir.name,
+                    exc,
+                )
+                store.close()
+                continue
+            store.close()
+            if saved is None:
+                continue
+            snap = saved.snapshot
+            npc_registry: list[dict[str, Any]] = []
+            for entry in snap.npc_registry:
+                npc_registry.append(
+                    {
+                        "name": entry.name or "",
+                        "pronouns": entry.pronouns or "",
+                        "role": entry.role or "",
+                        "location": entry.last_seen_location or "",
+                        "last_seen_turn": entry.last_seen_turn or 0,
+                        "age": "",
+                        "appearance": entry.appearance or "",
+                        "ocean_summary": None,
+                        "ocean": None,
+                        "hp": 0,
+                        "max_hp": 0,
+                    }
+                )
+            trope_states: list[dict[str, Any]] = []
+            for trope in snap.active_tropes:
+                trope_states.append(
+                    {
+                        "trope_definition_id": getattr(trope, "trope_id", ""),
+                        "status": str(getattr(trope, "status", "")),
+                        "progression": int(getattr(trope, "progression", 0) or 0),
+                    }
+                )
+            players: list[dict[str, Any]] = []
+            for char in snap.characters:
+                hp = getattr(char, "hp", None)
+                max_hp = getattr(char, "hp_max", None)
+                players.append(
+                    {
+                        "player_name": getattr(char, "player_name", "") or "",
+                        "character_name": getattr(char, "name", None),
+                        "character_class": getattr(char, "archetype", "") or "",
+                        "character_hp": int(hp) if hp is not None else 0,
+                        "character_max_hp": int(max_hp) if max_hp is not None else 0,
+                        "character_level": int(getattr(char, "level", 1) or 1),
+                        "character_xp": int(getattr(char, "xp", 0) or 0),
+                        "region_id": snap.current_region or "",
+                        "display_location": snap.location or "",
+                        "inventory": {
+                            "items": [],
+                            "gold": 0,
+                        },
+                    }
+                )
+            views.append(
+                {
+                    "session_key": slug_dir.name,
+                    "genre_slug": snap.genre_slug or "",
+                    "world_slug": snap.world_slug or "",
+                    "current_location": snap.location or "",
+                    "discovered_regions": list(snap.discovered_regions),
+                    "narration_history_len": len(snap.narrative_log),
+                    "turn_mode": str(snap.turn_manager.phase),
+                    "npc_registry": npc_registry,
+                    "trope_states": trope_states,
+                    "players": players,
+                    "player_count": len(players),
+                    "has_music_director": False,
+                    "has_audio_mixer": False,
+                    "region_names": [],
+                }
+            )
+        return views
+
     @router.post("/api/games", status_code=201)
     async def create_or_resume_game(req: CreateGameRequest, request: Request) -> Any:
         """Create a new game (201) or resume an existing same-slug game (200, resumed=True).

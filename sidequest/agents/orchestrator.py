@@ -1044,9 +1044,26 @@ class Orchestrator:
         )
 
         prompt_text = registry.compose(agent_name)
+        section_count = len(registry.registry(agent_name))
         logger.info(
             "turn.agent_llm.prompt_build section_count=%d",
-            len(registry.registry(agent_name)),
+            section_count,
+        )
+        # Dashboard Prompt tab consumes `prompt_assembled`. The hub
+        # lives in `sidequest.telemetry.watcher_hub` — importing from
+        # `sidequest.server.watcher` would drag in uvicorn's logging
+        # reconfiguration and break every caplog-based test.
+        from sidequest.telemetry.watcher_hub import publish_event as _pub
+
+        _pub(
+            "prompt_assembled",
+            {
+                "agent_name": agent_name,
+                "section_count": section_count,
+                "prompt_len": len(prompt_text),
+                "tier": str(tier),
+            },
+            component="prompt_builder",
         )
         return prompt_text, registry
 

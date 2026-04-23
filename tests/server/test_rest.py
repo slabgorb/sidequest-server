@@ -311,3 +311,80 @@ def test_list_sessions_returns_empty(tmp_path):
     assert resp.status_code == 200
     data = resp.json()
     assert data == {"sessions": []}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/debug/state — GM dashboard State tab
+# ---------------------------------------------------------------------------
+
+
+def test_debug_state_empty_when_no_save_dir(tmp_path):
+    """With no games/ subdir, the endpoint returns [] (not 404)."""
+    client = _make_app(tmp_path)
+    resp = client.get("/api/debug/state")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_debug_state_projects_saved_game(tmp_path):
+    """A persisted GameSnapshot shows up in the SessionStateView list."""
+    from datetime import date
+
+    from sidequest.game.game_slug import generate_slug
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+    from sidequest.game.session import GameSnapshot, NpcRegistryEntry, TurnManager
+
+    # _make_app sets save_dir = tmp_path / "saves"
+    client = _make_app(tmp_path)
+    save_dir = tmp_path / "saves"
+    slug = generate_slug(world_slug="dust_and_lead", today=date.today())
+    db = db_path_for_slug(save_dir, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    snap = GameSnapshot(
+        genre_slug="spaghetti_western",
+        world_slug="dust_and_lead",
+        location="Sangre River Ford",
+        discovered_regions=["Sangre River Ford", "Dust Town"],
+        npc_registry=[
+            NpcRegistryEntry(
+                name="El Paso",
+                pronouns="he/him",
+                role="sheriff",
+                appearance="",
+                last_seen_location="Dust Town",
+                last_seen_turn=3,
+            )
+        ],
+        turn_manager=TurnManager(interaction=3),
+    )
+    store.save(snap)
+    store.close()
+
+    resp = client.get("/api/debug/state")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) == 1
+    view = body[0]
+    assert view["session_key"] == slug
+    assert view["genre_slug"] == "spaghetti_western"
+    assert view["world_slug"] == "dust_and_lead"
+    assert view["current_location"] == "Sangre River Ford"
+    assert "Sangre River Ford" in view["discovered_regions"]
+    assert len(view["npc_registry"]) == 1
+    assert view["npc_registry"][0]["name"] == "El Paso"
+    assert view["player_count"] == 0
+
+
+def test_cors_headers_present_for_dashboard(tmp_path):
+    """Dev UI on :5173 must receive CORS headers so the dashboard's
+    cross-origin fetch('/api/debug/state') polls don't spam the console."""
+    client = _make_app(tmp_path)
+    resp = client.get(
+        "/api/debug/state",
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
