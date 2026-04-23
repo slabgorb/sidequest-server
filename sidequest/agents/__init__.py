@@ -10,7 +10,6 @@ Phase 1 exports:
 - PromptComposer, PromptRegistry, PromptSection
 - AttentionZone, SectionCategory, RuleTier
 - SoulData, SoulPrinciple, parse_soul_md
-- PreprocessorError hierarchy + preprocess_action, preprocess_action_with_client
 - NarratorAgent (Phase 1 — story 41-5)
 - Orchestrator, TurnContext, NarrationTurnResult, run_narration_turn (Phase 1 — story 41-5)
 - ActionRewrite, BeatSelection, VisualScene, NpcMention (Phase 1 — story 41-5)
@@ -41,16 +40,6 @@ from sidequest.agents.orchestrator import (
     VisualScene,
     extract_structured_from_response,
     run_narration_turn,
-)
-from sidequest.agents.preprocessor import (
-    LlmFailed,
-    OutputTooLong,
-    ParseFailed,
-    PreprocessError,
-    build_prompt,
-    parse_response,
-    preprocess_action,
-    preprocess_action_with_client,
 )
 from sidequest.agents.prompt_framework import (
     AttentionZone,
@@ -92,15 +81,6 @@ __all__ = [
     "ClaudeTimeoutError",
     "EmptyResponse",
     "SubprocessFailed",
-    # preprocessor
-    "LlmFailed",
-    "OutputTooLong",
-    "ParseFailed",
-    "PreprocessError",
-    "build_prompt",
-    "parse_response",
-    "preprocess_action",
-    "preprocess_action_with_client",
     # prompt_framework
     "AttentionZone",
     "PromptComposer",
