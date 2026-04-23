@@ -41,7 +41,11 @@ from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
-from sidequest.game.projection_filter import PassThroughFilter
+from sidequest.game.projection.cache import ProjectionCache
+from sidequest.game.projection.composed import ComposedFilter
+from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.view import SessionGameStateView
+from sidequest.game.projection_filter import FilterDecision, PassThroughFilter, ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -260,7 +264,8 @@ class WebSocketSessionHandler:
         # falls back to a plain message without seq in that case. This is a
         # real production code path (not a test-only skip), documented below.
         self._event_log: EventLog | None = None
-        self._projection_filter: PassThroughFilter | None = None
+        self._projection_filter: ProjectionFilter | None = None
+        self._projection_cache: ProjectionCache | None = None
 
     # ------------------------------------------------------------------
     # Room context (MP-02 Task 2)
@@ -289,6 +294,31 @@ class WebSocketSessionHandler:
     def current_room(self) -> SessionRoom | None:
         """Return the room this handler is currently registered in, or None."""
         return self._room
+
+    def _build_game_state_view(self) -> SessionGameStateView:
+        """Read-only view of current session state for the projection filter.
+
+        Phase-3 engine state does not yet track zones / visibility /
+        per-item ownership — those fields stay at their conservative
+        SessionGameStateView defaults. Player-character mapping grows
+        as engine state grows.
+
+        Character does not carry a player_id attribute — the mapping
+        is left empty and the view uses conservative defaults (is_gm /
+        seat_of / zone_of all return None/False). This is the safe
+        direction: unknown relationships stay masked rather than
+        accidentally unmasked.
+        """
+        sd = self._session_data
+        if sd is None:
+            return SessionGameStateView(gm_player_id=None, player_id_to_character={})
+        mapping: dict[str, str] = {}
+        # Character does not carry player_id — no mapping possible yet.
+        # When the engine model gains player_id on Character, populate mapping here.
+        return SessionGameStateView(
+            gm_player_id=None,
+            player_id_to_character=mapping,
+        )
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -344,7 +374,22 @@ class WebSocketSessionHandler:
                 for other_pid in room.connected_player_ids():
                     if other_pid == emitter_player_id:
                         continue
-                    decision = projection_filter.project(event=row, player_id=other_pid)
+                    envelope = MessageEnvelope(
+                        kind=row.kind,
+                        payload_json=row.payload_json,
+                        origin_seq=row.seq,
+                    )
+                    view = self._build_game_state_view()
+                    decision = projection_filter.project(
+                        envelope=envelope, view=view, player_id=other_pid
+                    )
+                    # Persist the decision so reconnect/replay is byte-identical (Task 18).
+                    if self._projection_cache is not None:
+                        self._projection_cache.write(
+                            event_seq=row.seq,
+                            player_id=other_pid,
+                            decision=decision,
+                        )
                     if not decision.include:
                         continue
                     # Build per-recipient payload: merge filtered payload_json + seq
@@ -620,9 +665,17 @@ class WebSocketSessionHandler:
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
-            # MP-03 Task 3: initialize EventLog + ProjectionFilter for sync layer.
+            # MP-03 Task 3 + Task-17 ProjectionFilter Rules integration.
             self._event_log = EventLog(store)
-            self._projection_filter = PassThroughFilter()
+            self._projection_cache = ProjectionCache(store)
+            # Task 22 (GenrePack loader) will populate genre_pack.projection_rules;
+            # until that lands, fall back to no-genre-rules (behaviourally identical
+            # to PassThroughFilter plus the core invariants).
+            projection_rules = getattr(genre_pack, "projection_rules", None)
+            if projection_rules is not None:
+                self._projection_filter = ComposedFilter(rules=projection_rules)
+            else:
+                self._projection_filter = ComposedFilter.with_no_genre_rules()
             self._last_seen_seq = payload.last_seen_seq or 0
             self._current_player_id = player_id
             self._state = _State.Creating if not has_character else _State.Playing
@@ -643,8 +696,14 @@ class WebSocketSessionHandler:
             missed = self._event_log.read_since(since_seq=self._last_seen_seq)
             replay_msgs: list[object] = []
             for event_row in missed:
+                envelope = MessageEnvelope(
+                    kind=event_row.kind,
+                    payload_json=event_row.payload_json,
+                    origin_seq=event_row.seq,
+                )
+                view = self._build_game_state_view()
                 dec = self._projection_filter.project(
-                    event=event_row, player_id=self._current_player_id
+                    envelope=envelope, view=view, player_id=self._current_player_id
                 )
                 if not dec.include:
                     continue
