@@ -151,3 +151,26 @@ def test_combat_player_dead_emits_player_name() -> None:
     [span] = exporter.get_finished_spans()
     assert span.name == "combat.player_dead"
     assert span.attributes["player_name"] == "Rux"
+
+
+def test_encounter_resolved_omits_outcome_when_none() -> None:
+    """When ``outcome`` is None, the attribute is absent from the span.
+
+    GM-panel queries filter on outcome=victory / outcome=defeat etc.; a
+    sentinel like "unknown" would pollute those queries. Absence is the
+    contract for resolution paths that don't have a named outcome yet.
+    """
+    from sidequest.telemetry.spans import encounter_resolved_span
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+    with encounter_resolved_span(
+        _tracer=tracer, encounter_type="combat", outcome=None, source="player_death",
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert "outcome" not in span.attributes
+    assert span.attributes["source"] == "player_death"
+    assert span.attributes["encounter_type"] == "combat"

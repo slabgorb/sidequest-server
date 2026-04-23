@@ -555,6 +555,7 @@ def combat_tick_span(
     beat: int,
     phase: str,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_COMBAT_TICK.
 
@@ -567,6 +568,7 @@ def combat_tick_span(
             "encounter_type": encounter_type,
             "beat": beat,
             "phase": phase,
+            **attrs,
         },
     ) as span:
         yield span
@@ -579,6 +581,7 @@ def encounter_phase_transition_span(
     to_phase: str,
     encounter_type: str,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_ENCOUNTER_PHASE_TRANSITION.
 
@@ -591,6 +594,7 @@ def encounter_phase_transition_span(
             "from": from_phase,
             "to": to_phase,
             "encounter_type": encounter_type,
+            **attrs,
         },
     ) as span:
         yield span
@@ -603,21 +607,23 @@ def encounter_resolved_span(
     outcome: str | None,
     source: str,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_ENCOUNTER_RESOLVED.
 
     Fires when encounter resolved flag flips True with outcome and source.
     """
     t = _tracer if _tracer is not None else tracer()
-    attrs = {
+    span_attrs = {
         "encounter_type": encounter_type,
         "source": source,
     }
     if outcome is not None:
-        attrs["outcome"] = outcome
+        span_attrs["outcome"] = outcome
+    span_attrs.update(attrs)
     with t.start_as_current_span(
         SPAN_ENCOUNTER_RESOLVED,
-        attributes=attrs,
+        attributes=span_attrs,
     ) as span:
         yield span
 
@@ -630,6 +636,7 @@ def encounter_beat_applied_span(
     beat_id: str,
     metric_delta: int,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_ENCOUNTER_BEAT_APPLIED.
 
@@ -643,6 +650,7 @@ def encounter_beat_applied_span(
             "actor": actor,
             "beat_id": beat_id,
             "metric_delta": metric_delta,
+            **attrs,
         },
     ) as span:
         yield span
@@ -654,6 +662,7 @@ def encounter_confrontation_initiated_span(
     encounter_type: str,
     genre_slug: str,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_ENCOUNTER_CONFRONTATION_INITIATED.
 
@@ -665,6 +674,7 @@ def encounter_confrontation_initiated_span(
         attributes={
             "encounter_type": encounter_type,
             "genre_slug": genre_slug,
+            **attrs,
         },
     ) as span:
         yield span
@@ -676,6 +686,7 @@ def combat_ended_span(
     outcome: str,
     duration_beats: int,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_COMBAT_ENDED.
 
@@ -687,6 +698,7 @@ def combat_ended_span(
         attributes={
             "outcome": outcome,
             "duration_beats": duration_beats,
+            **attrs,
         },
     ) as span:
         yield span
@@ -697,6 +709,7 @@ def combat_player_dead_span(
     *,
     player_name: str,
     _tracer: trace.Tracer | None = None,
+    **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Context manager wrapping SPAN_COMBAT_PLAYER_DEAD.
 
@@ -707,6 +720,7 @@ def combat_player_dead_span(
         SPAN_COMBAT_PLAYER_DEAD,
         attributes={
             "player_name": player_name,
+            **attrs,
         },
     ) as span:
         yield span
