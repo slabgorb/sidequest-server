@@ -85,92 +85,91 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
         WebSocketSessionHandler,
         "_execute_narration_turn",
         new=_recording_execute,
-    ):
-        with client.websocket_connect("/ws") as ws_alice:
-            # Alice connects
-            ws_alice.send_json({
+    ), client.websocket_connect("/ws") as ws_alice:
+        # Alice connects
+        ws_alice.send_json({
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {"event": "connect", "game_slug": slug},
+        })
+        msg = ws_alice.receive_json()
+        assert msg["type"] == "SESSION_EVENT"
+        assert msg["payload"]["event"] == "connected"
+        # Drain chargen bootstrap (slug path emits it when has_character=False).
+        alice_chargen = ws_alice.receive_json()
+        assert alice_chargen["type"] == "CHARACTER_CREATION"
+
+        # Alice claims a seat
+        ws_alice.send_json({
+            "type": "PLAYER_SEAT",
+            "player_id": "alice",
+            "payload": {"character_slot": "rux"},
+        })
+        seat_msg = ws_alice.receive_json()
+        assert seat_msg["type"] == "SEAT_CONFIRMED"
+
+        # Bob connects to the same slug then immediately disconnects
+        with client.websocket_connect("/ws") as ws_bob:
+            ws_bob.send_json({
                 "type": "SESSION_EVENT",
-                "player_id": "alice",
+                "player_id": "bob",
                 "payload": {"event": "connect", "game_slug": slug},
             })
-            msg = ws_alice.receive_json()
-            assert msg["type"] == "SESSION_EVENT"
-            assert msg["payload"]["event"] == "connected"
-            # Drain chargen bootstrap (slug path emits it when has_character=False).
-            alice_chargen = ws_alice.receive_json()
-            assert alice_chargen["type"] == "CHARACTER_CREATION"
+            bob_connected = ws_bob.receive_json()
+            # Drain bob's chargen bootstrap.
+            bob_chargen = ws_bob.receive_json()
+            assert bob_chargen["type"] == "CHARACTER_CREATION"
+            # Alice should receive a PLAYER_PRESENCE{connected} for bob
+            alice_sees_bob = ws_alice.receive_json()
+            assert alice_sees_bob["type"] == "PLAYER_PRESENCE"
+            assert alice_sees_bob["payload"]["state"] == "connected"
 
-            # Alice claims a seat
-            ws_alice.send_json({
+            assert bob_connected["type"] == "SESSION_EVENT"
+            assert bob_connected["payload"]["event"] == "connected"
+
+            # Bob claims a seat so he is a "seated" player
+            ws_bob.send_json({
                 "type": "PLAYER_SEAT",
-                "player_id": "alice",
-                "payload": {"character_slot": "rux"},
+                "player_id": "bob",
+                "payload": {"character_slot": "grimble"},
             })
-            seat_msg = ws_alice.receive_json()
-            assert seat_msg["type"] == "SEAT_CONFIRMED"
+            bob_seat_bob = ws_bob.receive_json()
+            assert bob_seat_bob["type"] == "SEAT_CONFIRMED"
+            # Alice also receives Bob's seat confirmed
+            bob_seat_alice = ws_alice.receive_json()
+            assert bob_seat_alice["type"] == "SEAT_CONFIRMED"
 
-            # Bob connects to the same slug then immediately disconnects
-            with client.websocket_connect("/ws") as ws_bob:
-                ws_bob.send_json({
-                    "type": "SESSION_EVENT",
-                    "player_id": "bob",
-                    "payload": {"event": "connect", "game_slug": slug},
-                })
-                bob_connected = ws_bob.receive_json()
-                # Drain bob's chargen bootstrap.
-                bob_chargen = ws_bob.receive_json()
-                assert bob_chargen["type"] == "CHARACTER_CREATION"
-                # Alice should receive a PLAYER_PRESENCE{connected} for bob
-                alice_sees_bob = ws_alice.receive_json()
-                assert alice_sees_bob["type"] == "PLAYER_PRESENCE"
-                assert alice_sees_bob["payload"]["state"] == "connected"
+        # ws_bob context exited → Bob disconnected
+        # Alice should receive PLAYER_PRESENCE{disconnected} then GAME_PAUSED
+        presence_msg = ws_alice.receive_json()
+        assert presence_msg["type"] == "PLAYER_PRESENCE"
+        assert presence_msg["payload"]["state"] == "disconnected"
+        assert presence_msg["payload"]["player_id"] == "bob"
 
-                assert bob_connected["type"] == "SESSION_EVENT"
-                assert bob_connected["payload"]["event"] == "connected"
+        pause_msg = ws_alice.receive_json()
+        assert pause_msg["type"] == "GAME_PAUSED", (
+            f"Expected GAME_PAUSED after bob disconnects, got {pause_msg['type']}"
+        )
+        assert "bob" in pause_msg["payload"]["waiting_for"], (
+            f"Expected 'bob' in waiting_for, got {pause_msg['payload']['waiting_for']}"
+        )
 
-                # Bob claims a seat so he is a "seated" player
-                ws_bob.send_json({
-                    "type": "PLAYER_SEAT",
-                    "player_id": "bob",
-                    "payload": {"character_slot": "grimble"},
-                })
-                bob_seat_bob = ws_bob.receive_json()
-                assert bob_seat_bob["type"] == "SEAT_CONFIRMED"
-                # Alice also receives Bob's seat confirmed
-                bob_seat_alice = ws_alice.receive_json()
-                assert bob_seat_alice["type"] == "SEAT_CONFIRMED"
-
-            # ws_bob context exited → Bob disconnected
-            # Alice should receive PLAYER_PRESENCE{disconnected} then GAME_PAUSED
-            presence_msg = ws_alice.receive_json()
-            assert presence_msg["type"] == "PLAYER_PRESENCE"
-            assert presence_msg["payload"]["state"] == "disconnected"
-            assert presence_msg["payload"]["player_id"] == "bob"
-
-            pause_msg = ws_alice.receive_json()
-            assert pause_msg["type"] == "GAME_PAUSED", (
-                f"Expected GAME_PAUSED after bob disconnects, got {pause_msg['type']}"
-            )
-            assert "bob" in pause_msg["payload"]["waiting_for"], (
-                f"Expected 'bob' in waiting_for, got {pause_msg['payload']['waiting_for']}"
-            )
-
-            # Alice sends a PLAYER_ACTION — should get GAME_PAUSED back, NOT narration
-            narrator_calls.clear()
-            ws_alice.send_json({
-                "type": "PLAYER_ACTION",
-                "player_id": "alice",
-                "payload": {"action": "I look around the grimvault."},
-            })
-            action_resp = ws_alice.receive_json()
-            assert action_resp["type"] == "GAME_PAUSED", (
-                f"Expected GAME_PAUSED in response to PLAYER_ACTION while paused, "
-                f"got {action_resp['type']}"
-            )
-            assert "bob" in action_resp["payload"]["waiting_for"]
-            assert len(narrator_calls) == 0, (
-                "Narrator dispatch must NOT be called while the room is paused"
-            )
+        # Alice sends a PLAYER_ACTION — should get GAME_PAUSED back, NOT narration
+        narrator_calls.clear()
+        ws_alice.send_json({
+            "type": "PLAYER_ACTION",
+            "player_id": "alice",
+            "payload": {"action": "I look around the grimvault."},
+        })
+        action_resp = ws_alice.receive_json()
+        assert action_resp["type"] == "GAME_PAUSED", (
+            f"Expected GAME_PAUSED in response to PLAYER_ACTION while paused, "
+            f"got {action_resp['type']}"
+        )
+        assert "bob" in action_resp["payload"]["waiting_for"]
+        assert len(narrator_calls) == 0, (
+            "Narrator dispatch must NOT be called while the room is paused"
+        )
 
 
 # ---------------------------------------------------------------------------

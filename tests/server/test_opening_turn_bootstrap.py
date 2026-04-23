@@ -45,7 +45,6 @@ from sidequest.protocol.messages import (
 from sidequest.server.session_handler import WebSocketSessionHandler
 from tests.server.conftest import make_mock_claude_client
 
-
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 CANNED_OPENING_TEXT = (

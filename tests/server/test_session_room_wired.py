@@ -13,12 +13,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.app import create_app
-
-import pytest
 
 # Real genre/world available in the content repo
 _GENRE = "caverns_and_claudes"

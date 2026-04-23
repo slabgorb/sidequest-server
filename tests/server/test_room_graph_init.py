@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from opentelemetry import trace as otel_trace
@@ -32,11 +31,12 @@ from sidequest.protocol.messages import (
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
 
-
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
-from tests.server.conftest import mock_claude_client_factory as _mock_claude_client_factory  # noqa: E402
+from tests.server.conftest import (
+    mock_claude_client_factory as _mock_claude_client_factory,  # noqa: E402
+)
 
 
 @pytest.fixture

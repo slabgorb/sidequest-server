@@ -26,13 +26,11 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from sidequest.game.session import GameSnapshot, NarrativeEntry
-
 
 # ---------------------------------------------------------------------------
 # GameMode
@@ -50,7 +48,7 @@ class GameRow:
     mode: GameMode
     genre_slug: str
     world_slug: str
-    claude_session_id: Optional[str]
+    claude_session_id: str | None
     created_at: str
 
 
@@ -158,7 +156,7 @@ class SavedSession:
 
     meta: SessionMeta
     snapshot: GameSnapshot
-    recap: Optional[str]
+    recap: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -227,14 +225,14 @@ class SqliteStore:
         self._init_schema()
 
     @classmethod
-    def open_in_memory(cls) -> "SqliteStore":
+    def open_in_memory(cls) -> SqliteStore:
         """Open an in-memory store (for testing)."""
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         return cls(conn)
 
     @classmethod
-    def open(cls, path: str) -> "SqliteStore":
+    def open(cls, path: str) -> SqliteStore:
         """Open a file-backed store."""
         conn = sqlite3.connect(path)
         _configure_connection(conn)
@@ -265,7 +263,7 @@ class SqliteStore:
         Serializes GameSnapshot to JSON and stores in game_state table.
         Updates last_played in session_meta. Atomic via transaction.
         """
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         snapshot_copy = snapshot.model_copy(update={"last_saved_at": now})
         state_json = snapshot_copy.model_dump_json()
         now_str = now.isoformat()
@@ -281,7 +279,7 @@ class SqliteStore:
                 (now_str,),
             )
 
-    def load(self) -> Optional[SavedSession]:
+    def load(self) -> SavedSession | None:
         """Load the saved session, or None if no save exists."""
         row = self._conn.execute(
             "SELECT snapshot_json FROM game_state WHERE id = 1"
@@ -293,8 +291,8 @@ class SqliteStore:
         meta = self._load_meta() or SessionMeta(
             genre_slug=snapshot.genre_slug,
             world_slug=snapshot.world_slug,
-            created_at=datetime.now(tz=timezone.utc),
-            last_played=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
+            last_played=datetime.now(tz=UTC),
         )
         entries = self.recent_narrative(3)
         character_names = [ch.core.name for ch in snapshot.characters]
@@ -340,7 +338,7 @@ class SqliteStore:
             )
         return entries
 
-    def generate_recap(self) -> Optional[str]:
+    def generate_recap(self) -> str | None:
         """Generate a 'Previously On...' recap from recent entries."""
         entries = self.recent_narrative(3)
         if not entries:
@@ -353,7 +351,7 @@ class SqliteStore:
             recap += f"- {content}\n"
         return recap
 
-    def _load_meta(self) -> Optional[SessionMeta]:
+    def _load_meta(self) -> SessionMeta | None:
         row = self._conn.execute(
             """SELECT genre_slug, world_slug, created_at, last_played
                FROM session_meta WHERE id = 1"""
@@ -394,14 +392,14 @@ def db_path_for_session(
 
 
 def _now_rfc3339() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()
 
 
 def _parse_rfc3339(s: str) -> datetime:
     try:
         return datetime.fromisoformat(s)
     except Exception:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
 
 def db_path_for_slug(save_dir: Path, slug: str) -> Path:
@@ -434,7 +432,7 @@ def upsert_game(
         )
 
 
-def get_game(store: SqliteStore, slug: str) -> Optional[GameRow]:
+def get_game(store: SqliteStore, slug: str) -> GameRow | None:
     row = store._conn.execute(
         "SELECT slug, mode, genre_slug, world_slug, claude_session_id, created_at FROM games WHERE slug = ?",
         (slug,),
@@ -464,7 +462,7 @@ def _generate_recap(
     character_names: list[str],
     location: str,
     known_facts: list,
-) -> Optional[str]:
+) -> str | None:
     """Generate a 'Previously On...' recap.
 
     Port of sidequest_game::narrative::generate_recap_with_facts.

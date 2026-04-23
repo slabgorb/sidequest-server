@@ -9,10 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from sidequest.agents.prompt_framework.soul import SoulData, SoulPrinciple, parse_soul_md
-
+from sidequest.agents.prompt_framework.soul import parse_soul_md
 
 # ---------------------------------------------------------------------------
 # Helpers

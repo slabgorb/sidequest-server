@@ -15,7 +15,6 @@ import pytest
 
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 
-
 # ===========================================================================
 # MessageType wire strings — from tests.rs message_type_tests
 # Wire values must match the serde rename on each GameMessage variant.

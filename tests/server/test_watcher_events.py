@@ -19,19 +19,15 @@ from __future__ import annotations
 import asyncio
 import importlib
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import WebSocket
-from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace import TracerProvider
 
 from sidequest.agents.orchestrator import (
     NarrationTurnResult,
     NpcMention,
-    TurnContext,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry, TurnManager
+from sidequest.game.session import GameSnapshot, TurnManager
 from sidequest.server.session_handler import (
     _apply_narration_result_to_snapshot,
 )

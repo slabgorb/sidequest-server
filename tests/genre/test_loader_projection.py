@@ -8,7 +8,6 @@ import pytest
 
 from sidequest.genre.loader import load_genre_pack
 
-
 # Resolve the real caverns_and_claudes pack directory. Must match the pattern
 # used by tests/agents/test_orchestrator_e2e.py.
 _REPO_ROOT = Path(__file__).resolve().parents[3]  # sidequest-server → oq-2

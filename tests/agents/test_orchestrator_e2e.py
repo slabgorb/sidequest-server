@@ -26,8 +26,7 @@ from sidequest.agents.orchestrator import (
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.session import GameSnapshot
-from sidequest.genre.loader import load_genre_pack, DEFAULT_GENRE_PACK_SEARCH_PATHS
-
+from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, load_genre_pack
 
 # ---------------------------------------------------------------------------
 # Locate Caverns & Claudes genre pack

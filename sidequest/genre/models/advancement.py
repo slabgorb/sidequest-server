@@ -6,10 +6,9 @@ Port of sidequest-genre/src/models/advancement.rs.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
-
 
 # ---------------------------------------------------------------------------
 # RecoveryTrigger
@@ -44,11 +43,7 @@ class RecoveryTriggerOnBeatSuccess(BaseModel):
 
 
 RecoveryTrigger = Annotated[
-    Union[
-        RecoveryTriggerOnResolution,
-        RecoveryTriggerOnAllyRescue,
-        RecoveryTriggerOnBeatSuccess,
-    ],
+    RecoveryTriggerOnResolution | RecoveryTriggerOnAllyRescue | RecoveryTriggerOnBeatSuccess,
     Field(discriminator="kind"),
 ]
 
@@ -121,13 +116,7 @@ class AdvancementEffectLoreRevealBonus(BaseModel):
 
 
 AdvancementEffect = Annotated[
-    Union[
-        AdvancementEffectEdgeMaxBonus,
-        AdvancementEffectEdgeRecovery,
-        AdvancementEffectBeatDiscount,
-        AdvancementEffectLeverageBonus,
-        AdvancementEffectLoreRevealBonus,
-    ],
+    AdvancementEffectEdgeMaxBonus | AdvancementEffectEdgeRecovery | AdvancementEffectBeatDiscount | AdvancementEffectLeverageBonus | AdvancementEffectLoreRevealBonus,
     Field(discriminator="type"),
 ]
 
@@ -148,7 +137,7 @@ class AdvancementTier(BaseModel):
     effects: list[AdvancementEffect] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_non_blank(self) -> "AdvancementTier":
+    def _validate_non_blank(self) -> AdvancementTier:
         if not self.id.strip():
             raise ValueError("AdvancementTier.id must not be blank")
         if not self.required_milestone.strip():

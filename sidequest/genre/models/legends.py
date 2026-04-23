@@ -71,7 +71,7 @@ class Legend(BaseModel):
     }
 
     @classmethod
-    def model_validate(cls, obj: object, **kwargs: Any) -> "Legend":  # type: ignore[override]
+    def model_validate(cls, obj: object, **kwargs: Any) -> Legend:  # type: ignore[override]
         """Handle alias 'description' for summary field."""
         if isinstance(obj, dict) and "description" in obj and "summary" not in obj:
             obj = dict(obj)

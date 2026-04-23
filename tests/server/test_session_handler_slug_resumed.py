@@ -40,7 +40,6 @@ from sidequest.server.session_handler import (
 )
 from sidequest.server.session_room import RoomRegistry
 
-
 _GENRE = "caverns_and_claudes"
 _WORLD = "grimvault"
 _CONTENT_SEARCH_PATH = (

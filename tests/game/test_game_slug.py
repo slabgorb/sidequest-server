@@ -1,6 +1,8 @@
 from datetime import date
+
 import pytest
-from sidequest.game.game_slug import generate_slug, parse_slug, InvalidSlugError
+
+from sidequest.game.game_slug import InvalidSlugError, generate_slug, parse_slug
 
 
 def test_generate_slug_uses_date_and_world():

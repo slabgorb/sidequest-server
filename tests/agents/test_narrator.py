@@ -11,10 +11,9 @@ import pytest
 
 from sidequest.agents.narrator import (
     NARRATOR_AGENCY,
-    NARRATOR_COMBAT_RULES,
     NARRATOR_CHASE_RULES,
+    NARRATOR_COMBAT_RULES,
     NARRATOR_CONSTRAINTS,
-    NARRATOR_CONSEQUENCES,
     NARRATOR_DIALOGUE_RULES,
     NARRATOR_IDENTITY,
     NARRATOR_OUTPUT_ONLY,
@@ -25,7 +24,6 @@ from sidequest.agents.narrator import (
 )
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone, SectionCategory
-
 
 # ---------------------------------------------------------------------------
 # NarratorAgent — construction

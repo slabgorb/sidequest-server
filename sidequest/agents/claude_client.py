@@ -12,6 +12,7 @@ a mock without ever launching the real 'claude' binary.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import logging
 import time
@@ -20,8 +21,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
 from sidequest.telemetry.spans import (
-    SPAN_AGENT_CALL,
-    SPAN_AGENT_CALL_SESSION,
     agent_call_session_span,
     agent_call_span,
 )
@@ -185,12 +184,12 @@ class ClaudeClient:
         cls,
         timeout: float,
         spawn_fn: SpawnFn | None = None,
-    ) -> "ClaudeClient":
+    ) -> ClaudeClient:
         """Create a new client with a custom timeout."""
         return cls(timeout=timeout, spawn_fn=spawn_fn)
 
     @classmethod
-    def builder(cls) -> "ClaudeClientBuilder":
+    def builder(cls) -> ClaudeClientBuilder:
         """Create a builder for more complex configuration."""
         return ClaudeClientBuilder()
 
@@ -344,7 +343,7 @@ class ClaudeClient:
                 proc.communicate(),
                 timeout=self._timeout,
             )
-        except asyncio.TimeoutError:
+        except builtins.TimeoutError:
             try:
                 proc.kill()
                 await proc.wait()
@@ -436,17 +435,17 @@ class ClaudeClientBuilder:
         self._otel_endpoint: str | None = None
         self._spawn_fn: SpawnFn | None = None
 
-    def timeout(self, timeout: float) -> "ClaudeClientBuilder":
+    def timeout(self, timeout: float) -> ClaudeClientBuilder:
         """Set the timeout duration."""
         self._timeout = timeout
         return self
 
-    def command_path(self, path: str) -> "ClaudeClientBuilder":
+    def command_path(self, path: str) -> ClaudeClientBuilder:
         """Set the command path."""
         self._command_path = path
         return self
 
-    def otel_endpoint(self, endpoint: str) -> "ClaudeClientBuilder":
+    def otel_endpoint(self, endpoint: str) -> ClaudeClientBuilder:
         """Set the OTEL endpoint for Claude subprocess telemetry export.
 
         Empty strings are normalized to None.
@@ -454,7 +453,7 @@ class ClaudeClientBuilder:
         self._otel_endpoint = endpoint.strip() or None
         return self
 
-    def spawn_fn(self, fn: SpawnFn) -> "ClaudeClientBuilder":
+    def spawn_fn(self, fn: SpawnFn) -> ClaudeClientBuilder:
         """Inject a custom subprocess spawner (for testing)."""
         self._spawn_fn = fn
         return self

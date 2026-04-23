@@ -101,7 +101,7 @@ class BackstoryTables(BaseModel):
     tables: dict[str, list[str]] = Field(default_factory=dict)
 
     @classmethod
-    def model_validate(cls, obj: object, **kwargs: Any) -> "BackstoryTables":  # type: ignore[override]
+    def model_validate(cls, obj: object, **kwargs: Any) -> BackstoryTables:  # type: ignore[override]
         """Extract template and remaining string-list keys as tables."""
         if isinstance(obj, dict):
             data: dict[str, Any] = dict(obj)

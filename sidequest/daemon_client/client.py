@@ -210,7 +210,7 @@ class DaemonClient:
                 span.set_attribute("daemon.outcome", "connection_failed")
                 span.set_attribute("daemon.error", type(exc).__name__)
                 raise DaemonUnavailableError(str(exc)) from exc
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 span.set_attribute("daemon.outcome", "connect_timeout")
                 raise DaemonUnavailableError(
                     f"timed out opening daemon socket after {self._timeout}s"
@@ -226,7 +226,7 @@ class DaemonClient:
                     raw = await asyncio.wait_for(
                         reader.readline(), timeout=self._timeout
                     )
-                except asyncio.TimeoutError as exc:
+                except TimeoutError as exc:
                     span.set_attribute("daemon.outcome", "reply_timeout")
                     raise DaemonUnavailableError(
                         f"daemon did not reply within {self._timeout}s"

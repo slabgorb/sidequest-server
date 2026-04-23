@@ -33,7 +33,6 @@ from sidequest.genre.models.character import (
 )
 from sidequest.genre.models.rules import RulesConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

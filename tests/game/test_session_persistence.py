@@ -6,17 +6,13 @@ Python round-trip tests only. Rust save compatibility is deferred
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.persistence import (
-    PersistError,
     SavedSession,
-    SessionMeta,
     SqliteStore,
     db_path_for_session,
 )

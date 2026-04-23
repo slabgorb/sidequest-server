@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.genre.models import CartographyConfig, NavigationMode, Region, WorldConfig
 
 

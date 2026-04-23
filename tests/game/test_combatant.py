@@ -23,7 +23,6 @@ import pytest
 
 from sidequest.game.combatant import Combatant
 
-
 # ---------------------------------------------------------------------------
 # Helper — TestCombatant mirrors the Rust test fixture struct verbatim.
 # Carries Rust-verbatim semantics inline (broken@<=0, 0.0 @ max==0).

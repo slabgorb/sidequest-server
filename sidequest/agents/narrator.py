@@ -387,8 +387,8 @@ class NarratorAgent(BaseAgent):
         self,
         registry: object,
         *,
-        encounter: "StructuredEncounter | None" = None,
-        cdef: "ConfrontationDef | None" = None,
+        encounter: StructuredEncounter | None = None,
+        cdef: ConfrontationDef | None = None,
         encounter_summary: str | None = None,
     ) -> None:
         """Inject encounter-specific narration rules + live encounter state.

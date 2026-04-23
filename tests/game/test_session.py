@@ -6,15 +6,11 @@ round-trips through model_dump_json()/validate_json().
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
-from sidequest.game.delta import StateDelta, compute_delta, snapshot
+from sidequest.game.delta import compute_delta, snapshot
 from sidequest.game.session import (
-    DiscoveredFact,
     GameSnapshot,
     NarrativeEntry,
     Npc,

@@ -25,7 +25,6 @@ from sidequest.protocol.provenance import (
     Tier,
 )
 
-
 # ---------------------------------------------------------------------------
 # Minimal test types — mirror the structs in layered_derive.rs
 # ---------------------------------------------------------------------------

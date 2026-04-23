@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field
 
 from sidequest.genre.models.scenario import ClueGraph, ScenarioPack
 
-
 # ---------------------------------------------------------------------------
 # ScenarioRole — role a scenario assigns to a given NPC.
 # ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ class ScenarioState(BaseModel):
         pack: ScenarioPack,
         *,
         rng: random.Random | None = None,
-    ) -> "ScenarioState":
+    ) -> ScenarioState:
         """Initialize scenario state from a genre pack's scenario pack.
 
         Mirrors Rust ``ScenarioState::from_genre_pack``:

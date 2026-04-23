@@ -12,7 +12,6 @@ from sidequest.agents.agent import BaseAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone, SectionCategory
 
-
 # =========================================================================
 # AgentResponse
 # =========================================================================
@@ -95,7 +94,7 @@ def test_make_agent_satisfies_agent_protocol():
 
 def test_wiring_import_from_public_api():
     """Verify Agent, BaseAgent, make_agent are importable from sidequest.agents."""
-    from sidequest.agents import Agent, BaseAgent, make_agent
+    from sidequest.agents import Agent, make_agent
 
     a = make_agent("wiring_test", "Wiring test agent.")
     assert a.name() == "wiring_test"

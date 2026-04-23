@@ -32,7 +32,6 @@ from sidequest.game.builder import (
 )
 from sidequest.genre.loader import load_genre_pack
 
-
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 

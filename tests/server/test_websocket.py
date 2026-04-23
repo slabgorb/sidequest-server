@@ -9,11 +9,9 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from sidequest.server.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Helpers

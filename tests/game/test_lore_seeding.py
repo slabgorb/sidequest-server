@@ -18,7 +18,6 @@ from sidequest.game.lore_seeding import (
 )
 from sidequest.game.lore_store import (
     LoreCategory,
-    LoreFragment,
     LoreSource,
     LoreStore,
 )
@@ -29,7 +28,6 @@ from sidequest.genre.models.character import (
     MechanicalEffects,
 )
 from sidequest.genre.models.pack import GenrePack
-
 
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 

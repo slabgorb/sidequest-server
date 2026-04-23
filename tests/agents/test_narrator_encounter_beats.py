@@ -4,7 +4,9 @@ from sidequest.agents.narrator import NarratorAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.genre.models.rules import (
-    BeatDef, ConfrontationDef, MetricDef,
+    BeatDef,
+    ConfrontationDef,
+    MetricDef,
 )
 
 

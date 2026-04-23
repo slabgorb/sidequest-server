@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidequest.genre.models import TropeDefinition, TropeEscalation, PassiveProgression
+from sidequest.genre.models import PassiveProgression, TropeDefinition, TropeEscalation
 
 
 class TestTropeDefinition:
