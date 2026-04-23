@@ -12,6 +12,7 @@ from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection.view import GameStateView
 from sidequest.game.projection_filter import ProjectionFilter
+from sidequest.telemetry.spans import projection_cache_lazy_fill_span
 
 
 def lazy_fill(
@@ -26,15 +27,17 @@ def lazy_fill(
 
     Returns the number of rows filled.
     """
-    existing = {c.event_seq for c in cache.read_since(player_id=player_id, since_seq=0)}
-    filled = 0
-    for row in event_log.read_since(since_seq=0):
-        if row.seq in existing:
-            continue
-        envelope = MessageEnvelope(
-            kind=row.kind, payload_json=row.payload_json, origin_seq=row.seq
-        )
-        decision = filter_.project(envelope=envelope, view=view, player_id=player_id)
-        cache.write(event_seq=row.seq, player_id=player_id, decision=decision)
-        filled += 1
-    return filled
+    with projection_cache_lazy_fill_span(player_id=player_id) as span:
+        existing = {c.event_seq for c in cache.read_since(player_id=player_id, since_seq=0)}
+        filled = 0
+        for row in event_log.read_since(since_seq=0):
+            if row.seq in existing:
+                continue
+            envelope = MessageEnvelope(
+                kind=row.kind, payload_json=row.payload_json, origin_seq=row.seq
+            )
+            decision = filter_.project(envelope=envelope, view=view, player_id=player_id)
+            cache.write(event_seq=row.seq, player_id=player_id, decision=decision)
+            filled += 1
+        span.set_attribute("events_filled", filled)
+        return filled

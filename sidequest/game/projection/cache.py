@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from sidequest.game.persistence import SqliteStore
 from sidequest.game.projection_filter import FilterDecision
+from sidequest.telemetry.spans import projection_cache_fill_span
 
 
 @dataclass(frozen=True)
@@ -30,18 +31,19 @@ class ProjectionCache:
         player_id: str,
         decision: FilterDecision,
     ) -> None:
-        payload = decision.payload_json if decision.include else None
-        with self._store._conn:
-            self._store._conn.execute(
-                """
-                INSERT INTO projection_cache (event_seq, player_id, include, payload_json)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(event_seq, player_id) DO UPDATE SET
-                    include = excluded.include,
-                    payload_json = excluded.payload_json
-                """,
-                (event_seq, player_id, 1 if decision.include else 0, payload),
-            )
+        with projection_cache_fill_span(event_seq=event_seq, player_id=player_id):
+            payload = decision.payload_json if decision.include else None
+            with self._store._conn:
+                self._store._conn.execute(
+                    """
+                    INSERT INTO projection_cache (event_seq, player_id, include, payload_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(event_seq, player_id) DO UPDATE SET
+                        include = excluded.include,
+                        payload_json = excluded.payload_json
+                    """,
+                    (event_seq, player_id, 1 if decision.include else 0, payload),
+                )
 
     def read_since(self, *, player_id: str, since_seq: int) -> list[CachedDecision]:
         with self._store._conn:

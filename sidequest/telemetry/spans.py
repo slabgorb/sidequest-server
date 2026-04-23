@@ -724,3 +724,54 @@ def combat_player_dead_span(
         },
     ) as span:
         yield span
+
+
+# ---------------------------------------------------------------------------
+# Projection — sidequest/game/projection/*
+# ---------------------------------------------------------------------------
+SPAN_PROJECTION_DECIDE = "projection.filter.decide"
+SPAN_PROJECTION_CACHE_FILL = "projection.cache.fill"
+SPAN_PROJECTION_CACHE_LAZY_FILL = "projection.cache.lazy_fill"
+
+
+@contextmanager
+def projection_decide_span(
+    *,
+    event_kind: str,
+    event_seq: int | None,
+    player_id: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "event.kind": event_kind,
+        "player_id": player_id,
+    }
+    if event_seq is not None:
+        attributes["event.seq"] = event_seq
+    with t.start_as_current_span(SPAN_PROJECTION_DECIDE, attributes=attributes) as span:
+        yield span
+
+
+@contextmanager
+def projection_cache_fill_span(
+    *, event_seq: int, player_id: str, _tracer: trace.Tracer | None = None
+) -> Iterator[trace.Span]:
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_PROJECTION_CACHE_FILL,
+        attributes={"event.seq": event_seq, "player_id": player_id},
+    ) as span:
+        yield span
+
+
+@contextmanager
+def projection_cache_lazy_fill_span(
+    *, player_id: str, _tracer: trace.Tracer | None = None
+) -> Iterator[trace.Span]:
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_PROJECTION_CACHE_LAZY_FILL,
+        attributes={"player_id": player_id},
+    ) as span:
+        yield span
