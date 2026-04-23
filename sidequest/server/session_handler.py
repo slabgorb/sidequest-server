@@ -1692,6 +1692,8 @@ class WebSocketSessionHandler:
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
         # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
+        # OTEL visibility: add event to current span so the GM panel (Sebastien-
+        # tier mechanical visibility) can see the dispatch decision end-to-end.
         confrontation_msg: ConfrontationMessage | None = None
         if now_live and now_encounter is not None:
             from sidequest.server.dispatch.confrontation import (
@@ -1702,16 +1704,31 @@ class WebSocketSessionHandler:
                 sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
                 now_encounter.encounter_type,
             )
-            if cdef is not None:
-                payload_dict = build_confrontation_payload(
-                    encounter=now_encounter,
-                    cdef=cdef,
-                    genre_slug=sd.genre_slug,
+            # No silent fallback: an active encounter whose type is not in the
+            # pack is a pack-data bug. Task 10 raises in the same case during
+            # beat-apply; the dispatch path matches.
+            if cdef is None:
+                raise ValueError(
+                    f"active encounter type {now_encounter.encounter_type!r} "
+                    f"not in pack confrontations (genre={sd.genre_slug!r})"
                 )
-                confrontation_msg = ConfrontationMessage(
-                    payload=ConfrontationPayload(**payload_dict),
-                    player_id=sd.player_id,
-                )
+            payload_dict = build_confrontation_payload(
+                encounter=now_encounter,
+                cdef=cdef,
+                genre_slug=sd.genre_slug,
+            )
+            confrontation_msg = ConfrontationMessage(
+                payload=ConfrontationPayload(**payload_dict),
+                player_id=sd.player_id,
+            )
+            trace.get_current_span().add_event(
+                "confrontation.dispatched",
+                {
+                    "active": True,
+                    "encounter_type": now_encounter.encounter_type,
+                    "genre_slug": sd.genre_slug,
+                },
+            )
         elif prior_live and not now_live:
             from sidequest.server.dispatch.confrontation import (
                 build_clear_confrontation_payload,
@@ -1724,6 +1741,14 @@ class WebSocketSessionHandler:
             confrontation_msg = ConfrontationMessage(
                 payload=ConfrontationPayload(**payload_dict),
                 player_id=sd.player_id,
+            )
+            trace.get_current_span().add_event(
+                "confrontation.dispatched",
+                {
+                    "active": False,
+                    "encounter_type": prior_type,
+                    "genre_slug": sd.genre_slug,
+                },
             )
 
         outbound: list[object] = [narration_msg]

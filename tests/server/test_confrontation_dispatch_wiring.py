@@ -82,3 +82,39 @@ async def test_no_confrontation_message_when_state_unchanged(
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 0
+
+
+@pytest.mark.asyncio
+async def test_confrontation_message_refreshed_on_live_to_live(
+    session_handler_factory,
+):
+    """A live encounter that stays live still emits CONFRONTATION with updated
+    metric — the UI needs the new payload each turn to repaint beats/bars."""
+    from sidequest.game.encounter import (
+        EncounterMetric,
+        MetricDirection,
+        StructuredEncounter,
+    )
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc.metric = EncounterMetric(
+        name="momentum", current=0, starting=0,
+        direction=MetricDirection.Bidirectional,
+        threshold_high=10, threshold_low=-10,
+    )
+    sd.snapshot.encounter = enc
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=_result(
+            beat_selections=[BeatSelection(actor="Rux", beat_id="attack", target=None)],
+        ),
+    )
+    from sidequest.server.session_handler import _build_turn_context
+    msgs = await handler._execute_narration_turn(
+        sd, "Swing again.", _build_turn_context(sd),
+    )
+    conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
+    assert len(conf) == 1
+    assert conf[0].payload.active is True
+    # attack metric_delta=2 → momentum 0+2=2, still inside ±10 bounds.
+    assert conf[0].payload.metric["current"] == 2
