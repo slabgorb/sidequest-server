@@ -1550,6 +1550,18 @@ class WebSocketSessionHandler:
         if not action:
             return [_error_msg("Player action is empty after sanitization")]
 
+        # Story 3.4 Task 12: strip [combat] markers from aside-flagged actions
+        # before they reach the orchestrator (port of dispatch/aside.rs).
+        if getattr(payload, "aside", False):
+            from sidequest.server.dispatch.combat_brackets import (
+                strip_combat_brackets,
+            )
+            action = strip_combat_brackets(action)
+            if not action:
+                return [_error_msg(
+                    "Player aside is empty after combat-bracket strip"
+                )]
+
         logger.info(
             "session.player_action genre=%s world=%s player=%s action_len=%d",
             self._session_data.genre_slug,
