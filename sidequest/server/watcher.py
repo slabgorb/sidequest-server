@@ -3,14 +3,15 @@
 Implements the `/ws/watcher` stream the UI's `useWatcherSocket` hook expects.
 Every OTEL span that closes in this process is serialized into the TypeScript
 ``WatcherEvent`` shape (see ``sidequest-ui/src/types/watcher.ts``) and fanned
-out to every connected watcher WebSocket. No span filtering, no schema
-mapping beyond the generic ``agent_span_close`` event type — the dashboard
-already renders raw spans on the Timeline tab.
+out to every connected watcher WebSocket. The generic fan-out yields
+``agent_span_close`` events; semantic events (``turn_complete``,
+``state_transition``, ``game_state_snapshot``, ``prompt_assembled``,
+``lore_retrieval``) are published explicitly by subsystem code via
+:func:`~sidequest.telemetry.watcher_hub.publish_event`.
 
-The bridge is intentionally generic. Per-subsystem semantic events
-(``turn_complete``, ``state_transition``, etc.) can be emitted directly by
-subsystem code via :meth:`WatcherHub.publish` when those events need richer
-fields than the OTEL span carries.
+The hub itself lives in ``sidequest.telemetry.watcher_hub`` to keep it
+fastapi-free — subsystem modules must be able to publish without forcing
+uvicorn's logging reconfiguration on test processes.
 
 Threading model: FastAPI runs on the asyncio event loop. The OTEL SDK calls
 ``on_end`` from a background thread inside ``BatchSpanProcessor``. The hub
@@ -20,7 +21,6 @@ back onto the FastAPI loop where the WebSocket sends happen.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -29,57 +29,21 @@ from fastapi import WebSocket, WebSocketDisconnect
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanProcessor
 
+from sidequest.telemetry.watcher_hub import (
+    WatcherHub,
+    publish_event,
+    watcher_hub,
+)
+
 logger = logging.getLogger(__name__)
 
-
-class WatcherHub:
-    """Thread-safe pub/sub for WatcherEvent broadcasts."""
-
-    def __init__(self) -> None:
-        self._subscribers: set[WebSocket] = set()
-        self._lock = asyncio.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Remember the FastAPI event loop so background-thread publishers
-        can hop onto it. Called once during app startup."""
-        self._loop = loop
-
-    async def subscribe(self, ws: WebSocket) -> None:
-        async with self._lock:
-            self._subscribers.add(ws)
-        logger.info("watcher.subscribed total=%d", len(self._subscribers))
-
-    async def unsubscribe(self, ws: WebSocket) -> None:
-        async with self._lock:
-            self._subscribers.discard(ws)
-        logger.info("watcher.unsubscribed total=%d", len(self._subscribers))
-
-    def publish(self, event: dict[str, Any]) -> None:
-        """Broadcast an event to all subscribers.
-
-        Safe to call from any thread. If the event loop isn't bound yet
-        (process start-up race), drop the event — the dashboard treats
-        the stream as lossy by design.
-        """
-        loop = self._loop
-        if loop is None or loop.is_closed():
-            return
-        asyncio.run_coroutine_threadsafe(self._broadcast(event), loop)
-
-    async def _broadcast(self, event: dict[str, Any]) -> None:
-        async with self._lock:
-            targets = list(self._subscribers)
-        dead: list[WebSocket] = []
-        for ws in targets:
-            try:
-                await ws.send_json(event)
-            except Exception:  # noqa: BLE001 — broadcast is best-effort
-                dead.append(ws)
-        if dead:
-            async with self._lock:
-                for ws in dead:
-                    self._subscribers.discard(ws)
+__all__ = [
+    "WatcherHub",
+    "WatcherSpanProcessor",
+    "publish_event",
+    "watcher_endpoint",
+    "watcher_hub",
+]
 
 
 class WatcherSpanProcessor(SpanProcessor):

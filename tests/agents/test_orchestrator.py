@@ -15,7 +15,6 @@ import pytest
 from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse
 from sidequest.agents.narrator import NarratorAgent
 from sidequest.agents.orchestrator import (
-    ActionFlags,
     ActionRewrite,
     BeatSelection,
     NarratorPromptTier,
@@ -203,13 +202,6 @@ def test_extract_structured_extracts_action_rewrite():
     assert result["action_rewrite"]["you"] == "You look around"
 
 
-def test_extract_structured_extracts_action_flags():
-    raw = '```game_patch\n{"action_flags": {"is_power_grab": false, "references_npc": true}}\n```'
-    result = extract_structured_from_response(raw)
-    assert result["action_flags"]["references_npc"] is True
-    assert result["action_flags"]["is_power_grab"] is False
-
-
 def test_extract_structured_extracts_affinity_progress():
     raw = '```game_patch\n{"affinity_progress": [{"name": "combat_mastery", "delta": 1}]}\n```'
     result = extract_structured_from_response(raw)
@@ -272,7 +264,7 @@ def test_beat_selection_no_target():
 
 
 # ---------------------------------------------------------------------------
-# ActionRewrite / ActionFlags
+# ActionRewrite
 # ---------------------------------------------------------------------------
 
 
@@ -280,13 +272,6 @@ def test_action_rewrite_from_dict():
     ar = ActionRewrite.from_dict({"you": "You draw your sword", "named": "Kael draws their sword", "intent": "draw sword"})
     assert ar.you == "You draw your sword"
     assert ar.intent == "draw sword"
-
-
-def test_action_flags_from_dict():
-    af = ActionFlags.from_dict({"is_power_grab": True, "references_npc": True})
-    assert af.is_power_grab is True
-    assert af.references_npc is True
-    assert af.references_inventory is False
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +384,34 @@ def test_build_narrator_prompt_includes_state_summary():
     )
     prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "dark cave" in prompt
+
+
+def test_build_narrator_prompt_includes_lore_context_when_provided():
+    # Story 37-33: retrieved lore from semantic search should land in
+    # the Valley zone so the narrator has canonical world detail to
+    # weave in without asking the player.
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(
+        character_name="Kael",
+        lore_context=(
+            "<lore>\n"
+            "# Relevant lore retrieved for this turn\n"
+            "- [history · id=castle · similarity=0.92] An ancient castle stands on the hill.\n"
+            "</lore>"
+        ),
+    )
+    prompt, _ = orch.build_narrator_prompt("approach the castle", context, tier=NarratorPromptTier.Full)
+    assert "<lore>" in prompt
+    assert "ancient castle" in prompt
+
+
+def test_build_narrator_prompt_omits_lore_section_when_none():
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", lore_context=None)
+    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    assert "<lore>" not in prompt
 
 
 def test_build_narrator_prompt_encounter_rules_when_in_combat():
@@ -575,7 +588,6 @@ async def test_run_narration_turn_records_otel_fields():
     context = TurnContext(character_name="Kael")
     result = await orch.run_narration_turn("look around", context)
     assert result.agent_name == "narrator"
-    assert result.classified_intent == "exploration"
     assert result.agent_duration_ms is not None
     assert result.token_count_in is not None
     assert result.token_count_out is not None
@@ -591,18 +603,6 @@ async def test_run_narration_turn_warns_missing_action_rewrite(caplog):
     with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
         await orch.run_narration_turn("look around", context)
     assert "action_rewrite absent" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_run_narration_turn_warns_missing_action_flags(caplog):
-    import logging
-    narration_text = "**The Tavern**\n\nProse.\n\n```game_patch\n{}\n```"
-    client = make_canned_client(narration_text)
-    orch = Orchestrator(client=client)
-    context = TurnContext(character_name="Kael")
-    with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
-        await orch.run_narration_turn("look around", context)
-    assert "action_flags absent" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -639,3 +639,68 @@ async def test_run_narration_turn_genre_prompts_injected():
     prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "dungeon grit" in prompt
     assert "NPCs speak in riddles" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Group A Task 2 — ActionFlags removal tests
+# ---------------------------------------------------------------------------
+
+
+def test_narration_turn_result_has_no_action_flags():
+    """Group A Task 2 — ActionFlags dataclass is retired."""
+    from dataclasses import fields
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    field_names = {f.name for f in fields(NarrationTurnResult)}
+    assert "action_flags" not in field_names, (
+        "action_flags still on NarrationTurnResult"
+    )
+
+
+def test_action_flags_class_is_removed_from_orchestrator():
+    """Group A Task 2 — ActionFlags dataclass itself is gone."""
+    from sidequest.agents import orchestrator
+    assert not hasattr(orchestrator, "ActionFlags"), (
+        "ActionFlags dataclass still defined in orchestrator module"
+    )
+
+
+def test_action_flags_not_exported_from_agents_package():
+    """Group A Task 2 — ActionFlags removed from agents package exports."""
+    from sidequest.agents import __all__
+    assert "ActionFlags" not in __all__, (
+        "ActionFlags still exported from sidequest.agents.__all__"
+    )
+
+
+def test_action_rewrite_still_present():
+    """Guard: ActionRewrite is LIVE — must not be touched."""
+    from sidequest.agents.orchestrator import ActionRewrite, NarrationTurnResult
+    from dataclasses import fields
+    assert ActionRewrite is not None
+    field_names = {f.name for f in fields(NarrationTurnResult)}
+    assert "action_rewrite" in field_names, (
+        "action_rewrite must remain on NarrationTurnResult — not in scope for removal"
+    )
+
+
+def test_narration_turn_result_has_no_classified_intent():
+    """Group A Task 3 — classified_intent dead hardcode retired."""
+    from dataclasses import fields
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    field_names = {f.name for f in fields(NarrationTurnResult)}
+    assert "classified_intent" not in field_names, (
+        "classified_intent still on NarrationTurnResult"
+    )
+
+
+def test_orchestrator_module_has_no_classified_intent_hardcode():
+    """Group A Task 3 — no classified_intent = 'exploration' assignment in source."""
+    import inspect
+    from sidequest.agents import orchestrator
+    source = inspect.getsource(orchestrator)
+    assert 'classified_intent = "exploration"' not in source, (
+        'Hardcoded classified_intent = "exploration" still present'
+    )
+    assert "classified_intent = 'exploration'" not in source, (
+        "Hardcoded classified_intent = 'exploration' still present"
+    )

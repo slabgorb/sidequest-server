@@ -174,29 +174,6 @@ class ActionRewrite:
 
 
 @dataclass
-class ActionFlags:
-    """Relevance flags from the narrator's game_patch JSON block.
-
-    Port of orchestrator.rs::ActionFlags.
-    """
-    is_power_grab: bool = False
-    references_inventory: bool = False
-    references_npc: bool = False
-    references_ability: bool = False
-    references_location: bool = False
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ActionFlags":
-        return cls(
-            is_power_grab=bool(d.get("is_power_grab", False)),
-            references_inventory=bool(d.get("references_inventory", False)),
-            references_npc=bool(d.get("references_npc", False)),
-            references_ability=bool(d.get("references_ability", False)),
-            references_location=bool(d.get("references_location", False)),
-        )
-
-
-@dataclass
 class NarrationTurnResult:
     """Result of processing a player action through the Phase 1 narration pipeline.
 
@@ -224,13 +201,11 @@ class NarrationTurnResult:
     quest_updates: dict[str, str] = field(default_factory=dict)
     sfx_triggers: list[str] = field(default_factory=list)
     action_rewrite: ActionRewrite | None = None
-    action_flags: ActionFlags | None = None
     affinity_progress: list[tuple[str, int]] = field(default_factory=list)
     gold_change: int | None = None
     lore_established: list[str] | None = None
 
     # OTEL / telemetry
-    classified_intent: str | None = None
     agent_name: str | None = None
     agent_duration_ms: int | None = None
     token_count_in: int | None = None
@@ -347,6 +322,16 @@ class TurnContext:
     # ``sidequest.game.encounter.StructuredEncounter``.
     encounter: Any = None
 
+    # Retrieved lore fragments for the current turn (Valley zone, Story
+    # 37-33). Pre-rendered by the session handler via
+    # :func:`sidequest.game.lore_embedding.retrieve_lore_context` before
+    # the turn fires. ``None`` means no lore section is registered —
+    # keeps the prompt zone-clean when the daemon is unavailable or the
+    # store is empty. The retrieval helper never returns an empty string
+    # (all non-producing paths return ``None``; the producing path
+    # returns a non-empty ``<lore>`` block).
+    lore_context: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -425,7 +410,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
 
     Returns a dict with keys:
       prose, footnotes, items_gained, items_lost, npcs_present, quest_updates,
-      visual_scene, scene_mood, sfx_triggers, action_rewrite, action_flags,
+      visual_scene, scene_mood, sfx_triggers, action_rewrite,
       beat_selections, confrontation, location, affinity_progress, gold_change,
       lore_established.
 
@@ -440,7 +425,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "footnotes=%d items_gained=%d npcs_present=%d "
         "quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
-        "has_action_flags=%s beat_selections=%d confrontation=%r "
+        "beat_selections=%d confrontation=%r "
         "has_location=%s gold_change=%r",
         len(patch.get("footnotes", [])),
         len(patch.get("items_gained", [])),
@@ -450,7 +435,6 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         patch.get("visual_scene") is not None,
         patch.get("mood") is not None or patch.get("scene_mood") is not None,
         patch.get("action_rewrite") is not None,
-        patch.get("action_flags") is not None,
         len(patch.get("beat_selections", [])),
         patch.get("confrontation"),
         patch.get("location") is not None,
@@ -470,7 +454,6 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "scene_mood": patch.get("scene_mood", patch.get("mood")),
         "sfx_triggers": patch.get("sfx_triggers", []),
         "action_rewrite": patch.get("action_rewrite"),
-        "action_flags": patch.get("action_flags"),
         "beat_selections": patch.get("beat_selections", []),
         "confrontation": patch.get("confrontation"),
         "location": patch.get("location"),
@@ -875,7 +858,9 @@ class Orchestrator:
 
         # === STATE-DEPENDENT SECTIONS (every tier) ===
 
-        # Encounter rules for ANY active encounter type
+        # Encounter rules for ANY active encounter type. The narrator's
+        # build_encounter_context call (encounter / cdef / summary) renders
+        # live beats + actors directly into the registry.
         if context.in_combat or context.in_chase or context.in_encounter:
             self._narrator.build_encounter_context(
                 registry,
@@ -955,6 +940,22 @@ class Orchestrator:
                 PromptSection.new(
                     "world_context",
                     context.world_context.lstrip("\n"),
+                    AttentionZone.Valley,
+                    SectionCategory.State,
+                ),
+            )
+
+        # Retrieved lore (Valley zone) — Story 37-33. Semantic-search
+        # results from the player's action embedded against the lore
+        # store. Only registered when a non-empty block was produced;
+        # ``None`` means the daemon was unavailable or no fragments
+        # cleared the similarity floor, and the prompt stays quiet.
+        if context.lore_context:
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "retrieved_lore",
+                    context.lore_context,
                     AttentionZone.Valley,
                     SectionCategory.State,
                 ),
@@ -1067,9 +1068,26 @@ class Orchestrator:
         )
 
         prompt_text = registry.compose(agent_name)
+        section_count = len(registry.registry(agent_name))
         logger.info(
             "turn.agent_llm.prompt_build section_count=%d",
-            len(registry.registry(agent_name)),
+            section_count,
+        )
+        # Dashboard Prompt tab consumes `prompt_assembled`. The hub
+        # lives in `sidequest.telemetry.watcher_hub` — importing from
+        # `sidequest.server.watcher` would drag in uvicorn's logging
+        # reconfiguration and break every caplog-based test.
+        from sidequest.telemetry.watcher_hub import publish_event as _pub
+
+        _pub(
+            "prompt_assembled",
+            {
+                "agent_name": agent_name,
+                "section_count": section_count,
+                "prompt_len": len(prompt_text),
+                "tier": str(tier),
+            },
+            component="prompt_builder",
         )
         return prompt_text, registry
 
@@ -1098,17 +1116,11 @@ class Orchestrator:
         Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
         """
         with orchestrator_process_action_span(action_len=len(action)) as span:
-            # ADR-067: all intents route to narrator
-            classified_intent = "exploration"
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
             prompt_text, registry = self.build_narrator_prompt(action, context, tier=tier)
 
-            logger.info(
-                "unified_narrator.intent_inferred intent=%s source=state_inference",
-                classified_intent,
-            )
             logger.info("Invoking Claude CLI for narration action=%r", action)
 
             # ADR-066: persistent session (--resume on subsequent turns)
@@ -1153,7 +1165,6 @@ class Orchestrator:
                             "something shifts in the distance, but the moment passes."
                         ),
                         is_degraded=True,
-                        classified_intent=classified_intent,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
                         prompt_tier=tier,
@@ -1185,14 +1196,10 @@ class Orchestrator:
 
             prose = extraction["prose"]
 
-            # Warn on missing action_rewrite / action_flags
+            # Warn on missing action_rewrite
             if extraction["action_rewrite"] is None:
                 logger.warning(
                     "action_rewrite absent from extraction — using default (empty rewrite)"
-                )
-            if extraction["action_flags"] is None:
-                logger.warning(
-                    "action_flags absent from extraction — using default (all flags false)"
                 )
 
             # Log confrontation initiation
@@ -1230,14 +1237,10 @@ class Orchestrator:
             if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
                 visual_scene = VisualScene.from_dict(extraction["visual_scene"])
 
-            # Build ActionRewrite / ActionFlags
+            # Build ActionRewrite
             action_rewrite: ActionRewrite | None = None
             if isinstance(extraction["action_rewrite"], dict):
                 action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
-
-            action_flags: ActionFlags | None = None
-            if isinstance(extraction["action_flags"], dict):
-                action_flags = ActionFlags.from_dict(extraction["action_flags"])
 
             return NarrationTurnResult(
                 narration=prose,
@@ -1254,11 +1257,9 @@ class Orchestrator:
                 quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
                 sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],
                 action_rewrite=action_rewrite,
-                action_flags=action_flags,
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
-                classified_intent=classified_intent,
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,

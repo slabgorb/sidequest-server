@@ -282,6 +282,37 @@ class ActionQueuePayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# ImagePayload / RenderQueuedPayload — visual-scene dispatch
+# ---------------------------------------------------------------------------
+
+
+class ImagePayload(ProtocolBase):
+    """Rendered image reply. Mirrors the TypeScript ``ImagePayload`` in
+    ``sidequest-ui/src/types/payloads.ts``. The ``url`` is served by the
+    server's ``/renders/*`` static mount; absolute filesystem paths are
+    translated on the way out."""
+
+    url: str
+    alt: str | None = None
+    description: str | None = None
+    caption: str | None = None
+    render_id: str | None = None
+    tier: str | None = None
+    width: int | None = None
+    height: int | None = None
+    handout: bool | None = None
+
+
+class RenderQueuedPayload(ProtocolBase):
+    """Dispatch acknowledgement emitted the moment the server fires a
+    render request at the daemon. The UI's ``ImageBusProvider`` uses
+    ``render_id`` to hold a placeholder card until the matching
+    ``IMAGE`` message lands."""
+
+    render_id: str
+
+
+# ---------------------------------------------------------------------------
 # ErrorPayload
 # ---------------------------------------------------------------------------
 
@@ -547,6 +578,23 @@ class GamePausedMessage(ProtocolBase):
     player_id: str = ""
 
 
+class ImageMessage(ProtocolBase):
+    """GameMessage::Image wire representation — carries a rendered image URL."""
+
+    type: Literal[MessageType.IMAGE] = MessageType.IMAGE
+    payload: ImagePayload
+    player_id: str = ""
+
+
+class RenderQueuedMessage(ProtocolBase):
+    """GameMessage::RenderQueued — fires the moment the server dispatches
+    a render to the daemon, before the image is ready."""
+
+    type: Literal[MessageType.RENDER_QUEUED] = MessageType.RENDER_QUEUED
+    payload: RenderQueuedPayload
+    player_id: str = ""
+
+
 class GameResumedMessage(ProtocolBase):
     """GameMessage::GameResumed wire representation (MP-02 Task 6).
 
@@ -578,7 +626,9 @@ _Phase1Variant = Annotated[
     | PlayerSeatMessage
     | SeatConfirmedMessage
     | GamePausedMessage
-    | GameResumedMessage,
+    | GameResumedMessage
+    | ImageMessage
+    | RenderQueuedMessage,
     Field(discriminator="type"),
 ]
 

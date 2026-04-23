@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.daemon_client import (
+    DaemonClient,
+    DaemonRequestError,
+    DaemonUnavailableError,
+    render_enabled,
+)
 from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
@@ -38,6 +44,10 @@ from sidequest.game.builder import (
 )
 from sidequest.game.character import Character
 from sidequest.game.event_log import EventLog
+from sidequest.game.lore_embedding import (
+    embed_pending_fragments,
+    retrieve_lore_context,
+)
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
@@ -64,6 +74,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
 from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
@@ -74,6 +85,8 @@ from sidequest.protocol.messages import (
     GamePausedMessage,
     GamePausedPayload,
     GameResumedMessage,
+    ImageMessage,
+    ImagePayload,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -82,6 +95,8 @@ from sidequest.protocol.messages import (
     PartyStatusPayload,
     PlayerPresenceMessage,
     PlayerPresencePayload,
+    RenderQueuedMessage,
+    RenderQueuedPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SessionEventMessage,
@@ -106,6 +121,7 @@ from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +233,14 @@ class _SessionData:
     # game_slug rather than the legacy genre+world path.
     game_slug: str | None = None
     mode: GameMode | None = None
+    # Lore embed worker lifecycle (Story 37-33 round-trip #4). A live
+    # reference to the most recent background embed task so cleanup() can
+    # cancel it before the SQLite store closes and so _dispatch_embed_worker
+    # can skip dispatch while a previous worker is still running. Both
+    # guards prevent the fire-and-forget task from writing to an orphaned
+    # in-memory lore_store after disconnect and from racing a sibling worker
+    # at the ``await client.embed()`` yield point on rapid successive turns.
+    embed_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +552,28 @@ class WebSocketSessionHandler:
     async def cleanup(self) -> None:
         """Called on disconnect — persist current state if in Playing."""
         if self._session_data is not None:
+            # Cancel any in-flight embed worker first so it cannot write
+            # to an orphaned in-memory lore_store after store.close().
+            # CancelledError is a BaseException in Python 3.8+, so it
+            # escapes every `except Exception` in the worker; we await
+            # and swallow it here so disconnect never raises to the
+            # WebSocket layer. Non-cancel exceptions (a real worker bug
+            # that happened to surface during cancellation) are logged
+            # at warning with exc_info — cleanup still proceeds.
+            embed_task = self._session_data.embed_task
+            if embed_task is not None and not embed_task.done():
+                embed_task.cancel()
+                try:
+                    await embed_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 — cleanup must proceed
+                    logger.warning(
+                        "session.embed_task_cleanup_error type=%s error=%s",
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
             try:
                 self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
@@ -999,6 +1045,27 @@ class WebSocketSessionHandler:
                 "session.ready_emitted reason=resume player=%s turn=%d",
                 player_name,
                 snapshot.turn_manager.interaction,
+            )
+            # Snapshot the resumed session so the dashboard State tab and
+            # Subsystems "session" component light up on reconnect without
+            # waiting for the next narration turn.
+            _watcher_publish(
+                "game_state_snapshot",
+                {
+                    "reason": "resume",
+                    "genre_slug": genre_slug,
+                    "world_slug": world_slug,
+                    "player_name": player_name,
+                    "player_id": player_id,
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "current_location": snapshot.location or "",
+                    "discovered_regions": list(snapshot.discovered_regions),
+                    "npc_registry_count": len(snapshot.npc_registry),
+                    "quest_log_count": len(snapshot.quest_log),
+                    "lore_established_count": len(snapshot.lore_established),
+                    "character_count": len(snapshot.characters),
+                },
+                component="session",
             )
             # Also refresh PARTY_STATUS so the resumed client's header /
             # sheet / location update from the saved snapshot. Without
@@ -1526,6 +1593,19 @@ class WebSocketSessionHandler:
             lore_added,
             len(sd.lore_store),
         )
+        _watcher_publish(
+            "lore_retrieval",
+            {
+                "reason": "character_creation_seed",
+                "fragments_added": lore_added,
+                "total_fragments": len(sd.lore_store),
+                "total_tokens": sd.lore_store.total_tokens(),
+                "genre_slug": sd.genre_slug,
+                "world_slug": sd.world_slug,
+                "player_id": player_id,
+            },
+            component="rag",
+        )
 
         # NPC registry reset (Story 2.3 Slice G). A fresh character
         # entering the world must not inherit chargen-tier NPC name
@@ -1773,7 +1853,8 @@ class WebSocketSessionHandler:
             self._state = _State.Playing
 
         sd = self._session_data
-        turn_context = _build_turn_context(sd)
+        lore_context = await self._retrieve_lore_for_turn(sd, action)
+        turn_context = _build_turn_context(sd, lore_context=lore_context)
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
@@ -1808,10 +1889,18 @@ class WebSocketSessionHandler:
             result.agent_duration_ms,
         )
 
+        # Capture encounter state BEFORE applying the narration result so we
+        # can detect transitions (live→resolved) after the dispatch below and
+        # emit the corresponding state_transition / resolve events.
         prior_encounter = snapshot.encounter
         prior_live = prior_encounter is not None and not prior_encounter.resolved
         prior_type = prior_encounter.encounter_type if prior_encounter else None
 
+        # Unified dispatch — passes the pack so encounter instantiation /
+        # beat application / resolution happen in one place (the version
+        # that emits the Story-3.4 OTEL spans the GM panel reads). The
+        # develop-side ``apply_encounter_updates`` split was supplanted by
+        # this richer combined helper; see merge commit for details.
         _apply_narration_result_to_snapshot(
             snapshot, result, sd.player_name, pack=sd.genre_pack,
         )
@@ -1871,6 +1960,13 @@ class WebSocketSessionHandler:
         except Exception as exc:
             logger.error("session.persist_failed error=%s", exc)
 
+        # Story 37-33: embed newly-seeded / pending lore fragments in the
+        # background so the *next* turn's RAG retrieval can find them.
+        # Spawns a fire-and-forget task — the narration turn returns to
+        # the player immediately; embeds populate during the human's
+        # reading time.
+        self._dispatch_embed_worker(sd)
+
         narration_text = result.narration or "(The world holds its breath...)"
         try:
             narration_nbs = NonBlankString(narration_text)
@@ -1900,6 +1996,17 @@ class WebSocketSessionHandler:
             "state.footnotes_forwarded count=%d player=%s",
             len(forwarded_footnotes),
             sd.player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "footnotes",
+                "count": len(forwarded_footnotes),
+                "player_id": sd.player_id,
+                "turn_number": snapshot.turn_manager.interaction,
+                "summaries": [fn.summary for fn in forwarded_footnotes][:10],
+            },
+            component="footnotes",
         )
         narration_payload = NarrationPayload(
             text=narration_nbs,
@@ -1997,10 +2104,93 @@ class WebSocketSessionHandler:
                     snapshot.location or "",
                     snapshot.turn_manager.interaction,
                 )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "party_status",
+                        "reason": "turn_end",
+                        "location": snapshot.location or "",
+                        "turn_number": snapshot.turn_manager.interaction,
+                        "player_id": sd.player_id,
+                    },
+                    component="party_status",
+                )
             except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
                 logger.warning(
                     "state.party_status_refresh_failed error=%s", exc
                 )
+
+        # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
+        # message ships with the NARRATION payload; the async render task
+        # posts an IMAGE message onto the per-connection outbound queue
+        # when the daemon replies. Short-circuits without any socket work
+        # when: render flag off, no visual scene, daemon socket missing,
+        # or outbound queue unavailable (test configurations that don't
+        # attach room context).
+        render_queued = self._maybe_dispatch_render(sd, result)
+        if render_queued is not None:
+            outbound.append(render_queued)
+
+        # Semantic watcher event — `turn_complete` is the highest-leverage
+        # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
+        # turn-buckets, Timing p95, and the Turn counter all at once.
+        # Field shape mirrors `TurnCompleteFields` in
+        # `sidequest-ui/src/types/watcher.ts`.
+        try:
+            patches: list[dict[str, object]] = []
+            if result.location:
+                patches.append({"patch_type": "location", "fields_changed": ["location"]})
+            if result.quest_updates:
+                patches.append(
+                    {"patch_type": "quest", "fields_changed": list(result.quest_updates)}
+                )
+            if result.lore_established:
+                patches.append({"patch_type": "lore", "fields_changed": ["lore_established"]})
+            if result.npcs_present:
+                patches.append(
+                    {
+                        "patch_type": "npc_registry",
+                        "fields_changed": [n.name for n in result.npcs_present],
+                    }
+                )
+            if result.items_gained or result.items_lost:
+                patches.append({"patch_type": "inventory", "fields_changed": []})
+
+            beats_fired: list[dict[str, object]] = []
+            for beat in result.beat_selections or []:
+                beats_fired.append(
+                    {
+                        "trope": getattr(beat, "trope_id", None)
+                        or getattr(beat, "beat_id", None)
+                        or "unknown",
+                        "threshold": getattr(beat, "threshold", None),
+                    }
+                )
+
+            _watcher_publish(
+                "turn_complete",
+                {
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "agent_name": result.agent_name,
+                    "agent_duration_ms": result.agent_duration_ms,
+                    "total_duration_ms": result.agent_duration_ms,
+                    "is_degraded": result.is_degraded,
+                    "token_count_in": result.token_count_in,
+                    "token_count_out": result.token_count_out,
+                    "extraction_tier": str(result.prompt_tier),
+                    "player_input": action,
+                    "player_id": sd.player_id,
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "patches": patches,
+                    "beats_fired": beats_fired,
+                    "delta_empty": not patches and not beats_fired,
+                },
+                component="orchestrator",
+                severity="warning" if result.is_degraded else "info",
+            )
+        except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
+            logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
 
         return outbound
 
@@ -2029,8 +2219,11 @@ class WebSocketSessionHandler:
         action = sd.opening_seed or "I look around and take in my surroundings."
         source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
 
+        lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(
-            sd, opening_directive=sd.opening_directive
+            sd,
+            opening_directive=sd.opening_directive,
+            lore_context=lore_context,
         )
 
         span.add_event(
@@ -2054,6 +2247,355 @@ class WebSocketSessionHandler:
         sd.opening_directive = None
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Visual-scene render dispatch
+    # ------------------------------------------------------------------
+
+    def _maybe_dispatch_render(
+        self,
+        sd: _SessionData,
+        result: object,
+    ) -> RenderQueuedMessage | None:
+        """Fire a render request at the media daemon if the narrator flagged
+        a visual scene and the pipeline is enabled.
+
+        Returns a ``RenderQueuedMessage`` to append to the turn's outbound
+        frames, or ``None`` when nothing was dispatched (no scene, feature
+        flag off, daemon offline, or no outbound queue).
+
+        The actual daemon round-trip runs on a background task; the IMAGE
+        reply lands on ``self._out_queue`` whenever the render completes.
+        Failures are swallowed with OTEL spans + watcher events so that no
+        render error ever crashes a turn.
+        """
+        from sidequest.agents.orchestrator import NarrationTurnResult
+
+        if not isinstance(result, NarrationTurnResult):
+            return None
+        visual = result.visual_scene
+        if visual is None or not getattr(visual, "subject", "").strip():
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "no_visual_scene",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        if not render_enabled():
+            logger.info("render.skipped reason=feature_flag_disabled")
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "feature_flag_disabled",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        client = DaemonClient()
+        if not client.is_available():
+            logger.warning(
+                "render.skipped reason=daemon_unavailable socket=%s",
+                client.socket_path,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "daemon_unavailable",
+                    "socket": str(client.socket_path),
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+                severity="warning",
+            )
+            return None
+        if self._out_queue is None:
+            # Test configurations that don't attach room context can't
+            # receive async IMAGE frames. Skip loudly so we don't fire
+            # a render whose result has nowhere to land.
+            logger.warning("render.skipped reason=no_outbound_queue")
+            return None
+
+        render_id = uuid.uuid4().hex[:12]
+        tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
+        params: dict[str, object] = {
+            "tier": tier,
+            "subject": visual.subject,
+            "mood": visual.mood or "",
+            "tags": list(visual.tags or []),
+            "location": sd.snapshot.location or "",
+            "narration": result.narration,
+            "genre": sd.genre_slug,
+        }
+
+        logger.info(
+            "render.dispatched render_id=%s tier=%s subject=%r",
+            render_id,
+            tier,
+            visual.subject[:80],
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "dispatched",
+                "render_id": render_id,
+                "tier": tier,
+                "subject": visual.subject[:120],
+                "turn_number": sd.snapshot.turn_manager.interaction,
+            },
+            component="render",
+        )
+
+        out_queue = self._out_queue
+        player_id = sd.player_id
+        asyncio.create_task(
+            self._run_render(client, params, render_id, out_queue, player_id)
+        )
+
+        return RenderQueuedMessage(
+            type=MessageType.RENDER_QUEUED,  # type: ignore[arg-type]
+            payload=RenderQueuedPayload(render_id=render_id),
+            player_id=player_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Lore embedding — RAG retrieval (pre-turn) + worker dispatch (post-turn)
+    # ------------------------------------------------------------------
+
+    async def _retrieve_lore_for_turn(
+        self, sd: _SessionData, action: str
+    ) -> str | None:
+        """Fetch the pre-turn lore block via semantic search.
+
+        Always returns ``None`` on empty stores, missing daemons, or
+        embed failures — the narrator will run without RAG injection,
+        which is strictly better than crashing the turn. Expected failure
+        modes (empty store, daemon unavailable, embed error, query too
+        large) are logged inside :func:`retrieve_lore_context` and surface
+        their own OTEL span attribute. The blanket ``except Exception``
+        below exists precisely for paths those guards do not cover (e.g.
+        a malformed daemon reply that raises ``KeyError`` from
+        ``EmbedResponse`` construction) so a buggy codepath never crashes
+        the turn.
+        """
+        try:
+            return await retrieve_lore_context(sd.lore_store, action)
+        except Exception as exc:  # noqa: BLE001 — RAG must never crash a turn
+            logger.warning(
+                "lore_retrieval.unexpected_exception action_len=%d error=%s",
+                len(action),
+                exc,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_retrieval",
+                    "op": "failed",
+                    "reason": "unexpected_exception",
+                    "error": type(exc).__name__,
+                },
+                component="lore",
+                severity="error",
+            )
+            return None
+
+    def _dispatch_embed_worker(self, sd: _SessionData) -> None:
+        """Spawn a background embed worker for any newly-added lore.
+
+        Fire-and-forget, but lifecycle-tracked. The worker itself checks
+        :meth:`DaemonClient.is_available` before opening any connection
+        and returns early with ``skipped_daemon_unavailable=True`` when
+        the sidecar is absent — matching the render-dispatch graceful
+        degradation pattern.
+
+        Double-dispatch gate: if a previous worker for this session is
+        still running, skip this turn's dispatch. The next turn will pick
+        up the remaining pending fragments. This prevents two concurrent
+        workers from racing at the ``await client.embed()`` yield point
+        and double-incrementing the retry counter on the same fragment.
+        """
+        tracer = trace.get_tracer("sidequest.server.session_handler")
+        previous = sd.embed_task
+        if previous is not None and not previous.done():
+            # Emit a span for the skip so the GM panel's OTEL audit trail
+            # shows it alongside the worker's own ``lore_embedding.worker``
+            # span. Watcher event stays as well for the live state_transition
+            # stream.
+            with tracer.start_as_current_span(
+                "lore_embedding.dispatch_skipped"
+            ) as skip_span:
+                skip_span.set_attribute("lore.skip_reason", "worker_still_running")
+                skip_span.set_attribute(
+                    "lore.turn_number", sd.snapshot.turn_manager.interaction
+                )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_embedding",
+                    "op": "skipped",
+                    "reason": "worker_still_running",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="lore",
+            )
+            return
+        pending = sd.lore_store.pending_embedding_ids(max_retries=3)
+        if not pending:
+            return
+        turn_number = sd.snapshot.turn_manager.interaction
+        sd.embed_task = asyncio.create_task(
+            self._run_embed_worker(sd, len(pending), turn_number)
+        )
+
+    async def _run_embed_worker(
+        self, sd: _SessionData, pending_count: int, turn_number: int
+    ) -> None:
+        """Background embed worker — never raises, always emits telemetry."""
+        try:
+            result = await embed_pending_fragments(sd.lore_store)
+        except Exception as exc:  # noqa: BLE001 — worker cannot crash the loop
+            logger.exception("lore_embedding.worker_exception")
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_embedding",
+                    "op": "failed",
+                    "reason": "exception",
+                    "error": type(exc).__name__,
+                    "turn_number": turn_number,
+                },
+                component="lore",
+                severity="error",
+            )
+            return
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "lore_embedding",
+                "op": "completed",
+                "pending_at_dispatch": pending_count,
+                "turn_number": turn_number,
+                **result.as_dict(),
+            },
+            component="lore",
+        )
+
+    async def _run_render(
+        self,
+        client: DaemonClient,
+        params: dict[str, object],
+        render_id: str,
+        out_queue: asyncio.Queue[object],
+        player_id: str,
+    ) -> None:
+        """Background render coroutine — waits for the daemon reply, then
+        enqueues an IMAGE message or logs a failure. Never raises; any
+        exception is caught and surfaced as an OTEL watcher event."""
+        try:
+            reply = await client.render(params)
+        except DaemonUnavailableError as exc:
+            logger.warning(
+                "render.reply_unavailable render_id=%s error=%s", render_id, exc
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_unavailable",
+                    "error": str(exc),
+                },
+                component="render",
+                severity="warning",
+            )
+            return
+        except DaemonRequestError as exc:
+            logger.warning(
+                "render.reply_error render_id=%s code=%s error=%s",
+                render_id,
+                exc.code,
+                exc.message,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_error",
+                    "code": exc.code,
+                    "error": exc.message,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — background task must never crash the loop
+            logger.exception("render.reply_exception render_id=%s", render_id)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "exception",
+                    "error": type(exc).__name__,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+
+        image_url = str(reply.get("image_url") or "")
+        served_url = _render_url_from_path(image_url)
+        width = int(reply.get("width") or 0) or None
+        height = int(reply.get("height") or 0) or None
+        elapsed = int(reply.get("elapsed_ms") or 0)
+
+        msg = ImageMessage(
+            type=MessageType.IMAGE,  # type: ignore[arg-type]
+            payload=ImagePayload(
+                url=served_url,
+                render_id=render_id,
+                tier=str(params.get("tier") or ""),
+                width=width,
+                height=height,
+            ),
+            player_id=player_id,
+        )
+        try:
+            out_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            logger.warning("render.outbound_queue_full render_id=%s", render_id)
+            return
+        logger.info(
+            "render.completed render_id=%s url=%s elapsed_ms=%d",
+            render_id,
+            served_url,
+            elapsed,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "completed",
+                "render_id": render_id,
+                "url": served_url,
+                "elapsed_ms": elapsed,
+            },
+            component="render",
+        )
 
     def _build_session_start_party_status(
         self,
@@ -2149,14 +2691,20 @@ class WebSocketSessionHandler:
 
 
 def _build_turn_context(
-    sd: _SessionData, *, opening_directive: str | None = None
+    sd: _SessionData,
+    *,
+    opening_directive: str | None = None,
+    lore_context: str | None = None,
 ) -> TurnContext:
     """Assemble the :class:`TurnContext` for a single narration turn.
 
     Shared by :meth:`_handle_player_action` and the opening-turn
     bootstrap (Slice H). ``opening_directive`` is consumed by the
     narrator on turn 0 only — the caller is responsible for clearing
-    the session-level directive after the turn runs.
+    the session-level directive after the turn runs. ``lore_context``
+    (story 37-33) is the pre-rendered ``<lore>`` block from
+    :func:`sidequest.game.lore_embedding.retrieve_lore_context`;
+    ``None`` means no lore section is registered on this turn.
     """
     from sidequest.agents.encounter_render import render_encounter_summary
     from sidequest.server.dispatch.confrontation import find_confrontation_def
@@ -2167,6 +2715,10 @@ def _build_turn_context(
     )
 
     # Derive encounter flags from snapshot.encounter (Story 3.4).
+    # Uses category-based flags from the matched ConfrontationDef
+    # (combat / movement) rather than string-matching on encounter_type,
+    # and skips resolved encounters so a just-closed combat doesn't keep
+    # flipping in_combat=True.
     encounter = snapshot.encounter
     confrontation_def = None
     encounter_summary = None
@@ -2201,7 +2753,25 @@ def _build_turn_context(
         npcs=list(snapshot.npcs),
         opening_directive=opening_directive,
         world_context=sd.world_context,
+        lore_context=lore_context,
     )
+
+
+def _find_confrontation_def(pack: GenrePack, confrontation_type: str) -> object | None:
+    """Look up the ConfrontationDef matching the narrator's hint.
+
+    Returns ``None`` when the pack doesn't declare that confrontation
+    type; the caller skips encounter context injection and the narrator
+    will run without beats (narration-only fallback).
+    """
+    rules = getattr(pack, "rules", None)
+    if rules is None:
+        return None
+    confrontations = getattr(rules, "confrontations", None) or []
+    for cd in confrontations:
+        if getattr(cd, "confrontation_type", None) == confrontation_type:
+            return cd
+    return None
 
 
 def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
@@ -2278,6 +2848,18 @@ def _apply_narration_result_to_snapshot(
             result.location,
             player_name,
         )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "location",
+                "before": old_loc,
+                "after": result.location,
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+                "discovered_count": len(snapshot.discovered_regions),
+            },
+            component="state.location",
+        )
 
     # Quest updates
     if result.quest_updates:
@@ -2287,6 +2869,16 @@ def _apply_narration_result_to_snapshot(
             "state.quest_update count=%d player=%s",
             len(result.quest_updates),
             player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "quest_log",
+                "updates": dict(result.quest_updates),
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+            },
+            component="quest_log",
         )
 
     # Lore established
@@ -2323,6 +2915,19 @@ def _apply_narration_result_to_snapshot(
                 npc_mention.pronouns or "",
                 npc_mention.role or "",
                 turn_num,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "auto_registered",
+                    "name": npc_mention.name,
+                    "pronouns": npc_mention.pronouns or "",
+                    "role": npc_mention.role or "",
+                    "turn_number": turn_num,
+                    "registry_len": len(snapshot.npc_registry),
+                },
+                component="npc_registry",
             )
         else:
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
@@ -2463,6 +3068,262 @@ def _advance_phase(enc: StructuredEncounter) -> None:
     enc.structured_phase = ladder.get(enc.beat, EncounterPhase.Climax)
 
 
+def apply_encounter_updates(
+    snapshot: GameSnapshot,
+    result: object,
+    genre_pack: GenrePack,
+    player_name: str,
+) -> None:
+    """Materialize, advance, and resolve encounter state from narrator output.
+
+    Three cases, in order:
+
+    1. No encounter active + narrator hinted a confrontation type: look up
+       the matching :class:`ConfrontationDef` in ``genre_pack.rules`` and
+       instantiate a :class:`StructuredEncounter` from the def's metric +
+       actor list (player + recently-mentioned hostile NPCs). Writes to
+       ``snapshot.encounter``.
+    2. Encounter active + narrator emitted ``beat_selections``: for each
+       selection, find the matching :class:`BeatDef` and apply its
+       ``metric_delta`` to the encounter's metric. Resolution beats (and
+       any metric crossing a threshold) mark ``encounter.resolved`` and
+       clear ``snapshot.encounter``.
+    3. Encounter active + narrator hinted a new confrontation type: no-op.
+       The narrator should not be starting a second encounter while one
+       is running; we trust the existing state.
+
+    Each step emits a ``state_transition`` watcher event tagged
+    ``component=encounter`` so the dashboard Subsystems tab surfaces the
+    mechanical loop Sebastien wants to see.
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        EncounterPhase,
+        MetricDirection,
+        StructuredEncounter,
+    )
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+
+    confrontation_hint = result.confrontation
+    turn_num = snapshot.turn_manager.interaction
+
+    # Case 1 — start a new encounter.
+    if snapshot.encounter is None and confrontation_hint:
+        conf_def = _find_confrontation_def(genre_pack, confrontation_hint)
+        if conf_def is None:
+            logger.warning(
+                "encounter.skipped reason=no_matching_def type=%s player=%s",
+                confrontation_hint,
+                player_name,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "skipped",
+                    "reason": "no_matching_def",
+                    "confrontation_type": confrontation_hint,
+                },
+                component="encounter",
+                severity="warning",
+            )
+            return
+        # Build actors from the player character and any hostile NPCs the
+        # narrator referenced this turn. Keeps per-turn state simple —
+        # tactical grid is Phase 4. Hostile-role detection is a rough
+        # heuristic (anything whose role contains "combat", "hostile",
+        # "enemy", or a named role like "bandit"/"creature"); the
+        # narrator also gets a chance to refine this via later turns.
+        actors: list[EncounterActor] = []
+        if snapshot.characters:
+            player_actor_name = snapshot.characters[0].core.name or player_name
+        else:
+            player_actor_name = player_name
+        actors.append(
+            EncounterActor(name=player_actor_name, role="player", per_actor_state={})
+        )
+        hostile_keywords = {"combat", "hostile", "enemy", "combatant"}
+        for npc in result.npcs_present or []:
+            role = (npc.role or "").lower()
+            if any(k in role for k in hostile_keywords) or role in {"brood-mother", "predator"}:
+                actors.append(
+                    EncounterActor(name=npc.name, role="combatant", per_actor_state={})
+                )
+        # Convert the pack metric def into the live EncounterMetric.
+        md = conf_def.metric
+        direction_map = {
+            "ascending": MetricDirection.Ascending,
+            "descending": MetricDirection.Descending,
+            "bidirectional": MetricDirection.Bidirectional,
+        }
+        metric = EncounterMetric(
+            name=md.name,
+            current=md.starting,
+            starting=md.starting,
+            direction=direction_map.get(md.direction, MetricDirection.Bidirectional),
+            threshold_high=md.threshold_high,
+            threshold_low=md.threshold_low,
+        )
+        snapshot.encounter = StructuredEncounter(
+            encounter_type=conf_def.confrontation_type,
+            metric=metric,
+            beat=0,
+            structured_phase=EncounterPhase.Setup,
+            actors=actors,
+            outcome=None,
+            resolved=False,
+            mood_override=conf_def.mood,
+            narrator_hints=[],
+        )
+        logger.info(
+            "encounter.started type=%s metric=%s=%d actors=%d player=%s",
+            conf_def.confrontation_type,
+            metric.name,
+            metric.current,
+            len(actors),
+            player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "started",
+                "confrontation_type": conf_def.confrontation_type,
+                "metric_name": metric.name,
+                "metric_current": metric.current,
+                "actors": [a.name for a in actors],
+                "turn_number": turn_num,
+            },
+            component="encounter",
+        )
+
+    # Case 2 — advance an active encounter via beat_selections.
+    if snapshot.encounter is not None and result.beat_selections:
+        conf_def = _find_confrontation_def(
+            genre_pack, snapshot.encounter.encounter_type
+        )
+        if conf_def is None:
+            return
+        beat_lookup = {b.id: b for b in conf_def.beats}
+        resolved_this_turn = False
+        for selection in result.beat_selections:
+            beat_id = getattr(selection, "beat_id", None) or ""
+            actor = getattr(selection, "actor", None) or ""
+            beat_def = beat_lookup.get(beat_id)
+            if beat_def is None:
+                logger.warning(
+                    "encounter.beat_skipped reason=unknown_beat_id beat_id=%r actor=%r",
+                    beat_id,
+                    actor,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "beat_skipped",
+                        "reason": "unknown_beat_id",
+                        "beat_id": beat_id,
+                        "actor": actor,
+                    },
+                    component="encounter",
+                    severity="warning",
+                )
+                continue
+            before = snapshot.encounter.metric.current
+            snapshot.encounter.metric.current += int(beat_def.metric_delta or 0)
+            snapshot.encounter.beat += 1
+            logger.info(
+                "encounter.beat_applied beat=%s actor=%s metric=%s %d->%d",
+                beat_id,
+                actor,
+                snapshot.encounter.metric.name,
+                before,
+                snapshot.encounter.metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_applied",
+                    "beat_id": beat_id,
+                    "actor": actor,
+                    "metric_before": before,
+                    "metric_after": snapshot.encounter.metric.current,
+                    "metric_delta": beat_def.metric_delta,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            if beat_def.resolution:
+                resolved_this_turn = True
+                snapshot.encounter.outcome = beat_def.id
+        # Threshold crossing — resolve the encounter.
+        metric = snapshot.encounter.metric
+        hit_high = (
+            metric.threshold_high is not None
+            and metric.current >= metric.threshold_high
+        )
+        hit_low = (
+            metric.threshold_low is not None
+            and metric.current <= metric.threshold_low
+        )
+        if resolved_this_turn or hit_high or hit_low:
+            etype = snapshot.encounter.encounter_type
+            outcome = (
+                snapshot.encounter.outcome
+                or ("threshold_high" if hit_high else "threshold_low" if hit_low else "resolved")
+            )
+            logger.info(
+                "encounter.resolved type=%s outcome=%s final_metric=%d",
+                etype,
+                outcome,
+                metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "resolved",
+                    "confrontation_type": etype,
+                    "outcome": outcome,
+                    "final_metric": metric.current,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            snapshot.encounter = None
+
+
+def _render_url_from_path(image_path: str) -> str:
+    """Translate a daemon-returned filesystem path into a URL the UI can
+    fetch via the server's ``/renders/*`` static mount.
+
+    The daemon writes every image under ``SIDEQUEST_OUTPUT_DIR`` (or a
+    tempdir when the env var is unset). The server mounts that same
+    directory at ``/renders``, so the mapping is purely a prefix swap.
+    When the path isn't inside that root (tempdir the server can't see),
+    the absolute path is returned verbatim; the UI will fail to load the
+    image, but a clear 404 is better than a silent replacement.
+    """
+    import os as _os
+    import pathlib as _pathlib
+
+    root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    if not root or not image_path:
+        return image_path
+    try:
+        rel = _pathlib.Path(image_path).resolve().relative_to(
+            _pathlib.Path(root).resolve()
+        )
+    except ValueError:
+        return image_path
+    return "/renders/" + str(rel).replace(_os.sep, "/")
+
+
 def _detect_npc_identity_drift(
     existing: NpcRegistryEntry,
     mention: NpcMention,
@@ -2490,4 +3351,18 @@ def _detect_npc_identity_drift(
                 e_val,
                 m_val,
                 turn_num,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "reinvented",
+                    "name": existing.name,
+                    "drift_field": field,
+                    "expected": e_val,
+                    "narrator": m_val,
+                    "turn_number": turn_num,
+                },
+                component="npc_registry",
+                severity="warning",
             )

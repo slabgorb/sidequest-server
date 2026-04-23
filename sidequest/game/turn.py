@@ -135,8 +135,3 @@ class PreprocessedAction(BaseModel):
     you: str
     named: str
     intent: str
-    is_power_grab: bool = False
-    references_inventory: bool = False
-    references_npc: bool = False
-    references_ability: bool = False
-    references_location: bool = False

@@ -13,6 +13,7 @@ from typing import Callable
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from sidequest.agents.claude_client import ClaudeLike
@@ -21,27 +22,41 @@ from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import RoomRegistry
 from sidequest.server.watcher import (
-    WatcherHub,
     WatcherSpanProcessor,
     watcher_endpoint,
+    watcher_hub,
 )
 from sidequest.server.websocket import ws_endpoint
 
 logger = logging.getLogger(__name__)
 
-# Surface INFO from sidequest.* loggers in the uvicorn-driven log. Uvicorn
-# installs its own dictConfig which disables un-attached loggers, so
-# logging.basicConfig() is a no-op here — we must attach a handler directly
-# to the sidequest logger tree and disable propagation to root.
-_sq_logger = logging.getLogger("sidequest")
-_sq_logger.setLevel(logging.INFO)
-if not _sq_logger.handlers:
-    _sq_handler = logging.StreamHandler()
-    _sq_handler.setFormatter(
-        logging.Formatter("%(levelname)s [%(name)s] %(message)s")
-    )
-    _sq_logger.addHandler(_sq_handler)
-    _sq_logger.propagate = False
+
+def _install_uvicorn_log_bridge() -> None:
+    """Attach a StreamHandler to the ``sidequest`` logger tree so INFO
+    lines surface in the uvicorn-driven log.
+
+    Uvicorn installs its own dictConfig at serve time with
+    ``disable_existing_loggers=True``, which disables any logger that
+    isn't explicitly in its config. Attaching a handler directly on the
+    ``sidequest`` tree keeps that tree alive through uvicorn's config
+    swap without touching ``propagate`` — which would silently drop
+    records from every caplog-based test later in the run.
+
+    The previous implementation ran at module-import and set
+    ``propagate=False``, which poisoned the logger tree for any test
+    that later imported this module. The setup now runs only inside
+    :func:`create_app`, and propagation stays on so tests using
+    ``caplog`` continue to capture records off the root logger.
+    """
+    sq = logging.getLogger("sidequest")
+    sq.setLevel(logging.INFO)
+    if not any(getattr(h, "_sidequest_bridge", False) for h in sq.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s [%(name)s] %(message)s")
+        )
+        handler._sidequest_bridge = True  # type: ignore[attr-defined]
+        sq.addHandler(handler)
 
 
 def create_app(
@@ -74,10 +89,28 @@ def create_app(
         else ClaudeClient
     )
 
+    _install_uvicorn_log_bridge()
+
     app = FastAPI(
         title="sidequest-server",
         description="SideQuest Python API server (ADR-082 port target)",
         version="0.1.0",
+    )
+
+    # CORS — dev UI runs on Vite (5173) and fetches API routes cross-origin.
+    # Without this, dashboard polls hit `/api/debug/state` and friends from
+    # 5173 → 8765 and the browser blocks with "No Access-Control-Allow-Origin",
+    # flooding the console. Localhost-only by default; keeps prod safe because
+    # the server isn't exposed beyond localhost anyway.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # Store DI config on app.state so REST handlers can access it via Request
@@ -87,7 +120,9 @@ def create_app(
     app.state.room_registry = RoomRegistry()
 
     # --- Watcher hub — OTEL span broadcast for the GM dashboard. ---
-    watcher_hub = WatcherHub()
+    # The hub is a module-level singleton in `sidequest.server.watcher` so
+    # subsystem code (session_handler, orchestrator) can publish semantic
+    # events without threading a reference through every constructor.
     app.state.watcher_hub = watcher_hub
 
     @app.on_event("startup")
@@ -141,16 +176,43 @@ def create_app(
 
     # --- Static /genre/* mount — serve genre pack assets (POI images, portraits, etc.) ---
     # URL /genre/<genre>/worlds/<world>/assets/poi/<file> → first-matching genre_packs dir.
-    # Fails loud if no genre_packs dir is found.
+    # When no genre_packs dir exists (unit-test configurations that pass
+    # a nonexistent path), skip the mount entirely — asset requests will
+    # 404 loudly, which is correct signal, while the rest of the app
+    # (including /api/genres returning {}) stays usable.
     genre_packs_dir: Path | None = next(
         (p for p in resolved_search_paths if p.exists() and p.is_dir()), None
     )
-    if genre_packs_dir is None:
-        raise RuntimeError(
-            f"No genre_packs directory found in {[str(p) for p in resolved_search_paths]}. "
-            f"Cannot serve /genre/* static assets."
+    if genre_packs_dir is not None:
+        app.mount("/genre", StaticFiles(directory=str(genre_packs_dir)), name="genre_assets")
+    else:
+        logger.warning(
+            "genre_assets.mount_skipped search_paths=%s",
+            [str(p) for p in resolved_search_paths],
         )
-    app.mount("/genre", StaticFiles(directory=str(genre_packs_dir)), name="genre_assets")
+
+    # --- Static /renders/* mount — serve daemon-generated images. ---
+    # The daemon writes every render under SIDEQUEST_OUTPUT_DIR (same env
+    # both processes read), and session_handler._render_url_from_path
+    # maps those filesystem paths to /renders/<relative>. When the env
+    # isn't set (unit tests, first-run) we skip the mount rather than
+    # raise — renders are optional and the lobby stays usable.
+    import os as _os
+
+    render_root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    if render_root:
+        render_dir = Path(render_root)
+        render_dir.mkdir(parents=True, exist_ok=True)
+        app.mount(
+            "/renders",
+            StaticFiles(directory=str(render_dir)),
+            name="render_assets",
+        )
+        logger.info("render_assets.mount_registered dir=%s", render_dir)
+    else:
+        logger.info(
+            "render_assets.mount_skipped reason=SIDEQUEST_OUTPUT_DIR_unset"
+        )
 
     return app
 
