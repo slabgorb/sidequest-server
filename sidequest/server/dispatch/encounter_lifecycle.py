@@ -119,6 +119,12 @@ def resolve_encounter_from_trope(
 
     Port of dispatch/tropes.rs:179-181. Returns the resolved encounter
     (for OTEL / payload emission) or ``None`` if nothing to resolve.
+
+    IOU (story 3.4): this helper has no Python caller as of this commit. The
+    trope engine has not yet been ported to Python (Phase 3 scope). When the
+    trope tick/resolve path lands, hook this function at the completion site
+    — match Rust's dispatch/tropes.rs:179-181 pattern. The helper + unit
+    tests are here so the future port can just call it.
     """
     enc = snapshot.encounter
     if enc is None or enc.resolved:
