@@ -61,6 +61,8 @@ from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
+    ConfrontationMessage,
+    ConfrontationPayload,
     ErrorMessage,
     ErrorPayload,
     GamePausedMessage,
@@ -108,6 +110,7 @@ logger = logging.getLogger(__name__)
 
 _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
+    "CONFRONTATION": ConfrontationMessage,
 }
 
 
@@ -137,6 +140,9 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
     if kind == "NARRATION":
         from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
         return message_cls(payload=_NarrationPayload(**data))
+
+    if kind == "CONFRONTATION":
+        return message_cls(payload=ConfrontationPayload(**data))
 
     # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
     # Kept as a belt-and-suspenders hard fail.
@@ -1617,10 +1623,17 @@ class WebSocketSessionHandler:
             result.agent_duration_ms,
         )
 
+        prior_encounter = snapshot.encounter
+        prior_live = prior_encounter is not None and not prior_encounter.resolved
+        prior_type = prior_encounter.encounter_type if prior_encounter else None
+
         _apply_narration_result_to_snapshot(
             snapshot, result, sd.player_name, pack=sd.genre_pack,
         )
         snapshot.turn_manager.record_interaction()
+
+        now_encounter = snapshot.encounter
+        now_live = now_encounter is not None and not now_encounter.resolved
 
         try:
             sd.store.save(snapshot)
@@ -1678,14 +1691,51 @@ class WebSocketSessionHandler:
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
-        outbound: list[object] = [
-            narration_msg,
+        # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
+        confrontation_msg: ConfrontationMessage | None = None
+        if now_live and now_encounter is not None:
+            from sidequest.server.dispatch.confrontation import (
+                build_confrontation_payload,
+                find_confrontation_def,
+            )
+            cdef = find_confrontation_def(
+                sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
+                now_encounter.encounter_type,
+            )
+            if cdef is not None:
+                payload_dict = build_confrontation_payload(
+                    encounter=now_encounter,
+                    cdef=cdef,
+                    genre_slug=sd.genre_slug,
+                )
+                confrontation_msg = ConfrontationMessage(
+                    payload=ConfrontationPayload(**payload_dict),
+                    player_id=sd.player_id,
+                )
+        elif prior_live and not now_live:
+            from sidequest.server.dispatch.confrontation import (
+                build_clear_confrontation_payload,
+            )
+            assert prior_type is not None  # guaranteed by prior_live=True
+            payload_dict = build_clear_confrontation_payload(
+                encounter_type=prior_type,
+                genre_slug=sd.genre_slug,
+            )
+            confrontation_msg = ConfrontationMessage(
+                payload=ConfrontationPayload(**payload_dict),
+                player_id=sd.player_id,
+            )
+
+        outbound: list[object] = [narration_msg]
+        if confrontation_msg is not None:
+            outbound.append(confrontation_msg)
+        outbound.append(
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]
                 payload=NarrationEndPayload(state_delta=None),
                 player_id=sd.player_id,
             ),
-        ]
+        )
 
         # Refresh PARTY_STATUS so `current_location` and any HP/inventory
         # mutations landed by the narration apply propagate to the client
