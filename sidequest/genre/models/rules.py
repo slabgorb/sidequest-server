@@ -45,7 +45,7 @@ class ResourceDeclaration(BaseModel):
     thresholds: list[ResourceThresholdDecl] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_range(self) -> "ResourceDeclaration":
+    def _validate_range(self) -> ResourceDeclaration:
         if self.max < self.min:
             raise ValueError(
                 f"resource '{self.name}': max ({self.max}) must be >= min ({self.min})"
@@ -90,7 +90,7 @@ class BeatDef(BaseModel):
     resource_deltas: dict[str, float] | None = None
 
     @model_validator(mode="after")
-    def _validate_id(self) -> "BeatDef":
+    def _validate_id(self) -> BeatDef:
         if not self.id:
             raise ValueError("beat id must not be empty")
         return self
@@ -108,7 +108,7 @@ class MetricDef(BaseModel):
     threshold_low: int | None = None
 
     @model_validator(mode="after")
-    def _validate_direction(self) -> "MetricDef":
+    def _validate_direction(self) -> MetricDef:
         valid = {"ascending", "descending", "bidirectional"}
         if self.direction not in valid:
             raise ValueError(
@@ -139,7 +139,7 @@ class InteractionCell(BaseModel):
     calibration_notes: str | None = None
 
     @model_validator(mode="after")
-    def _validate_pair(self) -> "InteractionCell":
+    def _validate_pair(self) -> InteractionCell:
         if len(self.pair) != 2:
             raise ValueError(
                 f"interaction cell pair must have exactly 2 elements, got {len(self.pair)}"
@@ -160,7 +160,7 @@ class InteractionTable(BaseModel):
     starting_hull: int | None = None
 
     @model_validator(mode="after")
-    def _validate(self) -> "InteractionTable":
+    def _validate(self) -> InteractionTable:
         if not self.version:
             raise ValueError("interaction table version must not be empty")
         if not self.cells:
@@ -206,7 +206,7 @@ class ConfrontationDef(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
 
     @model_validator(mode="after")
-    def _validate(self) -> "ConfrontationDef":
+    def _validate(self) -> ConfrontationDef:
         if not self.confrontation_type:
             raise ValueError("confrontation type must not be empty")
         valid_categories = {"combat", "social", "pre_combat", "movement"}

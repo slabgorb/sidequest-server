@@ -120,6 +120,13 @@ def test_late_joiner_catches_up(tmp_path: Path) -> None:
             alice_connected = ws_alice.receive_json()
             assert alice_connected["type"] == "SESSION_EVENT"
             assert alice_connected["payload"]["event"] == "connected"
+            # Drain the resume bootstrap messages (has_character=True path):
+            # SESSION_EVENT{ready} + PARTY_STATUS.
+            ready_msg = ws_alice.receive_json()
+            assert ready_msg["type"] == "SESSION_EVENT"
+            assert ready_msg["payload"]["event"] == "ready"
+            party_status_msg = ws_alice.receive_json()
+            assert party_status_msg["type"] == "PARTY_STATUS"
 
             # Alice claims a seat
             ws_alice.send_json({

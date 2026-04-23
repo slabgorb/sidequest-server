@@ -16,7 +16,7 @@ resolution (e.g., /roll) are not implemented here.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ class ErrorResult:
 class StateMutationResult:
     """A state patch to apply."""
 
-    patch: "WorldStatePatch"
+    patch: WorldStatePatch
 
 
 # Union type matching Rust's CommandResult enum
@@ -77,7 +77,7 @@ class CommandHandler(ABC):
         ...
 
     @abstractmethod
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         """Handle the command and return a result."""
         ...
 
@@ -98,7 +98,7 @@ class StatusCommand(CommandHandler):
     def description(self) -> str:
         return "Show your character's current condition"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         if not state.characters:
             return ErrorResult("No character found")
 
@@ -141,7 +141,7 @@ class InventoryCommand(CommandHandler):
     def description(self) -> str:
         return "List your carried items"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         if not state.characters:
             return ErrorResult("No character found")
 
@@ -195,7 +195,7 @@ class QuestsCommand(CommandHandler):
     def description(self) -> str:
         return "Show your quest log"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         if not state.quest_log:
             return DisplayResult("No quests recorded yet. The story is just beginning.")
 
@@ -244,7 +244,7 @@ class MapCommand(CommandHandler):
     def description(self) -> str:
         return "Show discovered regions and routes"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         output = "REGIONS:\n"
         if not state.discovered_regions:
             output += "  No regions discovered yet.\n"
@@ -281,7 +281,7 @@ class SaveCommand(CommandHandler):
     def description(self) -> str:
         return "Save your game"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
         name = state.characters[0].core.name if state.characters else "Unknown"
         return DisplayResult(f"Game saved for {name}.")
 
@@ -302,8 +302,7 @@ class GmCommand(CommandHandler):
     def description(self) -> str:
         return "Game master commands (operator only)"
 
-    def handle(self, state: "GameSnapshot", args: str) -> CommandResult:
-        from sidequest.game.session import WorldStatePatch
+    def handle(self, state: GameSnapshot, args: str) -> CommandResult:
 
         parts = args.split(" ", 1)
         sub = parts[0]

@@ -15,7 +15,6 @@ from sidequest.protocol.base import ProtocolBase
 from sidequest.protocol.provenance import Provenance
 from sidequest.protocol.types import NonBlankString
 
-
 # ---------------------------------------------------------------------------
 # FactCategory — from Footnote / Journal
 # ---------------------------------------------------------------------------

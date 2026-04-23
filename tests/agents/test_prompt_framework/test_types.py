@@ -17,7 +17,6 @@ from sidequest.agents.prompt_framework.types import (
     SectionCategory,
 )
 
-
 # =========================================================================
 # AttentionZone ordering tests
 # =========================================================================

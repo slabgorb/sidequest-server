@@ -23,24 +23,19 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, RootModel
 
 from sidequest.protocol.base import ProtocolBase
-
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
     CartographyMetadata,
-    CharacterSheetDetails,
     CreationChoice,
     ExploredLocation,
     FogBounds,
     Footnote,
     InitialState,
-    InventoryPayload,
     PartyMember,
     RolledStat,
     StateDelta,
-    TacticalGridPayload,
 )
 from sidequest.protocol.types import NonBlankString
-
 
 # ---------------------------------------------------------------------------
 # PlayerActionPayload

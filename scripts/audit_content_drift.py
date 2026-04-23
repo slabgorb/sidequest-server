@@ -24,10 +24,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.audio import AudioConfig, VoicePresets
 from sidequest.genre.models.axes import AxesConfig
-from sidequest.genre.models.archetype_axes import BaseArchetypes
-from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
@@ -42,15 +41,12 @@ from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
     OpeningHook,
-    PowerTier,
     Prompts,
 )
-from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.pack import PackMeta
 from sidequest.genre.models.progression import ProgressionConfig
 from sidequest.genre.models.rules import RulesConfig
-from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
 from sidequest.genre.models.tropes import TropeDefinition
 

@@ -6,23 +6,20 @@ with a canned spawn_fn.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
 import pytest
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse
-from sidequest.agents.narrator import NarratorAgent
+from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
     ActionRewrite,
     BeatSelection,
-    NarratorPromptTier,
     NarrationTurnResult,
+    NarratorPromptTier,
     NpcMention,
     Orchestrator,
     TurnContext,
-    VisualScene,
     _extract_game_patch_json,
     _strip_json_fence,
     extract_structured_from_response,
@@ -655,7 +652,6 @@ async def test_run_narration_turn_genre_prompts_injected():
 def test_narration_turn_result_has_no_action_flags():
     """Group A Task 2 — ActionFlags dataclass is retired."""
     from dataclasses import fields
-    from sidequest.agents.orchestrator import NarrationTurnResult
     field_names = {f.name for f in fields(NarrationTurnResult)}
     assert "action_flags" not in field_names, (
         "action_flags still on NarrationTurnResult"
@@ -680,8 +676,9 @@ def test_action_flags_not_exported_from_agents_package():
 
 def test_action_rewrite_still_present():
     """Guard: ActionRewrite is LIVE — must not be touched."""
-    from sidequest.agents.orchestrator import ActionRewrite, NarrationTurnResult
     from dataclasses import fields
+
+    from sidequest.agents.orchestrator import ActionRewrite
     assert ActionRewrite is not None
     field_names = {f.name for f in fields(NarrationTurnResult)}
     assert "action_rewrite" in field_names, (
@@ -692,7 +689,6 @@ def test_action_rewrite_still_present():
 def test_narration_turn_result_has_no_classified_intent():
     """Group A Task 3 — classified_intent dead hardcode retired."""
     from dataclasses import fields
-    from sidequest.agents.orchestrator import NarrationTurnResult
     field_names = {f.name for f in fields(NarrationTurnResult)}
     assert "classified_intent" not in field_names, (
         "classified_intent still on NarrationTurnResult"
@@ -702,6 +698,7 @@ def test_narration_turn_result_has_no_classified_intent():
 def test_orchestrator_module_has_no_classified_intent_hardcode():
     """Group A Task 3 — no classified_intent = 'exploration' assignment in source."""
     import inspect
+
     from sidequest.agents import orchestrator
     source = inspect.getsource(orchestrator)
     assert 'classified_intent = "exploration"' not in source, (

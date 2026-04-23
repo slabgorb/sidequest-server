@@ -14,12 +14,10 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.server.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -380,7 +378,6 @@ def test_e2e_npc_registry_populated_after_action(tmp_path):
     captured_handler: list = []
 
     original_ws_endpoint = None
-    import sidequest.server.app as app_module
 
     app = create_app(
         claude_client_factory=lambda: mock_client,

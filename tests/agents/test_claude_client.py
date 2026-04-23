@@ -12,16 +12,13 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from sidequest.agents import ClaudeClient, ClaudeClientBuilder, ClaudeResponse
+from sidequest.agents import ClaudeClient, ClaudeResponse
 from sidequest.agents.claude_client import (
-    ClaudeClientError,
     ClaudeLike,
     EmptyResponse,
     SubprocessFailed,
     TimeoutError,
-    _default_spawn,
 )
-
 
 # ---------------------------------------------------------------------------
 # FakeProcess — minimal asyncio.subprocess.Process stand-in

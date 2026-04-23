@@ -1,7 +1,9 @@
 from pathlib import Path
+
 import pytest
+
+from sidequest.game.event_log import EventLog
 from sidequest.game.persistence import SqliteStore, db_path_for_slug
-from sidequest.game.event_log import EventLog, EventRow
 
 
 @pytest.fixture

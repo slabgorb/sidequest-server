@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from sidequest.protocol.provenance import (
     ContributionKind,
     MergeStep,
@@ -19,7 +17,6 @@ from sidequest.protocol.provenance import (
     Span,
     Tier,
 )
-
 
 # ---------------------------------------------------------------------------
 # Tier — enum wire strings (serde rename_all = "lowercase")
@@ -34,7 +31,6 @@ def test_tier_wire_strings() -> None:
 
 
 def test_tier_serializes_as_lowercase() -> None:
-    import json as _json
 
     from pydantic import RootModel
 

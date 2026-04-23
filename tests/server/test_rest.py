@@ -9,16 +9,12 @@ YAML stubs.
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 
-import pytest
 import yaml
 from fastapi.testclient import TestClient
 
 from sidequest.server.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

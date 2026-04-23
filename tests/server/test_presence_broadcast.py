@@ -66,6 +66,7 @@ def test_second_player_join_broadcasts_presence_to_first(tmp_path: Path):
         connected_msg = ws_a.receive_json()
         assert connected_msg["type"] == "SESSION_EVENT"
         assert connected_msg["payload"]["event"] == "connected"
+        ws_a.receive_json()  # CHARACTER_CREATION bootstrap
 
         with client.websocket_connect("/ws") as ws_b:
             ws_b.send_json({
@@ -76,6 +77,7 @@ def test_second_player_join_broadcasts_presence_to_first(tmp_path: Path):
             bob_connected = ws_b.receive_json()
             assert bob_connected["type"] == "SESSION_EVENT"
             assert bob_connected["payload"]["event"] == "connected"
+            ws_b.receive_json()  # CHARACTER_CREATION bootstrap
 
             # Alice should now receive a PLAYER_PRESENCE about bob
             presence_msg = ws_a.receive_json()

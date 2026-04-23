@@ -18,29 +18,29 @@ from __future__ import annotations
 import json
 
 from sidequest.protocol import (
-    GameMessage,
-    NarrationPayload,
-    StateDelta,
-    InitialState,
     CharacterState,
     ExploredLocation,
+    GameMessage,
+    InitialState,
     InventoryItem,
     InventoryPayload,
+    NarrationPayload,
     PartyMember,
+    StateDelta,
 )
 from sidequest.protocol.messages import (
-    NarrationEndPayload,
-    NarrationMessage,
-    SessionEventMessage,
-    SessionEventPayload,
     MapUpdateMessage,
     MapUpdatePayload,
+    NarrationEndPayload,
+    NarrationMessage,
     PartyStatusMessage,
     PartyStatusPayload,
+    SessionEventMessage,
+    SessionEventPayload,
 )
 from sidequest.protocol.models import (
-    Footnote,
     FactCategory,
+    Footnote,
 )
 from sidequest.protocol.types import NonBlankString
 

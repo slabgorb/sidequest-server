@@ -24,7 +24,14 @@ from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from sidequest.protocol import GameMessage
-from sidequest.protocol.messages import ErrorMessage, ErrorPayload, GamePausedMessage, GamePausedPayload, PlayerPresenceMessage, PlayerPresencePayload
+from sidequest.protocol.messages import (
+    ErrorMessage,
+    ErrorPayload,
+    GamePausedMessage,
+    GamePausedPayload,
+    PlayerPresenceMessage,
+    PlayerPresencePayload,
+)
 from sidequest.protocol.types import NonBlankString  # noqa: F401
 
 if TYPE_CHECKING:
@@ -33,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def ws_endpoint(websocket: WebSocket, handler: "WebSocketSessionHandler") -> None:
+async def ws_endpoint(websocket: WebSocket, handler: WebSocketSessionHandler) -> None:
     """WebSocket connection lifecycle — accept, loop, cleanup.
 
     On PLAYER_ACTION: dispatch through session_handler → emit NARRATION.

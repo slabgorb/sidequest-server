@@ -70,6 +70,10 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
         alice_connected = ws_a.receive_json()
         assert alice_connected["type"] == "SESSION_EVENT"
         assert alice_connected["payload"]["event"] == "connected"
+        # Drain chargen bootstrap scene (slug path emits CHARACTER_CREATION
+        # when has_character=False — playtest 2026-04-23 fix).
+        alice_chargen = ws_a.receive_json()
+        assert alice_chargen["type"] == "CHARACTER_CREATION"
 
         # Alice claims a seat
         ws_a.send_json({
@@ -90,6 +94,9 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
             bob_connected = ws_b.receive_json()
             assert bob_connected["type"] == "SESSION_EVENT"
             assert bob_connected["payload"]["event"] == "connected"
+            # Drain Bob's chargen bootstrap scene.
+            bob_chargen = ws_b.receive_json()
+            assert bob_chargen["type"] == "CHARACTER_CREATION"
 
             # Alice receives PLAYER_PRESENCE{connected} for bob
             alice_sees_bob_connect = ws_a.receive_json()
@@ -129,18 +136,17 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
                 "player_id": "bob",
                 "payload": {"event": "connect", "game_slug": slug},
             })
-            # Drain messages from bob's connection — may receive SESSION_EVENT or GAME_RESUMED
-            bob_first = ws_b2.receive_json()
-            # The reconnect broadcast may have sent GAME_RESUMED before SESSION_EVENT
-            # arrives, or SESSION_EVENT may come first. Both orderings are valid.
-            bob_second = None
-            if bob_first["type"] == "GAME_RESUMED":
-                bob_second = ws_b2.receive_json()
-                assert bob_second["type"] == "SESSION_EVENT"
-            else:
-                assert bob_first["type"] == "SESSION_EVENT"
-                bob_second = ws_b2.receive_json()
-                assert bob_second["type"] == "GAME_RESUMED"
+            # Drain bob's reconnect messages — expected set is:
+            # {SESSION_EVENT(connected), CHARACTER_CREATION (bootstrap), GAME_RESUMED}.
+            # Ordering across broadcast vs handler-return is racy, so just
+            # assert the set of types received.
+            seen_types: set[str] = set()
+            for _ in range(3):
+                m = ws_b2.receive_json()
+                seen_types.add(m["type"])
+            assert "SESSION_EVENT" in seen_types
+            assert "GAME_RESUMED" in seen_types
+            assert "CHARACTER_CREATION" in seen_types
 
             # Alice should receive PLAYER_PRESENCE{connected} then GAME_RESUMED
             saw_resume = False

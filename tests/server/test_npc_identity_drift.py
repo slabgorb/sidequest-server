@@ -27,8 +27,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
     NarrationTurnResult,
@@ -42,7 +40,6 @@ from sidequest.agents.prompt_framework.types import (
 )
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.server.session_handler import _apply_narration_result_to_snapshot
-
 
 # ---------------------------------------------------------------------------
 # Helpers

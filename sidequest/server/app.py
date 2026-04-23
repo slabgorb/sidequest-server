@@ -8,11 +8,11 @@ are all configurable for tests.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -141,14 +141,35 @@ def create_app(
         init_tracer()
 
         provider = trace.get_tracer_provider()
-        if isinstance(provider, TracerProvider):
-            provider.add_span_processor(WatcherSpanProcessor(watcher_hub))
-            logger.info("watcher.span_processor_registered")
-        else:
+        if not isinstance(provider, TracerProvider):
             logger.warning(
                 "watcher.span_processor_skipped reason=tracer_provider_is_%s",
                 type(provider).__name__,
             )
+            return
+
+        # Idempotent registration. Under ``uvicorn --reload`` the startup
+        # handler runs on every hot-reload, and the SDK's
+        # ``add_span_processor`` happily stacks duplicates. Before this
+        # guard, a 20-minute playtest session ended up with 30+
+        # ``WatcherSpanProcessor`` instances, each pushing every span to
+        # a (potentially stale) hub — the exact symptom on
+        # 2026-04-23. We walk the provider's processor chain and skip
+        # registration if one of ours is already wired up.
+        existing = getattr(provider, "_active_span_processor", None)
+        processors = getattr(existing, "_span_processors", ()) if existing else ()
+        already_wired = any(
+            isinstance(p, WatcherSpanProcessor) for p in processors
+        )
+        if already_wired:
+            logger.info(
+                "watcher.span_processor_already_registered count=%d",
+                sum(1 for p in processors if isinstance(p, WatcherSpanProcessor)),
+            )
+            return
+
+        provider.add_span_processor(WatcherSpanProcessor(watcher_hub))
+        logger.info("watcher.span_processor_registered")
 
     # --- /health ---
     @app.get("/health")

@@ -19,14 +19,14 @@ import json
 
 import pytest
 
-from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
+from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     ActionQueueMessage,
     ActionQueuePayload,
-    CharacterCreationMessage,
-    CharacterCreationPayload,
     ChapterMarkerMessage,
     ChapterMarkerPayload,
+    CharacterCreationMessage,
+    CharacterCreationPayload,
     ErrorMessage,
     ErrorPayload,
     GameMessage,
@@ -48,7 +48,6 @@ from sidequest.protocol.messages import (
     TurnStatusPayload,
 )
 from sidequest.protocol.models import (
-    CharacterSheetDetails,
     CharacterState,
     CreationChoice,
     ExploredLocation,
@@ -57,13 +56,11 @@ from sidequest.protocol.models import (
     Footnote,
     InitialState,
     InventoryItem,
-    InventoryPayload,
     ItemGained,
     PartyMember,
     StateDelta,
 )
 from sidequest.protocol.types import NonBlankString
-
 
 # ---------------------------------------------------------------------------
 # Helpers

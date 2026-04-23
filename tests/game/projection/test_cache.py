@@ -1,7 +1,7 @@
 """ProjectionCache — per-player decision cache backed by SQLite."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sidequest.game.persistence import SqliteStore
@@ -16,7 +16,7 @@ def _cache(tmp_path: Path) -> tuple[ProjectionCache, SqliteStore]:
 
 def _insert_event(store: SqliteStore, seq: int, kind: str = "NARRATION", payload: str = "{}") -> None:
     """Insert a dummy event into the events table for foreign key constraint."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with store._conn:
         store._conn.execute(
             "INSERT INTO events (seq, kind, payload_json, created_at) VALUES (?, ?, ?, ?)",

@@ -36,7 +36,6 @@ from sidequest.protocol.models import (
 )
 from sidequest.protocol.types import NonBlankString
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

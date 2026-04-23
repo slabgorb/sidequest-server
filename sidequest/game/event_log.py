@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 
 from sidequest.game.persistence import SqliteStore
 
@@ -55,7 +54,7 @@ class EventLog:
         ``with store._conn:``) so that the event row and its associated
         ProjectionCache rows can be persisted atomically.
         """
-        now = datetime.now(tz=timezone.utc).isoformat()
+        now = datetime.now(tz=UTC).isoformat()
         cur = conn.execute(
             "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, ?)",
             (kind, payload_json, now),
@@ -64,7 +63,7 @@ class EventLog:
         assert seq is not None
         return EventRow(seq=seq, kind=kind, payload_json=payload_json, created_at=now)
 
-    def read_since(self, *, since_seq: int) -> List[EventRow]:
+    def read_since(self, *, since_seq: int) -> list[EventRow]:
         with self._store._conn:
             rows = self._store._conn.execute(
                 "SELECT seq, kind, payload_json, created_at FROM events WHERE seq > ? ORDER BY seq ASC",

@@ -5,8 +5,6 @@ Phase 1: /status, /inventory, /quests, /map, /save, /gm commands.
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.game.commands import (
     BUILTIN_COMMANDS,
     DisplayResult,
@@ -19,8 +17,7 @@ from sidequest.game.commands import (
     StateMutationResult,
     StatusCommand,
 )
-from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
-from sidequest.game.session import GameSnapshot, WorldStatePatch
+from sidequest.game.session import GameSnapshot
 from tests.game.test_character import make_test_character
 
 

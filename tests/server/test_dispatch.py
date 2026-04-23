@@ -6,16 +6,9 @@ No real Claude CLI calls.
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
-from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.session import GameSnapshot
 from sidequest.server.session_handler import _apply_narration_result_to_snapshot
-
 
 # ---------------------------------------------------------------------------
 # _apply_narration_result_to_snapshot unit tests

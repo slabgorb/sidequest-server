@@ -12,16 +12,15 @@ import random
 from sidequest.game.scenario_state import ScenarioRole, ScenarioState
 from sidequest.genre.models.scenario import (
     AssignmentMatrix,
+    InitialBeliefs,
     Pacing,
     ScenarioNpc,
     ScenarioPack,
     Suspect,
     Suspicion,
-    InitialBeliefs,
     WhenGuilty,
     WhenInnocent,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

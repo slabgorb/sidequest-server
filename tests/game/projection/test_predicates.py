@@ -1,8 +1,6 @@
 """Predicate catalog — the vocabulary of per-player asymmetry."""
 from __future__ import annotations
 
-import pytest
-
 from sidequest.game.projection.predicates import PREDICATES, PredicateContext
 from sidequest.game.projection.view import SessionGameStateView
 

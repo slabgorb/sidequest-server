@@ -689,6 +689,30 @@ class WebSocketSessionHandler:
             if not player_id:
                 player_id = str(uuid.uuid4())
 
+            # Display name (playtest 2026-04-23 Bug 1). The UI stores the
+            # player's chosen display name in localStorage and sends it on
+            # the slug-connect envelope as ``payload.player_name``. Without
+            # it the character-name fallback (``CharacterBuilder.with_
+            # lobby_name``) falls back to the opaque player UUID — so
+            # genre packs with no name-entry scene (mutant_wasteland etc.)
+            # end up with a UUID string on the character sheet header.
+            #
+            # No silent fallback: if the client didn't send a name, log
+            # loud and use the player_id as a last resort. The UI should
+            # always send this field on the slug-connect payload — a
+            # missing value is a protocol contract violation, not a
+            # normal operating mode.
+            display_name: str = (payload.player_name or "").strip()
+            if not display_name:
+                logger.warning(
+                    "session.slug_connect.missing_player_name slug=%s player_id=%s "
+                    "— falling back to player_id as display name. UI must send "
+                    "payload.player_name on slug-connect envelopes.",
+                    slug,
+                    player_id,
+                )
+                display_name = player_id
+
             # Room registry wiring (MP-02 Task 2). attach_room_context must
             # have been called — slug-connect cannot proceed without a room
             # registry, socket id, and outbound queue. Fail loudly if the
@@ -778,16 +802,49 @@ class WebSocketSessionHandler:
                     slug,
                 )
 
+            # Initialize chargen builder when entering Creating state. Slug
+            # path parity with legacy branch (playtest 2026-04-23): without
+            # this the client lands on an empty <CharacterCreation/> and has
+            # no way to advance — there is no client-side kickoff. The lobby
+            # name is the human-readable display name sent by the UI (see
+            # display_name resolution above) — NOT the opaque player UUID.
+            builder: CharacterBuilder | None = None
+            if not has_character and genre_pack.char_creation:
+                builder = CharacterBuilder(
+                    scenes=list(genre_pack.char_creation),
+                    rules=genre_pack.rules,
+                    backstory_tables=genre_pack.backstory_tables,
+                ).with_lobby_name(display_name)
+                if genre_pack.equipment_tables is not None:
+                    builder = builder.with_equipment_tables(genre_pack.equipment_tables)
+
+            # Opening-hook + world-context resolution (matches legacy branch).
+            # Resolved once at connect time so chargen confirmation and the
+            # narrator's first turn see the same directive/seed/context.
+            opening: tuple[str, str] | None = resolve_opening(
+                genre_pack, row.world_slug, row.genre_slug
+            )
+            opening_seed: str | None = None
+            opening_directive: str | None = None
+            if opening is not None:
+                opening_seed, opening_directive = opening
+            culture_ref = resolve_culture_reference(genre_pack, row.world_slug)
+            world_context: str | None = culture_ref if culture_ref else None
+
             self._session_data = _SessionData(
                 genre_slug=row.genre_slug,
                 world_slug=row.world_slug,
-                player_name=player_id,
+                player_name=display_name,
                 player_id=player_id,
                 snapshot=snapshot,
                 store=store,
                 genre_pack=genre_pack,
                 orchestrator=Orchestrator(client=self._client_factory()),
                 local_dm=LocalDM(client=self._client_factory()),
+                builder=builder,
+                opening_seed=opening_seed,
+                opening_directive=opening_directive,
+                world_context=world_context,
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
@@ -809,7 +866,7 @@ class WebSocketSessionHandler:
                 type="SESSION_EVENT",  # type: ignore[arg-type]
                 payload=SessionEventPayload(
                     event="connected",
-                    player_name=player_id,
+                    player_name=display_name,
                     genre=row.genre_slug,
                     world=row.world_slug,
                     has_character=has_character,
@@ -879,7 +936,87 @@ class WebSocketSessionHandler:
                             seq=event_row.seq,
                         )
                     )
-            return [connected_msg, *replay_msgs]
+
+            # Bootstrap messages (playtest 2026-04-23 parity with legacy
+            # connect path). Without these the client lands on an empty
+            # <CharacterCreation/> (Creating) or stays on ConnectScreen
+            # forever (Playing).
+            bootstrap_msgs: list[object] = []
+            if self._state is _State.Creating and builder is not None:
+                bootstrap_msgs.append(builder.to_scene_message(player_id))
+                # OTEL: let the GM panel verify chargen bootstrap fired —
+                # lie detector for "did this subsystem actually engage?".
+                # Emitted as a child of mp.slug_connect via a fresh span
+                # (the mp span has already closed by this point).
+                _bootstrap_tracer = trace.get_tracer(
+                    "sidequest.server.session_handler"
+                )
+                with _bootstrap_tracer.start_as_current_span(
+                    "slug_connect.chargen_bootstrap"
+                ) as _bootstrap_span:
+                    _bootstrap_span.set_attribute("player_id", player_id)
+                    _bootstrap_span.set_attribute("slug", slug)
+                    _bootstrap_span.set_attribute(
+                        "scene_index", builder.current_scene_index()
+                    )
+            elif self._state is _State.Playing:
+                ready_msg = SessionEventMessage(
+                    type="SESSION_EVENT",  # type: ignore[arg-type]
+                    payload=SessionEventPayload(
+                        event="ready",
+                        player_name=display_name,
+                        genre=row.genre_slug,
+                        world=row.world_slug,
+                        has_character=True,
+                        initial_state=None,
+                        css=None,
+                        narrator_verbosity=None,
+                        narrator_vocabulary=None,
+                        image_cooldown_seconds=None,
+                    ),
+                    player_id=player_id,
+                )
+                bootstrap_msgs.append(ready_msg)
+                logger.info(
+                    "session.ready_emitted reason=slug_resume player=%s turn=%d",
+                    player_id,
+                    snapshot.turn_manager.interaction,
+                )
+                # Snapshot the resumed session so the dashboard State tab and
+                # Subsystems "session" component light up on reconnect.
+                _watcher_publish(
+                    "game_state_snapshot",
+                    {
+                        "reason": "resume",
+                        "genre_slug": row.genre_slug,
+                        "world_slug": row.world_slug,
+                        "player_name": display_name,
+                        "player_id": player_id,
+                        "turn_number": snapshot.turn_manager.interaction,
+                        "current_location": snapshot.location or "",
+                        "discovered_regions": list(snapshot.discovered_regions),
+                        "npc_registry_count": len(snapshot.npc_registry),
+                        "quest_log_count": len(snapshot.quest_log),
+                        "lore_established_count": len(snapshot.lore_established),
+                        "character_count": len(snapshot.characters),
+                    },
+                    component="session",
+                )
+                # Refresh PARTY_STATUS so the resumed client's header / sheet
+                # / location update from the saved snapshot.
+                if snapshot.characters:
+                    try:
+                        bootstrap_msgs.append(
+                            self._build_session_start_party_status(
+                                self._session_data, snapshot.characters[0], player_id
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "session.resume_party_status_failed error=%s", exc
+                        )
+
+            return [connected_msg, *bootstrap_msgs, *replay_msgs]
 
         genre_slug = payload.genre or ""
         world_slug = payload.world or ""

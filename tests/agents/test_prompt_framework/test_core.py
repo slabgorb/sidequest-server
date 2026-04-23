@@ -6,15 +6,12 @@ trait test blocks, adapted for Python PromptRegistry.
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.agents.prompt_framework.core import PromptComposer, PromptRegistry
 from sidequest.agents.prompt_framework.types import (
     AttentionZone,
     PromptSection,
     SectionCategory,
 )
-
 
 # =========================================================================
 # PromptRegistry — sorting by zone order

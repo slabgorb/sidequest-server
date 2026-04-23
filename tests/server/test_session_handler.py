@@ -4,6 +4,7 @@
 def test_turn_complete_watcher_payload_omits_classified_intent():
     """Group A Task 6 — classified_intent fully retired from watcher stream."""
     import inspect
+
     from sidequest.server import session_handler
 
     source = inspect.getsource(session_handler)

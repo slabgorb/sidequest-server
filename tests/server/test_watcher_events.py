@@ -17,18 +17,17 @@ production code paths, not just unit-testable in isolation.
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import WebSocket
+from opentelemetry.sdk.trace import TracerProvider
 
 from sidequest.agents.orchestrator import (
     NarrationTurnResult,
     NpcMention,
-    TurnContext,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry, TurnManager
+from sidequest.game.session import GameSnapshot, TurnManager
 from sidequest.server.session_handler import (
     _apply_narration_result_to_snapshot,
 )
@@ -176,6 +175,65 @@ async def test_hub_drops_silently_when_loop_unbound() -> None:
     unbound = WatcherHub()
     # No subscribers, no loop — this must be a silent no-op, not a crash.
     unbound.publish({"event_type": "turn_complete", "fields": {}})
+
+
+@pytest.mark.asyncio
+async def test_hub_survives_module_reimport() -> None:
+    """uvicorn --reload re-imports modified modules on every save. The
+    hub singleton MUST survive that re-import, otherwise OTEL span
+    processors registered before the reload broadcast into a dead
+    instance and the dashboard goes deaf mid-session
+    (playtest 2026-04-23)."""
+    import sidequest.telemetry.watcher_hub as module
+
+    hub_before = module.watcher_hub
+    # Mark it so we can prove identity across the re-import — ``is``
+    # alone would work, but a tag makes the assertion failure readable.
+    hub_before._reimport_marker = "survived"  # type: ignore[attr-defined]
+
+    reloaded = importlib.reload(module)
+
+    assert reloaded.watcher_hub is hub_before, (
+        "watcher_hub singleton was replaced on module reload — "
+        "OTEL span processors from before reload are now orphaned"
+    )
+    assert getattr(reloaded.watcher_hub, "_reimport_marker", None) == "survived"
+
+
+@pytest.mark.asyncio
+async def test_span_processor_broadcasts_to_subscriber(
+    bound_hub: WatcherHub,
+) -> None:
+    """End-to-end wiring test: register a ``WatcherSpanProcessor``
+    against a TracerProvider, emit a span, assert the subscriber
+    receives an ``agent_span_close`` event.
+
+    This is the integration test the playtest blocker needed — it
+    proves the on_end → hub → subscriber path is intact."""
+    from sidequest.server.watcher import WatcherSpanProcessor
+
+    sock = await _capture(bound_hub)
+
+    processor = WatcherSpanProcessor(bound_hub)
+
+    # Build a minimal ReadableSpan by driving the SDK end-to-end.
+    provider = TracerProvider()
+    provider.add_span_processor(processor)
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("wiring.test") as span:
+        span.set_attribute("probe", "ok")
+    # BatchSpanProcessor isn't in play here; our processor is
+    # synchronous-enough. Give the loop a tick for the broadcast.
+    await asyncio.sleep(0.05)
+
+    close_events = [
+        e for e in sock.events if e["event_type"] == "agent_span_close"
+        and e["fields"].get("name") == "wiring.test"
+    ]
+    assert len(close_events) == 1, (
+        f"expected 1 span_close event, got {len(sock.events)}: {sock.events}"
+    )
+    assert close_events[0]["fields"]["probe"] == "ok"
 
 
 @pytest.mark.asyncio

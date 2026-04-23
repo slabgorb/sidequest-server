@@ -1,6 +1,7 @@
 import pytest
-from sidequest.server.session_room import SessionRoom, RoomRegistry, SoloSlotConflict
+
 from sidequest.game.persistence import GameMode
+from sidequest.server.session_room import RoomRegistry, SessionRoom, SoloSlotConflict
 
 
 def test_room_registry_returns_same_room_for_same_slug():

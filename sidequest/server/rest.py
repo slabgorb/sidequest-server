@@ -15,7 +15,6 @@ React UI reads these endpoints.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date as _date_cls
 from pathlib import Path
 from typing import Any

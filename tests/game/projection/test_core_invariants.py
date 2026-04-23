@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from sidequest.game.projection.envelope import MessageEnvelope
-from sidequest.game.projection.invariants import CoreInvariantStage, InvariantOutcome
+from sidequest.game.projection.invariants import CoreInvariantStage
 from sidequest.game.projection.view import SessionGameStateView
 
 

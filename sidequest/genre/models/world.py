@@ -58,7 +58,7 @@ class RoomExitSecret(BaseModel):
 
 # Rust uses serde(tag = "type") on RoomExit.
 RoomExit = Annotated[
-    Union[RoomExitDoor, RoomExitCorridor, RoomExitChuteDown, RoomExitChuteUp, RoomExitSecret],
+    RoomExitDoor | RoomExitCorridor | RoomExitChuteDown | RoomExitChuteUp | RoomExitSecret,
     Field(discriminator="type"),
 ]
 

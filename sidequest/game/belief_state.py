@@ -25,7 +25,6 @@ from typing import Annotated, Literal
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # BeliefSource — how the NPC came to hold a belief.
 # ---------------------------------------------------------------------------
@@ -130,7 +129,7 @@ class BeliefSuspicion(BaseModel):
         turn_learned: int,
         source: BeliefSource,
         confidence: float,
-    ) -> "BeliefSuspicion":
+    ) -> BeliefSuspicion:
         """Clamped constructor — mirrors Rust ``Belief::suspicion``."""
         return cls(
             subject=subject,
@@ -174,7 +173,7 @@ class Credibility(BaseModel):
     score: float = 0.5
 
     @classmethod
-    def new(cls, score: float) -> "Credibility":
+    def new(cls, score: float) -> Credibility:
         return cls(score=max(0.0, min(1.0, score)))
 
     def adjust(self, delta: float) -> None:

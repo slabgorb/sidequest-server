@@ -27,10 +27,12 @@ from sidequest.game.ability import AbilitySource
 from sidequest.game.character import AbilityDefinition, Character
 from sidequest.game.creature_core import (
     CreatureCore,
-    EdgeConfigMissingClassError as _CoreEdgeConfigMissingClassError,
     Inventory,
     edge_pool_from_config,
     placeholder_edge_pool,
+)
+from sidequest.game.creature_core import (
+    EdgeConfigMissingClassError as _CoreEdgeConfigMissingClassError,
 )
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -45,7 +47,6 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.models import CreationChoice, RolledStat
 from sidequest.protocol.types import NonBlankString
-
 
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
@@ -658,7 +659,7 @@ class CharacterBuilder:
 
     # --- Fluent setters ---
 
-    def with_lobby_name(self, name: str) -> "CharacterBuilder":
+    def with_lobby_name(self, name: str) -> CharacterBuilder:
         """Attach the lobby-provided player name.
 
         Used as a fallback for the `{name}` placeholder in scene narration
@@ -672,7 +673,7 @@ class CharacterBuilder:
         self._lobby_name = trimmed if trimmed else None
         return self
 
-    def with_equipment_tables(self, tables: EquipmentTables) -> "CharacterBuilder":
+    def with_equipment_tables(self, tables: EquipmentTables) -> CharacterBuilder:
         """Attach random equipment tables.
 
         When set AND a scene declares `equipment_generation: random_table`,

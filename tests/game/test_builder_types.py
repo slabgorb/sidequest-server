@@ -37,7 +37,6 @@ from sidequest.game.builder import (
 )
 from sidequest.genre.models.character import MechanicalEffects
 
-
 # ---------------------------------------------------------------------------
 # HookType — enum values match Rust variant names
 # ---------------------------------------------------------------------------

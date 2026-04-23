@@ -12,7 +12,7 @@ Uses caverns_and_claudes / grimvault (same as other MP integration tests).
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,21 +84,20 @@ def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> None:
     with patch(
         "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
         new=AsyncMock(return_value=fake_result),
-    ):
-        with client.websocket_connect("/ws") as ws:
-            # Connect via slug
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "alice",
-                "payload": {
-                    "event": "connect",
-                    "game_slug": _SLUG,
-                    "last_seen_seq": 0,
-                },
-            })
-            connected = ws.receive_json()
-            assert connected["type"] == "SESSION_EVENT"
-            assert connected["payload"]["event"] == "connected"
+    ), client.websocket_connect("/ws") as ws:
+        # Connect via slug
+        ws.send_json({
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG,
+                "last_seen_seq": 0,
+            },
+        })
+        connected = ws.receive_json()
+        assert connected["type"] == "SESSION_EVENT"
+        assert connected["payload"]["event"] == "connected"
 
             # Skip chargen — send a PLAYER_ACTION (caverns_and_claudes has chargen
             # so we need to complete it first, but we can't in a unit test easily.
@@ -135,46 +134,45 @@ def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> None:
     with patch(
         "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
         new=AsyncMock(return_value=fake_result),
-    ):
-        with client.websocket_connect("/ws") as ws:
-            # Connect (now has_character=True, skips chargen → Playing)
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "alice",
-                "payload": {
-                    "event": "connect",
-                    "game_slug": _SLUG,
-                    "last_seen_seq": 0,
-                },
-            })
-            connected = ws.receive_json()
-            assert connected["type"] == "SESSION_EVENT"
-            assert connected["payload"]["event"] == "connected"
-            assert connected["payload"]["has_character"] is True
+    ), client.websocket_connect("/ws") as ws:
+        # Connect (now has_character=True, skips chargen → Playing)
+        ws.send_json({
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG,
+                "last_seen_seq": 0,
+            },
+        })
+        connected = ws.receive_json()
+        assert connected["type"] == "SESSION_EVENT"
+        assert connected["payload"]["event"] == "connected"
+        assert connected["payload"]["has_character"] is True
 
-            # Send PLAYER_ACTION
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "player_id": "alice",
-                "payload": {"action": "I look around the dungeon."},
-            })
+        # Send PLAYER_ACTION
+        ws.send_json({
+            "type": "PLAYER_ACTION",
+            "player_id": "alice",
+            "payload": {"action": "I look around the dungeon."},
+        })
 
-            # Drain until we see NARRATION
-            narration_msg = None
-            for _ in range(10):
-                m = ws.receive_json()
-                if m["type"] == "NARRATION":
-                    narration_msg = m
-                    break
+        # Drain until we see NARRATION
+        narration_msg = None
+        for _ in range(10):
+            m = ws.receive_json()
+            if m["type"] == "NARRATION":
+                narration_msg = m
+                break
 
-            assert narration_msg is not None, "Expected NARRATION message"
-            # Core invariant: seq field present and >= 1
-            assert "seq" in narration_msg["payload"], (
-                f"NARRATION payload missing 'seq': {narration_msg['payload']}"
-            )
-            assert narration_msg["payload"]["seq"] >= 1, (
-                f"Expected seq >= 1, got {narration_msg['payload']['seq']}"
-            )
+        assert narration_msg is not None, "Expected NARRATION message"
+        # Core invariant: seq field present and >= 1
+        assert "seq" in narration_msg["payload"], (
+            f"NARRATION payload missing 'seq': {narration_msg['payload']}"
+        )
+        assert narration_msg["payload"]["seq"] >= 1, (
+            f"Expected seq >= 1, got {narration_msg['payload']['seq']}"
+        )
 
     # Confirm EventLog has at least one NARRATION row
     db = db_path_for_slug(tmp_path, _SLUG)

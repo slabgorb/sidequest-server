@@ -5,20 +5,15 @@ Port of tests in sidequest_game::character (character.rs mod tests).
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from sidequest.game.ability import AbilitySource
-from sidequest.game.character import AbilityDefinition, AffinityState, Character, KnownFact
+from sidequest.game.character import AbilityDefinition, Character, KnownFact
 from sidequest.game.creature_core import (
-    PLACEHOLDER_EDGE_BASE_MAX,
     CreatureCore,
-    EdgePool,
     Inventory,
     placeholder_edge_pool,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -25,7 +25,7 @@ class GenreCode(str):
     """
 
     @classmethod
-    def _validate(cls, value: str) -> "GenreCode":
+    def _validate(cls, value: str) -> GenreCode:
         if not value:
             raise ValueError("genre code must not be empty")
         if value.startswith("_") or value.endswith("_"):
