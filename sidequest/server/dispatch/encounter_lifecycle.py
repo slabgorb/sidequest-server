@@ -12,6 +12,8 @@ from sidequest.game.encounter import (
     MetricDirection,
     StructuredEncounter,
 )
+from sidequest.game.lore_store import LoreStore
+from sidequest.game.resource_pool import ResourceThreshold
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ConfrontationDef
@@ -152,3 +154,36 @@ def award_turn_xp(snapshot: GameSnapshot, *, in_combat: bool) -> None:
     delta = 25 if in_combat else 10
     char = snapshot.characters[0]
     char.core.xp = char.core.xp + delta
+
+
+def apply_resource_patches(
+    snapshot: GameSnapshot,
+    *,
+    affinity_progress: list[tuple[str, int]],
+    lore_store: LoreStore,
+    turn: int,
+) -> list[ResourceThreshold]:
+    """Apply each (name, delta) to the named pool; mint threshold lore on crossings.
+
+    Returns the flat list of all ResourceThreshold objects crossed across all
+    patches (for OTEL / caller logging). The lore fragments themselves have
+    already been added to ``lore_store`` — callers don't need to re-mint.
+
+    Raises ``UnknownResource`` on unknown pool name (CLAUDE.md: no silent
+    fallback in the helper). The session-handler caller wraps this call in
+    a try/except to keep the narration turn resilient to LLM typos — strict
+    helper, lenient caller.
+    """
+    from sidequest.game.resource_pool import ResourcePatchOp
+    from sidequest.game.thresholds import mint_threshold_lore
+
+    all_crossed: list[ResourceThreshold] = []
+    for name, delta in affinity_progress:
+        op = ResourcePatchOp.Add if delta >= 0 else ResourcePatchOp.Subtract
+        value = float(abs(delta))
+        result = snapshot.apply_resource_patch_by_name(name, op, value)
+        mint_threshold_lore(
+            result.crossed_thresholds, lore_store, turn,
+        )
+        all_crossed.extend(result.crossed_thresholds)
+    return all_crossed

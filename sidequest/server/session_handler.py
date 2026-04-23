@@ -1648,6 +1648,7 @@ class WebSocketSessionHandler:
         now_live = now_encounter is not None and not now_encounter.resolved
 
         from sidequest.server.dispatch.encounter_lifecycle import (
+            apply_resource_patches,
             award_turn_xp,
             _is_combat_category,
         )
@@ -1659,6 +1660,25 @@ class WebSocketSessionHandler:
             )
         )
         award_turn_xp(snapshot, in_combat=in_combat_now)
+
+        try:
+            crossed_thresholds = apply_resource_patches(
+                snapshot,
+                affinity_progress=result.affinity_progress or [],
+                lore_store=sd.lore_store,
+                turn=snapshot.turn_manager.interaction,
+            )
+        except Exception as exc:  # noqa: BLE001 — LLM typos must not kill the turn
+            logger.warning(
+                "resource.patch_failed error=%s — skipping threshold mint for this turn",
+                exc,
+            )
+            crossed_thresholds = []
+        for t in crossed_thresholds:
+            logger.info(
+                "resource.threshold_crossed event_id=%s at=%s",
+                t.event_id, t.at,
+            )
 
         try:
             sd.store.save(snapshot)
