@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
+from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
 from sidequest.daemon_client import (
     DaemonClient,
@@ -229,6 +230,11 @@ class _SessionData:
     # in-memory lore_store after disconnect and from racing a sibling worker
     # at the ``await client.embed()`` yield point on rapid successive turns.
     embed_task: asyncio.Task[None] | None = None
+    # Group B Local DM decomposer (Task 10). One instance per session so
+    # the decomposer can maintain a persistent Haiku sub-session across
+    # turns. Constructed with a default factory so existing _SessionData
+    # construction sites require no change.
+    local_dm: LocalDM = field(default_factory=LocalDM)
 
 
 # ---------------------------------------------------------------------------
@@ -1686,6 +1692,31 @@ class WebSocketSessionHandler:
         trope beats on subsequent turns) without leaking responsibility.
         """
         snapshot = sd.snapshot
+
+        # Group B — Local DM decomposer runs between sealed-letter and narrator.
+        turn_id = f"{sd.genre_slug}:{sd.world_slug}:{snapshot.turn_manager.interaction}"
+        state_summary = turn_context.state_summary or ""
+        try:
+            dispatch_package = await sd.local_dm.decompose(
+                turn_id=turn_id,
+                player_id=f"player:{sd.player_name}",
+                raw_action=action,
+                state_summary=state_summary,
+            )
+        except Exception as exc:
+            logger.warning("session.decomposer_exception exc=%s", exc)
+            from sidequest.protocol.dispatch import DispatchPackage
+            dispatch_package = DispatchPackage(
+                turn_id=turn_id, per_player=[], cross_player=[],
+                confidence_global=0.0, degraded=True,
+                degraded_reason=f"exception: {exc}",
+            )
+        if dispatch_package.degraded:
+            logger.info(
+                "session.decomposer_degraded reason=%s turn_id=%s",
+                dispatch_package.degraded_reason, turn_id,
+            )
+        turn_context.dispatch_package = dispatch_package
 
         with orchestrator_process_action_span(action_len=len(action)):
             result = await sd.orchestrator.run_narration_turn(action, turn_context)

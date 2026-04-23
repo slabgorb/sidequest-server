@@ -11,7 +11,10 @@ real :class:`ClaudeResponse` with non-empty text + session id.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
 
@@ -69,3 +72,82 @@ def mock_claude_client_factory(
     """Factory suitable for ``WebSocketSessionHandler(claude_client_factory=...)``."""
     client = make_mock_claude_client(text=text, session_id=session_id)
     return lambda: client
+
+
+# ---------------------------------------------------------------------------
+# Group B Task 10 — session_fixture helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def session_fixture():
+    """Return ``(sd, handler)`` — a minimal in-memory _SessionData + its handler.
+
+    ``sd.local_dm`` is populated by the default_factory added in Task 10.
+    ``sd.orchestrator`` is a ``MagicMock`` — tests that exercise the narrator
+    path override ``run_narration_turn`` via ``patch.object``.
+
+    The handler is a :class:`WebSocketSessionHandler` wired to a stub
+    save directory; its ``_session_data`` attribute is set to ``sd`` so
+    ``_execute_narration_turn`` can be called directly without going through
+    the full connect handshake.
+    """
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.server.session_handler import (
+        WebSocketSessionHandler,
+        _SessionData,
+    )
+
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="sunken_keep",
+        location="Main Hall",
+        turn_manager=TurnManager(interaction=1),
+    )
+    sd = _SessionData(
+        genre_slug="caverns_and_claudes",
+        world_slug="sunken_keep",
+        player_name="TestHero",
+        player_id="player:TestHero",
+        snapshot=snap,
+        store=MagicMock(),
+        genre_pack=MagicMock(),
+        orchestrator=MagicMock(),
+    )
+    # Silence the persist side-effect so _execute_narration_turn doesn't fail
+    # on sd.store.save / sd.store.append_narrative.
+    sd.store.save = MagicMock()
+    sd.store.append_narrative = MagicMock()
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-never-used"))
+    handler._session_data = sd
+    return sd, handler
+
+
+def _build_turn_context_for_test(sd):
+    """Build a minimal :class:`TurnContext` from session state.
+
+    Mirrors the shape that ``_build_turn_context`` produces so that
+    ``_execute_narration_turn`` receives a plausible context object.
+    """
+    from sidequest.agents.orchestrator import TurnContext
+
+    return TurnContext(
+        state_summary="(test state summary)",
+        genre=sd.genre_slug,
+        character_name=sd.player_name,
+        current_location=getattr(sd.snapshot, "location", None) or "Unknown",
+        npc_registry=list(getattr(sd.snapshot, "npc_registry", [])),
+    )
+
+
+def _make_minimal_narration_turn_result(narration: str = "ok"):
+    """Construct a :class:`NarrationTurnResult` with minimum required fields."""
+    from sidequest.agents.orchestrator import NarrationTurnResult
+
+    return NarrationTurnResult(
+        narration=narration,
+        is_degraded=False,
+        agent_duration_ms=1,
+    )
