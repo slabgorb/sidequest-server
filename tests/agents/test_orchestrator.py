@@ -29,6 +29,7 @@ from sidequest.agents.orchestrator import (
 )
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone
+from sidequest.protocol.dispatch import DispatchPackage
 
 
 # ---------------------------------------------------------------------------
@@ -704,3 +705,23 @@ def test_orchestrator_module_has_no_classified_intent_hardcode():
     assert "classified_intent = 'exploration'" not in source, (
         "Hardcoded classified_intent = 'exploration' still present"
     )
+
+
+def test_turn_context_defaults_dispatch_package_to_none():
+    """Group B Task 8 — optional field defaults to None.
+
+    All other TurnContext fields have defaults; constructing with no args
+    should succeed and dispatch_package should read as None.
+    """
+    tc = TurnContext()
+    assert tc.dispatch_package is None
+
+
+def test_turn_context_accepts_dispatch_package():
+    """Group B Task 8 — the new field is populated via kwarg."""
+    pkg = DispatchPackage(
+        turn_id="t1", per_player=[], cross_player=[],
+        confidence_global=1.0, degraded=False, degraded_reason=None,
+    )
+    tc = TurnContext(dispatch_package=pkg)
+    assert tc.dispatch_package is pkg

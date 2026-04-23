@@ -48,6 +48,7 @@ from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
+from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,
     SPAN_RAG_PROSE_CLEANUP,
@@ -324,6 +325,11 @@ class TurnContext:
     # (all non-producing paths return ``None``; the producing path
     # returns a non-empty ``<lore>`` block).
     lore_context: str | None = None
+
+    # Group B (Local DM decomposer) — session handler populates before calling
+    # run_narration_turn. Consumed by build_narrator_prompt to register the
+    # narrator_directives PromptSection. Default None = decomposer did not run.
+    dispatch_package: DispatchPackage | None = None
 
 
 # ---------------------------------------------------------------------------
