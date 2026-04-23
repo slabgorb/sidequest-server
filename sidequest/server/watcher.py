@@ -101,22 +101,33 @@ async def watcher_endpoint(websocket: WebSocket, hub: WatcherHub) -> None:
     """
     await websocket.accept()
     await hub.subscribe(websocket)
-    # Hello frame so the client knows the stream is live before the first
-    # real span arrives. Useful during idle moments when the server isn't
-    # narrating.
-    await websocket.send_json(
-        {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "component": "sidequest-server",
-            "event_type": "agent_span_open",
-            "severity": "info",
-            "fields": {"name": "watcher.connected"},
-        }
-    )
     try:
+        # Hello frame so the client knows the stream is live before the
+        # first real span arrives. Useful during idle moments when the
+        # server isn't narrating. If the client already hung up (races
+        # with the handshake are common during Vite HMR reloads), treat
+        # it exactly like any other mid-session disconnect: evict via
+        # ``finally`` and return, rather than propagating a traceback
+        # through the ASGI stack.
+        try:
+            await websocket.send_json(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "component": "sidequest-server",
+                    "event_type": "agent_span_open",
+                    "severity": "info",
+                    "fields": {
+                        "name": "watcher.connected",
+                        **hub.stats(),
+                    },
+                }
+            )
+        except WebSocketDisconnect:
+            return
+
         while True:
-            # The watcher stream is one-way server→client. Read to detect
-            # client disconnect; discard the content.
+            # The watcher stream is one-way server→client. Read to
+            # detect client disconnect; discard the content.
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
