@@ -38,6 +38,8 @@ Span groups mirror the Rust source crate that emits them:
   - scenario.*        sidequest-server/dispatch/mod.rs, dispatch/slash.rs
   - monster_manual.*  sidequest-server/dispatch/mod.rs
   - turn.slash_command sidequest-server/dispatch/slash.rs
+  - combat.*          sidequest-server/dispatch/{response,state_mutations,telemetry}.rs
+  - encounter.*       sidequest-game/encounter.rs (Story 3.4)
 """
 
 from __future__ import annotations
@@ -527,6 +529,184 @@ def mp_player_action_paused_span(
             "absent_count": len(absent_player_ids),
             "absent_player_ids": ",".join(absent_player_ids),
             **attrs,
+        },
+    ) as span:
+        yield span
+
+
+# ---------------------------------------------------------------------------
+# Combat / Encounter — dispatch/{response,state_mutations,telemetry}.rs +
+# sidequest-game/encounter.rs (Story 3.4). Names byte-identical to Rust
+# watcher!("...") emitters — GM-panel queries break on drift.
+# ---------------------------------------------------------------------------
+SPAN_COMBAT_TICK = "combat.tick"
+SPAN_COMBAT_ENDED = "combat.ended"
+SPAN_COMBAT_PLAYER_DEAD = "combat.player_dead"
+SPAN_ENCOUNTER_PHASE_TRANSITION = "encounter.phase_transition"
+SPAN_ENCOUNTER_RESOLVED = "encounter.resolved"
+SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
+SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
+
+
+@contextmanager
+def combat_tick_span(
+    *,
+    encounter_type: str,
+    beat: int,
+    phase: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_COMBAT_TICK.
+
+    Fires every encounter turn with encounter type, beat number, and phase.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_COMBAT_TICK,
+        attributes={
+            "encounter_type": encounter_type,
+            "beat": beat,
+            "phase": phase,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_phase_transition_span(
+    *,
+    from_phase: str,
+    to_phase: str,
+    encounter_type: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_PHASE_TRANSITION.
+
+    Fires when encounter phase changes with from/to phases and encounter type.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_PHASE_TRANSITION,
+        attributes={
+            "from": from_phase,
+            "to": to_phase,
+            "encounter_type": encounter_type,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_resolved_span(
+    *,
+    encounter_type: str,
+    outcome: str | None,
+    source: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_RESOLVED.
+
+    Fires when encounter resolved flag flips True with outcome and source.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attrs = {
+        "encounter_type": encounter_type,
+        "source": source,
+    }
+    if outcome is not None:
+        attrs["outcome"] = outcome
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_RESOLVED,
+        attributes=attrs,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_beat_applied_span(
+    *,
+    encounter_type: str,
+    actor: str,
+    beat_id: str,
+    metric_delta: int,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_BEAT_APPLIED.
+
+    Fires when a narrator beat_selection is consumed with actor, beat_id, delta.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_BEAT_APPLIED,
+        attributes={
+            "encounter_type": encounter_type,
+            "actor": actor,
+            "beat_id": beat_id,
+            "metric_delta": metric_delta,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_confrontation_initiated_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_CONFRONTATION_INITIATED.
+
+    Fires when a narrator-emitted confrontation=... triggers encounter instantiation.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_CONFRONTATION_INITIATED,
+        attributes={
+            "encounter_type": encounter_type,
+            "genre_slug": genre_slug,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def combat_ended_span(
+    *,
+    outcome: str,
+    duration_beats: int,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_COMBAT_ENDED.
+
+    Fires when encounter resolves (any outcome) with outcome and duration.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_COMBAT_ENDED,
+        attributes={
+            "outcome": outcome,
+            "duration_beats": duration_beats,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def combat_player_dead_span(
+    *,
+    player_name: str,
+    _tracer: trace.Tracer | None = None,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_COMBAT_PLAYER_DEAD.
+
+    Fires on player fatality resolution with player name.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_COMBAT_PLAYER_DEAD,
+        attributes={
+            "player_name": player_name,
         },
     ) as span:
         yield span
