@@ -221,6 +221,14 @@ class _SessionData:
     # game_slug rather than the legacy genre+world path.
     game_slug: str | None = None
     mode: GameMode | None = None
+    # Lore embed worker lifecycle (Story 37-33 round-trip #4). A live
+    # reference to the most recent background embed task so cleanup() can
+    # cancel it before the SQLite store closes and so _dispatch_embed_worker
+    # can skip dispatch while a previous worker is still running. Both
+    # guards prevent the fire-and-forget task from writing to an orphaned
+    # in-memory lore_store after disconnect and from racing a sibling worker
+    # at the ``await client.embed()`` yield point on rapid successive turns.
+    embed_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +426,18 @@ class WebSocketSessionHandler:
     async def cleanup(self) -> None:
         """Called on disconnect — persist current state if in Playing."""
         if self._session_data is not None:
+            # Cancel any in-flight embed worker first so it cannot write
+            # to an orphaned in-memory lore_store after store.close(). The
+            # worker catches CancelledError implicitly via the coroutine's
+            # normal unwinding; its ``except Exception`` is narrow enough
+            # to let CancelledError propagate.
+            embed_task = self._session_data.embed_task
+            if embed_task is not None and not embed_task.done():
+                embed_task.cancel()
+                try:
+                    await embed_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
             try:
                 self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
@@ -2048,11 +2068,15 @@ class WebSocketSessionHandler:
 
         Always returns ``None`` on empty stores, missing daemons, or
         embed failures — the narrator will run without RAG injection,
-        which is strictly better than crashing the turn. All failure
-        modes are logged inside :func:`retrieve_lore_context`.
+        which is strictly better than crashing the turn. Expected failure
+        modes (empty store, daemon unavailable, embed error, query too
+        large) are logged inside :func:`retrieve_lore_context` and surface
+        their own OTEL span attribute. The blanket ``except Exception``
+        below exists precisely for paths those guards do not cover (e.g.
+        a malformed daemon reply that raises ``KeyError`` from
+        ``EmbedResponse`` construction) so a buggy codepath never crashes
+        the turn.
         """
-        if sd.lore_store.is_empty():
-            return None
         try:
             return await retrieve_lore_context(sd.lore_store, action)
         except Exception as exc:  # noqa: BLE001 — RAG must never crash a turn
@@ -2077,17 +2101,38 @@ class WebSocketSessionHandler:
     def _dispatch_embed_worker(self, sd: _SessionData) -> None:
         """Spawn a background embed worker for any newly-added lore.
 
-        Fire-and-forget. The worker itself checks
+        Fire-and-forget, but lifecycle-tracked. The worker itself checks
         :meth:`DaemonClient.is_available` before opening any connection
         and returns early with ``skipped_daemon_unavailable=True`` when
         the sidecar is absent — matching the render-dispatch graceful
         degradation pattern.
+
+        Double-dispatch gate: if a previous worker for this session is
+        still running, skip this turn's dispatch. The next turn will pick
+        up the remaining pending fragments. This prevents two concurrent
+        workers from racing at the ``await client.embed()`` yield point
+        and double-incrementing the retry counter on the same fragment.
         """
+        previous = sd.embed_task
+        if previous is not None and not previous.done():
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "lore_embedding",
+                    "op": "skipped",
+                    "reason": "worker_still_running",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="lore",
+            )
+            return
         pending = sd.lore_store.pending_embedding_ids(max_retries=3)
         if not pending:
             return
         turn_number = sd.snapshot.turn_manager.interaction
-        asyncio.create_task(self._run_embed_worker(sd, len(pending), turn_number))
+        sd.embed_task = asyncio.create_task(
+            self._run_embed_worker(sd, len(pending), turn_number)
+        )
 
     async def _run_embed_worker(
         self, sd: _SessionData, pending_count: int, turn_number: int

@@ -343,9 +343,11 @@ class TurnContext:
     # Retrieved lore fragments for the current turn (Valley zone, Story
     # 37-33). Pre-rendered by the session handler via
     # :func:`sidequest.game.lore_embedding.retrieve_lore_context` before
-    # the turn fires. ``None`` (or empty string) means no lore section
-    # is registered — keeps the prompt zone-clean when the daemon is
-    # unavailable or the store is empty.
+    # the turn fires. ``None`` means no lore section is registered —
+    # keeps the prompt zone-clean when the daemon is unavailable or the
+    # store is empty. The retrieval helper never returns an empty string
+    # (all non-producing paths return ``None``; the producing path
+    # returns a non-empty ``<lore>`` block).
     lore_context: str | None = None
 
 

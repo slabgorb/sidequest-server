@@ -113,21 +113,55 @@ class DaemonClient:
         does not model or guarantee that concurrency.
 
         :raises ValueError: ``text`` exceeds ``MAX_EMBED_BYTES`` (UTF-8).
+            The empty-text case is defended upstream —
+            :class:`LoreFragment` enforces ``content`` min_length=1 at
+            construction, and :func:`retrieve_lore_context` short-circuits
+            on an empty query — so this client layer does not re-check.
         :raises DaemonUnavailableError: socket missing, connection refused,
             or response timed out.
         :raises DaemonRequestError: daemon returned ``{"error": {...}}``
-            (e.g. ``EMBED_FAILED``; empty ``text`` surfaces here as
-            ``INVALID_REQUEST``).
+            (e.g. ``EMBED_FAILED``), or the daemon returned a structurally
+            invalid reply (missing / wrong-typed fields) — the latter
+            surfaces as ``INVALID_RESPONSE`` so the worker's retry budget
+            applies and the GM panel records a terminal outcome.
         """
         if len(text.encode("utf-8")) > MAX_EMBED_BYTES:
             raise ValueError(
                 f"embed() text exceeds {MAX_EMBED_BYTES}-byte UTF-8 limit"
             )
         result = await self._call("embed", {"text": text})
+        # Runtime validation — EmbedResponse is a TypedDict, not a
+        # pydantic model, so mypy-only shape checks don't catch a daemon
+        # that sends ``{"embedding": null}`` (partial flush mid-crash),
+        # a non-list embedding (schema drift), or a missing key (hot
+        # reload). Surface the class of failure as DaemonRequestError so
+        # the worker's retry budget applies and the GM panel sees a
+        # terminal ``INVALID_RESPONSE`` outcome rather than an unlabelled
+        # partial span from a bubbled-up KeyError/TypeError.
+        try:
+            embedding = result["embedding"]
+            model = result["model"]
+            latency_ms = result["latency_ms"]
+        except KeyError as exc:
+            raise DaemonRequestError(
+                "INVALID_RESPONSE", f"embed reply missing key {exc}"
+            ) from exc
+        if not isinstance(embedding, list) or not all(
+            isinstance(v, (int, float)) for v in embedding
+        ):
+            raise DaemonRequestError(
+                "INVALID_RESPONSE",
+                "embed reply 'embedding' is not a list of numbers",
+            )
+        if not isinstance(model, str) or not isinstance(latency_ms, int):
+            raise DaemonRequestError(
+                "INVALID_RESPONSE",
+                "embed reply 'model'/'latency_ms' have wrong types",
+            )
         return EmbedResponse(
-            embedding=result["embedding"],
-            model=result["model"],
-            latency_ms=result["latency_ms"],
+            embedding=embedding,
+            model=model,
+            latency_ms=latency_ms,
         )
 
     async def _call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

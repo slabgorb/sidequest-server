@@ -9,7 +9,7 @@ narration-turn paths consume:
 - :meth:`LoreStore.query_by_keyword` (case-insensitive substring)
 - :meth:`LoreStore.query_by_similarity` (semantic search — story 37-33)
 - :meth:`LoreStore.update_embedding` (embedding worker write-back)
-- :meth:`LoreStore.total_tokens`, :meth:`LoreStore.len` accessors
+- :meth:`LoreStore.total_tokens`, :meth:`LoreStore.__len__` accessors
 
 Semantic search wires up in story 37-33 alongside
 ``sidequest.daemon_client.DaemonClient.embed()``. Fragments persist
@@ -26,7 +26,7 @@ not ad-hoc blobs.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterator
 
 from pydantic import BaseModel, Field
 
@@ -78,7 +78,7 @@ class LoreFragment(BaseModel):
 
     id: str
     category: str
-    content: str
+    content: str = Field(min_length=1)
     token_estimate: int
     source: str
     turn_created: int | None = None
@@ -182,9 +182,14 @@ class LoreStore(BaseModel):
         against ``query_embedding``.
 
         Fragments without an embedding are skipped silently (they will
-        be picked up by the embedding worker on a later turn). Returned
-        list is sorted descending by similarity; ties are broken by id
-        for deterministic output under test.
+        be picked up by the embedding worker on a later turn). Fragments
+        whose stored embedding has a different dimension from the query
+        are *also* skipped here, but the caller is expected to have run
+        :meth:`requeue_dimension_mismatched` before this call so those
+        fragments get re-embedded on the current model; see that method
+        for the anti-silent-orphan contract. Returned list is sorted
+        descending by similarity; ties are broken by id for deterministic
+        output under test.
 
         A zero-magnitude embedding on either side is treated as 0.0
         similarity — never a division by zero.
@@ -197,6 +202,34 @@ class LoreStore(BaseModel):
             candidates.append((sim, frag))
         candidates.sort(key=lambda item: (-item[0], item[1].id))
         return candidates[: max(0, top_k)]
+
+    def requeue_dimension_mismatched(self, current_dim: int) -> list[str]:
+        """Flip ``embedding_pending`` back to ``True`` for every fragment
+        whose stored embedding dimension differs from ``current_dim``.
+
+        Guards against the silent-orphan failure mode where a daemon
+        model upgrade (e.g. MiniLM-384 → MiniLM-768) leaves every
+        pre-upgrade fragment scoring 0.0 against every query because
+        :func:`cosine_similarity` returns 0.0 on length mismatch. Without
+        this re-queue, ``update_embedding`` permanently clears the
+        pending flag — no log, no span attribute, no GM-panel signal.
+
+        Returns the ids that were re-queued so the caller can emit a
+        ``lore.dimension_mismatch_count`` OTEL span attribute. Called
+        from :func:`retrieve_lore_context` before the similarity query;
+        the next post-turn worker pass picks up the re-queued fragments
+        and re-embeds them on the current model.
+        """
+        requeued: list[str] = []
+        for fid, frag in self.fragments.items():
+            if frag.embedding is None:
+                continue
+            if len(frag.embedding) != current_dim:
+                frag.embedding = None
+                frag.embedding_pending = True
+                frag.embedding_retry_count = 0
+                requeued.append(fid)
+        return sorted(requeued)
 
     # ------------------------------------------------------------------
     # Embedding worker write-back
@@ -255,7 +288,7 @@ class LoreStore(BaseModel):
     def is_empty(self) -> bool:
         return not self.fragments
 
-    def __iter__(self) -> Iterable[LoreFragment]:  # type: ignore[override]
+    def __iter__(self) -> Iterator[LoreFragment]:  # type: ignore[override]
         return iter(self.fragments.values())
 
 
@@ -264,9 +297,12 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
     Returns ``0.0`` rather than raising when either side has zero
     magnitude (uninitialized embedding, all-zero sentinel). Returns
-    ``0.0`` when the lengths differ — a length mismatch indicates
-    a model change across saved sessions and should degrade silently
-    at query time (the worker re-embeds on the current model).
+    ``0.0`` when the lengths differ — a length mismatch indicates a
+    model change across saved sessions. The query-time caller
+    (:func:`retrieve_lore_context`) runs
+    :meth:`LoreStore.requeue_dimension_mismatched` first so mismatched
+    fragments get re-queued for the embedding worker rather than being
+    permanently orphaned by this 0.0 return.
     """
     if not a or not b or len(a) != len(b):
         return 0.0

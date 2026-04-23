@@ -64,17 +64,35 @@ preview and can ask the player for more via the story beat."""
 
 @dataclass
 class EmbedWorkerResult:
-    """Telemetry for one :func:`embed_pending_fragments` run."""
+    """Telemetry for one :func:`embed_pending_fragments` run.
+
+    ``failed_embed_error`` counts daemon-side structured failures
+    (:class:`DaemonRequestError`); ``failed_text_too_large`` counts
+    client-side byte-cap rejections (:class:`ValueError`). ``failed``
+    is the sum of both — kept as a top-level field for backward
+    compatibility with the watcher payload, but the two sub-counters
+    let the GM panel tell transient daemon errors from permanent data
+    problems across N failures in a single run.
+    """
 
     embedded: int = 0
     failed: int = 0
+    failed_embed_error: int = 0
+    failed_text_too_large: int = 0
     skipped_daemon_unavailable: bool = False
     skipped_empty_queue: bool = False
 
     def as_dict(self) -> dict[str, object]:
+        """Watcher payload contract — keys land on the OTEL span and
+        the GM panel ``state_transition`` event. The four failure /
+        skip fields are the lie-detector signal when the worker reports
+        zero embeddings written on a non-empty pending queue.
+        """
         return {
             "embedded": self.embedded,
             "failed": self.failed,
+            "failed_embed_error": self.failed_embed_error,
+            "failed_text_too_large": self.failed_text_too_large,
             "skipped_daemon_unavailable": self.skipped_daemon_unavailable,
             "skipped_empty_queue": self.skipped_empty_queue,
         }
@@ -97,6 +115,16 @@ async def embed_pending_fragments(
     with defaults. If the socket is absent the run returns early with
     ``skipped_daemon_unavailable=True`` — no attempt is made to
     connect, matching the render dispatch pattern.
+
+    :param max_retries: ceiling on per-fragment transient-failure
+        retries. Fragments whose ``embedding_retry_count`` has reached
+        this value are skipped so a single poisoned fragment cannot
+        burn through embed budget every turn. ``None`` disables the
+        ceiling (used by unit tests that want a single shot).
+    :param max_per_run: upper bound on fragments processed in this
+        run. ``None`` drains the full pending queue. Callers that want
+        to amortise embed cost across turns (e.g. chargen seeds 20+
+        fragments at once) can set this to a small integer.
     """
     result = EmbedWorkerResult()
     with tracer.start_as_current_span("lore_embedding.worker") as span:
@@ -150,6 +178,16 @@ async def embed_pending_fragments(
             except DaemonRequestError as exc:
                 lore_store.mark_embedding_failed(frag_id)
                 result.failed += 1
+                result.failed_embed_error += 1
+                span.add_event(
+                    "embed_failed",
+                    {
+                        "fragment_id": frag_id,
+                        "reason": "daemon_error",
+                        "code": exc.code,
+                        "retry_count": frag.embedding_retry_count,
+                    },
+                )
                 logger.warning(
                     "lore_embedding.worker embed_failed fragment=%s "
                     "code=%s message=%s retry_count=%d",
@@ -160,15 +198,47 @@ async def embed_pending_fragments(
                 )
                 continue
             except ValueError as exc:
-                # MAX_EMBED_BYTES guard in the client — the fragment is
-                # too large to embed. Mark as failed so we stop trying.
+                # MAX_EMBED_BYTES guard in the client (or empty-content
+                # guard at the Pydantic layer) — the fragment cannot be
+                # embedded. Mark as failed so we stop trying.
                 lore_store.mark_embedding_failed(frag_id)
                 result.failed += 1
+                result.failed_text_too_large += 1
+                span.add_event(
+                    "embed_failed",
+                    {
+                        "fragment_id": frag_id,
+                        "reason": "text_too_large",
+                        "content_bytes": len(frag.content.encode("utf-8")),
+                    },
+                )
                 logger.warning(
                     "lore_embedding.worker text_too_large fragment=%s "
                     "content_bytes=%d error=%s",
                     frag_id,
                     len(frag.content.encode("utf-8")),
+                    exc,
+                )
+                continue
+            except (KeyError, TypeError) as exc:
+                # EmbedResponse construction on a malformed daemon reply.
+                # Treat as a daemon-error for accounting (retry budget
+                # applies — the reply could be transient mid-crash).
+                lore_store.mark_embedding_failed(frag_id)
+                result.failed += 1
+                result.failed_embed_error += 1
+                span.add_event(
+                    "embed_failed",
+                    {
+                        "fragment_id": frag_id,
+                        "reason": "malformed_response",
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                logger.warning(
+                    "lore_embedding.worker malformed_response fragment=%s "
+                    "error=%s",
+                    frag_id,
                     exc,
                 )
                 continue
@@ -178,6 +248,10 @@ async def embed_pending_fragments(
 
         span.set_attribute("lore.embedded", result.embedded)
         span.set_attribute("lore.failed", result.failed)
+        span.set_attribute("lore.failed_embed_error", result.failed_embed_error)
+        span.set_attribute(
+            "lore.failed_text_too_large", result.failed_text_too_large
+        )
         return result
 
 
@@ -219,7 +293,7 @@ async def retrieve_lore_context(
             client = DaemonClient()
         if not client.is_available():
             span.set_attribute("lore.outcome", "daemon_unavailable")
-            logger.info(
+            logger.warning(
                 "lore_embedding.retrieve skipped reason=daemon_unavailable"
             )
             return None
@@ -230,6 +304,18 @@ async def retrieve_lore_context(
             span.set_attribute("lore.outcome", "embed_failed")
             span.set_attribute("lore.error_type", type(exc).__name__)
             logger.warning("lore_embedding.retrieve embed_failed error=%s", exc)
+            return None
+        except (KeyError, TypeError) as exc:
+            # EmbedResponse construction in DaemonClient.embed() can raise
+            # KeyError / TypeError when the daemon returns a malformed
+            # reply (partial JSON flush during crash, schema drift, hot
+            # reload). Label the span so the GM panel sees a terminal
+            # outcome instead of an unlabelled partial span.
+            span.set_attribute("lore.outcome", "malformed_response")
+            span.set_attribute("lore.error_type", type(exc).__name__)
+            logger.warning(
+                "lore_embedding.retrieve malformed_response error=%s", exc
+            )
             return None
         except ValueError as exc:
             # Query text exceeded MAX_EMBED_BYTES — truncate? No: the
@@ -242,7 +328,23 @@ async def retrieve_lore_context(
             )
             return None
 
-        hits = lore_store.query_by_similarity(response["embedding"], top_k=top_k)
+        query_embedding = response["embedding"]
+        # Re-queue any fragments whose stored embedding dimension differs
+        # from the current model's. Without this, cosine_similarity would
+        # silently return 0.0 for every mismatched fragment forever —
+        # see :meth:`LoreStore.requeue_dimension_mismatched` for the
+        # anti-silent-orphan contract.
+        mismatched = lore_store.requeue_dimension_mismatched(len(query_embedding))
+        span.set_attribute("lore.dimension_mismatch_count", len(mismatched))
+        if mismatched:
+            logger.warning(
+                "lore_embedding.retrieve dimension_mismatch requeued=%d "
+                "current_dim=%d",
+                len(mismatched),
+                len(query_embedding),
+            )
+
+        hits = lore_store.query_by_similarity(query_embedding, top_k=top_k)
         hits = [(sim, frag) for sim, frag in hits if sim >= min_similarity]
         span.set_attribute("lore.hit_count", len(hits))
 
@@ -250,9 +352,7 @@ async def retrieve_lore_context(
             span.set_attribute("lore.outcome", "no_hits_above_threshold")
             return None
 
-        span.set_attribute(
-            "lore.top_similarity", hits[0][0] if hits else 0.0
-        )
+        span.set_attribute("lore.top_similarity", hits[0][0])
         span.set_attribute("lore.outcome", "ok")
         return _format_lore_section(hits, preview_chars=preview_chars)
 

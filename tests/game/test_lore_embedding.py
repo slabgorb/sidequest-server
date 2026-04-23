@@ -243,10 +243,17 @@ async def test_worker_respects_max_retries_and_skips_poisoned_fragments() -> Non
 
 
 def test_embed_worker_result_as_dict_shape() -> None:
-    r = EmbedWorkerResult(embedded=3, failed=1)
+    r = EmbedWorkerResult(
+        embedded=3,
+        failed=2,
+        failed_embed_error=1,
+        failed_text_too_large=1,
+    )
     assert r.as_dict() == {
         "embedded": 3,
-        "failed": 1,
+        "failed": 2,
+        "failed_embed_error": 1,
+        "failed_text_too_large": 1,
         "skipped_daemon_unavailable": False,
         "skipped_empty_queue": False,
     }
