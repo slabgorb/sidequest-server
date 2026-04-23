@@ -139,7 +139,7 @@ async def run_dispatch_bank(
     with local_dm_dispatch_bank_span(
         turn_id=package.turn_id,
         dispatch_count=len(all_dispatches),
-    ):
+    ) as bank_span:
         if not all_dispatches:
             # Still include decomposer-authored narrator_instructions even when no
             # subsystem dispatches ran.
@@ -152,6 +152,7 @@ async def run_dispatch_bank(
         except ValueError as exc:
             logger.error("subsystems.bank_topo_sort_failed exc=%s", exc)
             result.errors.append(("__bank__", repr(exc)))
+            bank_span.set_attribute("error", "topo_sort_failure")
             # Authored directives still flow; zero subsystem dispatches run.
             for pd in package.per_player:
                 result.directives.extend(pd.narrator_instructions)

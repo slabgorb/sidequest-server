@@ -178,9 +178,10 @@ def test_register_subsystem_rejects_duplicate_name():
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_cycle_in_depends_on_records_bank_error():
+async def test_run_dispatch_bank_cycle_in_depends_on_records_bank_error(otel_capture):
     """A cycle in depends_on records a __bank__ error; zero dispatches run;
-    authored directives still flow."""
+    authored directives still flow; the bank span carries an error attribute
+    so the GM panel distinguishes cycle-aborted turns from empty ones."""
     a = _make_dispatch("reflect_absence", "A", depends_on=["B"])
     b = _make_dispatch("reflect_absence", "B", depends_on=["A"])
     pkg = _make_package([[a, b]])
@@ -201,6 +202,11 @@ async def test_run_dispatch_bank_cycle_in_depends_on_records_bank_error():
 
     # Authored directive still flows.
     assert any(d.payload == "authored despite cycle" for d in res.directives)
+
+    # Bank span records the cycle-abort reason so GM panel can filter it.
+    bank_spans = [s for s in otel_capture.get_finished_spans() if s.name == "local_dm.dispatch_bank"]
+    assert len(bank_spans) == 1
+    assert dict(bank_spans[0].attributes or {}).get("error") == "topo_sort_failure"
 
 
 @pytest.mark.asyncio

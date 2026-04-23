@@ -297,42 +297,23 @@ async def test_local_dm_emits_decompose_span(dispatch_json_absence, otel_capture
 
 
 @pytest.mark.asyncio
-async def test_local_dm_decompose_span_records_degraded_reason():
+async def test_local_dm_decompose_span_records_degraded_reason(otel_capture):
     """Failure paths (parse failure here) must set degraded=True and
     degraded_reason on the span so the GM panel distinguishes degraded
     turns from clean ones."""
     client = _make_mock_client("not json at all")
     dm = LocalDM(client=client)
-    # Need a fresh otel capture inline so we do not rely on fixture ordering.
-    from opentelemetry import trace as otel_trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-        InMemorySpanExporter,
+    await dm.decompose(
+        turn_id="turn-bad",
+        player_id="player:Alice",
+        raw_action="x",
+        state_summary="y",
     )
-
-    from sidequest.telemetry.setup import init_tracer
-
-    init_tracer()
-    provider = otel_trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider)
-    exporter = InMemorySpanExporter()
-    processor = SimpleSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    try:
-        await dm.decompose(
-            turn_id="turn-bad",
-            player_id="player:Alice",
-            raw_action="x",
-            state_summary="y",
-        )
-        spans = [s for s in exporter.get_finished_spans() if s.name == "local_dm.decompose"]
-        assert len(spans) == 1
-        attrs = dict(spans[0].attributes or {})
-        assert attrs["degraded"] is True
-        assert "parse_failure" in attrs["degraded_reason"]
-    finally:
-        processor.shutdown()
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "local_dm.decompose"]
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes or {})
+    assert attrs["degraded"] is True
+    assert "parse_failure" in attrs["degraded_reason"]
 
 
 def test_decomposer_system_prompt_includes_schema_shape():
