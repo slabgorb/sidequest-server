@@ -1,0 +1,46 @@
+"""Core invariants — structural guarantees genre packs cannot weaken.
+
+Runs before GenreRuleStage in the ComposedFilter. Can short-circuit with
+a terminal decision (include=True with canonical payload, or include=False).
+
+Invariants shipped in this stage:
+    - GM sees canonical (Task 5).
+    - Targeted-by-field — SECRET_NOTE / DICE_REQUEST / etc.'s `to` field
+      restricts recipients (Task 6).
+    - Self-authored — PLAYER_ACTION / DICE_THROW echo to author + GM
+      (Task 7).
+    - GM-only kind — THINKING is never routed to players (Task 8).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.view import GameStateView
+from sidequest.game.projection_filter import FilterDecision
+
+
+@dataclass(frozen=True)
+class InvariantOutcome:
+    terminal: bool
+    decision: FilterDecision | None
+
+
+class CoreInvariantStage:
+    """Hardcoded structural filters. No configuration."""
+
+    def evaluate(
+        self,
+        *,
+        envelope: MessageEnvelope,
+        view: GameStateView,
+        player_id: str,
+    ) -> InvariantOutcome:
+        # 1. GM sees canonical — always.
+        if view.is_gm(player_id):
+            return InvariantOutcome(
+                terminal=True,
+                decision=FilterDecision(include=True, payload_json=envelope.payload_json),
+            )
+
+        return InvariantOutcome(terminal=False, decision=None)
