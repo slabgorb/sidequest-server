@@ -372,3 +372,64 @@ async def test_full_turn_decomposer_timeout_narrator_still_runs(session_fixture)
     assert "client_exception" in (pkg.degraded_reason or ""), (
         f"expected 'client_exception' in degraded_reason, got: {pkg.degraded_reason!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 15 — wiring: LocalDM is initialized on the real session-open path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_open_initializes_local_dm(tmp_path):
+    """Wiring test — LocalDM is instantiated on every real session open.
+
+    Drives handle_message(connect) against a fresh handler with real
+    content packs and asserts sd.local_dm is a live LocalDM instance.
+    If _SessionData's default_factory for local_dm regresses, this test
+    fails. (Unit tests in this file use a hand-built _SessionData and
+    would NOT catch that regression — the whole point of this test is
+    to exercise the real _handle_connect → _SessionData(...) construction
+    site at session_handler.py:655 / :805.)
+    """
+    from pathlib import Path
+
+    from sidequest.agents.local_dm import LocalDM
+    from sidequest.protocol.messages import SessionEventMessage, SessionEventPayload
+    from sidequest.server.session_handler import WebSocketSessionHandler
+    from tests.server.conftest import mock_claude_client_factory
+
+    content_root = (
+        Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+    )
+    if not (content_root / "caverns_and_claudes").is_dir():
+        pytest.fail(
+            f"content pack not found at {content_root} — sidequest-content symlink broken"
+        )
+
+    handler = WebSocketSessionHandler(
+        claude_client_factory=mock_claude_client_factory(),
+        genre_pack_search_paths=[content_root],
+        save_dir=tmp_path,
+    )
+
+    payload = SessionEventPayload(
+        event="connect",
+        player_name="WiringTestPlayer",
+        genre="caverns_and_claudes",
+        world="grimvault",
+    )
+    out = await handler.handle_message(
+        SessionEventMessage(payload=payload, player_id="")
+    )
+    assert isinstance(out[0], SessionEventMessage), (
+        f"expected connect response, got: {out[0]!r}"
+    )
+
+    sd = handler._session_data
+    assert sd is not None, "session_data must be populated after connect"
+    assert hasattr(sd, "local_dm"), (
+        "sd must have local_dm attribute (Task 10 regression)"
+    )
+    assert isinstance(sd.local_dm, LocalDM), (
+        f"sd.local_dm must be a live LocalDM, got: {type(sd.local_dm).__name__}"
+    )
