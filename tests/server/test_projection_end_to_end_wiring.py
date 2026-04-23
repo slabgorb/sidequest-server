@@ -28,10 +28,21 @@ from sidequest.game.projection.view import SessionGameStateView
 
 
 def _setup_tracing() -> InMemorySpanExporter:
+    """Attach an in-memory exporter to whichever TracerProvider is active.
+
+    OTEL forbids replacing a TracerProvider once set, so if an earlier test
+    (or the app's own telemetry setup) has already installed one, we attach
+    our SpanProcessor to it rather than overriding. Falls back to installing
+    a fresh provider only when none is set.
+    """
     exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
+    current = trace.get_tracer_provider()
+    if hasattr(current, "add_span_processor"):
+        current.add_span_processor(SimpleSpanProcessor(exporter))
+    else:
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
     return exporter
 
 
