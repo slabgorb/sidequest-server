@@ -787,6 +787,7 @@ class WebSocketSessionHandler:
                 store=store,
                 genre_pack=genre_pack,
                 orchestrator=Orchestrator(client=self._client_factory()),
+                local_dm=LocalDM(client=self._client_factory()),
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
@@ -990,6 +991,7 @@ class WebSocketSessionHandler:
             store=store,
             genre_pack=genre_pack,
             orchestrator=orchestrator,
+            local_dm=LocalDM(client=self._client_factory()),
             builder=builder,
             opening_seed=opening_seed,
             opening_directive=opening_directive,

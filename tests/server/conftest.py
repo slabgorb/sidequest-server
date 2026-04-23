@@ -11,6 +11,7 @@ real :class:`ClaudeResponse` with non-empty text + session id.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
