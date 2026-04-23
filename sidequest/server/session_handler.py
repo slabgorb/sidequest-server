@@ -691,29 +691,68 @@ class WebSocketSessionHandler:
                 player_id=player_id,
             )
 
-            # MP-03 Task 4: replay missed events since last_seen_seq.
-            # SESSION_CONNECTED is always first; replay follows in seq ASC order.
-            missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+            # Task 19: lazy-fill projection_cache for this player if they're
+            # joining a session that has events already. Subsequent reconnects
+            # read from cache (Task 18) — no re-filter.
+            if self._projection_cache is not None:
+                from sidequest.game.projection.cache_fill import lazy_fill
+                lazy_fill(
+                    event_log=self._event_log,
+                    cache=self._projection_cache,
+                    filter_=self._projection_filter,
+                    view=self._build_game_state_view(),
+                    player_id=player_id,
+                )
+
+            # MP-03 Task 4 / ProjectionFilter-Rules Task 18: replay from
+            # projection_cache when present (byte-identical to what the live
+            # player received). Legacy fallback runs filter live.
             replay_msgs: list[object] = []
-            for event_row in missed:
-                envelope = MessageEnvelope(
-                    kind=event_row.kind,
-                    payload_json=event_row.payload_json,
-                    origin_seq=event_row.seq,
+            if self._projection_cache is not None:
+                cached_rows = self._projection_cache.read_since(
+                    player_id=self._current_player_id,
+                    since_seq=self._last_seen_seq,
                 )
-                view = self._build_game_state_view()
-                dec = self._projection_filter.project(
-                    envelope=envelope, view=view, player_id=self._current_player_id
-                )
-                if not dec.include:
-                    continue
-                replay_msgs.append(
-                    _build_message_for_kind(
-                        kind=event_row.kind,
-                        payload_json=dec.payload_json,
-                        seq=event_row.seq,
+                for c in cached_rows:
+                    if not c.include or c.payload_json is None:
+                        continue
+                    # Need the event kind to rebuild the message — look it up.
+                    # Most sessions won't have many missed events on reconnect,
+                    # but this does one event-log read per cache row. Acceptable
+                    # for v1; optimize to a join query if it becomes hot.
+                    kind_lookup = self._event_log.read_since(since_seq=c.event_seq - 1)
+                    if not kind_lookup or kind_lookup[0].seq != c.event_seq:
+                        continue
+                    replay_msgs.append(
+                        _build_message_for_kind(
+                            kind=kind_lookup[0].kind,
+                            payload_json=c.payload_json,
+                            seq=c.event_seq,
+                        )
                     )
-                )
+            else:
+                # Legacy fallback: no cache available, filter live (may diverge
+                # from cached projections in edge cases; v1 accepts this).
+                missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+                view = self._build_game_state_view()
+                for event_row in missed:
+                    envelope = MessageEnvelope(
+                        kind=event_row.kind,
+                        payload_json=event_row.payload_json,
+                        origin_seq=event_row.seq,
+                    )
+                    dec = self._projection_filter.project(
+                        envelope=envelope, view=view, player_id=self._current_player_id
+                    )
+                    if not dec.include:
+                        continue
+                    replay_msgs.append(
+                        _build_message_for_kind(
+                            kind=event_row.kind,
+                            payload_json=dec.payload_json,
+                            seq=event_row.seq,
+                        )
+                    )
             return [connected_msg, *replay_msgs]
 
         genre_slug = payload.genre or ""
