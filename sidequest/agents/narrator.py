@@ -73,7 +73,7 @@ After your prose, emit a fenced JSON block labeled game_patch containing \
 mechanical intents from this turn. Only include fields that changed.\
 Valid fields: confrontation, items_gained, items_lost, location, npcs_met, \
 mood, state_snapshot, beat_selections, visual_scene, footnotes, gold_change, \
-action_rewrite.
+action_rewrite, action_flags.
 gold_change: Integer. Emit when the player gains or loses gold/currency \
 outside of beat costs (e.g., winning a poker hand: +50, paying a bribe: -20, \
 finding a coin purse: +10). Beat costs are handled automatically — only emit \
@@ -87,6 +87,19 @@ three perspective forms for downstream systems:\
 Example: player says "I draw my sword" →
   {"you": "You draw your sword", "named": "Kael draws their sword", \
 "intent": "draw sword"}
+
+action_flags: Object. Include on every turn. If omitted, all flags default to \
+false and a warning is logged. Classify the player's action with boolean flags:\
+  {"is_power_grab": false, "references_inventory": false, "references_npc": false, \
+"references_ability": false, "references_location": false}
+is_power_grab: true if the action attempts to seize extraordinary power OR \
+coerce an outcome through force or threat (e.g., "I wish for godlike power", \
+"I'll kill them all if you don't comply"). references_inventory: true if the action \
+mentions items, equipment, or gear. references_npc: true if the action addresses \
+or mentions an NPC by name or role. references_ability: true if the action invokes \
+a power, mutation, spell, or skill. references_location: true if the action \
+targets a location, attempts travel, or requests location-specific information — \
+not merely a passing geographic reference in dialogue.
 
 items_gained: Array. Emit when the player acquires, picks up, finds, loots, \
 receives, or is given a new item during this turn. Each entry:
