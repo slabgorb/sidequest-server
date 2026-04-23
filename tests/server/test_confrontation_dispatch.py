@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sidequest.game.encounter import MetricDirection
 from sidequest.genre.models.rules import (
     BeatDef,
     ConfrontationDef,
