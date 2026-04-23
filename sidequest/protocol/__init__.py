@@ -63,6 +63,51 @@ from sidequest.protocol.models import (
     TacticalFeaturePayload,
     TacticalGridPayload,
 )
+
+# Local DM decomposer output contract (Group B)
+from sidequest.protocol.dispatch import (
+    CrossAction,
+    DispatchPackage,
+    LethalityVerdict,
+    LethalityVerdictKind,
+    NarratorDirective,
+    NarratorDirectiveKind,
+    PerceptionFidelity,
+    PlayerDispatch,
+    Referent,
+    Reversibility,
+    SubsystemDispatch,
+    VisibilityTag,
+)
+
+# Phase 1 payload classes
+from sidequest.protocol.messages import (
+    ActionQueueMessage,
+    ActionQueuePayload,
+    CharacterCreationMessage,
+    CharacterCreationPayload,
+    ChapterMarkerMessage,
+    ChapterMarkerPayload,
+    ErrorMessage,
+    ErrorPayload,
+    GameMessage,
+    MapUpdateMessage,
+    MapUpdatePayload,
+    NarrationEndMessage,
+    NarrationEndPayload,
+    NarrationMessage,
+    NarrationPayload,
+    PartyStatusMessage,
+    PartyStatusPayload,
+    PlayerActionMessage,
+    PlayerActionPayload,
+    SessionEventMessage,
+    SessionEventPayload,
+    ThinkingMessage,
+    ThinkingPayload,
+    TurnStatusMessage,
+    TurnStatusPayload,
+)
 from sidequest.protocol.provenance import (
     ContributionKind,
     MergeStep,
@@ -74,6 +119,19 @@ from sidequest.protocol.sanitize import sanitize_player_text
 from sidequest.protocol.types import NonBlankString, Stat
 
 __all__ = [
+    # Local DM decomposer (Group B)
+    "CrossAction",
+    "DispatchPackage",
+    "LethalityVerdict",
+    "LethalityVerdictKind",
+    "NarratorDirective",
+    "NarratorDirectiveKind",
+    "PerceptionFidelity",
+    "PlayerDispatch",
+    "Referent",
+    "Reversibility",
+    "SubsystemDispatch",
+    "VisibilityTag",
     # Foundation
     "MessageType",
     "NarratorVerbosity",

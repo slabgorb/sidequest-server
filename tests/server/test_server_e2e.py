@@ -231,7 +231,13 @@ def test_e2e_session_is_persisted_after_action(tmp_path):
 
 
 def test_e2e_second_action_calls_client_twice(tmp_path):
-    """Second PLAYER_ACTION causes second Claude call (not cached away)."""
+    """Second PLAYER_ACTION causes additional Claude calls (not cached away).
+
+    Group B wired LocalDM between sealed-letter and narrator, so each
+    PLAYER_ACTION now drives two ``send_with_session`` calls on the
+    shared mock client: one for decompose (haiku) and one for narration
+    (opus). Two actions → four calls.
+    """
     saves_dir = tmp_path / "saves"
     saves_dir.mkdir()
     mock_client = _make_mock_client()
@@ -272,8 +278,8 @@ def test_e2e_second_action_calls_client_twice(tmp_path):
             narration2 = json.loads(ws.receive_text())
             ws.receive_text()  # NARRATION_END
 
-    # Claude was called twice
-    assert mock_client.send_with_session.call_count == 2
+    # Two actions × (LocalDM decompose + narrator) = 4 calls
+    assert mock_client.send_with_session.call_count == 4
     assert narration2["type"] == "NARRATION"
 
 

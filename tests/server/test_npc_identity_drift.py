@@ -63,7 +63,7 @@ def _frandrew_captain() -> NpcRegistryEntry:
     )
 
 
-def _build_prompt_with_registry(
+async def _build_prompt_with_registry(
     registry_entries: list[NpcRegistryEntry],
 ) -> tuple[str, object]:
     orch = _make_orchestrator()
@@ -72,7 +72,7 @@ def _build_prompt_with_registry(
         genre="space_opera",
         npc_registry=registry_entries,
     )
-    return orch.build_narrator_prompt("look around", context)
+    return await orch.build_narrator_prompt("look around", context)
 
 
 # ---------------------------------------------------------------------------
@@ -80,13 +80,13 @@ def _build_prompt_with_registry(
 # ---------------------------------------------------------------------------
 
 
-def test_npc_registry_renders_as_prompt_section():
+async def test_npc_registry_renders_as_prompt_section():
     """When ``TurnContext.npc_registry`` is non-empty, the built prompt must
     include a dossier section listing each known NPC. This is the root-cause
     fix for identity drift: the narrator can only stay consistent if it sees
     the canonical roster every turn.
     """
-    prompt, _ = _build_prompt_with_registry([_frandrew_captain()])
+    prompt, _ = await _build_prompt_with_registry([_frandrew_captain()])
 
     # The name must appear in the prompt
     assert "Frandrew" in prompt, (
@@ -95,35 +95,35 @@ def test_npc_registry_renders_as_prompt_section():
     )
 
 
-def test_npc_dossier_contains_canonical_pronouns():
+async def test_npc_dossier_contains_canonical_pronouns():
     """Canonical pronouns must reach the narrator. Without them, the narrator
     defaults to whatever pronoun the last mention of the name happened to use.
     """
-    prompt, _ = _build_prompt_with_registry([_frandrew_captain()])
+    prompt, _ = await _build_prompt_with_registry([_frandrew_captain()])
     assert "she/her" in prompt, (
         "Canonical pronouns missing from prompt — this is how Frandrew drifted "
         "from 'she/her captain' to 'he/him grease monkey' in 10 turns."
     )
 
 
-def test_npc_dossier_contains_canonical_role():
+async def test_npc_dossier_contains_canonical_role():
     """Role must reach the narrator — otherwise the narrator re-guesses."""
-    prompt, _ = _build_prompt_with_registry([_frandrew_captain()])
+    prompt, _ = await _build_prompt_with_registry([_frandrew_captain()])
     assert "captain" in prompt.lower(), (
         "Canonical role missing — narrator will re-guess role each turn."
     )
 
 
-def test_npc_dossier_contains_canonical_appearance():
+async def test_npc_dossier_contains_canonical_appearance():
     """Appearance details must reach the narrator for visual consistency."""
-    prompt, _ = _build_prompt_with_registry([_frandrew_captain()])
+    prompt, _ = await _build_prompt_with_registry([_frandrew_captain()])
     # Pick a distinctive appearance token that can't coincidentally appear
     assert "scarred eyebrow" in prompt, (
         "Appearance detail missing — narrator will invent new physical traits."
     )
 
 
-def test_empty_npc_registry_produces_no_dossier_section():
+async def test_empty_npc_registry_produces_no_dossier_section():
     """Zero-byte leak: if no NPCs are registered, no dossier section should
     be added to the prompt. Story 42-3 introduced this discipline (PacingHint)
     and it applies here too — pay only when the dossier has content.
@@ -134,7 +134,7 @@ def test_empty_npc_registry_produces_no_dossier_section():
         genre="space_opera",
         npc_registry=[],
     )
-    _, registry = orch.build_narrator_prompt("look around", context)
+    _, registry = await orch.build_narrator_prompt("look around", context)
 
     agent_name = orch._narrator.name()
     section_names = {s.name for s in registry.registry(agent_name)}
@@ -144,7 +144,7 @@ def test_empty_npc_registry_produces_no_dossier_section():
     )
 
 
-def test_npc_roster_section_uses_valley_or_early_zone():
+async def test_npc_roster_section_uses_valley_or_early_zone():
     """The roster is reference data, not primacy-zone identity. Per the
     prompt_framework zoning convention, background context belongs in
     Valley (lower attention); acute rules belong in Early/Primacy. Accept
@@ -156,7 +156,7 @@ def test_npc_roster_section_uses_valley_or_early_zone():
         genre="space_opera",
         npc_registry=[_frandrew_captain()],
     )
-    _, registry = orch.build_narrator_prompt("look around", context)
+    _, registry = await orch.build_narrator_prompt("look around", context)
 
     agent_name = orch._narrator.name()
     roster_sections = [
@@ -172,7 +172,7 @@ def test_npc_roster_section_uses_valley_or_early_zone():
     )
 
 
-def test_npc_roster_section_is_state_category():
+async def test_npc_roster_section_is_state_category():
     """Roster content describes current world state — not identity, genre,
     or format. Category should be ``SectionCategory.State``.
     """
@@ -181,7 +181,7 @@ def test_npc_roster_section_is_state_category():
         character_name="Felix",
         npc_registry=[_frandrew_captain()],
     )
-    _, registry = orch.build_narrator_prompt("look around", context)
+    _, registry = await orch.build_narrator_prompt("look around", context)
 
     agent_name = orch._narrator.name()
     roster_sections = [
@@ -191,7 +191,7 @@ def test_npc_roster_section_is_state_category():
     assert roster_sections[0].category == SectionCategory.State
 
 
-def test_multiple_npcs_all_rendered():
+async def test_multiple_npcs_all_rendered():
     """When the registry holds several NPCs, every one must reach the prompt.
     Playtest 3 had Frandrew (33), Vey (25), Marrien (6), Prefect But (2),
     Tchesla (1) — a real roster. Losing any of them is drift.
@@ -201,7 +201,7 @@ def test_multiple_npcs_all_rendered():
         NpcRegistryEntry(name="Vey", role="engineer", pronouns="he/him"),
         NpcRegistryEntry(name="Marrien", role="scout", pronouns="they/them"),
     ]
-    prompt, _ = _build_prompt_with_registry(entries)
+    prompt, _ = await _build_prompt_with_registry(entries)
     for name in ("Frandrew", "Vey", "Marrien"):
         assert name in prompt, f"{name} missing from multi-NPC roster"
     # Correct pronouns must survive for each
@@ -219,7 +219,7 @@ def test_multiple_npcs_all_rendered():
 # ---------------------------------------------------------------------------
 
 
-def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
+async def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
     """End-to-end wire: a narrator that introduces Frandrew as a she/her
     captain in turn N must have those exact canonical fields appear in the
     prompt built for turn N+1.
@@ -252,7 +252,7 @@ def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
         genre="space_opera",
         npc_registry=list(snapshot.npc_registry),
     )
-    prompt_n_plus_1, _ = orch.build_narrator_prompt(
+    prompt_n_plus_1, _ = await orch.build_narrator_prompt(
         "I salute the captain", context
     )
 
@@ -266,7 +266,7 @@ def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
 # ---------------------------------------------------------------------------
 
 
-def test_multi_turn_registry_persistence_in_prompt():
+async def test_multi_turn_registry_persistence_in_prompt():
     """Across three consecutive turns the registry is built up and each
     subsequent prompt must still carry every prior NPC's canonical identity.
     This directly mirrors the playtest-3 pattern that produced drift.
@@ -320,7 +320,7 @@ def test_multi_turn_registry_persistence_in_prompt():
         genre="space_opera",
         npc_registry=list(snapshot.npc_registry),
     )
-    prompt, _ = orch.build_narrator_prompt("I nod to Frandrew", context)
+    prompt, _ = await orch.build_narrator_prompt("I nod to Frandrew", context)
 
     # Both NPCs should appear in the roster
     assert "Frandrew" in prompt

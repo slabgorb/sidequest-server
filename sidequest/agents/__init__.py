@@ -41,6 +41,7 @@ from sidequest.agents.orchestrator import (
     extract_structured_from_response,
     run_narration_turn,
 )
+from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.prompt_framework import (
     AttentionZone,
     PromptComposer,
@@ -54,6 +55,8 @@ from sidequest.agents.prompt_framework import (
 )
 
 __all__ = [
+    # local dm decomposer (Group B)
+    "LocalDM",
     # narrator + orchestrator (Phase 1 — story 41-5)
     "NarratorAgent",
     "narrator_output_format_text",

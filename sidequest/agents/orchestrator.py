@@ -47,6 +47,7 @@ from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
+from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
@@ -325,6 +326,11 @@ class TurnContext:
     # (all non-producing paths return ``None``; the producing path
     # returns a non-empty ``<lore>`` block).
     lore_context: str | None = None
+
+    # Group B (Local DM decomposer) — session handler populates before calling
+    # run_narration_turn. Consumed by build_narrator_prompt to register the
+    # narrator_directives PromptSection. Default None = decomposer did not run.
+    dispatch_package: DispatchPackage | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -647,7 +653,7 @@ class Orchestrator:
     # Prompt assembly
     # ------------------------------------------------------------------
 
-    def build_narrator_prompt(
+    async def build_narrator_prompt(
         self,
         action: str,
         context: TurnContext,
@@ -1050,6 +1056,38 @@ class Orchestrator:
                 hint.escalation_beat,
             )
 
+        # Group B — Local DM decomposer narrator_directives (Recency zone).
+        # When the decomposer ran, run its dispatch bank here and inject the
+        # aggregated directives as a high-attention section so they land just
+        # before the player action (load-bearing, not ambient context).
+        if context.dispatch_package is not None:
+            from sidequest.agents.subsystems import run_dispatch_bank
+
+            bank_context: dict[str, object] = {}
+            if context.npc_registry:
+                bank_context["npc_registry"] = context.npc_registry
+
+            bank_result = await run_dispatch_bank(
+                context.dispatch_package, context=bank_context,
+            )
+            if bank_result.directives:
+                block = "\n".join(
+                    f"- [{d.kind}] {d.payload}" for d in bank_result.directives
+                )
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "narrator_directives",
+                        block,
+                        AttentionZone.Recency,
+                        SectionCategory.State,
+                    ),
+                )
+            for key, err in bank_result.errors:
+                logger.warning(
+                    "orchestrator.subsystem_error key=%s error=%s", key, err,
+                )
+
         # Player action (Recency zone — highest attention, every tier)
         registry.register_section(
             agent_name,
@@ -1113,7 +1151,7 @@ class Orchestrator:
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
-            prompt_text, registry = self.build_narrator_prompt(action, context, tier=tier)
+            prompt_text, registry = await self.build_narrator_prompt(action, context, tier=tier)
 
             logger.info("Invoking Claude CLI for narration action=%r", action)
 

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
+from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
 from sidequest.daemon_client import (
     DaemonClient,
@@ -241,6 +242,11 @@ class _SessionData:
     # in-memory lore_store after disconnect and from racing a sibling worker
     # at the ``await client.embed()`` yield point on rapid successive turns.
     embed_task: asyncio.Task[None] | None = None
+    # Group B Local DM decomposer (Task 10). One instance per session so
+    # the decomposer can maintain a persistent Haiku sub-session across
+    # turns. Constructed with a default factory so existing _SessionData
+    # construction sites require no change.
+    local_dm: LocalDM = field(default_factory=LocalDM)
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +840,7 @@ class WebSocketSessionHandler:
                 store=store,
                 genre_pack=genre_pack,
                 orchestrator=Orchestrator(client=self._client_factory()),
+                local_dm=LocalDM(client=self._client_factory()),
                 builder=builder,
                 opening_seed=opening_seed,
                 opening_directive=opening_directive,
@@ -1121,6 +1128,7 @@ class WebSocketSessionHandler:
             store=store,
             genre_pack=genre_pack,
             orchestrator=orchestrator,
+            local_dm=LocalDM(client=self._client_factory()),
             builder=builder,
             opening_seed=opening_seed,
             opening_directive=opening_directive,
@@ -2014,6 +2022,31 @@ class WebSocketSessionHandler:
         trope beats on subsequent turns) without leaking responsibility.
         """
         snapshot = sd.snapshot
+
+        # Group B — Local DM decomposer runs between sealed-letter and narrator.
+        # LocalDM.decompose catches expected client failures internally and
+        # returns a degraded DispatchPackage. Any exception escaping here is a
+        # programmer bug (rename, signature drift); let it propagate — failing
+        # the turn loudly beats silently demoting bugs to degraded.
+        turn_id = (
+            f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:"
+            f"{snapshot.turn_manager.interaction}"
+        )
+        assert turn_context.state_summary is not None, (
+            "TurnContext.state_summary must be populated by _build_turn_context"
+        )
+        dispatch_package = await sd.local_dm.decompose(
+            turn_id=turn_id,
+            player_id=f"player:{sd.player_name}",
+            raw_action=action,
+            state_summary=turn_context.state_summary,
+        )
+        if dispatch_package.degraded:
+            logger.info(
+                "session.decomposer_degraded reason=%s turn_id=%s",
+                dispatch_package.degraded_reason, turn_id,
+            )
+        turn_context.dispatch_package = dispatch_package
 
         with orchestrator_process_action_span(action_len=len(action)):
             result = await sd.orchestrator.run_narration_turn(action, turn_context)

@@ -116,10 +116,10 @@ def test_turn_context_accepts_pacing_hint_typed():
 # ---------------------------------------------------------------------------
 
 
-def test_pacing_hint_none_does_not_register_section():
+async def test_pacing_hint_none_does_not_register_section():
     orch = Orchestrator(client=_make_client())
     ctx = TurnContext(character_name="Kael", pacing_hint=None)
-    _, registry = orch.build_narrator_prompt(
+    _, registry = await orch.build_narrator_prompt(
         "look around", ctx, tier=NarratorPromptTier.Full
     )
     assert _section(registry, _agent_name(orch), "pacing") is None, (
@@ -132,7 +132,7 @@ def test_pacing_hint_none_does_not_register_section():
 # ---------------------------------------------------------------------------
 
 
-def test_pacing_hint_present_registers_pacing_section_in_late_zone():
+async def test_pacing_hint_present_registers_pacing_section_in_late_zone():
     orch = Orchestrator(client=_make_client())
     hint = PacingHint(
         drama_weight=0.5,
@@ -141,7 +141,7 @@ def test_pacing_hint_present_registers_pacing_section_in_late_zone():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = orch.build_narrator_prompt(
+    _, registry = await orch.build_narrator_prompt(
         "look around", ctx, tier=NarratorPromptTier.Full
     )
     section = _section(registry, _agent_name(orch), "pacing")
@@ -151,7 +151,7 @@ def test_pacing_hint_present_registers_pacing_section_in_late_zone():
     )
 
 
-def test_pacing_hint_section_content_includes_directive():
+async def test_pacing_hint_section_content_includes_directive():
     orch = Orchestrator(client=_make_client())
     hint = PacingHint(
         drama_weight=0.5,
@@ -161,7 +161,7 @@ def test_pacing_hint_section_content_includes_directive():
     )
     expected_directive = hint.narrator_directive()
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    prompt, registry = orch.build_narrator_prompt(
+    prompt, registry = await orch.build_narrator_prompt(
         "look around", ctx, tier=NarratorPromptTier.Full
     )
     section = _section(registry, _agent_name(orch), "pacing")
@@ -175,7 +175,7 @@ def test_pacing_hint_section_content_includes_directive():
     )
 
 
-def test_pacing_hint_escalation_beat_appears_when_set():
+async def test_pacing_hint_escalation_beat_appears_when_set():
     orch = Orchestrator(client=_make_client())
     beat = "The environment shifts — introduce a new element to break the monotony."
     hint = PacingHint(
@@ -185,7 +185,7 @@ def test_pacing_hint_escalation_beat_appears_when_set():
         escalation_beat=beat,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = orch.build_narrator_prompt(
+    _, registry = await orch.build_narrator_prompt(
         "wait", ctx, tier=NarratorPromptTier.Full
     )
     section = _section(registry, _agent_name(orch), "pacing")
@@ -194,7 +194,7 @@ def test_pacing_hint_escalation_beat_appears_when_set():
     assert beat in section.content
 
 
-def test_pacing_hint_no_escalation_beat_omits_escalation_block():
+async def test_pacing_hint_no_escalation_beat_omits_escalation_block():
     orch = Orchestrator(client=_make_client())
     hint = PacingHint(
         drama_weight=0.4,
@@ -203,7 +203,7 @@ def test_pacing_hint_no_escalation_beat_omits_escalation_block():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = orch.build_narrator_prompt(
+    _, registry = await orch.build_narrator_prompt(
         "look around", ctx, tier=NarratorPromptTier.Full
     )
     section = _section(registry, _agent_name(orch), "pacing")
@@ -218,7 +218,7 @@ def test_pacing_hint_no_escalation_beat_omits_escalation_block():
 # ---------------------------------------------------------------------------
 
 
-def test_pacing_hint_registers_on_delta_tier():
+async def test_pacing_hint_registers_on_delta_tier():
     orch = Orchestrator(client=_make_client())
     hint = PacingHint(
         drama_weight=0.5,
@@ -227,7 +227,7 @@ def test_pacing_hint_registers_on_delta_tier():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint, genre="caverns_and_claudes")
-    _, registry = orch.build_narrator_prompt(
+    _, registry = await orch.build_narrator_prompt(
         "look around", ctx, tier=NarratorPromptTier.Delta
     )
     section = _section(registry, _agent_name(orch), "pacing")
