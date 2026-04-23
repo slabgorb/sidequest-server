@@ -95,7 +95,7 @@ def parse_soul_md(path: Path | str) -> SoulData:
 
     try:
         content = Path(path).read_text(encoding="utf-8")
-    except (OSError, IOError):
+    except OSError:
         return empty
 
     if not content:

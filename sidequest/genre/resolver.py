@@ -211,7 +211,7 @@ class Resolver(Generic[T]):
         self._root = root
         self._type = type_
 
-    def resolve(self, axis: str, ctx: ResolutionContext) -> "Resolved[T]":
+    def resolve(self, axis: str, ctx: ResolutionContext) -> Resolved[T]:
         """Load the World-tier file for `axis` under
         {root}/{genre}/worlds/{world}/{axis}.yaml.
 
@@ -252,7 +252,7 @@ class Resolver(Generic[T]):
         )
         return Resolved(value=value, provenance=provenance)
 
-    def resolve_merged(self, axis: str, field_path: str, ctx: ResolutionContext) -> "Resolved[T]":
+    def resolve_merged(self, axis: str, field_path: str, ctx: ResolutionContext) -> Resolved[T]:
         """Resolve a field path across Global → Genre → World → Culture.
 
         Port of Rust Resolver<T>::resolve_merged. Merges tier files using

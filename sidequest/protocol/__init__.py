@@ -10,15 +10,35 @@ from __future__ import annotations
 
 # Foundation types
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
-from sidequest.protocol.provenance import (
-    ContributionKind,
-    MergeStep,
-    Provenance,
-    Span,
-    Tier,
+
+# Phase 1 payload classes
+from sidequest.protocol.messages import (
+    ActionQueueMessage,
+    ActionQueuePayload,
+    ChapterMarkerMessage,
+    ChapterMarkerPayload,
+    CharacterCreationMessage,
+    CharacterCreationPayload,
+    ErrorMessage,
+    ErrorPayload,
+    GameMessage,
+    MapUpdateMessage,
+    MapUpdatePayload,
+    NarrationEndMessage,
+    NarrationEndPayload,
+    NarrationMessage,
+    NarrationPayload,
+    PartyStatusMessage,
+    PartyStatusPayload,
+    PlayerActionMessage,
+    PlayerActionPayload,
+    SessionEventMessage,
+    SessionEventPayload,
+    ThinkingMessage,
+    ThinkingPayload,
+    TurnStatusMessage,
+    TurnStatusPayload,
 )
-from sidequest.protocol.sanitize import sanitize_player_text
-from sidequest.protocol.types import NonBlankString, Stat
 
 # Nested model types
 from sidequest.protocol.models import (
@@ -43,35 +63,15 @@ from sidequest.protocol.models import (
     TacticalFeaturePayload,
     TacticalGridPayload,
 )
-
-# Phase 1 payload classes
-from sidequest.protocol.messages import (
-    ActionQueueMessage,
-    ActionQueuePayload,
-    CharacterCreationMessage,
-    CharacterCreationPayload,
-    ChapterMarkerMessage,
-    ChapterMarkerPayload,
-    ErrorMessage,
-    ErrorPayload,
-    GameMessage,
-    MapUpdateMessage,
-    MapUpdatePayload,
-    NarrationEndMessage,
-    NarrationEndPayload,
-    NarrationMessage,
-    NarrationPayload,
-    PartyStatusMessage,
-    PartyStatusPayload,
-    PlayerActionMessage,
-    PlayerActionPayload,
-    SessionEventMessage,
-    SessionEventPayload,
-    ThinkingMessage,
-    ThinkingPayload,
-    TurnStatusMessage,
-    TurnStatusPayload,
+from sidequest.protocol.provenance import (
+    ContributionKind,
+    MergeStep,
+    Provenance,
+    Span,
+    Tier,
 )
+from sidequest.protocol.sanitize import sanitize_player_text
+from sidequest.protocol.types import NonBlankString, Stat
 
 __all__ = [
     # Foundation

@@ -15,7 +15,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from sidequest.game.projection.rules import ProjectionRules
-
 from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels

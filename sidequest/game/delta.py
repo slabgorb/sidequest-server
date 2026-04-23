@@ -100,7 +100,7 @@ class StateSnapshot:
     Uses serialized JSON strings per field group for O(1) equality checks.
     """
 
-    def __init__(self, state: "GameSnapshot") -> None:
+    def __init__(self, state: GameSnapshot) -> None:
         self.characters_json = _to_json(state.characters)
         self.npcs_json = _to_json(state.npcs)
         self.location = state.location
@@ -126,7 +126,7 @@ def _to_json(value: object) -> str:
         return ""
 
 
-def snapshot(state: "GameSnapshot") -> StateSnapshot:
+def snapshot(state: GameSnapshot) -> StateSnapshot:
     """Take a snapshot of game state for later delta comparison."""
     return StateSnapshot(state)
 

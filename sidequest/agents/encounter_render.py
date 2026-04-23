@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from sidequest.game.encounter import MetricDirection, StructuredEncounter
 
-
 _DIRECTION_LABELS: dict[MetricDirection, str] = {
     MetricDirection.Ascending: "ascending",
     MetricDirection.Descending: "descending",

@@ -1,11 +1,11 @@
 from pathlib import Path
-import pytest
+
 from sidequest.game.persistence import (
-    SqliteStore,
     GameMode,
+    SqliteStore,
     db_path_for_slug,
-    upsert_game,
     get_game,
+    upsert_game,
 )
 
 

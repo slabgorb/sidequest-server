@@ -6,7 +6,7 @@ import pytest
 
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.session import GameSnapshot
-from sidequest.genre.loader import GenreLoader, DEFAULT_GENRE_PACK_SEARCH_PATHS
+from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 
 
 @pytest.fixture

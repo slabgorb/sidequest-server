@@ -23,7 +23,6 @@ from sidequest.game.belief_state import (
     Credibility,
 )
 
-
 # ---------------------------------------------------------------------------
 # OTEL harness (mirrors tests/server/test_chargen_summary.py)
 # ---------------------------------------------------------------------------

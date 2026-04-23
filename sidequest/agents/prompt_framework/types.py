@@ -6,10 +6,8 @@ Port of sidequest-agents/src/prompt_framework/types.rs.
 from __future__ import annotations
 
 from enum import Enum
-from functools import total_ordering
-from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class AttentionZone(str, Enum):

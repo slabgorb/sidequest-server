@@ -8,20 +8,14 @@ from sidequest.genre.models import (
     AxesConfig,
     AxisDefinition,
     CarryMode,
-    CatalogItem,
     Culture,
-    Dinkus,
     GenreTheme,
     InventoryConfig,
     Legend,
     NpcTrait,
     NpcTraitsDatabase,
     OpeningHook,
-    OceanTendencies,
-    PowerTier,
     Prompts,
-    SessionOpener,
-    TropeDefinition,
 )
 
 

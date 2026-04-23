@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidequest.genre.models import Ability, Affinity, AffinityTier, ProgressionConfig
+from sidequest.genre.models import Ability, AffinityTier, ProgressionConfig
 
 
 class TestAbility:

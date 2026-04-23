@@ -8,13 +8,10 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
-
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry import trace
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,19 +39,19 @@ def _local_tracer(provider: TracerProvider) -> trace.Tracer:
 def test_turn_span_names() -> None:
     from sidequest.telemetry.spans import (
         SPAN_TURN,
+        SPAN_TURN_ASSEMBLE,
         SPAN_TURN_BARRIER,
-        SPAN_TURN_STATE_UPDATE,
-        SPAN_TURN_SYSTEM_TICK,
-        SPAN_TURN_SYSTEM_TICK_TROPES,
-        SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
         SPAN_TURN_MEDIA,
-        SPAN_TURN_TROPES,
         SPAN_TURN_PHASE_TRANSITION,
-        SPAN_TURN_SLASH_COMMAND,
         SPAN_TURN_PREPROCESS_LLM,
         SPAN_TURN_PREPROCESS_PARSE,
         SPAN_TURN_PREPROCESS_WISH_CHECK,
-        SPAN_TURN_ASSEMBLE,
+        SPAN_TURN_SLASH_COMMAND,
+        SPAN_TURN_STATE_UPDATE,
+        SPAN_TURN_SYSTEM_TICK,
+        SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
+        SPAN_TURN_SYSTEM_TICK_TROPES,
+        SPAN_TURN_TROPES,
     )
     assert SPAN_TURN == "turn"
     assert SPAN_TURN_BARRIER == "turn.barrier"
@@ -79,12 +76,12 @@ def test_narrator_span_names() -> None:
 
 def test_orchestrator_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_ORCHESTRATOR_PROCESS_ACTION,
-        SPAN_ORCHESTRATOR_NARRATOR_SESSION_RESET,
         SPAN_ORCHESTRATOR_GENRE_IDENTITY_INJECTION,
+        SPAN_ORCHESTRATOR_LORE_FILTER,
+        SPAN_ORCHESTRATOR_NARRATOR_SESSION_RESET,
+        SPAN_ORCHESTRATOR_PROCESS_ACTION,
         SPAN_ORCHESTRATOR_TACTICAL_GRID_INJECTION,
         SPAN_ORCHESTRATOR_TROPE_BEAT_INJECTION,
-        SPAN_ORCHESTRATOR_LORE_FILTER,
     )
     assert SPAN_ORCHESTRATOR_PROCESS_ACTION == "orchestrator.process_action"
     assert SPAN_ORCHESTRATOR_NARRATOR_SESSION_RESET == "orchestrator.narrator_session_reset"
@@ -105,9 +102,9 @@ def test_agent_call_span_names() -> None:
 
 def test_turn_agent_llm_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
         SPAN_TURN_AGENT_LLM_INFERENCE,
         SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
+        SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
     )
     assert SPAN_TURN_AGENT_LLM_PROMPT_BUILD == "turn.agent_llm.prompt_build"
     assert SPAN_TURN_AGENT_LLM_INFERENCE == "turn.agent_llm.inference"
@@ -121,13 +118,13 @@ def test_content_span_names() -> None:
 
 def test_trope_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_TROPE_TICK,
-        SPAN_TROPE_TICK_PER,
-        SPAN_TROPE_ROOM_TICK,
         SPAN_TROPE_ACTIVATE,
-        SPAN_TROPE_RESOLVE,
         SPAN_TROPE_CROSS_SESSION,
         SPAN_TROPE_EVALUATE_TRIGGERS,
+        SPAN_TROPE_RESOLVE,
+        SPAN_TROPE_ROOM_TICK,
+        SPAN_TROPE_TICK,
+        SPAN_TROPE_TICK_PER,
     )
     assert SPAN_TROPE_TICK == "trope_tick"
     assert SPAN_TROPE_TICK_PER == "trope.tick"
@@ -149,8 +146,8 @@ def test_barrier_span_names() -> None:
 
 def test_music_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_MUSIC_EVALUATE,
         SPAN_MUSIC_CLASSIFY_MOOD,
+        SPAN_MUSIC_EVALUATE,
     )
     assert SPAN_MUSIC_EVALUATE == "music_evaluate"
     assert SPAN_MUSIC_CLASSIFY_MOOD == "music_classify_mood"
@@ -158,9 +155,9 @@ def test_music_span_names() -> None:
 
 def test_persistence_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_PERSISTENCE_SAVE,
-        SPAN_PERSISTENCE_LOAD,
         SPAN_PERSISTENCE_DELETE,
+        SPAN_PERSISTENCE_LOAD,
+        SPAN_PERSISTENCE_SAVE,
     )
     assert SPAN_PERSISTENCE_SAVE == "persistence_save"
     assert SPAN_PERSISTENCE_LOAD == "persistence_load"
@@ -169,10 +166,10 @@ def test_persistence_span_names() -> None:
 
 def test_chargen_span_names() -> None:
     from sidequest.telemetry.spans import (
+        SPAN_CHARGEN_BACKSTORY_COMPOSED,
+        SPAN_CHARGEN_HP_FORMULA,
         SPAN_CHARGEN_STAT_ROLL,
         SPAN_CHARGEN_STATS_GENERATED,
-        SPAN_CHARGEN_HP_FORMULA,
-        SPAN_CHARGEN_BACKSTORY_COMPOSED,
     )
     assert SPAN_CHARGEN_STAT_ROLL == "chargen.stat_roll"
     assert SPAN_CHARGEN_STATS_GENERATED == "chargen.stats_generated"
@@ -202,9 +199,9 @@ def test_disposition_span_names() -> None:
 def test_state_patch_span_names() -> None:
     from sidequest.telemetry.spans import (
         SPAN_APPLY_WORLD_PATCH,
-        SPAN_QUEST_UPDATE,
         SPAN_BUILD_PROTOCOL_DELTA,
         SPAN_COMPUTE_DELTA,
+        SPAN_QUEST_UPDATE,
     )
     assert SPAN_APPLY_WORLD_PATCH == "apply_world_patch"
     assert SPAN_QUEST_UPDATE == "quest_update"
@@ -223,12 +220,12 @@ def test_merchant_span_names() -> None:
 
 def test_misc_agent_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_INVENTORY_EXTRACTION,
-        SPAN_CONTINUITY_LLM_VALIDATION,
         SPAN_COMPOSE,
-        SPAN_WORLD_MATERIALIZED,
+        SPAN_CONTINUITY_LLM_VALIDATION,
+        SPAN_INVENTORY_EXTRACTION,
         SPAN_RAG_PROSE_CLEANUP,
         SPAN_SCRIPT_TOOL_PROMPT_INJECTED,
+        SPAN_WORLD_MATERIALIZED,
     )
     assert SPAN_INVENTORY_EXTRACTION == "inventory.extraction"
     assert SPAN_CONTINUITY_LLM_VALIDATION == "continuity.llm_validation"
@@ -240,13 +237,13 @@ def test_misc_agent_span_names() -> None:
 
 def test_server_misc_span_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_REMINDER_SPAWNED,
-        SPAN_REMINDER_FIRED,
-        SPAN_PREGEN_SEED_MANUAL,
         SPAN_CATCH_UP_GENERATE,
-        SPAN_SCENARIO_ADVANCE,
-        SPAN_SCENARIO_ACCUSATION,
         SPAN_MONSTER_MANUAL_INJECTED,
+        SPAN_PREGEN_SEED_MANUAL,
+        SPAN_REMINDER_FIRED,
+        SPAN_REMINDER_SPAWNED,
+        SPAN_SCENARIO_ACCUSATION,
+        SPAN_SCENARIO_ADVANCE,
     )
     assert SPAN_REMINDER_SPAWNED == "reminder_spawned"
     assert SPAN_REMINDER_FIRED == "reminder_fired"
@@ -264,7 +261,7 @@ def test_server_misc_span_names() -> None:
 
 def test_turn_span_helper_emits_span() -> None:
     """turn_span() starts a span with the correct name."""
-    from sidequest.telemetry.spans import turn_span, SPAN_TURN
+    from sidequest.telemetry.spans import SPAN_TURN, turn_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -311,7 +308,10 @@ def test_turn_span_helper_truncates_action_to_80_chars() -> None:
 
 
 def test_orchestrator_process_action_span_helper() -> None:
-    from sidequest.telemetry.spans import orchestrator_process_action_span, SPAN_ORCHESTRATOR_PROCESS_ACTION
+    from sidequest.telemetry.spans import (
+        SPAN_ORCHESTRATOR_PROCESS_ACTION,
+        orchestrator_process_action_span,
+    )
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -326,7 +326,7 @@ def test_orchestrator_process_action_span_helper() -> None:
 
 
 def test_agent_call_span_helper() -> None:
-    from sidequest.telemetry.spans import agent_call_span, SPAN_AGENT_CALL
+    from sidequest.telemetry.spans import SPAN_AGENT_CALL, agent_call_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -342,7 +342,7 @@ def test_agent_call_span_helper() -> None:
 
 
 def test_agent_call_session_span_helper() -> None:
-    from sidequest.telemetry.spans import agent_call_session_span, SPAN_AGENT_CALL_SESSION
+    from sidequest.telemetry.spans import SPAN_AGENT_CALL_SESSION, agent_call_session_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -355,7 +355,7 @@ def test_agent_call_session_span_helper() -> None:
 
 
 def test_content_resolve_span_helper() -> None:
-    from sidequest.telemetry.spans import content_resolve_span, SPAN_CONTENT_RESOLVE
+    from sidequest.telemetry.spans import SPAN_CONTENT_RESOLVE, content_resolve_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -396,7 +396,7 @@ def test_content_resolve_span_defaults_world_and_culture() -> None:
 
 
 def test_persistence_save_span_helper() -> None:
-    from sidequest.telemetry.spans import persistence_save_span, SPAN_PERSISTENCE_SAVE
+    from sidequest.telemetry.spans import SPAN_PERSISTENCE_SAVE, persistence_save_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -412,7 +412,7 @@ def test_persistence_save_span_helper() -> None:
 
 
 def test_persistence_load_span_helper() -> None:
-    from sidequest.telemetry.spans import persistence_load_span, SPAN_PERSISTENCE_LOAD
+    from sidequest.telemetry.spans import SPAN_PERSISTENCE_LOAD, persistence_load_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -425,7 +425,7 @@ def test_persistence_load_span_helper() -> None:
 
 
 def test_trope_tick_span_helper() -> None:
-    from sidequest.telemetry.spans import trope_tick_span, SPAN_TROPE_TICK
+    from sidequest.telemetry.spans import SPAN_TROPE_TICK, trope_tick_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -440,7 +440,10 @@ def test_trope_tick_span_helper() -> None:
 
 
 def test_turn_agent_llm_inference_span_helper() -> None:
-    from sidequest.telemetry.spans import turn_agent_llm_inference_span, SPAN_TURN_AGENT_LLM_INFERENCE
+    from sidequest.telemetry.spans import (
+        SPAN_TURN_AGENT_LLM_INFERENCE,
+        turn_agent_llm_inference_span,
+    )
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -462,7 +465,7 @@ def test_turn_agent_llm_inference_span_helper() -> None:
 
 def test_spans_are_exported_with_correct_name_smoke() -> None:
     """End-to-end: a helper emits a span that is captured by InMemorySpanExporter."""
-    from sidequest.telemetry.spans import agent_call_span, SPAN_AGENT_CALL
+    from sidequest.telemetry.spans import SPAN_AGENT_CALL, agent_call_span
 
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
@@ -480,10 +483,10 @@ def test_spans_are_exported_with_correct_name_smoke() -> None:
 def test_multiple_spans_exported_in_order() -> None:
     """Multiple helpers in sequence produce the right spans in order."""
     from sidequest.telemetry.spans import (
-        turn_span,
-        agent_call_span,
-        SPAN_TURN,
         SPAN_AGENT_CALL,
+        SPAN_TURN,
+        agent_call_span,
+        turn_span,
     )
 
     provider, exporter = _fresh_provider()

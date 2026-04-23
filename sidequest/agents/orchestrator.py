@@ -31,7 +31,6 @@ import json
 import logging
 import re
 import time
-import uuid
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
@@ -49,11 +48,6 @@ from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
 from sidequest.telemetry.spans import (
-    SPAN_ORCHESTRATOR_PROCESS_ACTION,
-    SPAN_RAG_PROSE_CLEANUP,
-    SPAN_TURN_AGENT_LLM_INFERENCE,
-    SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
-    SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
 )
@@ -94,7 +88,7 @@ class BeatSelection:
     target: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "BeatSelection":
+    def from_dict(cls, d: dict[str, Any]) -> BeatSelection:
         return cls(
             actor=str(d.get("actor", "")),
             beat_id=str(d.get("beat_id", "")),
@@ -114,7 +108,7 @@ class VisualScene:
     tags: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "VisualScene":
+    def from_dict(cls, d: dict[str, Any]) -> VisualScene:
         return cls(
             subject=str(d.get("subject", "")),
             tier=str(d.get("tier", "")),
@@ -139,7 +133,7 @@ class NpcMention:
     is_new: bool = False
 
     @classmethod
-    def from_value(cls, value: Any) -> "NpcMention":
+    def from_value(cls, value: Any) -> NpcMention:
         if isinstance(value, str):
             logger.debug("npc_mention.bare_string_fallback npc_name=%s", value)
             return cls(name=value)
@@ -165,7 +159,7 @@ class ActionRewrite:
     intent: str = ""
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ActionRewrite":
+    def from_dict(cls, d: dict[str, Any]) -> ActionRewrite:
         return cls(
             you=str(d.get("you", "")),
             named=str(d.get("named", "")),

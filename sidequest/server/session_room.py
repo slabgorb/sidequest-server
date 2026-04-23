@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 from sidequest.game.persistence import GameMode
 
@@ -29,12 +29,12 @@ class SessionRoom:
     slug: str
     mode: GameMode
     # player_id -> socket_id (only connected players)
-    _connected: Dict[str, str] = field(default_factory=dict)
-    _sockets: Dict[str, str] = field(default_factory=dict)  # socket_id -> player_id
-    _seated: Dict[str, _Seat] = field(default_factory=dict)
+    _connected: dict[str, str] = field(default_factory=dict)
+    _sockets: dict[str, str] = field(default_factory=dict)  # socket_id -> player_id
+    _seated: dict[str, _Seat] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, repr=False)
     # socket_id -> asyncio.Queue for per-socket outbound message fan-out (MP-02 Task 4)
-    _outbound_queues: Dict[str, "asyncio.Queue[Any]"] = field(default_factory=dict)
+    _outbound_queues: dict[str, asyncio.Queue[Any]] = field(default_factory=dict)
 
     def connect(self, player_id: str, *, socket_id: str) -> None:
         with self._lock:
@@ -69,15 +69,15 @@ class SessionRoom:
         with self._lock:
             self._seated.pop(player_id, None)
 
-    def connected_player_ids(self) -> List[str]:
+    def connected_player_ids(self) -> list[str]:
         with self._lock:
             return list(self._connected.keys())
 
-    def seated_player_ids(self) -> List[str]:
+    def seated_player_ids(self) -> list[str]:
         with self._lock:
             return list(self._seated.keys())
 
-    def absent_seated_player_ids(self) -> List[str]:
+    def absent_seated_player_ids(self) -> list[str]:
         with self._lock:
             return [p for p in self._seated if p not in self._connected]
 
@@ -89,7 +89,7 @@ class SessionRoom:
     # Outbound queue management (MP-02 Task 4)
     # ------------------------------------------------------------------
 
-    def attach_outbound(self, socket_id: str, queue: "asyncio.Queue[Any]") -> None:
+    def attach_outbound(self, socket_id: str, queue: asyncio.Queue[Any]) -> None:
         """Register a per-socket outbound queue for broadcast delivery."""
         with self._lock:
             self._outbound_queues[socket_id] = queue
@@ -104,7 +104,7 @@ class SessionRoom:
         with self._lock:
             return self._connected.get(player_id)
 
-    def queue_for_socket(self, socket_id: str) -> "asyncio.Queue[Any] | None":
+    def queue_for_socket(self, socket_id: str) -> asyncio.Queue[Any] | None:
         """Return the outbound queue for a socket, or None if not registered."""
         with self._lock:
             return self._outbound_queues.get(socket_id)
@@ -127,7 +127,7 @@ class SessionRoom:
 
 class RoomRegistry:
     def __init__(self) -> None:
-        self._rooms: Dict[str, SessionRoom] = {}
+        self._rooms: dict[str, SessionRoom] = {}
         self._lock = RLock()
 
     def get_or_create(self, slug: str, *, mode: GameMode) -> SessionRoom:

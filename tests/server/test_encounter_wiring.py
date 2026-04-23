@@ -19,16 +19,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult, NpcMention
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.session import GameSnapshot, TurnManager
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef, MetricDef
 from sidequest.server.session_handler import (
-    _SessionData,
     _build_turn_context,
     _find_confrontation_def,
+    _SessionData,
     apply_encounter_updates,
 )
 

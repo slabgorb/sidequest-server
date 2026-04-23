@@ -34,7 +34,6 @@ from sidequest.genre.models.character import (
 )
 from sidequest.genre.models.rules import RulesConfig
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
 # ---------------------------------------------------------------------------

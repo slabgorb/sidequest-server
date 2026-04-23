@@ -8,8 +8,8 @@ from sidequest.genre.models import (
     BeatDef,
     ConfrontationDef,
     MetricDef,
-    ResourceDeclaration,
     ResolutionMode,
+    ResourceDeclaration,
     RulesConfig,
 )
 

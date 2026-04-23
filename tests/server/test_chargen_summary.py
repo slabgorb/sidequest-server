@@ -31,7 +31,6 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 
-
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 

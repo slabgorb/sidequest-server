@@ -29,7 +29,6 @@ from sidequest.genre.models.archetype_constraints import ArchetypeConstraints, P
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.protocol.provenance import Tier
 
-
 # ---------------------------------------------------------------------------
 # Fixtures (mirrors Rust inline test helpers)
 # ---------------------------------------------------------------------------

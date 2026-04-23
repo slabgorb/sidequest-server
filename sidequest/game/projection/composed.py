@@ -91,6 +91,6 @@ class ComposedFilter:
         return f"genre:{pack}/{kind}/{matched_rule_index}"
 
     @classmethod
-    def with_no_genre_rules(cls) -> "ComposedFilter":
+    def with_no_genre_rules(cls) -> ComposedFilter:
         """Convenience for sessions whose genre pack has no projection.yaml."""
         return cls(rules=load_rules_from_yaml_str("rules: []"), pack_slug=None)

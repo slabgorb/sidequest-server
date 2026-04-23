@@ -5,7 +5,7 @@ Port of sidequest-genre/src/models/progression.rs.
 
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 

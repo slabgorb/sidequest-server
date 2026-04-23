@@ -6,7 +6,6 @@ Port of sidequest-genre/src/cache.rs semantics.
 from __future__ import annotations
 
 import threading
-from unittest.mock import MagicMock
 
 import pytest
 

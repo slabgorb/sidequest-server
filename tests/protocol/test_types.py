@@ -11,7 +11,6 @@ from pydantic import ValidationError
 
 from sidequest.protocol.types import NonBlankString, Stat
 
-
 # ---------------------------------------------------------------------------
 # NonBlankString — from tests.rs newtype_tests
 # ---------------------------------------------------------------------------

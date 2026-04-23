@@ -32,8 +32,8 @@ from sidequest.agents.narrator import NarratorAgent, narrator_output_format_text
 from sidequest.agents.orchestrator import (
     ActionRewrite,
     BeatSelection,
-    NarratorPromptTier,
     NarrationTurnResult,
+    NarratorPromptTier,
     NpcMention,
     Orchestrator,
     TurnContext,

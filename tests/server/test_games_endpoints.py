@@ -1,10 +1,12 @@
 # sidequest-server/tests/server/test_games_endpoints.py
 from datetime import date
 from pathlib import Path
+
 import pytest
-from fastapi.testclient import TestClient
-from sidequest.server.rest import create_rest_router
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from sidequest.server.rest import create_rest_router
 
 
 @pytest.fixture

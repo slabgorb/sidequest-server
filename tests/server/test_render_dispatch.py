@@ -158,7 +158,7 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
 
     assert image_msg.type == MessageType.IMAGE
     assert image_msg.payload.render_id == render_id
-    assert image_msg.payload.url == f"/renders/render_abc.png"
+    assert image_msg.payload.url == "/renders/render_abc.png"
     assert image_msg.payload.width == 1024
     assert image_msg.payload.tier == "scene_illustration"
 

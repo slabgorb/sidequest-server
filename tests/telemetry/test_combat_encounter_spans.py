@@ -14,13 +14,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 
 def test_combat_encounter_span_constants_match_rust_names() -> None:
     from sidequest.telemetry.spans import (
-        SPAN_COMBAT_TICK,
         SPAN_COMBAT_ENDED,
         SPAN_COMBAT_PLAYER_DEAD,
-        SPAN_ENCOUNTER_PHASE_TRANSITION,
-        SPAN_ENCOUNTER_RESOLVED,
+        SPAN_COMBAT_TICK,
         SPAN_ENCOUNTER_BEAT_APPLIED,
         SPAN_ENCOUNTER_CONFRONTATION_INITIATED,
+        SPAN_ENCOUNTER_PHASE_TRANSITION,
+        SPAN_ENCOUNTER_RESOLVED,
     )
     assert SPAN_COMBAT_TICK == "combat.tick"
     assert SPAN_COMBAT_ENDED == "combat.ended"

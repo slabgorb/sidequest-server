@@ -18,20 +18,13 @@ import pytest
 
 from sidequest.game.builder import (
     AccumulatedChoices,
-    AwaitingFollowup,
     CannotRevertError,
     CharacterBuilder,
-    ChoiceInput,
-    Confirmation,
-    FreeformInput,
     FreeformNotAllowedError,
     HookType,
-    InProgress,
     InvalidChoiceError,
     LoreAnchor,
-    NarrativeHook,
     NoScenesError,
-    SceneResult,
     WrongPhaseError,
     extract_anchors,
     extract_hooks,
@@ -44,7 +37,6 @@ from sidequest.genre.models.character import (
     MechanicalEffects,
 )
 from sidequest.genre.models.rules import RulesConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers for constructing fixtures

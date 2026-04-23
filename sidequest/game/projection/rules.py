@@ -15,11 +15,10 @@ resolve against payload schema, type-compatible masks) is Task 10.
 from __future__ import annotations
 
 import re
-from typing import Annotated, Union
+from typing import Annotated
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 
 _PRED_RE = re.compile(r"^([a-z_][a-z0-9_]*)\((.*)\)$")
 
@@ -33,7 +32,7 @@ class PredicateCall(BaseModel):
     arg: str | None
 
     @classmethod
-    def parse(cls, expr: str) -> "PredicateCall":
+    def parse(cls, expr: str) -> PredicateCall:
         m = _PRED_RE.match(expr.strip())
         if not m:
             raise ValueError(f"invalid predicate expression: {expr!r}")
@@ -85,7 +84,7 @@ class RedactFieldsRule(_RuleBase):
 
 
 ProjectionRule = Annotated[
-    Union[TargetOnlyRule, IncludeIfRule, RedactFieldsRule],
+    TargetOnlyRule | IncludeIfRule | RedactFieldsRule,
     Field(discriminator=None),
 ]
 

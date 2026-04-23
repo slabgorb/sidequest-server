@@ -8,7 +8,6 @@ from __future__ import annotations
 from sidequest.genre.models.archetype import ArchetypeResolved
 from sidequest.genre.resolver import LayeredMerge
 
-
 # ---------------------------------------------------------------------------
 # Wiring test — CLAUDE.md requirement: every Layered type needs a wiring test
 # ---------------------------------------------------------------------------
