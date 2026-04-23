@@ -17,6 +17,15 @@ want to exercise the daemon path use an in-process fake
 ``test_lore_rag_wiring.py``'s counting stub) — their
 ``monkeypatch.setattr`` call simply overrides the guard for that test.
 No server test ever talks to the real ``/tmp/sidequest-renderer.sock``.
+
+Also installs a genre-pack search-path guard: every test in this directory
+resolves genre packs from ``tests/fixtures/packs/`` (the frozen fixture
+pack at ``test_genre/`` with symlinks for each real genre slug) rather than
+from ``sidequest-content/``. This makes the suite hermetic — no CI
+dependency on the content submodule. Tests that construct
+``WebSocketSessionHandler`` with an explicit ``genre_pack_search_paths``
+argument (e.g. ``test_session_handler_slug_resumed.py``) bypass this
+guard intentionally and must handle their own content-not-found skips.
 """
 
 from __future__ import annotations
@@ -27,6 +36,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
+
+# Absolute path to the frozen fixture pack directory.
+# Structure: tests/fixtures/packs/{test_genre,caverns_and_claudes,...} where
+# every slug is a symlink → test_genre (mutant_wasteland frozen copy).
+_FIXTURE_PACKS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +95,34 @@ def _mock_daemon_client(monkeypatch):
     monkeypatch.setattr(
         "sidequest.game.lore_embedding.DaemonClient",
         lambda *a, **kw: _UnavailableDaemonClient(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixture pack search-path guard — autouse. Redirects all genre pack
+# resolution to tests/fixtures/packs/ so the test suite never depends on
+# sidequest-content being present on disk.
+#
+# Every genre slug used in tests (caverns_and_claudes, elemental_harmony,
+# mutant_wasteland, spaghetti_western, space_opera, heavy_metal, low_fantasy,
+# neon_dystopia) resolves via a symlink in that directory that points to the
+# frozen test_genre/ pack (a stripped copy of mutant_wasteland).
+#
+# Tests that pass genre_pack_search_paths explicitly to
+# WebSocketSessionHandler (e.g. test_session_handler_slug_resumed.py) are
+# NOT affected — they construct their own loader with a fixed path and add
+# their own pytest.skip guards for when sidequest-content is missing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _fixture_pack_search_paths(monkeypatch):
+    """Autouse guard: point DEFAULT_GENRE_PACK_SEARCH_PATHS at the frozen
+    fixture pack directory so genre resolution never reaches sidequest-content.
+    """
+    monkeypatch.setattr(
+        "sidequest.genre.loader.DEFAULT_GENRE_PACK_SEARCH_PATHS",
+        [_FIXTURE_PACKS_DIR],
     )
 
 
@@ -158,14 +200,17 @@ def session_handler_factory(tmp_path):
     from sidequest.game.creature_core import CreatureCore, Inventory
     from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
-    from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
+    import sidequest.genre.loader as _genre_loader_mod
+    from sidequest.genre.loader import GenreLoader
     from sidequest.server.session_handler import (
         WebSocketSessionHandler,
         _SessionData,
     )
 
     def _make(genre: str):
-        pack = GenreLoader(DEFAULT_GENRE_PACK_SEARCH_PATHS).load(genre)
+        # Read DEFAULT_GENRE_PACK_SEARCH_PATHS from the module at call-time so
+        # that the _fixture_pack_search_paths monkeypatch is visible here.
+        pack = GenreLoader(_genre_loader_mod.DEFAULT_GENRE_PACK_SEARCH_PATHS).load(genre)
         snap = GameSnapshot(genre_slug=genre)
         core = CreatureCore(
             name="Rux",
