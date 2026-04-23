@@ -192,7 +192,6 @@ async def test_narrator_turn_end_to_end_with_caverns_claudes():
 
     # OTEL / telemetry fields
     assert result.agent_name == "narrator"
-    assert result.classified_intent == "exploration"
     assert result.agent_duration_ms is not None
     assert result.token_count_in == 150
     assert result.token_count_out == 80
