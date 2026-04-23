@@ -23,7 +23,8 @@ async def test_distinctive_detail_emits_single_narrator_directive():
         idempotency_key="idem:a",
         visibility=_tag_all(),
     )
-    directives = await run_distinctive_detail(dispatch)
+    out = await run_distinctive_detail(dispatch)
+    directives = out.directives
     assert len(directives) == 1
     d = directives[0]
     assert d.kind == "distinctive_detail_for_referent"

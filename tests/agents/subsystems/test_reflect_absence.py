@@ -28,7 +28,8 @@ async def test_reflect_absence_emits_must_not_and_must_directives():
         idempotency_key="idem:t:p:0",
         visibility=_tag_all(),
     )
-    directives = await run_reflect_absence(dispatch)
+    out = await run_reflect_absence(dispatch)
+    directives = out.directives
     kinds = {d.kind for d in directives}
     assert "must_not_narrate" in kinds
     assert "must_narrate" in kinds
@@ -56,5 +57,6 @@ async def test_reflect_absence_propagates_visibility_tag():
         idempotency_key="idem:x",
         visibility=tag,
     )
-    directives = await run_reflect_absence(dispatch)
+    out = await run_reflect_absence(dispatch)
+    directives = out.directives
     assert all(d.visibility == tag for d in directives)

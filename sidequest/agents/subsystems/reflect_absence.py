@@ -6,24 +6,28 @@ directive pair that enforces that.
 """
 from __future__ import annotations
 
+from sidequest.agents.subsystems import SubsystemOutput
 from sidequest.protocol.dispatch import NarratorDirective, SubsystemDispatch
 
 
-async def run_reflect_absence(dispatch: SubsystemDispatch) -> list[NarratorDirective]:
+async def run_reflect_absence(dispatch: SubsystemDispatch) -> SubsystemOutput:
     """Return directives forcing honest-absence narration."""
     tag = dispatch.visibility
-    return [
-        NarratorDirective(
-            kind="must_not_narrate",
-            payload="inventing an NPC follower or off-screen responder",
-            visibility=tag,
-        ),
-        NarratorDirective(
-            kind="must_narrate",
-            payload="the empty room answering back — the absence itself is the scene",
-            visibility=tag,
-        ),
-    ]
+    return SubsystemOutput(
+        directives=[
+            NarratorDirective(
+                kind="must_not_narrate",
+                payload="inventing an NPC follower or off-screen responder",
+                visibility=tag,
+            ),
+            NarratorDirective(
+                kind="must_narrate",
+                payload="the empty room answering back — the absence itself is the scene",
+                visibility=tag,
+            ),
+        ],
+        data={},
+    )
 
 
 __all__ = ["run_reflect_absence"]

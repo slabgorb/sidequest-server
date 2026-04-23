@@ -1,4 +1,4 @@
-"""Fixtures for subsystem tests."""
+"""Shared fixtures for tests/agents/ and its subdirectories."""
 from __future__ import annotations
 
 import pytest
