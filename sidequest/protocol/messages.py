@@ -369,7 +369,7 @@ class ConfrontationPayload(ProtocolBase):
     beats: list[dict[str, Any]] = Field(default_factory=list)
     secondary_stats: dict[str, Any] | None = None
     genre_slug: str
-    mood: str = ""
+    mood: str | None = None
     active: bool = True
 
 
