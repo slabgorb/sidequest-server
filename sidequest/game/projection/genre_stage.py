@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 
 from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.predicates import PREDICATES, PredicateContext
 from sidequest.game.projection.rules import (
+    IncludeIfRule,
     ProjectionRules,
     TargetOnlyRule,
 )
@@ -43,6 +45,22 @@ class GenreRuleStage:
             if isinstance(rule, TargetOnlyRule):
                 to_value = payload.get(rule.target_only.field)
                 if not _match_to_value(to_value, player_id):
+                    return FilterDecision(include=False, payload_json="")
+
+            if isinstance(rule, IncludeIfRule):
+                pred = PREDICATES.get(rule.include_if.predicate)
+                if pred is None:
+                    raise RuntimeError(
+                        f"unknown predicate {rule.include_if.predicate!r} "
+                        f"at runtime (validator should have caught this)"
+                    )
+                ctx = PredicateContext(
+                    view=view,
+                    payload=payload,
+                    viewer_player_id=player_id,
+                    viewer_character_id=view.character_of(player_id),
+                )
+                if not pred(ctx, rule.include_if.arg):
                     return FilterDecision(include=False, payload_json="")
 
         return FilterDecision(include=True, payload_json=json.dumps(working))
