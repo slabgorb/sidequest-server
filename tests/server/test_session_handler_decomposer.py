@@ -272,3 +272,48 @@ async def test_full_turn_happy_path_pronoun_resolved(session_fixture):
     assert "distinctive_detail_for_referent" in prompt_text or "broken tooth" in prompt_text, (
         f"expected distinctive_detail directive in prompt; got: {prompt_text[:500]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — absence path: reflect_absence directives reach the prompt
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_turn_absence_path_injects_reflect_absence_directives(session_fixture):
+    """Decomposer resolves 'let's' to absence; narrator prompt tells it not
+    to invent a follower and to narrate the empty room."""
+    sd, handler = session_fixture
+    _install_real_orchestrator(sd)
+
+    from sidequest.agents.claude_client import ClaudeResponse
+
+    sd.local_dm._client = AsyncMock()
+    sd.local_dm._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
+        text=ABSENCE_JSON, session_id="dec-sess-xyz",
+    ))
+
+    captured_prompt: dict = {}
+    orig_build = sd.orchestrator.build_narrator_prompt
+
+    async def spying_build(action, context, *, tier):
+        prompt_text, registry = await orig_build(action, context, tier=tier)
+        captured_prompt["text"] = prompt_text
+        return prompt_text, registry
+
+    sd.orchestrator.build_narrator_prompt = spying_build
+
+    sd.orchestrator._client = AsyncMock()
+    sd.orchestrator._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
+        text='{"narration": "the room is empty"}', session_id="n",
+    ))
+
+    await handler._execute_narration_turn(sd, "Let's go!", _build_turn_context_for_test(sd))
+
+    prompt_text = captured_prompt["text"]
+    assert "must_not_narrate" in prompt_text, f"missing must_not_narrate; got: {prompt_text[:500]}"
+    assert "must_narrate" in prompt_text, f"missing must_narrate; got: {prompt_text[:500]}"
+    # reflect_absence subsystem emits "inventing an NPC follower or off-screen responder"
+    # and "the empty room answering back — the absence itself is the scene".
+    assert "follower" in prompt_text.lower()
+    assert "empty" in prompt_text.lower()
