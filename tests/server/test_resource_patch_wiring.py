@@ -10,7 +10,6 @@ from sidequest.game.resource_pool import (
     UnknownResource,
 )
 from sidequest.game.session import GameSnapshot
-from sidequest.genre.loader import GenreLoader, DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.dispatch.encounter_lifecycle import apply_resource_patches
 
 
@@ -85,10 +84,7 @@ def test_empty_affinity_progress_is_noop() -> None:
 
 def test_narration_result_with_affinity_progress_applies_patches() -> None:
     """Integration: NarrationTurnResult.affinity_progress is applied to pools."""
-    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
-    pack = GenreLoader(DEFAULT_GENRE_PACK_SEARCH_PATHS).load("caverns_and_claudes")
-
     # Initialize a resource pool.
     snap.resources["Luck"] = _pool(name="Luck", current=5.0)
 

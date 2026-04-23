@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 
 if TYPE_CHECKING:
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
@@ -35,9 +37,11 @@ from sidequest.game.builder import (
     CharacterBuilder,
 )
 from sidequest.game.character import Character
+from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -55,8 +59,6 @@ from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
-from sidequest.game.event_log import EventLog
-from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -210,7 +212,7 @@ class _SessionData:
     # MP-01 Task 4: slug-based connect fields. Set when connecting via
     # game_slug rather than the legacy genre+world path.
     game_slug: str | None = None
-    mode: "GameMode | None" = None
+    mode: GameMode | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +251,10 @@ class WebSocketSessionHandler:
         # being driven outside that lifecycle (e.g. unit tests that exercise
         # non-slug-connect code paths). The slug-connect branch rejects this
         # loudly rather than silently skipping room wiring.
-        self._room_registry: "RoomRegistry | None" = None
+        self._room_registry: RoomRegistry | None = None
         self._socket_id: str | None = None
-        self._out_queue: "asyncio.Queue[object] | None" = None
-        self._room: "SessionRoom | None" = None
+        self._out_queue: asyncio.Queue[object] | None = None
+        self._room: SessionRoom | None = None
         # EventLog + projection filter are bound in the slug-connect branch.
         # The legacy genre/world connect path leaves them None; _emit_event
         # falls back to a plain message without seq in that case. This is a
@@ -267,9 +269,9 @@ class WebSocketSessionHandler:
     def attach_room_context(
         self,
         *,
-        registry: "RoomRegistry",
+        registry: RoomRegistry,
         socket_id: str,
-        out_queue: "asyncio.Queue[object]",
+        out_queue: asyncio.Queue[object],
     ) -> None:
         """Attach the process-wide RoomRegistry, socket_id, and per-socket outbound queue.
 
@@ -284,7 +286,7 @@ class WebSocketSessionHandler:
         self._socket_id = socket_id
         self._out_queue = out_queue
 
-    def current_room(self) -> "SessionRoom | None":
+    def current_room(self) -> SessionRoom | None:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
@@ -1648,9 +1650,9 @@ class WebSocketSessionHandler:
         now_live = now_encounter is not None and not now_encounter.resolved
 
         from sidequest.server.dispatch.encounter_lifecycle import (
+            _is_combat_category,
             apply_resource_patches,
             award_turn_xp,
-            _is_combat_category,
         )
         in_combat_now = (
             snapshot.encounter is not None
@@ -2081,7 +2083,7 @@ def _apply_narration_result_to_snapshot(
     result: object,
     player_name: str,
     *,
-    pack: "GenrePack | None" = None,
+    pack: GenrePack | None = None,
 ) -> None:
     """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
 
@@ -2168,17 +2170,17 @@ def _apply_narration_result_to_snapshot(
 
     # --- Encounter lifecycle (Story 3.4) ---
     if pack is not None:
+        from sidequest.game.encounter import EncounterPhase, MetricDirection
         from sidequest.server.dispatch.confrontation import find_confrontation_def
         from sidequest.server.dispatch.encounter_lifecycle import (
             instantiate_encounter_from_trigger,
         )
         from sidequest.telemetry.spans import (
+            combat_tick_span,
             encounter_beat_applied_span,
             encounter_phase_transition_span,
             encounter_resolved_span,
-            combat_tick_span,
         )
-        from sidequest.game.encounter import EncounterPhase, MetricDirection
 
         # (a) Narrator-initiated encounter
         if result.confrontation and (
@@ -2275,7 +2277,7 @@ def _apply_narration_result_to_snapshot(
                     pass
 
 
-def _advance_phase(enc: "StructuredEncounter") -> None:
+def _advance_phase(enc: StructuredEncounter) -> None:
     """Promote encounter phase by beat count. Port of Rust encounter.rs ladder."""
     from sidequest.game.encounter import EncounterPhase
     if enc.structured_phase is None:

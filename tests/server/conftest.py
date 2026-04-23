@@ -86,7 +86,6 @@ def session_handler_factory(tmp_path):
     Task 16 (story 3.4): snapshot now includes a Character named "Rux" so
     XP-award tests can inspect ``sd.snapshot.characters[0].core.xp``.
     """
-    from pathlib import Path
 
     from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.character import Character

@@ -23,7 +23,6 @@ from sidequest.telemetry.spans import (
     encounter_resolved_span,
 )
 
-
 _DIRECTION_BY_NAME: dict[str, MetricDirection] = {
     "ascending": MetricDirection.Ascending,
     "descending": MetricDirection.Descending,

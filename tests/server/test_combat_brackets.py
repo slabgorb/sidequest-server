@@ -5,19 +5,18 @@ markers from aside prose before narrator dispatch.
 """
 from __future__ import annotations
 
-import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.protocol.messages import (
     PlayerActionMessage,
     PlayerActionPayload,
 )
+from sidequest.protocol.types import NonBlankString
 from sidequest.server.dispatch.combat_brackets import strip_combat_brackets
 from sidequest.server.session_handler import _State
-from sidequest.protocol.types import NonBlankString
 
 
 def test_strip_removes_leading_combat_bracket() -> None:

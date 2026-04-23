@@ -27,6 +27,7 @@ Semantics
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Protocol, TypeVar, runtime_checkable
 
 from sidequest.game.lore_store import (
@@ -77,7 +78,7 @@ def detect_crossings(
 
 
 def mint_threshold_lore(
-    thresholds: list[ThresholdAt],
+    thresholds: Sequence[ThresholdAt],
     store: LoreStore,
     turn: int,
 ) -> None:

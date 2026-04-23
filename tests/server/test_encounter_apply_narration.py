@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from sidequest.agents.orchestrator import NarrationTurnResult, BeatSelection
-from sidequest.genre.loader import GenreLoader, DEFAULT_GENRE_PACK_SEARCH_PATHS
+from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult
 from sidequest.game.session import GameSnapshot
+from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_beat_selection_unknown_beat_id_raises(cac_snap) -> None:
 
 
 def test_metric_crossing_threshold_resolves_encounter(cac_snap) -> None:
-    from sidequest.game.encounter import StructuredEncounter, EncounterMetric, MetricDirection
+    from sidequest.game.encounter import EncounterMetric, MetricDirection, StructuredEncounter
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
     snap, pack = cac_snap
     enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
@@ -96,9 +96,9 @@ def test_ascending_metric_ignores_threshold_low(cac_snap) -> None:
     (ascending) from being falsely resolved if the counter dips below zero.
     """
     from sidequest.game.encounter import (
-        StructuredEncounter,
         EncounterMetric,
         MetricDirection,
+        StructuredEncounter,
     )
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
@@ -132,9 +132,9 @@ def test_ascending_metric_ignores_threshold_low(cac_snap) -> None:
 def test_descending_metric_ignores_threshold_high(cac_snap) -> None:
     """Descending encounters resolve only on threshold_low, never threshold_high."""
     from sidequest.game.encounter import (
-        StructuredEncounter,
         EncounterMetric,
         MetricDirection,
+        StructuredEncounter,
     )
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
@@ -166,10 +166,10 @@ def test_descending_metric_ignores_threshold_high(cac_snap) -> None:
 def test_phase_ladder_beat_four_is_escalation(cac_snap) -> None:
     """Beat 4 is still Escalation; Climax starts at beat 5 (matches Rust)."""
     from sidequest.game.encounter import (
-        StructuredEncounter,
         EncounterMetric,
-        MetricDirection,
         EncounterPhase,
+        MetricDirection,
+        StructuredEncounter,
     )
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
