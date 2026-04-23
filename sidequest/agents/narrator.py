@@ -10,6 +10,12 @@ from former separate agents (CreatureSmith, Dialectician, Ensemble).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.genre.models.rules import ConfrontationDef
+
 from sidequest.agents.agent import BaseAgent
 from sidequest.agents.prompt_framework.types import (
     AttentionZone,
@@ -377,11 +383,21 @@ class NarratorAgent(BaseAgent):
             ),
         )
 
-    def build_encounter_context(self, registry: object) -> None:
-        """Inject encounter-specific narration rules into the prompt (story 28-6).
+    def build_encounter_context(
+        self,
+        registry: object,
+        *,
+        encounter: "StructuredEncounter | None" = None,
+        cdef: "ConfrontationDef | None" = None,
+        encounter_summary: str | None = None,
+    ) -> None:
+        """Inject encounter-specific narration rules + live encounter state.
 
-        Called by the orchestrator when any StructuredEncounter is active.
-        Replaces the separate build_combat_context/build_chase_context methods.
+        When ``encounter`` and ``cdef`` are given, render:
+        1. The generic encounter-rules prose (unchanged — backwards compatible).
+        2. The matched ConfrontationDef's beats + actors so the LLM emits
+           valid ``beat_selections``.
+        3. The encounter_summary (metric / phase / beat) in the Valley zone.
 
         Port of NarratorAgent::build_encounter_context() in narrator.rs.
         """
@@ -394,11 +410,46 @@ class NarratorAgent(BaseAgent):
             self.name(),
             PromptSection.new(
                 "narrator_encounter_rules",
-                f"<encounter-rules>\n{NARRATOR_COMBAT_RULES}\n{NARRATOR_CHASE_RULES}\n</encounter-rules>",
+                f"<encounter-rules>\n{NARRATOR_COMBAT_RULES}\n"
+                f"{NARRATOR_CHASE_RULES}\n</encounter-rules>",
                 AttentionZone.Early,
                 SectionCategory.Guardrail,
             ),
         )
+
+        if encounter is not None and cdef is not None:
+            actor_lines = "\n".join(f"- {a.name} ({a.role})" for a in encounter.actors)
+            beat_lines = "\n".join(
+                f"- {b.id}: {b.label} (metric_delta={b.metric_delta})"
+                for b in cdef.beats
+            )
+            body = (
+                f"<encounter-live>\n"
+                f"Active encounter: {cdef.label} ({cdef.confrontation_type})\n"
+                f"Available beats — beat_selections.beat_id MUST be one of:\n"
+                f"{beat_lines}\n"
+                f"Actors — emit a beat_selection for every actor:\n"
+                f"{actor_lines}\n"
+                f"</encounter-live>"
+            )
+            registry.register_section(
+                self.name(),
+                PromptSection.new(
+                    "narrator_encounter_live", body,
+                    AttentionZone.Early, SectionCategory.State,
+                ),
+            )
+
+        if encounter_summary:
+            registry.register_section(
+                self.name(),
+                PromptSection.new(
+                    "narrator_encounter_summary",
+                    f"<encounter-state>\n{encounter_summary}\n</encounter-state>",
+                    AttentionZone.Valley,
+                    SectionCategory.State,
+                ),
+            )
 
     def build_dialogue_context(self, registry: object) -> None:
         """Inject dialogue-specific narration rules into the prompt (ADR-067).

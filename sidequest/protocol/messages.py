@@ -380,6 +380,31 @@ class SeatConfirmedPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# ConfrontationPayload
+# ---------------------------------------------------------------------------
+
+
+class ConfrontationPayload(ProtocolBase):
+    """Payload for CONFRONTATION — drives the ConfrontationOverlay UI.
+
+    Shape mirrors sidequest-ui/src/components/ConfrontationOverlay.tsx
+    ``ConfrontationData`` (L42-58). ``active=False`` signals the overlay
+    to unmount. Story 3.4.
+    """
+
+    type: str
+    label: str
+    category: str
+    actors: list[dict[str, Any]] = Field(default_factory=list)
+    metric: dict[str, Any] = Field(default_factory=dict)
+    beats: list[dict[str, Any]] = Field(default_factory=list)
+    secondary_stats: dict[str, Any] | None = None
+    genre_slug: str
+    mood: str | None = None
+    active: bool = True
+
+
+# ---------------------------------------------------------------------------
 # GamePausedPayload / GameResumedPayload
 # ---------------------------------------------------------------------------
 
@@ -458,6 +483,14 @@ class CharacterCreationMessage(ProtocolBase):
 
     type: Literal[MessageType.CHARACTER_CREATION] = MessageType.CHARACTER_CREATION
     payload: CharacterCreationPayload
+    player_id: str = ""
+
+
+class ConfrontationMessage(ProtocolBase):
+    """GameMessage::Confrontation wire representation (story 3.4)."""
+
+    type: Literal[MessageType.CONFRONTATION] = MessageType.CONFRONTATION
+    payload: ConfrontationPayload
     player_id: str = ""
 
 
@@ -582,6 +615,7 @@ _Phase1Variant = Annotated[
     | ThinkingMessage
     | SessionEventMessage
     | CharacterCreationMessage
+    | ConfrontationMessage
     | TurnStatusMessage
     | PartyStatusMessage
     | MapUpdateMessage

@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 
 if TYPE_CHECKING:
+    from sidequest.game.encounter import StructuredEncounter
+    from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
@@ -49,7 +51,11 @@ from sidequest.game.lore_embedding import (
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import SqliteStore, db_path_for_session
-from sidequest.game.projection_filter import PassThroughFilter
+from sidequest.game.projection.cache import ProjectionCache
+from sidequest.game.projection.composed import ComposedFilter
+from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.view import SessionGameStateView
+from sidequest.game.projection_filter import FilterDecision, ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -72,6 +78,8 @@ from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
+    ConfrontationMessage,
+    ConfrontationPayload,
     ErrorMessage,
     ErrorPayload,
     GamePausedMessage,
@@ -124,6 +132,7 @@ logger = logging.getLogger(__name__)
 
 _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
+    "CONFRONTATION": ConfrontationMessage,
 }
 
 
@@ -153,6 +162,9 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
     if kind == "NARRATION":
         from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
         return message_cls(payload=_NarrationPayload(**data))
+
+    if kind == "CONFRONTATION":
+        return message_cls(payload=ConfrontationPayload(**data))
 
     # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
     # Kept as a belt-and-suspenders hard fail.
@@ -276,7 +288,8 @@ class WebSocketSessionHandler:
         # falls back to a plain message without seq in that case. This is a
         # real production code path (not a test-only skip), documented below.
         self._event_log: EventLog | None = None
-        self._projection_filter: PassThroughFilter | None = None
+        self._projection_filter: ProjectionFilter | None = None
+        self._projection_cache: ProjectionCache | None = None
 
     # ------------------------------------------------------------------
     # Room context (MP-02 Task 2)
@@ -305,6 +318,70 @@ class WebSocketSessionHandler:
     def current_room(self) -> SessionRoom | None:
         """Return the room this handler is currently registered in, or None."""
         return self._room
+
+    def _build_game_state_view(self) -> SessionGameStateView:
+        """Read-only view of current session state for the projection filter.
+
+        Phase-3 engine state does not yet track zones / visibility /
+        per-item ownership — those fields stay at their conservative
+        SessionGameStateView defaults. Player-character mapping grows
+        as engine state grows.
+
+        **GM identity wiring (C1, still partial):**
+
+        - Solo sessions have no separate GM player by design; ``gm_player_id``
+          is correctly ``None`` there. ``CoreInvariantStage`` never
+          short-circuits on ``is_gm()`` for solo — which is the right
+          behavior, because in solo play the single player is the only
+          recipient and has no counterpart to be "GM" to.
+        - Multiplayer sessions *should* name a GM player (e.g. the session
+          creator or a designated seat) so that ``unless: is_gm()`` in
+          ``projection.yaml`` can exempt them. That wiring lives downstream
+          of MP-02 seating — ``SessionRoom`` does not yet carry a GM seat
+          designation, so we still fall through to ``None`` for multiplayer
+          with a logged warning. Genre packs that ship ``unless: is_gm()``
+          rules today will mask the GM identically to a regular player
+          (the safe direction: over-redact rather than leak).
+
+        **Player-character mapping:** ``Character`` does not yet carry a
+        ``player_id`` attribute, so the mapping is empty. Conservative
+        defaults apply — ``seat_of`` / ``zone_of`` return ``None``, and
+        predicates dependent on the mapping evaluate to ``False`` (the
+        masked direction).
+        """
+        sd = self._session_data
+        if sd is None:
+            return SessionGameStateView(gm_player_id=None, player_id_to_character={})
+
+        from sidequest.game.persistence import GameMode  # noqa: PLC0415 — break import cycle
+
+        # Solo: no human GM. None is correct; CoreInvariantStage's
+        # gm-sees-all branch never fires for the single player.
+        gm_player_id: str | None = None
+        if sd.mode is not None and sd.mode != GameMode.SOLO:
+            # Multiplayer: GM seat assignment not yet plumbed through
+            # SessionRoom. Log one warning per build so GM-panel users
+            # can see that ``unless: is_gm()`` rules are currently
+            # over-masking the GM in multiplayer sessions.
+            if not getattr(self, "_gm_wiring_warned", False):
+                logger.warning(
+                    "projection.gm_identity_unwired slug=%s mode=%s — "
+                    "multiplayer sessions do not yet carry a GM-seat "
+                    "designation; `unless: is_gm()` rules will mask the "
+                    "GM like any other player until MP-02 GM seating "
+                    "lands.",
+                    sd.game_slug,
+                    sd.mode,
+                )
+                self._gm_wiring_warned = True
+
+        mapping: dict[str, str] = {}
+        # Character does not carry player_id — no mapping possible yet.
+        # When the engine model gains player_id on Character, populate mapping here.
+        return SessionGameStateView(
+            gm_player_id=gm_player_id,
+            player_id_to_character=mapping,
+        )
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -340,54 +417,103 @@ class WebSocketSessionHandler:
             payload_json = json.dumps(payload_model)  # type: ignore[arg-type]
 
         if event_log is not None:
-            # Invariant 1: persist first
-            row = event_log.append(kind=kind, payload_json=payload_json)
-            seq = row.seq
+            room = self._room
+            emitter_player_id = (
+                self._session_data.player_id if self._session_data else None
+            )
 
-            # Build emitter's message with raw, unfiltered payload + seq (Invariant 3)
+            # C2: event append + all cache writes share a single transaction.
+            # Projections are computed inside the block so the cache row's
+            # event_seq is the freshly-assigned one. If the server crashes
+            # mid-block, sqlite rolls back both the event row and any partial
+            # cache rows — either the event is fully persisted with its
+            # projection cache, or not at all.
+            store = event_log.store
+            conn = store._conn
+            fanout: list[tuple[str, FilterDecision, dict]] = []
+            with conn:
+                row = event_log.append_in_transaction(
+                    kind=kind, payload_json=payload_json, conn=conn
+                )
+                seq = row.seq
+
+                if room is not None and projection_filter is not None:
+                    view = self._build_game_state_view()
+                    envelope = MessageEnvelope(
+                        kind=row.kind,
+                        payload_json=row.payload_json,
+                        origin_seq=row.seq,
+                    )
+                    for other_pid in room.connected_player_ids():
+                        if other_pid == emitter_player_id:
+                            continue
+                        decision = projection_filter.project(
+                            envelope=envelope, view=view, player_id=other_pid
+                        )
+                        if self._projection_cache is not None:
+                            self._projection_cache.write_in_transaction(
+                                event_seq=seq,
+                                player_id=other_pid,
+                                decision=decision,
+                                conn=conn,
+                            )
+                        filtered_data: dict = {}
+                        if decision.include:
+                            filtered_data = json.loads(decision.payload_json)
+                        fanout.append((other_pid, decision, filtered_data))
+
+            # Build emitter's message with raw, unfiltered payload + seq
+            # (Invariant 3). model_copy with scalar update is safe here —
+            # only `seq` is being added, no existing field is being replaced
+            # with a filtered value.
             if isinstance(payload_model, BaseModel):
                 emitter_payload = payload_model.model_copy(update={"seq": seq})
             else:
                 emitter_payload = payload_model  # type: ignore[assignment]
             out_to_self = message_cls(payload=emitter_payload)
 
-            # Fan-out to other connected players (Invariant 2)
-            room = self._room
-            if room is not None and projection_filter is not None:
-                emitter_player_id = (
-                    self._session_data.player_id if self._session_data else None
+            # Socket fan-out happens AFTER the DB transaction commits. A
+            # crash between commit and send is recoverable via the cache on
+            # reconnect; sending before commit would risk a client observing
+            # an event that never hit disk.
+            if room is not None:
+                payload_cls = (
+                    type(payload_model) if isinstance(payload_model, BaseModel) else None
                 )
-                for other_pid in room.connected_player_ids():
-                    if other_pid == emitter_player_id:
-                        continue
-                    decision = projection_filter.project(event=row, player_id=other_pid)
+                for other_pid, decision, filtered_data in fanout:
                     if not decision.include:
                         continue
-                    # Build per-recipient payload: merge filtered payload_json + seq
+                    socket_id = room.socket_for_player(other_pid)
+                    if socket_id is None:
+                        continue
+                    queue = room.queue_for_socket(socket_id)
+                    if queue is None:
+                        continue
                     try:
-                        filtered_data = json.loads(decision.payload_json)
-                        filtered_data["seq"] = seq
-                        if isinstance(payload_model, BaseModel):
-                            recipient_payload = payload_model.model_copy(
-                                update={**json.loads(decision.payload_json), "seq": seq}
+                        if payload_cls is not None:
+                            # C3: rebuild the recipient payload from the
+                            # filtered dict alone (plus seq). Do NOT use
+                            # model_copy(update=...) — merging leaves fields
+                            # absent from the filtered dict at their canonical
+                            # values, which would leak any field a future rule
+                            # drops entirely.
+                            recipient_payload = payload_cls.model_validate(
+                                {**filtered_data, "seq": seq}
                             )
+                            recipient_msg = message_cls(payload=recipient_payload)
                         else:
-                            recipient_payload = filtered_data  # type: ignore[assignment]
-                        recipient_msg = message_cls(payload=recipient_payload)
+                            recipient_msg = message_cls(
+                                payload={**filtered_data, "seq": seq}
+                            )
                     except Exception:
-                        # Never silently fail fan-out; log and skip this recipient
+                        # Never silently fail fan-out; log and skip this recipient.
                         logger.error(
                             "emit_event.fanout_failed kind=%s other_pid=%s",
                             kind,
                             other_pid,
                         )
                         continue
-                    socket_id = room.socket_for_player(other_pid)
-                    if socket_id is None:
-                        continue
-                    queue = room.queue_for_socket(socket_id)
-                    if queue is not None:
-                        queue.put_nowait(recipient_msg)
+                    queue.put_nowait(recipient_msg)
         else:
             # Legacy path (non-slug connect): no EventLog, no seq
             out_to_self = message_cls(payload=payload_model)
@@ -658,9 +784,17 @@ class WebSocketSessionHandler:
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
-            # MP-03 Task 3: initialize EventLog + ProjectionFilter for sync layer.
+            # MP-03 Task 3 + Task-17 + Task-22 ProjectionFilter Rules integration.
             self._event_log = EventLog(store)
-            self._projection_filter = PassThroughFilter()
+            self._projection_cache = ProjectionCache(store)
+            projection_rules = genre_pack.projection_rules
+            if projection_rules is not None:
+                self._projection_filter = ComposedFilter(
+                    rules=projection_rules,
+                    pack_slug=row.genre_slug,
+                )
+            else:
+                self._projection_filter = ComposedFilter.with_no_genre_rules()
             self._last_seen_seq = payload.last_seen_seq or 0
             self._current_player_id = player_id
             self._state = _State.Creating if not has_character else _State.Playing
@@ -676,23 +810,68 @@ class WebSocketSessionHandler:
                 player_id=player_id,
             )
 
-            # MP-03 Task 4: replay missed events since last_seen_seq.
-            # SESSION_CONNECTED is always first; replay follows in seq ASC order.
-            missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+            # Task 19: lazy-fill projection_cache for this player if they're
+            # joining a session that has events already. Subsequent reconnects
+            # read from cache (Task 18) — no re-filter.
+            if self._projection_cache is not None:
+                from sidequest.game.projection.cache_fill import lazy_fill
+                lazy_fill(
+                    event_log=self._event_log,
+                    cache=self._projection_cache,
+                    filter_=self._projection_filter,
+                    view=self._build_game_state_view(),
+                    player_id=player_id,
+                )
+
+            # MP-03 Task 4 / ProjectionFilter-Rules Task 18: replay from
+            # projection_cache when present (byte-identical to what the live
+            # player received). Legacy fallback runs filter live.
             replay_msgs: list[object] = []
-            for event_row in missed:
-                dec = self._projection_filter.project(
-                    event=event_row, player_id=self._current_player_id
+            if self._projection_cache is not None:
+                cached_rows = self._projection_cache.read_since(
+                    player_id=self._current_player_id,
+                    since_seq=self._last_seen_seq,
                 )
-                if not dec.include:
-                    continue
-                replay_msgs.append(
-                    _build_message_for_kind(
-                        kind=event_row.kind,
-                        payload_json=dec.payload_json,
-                        seq=event_row.seq,
+                for c in cached_rows:
+                    if not c.include or c.payload_json is None:
+                        continue
+                    # Need the event kind to rebuild the message — look it up.
+                    # Most sessions won't have many missed events on reconnect,
+                    # but this does one event-log read per cache row. Acceptable
+                    # for v1; optimize to a join query if it becomes hot.
+                    kind_lookup = self._event_log.read_since(since_seq=c.event_seq - 1)
+                    if not kind_lookup or kind_lookup[0].seq != c.event_seq:
+                        continue
+                    replay_msgs.append(
+                        _build_message_for_kind(
+                            kind=kind_lookup[0].kind,
+                            payload_json=c.payload_json,
+                            seq=c.event_seq,
+                        )
                     )
-                )
+            else:
+                # Legacy fallback: no cache available, filter live (may diverge
+                # from cached projections in edge cases; v1 accepts this).
+                missed = self._event_log.read_since(since_seq=self._last_seen_seq)
+                view = self._build_game_state_view()
+                for event_row in missed:
+                    envelope = MessageEnvelope(
+                        kind=event_row.kind,
+                        payload_json=event_row.payload_json,
+                        origin_seq=event_row.seq,
+                    )
+                    dec = self._projection_filter.project(
+                        envelope=envelope, view=view, player_id=self._current_player_id
+                    )
+                    if not dec.include:
+                        continue
+                    replay_msgs.append(
+                        _build_message_for_kind(
+                            kind=event_row.kind,
+                            payload_json=dec.payload_json,
+                            seq=event_row.seq,
+                        )
+                    )
             return [connected_msg, *replay_msgs]
 
         genre_slug = payload.genre or ""
@@ -1624,6 +1803,18 @@ class WebSocketSessionHandler:
         if not action:
             return [_error_msg("Player action is empty after sanitization")]
 
+        # Story 3.4 Task 12: strip [combat] markers from aside-flagged actions
+        # before they reach the orchestrator (port of dispatch/aside.rs).
+        if getattr(payload, "aside", False):
+            from sidequest.server.dispatch.combat_brackets import (
+                strip_combat_brackets,
+            )
+            action = strip_combat_brackets(action)
+            if not action:
+                return [_error_msg(
+                    "Player aside is empty after combat-bracket strip"
+                )]
+
         logger.info(
             "session.player_action genre=%s world=%s player=%s action_len=%d",
             self._session_data.genre_slug,
@@ -1698,9 +1889,58 @@ class WebSocketSessionHandler:
             result.agent_duration_ms,
         )
 
-        _apply_narration_result_to_snapshot(snapshot, result, sd.player_name)
-        apply_encounter_updates(snapshot, result, sd.genre_pack, sd.player_name)
+        # Capture encounter state BEFORE applying the narration result so we
+        # can detect transitions (live→resolved) after the dispatch below and
+        # emit the corresponding state_transition / resolve events.
+        prior_encounter = snapshot.encounter
+        prior_live = prior_encounter is not None and not prior_encounter.resolved
+        prior_type = prior_encounter.encounter_type if prior_encounter else None
+
+        # Unified dispatch — passes the pack so encounter instantiation /
+        # beat application / resolution happen in one place (the version
+        # that emits the Story-3.4 OTEL spans the GM panel reads). The
+        # develop-side ``apply_encounter_updates`` split was supplanted by
+        # this richer combined helper; see merge commit for details.
+        _apply_narration_result_to_snapshot(
+            snapshot, result, sd.player_name, pack=sd.genre_pack,
+        )
         snapshot.turn_manager.record_interaction()
+
+        now_encounter = snapshot.encounter
+        now_live = now_encounter is not None and not now_encounter.resolved
+
+        from sidequest.server.dispatch.encounter_lifecycle import (
+            _is_combat_category,
+            apply_resource_patches,
+            award_turn_xp,
+        )
+        in_combat_now = (
+            snapshot.encounter is not None
+            and not snapshot.encounter.resolved
+            and _is_combat_category(
+                sd.genre_pack, snapshot.encounter.encounter_type
+            )
+        )
+        award_turn_xp(snapshot, in_combat=in_combat_now)
+
+        try:
+            crossed_thresholds = apply_resource_patches(
+                snapshot,
+                affinity_progress=result.affinity_progress or [],
+                lore_store=sd.lore_store,
+                turn=snapshot.turn_manager.interaction,
+            )
+        except Exception as exc:  # noqa: BLE001 — LLM typos must not kill the turn
+            logger.warning(
+                "resource.patch_failed error=%s — skipping threshold mint for this turn",
+                exc,
+            )
+            crossed_thresholds = []
+        for t in crossed_thresholds:
+            logger.info(
+                "resource.threshold_crossed event_id=%s at=%s",
+                t.event_id, t.at,
+            )
 
         try:
             sd.store.save(snapshot)
@@ -1776,14 +2016,76 @@ class WebSocketSessionHandler:
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
-        outbound: list[object] = [
-            narration_msg,
+        # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
+        # OTEL visibility: add event to current span so the GM panel (Sebastien-
+        # tier mechanical visibility) can see the dispatch decision end-to-end.
+        confrontation_msg: ConfrontationMessage | None = None
+        if now_live and now_encounter is not None:
+            from sidequest.server.dispatch.confrontation import (
+                build_confrontation_payload,
+                find_confrontation_def,
+            )
+            cdef = find_confrontation_def(
+                sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
+                now_encounter.encounter_type,
+            )
+            # No silent fallback: an active encounter whose type is not in the
+            # pack is a pack-data bug. Task 10 raises in the same case during
+            # beat-apply; the dispatch path matches.
+            if cdef is None:
+                raise ValueError(
+                    f"active encounter type {now_encounter.encounter_type!r} "
+                    f"not in pack confrontations (genre={sd.genre_slug!r})"
+                )
+            payload_dict = build_confrontation_payload(
+                encounter=now_encounter,
+                cdef=cdef,
+                genre_slug=sd.genre_slug,
+            )
+            confrontation_msg = ConfrontationMessage(
+                payload=ConfrontationPayload(**payload_dict),
+                player_id=sd.player_id,
+            )
+            trace.get_current_span().add_event(
+                "confrontation.dispatched",
+                {
+                    "active": True,
+                    "encounter_type": now_encounter.encounter_type,
+                    "genre_slug": sd.genre_slug,
+                },
+            )
+        elif prior_live and not now_live:
+            from sidequest.server.dispatch.confrontation import (
+                build_clear_confrontation_payload,
+            )
+            assert prior_type is not None  # guaranteed by prior_live=True
+            payload_dict = build_clear_confrontation_payload(
+                encounter_type=prior_type,
+                genre_slug=sd.genre_slug,
+            )
+            confrontation_msg = ConfrontationMessage(
+                payload=ConfrontationPayload(**payload_dict),
+                player_id=sd.player_id,
+            )
+            trace.get_current_span().add_event(
+                "confrontation.dispatched",
+                {
+                    "active": False,
+                    "encounter_type": prior_type,
+                    "genre_slug": sd.genre_slug,
+                },
+            )
+
+        outbound: list[object] = [narration_msg]
+        if confrontation_msg is not None:
+            outbound.append(confrontation_msg)
+        outbound.append(
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]
                 payload=NarrationEndPayload(state_delta=None),
                 player_id=sd.player_id,
             ),
-        ]
+        )
 
         # Refresh PARTY_STATUS so `current_location` and any HP/inventory
         # mutations landed by the narration apply propagate to the client
@@ -2404,30 +2706,41 @@ def _build_turn_context(
     :func:`sidequest.game.lore_embedding.retrieve_lore_context`;
     ``None`` means no lore section is registered on this turn.
     """
+    from sidequest.agents.encounter_render import render_encounter_summary
+    from sidequest.server.dispatch.confrontation import find_confrontation_def
+
     snapshot = sd.snapshot
     char_name = (
         snapshot.characters[0].core.name if snapshot.characters else sd.player_name
     )
-    # Encounter state — when ``snapshot.encounter`` is set, flip the
-    # per-type flags and look up the matching ``ConfrontationDef`` from
-    # the genre pack's rules so the narrator prompt can list beats.
-    # Without this pairing, ``in_combat`` was hardcoded False and every
-    # combat turn emitted ``beat_selections=[]``.
+
+    # Derive encounter flags from snapshot.encounter (Story 3.4).
+    # Uses category-based flags from the matched ConfrontationDef
+    # (combat / movement) rather than string-matching on encounter_type,
+    # and skips resolved encounters so a just-closed combat doesn't keep
+    # flipping in_combat=True.
+    encounter = snapshot.encounter
+    confrontation_def = None
+    encounter_summary = None
     in_combat = False
     in_chase = False
     in_encounter = False
-    confrontation_def: object | None = None
-    encounter_state = snapshot.encounter
-    if encounter_state is not None:
-        etype = encounter_state.encounter_type
-        in_combat = etype == "combat"
-        in_chase = etype == "chase"
+    if encounter is not None and not encounter.resolved:
         in_encounter = True
-        confrontation_def = _find_confrontation_def(sd.genre_pack, etype)
+        defs = sd.genre_pack.rules.confrontations if sd.genre_pack.rules else []
+        confrontation_def = find_confrontation_def(defs, encounter.encounter_type)
+        if confrontation_def is not None:
+            in_combat = confrontation_def.category == "combat"
+            in_chase = confrontation_def.category == "movement"
+        encounter_summary = render_encounter_summary(encounter)
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
         in_encounter=in_encounter,
+        encounter=encounter if in_encounter else None,
+        confrontation_def=confrontation_def,
+        encounter_summary=encounter_summary,
         state_summary=snapshot.model_dump_json(indent=2),
         narrator_verbosity="standard",
         narrator_vocabulary="literary",
@@ -2440,8 +2753,6 @@ def _build_turn_context(
         npcs=list(snapshot.npcs),
         opening_directive=opening_directive,
         world_context=sd.world_context,
-        confrontation_def=confrontation_def,
-        encounter_state=encounter_state,
         lore_context=lore_context,
     )
 
@@ -2512,11 +2823,13 @@ def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
     player_name: str,
+    *,
+    pack: GenrePack | None = None,
 ) -> None:
     """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
 
     Phase 1: location, quest_updates, lore_established, npc_registry updates.
-    Phase 2+: items, HP changes, encounter state — deferred.
+    Story 3.4: encounter instantiation and beat application (when pack provided).
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
@@ -2630,6 +2943,129 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+    # --- Encounter lifecycle (Story 3.4) ---
+    if pack is not None:
+        from sidequest.game.encounter import EncounterPhase, MetricDirection
+        from sidequest.server.dispatch.confrontation import find_confrontation_def
+        from sidequest.server.dispatch.encounter_lifecycle import (
+            instantiate_encounter_from_trigger,
+        )
+        from sidequest.telemetry.spans import (
+            combat_tick_span,
+            encounter_beat_applied_span,
+            encounter_phase_transition_span,
+            encounter_resolved_span,
+        )
+
+        # (a) Narrator-initiated encounter
+        if result.confrontation and (
+            snapshot.encounter is None or snapshot.encounter.resolved
+        ):
+            combatants = [e.name for e in result.npcs_present] or [player_name]
+            combatants = [player_name] + [c for c in combatants if c != player_name]
+            instantiate_encounter_from_trigger(
+                snapshot=snapshot,
+                pack=pack,
+                encounter_type=result.confrontation,
+                combatants=combatants,
+                hp=10,
+                genre_slug=snapshot.genre_slug,
+            )
+
+        # (b) Apply beat_selections
+        enc = snapshot.encounter
+        if enc is not None and not enc.resolved and result.beat_selections:
+            cdef = find_confrontation_def(
+                pack.rules.confrontations if pack.rules else [],
+                enc.encounter_type,
+            )
+            if cdef is None:
+                raise ValueError(
+                    f"active encounter type {enc.encounter_type!r} not in pack"
+                )
+            beat_by_id = {b.id: b for b in cdef.beats}
+            prev_phase = enc.structured_phase
+            for sel in result.beat_selections:
+                beat = beat_by_id.get(sel.beat_id)
+                if beat is None:
+                    raise ValueError(
+                        f"unknown beat_id {sel.beat_id!r} for encounter "
+                        f"{enc.encounter_type!r}"
+                    )
+                with encounter_beat_applied_span(
+                    encounter_type=enc.encounter_type,
+                    actor=sel.actor,
+                    beat_id=sel.beat_id,
+                    metric_delta=beat.metric_delta,
+                ):
+                    enc.metric.current += beat.metric_delta
+                    # Ascending metrics clamp at 0 (port of Rust encounter.rs).
+                    if (
+                        enc.metric.direction == MetricDirection.Ascending
+                        and enc.metric.current < 0
+                    ):
+                        enc.metric.current = 0
+                enc.beat += 1
+                _advance_phase(enc)
+                with combat_tick_span(
+                    encounter_type=enc.encounter_type,
+                    beat=enc.beat,
+                    phase=(enc.structured_phase or EncounterPhase.Setup).value,
+                ):
+                    pass
+                # Direction-aware threshold resolution (port of Rust encounter.rs):
+                # Ascending fires on high only; Descending on low only; Bidirectional
+                # on either. Cross-checking the wrong boundary would falsely resolve
+                # a chase the moment its counter dipped below zero.
+                m = enc.metric
+                if m.direction == MetricDirection.Ascending:
+                    threshold_hit = (
+                        m.threshold_high is not None and m.current >= m.threshold_high
+                    )
+                elif m.direction == MetricDirection.Descending:
+                    threshold_hit = (
+                        m.threshold_low is not None and m.current <= m.threshold_low
+                    )
+                else:  # Bidirectional
+                    threshold_hit = (
+                        (m.threshold_high is not None and m.current >= m.threshold_high)
+                        or (m.threshold_low is not None and m.current <= m.threshold_low)
+                    )
+                if threshold_hit or beat.resolution:
+                    enc.resolved = True
+                    enc.structured_phase = EncounterPhase.Resolution
+                    enc.outcome = f"resolved at beat {enc.beat}"
+                    with encounter_resolved_span(
+                        encounter_type=enc.encounter_type,
+                        outcome=enc.outcome,
+                        source="metric",
+                    ):
+                        pass
+                    break
+            if prev_phase != enc.structured_phase:
+                with encounter_phase_transition_span(
+                    from_phase=(prev_phase.value if prev_phase else "None"),
+                    to_phase=(enc.structured_phase.value
+                              if enc.structured_phase else "None"),
+                    encounter_type=enc.encounter_type,
+                ):
+                    pass
+
+
+def _advance_phase(enc: StructuredEncounter) -> None:
+    """Promote encounter phase by beat count. Port of Rust encounter.rs ladder."""
+    from sidequest.game.encounter import EncounterPhase
+    if enc.structured_phase is None:
+        enc.structured_phase = EncounterPhase.Setup
+    ladder = {
+        0: EncounterPhase.Setup,
+        1: EncounterPhase.Opening,
+        2: EncounterPhase.Escalation,
+        3: EncounterPhase.Escalation,
+        4: EncounterPhase.Escalation,
+    }
+    enc.structured_phase = ladder.get(enc.beat, EncounterPhase.Climax)
 
 
 def apply_encounter_updates(
