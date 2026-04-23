@@ -7,6 +7,16 @@ narration path only fired on PLAYER_ACTION. Slice H routes an opening
 turn through the orchestrator at confirmation, so every chargen test
 now goes through the narrator pipeline and the mock has to return a
 real :class:`ClaudeResponse` with non-empty text + session id.
+
+Also installs a daemon guard: every test in this directory runs with
+``DaemonClient`` replaced by an always-unavailable stub so that
+narration-turn post-processing (lore embedding, image render) never
+blocks on a real Unix-domain-socket round trip. Integration tests that
+want to exercise the daemon path use an in-process fake
+(``test_render_dispatch.py``'s asyncio Unix server,
+``test_lore_rag_wiring.py``'s counting stub) — their
+``monkeypatch.setattr`` call simply overrides the guard for that test.
+No server test ever talks to the real ``/tmp/sidequest-renderer.sock``.
 """
 
 from __future__ import annotations
@@ -17,6 +27,61 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
+
+
+# ---------------------------------------------------------------------------
+# Daemon guard — autouse. Prevents any server test from reaching the real
+# /tmp/sidequest-renderer.sock, which would otherwise burn up to 180 s per
+# embed()/render() call when the daemon is slow, warming, or dead.
+# ---------------------------------------------------------------------------
+
+
+class _UnavailableDaemonClient:
+    """Stand-in for ``DaemonClient`` that never admits to being available.
+
+    ``is_available()`` returns ``False``, matching the natural fail-fast
+    branch already handled by ``session_handler._maybe_dispatch_render``
+    and ``lore_embedding.{retrieve_lore_context,embed_pending_fragments}``.
+    Any accidental call into ``embed()`` / ``render()`` raises loudly
+    instead of hanging — that's the whole point of the guard.
+    """
+
+    socket_path = Path("/tmp/sq-test-daemon-not-used.sock")
+
+    def is_available(self) -> bool:
+        return False
+
+    async def embed(self, text: str):  # noqa: ARG002
+        raise RuntimeError(
+            "DaemonClient.embed called in a server test without opting in "
+            "(mark @pytest.mark.live_daemon or patch the symbol yourself)."
+        )
+
+    async def render(self, params):  # noqa: ARG002
+        raise RuntimeError(
+            "DaemonClient.render called in a server test without opting in "
+            "(mark @pytest.mark.live_daemon or patch the symbol yourself)."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _mock_daemon_client(monkeypatch):
+    """Autouse guard: replace ``DaemonClient`` with an always-unavailable
+    stub everywhere the server code instantiates one inline.
+
+    No test talks to the real daemon. Integration tests that want a
+    daemon fake (``test_render_dispatch.py``, ``test_lore_rag_wiring.py``)
+    install their own via ``monkeypatch.setattr`` — those patches shadow
+    this one for the duration of that test and teardown unwinds in LIFO.
+    """
+    monkeypatch.setattr(
+        "sidequest.server.session_handler.DaemonClient",
+        lambda *a, **kw: _UnavailableDaemonClient(),
+    )
+    monkeypatch.setattr(
+        "sidequest.game.lore_embedding.DaemonClient",
+        lambda *a, **kw: _UnavailableDaemonClient(),
+    )
 
 
 def canned_claude_response(
