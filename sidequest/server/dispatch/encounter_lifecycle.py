@@ -128,3 +128,27 @@ def resolve_encounter_from_trope(
     ):
         enc.resolve_from_trope(trope_id)
     return enc
+
+
+def _is_combat_category(pack: GenrePack, encounter_type: str) -> bool:
+    """Return True when the ConfrontationDef for ``encounter_type`` declares
+    category=='combat'. Port of state_mutations.rs:39 category check."""
+    defs = pack.rules.confrontations if pack.rules else []
+    for d in defs:
+        if d.confrontation_type == encounter_type:
+            return d.category == "combat"
+    return False
+
+
+def award_turn_xp(snapshot: GameSnapshot, *, in_combat: bool) -> None:
+    """Award per-turn XP to the party lead.
+
+    25 XP when ``in_combat`` is True, 10 otherwise. Port of
+    sidequest-api/crates/sidequest-server/src/dispatch/state_mutations.rs:39.
+    No-op when the snapshot has no characters.
+    """
+    if not snapshot.characters:
+        return
+    delta = 25 if in_combat else 10
+    char = snapshot.characters[0]
+    char.core.xp = char.core.xp + delta

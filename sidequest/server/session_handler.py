@@ -1647,6 +1647,19 @@ class WebSocketSessionHandler:
         now_encounter = snapshot.encounter
         now_live = now_encounter is not None and not now_encounter.resolved
 
+        from sidequest.server.dispatch.encounter_lifecycle import (
+            award_turn_xp,
+            _is_combat_category,
+        )
+        in_combat_now = (
+            snapshot.encounter is not None
+            and not snapshot.encounter.resolved
+            and _is_combat_category(
+                sd.genre_pack, snapshot.encounter.encounter_type
+            )
+        )
+        award_turn_xp(snapshot, in_combat=in_combat_now)
+
         try:
             sd.store.save(snapshot)
             narrative_entry = NarrativeEntry(
