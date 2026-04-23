@@ -125,6 +125,15 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_seq ON events (seq);
+CREATE TABLE IF NOT EXISTS projection_cache (
+    event_seq    INTEGER NOT NULL,
+    player_id    TEXT NOT NULL,
+    include      INTEGER NOT NULL,
+    payload_json TEXT,
+    PRIMARY KEY (event_seq, player_id),
+    FOREIGN KEY (event_seq) REFERENCES events(seq)
+);
+CREATE INDEX IF NOT EXISTS idx_projection_cache_player ON projection_cache (player_id, event_seq);
 """
 
 
