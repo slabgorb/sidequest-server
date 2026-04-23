@@ -404,7 +404,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
 
     Returns a dict with keys:
       prose, footnotes, items_gained, items_lost, npcs_present, quest_updates,
-      visual_scene, scene_mood, sfx_triggers, action_rewrite, action_flags,
+      visual_scene, scene_mood, sfx_triggers, action_rewrite,
       beat_selections, confrontation, location, affinity_progress, gold_change,
       lore_established.
 
