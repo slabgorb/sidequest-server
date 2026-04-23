@@ -329,6 +329,19 @@ class TurnContext:
     # *field* mirrors Rust's typed seam; the *helper signatures* differ.
     pacing_hint: PacingHint | None = None
 
+    # Encounter state summary rendered for the Valley zone (Story 3.4).
+    # When ``None``, no encounter section is registered. Mutually consistent
+    # with ``in_combat``/``in_chase``/``in_encounter`` — if any of those is
+    # True, ``encounter_summary`` should be set.
+    encounter_summary: str | None = None
+
+    # The matched ConfrontationDef for the active encounter (Story 3.4).
+    # Typed as ``Any`` to avoid a circular import through sidequest.genre;
+    # runtime shape is ``sidequest.genre.models.rules.ConfrontationDef``.
+    # The narrator uses this to render available beats + actors into the
+    # Early zone so the LLM can emit valid ``beat_selections``.
+    confrontation_def: Any = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
