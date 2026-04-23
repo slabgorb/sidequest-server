@@ -45,8 +45,12 @@ class _FakeDaemon:
         reply: dict[str, Any] | None = None,
         *,
         crash: bool = False,
+        replies_by_method: dict[str, dict[str, Any]] | None = None,
+        delays_by_method: dict[str, float] | None = None,
     ) -> None:
         self.reply = reply or {}
+        self.replies_by_method = replies_by_method or {}
+        self.delays_by_method = delays_by_method or {}
         self.crash = crash
         self.requests: list[dict[str, Any]] = []
         self._server: asyncio.AbstractServer | None = None
@@ -68,7 +72,12 @@ class _FakeDaemon:
             if self.crash:
                 writer.close()
                 return
-            reply = {"id": req.get("id"), **self.reply}
+            method = req.get("method", "")
+            delay = self.delays_by_method.get(method)
+            if delay:
+                await asyncio.sleep(delay)
+            reply_body = self.replies_by_method.get(method, self.reply)
+            reply = {"id": req.get("id"), **reply_body}
             writer.write((json.dumps(reply) + "\n").encode())
             await writer.drain()
         finally:
@@ -149,3 +158,110 @@ def test_render_enabled_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert render_enabled() is False
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "yes")
     assert render_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_embed_round_trip_returns_result(short_sock: Path) -> None:
+    daemon = _FakeDaemon(
+        reply={
+            "result": {
+                "embedding": [0.1, 0.2, 0.3],
+                "model": "all-MiniLM-L6-v2",
+                "latency_ms": 12,
+            }
+        }
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        result = await client.embed("a fragment of lore")
+    finally:
+        await daemon.stop()
+    assert result["embedding"] == [0.1, 0.2, 0.3]
+    assert result["model"] == "all-MiniLM-L6-v2"
+    assert result["latency_ms"] == 12
+    assert daemon.requests[0]["method"] == "embed"
+    assert daemon.requests[0]["params"]["text"] == "a fragment of lore"
+
+
+@pytest.mark.asyncio
+async def test_embed_unavailable_when_socket_missing(short_sock: Path) -> None:
+    client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+    assert not client.is_available()
+    with pytest.raises(DaemonUnavailableError):
+        await client.embed("text")
+
+
+@pytest.mark.asyncio
+async def test_embed_daemon_error_surfaces_structured_exception(
+    short_sock: Path,
+) -> None:
+    daemon = _FakeDaemon(
+        reply={"error": {"code": "EMBED_FAILED", "message": "model offline"}}
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        with pytest.raises(DaemonRequestError) as excinfo:
+            await client.embed("text")
+    finally:
+        await daemon.stop()
+    assert excinfo.value.code == "EMBED_FAILED"
+    assert excinfo.value.message == "model offline"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_render_and_embed_do_not_block_each_other(
+    short_sock: Path,
+) -> None:
+    """Story 37-33 diagnostic.
+
+    Story 37-23 split the daemon's render_lock and embed_lock so an embed
+    request (~10ms on CPU) no longer serializes behind a slow render
+    (~5–60s on MPS). This asserts the client exposes that independence
+    end-to-end: a slow render in flight must not stall a concurrent
+    embed call.
+    """
+    slow_render_delay = 0.25
+    daemon = _FakeDaemon(
+        replies_by_method={
+            "render": {"result": {"image_url": "/tmp/x.png"}},
+            "embed": {
+                "result": {
+                    "embedding": [0.4, 0.5, 0.6],
+                    "model": "all-MiniLM-L6-v2",
+                    "latency_ms": 8,
+                }
+            },
+        },
+        delays_by_method={"render": slow_render_delay},
+    )
+    await daemon.start(short_sock)
+    try:
+        client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
+        loop = asyncio.get_running_loop()
+        render_task = asyncio.create_task(
+            client.render({"tier": "scene_illustration", "subject": "x"})
+        )
+        # Let the slow render get into flight before firing embed so the
+        # test exercises the concurrent case, not a serial one.
+        await asyncio.sleep(0.02)
+        embed_start = loop.time()
+        embed_result = await client.embed("short fragment")
+        embed_elapsed = loop.time() - embed_start
+        render_result = await render_task
+    finally:
+        await daemon.stop()
+
+    assert embed_result["embedding"] == [0.4, 0.5, 0.6]
+    assert render_result["image_url"] == "/tmp/x.png"
+    # Embed must finish well before the render delay — the whole point of
+    # the 37-23 lock split. Generous margin for CI noise; the real signal
+    # is that embed isn't gated on slow_render_delay.
+    assert embed_elapsed < slow_render_delay, (
+        f"embed took {embed_elapsed:.3f}s — should be independent of the "
+        f"{slow_render_delay}s render in flight"
+    )
+    methods = [req["method"] for req in daemon.requests]
+    assert "render" in methods
+    assert "embed" in methods

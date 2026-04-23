@@ -82,6 +82,25 @@ class DaemonClient:
         """
         return await self._call("render", params)
 
+    async def embed(self, text: str) -> dict[str, Any]:
+        """Send an embed request and return the result dict.
+
+        The daemon dispatches embeds on ``embed_lock`` (story 37-23), which
+        runs independently from the MPS-bound render lock. A slow 60s Flux
+        render no longer serializes a 10ms sentence embedding behind it, so
+        callers can await ``embed()`` concurrently with render requests.
+
+        Returns a dict with ``embedding`` (``list[float]``), ``model``
+        (``str``), and ``latency_ms`` (``int``). Empty ``text`` is rejected
+        by the daemon with ``INVALID_REQUEST``.
+
+        :raises DaemonUnavailableError: socket missing, connection refused,
+            or response timed out.
+        :raises DaemonRequestError: daemon returned ``{"error": {...}}``
+            (e.g. ``EMBED_FAILED``, ``INVALID_REQUEST``).
+        """
+        return await self._call("embed", {"text": text})
+
     async def _call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = uuid.uuid4().hex[:12]
         with tracer.start_as_current_span("daemon_client.request") as span:
