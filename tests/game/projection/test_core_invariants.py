@@ -29,3 +29,39 @@ def test_non_gm_passes_through_gm_invariant() -> None:
     outcome = stage.evaluate(envelope=env, view=_view(), player_id="alice")
     assert outcome.terminal is False
     assert outcome.decision is None
+
+
+import json
+
+
+def test_secret_note_routes_only_to_recipient() -> None:
+    stage = CoreInvariantStage()
+    payload = json.dumps({"to": "alice", "text": "psst"})
+    env = MessageEnvelope(kind="SECRET_NOTE", payload_json=payload, origin_seq=3)
+
+    out_alice = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert out_alice.terminal is True
+    assert out_alice.decision is not None
+    assert out_alice.decision.include is True
+
+    out_bob = stage.evaluate(envelope=env, view=_view(), player_id="bob")
+    assert out_bob.terminal is True
+    assert out_bob.decision is not None
+    assert out_bob.decision.include is False
+
+
+def test_dice_request_to_field_with_list() -> None:
+    stage = CoreInvariantStage()
+    payload = json.dumps({"to": ["alice", "bob"], "dice": "d20"})
+    env = MessageEnvelope(kind="DICE_REQUEST", payload_json=payload, origin_seq=4)
+
+    assert stage.evaluate(envelope=env, view=_view(), player_id="alice").decision.include is True
+    assert stage.evaluate(envelope=env, view=_view(), player_id="bob").decision.include is True
+    assert stage.evaluate(envelope=env, view=_view(), player_id="carol").decision.include is False
+
+
+def test_non_targeted_kind_has_no_to_field_invariant() -> None:
+    stage = CoreInvariantStage()
+    env = MessageEnvelope(kind="NARRATION", payload_json='{"text":"hi"}', origin_seq=5)
+    outcome = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert outcome.terminal is False
