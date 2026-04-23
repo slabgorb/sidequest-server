@@ -30,6 +30,16 @@ TARGETED_KINDS: dict[str, str] = {
     "VOICE_TEXT": "to",
 }
 
+# Kinds that echo back to the player who authored them (via
+# payload.author_player_id). GM is implicit recipient. Non-author,
+# non-GM players do not see these.
+SELF_AUTHORED_KINDS: frozenset[str] = frozenset({
+    "PLAYER_ACTION",
+    "DICE_THROW",
+    "BEAT_SELECTION",
+    "CHARACTER_CREATION",
+})
+
 
 @dataclass(frozen=True)
 class InvariantOutcome:
@@ -60,6 +70,19 @@ class CoreInvariantStage:
             payload = json.loads(envelope.payload_json)
             to_value = payload.get(field_name)
             included = _match_to_field(to_value, player_id)
+            return InvariantOutcome(
+                terminal=True,
+                decision=FilterDecision(
+                    include=included,
+                    payload_json=envelope.payload_json if included else "",
+                ),
+            )
+
+        # 3. Self-authored: echo to author + GM only.
+        if envelope.kind in SELF_AUTHORED_KINDS:
+            payload = json.loads(envelope.payload_json)
+            author = payload.get("author_player_id")
+            included = isinstance(author, str) and author == player_id
             return InvariantOutcome(
                 terminal=True,
                 decision=FilterDecision(
