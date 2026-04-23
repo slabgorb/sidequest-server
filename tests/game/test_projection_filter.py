@@ -1,43 +1,48 @@
+from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.view import SessionGameStateView
 from sidequest.game.projection_filter import (
-    ProjectionFilter,
-    PassThroughFilter,
     FilterDecision,
+    PassThroughFilter,
+    ProjectionFilter,
 )
-from sidequest.game.event_log import EventRow
 
 
-def _row(seq=1, kind="NARRATION", payload='{"text":"hi"}'):
-    return EventRow(seq=seq, kind=kind, payload_json=payload, created_at="now")
+def _env(kind: str = "NARRATION", payload: str = '{"text":"hi"}', seq: int = 1) -> MessageEnvelope:
+    return MessageEnvelope(kind=kind, payload_json=payload, origin_seq=seq)
+
+
+def _view() -> SessionGameStateView:
+    return SessionGameStateView(gm_player_id="gm", player_id_to_character={"alice": "alice_char"})
 
 
 def test_pass_through_includes_everything_for_everyone():
     f = PassThroughFilter()
-    dec = f.project(event=_row(), player_id="alice")
+    dec = f.project(envelope=_env(), view=_view(), player_id="alice")
     assert dec.include is True
     assert dec.payload_json == '{"text":"hi"}'
 
 
 def test_filter_protocol_allows_redaction():
-    class RedactHP(ProjectionFilter):
-        def project(self, *, event, player_id):
-            if event.kind == "STATE_UPDATE" and player_id != "gm":
-                return FilterDecision(include=True, payload_json='{}')  # redacted
-            return FilterDecision(include=True, payload_json=event.payload_json)
+    class RedactHP:
+        def project(self, *, envelope: MessageEnvelope, view, player_id):
+            if envelope.kind == "STATE_UPDATE" and player_id != "gm":
+                return FilterDecision(include=True, payload_json='{}')
+            return FilterDecision(include=True, payload_json=envelope.payload_json)
 
-    f = RedactHP()
-    dec = f.project(event=_row(kind="STATE_UPDATE", payload='{"hp":10}'), player_id="alice")
+    f: ProjectionFilter = RedactHP()
+    dec = f.project(envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="alice")
     assert dec.payload_json == '{}'
-    dec_gm = f.project(event=_row(kind="STATE_UPDATE", payload='{"hp":10}'), player_id="gm")
+    dec_gm = f.project(envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="gm")
     assert dec_gm.payload_json == '{"hp":10}'
 
 
 def test_filter_can_omit():
-    class OmitSecrets(ProjectionFilter):
-        def project(self, *, event, player_id):
-            if event.kind == "SECRET_NOTE" and player_id != "alice":
+    class OmitSecrets:
+        def project(self, *, envelope: MessageEnvelope, view, player_id):
+            if envelope.kind == "SECRET_NOTE" and player_id != "alice":
                 return FilterDecision(include=False, payload_json="")
-            return FilterDecision(include=True, payload_json=event.payload_json)
+            return FilterDecision(include=True, payload_json=envelope.payload_json)
 
-    f = OmitSecrets()
-    assert f.project(event=_row(kind="SECRET_NOTE"), player_id="bob").include is False
-    assert f.project(event=_row(kind="SECRET_NOTE"), player_id="alice").include is True
+    f: ProjectionFilter = OmitSecrets()
+    assert f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="bob").include is False
+    assert f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="alice").include is True

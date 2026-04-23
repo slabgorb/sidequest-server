@@ -588,6 +588,16 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         path, "scenarios", _load_single_scenario
     )
 
+    # Task 22: load optional projection.yaml.
+    projection_yaml = path / "projection.yaml"
+    projection_rules = None
+    if projection_yaml.exists():
+        from sidequest.game.projection.rules import load_rules_from_yaml_path
+        from sidequest.game.projection.validator import validate_projection_rules
+
+        projection_rules = load_rules_from_yaml_path(projection_yaml)
+        validate_projection_rules(projection_rules)  # raises on error — no silent fallback
+
     return GenrePack(
         meta=meta,
         rules=rules,
@@ -616,6 +626,8 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         base_archetypes=base_archetypes,
         archetype_constraints=archetype_constraints,
         npc_traits=npc_traits,
+        projection_rules=projection_rules,
+        source_dir=path,
     )
 
 
