@@ -44,6 +44,22 @@ from sidequest.protocol.models import (
     TacticalGridPayload,
 )
 
+# Local DM decomposer output contract (Group B)
+from sidequest.protocol.dispatch import (
+    CrossAction,
+    DispatchPackage,
+    LethalityVerdict,
+    LethalityVerdictKind,
+    NarratorDirective,
+    NarratorDirectiveKind,
+    PerceptionFidelity,
+    PlayerDispatch,
+    Referent,
+    Reversibility,
+    SubsystemDispatch,
+    VisibilityTag,
+)
+
 # Phase 1 payload classes
 from sidequest.protocol.messages import (
     ActionQueueMessage,
@@ -74,6 +90,19 @@ from sidequest.protocol.messages import (
 )
 
 __all__ = [
+    # Local DM decomposer (Group B)
+    "CrossAction",
+    "DispatchPackage",
+    "LethalityVerdict",
+    "LethalityVerdictKind",
+    "NarratorDirective",
+    "NarratorDirectiveKind",
+    "PerceptionFidelity",
+    "PlayerDispatch",
+    "Referent",
+    "Reversibility",
+    "SubsystemDispatch",
+    "VisibilityTag",
     # Foundation
     "MessageType",
     "NarratorVerbosity",
