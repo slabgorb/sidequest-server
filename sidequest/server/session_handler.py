@@ -1617,7 +1617,9 @@ class WebSocketSessionHandler:
             result.agent_duration_ms,
         )
 
-        _apply_narration_result_to_snapshot(snapshot, result, sd.player_name)
+        _apply_narration_result_to_snapshot(
+            snapshot, result, sd.player_name, pack=sd.genre_pack,
+        )
         snapshot.turn_manager.record_interaction()
 
         try:
@@ -1958,11 +1960,13 @@ def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
     player_name: str,
+    *,
+    pack: "GenrePack | None" = None,
 ) -> None:
     """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
 
     Phase 1: location, quest_updates, lore_established, npc_registry updates.
-    Phase 2+: items, HP changes, encounter state — deferred.
+    Story 3.4: encounter instantiation and beat application (when pack provided).
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
@@ -2041,6 +2045,109 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+    # --- Encounter lifecycle (Story 3.4) ---
+    if pack is not None:
+        from sidequest.server.dispatch.confrontation import find_confrontation_def
+        from sidequest.server.dispatch.encounter_lifecycle import (
+            instantiate_encounter_from_trigger,
+        )
+        from sidequest.telemetry.spans import (
+            encounter_beat_applied_span,
+            encounter_phase_transition_span,
+            encounter_resolved_span,
+            combat_tick_span,
+        )
+        from sidequest.game.encounter import EncounterPhase
+
+        # (a) Narrator-initiated encounter
+        if result.confrontation and (
+            snapshot.encounter is None or snapshot.encounter.resolved
+        ):
+            combatants = [e.name for e in result.npcs_present] or [player_name]
+            combatants = [player_name] + [c for c in combatants if c != player_name]
+            instantiate_encounter_from_trigger(
+                snapshot=snapshot,
+                pack=pack,
+                encounter_type=result.confrontation,
+                combatants=combatants,
+                hp=10,
+                genre_slug=snapshot.genre_slug,
+            )
+
+        # (b) Apply beat_selections
+        enc = snapshot.encounter
+        if enc is not None and not enc.resolved and result.beat_selections:
+            cdef = find_confrontation_def(
+                pack.rules.confrontations if pack.rules else [],
+                enc.encounter_type,
+            )
+            if cdef is None:
+                raise ValueError(
+                    f"active encounter type {enc.encounter_type!r} not in pack"
+                )
+            beat_by_id = {b.id: b for b in cdef.beats}
+            prev_phase = enc.structured_phase
+            for sel in result.beat_selections:
+                beat = beat_by_id.get(sel.beat_id)
+                if beat is None:
+                    raise ValueError(
+                        f"unknown beat_id {sel.beat_id!r} for encounter "
+                        f"{enc.encounter_type!r}"
+                    )
+                with encounter_beat_applied_span(
+                    encounter_type=enc.encounter_type,
+                    actor=sel.actor,
+                    beat_id=sel.beat_id,
+                    metric_delta=beat.metric_delta,
+                ):
+                    enc.metric.current += beat.metric_delta
+                enc.beat += 1
+                _advance_phase(enc)
+                with combat_tick_span(
+                    encounter_type=enc.encounter_type,
+                    beat=enc.beat,
+                    phase=(enc.structured_phase or EncounterPhase.Setup).value,
+                ):
+                    pass
+                m = enc.metric
+                threshold_hit = (
+                    (m.threshold_high is not None and m.current >= m.threshold_high)
+                    or (m.threshold_low is not None and m.current <= m.threshold_low)
+                )
+                if threshold_hit or beat.resolution:
+                    enc.resolved = True
+                    enc.structured_phase = EncounterPhase.Resolution
+                    enc.outcome = f"resolved at beat {enc.beat}"
+                    with encounter_resolved_span(
+                        encounter_type=enc.encounter_type,
+                        outcome=enc.outcome,
+                        source="metric",
+                    ):
+                        pass
+                    break
+            if prev_phase != enc.structured_phase:
+                with encounter_phase_transition_span(
+                    from_phase=(prev_phase.value if prev_phase else "None"),
+                    to_phase=(enc.structured_phase.value
+                              if enc.structured_phase else "None"),
+                    encounter_type=enc.encounter_type,
+                ):
+                    pass
+
+
+def _advance_phase(enc: "StructuredEncounter") -> None:
+    """Promote encounter phase by beat count. Port of Rust encounter.rs ladder."""
+    from sidequest.game.encounter import EncounterPhase
+    if enc.structured_phase is None:
+        enc.structured_phase = EncounterPhase.Setup
+    ladder = {
+        0: EncounterPhase.Setup,
+        1: EncounterPhase.Opening,
+        2: EncounterPhase.Escalation,
+        3: EncounterPhase.Escalation,
+    }
+    enc.structured_phase = ladder.get(enc.beat, EncounterPhase.Climax)
 
 
 def _detect_npc_identity_drift(
