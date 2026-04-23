@@ -29,7 +29,12 @@ from sidequest.agents.orchestrator import (
 )
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone
-from sidequest.protocol.dispatch import DispatchPackage
+from sidequest.protocol.dispatch import (
+    DispatchPackage,
+    NarratorDirective,
+    PlayerDispatch,
+    VisibilityTag,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -327,67 +332,67 @@ def test_orchestrator_reset_clears_session():
 # ---------------------------------------------------------------------------
 
 
-def test_build_narrator_prompt_full_contains_narrator_identity():
+async def test_build_narrator_prompt_full_contains_narrator_identity():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", state_summary="You are in a tavern.")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "Game Master" in prompt
 
 
-def test_build_narrator_prompt_full_contains_output_format():
+async def test_build_narrator_prompt_full_contains_output_format():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "game_patch" in prompt
 
 
-def test_build_narrator_prompt_contains_player_action():
+async def test_build_narrator_prompt_contains_player_action():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = orch.build_narrator_prompt("examine the door", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("examine the door", context, tier=NarratorPromptTier.Full)
     assert "examine the door" in prompt
     assert "Kael" in prompt
 
 
-def test_build_narrator_prompt_includes_genre_identity():
+async def test_build_narrator_prompt_includes_genre_identity():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", genre="caverns_and_claudes")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "caverns and claudes" in prompt
 
 
-def test_build_narrator_prompt_full_contains_verbosity_limit():
+async def test_build_narrator_prompt_full_contains_verbosity_limit():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", narrator_verbosity="concise")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "400 characters" in prompt
 
 
-def test_build_narrator_prompt_full_contains_vocabulary_section():
+async def test_build_narrator_prompt_full_contains_vocabulary_section():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", narrator_vocabulary="epic")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "archaic" in prompt
 
 
-def test_build_narrator_prompt_includes_state_summary():
+async def test_build_narrator_prompt_includes_state_summary():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(
         character_name="Kael",
         state_summary="You are in a dark cave. HP: 10/10.",
     )
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "dark cave" in prompt
 
 
-def test_build_narrator_prompt_includes_lore_context_when_provided():
+async def test_build_narrator_prompt_includes_lore_context_when_provided():
     # Story 37-33: retrieved lore from semantic search should land in
     # the Valley zone so the narrator has canonical world detail to
     # weave in without asking the player.
@@ -402,83 +407,83 @@ def test_build_narrator_prompt_includes_lore_context_when_provided():
             "</lore>"
         ),
     )
-    prompt, _ = orch.build_narrator_prompt("approach the castle", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("approach the castle", context, tier=NarratorPromptTier.Full)
     assert "<lore>" in prompt
     assert "ancient castle" in prompt
 
 
-def test_build_narrator_prompt_omits_lore_section_when_none():
+async def test_build_narrator_prompt_omits_lore_section_when_none():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", lore_context=None)
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "<lore>" not in prompt
 
 
-def test_build_narrator_prompt_encounter_rules_when_in_combat():
+async def test_build_narrator_prompt_encounter_rules_when_in_combat():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", in_combat=True)
-    prompt, _ = orch.build_narrator_prompt("attack goblin", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("attack goblin", context, tier=NarratorPromptTier.Full)
     assert "COMBAT NARRATION RULES" in prompt
 
 
-def test_build_narrator_prompt_no_encounter_rules_when_not_in_combat():
+async def test_build_narrator_prompt_no_encounter_rules_when_not_in_combat():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", in_combat=False, in_chase=False)
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "COMBAT NARRATION RULES" not in prompt
 
 
-def test_build_narrator_prompt_delta_excludes_static_sections():
+async def test_build_narrator_prompt_delta_excludes_static_sections():
     """Delta tier should omit narrator identity (already in session)."""
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    full_prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
-    delta_prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    full_prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    delta_prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
     # Full prompt contains identity content; delta does not
     assert "narrator_identity" not in delta_prompt or len(delta_prompt) < len(full_prompt)
 
 
-def test_build_narrator_prompt_delta_still_contains_output_format():
+async def test_build_narrator_prompt_delta_still_contains_output_format():
     """Output format must be on every tier — narrator needs game_patch schema always."""
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
     assert "game_patch" in prompt
 
 
-def test_build_narrator_prompt_delta_still_contains_genre_identity():
+async def test_build_narrator_prompt_delta_still_contains_genre_identity():
     """Genre identity must be on every tier (playtest fix 2026-04-05)."""
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", genre="road_warrior")
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Delta)
     assert "road warrior" in prompt
 
 
-def test_build_narrator_prompt_player_action_last_in_zone_order():
+async def test_build_narrator_prompt_player_action_last_in_zone_order():
     """player_action (Recency) must appear after identity (Primacy) in composed output."""
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = orch.build_narrator_prompt("cast spell", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("cast spell", context, tier=NarratorPromptTier.Full)
     identity_pos = prompt.find("Game Master")
     action_pos = prompt.find("cast spell")
     assert identity_pos < action_pos
 
 
-def test_build_narrator_prompt_trope_context_injected():
+async def test_build_narrator_prompt_trope_context_injected():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(
         character_name="Kael",
         pending_trope_context="WEAVE THIS: The ancient curse stirs.",
     )
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "WEAVE THIS" in prompt
 
 
@@ -637,7 +642,7 @@ async def test_run_narration_turn_genre_prompts_injected():
             world_state="Track the dungeon state.",
         ),
     )
-    prompt, _ = orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    prompt, _ = await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     assert "dungeon grit" in prompt
     assert "NPCs speak in riddles" in prompt
 
@@ -725,3 +730,83 @@ def test_turn_context_accepts_dispatch_package():
     )
     tc = TurnContext(dispatch_package=pkg)
     assert tc.dispatch_package is pkg
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — narrator_directives section injection from DispatchPackage
+# ---------------------------------------------------------------------------
+
+
+def _tag_all() -> VisibilityTag:
+    return VisibilityTag(
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
+        redact_from_narrator_canonical=False,
+    )
+
+
+async def test_build_narrator_prompt_registers_narrator_directives_when_present():
+    """When TurnContext.dispatch_package has authored directives, the narrator
+    prompt registry contains a 'narrator_directives' section and the directive
+    payloads appear in the rendered prompt text."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    pkg = DispatchPackage(
+        turn_id="t1",
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="Let's go!",
+                resolved=[],
+                dispatch=[],
+                lethality=[],
+                narrator_instructions=[
+                    NarratorDirective(
+                        kind="must_not_narrate",
+                        payload="zzz-must-not-payload-zzz",
+                        visibility=_tag_all(),
+                    ),
+                    NarratorDirective(
+                        kind="must_narrate",
+                        payload="zzz-must-narrate-payload-zzz",
+                        visibility=_tag_all(),
+                    ),
+                ],
+            )
+        ],
+        cross_player=[],
+        confidence_global=1.0,
+        degraded=False,
+        degraded_reason=None,
+    )
+    ctx = TurnContext(dispatch_package=pkg)
+
+    prompt_text, registry = await orch.build_narrator_prompt(
+        "Let's go!", ctx, tier=NarratorPromptTier.Full
+    )
+
+    assert "zzz-must-not-payload-zzz" in prompt_text
+    assert "zzz-must-narrate-payload-zzz" in prompt_text
+
+    # Strong check: section is registered under the expected name.
+    section_names = [s.name for s in registry.registry(orch._narrator.name())]
+    assert "narrator_directives" in section_names
+
+
+async def test_build_narrator_prompt_omits_narrator_directives_when_no_dispatch_package():
+    """When dispatch_package is None, the prompt does NOT contain the
+    narrator_directives section (no decomposer payload strings)."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    ctx = TurnContext(dispatch_package=None)
+
+    prompt_text, registry = await orch.build_narrator_prompt(
+        "look around", ctx, tier=NarratorPromptTier.Full
+    )
+
+    assert "zzz-must-not-payload-zzz" not in prompt_text
+    assert "zzz-must-narrate-payload-zzz" not in prompt_text
+
+    section_names = [s.name for s in registry.registry(orch._narrator.name())]
+    assert "narrator_directives" not in section_names
