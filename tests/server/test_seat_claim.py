@@ -67,9 +67,9 @@ def test_player_seat_claim_broadcasts_seat_confirmed(tmp_path: Path):
         connected_msg = ws_a.receive_json()
         assert connected_msg["type"] == "SESSION_EVENT"
         assert connected_msg["payload"]["event"] == "connected"
-
-        # Drain any other messages (e.g., initial state)
-        # (There shouldn't be any in this test flow, but be defensive)
+        # Drain chargen bootstrap (slug path emits CHARACTER_CREATION when
+        # has_character=False — playtest 2026-04-23 fix).
+        ws_a.receive_json()
 
         # Send PLAYER_SEAT to claim character_slot "rux"
         ws_a.send_json({

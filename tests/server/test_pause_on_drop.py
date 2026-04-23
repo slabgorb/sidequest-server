@@ -96,6 +96,9 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
             msg = ws_alice.receive_json()
             assert msg["type"] == "SESSION_EVENT"
             assert msg["payload"]["event"] == "connected"
+            # Drain chargen bootstrap (slug path emits it when has_character=False).
+            alice_chargen = ws_alice.receive_json()
+            assert alice_chargen["type"] == "CHARACTER_CREATION"
 
             # Alice claims a seat
             ws_alice.send_json({
@@ -114,6 +117,9 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
                     "payload": {"event": "connect", "game_slug": slug},
                 })
                 bob_connected = ws_bob.receive_json()
+                # Drain bob's chargen bootstrap.
+                bob_chargen = ws_bob.receive_json()
+                assert bob_chargen["type"] == "CHARACTER_CREATION"
                 # Alice should receive a PLAYER_PRESENCE{connected} for bob
                 alice_sees_bob = ws_alice.receive_json()
                 assert alice_sees_bob["type"] == "PLAYER_PRESENCE"
@@ -193,6 +199,7 @@ def test_absent_player_reconnect_broadcasts_game_resumed(
         })
         msg = ws_alice.receive_json()
         assert msg["type"] == "SESSION_EVENT"
+        ws_alice.receive_json()  # CHARACTER_CREATION bootstrap
 
         ws_alice.send_json({
             "type": "PLAYER_SEAT",
@@ -209,6 +216,7 @@ def test_absent_player_reconnect_broadcasts_game_resumed(
                 "payload": {"event": "connect", "game_slug": slug},
             })
             ws_bob.receive_json()  # connected
+            ws_bob.receive_json()  # CHARACTER_CREATION bootstrap
             ws_alice.receive_json()  # PLAYER_PRESENCE{connected} for bob
 
             ws_bob.send_json({
@@ -233,6 +241,7 @@ def test_absent_player_reconnect_broadcasts_game_resumed(
                 "payload": {"event": "connect", "game_slug": slug},
             })
             ws_bob2.receive_json()  # bob sees SESSION_EVENT{connected}
+            ws_bob2.receive_json()  # CHARACTER_CREATION bootstrap
             # alice should receive PLAYER_PRESENCE{connected} then GAME_RESUMED
             bob_reconnect_presence = ws_alice.receive_json()
             assert bob_reconnect_presence["type"] == "PLAYER_PRESENCE"
