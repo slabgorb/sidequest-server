@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
     DaemonClient,
     DaemonRequestError,
@@ -222,6 +223,12 @@ class _SessionData:
     # the player's backstory decisions. Rust parity: Arc<Mutex<LoreStore>>
     # on app state — Python single-player keeps it on the session.
     lore_store: LoreStore = field(default_factory=LoreStore)
+    # Audio DJ — per-session LibraryBackend so ThemeRotator cooldowns
+    # persist across turns within a session. None when the genre pack
+    # has no resolvable audio directory on disk (e.g. a pack defining
+    # moods without a matching ``audio/`` subtree). See
+    # _maybe_dispatch_audio for the dispatch path.
+    audio_backend: LibraryBackend | None = None
     # Active scenario pack (Story 2.3 Slice D). Set at chargen
     # confirmation when the genre pack declares at least one scenario.
     # Rust parity: ``shared_session.active_scenario`` — lives on the
@@ -830,6 +837,7 @@ class WebSocketSessionHandler:
                 opening_seed, opening_directive = opening
             culture_ref = resolve_culture_reference(genre_pack, row.world_slug)
             world_context: str | None = culture_ref if culture_ref else None
+            audio_backend = self._build_audio_backend(row.genre_slug, genre_pack)
 
             self._session_data = _SessionData(
                 genre_slug=row.genre_slug,
@@ -845,6 +853,7 @@ class WebSocketSessionHandler:
                 opening_seed=opening_seed,
                 opening_directive=opening_directive,
                 world_context=world_context,
+                audio_backend=audio_backend,
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
@@ -1118,6 +1127,7 @@ class WebSocketSessionHandler:
         # instead of registering an empty block.
         culture_ref = resolve_culture_reference(genre_pack, world_slug)
         world_context: str | None = culture_ref if culture_ref else None
+        audio_backend = self._build_audio_backend(genre_slug, genre_pack)
 
         self._session_data = _SessionData(
             genre_slug=genre_slug,
@@ -1133,6 +1143,7 @@ class WebSocketSessionHandler:
             opening_seed=opening_seed,
             opening_directive=opening_directive,
             world_context=world_context,
+            audio_backend=audio_backend,
         )
         self._state = _State.Creating if not has_character else _State.Playing
 
@@ -2417,6 +2428,74 @@ class WebSocketSessionHandler:
         sd.opening_directive = None
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Audio DJ backend construction
+    # ------------------------------------------------------------------
+
+    def _build_audio_backend(
+        self,
+        genre_slug: str,
+        genre_pack: GenrePack,
+    ) -> LibraryBackend | None:
+        """Construct the per-session LibraryBackend, or None when the
+        genre pack has no resolvable on-disk audio directory.
+
+        Emits a watcher event when audio is disabled so the GM panel
+        can tell whether a silent turn is because the narration had
+        no cues or because audio is off entirely."""
+        try:
+            pack_dir = GenreLoader().find(genre_slug)
+        except Exception as exc:  # noqa: BLE001 — best-effort; never crash connect
+            logger.warning(
+                "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
+                genre_slug, exc,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "audio",
+                    "op": "disabled",
+                    "reason": "pack_dir_missing",
+                    "genre": genre_slug,
+                },
+                component="audio",
+            )
+            return None
+
+        audio_cfg = genre_pack.audio
+        if not audio_cfg.mood_tracks and not audio_cfg.themes and not audio_cfg.sfx_library:
+            logger.info(
+                "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "audio",
+                    "op": "disabled",
+                    "reason": "empty_config",
+                    "genre": genre_slug,
+                },
+                component="audio",
+            )
+            return None
+
+        logger.info(
+            "audio.backend_ready genre=%s pack_dir=%s",
+            genre_slug, pack_dir,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "audio",
+                "op": "enabled",
+                "genre": genre_slug,
+                "mood_count": len(audio_cfg.mood_tracks) + len(audio_cfg.themes),
+                "sfx_count": len(audio_cfg.sfx_library),
+            },
+            component="audio",
+        )
+        return LibraryBackend(audio_cfg, base_path=pack_dir)
 
     # ------------------------------------------------------------------
     # Visual-scene render dispatch
