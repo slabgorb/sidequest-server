@@ -1,0 +1,162 @@
+tone: gonzo-sincere
+lethality: moderate
+magic_level: none
+
+stat_generation: point_buy
+point_buy_budget: 27
+
+ability_score_names:
+  - Brawn
+  - Reflexes
+  - Toughness
+  - Wits
+  - Instinct
+  - Presence
+
+allowed_classes:
+  - Scavenger
+  - Mutant
+  - Pureblood
+  - Synth
+  - Beastkin
+  - Tinker
+
+allowed_races:
+  - Mutant Human
+  - Pure Strain Human
+  - Uplifted Animal
+  - Plant Person
+  - Synthetic
+  - Hybrid
+
+race_label: Stock
+class_label: Calling
+
+class_hp_bases:
+  Scavenger: 8
+  Mutant: 10
+  Pureblood: 8
+  Synth: 12
+  Beastkin: 10
+  Tinker: 6
+
+# ── Confrontations ──────────────────────────────────────────
+confrontations:
+  - type: negotiation
+    label: "Wasteland Parley"
+    category: social
+    metric:
+      name: leverage
+      direction: bidirectional
+      starting: 5
+      threshold_high: 10
+      threshold_low: 0
+    beats:
+      - id: persuade
+        label: "Make Your Case"
+        metric_delta: 2
+        stat_check: Presence
+        effect: "opponent considers your argument"
+        narrator_hint: "Show the NPC weighing the player's words."
+      - id: threaten
+        label: "Threaten"
+        metric_delta: 3
+        stat_check: Brawn
+        risk: "faction reputation -1 if it fails"
+        consequence: "NPC becomes hostile on critical failure"
+        narrator_hint: "Escalate tension. The threat should feel dangerous."
+      - id: concede_point
+        label: "Concede a Point"
+        metric_delta: -1
+        stat_check: Presence
+        effect: "opponent disposition +5, reveals their real goal"
+        narrator_hint: "Strategic retreat. Player gives ground to gain information."
+      - id: walk_away
+        label: "Walk Away"
+        metric_delta: 0
+        stat_check: Instinct
+        resolution: true
+        consequence: "deal collapses, reputation intact"
+        narrator_hint: "Player turns their back on the deal. Walking away."
+    mood: tension
+
+  - type: combat
+    label: "Wasteland Brawl"
+    category: combat
+    # Momentum-based encounter metric — tracks command of the brawl,
+    # not HP. Damage lives on character state. Brutal, gritty, and the
+    # mutation beat still has its cost-with-power dynamic.
+    metric:
+      name: momentum
+      direction: bidirectional
+      starting: 0
+      threshold_high: 10
+      threshold_low: -10
+    beats:
+      - id: attack
+        label: "Attack"
+        metric_delta: 2
+        stat_check: Brawn
+        effect: "deal damage to the target"
+        narrator_hint: "Describe the blow connecting — gritty, physical, consequential."
+      - id: defend
+        label: "Defend"
+        metric_delta: 1
+        stat_check: Toughness
+        effect: "reduce incoming damage, hold position"
+        narrator_hint: "Player braces or blocks. Show the impact absorbed."
+      - id: flank
+        label: "Flank"
+        metric_delta: 3
+        stat_check: Reflexes
+        risk: "exposed if it fails — lose 2 momentum and take extra damage"
+        effect: "gain positional advantage"
+        narrator_hint: "Risky repositioning for a better angle of attack."
+      - id: mutant_ability
+        label: "Use Mutation"
+        metric_delta: 4
+        stat_check: Instinct
+        risk: "mutation instability — lose 2 momentum and suffer side effect on failure"
+        effect: "unleash mutation on target"
+        narrator_hint: "The mutation manifests visibly. Show the cost as well as the power."
+      - id: flee
+        label: "Flee"
+        metric_delta: 0
+        stat_check: Reflexes
+        resolution: true
+        consequence: "escape combat, possible pursuit"
+        narrator_hint: "Player breaks contact and runs. Not every fight needs a winner."
+    mood: combat
+
+  - type: chase
+    label: Wasteland Pursuit
+    category: movement
+    metric:
+      name: separation
+      direction: ascending
+      starting: 3
+      threshold_high: 10
+      threshold_low: 0
+    beats:
+      - id: scramble
+        label: Scramble
+        metric_delta: 2
+        stat_check: Reflexes
+        narrator_hint: Boots on dust, pickup tires spitting rocks.
+      - id: shortcut
+        label: Shortcut
+        metric_delta: 3
+        stat_check: Wits
+        risk: "Dead end in the rubble — lose 2 separation"
+      - id: distraction
+        label: Distraction
+        metric_delta: 1
+        stat_check: Wits
+        effect: "Throw a flare, scatter scrap, misdirect"
+      - id: go_underground
+        label: Go Underground
+        metric_delta: 0
+        stat_check: Reflexes
+        resolution: true
+        consequence: "Chase ends — vanish into a drainage tunnel or bunker"
+    mood: tension

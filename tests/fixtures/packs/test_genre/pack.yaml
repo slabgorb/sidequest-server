@@ -1,0 +1,12 @@
+name: Mutant Wasteland
+version: "0.1.0"
+description: >-
+  Post-apocalyptic mutant adventure — scavenge ancient tech, survive the
+  wastes, discover what the Ancients left behind. Mutations are as common
+  as freckles. Technology is either treasure or trap.
+lobby_blurb: "Scavenge the ruins, dodge the feral, and decide what the old world's junk is worth to you."
+recommended_players:
+  min: 1
+  max: 4
+  sweet_spot: 3
+min_sidequest_version: "0.1.0"
