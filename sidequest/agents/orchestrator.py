@@ -329,6 +329,17 @@ class TurnContext:
     # *field* mirrors Rust's typed seam; the *helper signatures* differ.
     pacing_hint: PacingHint | None = None
 
+    # Active confrontation definition + live encounter (Valley zone, only
+    # while an encounter is in progress). The session handler materializes
+    # a ``StructuredEncounter`` from ``snapshot.encounter`` and looks up
+    # the matching ``ConfrontationDef`` from the genre pack's rules; both
+    # are passed to the narrator so the prompt can list available beats
+    # and actors. Without these the narrator emits ``confrontation="combat"``
+    # every turn with ``beat_selections=[]`` because the prompt has no
+    # beats to select from.
+    confrontation_def: object | None = None
+    encounter_state: object | None = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -469,6 +480,79 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers (ContextBuilder equivalent — inlined per spec)
 # ---------------------------------------------------------------------------
+
+
+def _format_encounter_context_section(
+    confrontation_def: object, encounter_state: object | None
+) -> str:
+    """Render the ``<encounter-context>`` block the narrator prompt reads
+    when an encounter is active.
+
+    Passed as ``object`` to avoid pulling the genre + encounter modules
+    into the orchestrator import graph; duck-typed on attribute access.
+    Returns an empty string if the def lacks beats (no-op, shouldn't
+    happen for real packs — the ConfrontationDef validator rejects empty
+    beat lists — but defensive for tests).
+    """
+    beats = getattr(confrontation_def, "beats", None) or []
+    if not beats:
+        return ""
+    ctype = getattr(confrontation_def, "confrontation_type", "encounter")
+    label = getattr(confrontation_def, "label", ctype)
+    metric_def = getattr(confrontation_def, "metric", None)
+    lines = [f"<encounter-context>", f"encounter: {ctype} ({label})"]
+    # Metric line — prefer the live encounter's value, fall back to the
+    # ConfrontationDef's starting value. "bidirectional", "ascending",
+    # "descending" + threshold_high / threshold_low come straight off the
+    # def so the narrator knows which direction to push and when it ends.
+    if encounter_state is not None and getattr(encounter_state, "metric", None) is not None:
+        em = encounter_state.metric
+        direction = getattr(em, "direction", "")
+        dir_str = direction.value if hasattr(direction, "value") else str(direction)
+        lines.append(
+            f"metric: {em.name}={em.current} (direction={dir_str}, "
+            f"threshold_high={em.threshold_high}, threshold_low={em.threshold_low})"
+        )
+    elif metric_def is not None:
+        lines.append(
+            f"metric: {metric_def.name} (direction={metric_def.direction}, "
+            f"starting={metric_def.starting}, "
+            f"threshold_high={metric_def.threshold_high}, "
+            f"threshold_low={metric_def.threshold_low})"
+        )
+    # Actors from live encounter state.
+    if encounter_state is not None:
+        actors = getattr(encounter_state, "actors", None) or []
+        if actors:
+            lines.append("actors: " + ", ".join(
+                f"{a.name} ({a.role})" for a in actors
+            ))
+    lines.append("")
+    lines.append("available beats:")
+    for beat in beats:
+        bid = getattr(beat, "id", "")
+        blabel = getattr(beat, "label", bid)
+        stat = getattr(beat, "stat_check", "")
+        delta = getattr(beat, "metric_delta", 0)
+        effect = getattr(beat, "effect", "") or ""
+        risk = getattr(beat, "risk", "") or ""
+        resolves = getattr(beat, "resolution", False)
+        hint = getattr(beat, "narrator_hint", "") or ""
+        parts = [f"- {bid} ({blabel})"]
+        if stat:
+            parts.append(f"stat_check={stat}")
+        parts.append(f"metric_delta={delta:+d}")
+        if resolves:
+            parts.append("RESOLVES")
+        if effect:
+            parts.append(f"effect: {effect}")
+        if risk:
+            parts.append(f"risk: {risk}")
+        if hint:
+            parts.append(f"hint: {hint}")
+        lines.append("  " + " | ".join(parts))
+    lines.append("</encounter-context>")
+    return "\n".join(lines)
 
 
 def _build_verbosity_section(verbosity: str) -> str:
@@ -860,6 +944,26 @@ class Orchestrator:
         # Encounter rules for ANY active encounter type
         if context.in_combat or context.in_chase or context.in_encounter:
             self._narrator.build_encounter_context(registry)
+            # Inject the live encounter + ConfrontationDef so the narrator
+            # can actually choose beats. Without this, the narrator prompt
+            # promises an "encounter context section will list available
+            # beats and actors" but no such section is ever registered —
+            # which is why every combat turn used to emit
+            # ``beat_selections=[]``.
+            if context.confrontation_def is not None:
+                section = _format_encounter_context_section(
+                    context.confrontation_def, context.encounter_state
+                )
+                if section:
+                    registry.register_section(
+                        agent_name,
+                        PromptSection.new(
+                            "encounter_context",
+                            section,
+                            AttentionZone.Valley,
+                            SectionCategory.State,
+                        ),
+                    )
 
         # Phase 1 slice: tactical grid injection deferred to Story 41-9
         # Phase 1 slice: lore filter (world_graph) deferred to Story 41-7
@@ -1044,9 +1148,26 @@ class Orchestrator:
         )
 
         prompt_text = registry.compose(agent_name)
+        section_count = len(registry.registry(agent_name))
         logger.info(
             "turn.agent_llm.prompt_build section_count=%d",
-            len(registry.registry(agent_name)),
+            section_count,
+        )
+        # Dashboard Prompt tab consumes `prompt_assembled`. The hub
+        # lives in `sidequest.telemetry.watcher_hub` — importing from
+        # `sidequest.server.watcher` would drag in uvicorn's logging
+        # reconfiguration and break every caplog-based test.
+        from sidequest.telemetry.watcher_hub import publish_event as _pub
+
+        _pub(
+            "prompt_assembled",
+            {
+                "agent_name": agent_name,
+                "section_count": section_count,
+                "prompt_len": len(prompt_text),
+                "tier": str(tier),
+            },
+            component="prompt_builder",
         )
         return prompt_text, registry
 

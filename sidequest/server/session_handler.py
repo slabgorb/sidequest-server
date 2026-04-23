@@ -58,6 +58,7 @@ from sidequest.genre.models.world import NavigationMode
 from sidequest.game.event_log import EventLog
 from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
@@ -66,6 +67,8 @@ from sidequest.protocol.messages import (
     GamePausedMessage,
     GamePausedPayload,
     GameResumedMessage,
+    ImageMessage,
+    ImagePayload,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -74,6 +77,8 @@ from sidequest.protocol.messages import (
     PartyStatusPayload,
     PlayerPresenceMessage,
     PlayerPresencePayload,
+    RenderQueuedMessage,
+    RenderQueuedPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SessionEventMessage,
@@ -87,11 +92,18 @@ from sidequest.protocol.models import (
     PartyMember,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.daemon_client import (
+    DaemonClient,
+    DaemonRequestError,
+    DaemonUnavailableError,
+    render_enabled,
+)
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 from sidequest.telemetry.spans import (
     SPAN_NPC_AUTO_REGISTERED,
     SPAN_NPC_REINVENTED,
@@ -821,6 +833,27 @@ class WebSocketSessionHandler:
                 player_name,
                 snapshot.turn_manager.interaction,
             )
+            # Snapshot the resumed session so the dashboard State tab and
+            # Subsystems "session" component light up on reconnect without
+            # waiting for the next narration turn.
+            _watcher_publish(
+                "game_state_snapshot",
+                {
+                    "reason": "resume",
+                    "genre_slug": genre_slug,
+                    "world_slug": world_slug,
+                    "player_name": player_name,
+                    "player_id": player_id,
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "current_location": snapshot.location or "",
+                    "discovered_regions": list(snapshot.discovered_regions),
+                    "npc_registry_count": len(snapshot.npc_registry),
+                    "quest_log_count": len(snapshot.quest_log),
+                    "lore_established_count": len(snapshot.lore_established),
+                    "character_count": len(snapshot.characters),
+                },
+                component="session",
+            )
             # Also refresh PARTY_STATUS so the resumed client's header /
             # sheet / location update from the saved snapshot. Without
             # this the UI has no character data until the next narration
@@ -1347,6 +1380,19 @@ class WebSocketSessionHandler:
             lore_added,
             len(sd.lore_store),
         )
+        _watcher_publish(
+            "lore_retrieval",
+            {
+                "reason": "character_creation_seed",
+                "fragments_added": lore_added,
+                "total_fragments": len(sd.lore_store),
+                "total_tokens": sd.lore_store.total_tokens(),
+                "genre_slug": sd.genre_slug,
+                "world_slug": sd.world_slug,
+                "player_id": player_id,
+            },
+            component="rag",
+        )
 
         # NPC registry reset (Story 2.3 Slice G). A fresh character
         # entering the world must not inherit chargen-tier NPC name
@@ -1618,6 +1664,7 @@ class WebSocketSessionHandler:
         )
 
         _apply_narration_result_to_snapshot(snapshot, result, sd.player_name)
+        apply_encounter_updates(snapshot, result, sd.genre_pack, sd.player_name)
         snapshot.turn_manager.record_interaction()
 
         try:
@@ -1668,6 +1715,17 @@ class WebSocketSessionHandler:
             len(forwarded_footnotes),
             sd.player_name,
         )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "footnotes",
+                "count": len(forwarded_footnotes),
+                "player_id": sd.player_id,
+                "turn_number": snapshot.turn_manager.interaction,
+                "summaries": [fn.summary for fn in forwarded_footnotes][:10],
+            },
+            component="footnotes",
+        )
         narration_payload = NarrationPayload(
             text=narration_nbs,
             state_delta=None,
@@ -1702,10 +1760,94 @@ class WebSocketSessionHandler:
                     snapshot.location or "",
                     snapshot.turn_manager.interaction,
                 )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "party_status",
+                        "reason": "turn_end",
+                        "location": snapshot.location or "",
+                        "turn_number": snapshot.turn_manager.interaction,
+                        "player_id": sd.player_id,
+                    },
+                    component="party_status",
+                )
             except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
                 logger.warning(
                     "state.party_status_refresh_failed error=%s", exc
                 )
+
+        # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
+        # message ships with the NARRATION payload; the async render task
+        # posts an IMAGE message onto the per-connection outbound queue
+        # when the daemon replies. Short-circuits without any socket work
+        # when: render flag off, no visual scene, daemon socket missing,
+        # or outbound queue unavailable (test configurations that don't
+        # attach room context).
+        render_queued = self._maybe_dispatch_render(sd, result)
+        if render_queued is not None:
+            outbound.append(render_queued)
+
+        # Semantic watcher event — `turn_complete` is the highest-leverage
+        # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
+        # turn-buckets, Timing p95, and the Turn counter all at once.
+        # Field shape mirrors `TurnCompleteFields` in
+        # `sidequest-ui/src/types/watcher.ts`.
+        try:
+            patches: list[dict[str, object]] = []
+            if result.location:
+                patches.append({"patch_type": "location", "fields_changed": ["location"]})
+            if result.quest_updates:
+                patches.append(
+                    {"patch_type": "quest", "fields_changed": list(result.quest_updates)}
+                )
+            if result.lore_established:
+                patches.append({"patch_type": "lore", "fields_changed": ["lore_established"]})
+            if result.npcs_present:
+                patches.append(
+                    {
+                        "patch_type": "npc_registry",
+                        "fields_changed": [n.name for n in result.npcs_present],
+                    }
+                )
+            if result.items_gained or result.items_lost:
+                patches.append({"patch_type": "inventory", "fields_changed": []})
+
+            beats_fired: list[dict[str, object]] = []
+            for beat in result.beat_selections or []:
+                beats_fired.append(
+                    {
+                        "trope": getattr(beat, "trope_id", None)
+                        or getattr(beat, "beat_id", None)
+                        or "unknown",
+                        "threshold": getattr(beat, "threshold", None),
+                    }
+                )
+
+            _watcher_publish(
+                "turn_complete",
+                {
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "classified_intent": result.classified_intent,
+                    "agent_name": result.agent_name,
+                    "agent_duration_ms": result.agent_duration_ms,
+                    "total_duration_ms": result.agent_duration_ms,
+                    "is_degraded": result.is_degraded,
+                    "token_count_in": result.token_count_in,
+                    "token_count_out": result.token_count_out,
+                    "extraction_tier": str(result.prompt_tier),
+                    "player_input": action,
+                    "player_id": sd.player_id,
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "patches": patches,
+                    "beats_fired": beats_fired,
+                    "delta_empty": not patches and not beats_fired,
+                },
+                component="orchestrator",
+                severity="warning" if result.is_degraded else "info",
+            )
+        except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
+            logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
 
         return outbound
 
@@ -1759,6 +1901,233 @@ class WebSocketSessionHandler:
         sd.opening_directive = None
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Visual-scene render dispatch
+    # ------------------------------------------------------------------
+
+    def _maybe_dispatch_render(
+        self,
+        sd: _SessionData,
+        result: object,
+    ) -> RenderQueuedMessage | None:
+        """Fire a render request at the media daemon if the narrator flagged
+        a visual scene and the pipeline is enabled.
+
+        Returns a ``RenderQueuedMessage`` to append to the turn's outbound
+        frames, or ``None`` when nothing was dispatched (no scene, feature
+        flag off, daemon offline, or no outbound queue).
+
+        The actual daemon round-trip runs on a background task; the IMAGE
+        reply lands on ``self._out_queue`` whenever the render completes.
+        Failures are swallowed with OTEL spans + watcher events so that no
+        render error ever crashes a turn.
+        """
+        from sidequest.agents.orchestrator import NarrationTurnResult
+
+        if not isinstance(result, NarrationTurnResult):
+            return None
+        visual = result.visual_scene
+        if visual is None or not getattr(visual, "subject", "").strip():
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "no_visual_scene",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        if not render_enabled():
+            logger.info("render.skipped reason=feature_flag_disabled")
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "feature_flag_disabled",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        client = DaemonClient()
+        if not client.is_available():
+            logger.warning(
+                "render.skipped reason=daemon_unavailable socket=%s",
+                client.socket_path,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "daemon_unavailable",
+                    "socket": str(client.socket_path),
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+                severity="warning",
+            )
+            return None
+        if self._out_queue is None:
+            # Test configurations that don't attach room context can't
+            # receive async IMAGE frames. Skip loudly so we don't fire
+            # a render whose result has nowhere to land.
+            logger.warning("render.skipped reason=no_outbound_queue")
+            return None
+
+        render_id = uuid.uuid4().hex[:12]
+        tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
+        params: dict[str, object] = {
+            "tier": tier,
+            "subject": visual.subject,
+            "mood": visual.mood or "",
+            "tags": list(visual.tags or []),
+            "location": sd.snapshot.location or "",
+            "narration": result.narration,
+            "genre": sd.genre_slug,
+        }
+
+        logger.info(
+            "render.dispatched render_id=%s tier=%s subject=%r",
+            render_id,
+            tier,
+            visual.subject[:80],
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "dispatched",
+                "render_id": render_id,
+                "tier": tier,
+                "subject": visual.subject[:120],
+                "turn_number": sd.snapshot.turn_manager.interaction,
+            },
+            component="render",
+        )
+
+        out_queue = self._out_queue
+        player_id = sd.player_id
+        asyncio.create_task(
+            self._run_render(client, params, render_id, out_queue, player_id)
+        )
+
+        return RenderQueuedMessage(
+            type=MessageType.RENDER_QUEUED,  # type: ignore[arg-type]
+            payload=RenderQueuedPayload(render_id=render_id),
+            player_id=player_id,
+        )
+
+    async def _run_render(
+        self,
+        client: DaemonClient,
+        params: dict[str, object],
+        render_id: str,
+        out_queue: "asyncio.Queue[object]",
+        player_id: str,
+    ) -> None:
+        """Background render coroutine — waits for the daemon reply, then
+        enqueues an IMAGE message or logs a failure. Never raises; any
+        exception is caught and surfaced as an OTEL watcher event."""
+        try:
+            reply = await client.render(params)
+        except DaemonUnavailableError as exc:
+            logger.warning(
+                "render.reply_unavailable render_id=%s error=%s", render_id, exc
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_unavailable",
+                    "error": str(exc),
+                },
+                component="render",
+                severity="warning",
+            )
+            return
+        except DaemonRequestError as exc:
+            logger.warning(
+                "render.reply_error render_id=%s code=%s error=%s",
+                render_id,
+                exc.code,
+                exc.message,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_error",
+                    "code": exc.code,
+                    "error": exc.message,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — background task must never crash the loop
+            logger.exception("render.reply_exception render_id=%s", render_id)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "exception",
+                    "error": type(exc).__name__,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+
+        image_url = str(reply.get("image_url") or "")
+        served_url = _render_url_from_path(image_url)
+        width = int(reply.get("width") or 0) or None
+        height = int(reply.get("height") or 0) or None
+        elapsed = int(reply.get("elapsed_ms") or 0)
+
+        msg = ImageMessage(
+            type=MessageType.IMAGE,  # type: ignore[arg-type]
+            payload=ImagePayload(
+                url=served_url,
+                render_id=render_id,
+                tier=str(params.get("tier") or ""),
+                width=width,
+                height=height,
+            ),
+            player_id=player_id,
+        )
+        try:
+            out_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            logger.warning("render.outbound_queue_full render_id=%s", render_id)
+            return
+        logger.info(
+            "render.completed render_id=%s url=%s elapsed_ms=%d",
+            render_id,
+            served_url,
+            elapsed,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "completed",
+                "render_id": render_id,
+                "url": served_url,
+                "elapsed_ms": elapsed,
+            },
+            component="render",
+        )
 
     def _build_session_start_party_status(
         self,
@@ -1867,10 +2236,26 @@ def _build_turn_context(
     char_name = (
         snapshot.characters[0].core.name if snapshot.characters else sd.player_name
     )
+    # Encounter state — when ``snapshot.encounter`` is set, flip the
+    # per-type flags and look up the matching ``ConfrontationDef`` from
+    # the genre pack's rules so the narrator prompt can list beats.
+    # Without this pairing, ``in_combat`` was hardcoded False and every
+    # combat turn emitted ``beat_selections=[]``.
+    in_combat = False
+    in_chase = False
+    in_encounter = False
+    confrontation_def: object | None = None
+    encounter_state = snapshot.encounter
+    if encounter_state is not None:
+        etype = encounter_state.encounter_type
+        in_combat = etype == "combat"
+        in_chase = etype == "chase"
+        in_encounter = True
+        confrontation_def = _find_confrontation_def(sd.genre_pack, etype)
     return TurnContext(
-        in_combat=False,
-        in_chase=False,
-        in_encounter=False,
+        in_combat=in_combat,
+        in_chase=in_chase,
+        in_encounter=in_encounter,
         state_summary=snapshot.model_dump_json(indent=2),
         narrator_verbosity="standard",
         narrator_vocabulary="literary",
@@ -1883,7 +2268,26 @@ def _build_turn_context(
         npcs=list(snapshot.npcs),
         opening_directive=opening_directive,
         world_context=sd.world_context,
+        confrontation_def=confrontation_def,
+        encounter_state=encounter_state,
     )
+
+
+def _find_confrontation_def(pack: GenrePack, confrontation_type: str) -> object | None:
+    """Look up the ConfrontationDef matching the narrator's hint.
+
+    Returns ``None`` when the pack doesn't declare that confrontation
+    type; the caller skips encounter context injection and the narrator
+    will run without beats (narration-only fallback).
+    """
+    rules = getattr(pack, "rules", None)
+    if rules is None:
+        return None
+    confrontations = getattr(rules, "confrontations", None) or []
+    for cd in confrontations:
+        if getattr(cd, "confrontation_type", None) == confrontation_type:
+            return cd
+    return None
 
 
 def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
@@ -1958,6 +2362,18 @@ def _apply_narration_result_to_snapshot(
             result.location,
             player_name,
         )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "location",
+                "before": old_loc,
+                "after": result.location,
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+                "discovered_count": len(snapshot.discovered_regions),
+            },
+            component="state.location",
+        )
 
     # Quest updates
     if result.quest_updates:
@@ -1967,6 +2383,16 @@ def _apply_narration_result_to_snapshot(
             "state.quest_update count=%d player=%s",
             len(result.quest_updates),
             player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "quest_log",
+                "updates": dict(result.quest_updates),
+                "player_name": player_name,
+                "turn_number": snapshot.turn_manager.interaction,
+            },
+            component="quest_log",
         )
 
     # Lore established
@@ -2004,6 +2430,19 @@ def _apply_narration_result_to_snapshot(
                 npc_mention.role or "",
                 turn_num,
             )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "auto_registered",
+                    "name": npc_mention.name,
+                    "pronouns": npc_mention.pronouns or "",
+                    "role": npc_mention.role or "",
+                    "turn_number": turn_num,
+                    "registry_len": len(snapshot.npc_registry),
+                },
+                component="npc_registry",
+            )
         else:
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
@@ -2018,6 +2457,262 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+
+def apply_encounter_updates(
+    snapshot: GameSnapshot,
+    result: object,
+    genre_pack: GenrePack,
+    player_name: str,
+) -> None:
+    """Materialize, advance, and resolve encounter state from narrator output.
+
+    Three cases, in order:
+
+    1. No encounter active + narrator hinted a confrontation type: look up
+       the matching :class:`ConfrontationDef` in ``genre_pack.rules`` and
+       instantiate a :class:`StructuredEncounter` from the def's metric +
+       actor list (player + recently-mentioned hostile NPCs). Writes to
+       ``snapshot.encounter``.
+    2. Encounter active + narrator emitted ``beat_selections``: for each
+       selection, find the matching :class:`BeatDef` and apply its
+       ``metric_delta`` to the encounter's metric. Resolution beats (and
+       any metric crossing a threshold) mark ``encounter.resolved`` and
+       clear ``snapshot.encounter``.
+    3. Encounter active + narrator hinted a new confrontation type: no-op.
+       The narrator should not be starting a second encounter while one
+       is running; we trust the existing state.
+
+    Each step emits a ``state_transition`` watcher event tagged
+    ``component=encounter`` so the dashboard Subsystems tab surfaces the
+    mechanical loop Sebastien wants to see.
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        EncounterPhase,
+        MetricDirection,
+        StructuredEncounter,
+    )
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+
+    confrontation_hint = result.confrontation
+    turn_num = snapshot.turn_manager.interaction
+
+    # Case 1 — start a new encounter.
+    if snapshot.encounter is None and confrontation_hint:
+        conf_def = _find_confrontation_def(genre_pack, confrontation_hint)
+        if conf_def is None:
+            logger.warning(
+                "encounter.skipped reason=no_matching_def type=%s player=%s",
+                confrontation_hint,
+                player_name,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "skipped",
+                    "reason": "no_matching_def",
+                    "confrontation_type": confrontation_hint,
+                },
+                component="encounter",
+                severity="warning",
+            )
+            return
+        # Build actors from the player character and any hostile NPCs the
+        # narrator referenced this turn. Keeps per-turn state simple —
+        # tactical grid is Phase 4. Hostile-role detection is a rough
+        # heuristic (anything whose role contains "combat", "hostile",
+        # "enemy", or a named role like "bandit"/"creature"); the
+        # narrator also gets a chance to refine this via later turns.
+        actors: list[EncounterActor] = []
+        if snapshot.characters:
+            player_actor_name = snapshot.characters[0].core.name or player_name
+        else:
+            player_actor_name = player_name
+        actors.append(
+            EncounterActor(name=player_actor_name, role="player", per_actor_state={})
+        )
+        hostile_keywords = {"combat", "hostile", "enemy", "combatant"}
+        for npc in result.npcs_present or []:
+            role = (npc.role or "").lower()
+            if any(k in role for k in hostile_keywords) or role in {"brood-mother", "predator"}:
+                actors.append(
+                    EncounterActor(name=npc.name, role="combatant", per_actor_state={})
+                )
+        # Convert the pack metric def into the live EncounterMetric.
+        md = conf_def.metric
+        direction_map = {
+            "ascending": MetricDirection.Ascending,
+            "descending": MetricDirection.Descending,
+            "bidirectional": MetricDirection.Bidirectional,
+        }
+        metric = EncounterMetric(
+            name=md.name,
+            current=md.starting,
+            starting=md.starting,
+            direction=direction_map.get(md.direction, MetricDirection.Bidirectional),
+            threshold_high=md.threshold_high,
+            threshold_low=md.threshold_low,
+        )
+        snapshot.encounter = StructuredEncounter(
+            encounter_type=conf_def.confrontation_type,
+            metric=metric,
+            beat=0,
+            structured_phase=EncounterPhase.Setup,
+            actors=actors,
+            outcome=None,
+            resolved=False,
+            mood_override=conf_def.mood,
+            narrator_hints=[],
+        )
+        logger.info(
+            "encounter.started type=%s metric=%s=%d actors=%d player=%s",
+            conf_def.confrontation_type,
+            metric.name,
+            metric.current,
+            len(actors),
+            player_name,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "started",
+                "confrontation_type": conf_def.confrontation_type,
+                "metric_name": metric.name,
+                "metric_current": metric.current,
+                "actors": [a.name for a in actors],
+                "turn_number": turn_num,
+            },
+            component="encounter",
+        )
+
+    # Case 2 — advance an active encounter via beat_selections.
+    if snapshot.encounter is not None and result.beat_selections:
+        conf_def = _find_confrontation_def(
+            genre_pack, snapshot.encounter.encounter_type
+        )
+        if conf_def is None:
+            return
+        beat_lookup = {b.id: b for b in conf_def.beats}
+        resolved_this_turn = False
+        for selection in result.beat_selections:
+            beat_id = getattr(selection, "beat_id", None) or ""
+            actor = getattr(selection, "actor", None) or ""
+            beat_def = beat_lookup.get(beat_id)
+            if beat_def is None:
+                logger.warning(
+                    "encounter.beat_skipped reason=unknown_beat_id beat_id=%r actor=%r",
+                    beat_id,
+                    actor,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "beat_skipped",
+                        "reason": "unknown_beat_id",
+                        "beat_id": beat_id,
+                        "actor": actor,
+                    },
+                    component="encounter",
+                    severity="warning",
+                )
+                continue
+            before = snapshot.encounter.metric.current
+            snapshot.encounter.metric.current += int(beat_def.metric_delta or 0)
+            snapshot.encounter.beat += 1
+            logger.info(
+                "encounter.beat_applied beat=%s actor=%s metric=%s %d->%d",
+                beat_id,
+                actor,
+                snapshot.encounter.metric.name,
+                before,
+                snapshot.encounter.metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_applied",
+                    "beat_id": beat_id,
+                    "actor": actor,
+                    "metric_before": before,
+                    "metric_after": snapshot.encounter.metric.current,
+                    "metric_delta": beat_def.metric_delta,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            if beat_def.resolution:
+                resolved_this_turn = True
+                snapshot.encounter.outcome = beat_def.id
+        # Threshold crossing — resolve the encounter.
+        metric = snapshot.encounter.metric
+        hit_high = (
+            metric.threshold_high is not None
+            and metric.current >= metric.threshold_high
+        )
+        hit_low = (
+            metric.threshold_low is not None
+            and metric.current <= metric.threshold_low
+        )
+        if resolved_this_turn or hit_high or hit_low:
+            etype = snapshot.encounter.encounter_type
+            outcome = (
+                snapshot.encounter.outcome
+                or ("threshold_high" if hit_high else "threshold_low" if hit_low else "resolved")
+            )
+            logger.info(
+                "encounter.resolved type=%s outcome=%s final_metric=%d",
+                etype,
+                outcome,
+                metric.current,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "resolved",
+                    "confrontation_type": etype,
+                    "outcome": outcome,
+                    "final_metric": metric.current,
+                    "turn_number": turn_num,
+                },
+                component="encounter",
+            )
+            snapshot.encounter = None
+
+
+def _render_url_from_path(image_path: str) -> str:
+    """Translate a daemon-returned filesystem path into a URL the UI can
+    fetch via the server's ``/renders/*`` static mount.
+
+    The daemon writes every image under ``SIDEQUEST_OUTPUT_DIR`` (or a
+    tempdir when the env var is unset). The server mounts that same
+    directory at ``/renders``, so the mapping is purely a prefix swap.
+    When the path isn't inside that root (tempdir the server can't see),
+    the absolute path is returned verbatim; the UI will fail to load the
+    image, but a clear 404 is better than a silent replacement.
+    """
+    import os as _os
+    import pathlib as _pathlib
+
+    root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    if not root or not image_path:
+        return image_path
+    try:
+        rel = _pathlib.Path(image_path).resolve().relative_to(
+            _pathlib.Path(root).resolve()
+        )
+    except ValueError:
+        return image_path
+    return "/renders/" + str(rel).replace(_os.sep, "/")
 
 
 def _detect_npc_identity_drift(
@@ -2047,4 +2742,18 @@ def _detect_npc_identity_drift(
                 e_val,
                 m_val,
                 turn_num,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "npc_registry",
+                    "op": "reinvented",
+                    "name": existing.name,
+                    "drift_field": field,
+                    "expected": e_val,
+                    "narrator": m_val,
+                    "turn_number": turn_num,
+                },
+                component="npc_registry",
+                severity="warning",
             )
