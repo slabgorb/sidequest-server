@@ -1863,14 +1863,37 @@ def _build_turn_context(
     narrator on turn 0 only — the caller is responsible for clearing
     the session-level directive after the turn runs.
     """
+    from sidequest.agents.encounter_render import render_encounter_summary
+    from sidequest.server.dispatch.confrontation import find_confrontation_def
+
     snapshot = sd.snapshot
     char_name = (
         snapshot.characters[0].core.name if snapshot.characters else sd.player_name
     )
+
+    # Derive encounter flags from snapshot.encounter (Story 3.4).
+    encounter = snapshot.encounter
+    confrontation_def = None
+    encounter_summary = None
+    in_combat = False
+    in_chase = False
+    in_encounter = False
+    if encounter is not None and not encounter.resolved:
+        in_encounter = True
+        defs = sd.genre_pack.rules.confrontations if sd.genre_pack.rules else []
+        confrontation_def = find_confrontation_def(defs, encounter.encounter_type)
+        if confrontation_def is not None:
+            in_combat = confrontation_def.category == "combat"
+            in_chase = confrontation_def.category == "movement"
+        encounter_summary = render_encounter_summary(encounter)
+
     return TurnContext(
-        in_combat=False,
-        in_chase=False,
-        in_encounter=False,
+        in_combat=in_combat,
+        in_chase=in_chase,
+        in_encounter=in_encounter,
+        encounter=encounter if in_encounter else None,
+        confrontation_def=confrontation_def,
+        encounter_summary=encounter_summary,
         state_summary=snapshot.model_dump_json(indent=2),
         narrator_verbosity="standard",
         narrator_vocabulary="literary",
