@@ -325,13 +325,37 @@ class WebSocketSessionHandler:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
+    # Status tokens the engine uses to mark a creature as non-visible for
+    # projection purposes. Matched case-insensitively against
+    # ``CreatureCore.statuses``. Genre packs that mint stealth/invisibility
+    # mechanics should emit statuses containing one of these tokens so the
+    # projection filter's ``visible_to()`` can see them. Kept conservative:
+    # a missing/unknown marker must never unmask a target.
+    _HIDDEN_STATUS_TOKENS: tuple[str, ...] = (
+        "hidden",
+        "invisible",
+        "stealth",
+        "concealed",
+    )
+
+    @classmethod
+    def _is_hidden_status_list(cls, statuses: list[str]) -> bool:
+        for status in statuses:
+            lowered = status.lower()
+            if any(tok in lowered for tok in cls._HIDDEN_STATUS_TOKENS):
+                return True
+        return False
+
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
 
-        Phase-3 engine state does not yet track zones / visibility /
-        per-item ownership — those fields stay at their conservative
-        SessionGameStateView defaults. Player-character mapping grows
-        as engine state grows.
+        Zone + visibility state is populated from the live ``GameSnapshot``:
+        all player-characters share the party-level ``snapshot.location``,
+        and NPCs report their per-entity ``Npc.location``. Creatures whose
+        ``statuses`` contain a stealth-like marker go into
+        ``hidden_characters`` so ``visible_to()`` masks them even when
+        co-located with the viewer. Per-item ownership is not yet tracked
+        and stays at the conservative default.
 
         **GM identity wiring (C1, still partial):**
 
@@ -384,9 +408,33 @@ class WebSocketSessionHandler:
         mapping: dict[str, str] = {}
         # Character does not carry player_id — no mapping possible yet.
         # When the engine model gains player_id on Character, populate mapping here.
+
+        # Zone + hidden-character tracking from the live snapshot. Characters
+        # share the party-level location today (no per-character zone split
+        # in the engine yet); NPCs carry their own ``location``. Keys are
+        # creature names — the same identity the rest of the projection
+        # system uses when it refers to characters by ID.
+        snapshot = sd.snapshot
+        character_zones: dict[str, str] = {}
+        hidden_characters: set[str] = set()
+        party_zone = snapshot.location or None
+        if party_zone is not None:
+            for ch in snapshot.characters:
+                character_zones[ch.core.name] = party_zone
+        for ch in snapshot.characters:
+            if self._is_hidden_status_list(ch.core.statuses):
+                hidden_characters.add(ch.core.name)
+        for npc in snapshot.npcs:
+            if npc.location:
+                character_zones[npc.core.name] = npc.location
+            if self._is_hidden_status_list(npc.core.statuses):
+                hidden_characters.add(npc.core.name)
+
         return SessionGameStateView(
             gm_player_id=gm_player_id,
             player_id_to_character=mapping,
+            character_zones=character_zones,
+            hidden_characters=hidden_characters,
         )
 
     # ------------------------------------------------------------------
