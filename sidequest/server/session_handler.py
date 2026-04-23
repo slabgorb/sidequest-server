@@ -2058,7 +2058,7 @@ def _apply_narration_result_to_snapshot(
             encounter_resolved_span,
             combat_tick_span,
         )
-        from sidequest.game.encounter import EncounterPhase
+        from sidequest.game.encounter import EncounterPhase, MetricDirection
 
         # (a) Narrator-initiated encounter
         if result.confrontation and (
@@ -2102,6 +2102,12 @@ def _apply_narration_result_to_snapshot(
                     metric_delta=beat.metric_delta,
                 ):
                     enc.metric.current += beat.metric_delta
+                    # Ascending metrics clamp at 0 (port of Rust encounter.rs).
+                    if (
+                        enc.metric.direction == MetricDirection.Ascending
+                        and enc.metric.current < 0
+                    ):
+                        enc.metric.current = 0
                 enc.beat += 1
                 _advance_phase(enc)
                 with combat_tick_span(
@@ -2110,11 +2116,24 @@ def _apply_narration_result_to_snapshot(
                     phase=(enc.structured_phase or EncounterPhase.Setup).value,
                 ):
                     pass
+                # Direction-aware threshold resolution (port of Rust encounter.rs):
+                # Ascending fires on high only; Descending on low only; Bidirectional
+                # on either. Cross-checking the wrong boundary would falsely resolve
+                # a chase the moment its counter dipped below zero.
                 m = enc.metric
-                threshold_hit = (
-                    (m.threshold_high is not None and m.current >= m.threshold_high)
-                    or (m.threshold_low is not None and m.current <= m.threshold_low)
-                )
+                if m.direction == MetricDirection.Ascending:
+                    threshold_hit = (
+                        m.threshold_high is not None and m.current >= m.threshold_high
+                    )
+                elif m.direction == MetricDirection.Descending:
+                    threshold_hit = (
+                        m.threshold_low is not None and m.current <= m.threshold_low
+                    )
+                else:  # Bidirectional
+                    threshold_hit = (
+                        (m.threshold_high is not None and m.current >= m.threshold_high)
+                        or (m.threshold_low is not None and m.current <= m.threshold_low)
+                    )
                 if threshold_hit or beat.resolution:
                     enc.resolved = True
                     enc.structured_phase = EncounterPhase.Resolution
@@ -2146,6 +2165,7 @@ def _advance_phase(enc: "StructuredEncounter") -> None:
         1: EncounterPhase.Opening,
         2: EncounterPhase.Escalation,
         3: EncounterPhase.Escalation,
+        4: EncounterPhase.Escalation,
     }
     enc.structured_phase = ladder.get(enc.beat, EncounterPhase.Climax)
 
