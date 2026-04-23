@@ -58,6 +58,7 @@ from sidequest.genre.models.world import NavigationMode
 from sidequest.game.event_log import EventLog
 from sidequest.game.projection_filter import PassThroughFilter
 from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
@@ -66,6 +67,8 @@ from sidequest.protocol.messages import (
     GamePausedMessage,
     GamePausedPayload,
     GameResumedMessage,
+    ImageMessage,
+    ImagePayload,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -74,6 +77,8 @@ from sidequest.protocol.messages import (
     PartyStatusPayload,
     PlayerPresenceMessage,
     PlayerPresencePayload,
+    RenderQueuedMessage,
+    RenderQueuedPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SessionEventMessage,
@@ -87,6 +92,12 @@ from sidequest.protocol.models import (
     PartyMember,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.daemon_client import (
+    DaemonClient,
+    DaemonRequestError,
+    DaemonUnavailableError,
+    render_enabled,
+)
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
@@ -1764,6 +1775,17 @@ class WebSocketSessionHandler:
                     "state.party_status_refresh_failed error=%s", exc
                 )
 
+        # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
+        # message ships with the NARRATION payload; the async render task
+        # posts an IMAGE message onto the per-connection outbound queue
+        # when the daemon replies. Short-circuits without any socket work
+        # when: render flag off, no visual scene, daemon socket missing,
+        # or outbound queue unavailable (test configurations that don't
+        # attach room context).
+        render_queued = self._maybe_dispatch_render(sd, result)
+        if render_queued is not None:
+            outbound.append(render_queued)
+
         # Semantic watcher event — `turn_complete` is the highest-leverage
         # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
         # turn-buckets, Timing p95, and the Turn counter all at once.
@@ -1878,6 +1900,233 @@ class WebSocketSessionHandler:
         sd.opening_directive = None
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Visual-scene render dispatch
+    # ------------------------------------------------------------------
+
+    def _maybe_dispatch_render(
+        self,
+        sd: _SessionData,
+        result: object,
+    ) -> RenderQueuedMessage | None:
+        """Fire a render request at the media daemon if the narrator flagged
+        a visual scene and the pipeline is enabled.
+
+        Returns a ``RenderQueuedMessage`` to append to the turn's outbound
+        frames, or ``None`` when nothing was dispatched (no scene, feature
+        flag off, daemon offline, or no outbound queue).
+
+        The actual daemon round-trip runs on a background task; the IMAGE
+        reply lands on ``self._out_queue`` whenever the render completes.
+        Failures are swallowed with OTEL spans + watcher events so that no
+        render error ever crashes a turn.
+        """
+        from sidequest.agents.orchestrator import NarrationTurnResult
+
+        if not isinstance(result, NarrationTurnResult):
+            return None
+        visual = result.visual_scene
+        if visual is None or not getattr(visual, "subject", "").strip():
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "no_visual_scene",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        if not render_enabled():
+            logger.info("render.skipped reason=feature_flag_disabled")
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "feature_flag_disabled",
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        client = DaemonClient()
+        if not client.is_available():
+            logger.warning(
+                "render.skipped reason=daemon_unavailable socket=%s",
+                client.socket_path,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "skipped",
+                    "reason": "daemon_unavailable",
+                    "socket": str(client.socket_path),
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+                severity="warning",
+            )
+            return None
+        if self._out_queue is None:
+            # Test configurations that don't attach room context can't
+            # receive async IMAGE frames. Skip loudly so we don't fire
+            # a render whose result has nowhere to land.
+            logger.warning("render.skipped reason=no_outbound_queue")
+            return None
+
+        render_id = uuid.uuid4().hex[:12]
+        tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
+        params: dict[str, object] = {
+            "tier": tier,
+            "subject": visual.subject,
+            "mood": visual.mood or "",
+            "tags": list(visual.tags or []),
+            "location": sd.snapshot.location or "",
+            "narration": result.narration,
+            "genre": sd.genre_slug,
+        }
+
+        logger.info(
+            "render.dispatched render_id=%s tier=%s subject=%r",
+            render_id,
+            tier,
+            visual.subject[:80],
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "dispatched",
+                "render_id": render_id,
+                "tier": tier,
+                "subject": visual.subject[:120],
+                "turn_number": sd.snapshot.turn_manager.interaction,
+            },
+            component="render",
+        )
+
+        out_queue = self._out_queue
+        player_id = sd.player_id
+        asyncio.create_task(
+            self._run_render(client, params, render_id, out_queue, player_id)
+        )
+
+        return RenderQueuedMessage(
+            type=MessageType.RENDER_QUEUED,  # type: ignore[arg-type]
+            payload=RenderQueuedPayload(render_id=render_id),
+            player_id=player_id,
+        )
+
+    async def _run_render(
+        self,
+        client: DaemonClient,
+        params: dict[str, object],
+        render_id: str,
+        out_queue: "asyncio.Queue[object]",
+        player_id: str,
+    ) -> None:
+        """Background render coroutine — waits for the daemon reply, then
+        enqueues an IMAGE message or logs a failure. Never raises; any
+        exception is caught and surfaced as an OTEL watcher event."""
+        try:
+            reply = await client.render(params)
+        except DaemonUnavailableError as exc:
+            logger.warning(
+                "render.reply_unavailable render_id=%s error=%s", render_id, exc
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_unavailable",
+                    "error": str(exc),
+                },
+                component="render",
+                severity="warning",
+            )
+            return
+        except DaemonRequestError as exc:
+            logger.warning(
+                "render.reply_error render_id=%s code=%s error=%s",
+                render_id,
+                exc.code,
+                exc.message,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "daemon_error",
+                    "code": exc.code,
+                    "error": exc.message,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — background task must never crash the loop
+            logger.exception("render.reply_exception render_id=%s", render_id)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "failed",
+                    "render_id": render_id,
+                    "reason": "exception",
+                    "error": type(exc).__name__,
+                },
+                component="render",
+                severity="error",
+            )
+            return
+
+        image_url = str(reply.get("image_url") or "")
+        served_url = _render_url_from_path(image_url)
+        width = int(reply.get("width") or 0) or None
+        height = int(reply.get("height") or 0) or None
+        elapsed = int(reply.get("elapsed_ms") or 0)
+
+        msg = ImageMessage(
+            type=MessageType.IMAGE,  # type: ignore[arg-type]
+            payload=ImagePayload(
+                url=served_url,
+                render_id=render_id,
+                tier=str(params.get("tier") or ""),
+                width=width,
+                height=height,
+            ),
+            player_id=player_id,
+        )
+        try:
+            out_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            logger.warning("render.outbound_queue_full render_id=%s", render_id)
+            return
+        logger.info(
+            "render.completed render_id=%s url=%s elapsed_ms=%d",
+            render_id,
+            served_url,
+            elapsed,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "completed",
+                "render_id": render_id,
+                "url": served_url,
+                "elapsed_ms": elapsed,
+            },
+            component="render",
+        )
 
     def _build_session_start_party_status(
         self,
@@ -2172,6 +2421,32 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+
+def _render_url_from_path(image_path: str) -> str:
+    """Translate a daemon-returned filesystem path into a URL the UI can
+    fetch via the server's ``/renders/*`` static mount.
+
+    The daemon writes every image under ``SIDEQUEST_OUTPUT_DIR`` (or a
+    tempdir when the env var is unset). The server mounts that same
+    directory at ``/renders``, so the mapping is purely a prefix swap.
+    When the path isn't inside that root (tempdir the server can't see),
+    the absolute path is returned verbatim; the UI will fail to load the
+    image, but a clear 404 is better than a silent replacement.
+    """
+    import os as _os
+    import pathlib as _pathlib
+
+    root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    if not root or not image_path:
+        return image_path
+    try:
+        rel = _pathlib.Path(image_path).resolve().relative_to(
+            _pathlib.Path(root).resolve()
+        )
+    except ValueError:
+        return image_path
+    return "/renders/" + str(rel).replace(_os.sep, "/")
 
 
 def _detect_npc_identity_drift(

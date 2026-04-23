@@ -191,6 +191,29 @@ def create_app(
             [str(p) for p in resolved_search_paths],
         )
 
+    # --- Static /renders/* mount — serve daemon-generated images. ---
+    # The daemon writes every render under SIDEQUEST_OUTPUT_DIR (same env
+    # both processes read), and session_handler._render_url_from_path
+    # maps those filesystem paths to /renders/<relative>. When the env
+    # isn't set (unit tests, first-run) we skip the mount rather than
+    # raise — renders are optional and the lobby stays usable.
+    import os as _os
+
+    render_root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    if render_root:
+        render_dir = Path(render_root)
+        render_dir.mkdir(parents=True, exist_ok=True)
+        app.mount(
+            "/renders",
+            StaticFiles(directory=str(render_dir)),
+            name="render_assets",
+        )
+        logger.info("render_assets.mount_registered dir=%s", render_dir)
+    else:
+        logger.info(
+            "render_assets.mount_skipped reason=SIDEQUEST_OUTPUT_DIR_unset"
+        )
+
     return app
 
 
