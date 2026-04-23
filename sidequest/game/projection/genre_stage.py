@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 
 from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.projection.field_path import apply_mask
 from sidequest.game.projection.predicates import PREDICATES, PredicateContext
 from sidequest.game.projection.rules import (
     IncludeIfRule,
     ProjectionRules,
+    RedactFieldsRule,
     TargetOnlyRule,
 )
 from sidequest.game.projection.view import GameStateView
@@ -62,6 +64,22 @@ class GenreRuleStage:
                 )
                 if not pred(ctx, rule.include_if.arg):
                     return FilterDecision(include=False, payload_json="")
+
+            if isinstance(rule, RedactFieldsRule):
+                ctx = PredicateContext(
+                    view=view,
+                    payload=payload,
+                    viewer_player_id=player_id,
+                    viewer_character_id=view.character_of(player_id),
+                )
+                for spec in rule.redact_fields:
+                    pred = PREDICATES.get(spec.unless.predicate)
+                    if pred is None:
+                        raise RuntimeError(
+                            f"unknown predicate {spec.unless.predicate!r} at runtime"
+                        )
+                    if not pred(ctx, spec.unless.arg):
+                        apply_mask(working, spec.field, mask=spec.mask)
 
         return FilterDecision(include=True, payload_json=json.dumps(working))
 
