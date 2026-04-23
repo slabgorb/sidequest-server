@@ -1869,7 +1869,7 @@ class WebSocketSessionHandler:
                 "turn_complete",
                 {
                     "turn_number": snapshot.turn_manager.interaction,
-                    "classified_intent": result.classified_intent,
+                    "classified_intent": None,  # transitional placeholder — Task 6 removes entire key
                     "agent_name": result.agent_name,
                     "agent_duration_ms": result.agent_duration_ms,
                     "total_duration_ms": result.agent_duration_ms,

@@ -206,7 +206,6 @@ class NarrationTurnResult:
     lore_established: list[str] | None = None
 
     # OTEL / telemetry
-    classified_intent: str | None = None
     agent_name: str | None = None
     agent_duration_ms: int | None = None
     token_count_in: int | None = None
@@ -1196,17 +1195,11 @@ class Orchestrator:
         Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
         """
         with orchestrator_process_action_span(action_len=len(action)) as span:
-            # ADR-067: all intents route to narrator
-            classified_intent = "exploration"
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
             prompt_text, registry = self.build_narrator_prompt(action, context, tier=tier)
 
-            logger.info(
-                "unified_narrator.intent_inferred intent=%s source=state_inference",
-                classified_intent,
-            )
             logger.info("Invoking Claude CLI for narration action=%r", action)
 
             # ADR-066: persistent session (--resume on subsequent turns)
@@ -1251,7 +1244,6 @@ class Orchestrator:
                             "something shifts in the distance, but the moment passes."
                         ),
                         is_degraded=True,
-                        classified_intent=classified_intent,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
                         prompt_tier=tier,
@@ -1347,7 +1339,6 @@ class Orchestrator:
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
-                classified_intent=classified_intent,
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,

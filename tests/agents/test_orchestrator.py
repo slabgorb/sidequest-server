@@ -588,7 +588,6 @@ async def test_run_narration_turn_records_otel_fields():
     context = TurnContext(character_name="Kael")
     result = await orch.run_narration_turn("look around", context)
     assert result.agent_name == "narrator"
-    assert result.classified_intent == "exploration"
     assert result.agent_duration_ms is not None
     assert result.token_count_in is not None
     assert result.token_count_out is not None
@@ -681,4 +680,27 @@ def test_action_rewrite_still_present():
     field_names = {f.name for f in fields(NarrationTurnResult)}
     assert "action_rewrite" in field_names, (
         "action_rewrite must remain on NarrationTurnResult — not in scope for removal"
+    )
+
+
+def test_narration_turn_result_has_no_classified_intent():
+    """Group A Task 3 — classified_intent dead hardcode retired."""
+    from dataclasses import fields
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    field_names = {f.name for f in fields(NarrationTurnResult)}
+    assert "classified_intent" not in field_names, (
+        "classified_intent still on NarrationTurnResult"
+    )
+
+
+def test_orchestrator_module_has_no_classified_intent_hardcode():
+    """Group A Task 3 — no classified_intent = 'exploration' assignment in source."""
+    import inspect
+    from sidequest.agents import orchestrator
+    source = inspect.getsource(orchestrator)
+    assert 'classified_intent = "exploration"' not in source, (
+        'Hardcoded classified_intent = "exploration" still present'
+    )
+    assert "classified_intent = 'exploration'" not in source, (
+        "Hardcoded classified_intent = 'exploration' still present"
     )
