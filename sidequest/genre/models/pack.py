@@ -9,9 +9,12 @@ by the loader (Story 41-3). The individual components are validated models.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from sidequest.game.projection.rules import ProjectionRules
 
 from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
@@ -166,6 +169,8 @@ class GenrePack(BaseModel):
     base_archetypes: BaseArchetypes | None = None
     archetype_constraints: ArchetypeConstraints | None = None
     npc_traits: NpcTraitsDatabase | None = None
+    projection_rules: ProjectionRules | None = None
+    source_dir: Path | None = None
 
     # Convenience accessor for pack name
     @property

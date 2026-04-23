@@ -665,13 +665,10 @@ class WebSocketSessionHandler:
                 game_slug=slug,
                 mode=GameMode(row.mode),
             )
-            # MP-03 Task 3 + Task-17 ProjectionFilter Rules integration.
+            # MP-03 Task 3 + Task-17 + Task-22 ProjectionFilter Rules integration.
             self._event_log = EventLog(store)
             self._projection_cache = ProjectionCache(store)
-            # Task 22 (GenrePack loader) will populate genre_pack.projection_rules;
-            # until that lands, fall back to no-genre-rules (behaviourally identical
-            # to PassThroughFilter plus the core invariants).
-            projection_rules = getattr(genre_pack, "projection_rules", None)
+            projection_rules = genre_pack.projection_rules
             if projection_rules is not None:
                 self._projection_filter = ComposedFilter(rules=projection_rules)
             else:
