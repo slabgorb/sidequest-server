@@ -67,3 +67,48 @@ async def test_execute_narration_turn_continues_when_decomposer_degraded(session
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
     assert narrator_called, "narrator must still run when decomposer is degraded"
+
+
+async def test_execute_narration_turn_propagates_programmer_bug_exceptions(session_fixture):
+    """Exceptions escaping LocalDM.decompose indicate programmer bugs
+    (rename, signature drift). The session handler must NOT swallow them —
+    LocalDM already converts expected failures to degraded packages internally.
+    """
+    sd, handler = session_fixture
+
+    async def buggy_decompose(**kwargs):
+        # Simulate a programmer bug — e.g. AttributeError from a rename.
+        raise AttributeError("simulated programmer bug")
+
+    with patch.object(sd.local_dm, "decompose", side_effect=buggy_decompose), \
+         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock()), \
+         pytest.raises(AttributeError, match="simulated programmer bug"):
+        await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
+
+
+async def test_execute_narration_turn_turn_id_includes_player_id(session_fixture):
+    """turn_id must include player_id to disambiguate concurrent sessions in
+    the same genre:world at the same interaction number."""
+    sd, handler = session_fixture
+
+    captured: dict = {}
+
+    async def fake_decompose(**kwargs):
+        from sidequest.protocol.dispatch import DispatchPackage
+        captured["turn_id"] = kwargs["turn_id"]
+        return DispatchPackage(
+            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
+            confidence_global=1.0, degraded=False, degraded_reason=None,
+        )
+
+    async def fake_run(action, context):
+        return _make_minimal_narration_turn_result(narration="ok")
+
+    with patch.object(sd.local_dm, "decompose", side_effect=fake_decompose), \
+         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)):
+        await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
+
+    assert sd.player_id in captured["turn_id"], (
+        f"turn_id={captured['turn_id']!r} must include player_id={sd.player_id!r}"
+    )
+    assert captured["turn_id"].startswith(f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:")

@@ -1694,23 +1694,23 @@ class WebSocketSessionHandler:
         snapshot = sd.snapshot
 
         # Group B — Local DM decomposer runs between sealed-letter and narrator.
-        turn_id = f"{sd.genre_slug}:{sd.world_slug}:{snapshot.turn_manager.interaction}"
-        state_summary = turn_context.state_summary or ""
-        try:
-            dispatch_package = await sd.local_dm.decompose(
-                turn_id=turn_id,
-                player_id=f"player:{sd.player_name}",
-                raw_action=action,
-                state_summary=state_summary,
-            )
-        except Exception as exc:
-            logger.warning("session.decomposer_exception exc=%s", exc)
-            from sidequest.protocol.dispatch import DispatchPackage
-            dispatch_package = DispatchPackage(
-                turn_id=turn_id, per_player=[], cross_player=[],
-                confidence_global=0.0, degraded=True,
-                degraded_reason=f"exception: {exc}",
-            )
+        # LocalDM.decompose catches expected client failures internally and
+        # returns a degraded DispatchPackage. Any exception escaping here is a
+        # programmer bug (rename, signature drift); let it propagate — failing
+        # the turn loudly beats silently demoting bugs to degraded.
+        turn_id = (
+            f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:"
+            f"{snapshot.turn_manager.interaction}"
+        )
+        assert turn_context.state_summary is not None, (
+            "TurnContext.state_summary must be populated by _build_turn_context"
+        )
+        dispatch_package = await sd.local_dm.decompose(
+            turn_id=turn_id,
+            player_id=f"player:{sd.player_name}",
+            raw_action=action,
+            state_summary=turn_context.state_summary,
+        )
         if dispatch_package.degraded:
             logger.info(
                 "session.decomposer_degraded reason=%s turn_id=%s",
