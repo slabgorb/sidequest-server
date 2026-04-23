@@ -46,8 +46,25 @@ GM_ONLY_KINDS: frozenset[str] = frozenset({"THINKING"})
 
 @dataclass(frozen=True)
 class InvariantOutcome:
+    """Result of running CoreInvariantStage on one envelope.
+
+    ``terminal=True`` means a core invariant decided the outcome — the
+    ``decision`` and ``source`` fields are both populated and the
+    GenreRuleStage must not run. ``source`` is one of the
+    ``invariant:*`` strings emitted as the OTEL ``rule.source`` attribute.
+
+    ``terminal=False`` means no invariant applied; ``decision`` and
+    ``source`` are both ``None`` and GenreRuleStage should be consulted.
+
+    The stage itself owns the source string (I7): it is the only place
+    that knows *which* invariant fired. The composed filter does not
+    redundantly re-check the envelope kind — that avoided the previous
+    silent ``"invariant:unknown"`` fallback when invariants drift.
+    """
+
     terminal: bool
     decision: FilterDecision | None
+    source: str | None = None
 
 
 class CoreInvariantStage:
@@ -65,6 +82,7 @@ class CoreInvariantStage:
             return InvariantOutcome(
                 terminal=True,
                 decision=FilterDecision(include=True, payload_json=envelope.payload_json),
+                source="invariant:gm_sees_all",
             )
 
         # 2. Targeted-by-field: kinds that declare a recipient in their payload.
@@ -79,6 +97,7 @@ class CoreInvariantStage:
                     include=included,
                     payload_json=envelope.payload_json if included else "",
                 ),
+                source="invariant:targeted",
             )
 
         # 3. Self-authored: echo to author + GM only.
@@ -92,6 +111,7 @@ class CoreInvariantStage:
                     include=included,
                     payload_json=envelope.payload_json if included else "",
                 ),
+                source="invariant:self_echo",
             )
 
         # 4. GM-only kinds: never route to players.
@@ -99,9 +119,10 @@ class CoreInvariantStage:
             return InvariantOutcome(
                 terminal=True,
                 decision=FilterDecision(include=False, payload_json=""),
+                source="invariant:gm_only_kind",
             )
 
-        return InvariantOutcome(terminal=False, decision=None)
+        return InvariantOutcome(terminal=False, decision=None, source=None)
 
 
 def _match_to_field(to_value: object, player_id: str) -> bool:

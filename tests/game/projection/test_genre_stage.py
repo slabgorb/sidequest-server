@@ -24,9 +24,10 @@ def _view() -> SessionGameStateView:
 def test_no_rules_passes_through() -> None:
     stage = _stage("rules: []")
     env = MessageEnvelope(kind="NARRATION", payload_json='{"text":"hi"}', origin_seq=1)
-    decision = stage.evaluate(envelope=env, view=_view(), player_id="alice")
-    assert decision.include is True
-    assert decision.payload_json == '{"text":"hi"}'
+    result = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert result.decision.include is True
+    assert result.decision.payload_json == '{"text":"hi"}'
+    assert result.matched_rule_index is None
 
 
 def test_target_only_omits_non_recipients() -> None:
@@ -43,10 +44,12 @@ def test_target_only_omits_non_recipients() -> None:
     env = MessageEnvelope(kind="NARRATION", payload_json=payload, origin_seq=2)
 
     out_alice = stage.evaluate(envelope=env, view=_view(), player_id="alice")
-    assert out_alice.include is True
+    assert out_alice.decision.include is True
 
     out_bob = stage.evaluate(envelope=env, view=_view(), player_id="bob")
-    assert out_bob.include is False
+    assert out_bob.decision.include is False
+    # Drop attributed to the target_only rule at index 0.
+    assert out_bob.matched_rule_index == 0
 
 
 def test_include_if_omits_when_predicate_false() -> None:
@@ -59,8 +62,9 @@ def test_include_if_omits_when_predicate_false() -> None:
     )
     stage = _stage(yaml)
     env = MessageEnvelope(kind="NARRATION", payload_json='{"text":"hi"}', origin_seq=3)
-    decision = stage.evaluate(envelope=env, view=_view(), player_id="alice")
-    assert decision.include is False
+    result = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert result.decision.include is False
+    assert result.matched_rule_index == 0
 
 
 def test_redact_fields_masks_unless_predicate_holds() -> None:
@@ -76,9 +80,11 @@ def test_redact_fields_masks_unless_predicate_holds() -> None:
     )
     stage = _stage(yaml)
     env = MessageEnvelope(kind="NARRATION", payload_json='{"text":"secret"}', origin_seq=4)
-    decision = stage.evaluate(envelope=env, view=_view(), player_id="alice")
-    assert decision.include is True
-    assert json.loads(decision.payload_json) == {"text": "**"}
+    result = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert result.decision.include is True
+    assert json.loads(result.decision.payload_json) == {"text": "**"}
+    # Mask fired — attributed to the redact rule at index 0.
+    assert result.matched_rule_index == 0
 
 
 def test_redact_fields_leaves_unmasked_when_predicate_holds() -> None:
@@ -95,5 +101,7 @@ def test_redact_fields_leaves_unmasked_when_predicate_holds() -> None:
     stage = _stage(yaml)
     env = MessageEnvelope(kind="NARRATION", payload_json='{"text":"secret"}', origin_seq=5)
     view = SessionGameStateView(gm_player_id="gm", player_id_to_character={"gm": "gm_char"})
-    decision = stage.evaluate(envelope=env, view=view, player_id="gm")
-    assert json.loads(decision.payload_json) == {"text": "secret"}
+    result = stage.evaluate(envelope=env, view=view, player_id="gm")
+    assert json.loads(result.decision.payload_json) == {"text": "secret"}
+    # No mask applied (predicate held) — no matched rule.
+    assert result.matched_rule_index is None

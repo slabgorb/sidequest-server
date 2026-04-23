@@ -24,13 +24,17 @@ class ValidationError(Exception):
     """Raised when a projection.yaml rule set is semantically invalid."""
 
 
-# Kinds that flow through _emit_event today.  Must stay in sync with
-# sidequest/server/session_handler.py:_KIND_TO_MESSAGE_CLS.
-# Kept as a separate constant here to avoid a circular import with server code.
-FILTER_REACHABLE_KINDS: frozenset[str] = frozenset({
-    "NARRATION",
-    "CONFRONTATION",
-})
+def _filter_reachable_kinds() -> frozenset[str]:
+    """Kinds that flow through ``_emit_event`` today.
+
+    Derived from ``session_handler._KIND_TO_MESSAGE_CLS`` at call time so the
+    two definitions cannot drift. Deferred import mirrors
+    ``_schema_fields_for_kind`` — the server module imports game modules, so
+    validator must not import the server module at its own load time.
+    """
+    from sidequest.server.session_handler import _KIND_TO_MESSAGE_CLS  # noqa: PLC0415
+
+    return frozenset(_KIND_TO_MESSAGE_CLS.keys())
 
 
 def _unwrap_rootmodel(ann: Any) -> Any:
@@ -179,7 +183,7 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
 
     Checks:
       1. Kind exists (member of MessageType).
-      2. Kind is filter-reachable (in FILTER_REACHABLE_KINDS).
+      2. Kind is filter-reachable (in _filter_reachable_kinds()).
       3. Fields exist on the payload's pydantic schema.
       4. Predicates exist in PREDICATES.
       5. Masks are type-compatible with the field type.
@@ -199,7 +203,7 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
             ) from exc
 
         # Check 2: Kind must be filter-reachable.
-        if rule.kind not in FILTER_REACHABLE_KINDS:
+        if rule.kind not in _filter_reachable_kinds():
             raise ValidationError(
                 f"rule[{idx}] kind={rule.kind!r}: not filter-reachable "
                 f"(kind does not flow through _emit_event yet)"

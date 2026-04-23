@@ -5,6 +5,7 @@ is appended here before fan-out. Peers catch up on reconnect via read_since.
 """
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List
@@ -24,14 +25,42 @@ class EventLog:
     def __init__(self, store: SqliteStore) -> None:
         self._store = store
 
+    @property
+    def store(self) -> SqliteStore:
+        """Store accessor for transaction-scoped batch writes."""
+        return self._store
+
     def append(self, *, kind: str, payload_json: str) -> EventRow:
-        now = datetime.now(tz=timezone.utc).isoformat()
+        """Append an event, committing its own transaction.
+
+        Used by callers outside the fan-out hot-path. Fan-out should use
+        ``append_in_transaction`` so the event insert + cache writes share
+        a single transaction — see ProjectionFilter-Rules spec (C2).
+        """
         with self._store._conn:
-            cur = self._store._conn.execute(
-                "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, ?)",
-                (kind, payload_json, now),
+            return self.append_in_transaction(
+                kind=kind, payload_json=payload_json, conn=self._store._conn
             )
-            seq = cur.lastrowid
+
+    def append_in_transaction(
+        self,
+        *,
+        kind: str,
+        payload_json: str,
+        conn: sqlite3.Connection,
+    ) -> EventRow:
+        """Append an event using a caller-managed connection/transaction.
+
+        Does NOT commit. The caller owns the transaction (typically via
+        ``with store._conn:``) so that the event row and its associated
+        ProjectionCache rows can be persisted atomically.
+        """
+        now = datetime.now(tz=timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, ?)",
+            (kind, payload_json, now),
+        )
+        seq = cur.lastrowid
         assert seq is not None
         return EventRow(seq=seq, kind=kind, payload_json=payload_json, created_at=now)
 

@@ -45,7 +45,7 @@ from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection.view import SessionGameStateView
-from sidequest.game.projection_filter import FilterDecision, PassThroughFilter, ProjectionFilter
+from sidequest.game.projection_filter import FilterDecision, ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
@@ -303,20 +303,59 @@ class WebSocketSessionHandler:
         SessionGameStateView defaults. Player-character mapping grows
         as engine state grows.
 
-        Character does not carry a player_id attribute — the mapping
-        is left empty and the view uses conservative defaults (is_gm /
-        seat_of / zone_of all return None/False). This is the safe
-        direction: unknown relationships stay masked rather than
-        accidentally unmasked.
+        **GM identity wiring (C1, still partial):**
+
+        - Solo sessions have no separate GM player by design; ``gm_player_id``
+          is correctly ``None`` there. ``CoreInvariantStage`` never
+          short-circuits on ``is_gm()`` for solo — which is the right
+          behavior, because in solo play the single player is the only
+          recipient and has no counterpart to be "GM" to.
+        - Multiplayer sessions *should* name a GM player (e.g. the session
+          creator or a designated seat) so that ``unless: is_gm()`` in
+          ``projection.yaml`` can exempt them. That wiring lives downstream
+          of MP-02 seating — ``SessionRoom`` does not yet carry a GM seat
+          designation, so we still fall through to ``None`` for multiplayer
+          with a logged warning. Genre packs that ship ``unless: is_gm()``
+          rules today will mask the GM identically to a regular player
+          (the safe direction: over-redact rather than leak).
+
+        **Player-character mapping:** ``Character`` does not yet carry a
+        ``player_id`` attribute, so the mapping is empty. Conservative
+        defaults apply — ``seat_of`` / ``zone_of`` return ``None``, and
+        predicates dependent on the mapping evaluate to ``False`` (the
+        masked direction).
         """
         sd = self._session_data
         if sd is None:
             return SessionGameStateView(gm_player_id=None, player_id_to_character={})
+
+        from sidequest.game.persistence import GameMode  # noqa: PLC0415 — break import cycle
+
+        # Solo: no human GM. None is correct; CoreInvariantStage's
+        # gm-sees-all branch never fires for the single player.
+        gm_player_id: str | None = None
+        if sd.mode is not None and sd.mode != GameMode.SOLO:
+            # Multiplayer: GM seat assignment not yet plumbed through
+            # SessionRoom. Log one warning per build so GM-panel users
+            # can see that ``unless: is_gm()`` rules are currently
+            # over-masking the GM in multiplayer sessions.
+            if not getattr(self, "_gm_wiring_warned", False):
+                logger.warning(
+                    "projection.gm_identity_unwired slug=%s mode=%s — "
+                    "multiplayer sessions do not yet carry a GM-seat "
+                    "designation; `unless: is_gm()` rules will mask the "
+                    "GM like any other player until MP-02 GM seating "
+                    "lands.",
+                    sd.game_slug,
+                    sd.mode,
+                )
+                self._gm_wiring_warned = True
+
         mapping: dict[str, str] = {}
         # Character does not carry player_id — no mapping possible yet.
         # When the engine model gains player_id on Character, populate mapping here.
         return SessionGameStateView(
-            gm_player_id=None,
+            gm_player_id=gm_player_id,
             player_id_to_character=mapping,
         )
 
@@ -354,69 +393,103 @@ class WebSocketSessionHandler:
             payload_json = json.dumps(payload_model)  # type: ignore[arg-type]
 
         if event_log is not None:
-            # Invariant 1: persist first
-            row = event_log.append(kind=kind, payload_json=payload_json)
-            seq = row.seq
+            room = self._room
+            emitter_player_id = (
+                self._session_data.player_id if self._session_data else None
+            )
 
-            # Build emitter's message with raw, unfiltered payload + seq (Invariant 3)
+            # C2: event append + all cache writes share a single transaction.
+            # Projections are computed inside the block so the cache row's
+            # event_seq is the freshly-assigned one. If the server crashes
+            # mid-block, sqlite rolls back both the event row and any partial
+            # cache rows — either the event is fully persisted with its
+            # projection cache, or not at all.
+            store = event_log.store
+            conn = store._conn
+            fanout: list[tuple[str, FilterDecision, dict]] = []
+            with conn:
+                row = event_log.append_in_transaction(
+                    kind=kind, payload_json=payload_json, conn=conn
+                )
+                seq = row.seq
+
+                if room is not None and projection_filter is not None:
+                    view = self._build_game_state_view()
+                    envelope = MessageEnvelope(
+                        kind=row.kind,
+                        payload_json=row.payload_json,
+                        origin_seq=row.seq,
+                    )
+                    for other_pid in room.connected_player_ids():
+                        if other_pid == emitter_player_id:
+                            continue
+                        decision = projection_filter.project(
+                            envelope=envelope, view=view, player_id=other_pid
+                        )
+                        if self._projection_cache is not None:
+                            self._projection_cache.write_in_transaction(
+                                event_seq=seq,
+                                player_id=other_pid,
+                                decision=decision,
+                                conn=conn,
+                            )
+                        filtered_data: dict = {}
+                        if decision.include:
+                            filtered_data = json.loads(decision.payload_json)
+                        fanout.append((other_pid, decision, filtered_data))
+
+            # Build emitter's message with raw, unfiltered payload + seq
+            # (Invariant 3). model_copy with scalar update is safe here —
+            # only `seq` is being added, no existing field is being replaced
+            # with a filtered value.
             if isinstance(payload_model, BaseModel):
                 emitter_payload = payload_model.model_copy(update={"seq": seq})
             else:
                 emitter_payload = payload_model  # type: ignore[assignment]
             out_to_self = message_cls(payload=emitter_payload)
 
-            # Fan-out to other connected players (Invariant 2)
-            room = self._room
-            if room is not None and projection_filter is not None:
-                emitter_player_id = (
-                    self._session_data.player_id if self._session_data else None
+            # Socket fan-out happens AFTER the DB transaction commits. A
+            # crash between commit and send is recoverable via the cache on
+            # reconnect; sending before commit would risk a client observing
+            # an event that never hit disk.
+            if room is not None:
+                payload_cls = (
+                    type(payload_model) if isinstance(payload_model, BaseModel) else None
                 )
-                for other_pid in room.connected_player_ids():
-                    if other_pid == emitter_player_id:
-                        continue
-                    envelope = MessageEnvelope(
-                        kind=row.kind,
-                        payload_json=row.payload_json,
-                        origin_seq=row.seq,
-                    )
-                    view = self._build_game_state_view()
-                    decision = projection_filter.project(
-                        envelope=envelope, view=view, player_id=other_pid
-                    )
-                    # Persist the decision so reconnect/replay is byte-identical (Task 18).
-                    if self._projection_cache is not None:
-                        self._projection_cache.write(
-                            event_seq=row.seq,
-                            player_id=other_pid,
-                            decision=decision,
-                        )
+                for other_pid, decision, filtered_data in fanout:
                     if not decision.include:
                         continue
-                    # Build per-recipient payload: merge filtered payload_json + seq
+                    socket_id = room.socket_for_player(other_pid)
+                    if socket_id is None:
+                        continue
+                    queue = room.queue_for_socket(socket_id)
+                    if queue is None:
+                        continue
                     try:
-                        filtered_data = json.loads(decision.payload_json)
-                        filtered_data["seq"] = seq
-                        if isinstance(payload_model, BaseModel):
-                            recipient_payload = payload_model.model_copy(
-                                update={**json.loads(decision.payload_json), "seq": seq}
+                        if payload_cls is not None:
+                            # C3: rebuild the recipient payload from the
+                            # filtered dict alone (plus seq). Do NOT use
+                            # model_copy(update=...) — merging leaves fields
+                            # absent from the filtered dict at their canonical
+                            # values, which would leak any field a future rule
+                            # drops entirely.
+                            recipient_payload = payload_cls.model_validate(
+                                {**filtered_data, "seq": seq}
                             )
+                            recipient_msg = message_cls(payload=recipient_payload)
                         else:
-                            recipient_payload = filtered_data  # type: ignore[assignment]
-                        recipient_msg = message_cls(payload=recipient_payload)
+                            recipient_msg = message_cls(
+                                payload={**filtered_data, "seq": seq}
+                            )
                     except Exception:
-                        # Never silently fail fan-out; log and skip this recipient
+                        # Never silently fail fan-out; log and skip this recipient.
                         logger.error(
                             "emit_event.fanout_failed kind=%s other_pid=%s",
                             kind,
                             other_pid,
                         )
                         continue
-                    socket_id = room.socket_for_player(other_pid)
-                    if socket_id is None:
-                        continue
-                    queue = room.queue_for_socket(socket_id)
-                    if queue is not None:
-                        queue.put_nowait(recipient_msg)
+                    queue.put_nowait(recipient_msg)
         else:
             # Legacy path (non-slug connect): no EventLog, no seq
             out_to_self = message_cls(payload=payload_model)
@@ -670,7 +743,10 @@ class WebSocketSessionHandler:
             self._projection_cache = ProjectionCache(store)
             projection_rules = genre_pack.projection_rules
             if projection_rules is not None:
-                self._projection_filter = ComposedFilter(rules=projection_rules)
+                self._projection_filter = ComposedFilter(
+                    rules=projection_rules,
+                    pack_slug=row.genre_slug,
+                )
             else:
                 self._projection_filter = ComposedFilter.with_no_genre_rules()
             self._last_seen_seq = payload.last_seen_seq or 0

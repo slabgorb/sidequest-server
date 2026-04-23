@@ -23,9 +23,20 @@ class ComposedFilter:
         *,
         rules: ProjectionRules,
         invariants: CoreInvariantStage | None = None,
+        pack_slug: str | None = None,
     ) -> None:
+        """Construct a ComposedFilter.
+
+        ``pack_slug`` is the genre pack slug (e.g. ``"mutant_wasteland"``)
+        used to compose the OTEL ``rule.source`` attribute in the
+        ``genre:<pack>/<kind>/<rule_index>`` form the GM panel consumes.
+        Pass ``None`` when no pack-level rules can possibly fire (e.g.
+        ``with_no_genre_rules``) — the attribute falls back to
+        ``default:pass_through``.
+        """
         self._invariants = invariants or CoreInvariantStage()
         self._genre = GenreRuleStage(rules)
+        self._pack_slug = pack_slug
 
     def project(
         self,
@@ -44,41 +55,42 @@ class ComposedFilter:
             )
             if outcome.terminal:
                 assert outcome.decision is not None
+                assert outcome.source is not None, (
+                    "CoreInvariantStage returned terminal outcome without "
+                    "a source — this is a bug: every terminal branch must "
+                    "populate InvariantOutcome.source."
+                )
                 decision = outcome.decision
-                source = _invariant_source(envelope=envelope, view=view, player_id=player_id)
+                source = outcome.source
             else:
-                decision = self._genre.evaluate(
+                genre_result = self._genre.evaluate(
                     envelope=envelope, view=view, player_id=player_id
                 )
-                source = (
-                    f"genre:{envelope.kind}"
-                    if envelope.kind in self._genre._by_kind
-                    else "default:pass_through"
+                decision = genre_result.decision
+                source = self._format_genre_source(
+                    kind=envelope.kind,
+                    matched_rule_index=genre_result.matched_rule_index,
                 )
             span.set_attribute("decision.include", decision.include)
             span.set_attribute("rule.source", source)
             return decision
 
+    def _format_genre_source(
+        self, *, kind: str, matched_rule_index: int | None
+    ) -> str:
+        """Compose the OTEL ``rule.source`` attribute for a genre-stage result.
+
+        Spec format: ``genre:<pack>/<kind>/<rule_index>``. Falls back to
+        ``default:pass_through`` when no genre rule altered the decision
+        (no rule exists for this kind, or rules existed but all gates
+        passed without redactions).
+        """
+        if matched_rule_index is None:
+            return "default:pass_through"
+        pack = self._pack_slug or "<unknown>"
+        return f"genre:{pack}/{kind}/{matched_rule_index}"
+
     @classmethod
     def with_no_genre_rules(cls) -> "ComposedFilter":
         """Convenience for sessions whose genre pack has no projection.yaml."""
-        return cls(rules=load_rules_from_yaml_str("rules: []"))
-
-
-def _invariant_source(
-    *, envelope: MessageEnvelope, view: GameStateView, player_id: str
-) -> str:
-    if view.is_gm(player_id):
-        return "invariant:gm_sees_all"
-    from sidequest.game.projection.invariants import (
-        GM_ONLY_KINDS,
-        SELF_AUTHORED_KINDS,
-        TARGETED_KINDS,
-    )
-    if envelope.kind in TARGETED_KINDS:
-        return "invariant:targeted"
-    if envelope.kind in SELF_AUTHORED_KINDS:
-        return "invariant:self_echo"
-    if envelope.kind in GM_ONLY_KINDS:
-        return "invariant:gm_only_kind"
-    return "invariant:unknown"
+        return cls(rules=load_rules_from_yaml_str("rules: []"), pack_slug=None)
