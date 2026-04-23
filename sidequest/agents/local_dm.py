@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.protocol.dispatch import DispatchPackage
+from sidequest.telemetry.spans import local_dm_decompose_span
 
 logger = logging.getLogger(__name__)
 
@@ -146,45 +147,61 @@ class LocalDM:
         On any failure returns a degraded=True package per spec §6.6 —
         the table never blocks.
         """
-        user_prompt = _build_user_prompt(turn_id, player_id, raw_action, state_summary)
+        with local_dm_decompose_span(
+            turn_id=turn_id,
+            player_id=player_id,
+            action_len=len(raw_action),
+        ) as span:
+            user_prompt = _build_user_prompt(turn_id, player_id, raw_action, state_summary)
 
-        with self._session_lock:
-            current_session = self._session_id
-
-        try:
-            response = await self._client.send_with_session(
-                prompt=user_prompt,
-                model=DECOMPOSER_MODEL,
-                session_id=current_session,
-                system_prompt=_DECOMPOSER_SYSTEM_PROMPT if current_session is None else None,
-                allowed_tools=[],
-                env_vars={},
-            )
-        except Exception as exc:  # TimeoutError, subprocess failure, whatever.
-            logger.warning("local_dm.client_exception turn_id=%s exc=%s", turn_id, exc)
-            # Stale session id after transport/auth failure would produce an
-            # infinite degraded loop next turn. Reset so the next call establishes.
             with self._session_lock:
-                self._session_id = None
-            return _degraded_package(turn_id, reason=f"client_exception: {exc}")
+                current_session = self._session_id
 
-        # Cache session id after first successful call.
-        if response.session_id:
-            with self._session_lock:
-                self._session_id = response.session_id
+            try:
+                response = await self._client.send_with_session(
+                    prompt=user_prompt,
+                    model=DECOMPOSER_MODEL,
+                    session_id=current_session,
+                    system_prompt=_DECOMPOSER_SYSTEM_PROMPT if current_session is None else None,
+                    allowed_tools=[],
+                    env_vars={},
+                )
+            except Exception as exc:  # TimeoutError, subprocess failure, whatever.
+                logger.warning("local_dm.client_exception turn_id=%s exc=%s", turn_id, exc)
+                # Stale session id after transport/auth failure would produce an
+                # infinite degraded loop next turn. Reset so the next call establishes.
+                with self._session_lock:
+                    self._session_id = None
+                reason = f"client_exception: {exc}"
+                span.set_attribute("degraded", True)
+                span.set_attribute("degraded_reason", reason)
+                return _degraded_package(turn_id, reason=reason)
 
-        raw_text = (response.text or "").strip()
-        if not raw_text:
-            logger.warning("local_dm.empty_response turn_id=%s", turn_id)
-            return _degraded_package(turn_id, reason="empty_response")
+            # Cache session id after first successful call.
+            if response.session_id:
+                with self._session_lock:
+                    self._session_id = response.session_id
 
-        try:
-            pkg = DispatchPackage.model_validate_json(raw_text)
-        except ValidationError as exc:
-            logger.warning("local_dm.parse_failure turn_id=%s exc=%s", turn_id, exc)
-            return _degraded_package(turn_id, reason=f"parse_failure: {type(exc).__name__}")
+            raw_text = (response.text or "").strip()
+            if not raw_text:
+                logger.warning("local_dm.empty_response turn_id=%s", turn_id)
+                span.set_attribute("degraded", True)
+                span.set_attribute("degraded_reason", "empty_response")
+                return _degraded_package(turn_id, reason="empty_response")
 
-        return pkg
+            try:
+                pkg = DispatchPackage.model_validate_json(raw_text)
+            except ValidationError as exc:
+                logger.warning("local_dm.parse_failure turn_id=%s exc=%s", turn_id, exc)
+                reason = f"parse_failure: {type(exc).__name__}"
+                span.set_attribute("degraded", True)
+                span.set_attribute("degraded_reason", reason)
+                return _degraded_package(turn_id, reason=reason)
+
+            span.set_attribute("degraded", pkg.degraded)
+            if pkg.degraded:
+                span.set_attribute("degraded_reason", pkg.degraded_reason or "")
+            return pkg
 
 
 def _degraded_package(turn_id: str, *, reason: str) -> DispatchPackage:

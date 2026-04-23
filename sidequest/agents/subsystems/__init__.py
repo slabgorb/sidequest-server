@@ -17,6 +17,10 @@ from sidequest.protocol.dispatch import (
     NarratorDirective,
     SubsystemDispatch,
 )
+from sidequest.telemetry.spans import (
+    local_dm_dispatch_bank_span,
+    local_dm_subsystem_span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,52 +136,71 @@ async def run_dispatch_bank(
     for ca in package.cross_player:
         all_dispatches.extend(ca.dispatch)
 
-    if not all_dispatches:
-        # Still include decomposer-authored narrator_instructions even when no
-        # subsystem dispatches ran.
-        for pd in package.per_player:
-            result.directives.extend(pd.narrator_instructions)
-        return result
+    with local_dm_dispatch_bank_span(
+        turn_id=package.turn_id,
+        dispatch_count=len(all_dispatches),
+    ):
+        if not all_dispatches:
+            # Still include decomposer-authored narrator_instructions even when no
+            # subsystem dispatches ran.
+            for pd in package.per_player:
+                result.directives.extend(pd.narrator_instructions)
+            return result
 
-    try:
-        ordered = _topo_sort(all_dispatches)
-    except ValueError as exc:
-        logger.error("subsystems.bank_topo_sort_failed exc=%s", exc)
-        result.errors.append(("__bank__", repr(exc)))
-        # Authored directives still flow; zero subsystem dispatches run.
-        for pd in package.per_player:
-            result.directives.extend(pd.narrator_instructions)
-        return result
-
-    seen: set[str] = set()
-    for d in ordered:
-        if d.idempotency_key in seen:
-            continue
-        seen.add(d.idempotency_key)
-
-        fn = _REGISTRY.get(d.subsystem)
-        if fn is None:
-            logger.warning(
-                "subsystems.unknown subsystem=%s key=%s", d.subsystem, d.idempotency_key,
-            )
-            continue
         try:
-            out = await fn(d, **context)
-        except Exception as exc:
-            logger.warning(
-                "subsystems.dispatch_failed subsystem=%s key=%s exc=%s",
-                d.subsystem, d.idempotency_key, exc,
-            )
-            result.errors.append((d.idempotency_key, repr(exc)))
-            continue
+            ordered = _topo_sort(all_dispatches)
+        except ValueError as exc:
+            logger.error("subsystems.bank_topo_sort_failed exc=%s", exc)
+            result.errors.append(("__bank__", repr(exc)))
+            # Authored directives still flow; zero subsystem dispatches run.
+            for pd in package.per_player:
+                result.directives.extend(pd.narrator_instructions)
+            return result
 
-        result.outputs_by_key[d.idempotency_key] = out
-        result.directives.extend(out.directives)
+        seen: set[str] = set()
+        for d in ordered:
+            if d.idempotency_key in seen:
+                continue
+            seen.add(d.idempotency_key)
 
-    for pd in package.per_player:
-        result.directives.extend(pd.narrator_instructions)
+            with local_dm_subsystem_span(
+                subsystem=d.subsystem,
+                idempotency_key=d.idempotency_key,
+            ) as sub_span:
+                fn = _REGISTRY.get(d.subsystem)
+                if fn is None:
+                    logger.warning(
+                        "subsystems.unknown subsystem=%s key=%s",
+                        d.subsystem, d.idempotency_key,
+                    )
+                    sub_span.set_attribute("error", "unknown_subsystem")
+                    sub_span.set_attribute("produced_directives", 0)
+                    continue
+                try:
+                    out = await fn(d, **context)
+                except Exception as exc:
+                    logger.warning(
+                        "subsystems.dispatch_failed subsystem=%s key=%s exc=%s",
+                        d.subsystem, d.idempotency_key, exc,
+                    )
+                    result.errors.append((d.idempotency_key, repr(exc)))
+                    sub_span.set_attribute("error", type(exc).__name__)
+                    sub_span.set_attribute("produced_directives", 0)
+                    continue
 
-    return result
+                result.outputs_by_key[d.idempotency_key] = out
+                result.directives.extend(out.directives)
+                sub_span.set_attribute("produced_directives", len(out.directives))
+                # Surface subsystem-level errors that returned via data["error"]
+                # rather than raising (e.g., npc_not_registered).
+                err_code = out.data.get("error") if isinstance(out.data, dict) else None
+                if err_code:
+                    sub_span.set_attribute("error", str(err_code))
+
+        for pd in package.per_player:
+            result.directives.extend(pd.narrator_instructions)
+
+        return result
 
 
 __all__ = [

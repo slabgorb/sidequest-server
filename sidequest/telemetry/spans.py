@@ -243,6 +243,16 @@ SPAN_MP_SEAT = "mp.seat"
 SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 
 # ---------------------------------------------------------------------------
+# Local DM (Group B) — decomposer + subsystem bank
+# Emitted by sidequest/agents/local_dm.py and sidequest/agents/subsystems/__init__.py
+# so the GM panel can verify the decomposer actually ran and which subsystems
+# fired on a given turn (CLAUDE.md OTEL observability principle).
+# ---------------------------------------------------------------------------
+SPAN_LOCAL_DM_DECOMPOSE = "local_dm.decompose"
+SPAN_LOCAL_DM_DISPATCH_BANK = "local_dm.dispatch_bank"
+SPAN_LOCAL_DM_SUBSYSTEM = "local_dm.subsystem"
+
+# ---------------------------------------------------------------------------
 # Helpers — context managers for Phase 1 spans
 #
 # Each helper accepts an optional ``_tracer`` parameter.  When omitted the
@@ -526,6 +536,93 @@ def mp_player_action_paused_span(
             "player_id": player_id,
             "absent_count": len(absent_player_ids),
             "absent_player_ids": ",".join(absent_player_ids),
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+# ---------------------------------------------------------------------------
+# Local DM (Group B) helpers — decomposer + subsystem bank
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def local_dm_decompose_span(
+    turn_id: str,
+    player_id: str,
+    action_len: int,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOCAL_DM_DECOMPOSE.
+
+    Emitted by LocalDM.decompose for every decomposer invocation. The
+    ``degraded`` + ``degraded_reason`` attrs are set by the caller before
+    return so the GM panel can see which turns fell back to the degraded
+    package (spec §6.6) vs. a clean structured output.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOCAL_DM_DECOMPOSE,
+        attributes={
+            "turn_id": turn_id,
+            "player_id": player_id,
+            "action_len": action_len,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def local_dm_dispatch_bank_span(
+    turn_id: str,
+    dispatch_count: int,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOCAL_DM_DISPATCH_BANK.
+
+    Emitted once per run_dispatch_bank call. Parent of every
+    ``local_dm.subsystem`` span for that turn, so the GM panel can
+    count dispatches per turn without joining across traces.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOCAL_DM_DISPATCH_BANK,
+        attributes={
+            "turn_id": turn_id,
+            "dispatch_count": dispatch_count,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def local_dm_subsystem_span(
+    subsystem: str,
+    idempotency_key: str,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOCAL_DM_SUBSYSTEM.
+
+    Emitted once per subsystem invocation inside run_dispatch_bank.
+    The caller records ``produced_directives`` (int) on success or
+    an ``error`` attr on the failure path — this is the lie detector
+    for whether a subsystem actually ran end-to-end.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOCAL_DM_SUBSYSTEM,
+        attributes={
+            "subsystem": subsystem,
+            "idempotency_key": idempotency_key,
             **attrs,
         },
     ) as span:

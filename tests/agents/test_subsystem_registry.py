@@ -213,3 +213,83 @@ async def test_run_dispatch_bank_dangling_depends_on_is_ignored():
     # A still ran — dangling dep did not block it.
     assert "A" in res.outputs_by_key
     assert res.errors == []
+
+
+@pytest.mark.asyncio
+async def test_run_dispatch_bank_emits_bank_and_subsystem_spans(otel_capture):
+    """run_dispatch_bank emits one local_dm.dispatch_bank span and one
+    local_dm.subsystem span per dispatch. Sebastien's lie detector: an
+    absent span == the subsystem never ran, no matter what the narrator says."""
+    a = _make_dispatch("reflect_absence", "k1")
+    b = _make_dispatch(
+        "distinctive_detail_hint", "k2",
+        params={"target": "npc:goblin_2", "hint": "broken tooth"},
+    )
+    pkg = _make_package([[a, b]])
+
+    res = await run_dispatch_bank(pkg)
+    # Sanity — bank did the real work.
+    assert "k1" in res.outputs_by_key
+    assert "k2" in res.outputs_by_key
+
+    spans = otel_capture.get_finished_spans()
+    bank_spans = [s for s in spans if s.name == "local_dm.dispatch_bank"]
+    sub_spans = [s for s in spans if s.name == "local_dm.subsystem"]
+
+    assert len(bank_spans) == 1
+    bank_attrs = dict(bank_spans[0].attributes or {})
+    assert bank_attrs["turn_id"] == "t"
+    assert bank_attrs["dispatch_count"] == 2
+
+    # One subsystem span per dispatch, with correct name + key.
+    assert len(sub_spans) == 2
+    by_key = {dict(s.attributes or {})["idempotency_key"]: s for s in sub_spans}
+    assert set(by_key.keys()) == {"k1", "k2"}
+
+    k1_attrs = dict(by_key["k1"].attributes or {})
+    assert k1_attrs["subsystem"] == "reflect_absence"
+    assert isinstance(k1_attrs["produced_directives"], int)
+    assert k1_attrs["produced_directives"] >= 0
+
+    k2_attrs = dict(by_key["k2"].attributes or {})
+    assert k2_attrs["subsystem"] == "distinctive_detail_hint"
+    assert isinstance(k2_attrs["produced_directives"], int)
+    assert k2_attrs["produced_directives"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_run_dispatch_bank_subsystem_span_records_error(otel_capture):
+    """When a subsystem raises, its local_dm.subsystem span records the
+    error type and produced_directives=0 — no clean span for a broken run."""
+    # distinctive_detail_hint raises without a target param (Task 7 semantics).
+    d = _make_dispatch("distinctive_detail_hint", "k_err", params={"hint": "x"})
+    pkg = _make_package([[d]])
+    res = await run_dispatch_bank(pkg)
+    assert len(res.errors) == 1
+
+    spans = otel_capture.get_finished_spans()
+    sub_spans = [s for s in spans if s.name == "local_dm.subsystem"]
+    assert len(sub_spans) == 1
+    attrs = dict(sub_spans[0].attributes or {})
+    assert attrs["subsystem"] == "distinctive_detail_hint"
+    assert attrs["produced_directives"] == 0
+    assert "error" in attrs
+
+
+@pytest.mark.asyncio
+async def test_run_dispatch_bank_span_fires_on_empty_package(otel_capture):
+    """Bank span fires even with zero dispatches, so absent parent span
+    means the bank executor never ran — not "no dispatches this turn"."""
+    pkg = DispatchPackage(
+        turn_id="t-empty",
+        per_player=[],
+        cross_player=[],
+        confidence_global=1.0,
+        degraded=False,
+        degraded_reason=None,
+    )
+    await run_dispatch_bank(pkg)
+    spans = otel_capture.get_finished_spans()
+    bank_spans = [s for s in spans if s.name == "local_dm.dispatch_bank"]
+    assert len(bank_spans) == 1
+    assert dict(bank_spans[0].attributes or {})["dispatch_count"] == 0

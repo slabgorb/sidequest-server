@@ -268,6 +268,73 @@ async def test_local_dm_resets_session_on_client_exception():
     assert pkg2.degraded is False
 
 
+@pytest.mark.asyncio
+async def test_local_dm_emits_decompose_span(dispatch_json_absence, otel_capture):
+    """LocalDM.decompose emits a local_dm.decompose span with turn/player/
+    action_len attrs and a degraded flag on every call — the GM panel lie
+    detector for whether the decomposer actually ran this turn."""
+    client = _make_mock_client(dispatch_json_absence)
+    dm = LocalDM(client=client)
+    await dm.decompose(
+        turn_id="turn-span",
+        player_id="player:Alice",
+        raw_action="test action",
+        state_summary="state",
+    )
+    spans = otel_capture.get_finished_spans()
+    names = [s.name for s in spans]
+    assert "local_dm.decompose" in names
+
+    decompose_spans = [s for s in spans if s.name == "local_dm.decompose"]
+    assert len(decompose_spans) == 1
+    attrs = dict(decompose_spans[0].attributes or {})
+    assert attrs["turn_id"] == "turn-span"
+    assert attrs["player_id"] == "player:Alice"
+    assert attrs["action_len"] == len("test action")
+    assert "degraded" in attrs
+    # Clean parse path from the absence fixture → degraded=False.
+    assert attrs["degraded"] is False
+
+
+@pytest.mark.asyncio
+async def test_local_dm_decompose_span_records_degraded_reason():
+    """Failure paths (parse failure here) must set degraded=True and
+    degraded_reason on the span so the GM panel distinguishes degraded
+    turns from clean ones."""
+    client = _make_mock_client("not json at all")
+    dm = LocalDM(client=client)
+    # Need a fresh otel capture inline so we do not rely on fixture ordering.
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        await dm.decompose(
+            turn_id="turn-bad",
+            player_id="player:Alice",
+            raw_action="x",
+            state_summary="y",
+        )
+        spans = [s for s in exporter.get_finished_spans() if s.name == "local_dm.decompose"]
+        assert len(spans) == 1
+        attrs = dict(spans[0].attributes or {})
+        assert attrs["degraded"] is True
+        assert "parse_failure" in attrs["degraded_reason"]
+    finally:
+        processor.shutdown()
+
+
 def test_decomposer_system_prompt_includes_schema_shape():
     """Haiku needs the DispatchPackage field names to produce parseable output."""
     from sidequest.agents.local_dm import _DECOMPOSER_SYSTEM_PROMPT
