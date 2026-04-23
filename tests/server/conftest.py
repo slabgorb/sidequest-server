@@ -83,10 +83,14 @@ def session_handler_factory(tmp_path):
     ``sd.orchestrator.run_narration_turn`` with an ``AsyncMock``.
 
     Task 11 (story 3.4): used by test_confrontation_dispatch_wiring.py.
+    Task 16 (story 3.4): snapshot now includes a Character named "Rux" so
+    XP-award tests can inspect ``sd.snapshot.characters[0].core.xp``.
     """
     from pathlib import Path
 
     from sidequest.agents.orchestrator import Orchestrator
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
     from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
@@ -98,6 +102,19 @@ def session_handler_factory(tmp_path):
     def _make(genre: str):
         pack = GenreLoader(DEFAULT_GENRE_PACK_SEARCH_PATHS).load(genre)
         snap = GameSnapshot(genre_slug=genre)
+        core = CreatureCore(
+            name="Rux",
+            description="A stoic fighter",
+            personality="stoic",
+            inventory=Inventory(),
+        )
+        char = Character(
+            core=core,
+            char_class="Fighter",
+            race="Human",
+            backstory="A wandering fighter",
+        )
+        snap.characters.append(char)
         store = SqliteStore.open_in_memory()
         orch = MagicMock(spec=Orchestrator)
         sd = _SessionData(
