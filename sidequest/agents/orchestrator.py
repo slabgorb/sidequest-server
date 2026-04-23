@@ -342,6 +342,11 @@ class TurnContext:
     # Early zone so the LLM can emit valid ``beat_selections``.
     confrontation_def: Any = None
 
+    # Live encounter object (Story 3.4). Typed as ``Any`` to avoid a
+    # circular import through sidequest.game. Runtime type:
+    # ``sidequest.game.encounter.StructuredEncounter``.
+    encounter: Any = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -872,7 +877,12 @@ class Orchestrator:
 
         # Encounter rules for ANY active encounter type
         if context.in_combat or context.in_chase or context.in_encounter:
-            self._narrator.build_encounter_context(registry)
+            self._narrator.build_encounter_context(
+                registry,
+                encounter=context.encounter,
+                cdef=context.confrontation_def,
+                encounter_summary=context.encounter_summary,
+            )
 
         # Phase 1 slice: tactical grid injection deferred to Story 41-9
         # Phase 1 slice: lore filter (world_graph) deferred to Story 41-7
