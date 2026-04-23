@@ -24,8 +24,15 @@ class GameStateView(Protocol):
 class SessionGameStateView:
     """Conservative GameStateView implementation.
 
-    Zone tracking populated by SessionHandler's movement subsystems.
-    Hidden-characters set populated by stealth / invisibility status.
+    Zone tracking populated by
+    ``WebSocketSessionHandler._build_game_state_view`` from
+    ``snapshot.location`` (all player-characters share the party-level
+    location) and ``Npc.location`` (NPCs). ``hidden_characters``
+    populated from stealth-flavored tokens on ``CreatureCore.statuses``
+    (whole-token match; see ``WebSocketSessionHandler._HIDDEN_STATUS_TOKENS``).
+    ``player_id_to_character`` maps the session's active ``player_id`` to
+    the first entry in ``snapshot.characters`` — single-player today;
+    MP seat-assignment (sprint 2) will feed the multi-player case.
     """
 
     gm_player_id: str | None

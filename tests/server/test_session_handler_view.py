@@ -105,3 +105,142 @@ def test_session_view_hides_stealth_npc(session_fixture) -> None:
     assert view.zone_of("ShadowThief") == "Main Hall"
     # Co-located but hidden -> masked.
     assert view.visible_to("Alice", "ShadowThief") is False
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: player_id_to_character must be populated so predicates can reach
+# the zone/visibility data. Without this mapping, view.character_of(player_id)
+# returns None, which short-circuits visible_to / in_same_zone to False before
+# any zone data is consulted.
+# ---------------------------------------------------------------------------
+
+
+def test_session_view_maps_player_id_to_character(session_fixture) -> None:
+    """The session's single player-character is reachable via character_of()."""
+    sd, handler = session_fixture
+    sd.snapshot.characters.append(_make_character("Alice"))
+
+    view = handler._build_game_state_view()
+
+    assert view.character_of(sd.player_id) == "Alice"
+
+
+def test_session_view_player_mapping_empty_when_no_characters(session_fixture) -> None:
+    """No characters yet (pre-chargen) -> mapping stays empty; no exception."""
+    sd, handler = session_fixture
+    assert sd.snapshot.characters == []
+
+    view = handler._build_game_state_view()
+
+    assert view.character_of(sd.player_id) is None
+
+
+def test_session_view_player_mapping_unknown_player(session_fixture) -> None:
+    """An unknown player_id returns None (conservative default)."""
+    sd, handler = session_fixture
+    sd.snapshot.characters.append(_make_character("Alice"))
+
+    view = handler._build_game_state_view()
+
+    assert view.character_of("someone-else") is None
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: one-shot OTEL/log warn when party_zone is absent but characters
+# exist. Silent zone absence collapses visible_to to False everywhere, which
+# is the safe direction but invisible to the GM panel.
+# ---------------------------------------------------------------------------
+
+
+def test_session_view_warns_once_when_party_zone_absent(session_fixture, caplog) -> None:
+    """Warn exactly once per session when characters exist but party zone is empty."""
+    import logging
+
+    sd, handler = session_fixture
+    sd.snapshot.location = ""  # Fresh session, pre-first-encounter.
+    sd.snapshot.characters.append(_make_character("Alice"))
+
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
+        handler._build_game_state_view()
+        handler._build_game_state_view()
+        handler._build_game_state_view()
+
+    matching = [
+        r for r in caplog.records
+        if "party_zone_absent_with_characters" in r.getMessage()
+    ]
+    assert len(matching) == 1, (
+        f"expected exactly one party_zone_absent warning, got {len(matching)}: "
+        f"{[r.getMessage() for r in matching]}"
+    )
+
+
+def test_session_view_does_not_warn_when_party_zone_present(session_fixture, caplog) -> None:
+    """With a party zone set, no zone-absent warning fires."""
+    import logging
+
+    sd, handler = session_fixture
+    # session_fixture defaults to location="Main Hall".
+    sd.snapshot.characters.append(_make_character("Alice"))
+
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
+        handler._build_game_state_view()
+
+    matching = [
+        r for r in caplog.records
+        if "party_zone_absent_with_characters" in r.getMessage()
+    ]
+    assert matching == []
+
+
+def test_session_view_does_not_warn_when_no_characters(session_fixture, caplog) -> None:
+    """Pre-chargen (no characters) -> no warning even if zone is empty."""
+    import logging
+
+    sd, handler = session_fixture
+    sd.snapshot.location = ""
+    assert sd.snapshot.characters == []
+
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
+        handler._build_game_state_view()
+
+    matching = [
+        r for r in caplog.records
+        if "party_zone_absent_with_characters" in r.getMessage()
+    ]
+    assert matching == []
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: _is_hidden_status_list must use whole-token membership, not
+# substring match. "unhidden", "hidden_buff_removed", etc. must NOT match.
+# ---------------------------------------------------------------------------
+
+
+def test_hidden_status_whole_token_membership() -> None:
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    check = WebSocketSessionHandler._is_hidden_status_list
+
+    # Exact tokens -> True.
+    assert check(["hidden"]) is True
+    assert check(["invisible"]) is True
+    assert check(["stealth"]) is True
+    assert check(["concealed"]) is True
+
+    # Case-insensitive exact tokens -> True.
+    assert check(["Hidden"]) is True
+    assert check(["INVISIBLE"]) is True
+
+    # Substring false-positives previously matched; must be rejected now.
+    assert check(["unhidden"]) is False
+    assert check(["hidden_buff_removed"]) is False
+    assert check(["no_longer_concealed"]) is False
+    assert check(["revealed"]) is False
+
+    # Empty / unrelated.
+    assert check([]) is False
+    assert check(["bleeding", "poisoned"]) is False
+
+    # Mixed list with one exact match -> True.
+    assert check(["bleeding", "hidden"]) is True

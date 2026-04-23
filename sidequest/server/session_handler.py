@@ -326,25 +326,24 @@ class WebSocketSessionHandler:
         return self._room
 
     # Status tokens the engine uses to mark a creature as non-visible for
-    # projection purposes. Matched case-insensitively against
-    # ``CreatureCore.statuses``. Genre packs that mint stealth/invisibility
-    # mechanics should emit statuses containing one of these tokens so the
-    # projection filter's ``visible_to()`` can see them. Kept conservative:
+    # projection purposes. Compared case-insensitively against
+    # ``CreatureCore.statuses`` via **whole-token membership** — substring
+    # matching produced false-positives like ``"unhidden"`` or
+    # ``"hidden_buff_removed"`` silently masking characters. Genre packs
+    # that mint stealth/invisibility mechanics must emit statuses that are
+    # exactly one of these tokens (case-insensitive) for the projection
+    # filter's ``visible_to()`` to mask the creature. Kept conservative:
     # a missing/unknown marker must never unmask a target.
-    _HIDDEN_STATUS_TOKENS: tuple[str, ...] = (
+    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset({
         "hidden",
         "invisible",
         "stealth",
         "concealed",
-    )
+    })
 
     @classmethod
     def _is_hidden_status_list(cls, statuses: list[str]) -> bool:
-        for status in statuses:
-            lowered = status.lower()
-            if any(tok in lowered for tok in cls._HIDDEN_STATUS_TOKENS):
-                return True
-        return False
+        return any(s.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
 
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
@@ -374,9 +373,13 @@ class WebSocketSessionHandler:
           (the safe direction: over-redact rather than leak).
 
         **Player-character mapping:** ``Character`` does not yet carry a
-        ``player_id`` attribute, so the mapping is empty. Conservative
-        defaults apply — ``seat_of`` / ``zone_of`` return ``None``, and
-        predicates dependent on the mapping evaluate to ``False`` (the
+        ``player_id`` attribute, so the session's active player_id
+        (``sd.player_id``) is mapped to the first entry in
+        ``snapshot.characters`` — the single-player case this branch is
+        authoritative for today. MP seat-assignment (sprint 2) will feed
+        the multi-player case via ``SessionRoom``. When no character
+        exists yet (pre-chargen) the mapping stays empty and predicates
+        that depend on ``character_of()`` evaluate to ``False`` (the
         masked direction).
         """
         sd = self._session_data
@@ -405,30 +408,62 @@ class WebSocketSessionHandler:
                 )
                 self._gm_wiring_warned = True
 
+        snapshot = sd.snapshot
+
+        # Player -> Character.name mapping. Solo / single-player sessions
+        # today have exactly one character; that character belongs to the
+        # session's active player_id. Without this mapping, the predicate
+        # path (e.g. ``visible_to(target)``) receives
+        # ``view.character_of(player_id) is None`` and short-circuits to
+        # False before ever consulting zone data. Populated from the
+        # existing session state — no new fields introduced.
         mapping: dict[str, str] = {}
-        # Character does not carry player_id — no mapping possible yet.
-        # When the engine model gains player_id on Character, populate mapping here.
+        if snapshot.characters:
+            mapping[sd.player_id] = snapshot.characters[0].core.name
 
         # Zone + hidden-character tracking from the live snapshot. Characters
         # share the party-level location today (no per-character zone split
         # in the engine yet); NPCs carry their own ``location``. Keys are
         # creature names — the same identity the rest of the projection
-        # system uses when it refers to characters by ID.
-        snapshot = sd.snapshot
+        # system uses when it refers to characters by ID. Single pass per
+        # collection so character_zones and hidden_characters stay in sync.
         character_zones: dict[str, str] = {}
         hidden_characters: set[str] = set()
         party_zone = snapshot.location or None
-        if party_zone is not None:
-            for ch in snapshot.characters:
-                character_zones[ch.core.name] = party_zone
+
+        # One-shot OTEL breadcrumb: if we have player-characters but no
+        # party zone, every co-located visible_to() collapses to False.
+        # The direction is conservative-correct but invisible to the GM
+        # panel — surface it once per session so rule authors can see why
+        # their ``visible_to`` rules are masking everything.
+        if (
+            party_zone is None
+            and snapshot.characters
+            and not getattr(self, "_party_zone_absent_warned", False)
+        ):
+            logger.warning(
+                "projection.party_zone_absent_with_characters slug=%s "
+                "characters=%d — snapshot.location is empty while "
+                "snapshot.characters is non-empty; visible_to() / "
+                "in_same_zone() will mask every co-located target until "
+                "a location is set (typically the first encounter).",
+                sd.game_slug,
+                len(snapshot.characters),
+            )
+            self._party_zone_absent_warned = True
+
         for ch in snapshot.characters:
+            name = ch.core.name
+            if party_zone is not None:
+                character_zones[name] = party_zone
             if self._is_hidden_status_list(ch.core.statuses):
-                hidden_characters.add(ch.core.name)
+                hidden_characters.add(name)
         for npc in snapshot.npcs:
+            name = npc.core.name
             if npc.location:
-                character_zones[npc.core.name] = npc.location
+                character_zones[name] = npc.location
             if self._is_hidden_status_list(npc.core.statuses):
-                hidden_characters.add(npc.core.name)
+                hidden_characters.add(name)
 
         return SessionGameStateView(
             gm_player_id=gm_player_id,
