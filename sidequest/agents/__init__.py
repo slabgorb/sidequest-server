@@ -13,7 +13,7 @@ Phase 1 exports:
 - PreprocessorError hierarchy + preprocess_action, preprocess_action_with_client
 - NarratorAgent (Phase 1 — story 41-5)
 - Orchestrator, TurnContext, NarrationTurnResult, run_narration_turn (Phase 1 — story 41-5)
-- ActionRewrite, ActionFlags, BeatSelection, VisualScene, NpcMention (Phase 1 — story 41-5)
+- ActionRewrite, BeatSelection, VisualScene, NpcMention (Phase 1 — story 41-5)
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from sidequest.agents.claude_client import (
 from sidequest.agents.claude_client import TimeoutError as ClaudeTimeoutError
 from sidequest.agents.narrator import NarratorAgent, narrator_output_format_text
 from sidequest.agents.orchestrator import (
-    ActionFlags,
     ActionRewrite,
     BeatSelection,
     NarratorPromptTier,
@@ -69,7 +68,6 @@ __all__ = [
     # narrator + orchestrator (Phase 1 — story 41-5)
     "NarratorAgent",
     "narrator_output_format_text",
-    "ActionFlags",
     "ActionRewrite",
     "BeatSelection",
     "NarratorPromptTier",
