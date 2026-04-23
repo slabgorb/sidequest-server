@@ -38,7 +38,12 @@ def build_confrontation_payload(
     Shape fixed by sidequest-ui/src/components/ConfrontationOverlay.tsx:42-58.
     Encounter mood_override beats the confrontation-def default mood.
     """
-    mood = encounter.mood_override or cdef.mood
+    if encounter.mood_override is not None:
+        mood = encounter.mood_override
+    elif cdef.mood is not None:
+        mood = cdef.mood
+    else:
+        mood = ""
     return {
         "type": encounter.encounter_type,
         "label": cdef.label,

@@ -61,7 +61,7 @@ def test_build_confrontation_payload_active_for_live_encounter() -> None:
     assert [a["name"] for a in payload["actors"]] == ["Rux", "Goblin"]
     assert payload["metric"]["current"] == 10
     assert [b["id"] for b in payload["beats"]] == ["attack"]
-    assert payload["mood"] is None or isinstance(payload["mood"], str)
+    assert isinstance(payload["mood"], str)
 
 
 def test_build_confrontation_payload_uses_encounter_mood_override_when_set() -> None:
@@ -82,3 +82,27 @@ def test_build_clear_confrontation_payload_signals_end() -> None:
     assert payload["active"] is False
     assert payload["type"] == "combat"
     assert payload["genre_slug"] == "caverns_and_claudes"
+
+
+def test_build_confrontation_payload_empty_string_override_preserved() -> None:
+    cdef = _def("combat", "Dungeon Combat", "combat")
+    cdef = cdef.model_copy(update={"mood": "pack-mood"})
+    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc.mood_override = ""
+    payload = build_confrontation_payload(
+        encounter=enc, cdef=cdef, genre_slug="caverns_and_claudes"
+    )
+    # Empty-string override is still an override — do NOT fall through to cdef.mood.
+    assert payload["mood"] == ""
+
+
+def test_build_confrontation_payload_both_none_defaults_to_empty_string() -> None:
+    cdef = _def("combat", "Dungeon Combat", "combat")
+    # cdef.mood is None by default and encounter has no override.
+    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    payload = build_confrontation_payload(
+        encounter=enc, cdef=cdef, genre_slug="caverns_and_claudes"
+    )
+    # UI contract: mood is a non-nullable string.
+    assert isinstance(payload["mood"], str)
+    assert payload["mood"] == ""
