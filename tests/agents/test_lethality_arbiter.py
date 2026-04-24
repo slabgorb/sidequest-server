@@ -12,6 +12,7 @@ from sidequest.game.creature_core import CreatureCore, EdgePool, Inventory
 from sidequest.genre.models.lethality import LethalityPolicy, VerdictsOnZeroEdge
 from sidequest.protocol.dispatch import (
     DispatchPackage,
+    LethalityVerdict,
     PlayerDispatch,
 )
 
@@ -161,3 +162,69 @@ def test_no_directives_when_no_verdicts():
         npc_cores_by_name={},
     )
     assert result.directives == []
+
+
+# Task 8 — merge with decomposer-authored verdicts
+
+
+def _decomposer_verdict(entity: str, verdict: str) -> LethalityVerdict:
+    return LethalityVerdict(
+        entity=entity,
+        verdict=verdict,  # type: ignore[arg-type]
+        cause="decomposer proposed",
+        reversibility="narrative_only",
+        narrator_directive="decomposer directive",
+        soul_md_constraint="decomposer_constraint",
+        witness_scope={},
+    )
+
+
+def test_arbiter_overrides_decomposer_verdict_on_conflict():
+    """Arbiter wins when both author a verdict for the same entity."""
+    arbiter = LethalityArbiter(policy=_heavy_metal_policy())
+    pc = _make_pc("Alice", edge_current=0)
+    pkg = DispatchPackage(
+        turn_id="t1",
+        per_player=[PlayerDispatch(
+            player_id="alice",
+            raw_action="x",
+            lethality=[_decomposer_verdict("player:alice", "humiliated")],
+        )],
+        cross_player=[],
+        confidence_global=1.0,
+    )
+    result = arbiter.arbitrate(
+        package=pkg,
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": pc},
+        npc_cores_by_name={},
+    )
+    verdicts_for_alice = [v for v in result.verdicts if v.entity == "player:alice"]
+    assert len(verdicts_for_alice) == 1
+    assert verdicts_for_alice[0].verdict == "dead"  # arbiter wins
+    assert "decomposer proposed" not in verdicts_for_alice[0].cause
+
+
+def test_arbiter_passes_through_decomposer_only_entities():
+    """Entity the arbiter did not touch → decomposer verdict preserved."""
+    arbiter = LethalityArbiter(policy=_heavy_metal_policy())
+    pkg = DispatchPackage(
+        turn_id="t1",
+        per_player=[PlayerDispatch(
+            player_id="alice",
+            raw_action="x",
+            lethality=[_decomposer_verdict("npc:BoneChewer", "maimed")],
+        )],
+        cross_player=[],
+        confidence_global=1.0,
+    )
+    result = arbiter.arbitrate(
+        package=pkg,
+        bank_result=BankResult(),
+        pc_cores_by_player={},   # no one at zero edge
+        npc_cores_by_name={},    # BoneChewer's core not tracked this turn
+    )
+    assert len(result.verdicts) == 1
+    assert result.verdicts[0].entity == "npc:BoneChewer"
+    assert result.verdicts[0].verdict == "maimed"
+    assert "decomposer proposed" in result.verdicts[0].cause

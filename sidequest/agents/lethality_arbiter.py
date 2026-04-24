@@ -77,6 +77,13 @@ class LethalityArbiter:
                     verdict_kind=self._policy.verdicts_on_zero_edge.npc,
                     core=core,
                 )
+        # Merge decomposer-authored verdicts. Arbiter wins on entity conflict;
+        # decomposer-only entities pass through.
+        arbiter_entities = {v.entity for v in result.verdicts}
+        for pd in package.per_player:
+            for decomposer_v in pd.lethality:
+                if decomposer_v.entity not in arbiter_entities:
+                    result.verdicts.append(decomposer_v)
         return result
 
     def _emit(
