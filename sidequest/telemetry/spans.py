@@ -252,6 +252,7 @@ SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 SPAN_LOCAL_DM_DECOMPOSE = "local_dm.decompose"
 SPAN_LOCAL_DM_DISPATCH_BANK = "local_dm.dispatch_bank"
 SPAN_LOCAL_DM_SUBSYSTEM = "local_dm.subsystem"
+SPAN_LOCAL_DM_LETHALITY_ARBITRATE = "local_dm.lethality_arbitrate"
 
 # ---------------------------------------------------------------------------
 # Helpers — context managers for Phase 1 spans
@@ -629,6 +630,35 @@ def local_dm_subsystem_span(
         },
     ) as span:
         yield span
+
+
+@contextmanager
+def lethality_arbitrate_span(
+    turn_id: str,
+    genre_key: str,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOCAL_DM_LETHALITY_ARBITRATE.
+
+    Emitted once per LethalityArbiter.arbitrate call (Group C). The caller
+    sets ``verdict_count`` on the span before return so the GM panel can
+    see how many lethality verdicts synthesised this turn — Sebastien's
+    lie detector for whether the arbiter actually ran vs. the narrator
+    improvising survival.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOCAL_DM_LETHALITY_ARBITRATE,
+        attributes={
+            "turn_id": turn_id,
+            "genre_key": genre_key,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
 
 # ---------------------------------------------------------------------------
 # Combat / Encounter — dispatch/{response,state_mutations,telemetry}.rs +

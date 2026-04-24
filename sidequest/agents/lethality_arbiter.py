@@ -34,6 +34,7 @@ from sidequest.protocol.dispatch import (
     NarratorDirective,
     VisibilityTag,
 )
+from sidequest.telemetry.spans import lethality_arbitrate_span
 
 logger = logging.getLogger(__name__)
 
@@ -60,31 +61,36 @@ class LethalityArbiter:
         pc_cores_by_player: dict[str, CreatureCore],
         npc_cores_by_name: dict[str, CreatureCore],
     ) -> LethalityResult:
-        result = LethalityResult()
-        for player_id, core in pc_cores_by_player.items():
-            if core.edge.current == 0:
-                self._emit(
-                    result,
-                    entity=f"player:{player_id}",
-                    verdict_kind=self._policy.verdicts_on_zero_edge.pc,
-                    core=core,
-                )
-        for npc_name, core in npc_cores_by_name.items():
-            if core.edge.current == 0:
-                self._emit(
-                    result,
-                    entity=f"npc:{npc_name}",
-                    verdict_kind=self._policy.verdicts_on_zero_edge.npc,
-                    core=core,
-                )
-        # Merge decomposer-authored verdicts. Arbiter wins on entity conflict;
-        # decomposer-only entities pass through.
-        arbiter_entities = {v.entity for v in result.verdicts}
-        for pd in package.per_player:
-            for decomposer_v in pd.lethality:
-                if decomposer_v.entity not in arbiter_entities:
-                    result.verdicts.append(decomposer_v)
-        return result
+        with lethality_arbitrate_span(
+            turn_id=package.turn_id,
+            genre_key=self._policy.genre_key,
+        ) as span:
+            result = LethalityResult()
+            for player_id, core in pc_cores_by_player.items():
+                if core.edge.current == 0:
+                    self._emit(
+                        result,
+                        entity=f"player:{player_id}",
+                        verdict_kind=self._policy.verdicts_on_zero_edge.pc,
+                        core=core,
+                    )
+            for npc_name, core in npc_cores_by_name.items():
+                if core.edge.current == 0:
+                    self._emit(
+                        result,
+                        entity=f"npc:{npc_name}",
+                        verdict_kind=self._policy.verdicts_on_zero_edge.npc,
+                        core=core,
+                    )
+            # Merge decomposer-authored verdicts. Arbiter wins on entity
+            # conflict; decomposer-only entities pass through.
+            arbiter_entities = {v.entity for v in result.verdicts}
+            for pd in package.per_player:
+                for decomposer_v in pd.lethality:
+                    if decomposer_v.entity not in arbiter_entities:
+                        result.verdicts.append(decomposer_v)
+            span.set_attribute("verdict_count", len(result.verdicts))
+            return result
 
     def _emit(
         self,
