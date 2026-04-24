@@ -172,14 +172,28 @@ def test_message_type_game_resumed_wire_string() -> None:
     assert MessageType.GAME_RESUMED == "GAME_RESUMED"
 
 
+def test_message_type_dispatch_package_wire_string() -> None:
+    assert MessageType.DISPATCH_PACKAGE == "DISPATCH_PACKAGE"
+
+
+def test_message_type_narrator_directive_used_wire_string() -> None:
+    assert MessageType.NARRATOR_DIRECTIVE_USED == "NARRATOR_DIRECTIVE_USED"
+
+
+def test_message_type_verdict_override_wire_string() -> None:
+    assert MessageType.VERDICT_OVERRIDE == "VERDICT_OVERRIDE"
+
+
 def test_message_type_complete_count() -> None:
-    """All 38 GameMessage variants must be represented.
+    """All 41 GameMessage variants must be represented.
 
     Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
+    Group D Task 7 reserved DISPATCH_PACKAGE, NARRATOR_DIRECTIVE_USED,
+    VERDICT_OVERRIDE for corpus going-forward capture; bumped 38 → 41.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 38
+    assert len(MessageType) == 41
 
 
 # ===========================================================================
