@@ -301,6 +301,7 @@ def agent_call_span(
     model: str,
     prompt_len: int,
     *,
+    backend: str = "claude-cli",
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
@@ -308,7 +309,12 @@ def agent_call_span(
     t = _tracer if _tracer is not None else tracer()
     with t.start_as_current_span(
         SPAN_AGENT_CALL,
-        attributes={"model": model, "prompt_len": prompt_len, **attrs},
+        attributes={
+            "model": model,
+            "prompt_len": prompt_len,
+            "agent.backend": backend,
+            **attrs,
+        },
     ) as span:
         yield span
 
@@ -318,6 +324,7 @@ def agent_call_session_span(
     model: str,
     prompt_len: int,
     *,
+    backend: str = "claude-cli",
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
@@ -325,7 +332,12 @@ def agent_call_session_span(
     t = _tracer if _tracer is not None else tracer()
     with t.start_as_current_span(
         SPAN_AGENT_CALL_SESSION,
-        attributes={"model": model, "prompt_len": prompt_len, **attrs},
+        attributes={
+            "model": model,
+            "prompt_len": prompt_len,
+            "agent.backend": backend,
+            **attrs,
+        },
     ) as span:
         yield span
 

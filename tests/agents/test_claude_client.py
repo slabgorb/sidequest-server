@@ -432,3 +432,11 @@ def test_claude_response_carries_backend_tag():
 def test_claude_response_backend_accepts_override():
     r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None, backend="ollama")
     assert r.backend == "ollama"
+
+
+def test_claude_client_stamps_backend_on_response():
+    """End-to-end: a successful send_with_model call surfaces backend='claude-cli'."""
+    spawn = make_spawn_fn(stdout=json_envelope("hi back"))
+    client = ClaudeClient(spawn_fn=spawn)
+    response = asyncio.run(client.send_with_model("hi", model="sonnet"))
+    assert response.backend == "claude-cli"

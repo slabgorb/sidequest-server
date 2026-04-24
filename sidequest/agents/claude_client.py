@@ -262,6 +262,7 @@ class ClaudeClient:
         with agent_call_session_span(
             model=model,
             prompt_len=len(prompt),
+            backend="claude-cli",
         ) as span:
             if not prompt.strip():
                 raise EmptyResponse()
@@ -304,7 +305,9 @@ class ClaudeClient:
         """Core subprocess execution used by all send methods."""
         model_label = model or "default"
 
-        with agent_call_span(model=model_label, prompt_len=len(prompt)) as span:
+        with agent_call_span(
+            model=model_label, prompt_len=len(prompt), backend="claude-cli"
+        ) as span:
             if not prompt.strip():
                 raise EmptyResponse()
 
@@ -447,6 +450,7 @@ class ClaudeClient:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             session_id=response_session_id,
+            backend="claude-cli",
         )
 
 
