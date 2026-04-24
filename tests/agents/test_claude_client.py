@@ -409,3 +409,13 @@ def test_llm_capabilities_is_frozen():
     )
     with pytest.raises(FrozenInstanceError):
         caps.backend_id = "y"  # type: ignore[misc]
+
+
+def test_claude_response_carries_backend_tag():
+    r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None)
+    assert r.backend == "claude-cli"
+
+
+def test_claude_response_backend_accepts_override():
+    r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None, backend="ollama")
+    assert r.backend == "ollama"

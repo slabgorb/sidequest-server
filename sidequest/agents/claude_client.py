@@ -94,9 +94,9 @@ class EmptyResponse(ClaudeClientError):
 
 
 class ClaudeResponse:
-    """Response from a Claude CLI invocation, including token usage telemetry."""
+    """Response from an LlmClient call, including token usage telemetry."""
 
-    __slots__ = ("text", "input_tokens", "output_tokens", "session_id")
+    __slots__ = ("text", "input_tokens", "output_tokens", "session_id", "backend")
 
     def __init__(
         self,
@@ -104,17 +104,19 @@ class ClaudeResponse:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         session_id: str | None = None,
+        backend: str = "claude-cli",
     ) -> None:
         self.text = text
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.session_id = session_id
+        self.backend = backend
 
     def __repr__(self) -> str:
         return (
             f"ClaudeResponse(text={self.text!r:.40}, "
             f"input_tokens={self.input_tokens}, output_tokens={self.output_tokens}, "
-            f"session_id={self.session_id!r})"
+            f"session_id={self.session_id!r}, backend={self.backend!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -125,6 +127,7 @@ class ClaudeResponse:
             and self.input_tokens == other.input_tokens
             and self.output_tokens == other.output_tokens
             and self.session_id == other.session_id
+            and self.backend == other.backend
         )
 
 
