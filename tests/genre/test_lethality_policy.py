@@ -122,3 +122,35 @@ def test_genre_pack_exposes_lethality_policy():
     assert pack.lethality_policy is not None
     assert pack.lethality_policy.genre_key == "caverns_and_claudes"
     assert pack.lethality_policy.verdicts_on_zero_edge.pc == "humiliated"
+
+
+def test_load_genre_pack_wraps_malformed_lethality_policy_in_genre_load_error(tmp_path):
+    """Malformed lethality_policy.yaml must surface as GenreLoadError, not raw
+    pydantic.ValidationError.
+
+    Mirrors the visibility_baseline precedent in loader.py — every pack-load
+    failure flows through GenreLoadError so callers get a unified surface.
+    """
+    import shutil
+    from pathlib import Path
+
+    from sidequest.genre.error import GenreLoadError
+    from sidequest.genre.loader import load_genre_pack
+
+    src = Path("sidequest-content/genre_packs/caverns_and_claudes")
+    dst = tmp_path / "caverns_and_claudes"
+    shutil.copytree(src, dst)
+    (dst / "lethality_policy.yaml").write_text(
+        "genre_key: caverns_and_claudes\n"
+        "default_reversibility: INVALID_ENUM_VALUE\n"
+        "verdicts_on_zero_edge:\n"
+        "  pc: humiliated\n"
+        "  npc: defeated\n"
+        "soul_md_constraint: x\n"
+        "must_narrate: x\n"
+        "must_not_narrate: x\n"
+    )
+
+    with pytest.raises(GenreLoadError) as exc_info:
+        load_genre_pack(dst)
+    assert "lethality_policy.yaml" in str(exc_info.value)

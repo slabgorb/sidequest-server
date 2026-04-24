@@ -622,6 +622,8 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         lethality_policy = load_lethality_policy(path)
     except LethalityPolicyMissingError as e:
         raise GenreLoadError(path=path / "lethality_policy.yaml", detail=str(e)) from e
+    except Exception as e:
+        raise GenreLoadError(path=path / "lethality_policy.yaml", detail=str(e)) from e
 
     return GenrePack(
         meta=meta,
