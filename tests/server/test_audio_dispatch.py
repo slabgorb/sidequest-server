@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -101,3 +101,116 @@ def test_build_audio_backend_returns_none_when_config_empty(
     backend = handler._build_audio_backend("empty", pack)
 
     assert backend is None
+
+
+# ---------------------------------------------------------------------------
+# _maybe_dispatch_audio — Task 4
+# ---------------------------------------------------------------------------
+
+
+def _dispatcher_fixture(audio_backend: LibraryBackend | None):
+    """Build a throwaway _SessionData for direct dispatcher calls."""
+    sd = _SessionData.__new__(_SessionData)
+    sd.audio_backend = audio_backend
+    sd.player_id = "p-1"
+    sd.genre_slug = "test_genre"
+    sd.world_slug = "test_world"
+    sd.snapshot = MagicMock()
+    sd.snapshot.turn_manager.interaction = 5
+    return sd
+
+
+def _narration_result(narration: str):
+    from sidequest.agents.orchestrator import NarrationTurnResult
+
+    return NarrationTurnResult(
+        narration=narration,
+        agent_name="test",
+        agent_duration_ms=0,
+        token_count_in=0,
+        token_count_out=0,
+        is_degraded=False,
+        prompt_tier="delta",
+    )
+
+
+def test_maybe_dispatch_audio_returns_message_on_mood_hit(
+    fake_audio_pack_dir: Path,
+) -> None:
+    from sidequest.protocol.enums import MessageType
+    from sidequest.protocol.messages import AudioCueMessage
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    backend = LibraryBackend(
+        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+    )
+    sd = _dispatcher_fixture(backend)
+    result = _narration_result(
+        "The dungeon falls silent. Tension coils through every shadow."
+    )
+    handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+
+    msg = handler._maybe_dispatch_audio(sd, result)
+
+    assert isinstance(msg, AudioCueMessage)
+    assert msg.type == MessageType.AUDIO_CUE
+    assert msg.payload.mood == "tension"
+    assert msg.payload.music_track == "audio/music/tension/a.ogg"
+    assert msg.player_id == "p-1"
+
+
+def test_maybe_dispatch_audio_returns_none_when_backend_absent() -> None:
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    sd = _dispatcher_fixture(None)
+    result = _narration_result("Tension coils through every shadow.")
+    handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+
+    assert handler._maybe_dispatch_audio(sd, result) is None
+
+
+def test_maybe_dispatch_audio_returns_none_on_empty_narration(
+    fake_audio_pack_dir: Path,
+) -> None:
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    backend = LibraryBackend(
+        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+    )
+    sd = _dispatcher_fixture(backend)
+    result = _narration_result("   ")
+    handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+
+    assert handler._maybe_dispatch_audio(sd, result) is None
+
+
+def test_maybe_dispatch_audio_returns_none_when_cues_empty(
+    fake_audio_pack_dir: Path,
+) -> None:
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    backend = LibraryBackend(
+        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+    )
+    sd = _dispatcher_fixture(backend)
+    result = _narration_result("You walk along the path.")
+    handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+
+    assert handler._maybe_dispatch_audio(sd, result) is None
+
+
+def test_maybe_dispatch_audio_swallows_exceptions_from_interpreter(
+    fake_audio_pack_dir: Path,
+) -> None:
+    from sidequest.server import session_handler as sh
+
+    backend = LibraryBackend(
+        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+    )
+    sd = _dispatcher_fixture(backend)
+    result = _narration_result("Tension.")
+    handler = sh.WebSocketSessionHandler.__new__(sh.WebSocketSessionHandler)
+
+    boom = MagicMock(side_effect=RuntimeError("interpreter blew up"))
+    with patch.object(sh.AudioInterpreter, "interpret", boom):
+        assert handler._maybe_dispatch_audio(sd, result) is None

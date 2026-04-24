@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
     DaemonClient,
@@ -79,6 +80,8 @@ from sidequest.protocol import GameMessage, sanitize_player_text
 from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
+    AudioCueMessage,
+    AudioCuePayload,
     CharacterCreationMessage,
     CharacterCreationPayload,
     ConfrontationMessage,
@@ -113,6 +116,7 @@ from sidequest.protocol.models import (
     PartyMember,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.server.audio_cue import build_audio_cue_payload
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
@@ -127,6 +131,13 @@ from sidequest.telemetry.spans import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+tracer = trace.get_tracer("sidequest.server.session_handler")
+
+# Stateless module-level AudioInterpreter; shared across all sessions.
+# interpret() takes the AudioConfig as an argument, so the object
+# carries no per-session state. See _maybe_dispatch_audio.
+_AUDIO_INTERPRETER = AudioInterpreter()
 
 # ---------------------------------------------------------------------------
 # Event-kind → message class mapping (MP-03 Task 3)
@@ -2398,6 +2409,13 @@ class WebSocketSessionHandler:
         if render_queued is not None:
             outbound.append(render_queued)
 
+        # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
+        # with this turn's outbound frames. No placeholder + later message
+        # dance — the DJ is a local filesystem lookup.
+        audio_cue = self._maybe_dispatch_audio(sd, result)
+        if audio_cue is not None:
+            outbound.append(audio_cue)
+
         # Semantic watcher event — `turn_complete` is the highest-leverage
         # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
         # turn-buckets, Timing p95, and the Turn counter all at once.
@@ -2701,6 +2719,90 @@ class WebSocketSessionHandler:
             type=MessageType.RENDER_QUEUED,  # type: ignore[arg-type]
             payload=RenderQueuedPayload(render_id=render_id),
             player_id=player_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Audio DJ dispatch — runs after NARRATION, ships AUDIO_CUE alongside.
+    # Synchronous filesystem lookup; no daemon round-trip, no placeholder
+    # message. See docs/superpowers/specs/2026-04-23-audio-dj-wiring-design.md
+    # ------------------------------------------------------------------
+
+    def _maybe_dispatch_audio(
+        self,
+        sd: _SessionData,
+        result: object,
+    ) -> AudioCueMessage | None:
+        """Run the DJ: interpret narration → resolve tracks → return an
+        AudioCueMessage, or None if any precondition fails. Best-effort;
+        exceptions are caught and logged so audio never crashes a turn."""
+        from sidequest.agents.orchestrator import NarrationTurnResult
+
+        if not isinstance(result, NarrationTurnResult):
+            return None
+        if sd.audio_backend is None:
+            self._audio_skip(sd, "no_audio_config")
+            return None
+        narration = (result.narration or "").strip()
+        if not narration:
+            self._audio_skip(sd, "no_narration")
+            return None
+
+        try:
+            with tracer.start_as_current_span("sidequest.audio.dispatch"):
+                cues = _AUDIO_INTERPRETER.interpret(
+                    narration, sd.audio_backend._config,  # type: ignore[attr-defined]
+                )
+                payload = build_audio_cue_payload(
+                    cues, audio_backend=sd.audio_backend,
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort; never crash a turn
+            logger.warning("audio.dispatch_failed error=%s", exc)
+            self._audio_skip(sd, "error", extra={"error": type(exc).__name__})
+            return None
+
+        if payload.mood is None and not payload.sfx_triggers:
+            self._audio_skip(sd, "empty_cues")
+            return None
+
+        self._audio_dispatched(sd, payload)
+        return AudioCueMessage(
+            payload=payload,
+            player_id=sd.player_id,
+        )
+
+    def _audio_skip(
+        self,
+        sd: _SessionData,
+        reason: str,
+        *,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "field": "audio",
+            "op": "skipped",
+            "reason": reason,
+            "turn_number": sd.snapshot.turn_manager.interaction,
+        }
+        if extra:
+            fields.update(extra)
+        _watcher_publish("state_transition", fields, component="audio")
+
+    def _audio_dispatched(
+        self,
+        sd: _SessionData,
+        payload: AudioCuePayload,
+    ) -> None:
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "audio",
+                "op": "dispatched",
+                "turn_number": sd.snapshot.turn_manager.interaction,
+                "mood": payload.mood,
+                "music_track": payload.music_track,
+                "sfx_count": len(payload.sfx_triggers),
+            },
+            component="audio",
         )
 
     # ------------------------------------------------------------------
