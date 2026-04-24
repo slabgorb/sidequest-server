@@ -4052,33 +4052,39 @@ def _apply_narration_result_to_snapshot(
                 )
             beat_by_id = {b.id: b for b in cdef.beats}
             prev_phase = enc.structured_phase
-            # SOUL Agency — when the player already chose + rolled a beat this
-            # turn (dice_failed is not None signals DICE_THROW ran), the
-            # dice dispatch path in dispatch/dice.py already applied that
-            # beat. Narrator-extracted beat_selections for the player's
-            # actor are filtered here so the system can't auto-play a
-            # second player action on their behalf. NPC beats still apply
-            # (Living World). Playtest 2026-04-24 "Player auto-plays
-            # 'attack' beat after a failed Flank — Agency violation".
+            # SOUL Agency + "Crunch in the Genre" — on a dice-replay turn
+            # (``dice_failed is not None`` signals DICE_THROW ran), the
+            # player's beat was already applied mechanically by the dice
+            # dispatch path in ``dispatch/dice.py``. Narrator-extracted
+            # ``beat_selections`` on this turn are *narrative*, not
+            # mechanical:
+            #
+            #   - Player-actor beats would double-play on the player's
+            #     behalf (playtest 2026-04-24 "Player auto-plays 'attack'
+            #     beat after failed Flank — Agency violation").
+            #   - NPC-actor beats using player-positive ``metric_delta``
+            #     values (every beat in mutant_wasteland rules is
+            #     described from the player's perspective) would push
+            #     momentum in unexpected directions and silently resolve
+            #     the encounter mid-turn (playtest 2026-04-24
+            #     "Confrontation tab disappears mid-fight").
+            #
+            # Filtering ALL beat_selections on a dice-replay turn keeps
+            # the dice roll as the single mechanical event of the turn
+            # and lets the narrator describe NPC responses narratively
+            # without invisible-mechanics side effects. Non-dice turns
+            # (free-text action while an encounter is active) are
+            # untouched — that's the narrator-drives-everything path.
             selections = result.beat_selections
-            if dice_failed is not None:
-                pname = player_name.casefold()
-                filtered = [
-                    s for s in selections if s.actor.casefold() != pname
-                ]
-                if len(filtered) != len(selections):
-                    dropped = [
-                        (s.actor, s.beat_id)
-                        for s in selections
-                        if s.actor.casefold() == pname
-                    ]
-                    logger.info(
-                        "encounter.agent_beat_selection_filtered "
-                        "reason=player_dice_turn player=%s dropped=%s",
-                        player_name,
-                        dropped,
-                    )
-                selections = filtered
+            if dice_failed is not None and selections:
+                dropped = [(s.actor, s.beat_id) for s in selections]
+                logger.info(
+                    "encounter.agent_beat_selection_filtered "
+                    "reason=dice_replay_turn player=%s dropped=%s",
+                    player_name,
+                    dropped,
+                )
+                selections = []
             for sel in selections:
                 beat = beat_by_id.get(sel.beat_id)
                 if beat is None:

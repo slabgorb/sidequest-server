@@ -136,19 +136,25 @@ async def test_confrontation_message_refreshed_on_live_to_live(
 
 
 @pytest.mark.asyncio
-async def test_pending_roll_outcome_threads_into_beat_application_on_failure(
+async def test_dice_turn_filters_narrator_beat_selections(
     session_handler_factory,
 ):
-    """Wiring test: when ``sd.pending_roll_outcome`` carries a Fail-classified
-    outcome at narration time, the beat application picks up
-    ``dice_failed=True`` and applies the Use Mutation beat's
-    ``failure_metric_delta`` (-2) instead of the default ``metric_delta`` (+4).
+    """Wiring test: when ``sd.pending_roll_outcome`` is set at narration
+    time (dice-replay turn), all narrator-extracted ``beat_selections``
+    are filtered so the turn has exactly one mechanical event — the
+    player's rolled beat, applied by DICE_THROW dispatch.
 
-    Verifies the full path from ``_execute_narration_turn`` → attribute read
-    on ``_SessionData`` → kwarg into ``_apply_narration_result_to_snapshot``
-    → structured failure branch in the encounter engine. Guards against the
-    pre-fix behavior where momentum advanced on every beat regardless of the
-    dice outcome (Sebastien-axis trust collapse).
+    Regression for playtest 2026-04-24 pingpong entries "Player
+    auto-plays 'attack' beat after failed Flank" and "Confrontation
+    tab disappears mid-fight (resolved_encounter=False)". The
+    pre-filter behavior let the narrator push momentum past threshold
+    via invisible NPC beat extractions, silently resolving the
+    encounter mid-fight.
+
+    Verifies the full path: ``_execute_narration_turn`` reads
+    ``pending_roll_outcome``, threads ``dice_failed`` into
+    ``_apply_narration_result_to_snapshot``, which drops the
+    narrator's beat_selections and leaves the encounter untouched.
     """
     from sidequest.game.encounter import (
         EncounterMetric,
@@ -173,28 +179,28 @@ async def test_pending_roll_outcome_threads_into_beat_application_on_failure(
     # Stash a Fail-classified outcome. The handler reads via
     # ``getattr(sd, "pending_roll_outcome", None)`` + ``outcome.name``, so a
     # SimpleNamespace with ``.name = "Fail"`` is a faithful duck-typed stand-in
-    # for OQ-2's ``RollOutcome.Fail`` without requiring that module to exist.
+    # for ``RollOutcome.Fail``.
     sd.pending_roll_outcome = SimpleNamespace(name="Fail")
 
-    # SOUL-Agency: player-actor beats are filtered on dice turns (the player
-    # already selected + rolled via DICE_THROW). Use an NPC actor to exercise
-    # the failure-branch path in the narrator-apply code.
+    # Narrator extracted beats for both player and NPC. Both must be
+    # filtered out on a dice-replay turn — dice was the mechanical event.
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
+                BeatSelection(actor="Rux", beat_id="mutant_ability", target=None),
                 BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
             ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
     msgs = await handler._execute_narration_turn(
-        sd, "The Warden channels the mutation.", _build_turn_context(sd),
+        sd, "[BEAT_RESOLVED] Use Mutation (Instinct): ...", _build_turn_context(sd),
     )
 
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
-    # Fail on Use Mutation → applied delta is failure_metric_delta (-2), not +4.
-    assert conf[0].payload.metric["current"] == -2
+    # No narrator beat applied — momentum stays at pre-narration 0.
+    assert conf[0].payload.metric["current"] == 0
 
     # Consumed — pending outcome is cleared after the turn so the next beat
     # doesn't re-use a stale roll.
@@ -268,12 +274,14 @@ async def test_narration_without_location_skips_chapter_marker(
 
 
 @pytest.mark.asyncio
-async def test_pending_roll_outcome_success_applies_default_delta(
+async def test_dice_turn_success_also_filters_narrator_beats(
     session_handler_factory,
 ):
-    """Success roll on Use Mutation → default +4 metric_delta. Guards
-    against accidentally inverting the branch: success must stay on the
-    default code path.
+    """Success roll branch of the narrator-beat filter. Same contract as
+    the Fail branch — the dice roll is the mechanical event, the
+    narrator's beat_selections are narrative-only. Guards against
+    accidentally applying the filter only on Fail and missing the
+    Success side.
     """
     from sidequest.game.encounter import (
         EncounterMetric,
@@ -285,13 +293,12 @@ async def test_pending_roll_outcome_success_applies_default_delta(
     sd.genre_pack = load_genre_pack(_FIXTURE_PACK)
     enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
     enc.metric = EncounterMetric(
-        name="momentum", current=0, starting=0,
+        name="momentum", current=3, starting=0,
         direction=MetricDirection.Bidirectional,
         threshold_high=10, threshold_low=-10,
     )
     sd.snapshot.encounter = enc
     sd.pending_roll_outcome = SimpleNamespace(name="Success")
-    # NPC actor — player-actor beats are filtered on dice turns (SOUL Agency).
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
@@ -301,7 +308,9 @@ async def test_pending_roll_outcome_success_applies_default_delta(
     )
     from sidequest.server.session_handler import _build_turn_context
     msgs = await handler._execute_narration_turn(
-        sd, "The Warden channels the mutation.", _build_turn_context(sd),
+        sd, "[BEAT_RESOLVED] ...", _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
-    assert conf[0].payload.metric["current"] == 4
+    # Momentum stays at 3 — the narrator's Warden beat is filtered on a
+    # dice-replay turn.
+    assert conf[0].payload.metric["current"] == 3

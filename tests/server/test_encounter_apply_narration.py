@@ -345,163 +345,69 @@ def mw_snap_with_combat():
     return snap, pack
 
 
-def test_failed_use_mutation_applies_failure_metric_delta(
+def test_all_beat_selections_dropped_on_dice_turn(
     mw_snap_with_combat, otel_capture: InMemorySpanExporter
 ) -> None:
-    """Rolling Fail on Use Mutation (beat has failure_metric_delta=-2)
-    should subtract 2 from momentum, NOT add the default +4.
+    """SOUL Agency + "Crunch in the Genre" — on a dice-replay turn
+    (``dice_failed is not None``) the player's beat was already applied
+    mechanically by DICE_THROW dispatch. All narrator-extracted
+    ``beat_selections`` on this turn are narrative only; mechanical
+    application would (a) double-play the player's own beat (agency
+    violation) or (b) silently push metric past threshold via NPC beats
+    that use player-positive metric_delta values (encounter
+    auto-resolves mid-fight).
 
-    Regression for pingpong 2026-04-24 "Momentum increments on a failed
-    Use Mutation roll". The engine previously applied ``metric_delta``
-    regardless of dice outcome; the YAML ``risk`` field was documentation
-    only and never reached the reducer. Now the structured failure branch
-    runs when dice_failed=True.
-
-    NOTE: after the SOUL-Agency filter lands (playtest 2026-04-24 "Player
-    auto-plays 'attack' beat after failed Flank"), player-actor beat
-    selections are dropped on dice turns — the player's beat is applied
-    by DICE_THROW dispatch, not by narrator extraction. This test uses an
-    NPC actor to exercise the raw failure-branch contract of
-    ``_apply_narration_result_to_snapshot``.
+    Regression for playtest 2026-04-24 pingpong entries "Player
+    auto-plays 'attack' beat after failed Flank" (Agency) and
+    "Confrontation tab disappears mid-fight" (resolved_encounter=False
+    when the server-side phantom mechanics hit threshold_high).
     """
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
     snap, pack = mw_snap_with_combat
-    result = NarrationTurnResult(
-        narration="The mutation turns on the Warden.",
-        beat_selections=[
-            BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
-        ],
-    )
-    _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack, dice_failed=True,
-    )
-    # Momentum moves by failure_metric_delta (-2), not the default +4.
-    assert snap.encounter.metric.current == -2, (
-        f"expected momentum -2 on failed Use Mutation; got "
-        f"{snap.encounter.metric.current}"
-    )
-
-    # Lie-detector span fired so GM panel can see the failure branch paid out.
-    failure_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "encounter.beat_failure_branch"
-    ]
-    assert len(failure_spans) == 1
-    s = failure_spans[0]
-    assert s.attributes["beat_id"] == "mutant_ability"
-    assert s.attributes["actor"] == "Warden"
-    assert s.attributes["base_delta"] == 4
-    assert s.attributes["failure_delta"] == -2
-
-
-def test_succeeded_use_mutation_applies_default_metric_delta(
-    mw_snap_with_combat, otel_capture: InMemorySpanExporter
-) -> None:
-    """Rolling Success on Use Mutation applies the default +4 and does
-    NOT fire the failure-branch span. Verifies the success path is
-    untouched by the new branching.
-    """
-    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
-
-    snap, pack = mw_snap_with_combat
-    result = NarrationTurnResult(
-        narration="The mutation flares.",
-        beat_selections=[
-            BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
-        ],
-    )
-    _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack, dice_failed=False,
-    )
-    assert snap.encounter.metric.current == 4
-
-    span_names = {s.name for s in otel_capture.get_finished_spans()}
-    assert "encounter.beat_failure_branch" not in span_names
-
-
-def test_beat_without_failure_branch_keeps_default_delta_on_fail(
-    mw_snap_with_combat, otel_capture: InMemorySpanExporter
-) -> None:
-    """When a beat has NO ``failure_metric_delta`` set (e.g. ``attack``),
-    dice_failed=True keeps the default delta — legacy behavior preserved.
-    Regression guard against accidentally breaking beats that don't define
-    a structured failure branch.
-    """
-    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
-
-    snap, pack = mw_snap_with_combat
-    result = NarrationTurnResult(
-        narration="The Warden swings.",
-        beat_selections=[
-            BeatSelection(actor="Warden", beat_id="attack", target=None),
-        ],
-    )
-    _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack, dice_failed=True,
-    )
-    # attack has metric_delta=2, no failure branch — still applies +2.
-    assert snap.encounter.metric.current == 2
-
-    span_names = {s.name for s in otel_capture.get_finished_spans()}
-    assert "encounter.beat_failure_branch" not in span_names
-
-
-def test_player_actor_beats_dropped_on_dice_turn_soul_agency(
-    mw_snap_with_combat, otel_capture: InMemorySpanExporter
-) -> None:
-    """SOUL Agency — on a dice-replay turn (dice_failed is not None) the
-    player's beat was already applied by DICE_THROW dispatch. Any
-    narrator-extracted ``beat_selection`` whose actor matches the
-    player's name must be dropped so the system can't auto-play a second
-    action on their behalf.
-
-    Regression for pingpong 2026-04-24 "Player auto-plays 'attack' beat
-    after failed Flank — Agency violation".
-    """
-    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
-
-    snap, pack = mw_snap_with_combat
-    # Narrator extracted TWO beats — player Slabgorb attacking AND Warden
-    # attacking. Only the NPC beat should land.
+    # Narrator extracted player + NPC beats. Both must be filtered when
+    # dice_failed is not None.
     result = NarrationTurnResult(
         narration="You swing, the Warden counters.",
         beat_selections=[
             BeatSelection(actor="Slabgorb", beat_id="attack", target=None),
             BeatSelection(actor="Warden", beat_id="attack", target=None),
+            BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
         ],
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack, dice_failed=False,
     )
-    # Only the Warden beat landed — momentum moves by one attack delta (+2),
-    # not two (+4).
-    assert snap.encounter.metric.current == 2
+    # No beat applied — momentum stays at whatever dice dispatch left it.
+    assert snap.encounter.metric.current == 0
 
-    # Case-insensitive actor match is enforced — the filter isn't brittle
-    # to narrator capitalization drift.
+    # Same for dice_failed=True (the other branch of "dice ran").
     snap2, pack2 = mw_snap_with_combat
-    snap2.encounter.metric.current = 0  # reset
+    snap2.encounter.metric.current = 5
     result2 = NarrationTurnResult(
-        narration="You attack.",
+        narration="The Warden channels the mutation.",
         beat_selections=[
-            BeatSelection(actor="SLABGORB", beat_id="attack", target=None),
+            BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
         ],
     )
     _apply_narration_result_to_snapshot(
         snap2, result2, player_name="Slabgorb", pack=pack2, dice_failed=True,
     )
-    assert snap2.encounter.metric.current == 0
+    # Pre-dice-applied momentum is untouched. No failure-branch span fires
+    # because no beat was applied at all.
+    assert snap2.encounter.metric.current == 5
+    span_names = {s.name for s in otel_capture.get_finished_spans()}
+    assert "encounter.beat_failure_branch" not in span_names
 
 
-def test_player_actor_beats_allowed_on_non_dice_turn(
+def test_beat_selections_apply_on_non_dice_turn(
     mw_snap_with_combat, otel_capture: InMemorySpanExporter
 ) -> None:
-    """When dice_failed is None (no DICE_THROW this turn, e.g. a pure
-    free-text narration turn before the player clicks a beat), the
-    filter stays out of the way — the raw narrator-apply contract is
-    unchanged. Guards against accidentally dropping player beats in the
-    pre-dice-integration path.
+    """When ``dice_failed is None`` (no DICE_THROW this turn, e.g. a
+    pure free-text narration turn while an encounter is active), the
+    narrator-apply contract is unchanged — beats still land. Guards
+    against accidentally dropping beats on the legacy narrator-driven
+    combat path.
     """
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
