@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
+import threading
 from pathlib import Path
 
 import uvicorn
@@ -13,14 +15,19 @@ from sidequest.corpus.schema import LabeledPair, TrainingPair
 
 DEFAULT_PORT = 9865
 _STATIC = Path(__file__).parent / "static"
+_log = logging.getLogger("sidequest.corpus.corpuslabel")
 
 
 def _load_unlabeled(corpus: Path) -> list[TrainingPair]:
-    return [
-        TrainingPair.model_validate_json(line)
-        for line in corpus.read_text().splitlines()
-        if line.strip()
-    ]
+    out: list[TrainingPair] = []
+    for line_no, line in enumerate(corpus.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            out.append(TrainingPair.model_validate_json(line))
+        except Exception as e:
+            _log.warning("corpus line %d is malformed, skipping: %s", line_no, e)
+    return out
 
 
 def build_app(corpus: Path, labeled_out: Path) -> FastAPI:
@@ -30,6 +37,10 @@ def build_app(corpus: Path, labeled_out: Path) -> FastAPI:
 
     app = FastAPI(title="SideQuest Corpus Labeler", version="0.1.0")
     app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+    # Per-app lock serialises concurrent /api/label writers so appends don't
+    # interleave. One app instance per process, so one lock per process.
+    _label_lock = threading.Lock()
 
     @app.get("/")
     def index() -> FileResponse:
@@ -44,14 +55,27 @@ def build_app(corpus: Path, labeled_out: Path) -> FastAPI:
         unlabeled = len(_load_unlabeled(corpus))
         labeled = 0
         if labeled_out.exists():
-            labeled = sum(1 for line in labeled_out.read_text().splitlines() if line.strip())
+            for line_no, line in enumerate(
+                labeled_out.read_text().splitlines(), start=1
+            ):
+                if not line.strip():
+                    continue
+                try:
+                    LabeledPair.model_validate_json(line)
+                    labeled += 1
+                except Exception as e:
+                    _log.warning(
+                        "labeled line %d is malformed, not counted: %s", line_no, e
+                    )
         return {"unlabeled": unlabeled, "labeled": labeled}
 
     @app.post("/api/label")
     def label(pair: LabeledPair) -> dict[str, bool]:
-        with labeled_out.open("a", encoding="utf-8") as fh:
-            fh.write(pair.model_dump_json())
-            fh.write("\n")
+        # Build the full record as one bytes blob, then write with the lock
+        # held so concurrent POSTs can't interleave their newlines.
+        line = pair.model_dump_json() + "\n"
+        with _label_lock, labeled_out.open("a", encoding="utf-8") as fh:
+            fh.write(line)
         return {"ok": True}
 
     return app
@@ -82,5 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"corpuslabel listening on http://{args.host}:{args.port}")
     print(f"corpus: {args.corpus}")
     print(f"labeled output: {args.out}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    except OSError as e:
+        print(f"error: cannot bind {args.host}:{args.port}: {e}", file=sys.stderr)
+        return 2
     return 0

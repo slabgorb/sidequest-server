@@ -36,13 +36,33 @@ def test_corpusdiff_fails_loud_on_missing_save(tmp_path: Path) -> None:
     assert "not found" in result.stderr.lower()
 
 
-def test_corpusdiff_single_save_emits_empty_array(tmp_path: Path) -> None:
-    """One save = nothing to diff against → empty JSON array on disk."""
-    out = tmp_path / "divergences.json"
-    subprocess.run(
+def test_corpusdiff_requires_at_least_two_saves(tmp_path: Path) -> None:
+    """One save = nothing to diff → rc 2 with explanatory stderr.
+
+    Supersedes the earlier behavior where a single save silently produced
+    an empty JSON array. The help text says "specify at least twice", so
+    honour that contract loudly.
+    """
+    result = subprocess.run(
         [sys.executable, "-m", "sidequest.cli.corpusdiff",
          "--save", str(FIXTURES / "per_player_a.db"),
-         "--out", str(out)],
-        capture_output=True, text=True, check=True,
+         "--out", str(tmp_path / "x.json")],
+        capture_output=True, text=True,
     )
-    assert json.loads(out.read_text()) == []
+    assert result.returncode == 2
+    assert "at least twice" in result.stderr.lower()
+
+
+def test_corpusdiff_fails_loud_on_non_sqlite_save(tmp_path: Path) -> None:
+    not_a_db = tmp_path / "not.db"
+    not_a_db.write_text("this is not a sqlite file")
+    result = subprocess.run(
+        [sys.executable, "-m", "sidequest.cli.corpusdiff",
+         "--save", str(not_a_db),
+         "--save", str(FIXTURES / "per_player_b.db"),
+         "--out", str(tmp_path / "x.json")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    combined = result.stderr.lower()
+    assert "not a valid sqlite" in combined or "database" in combined

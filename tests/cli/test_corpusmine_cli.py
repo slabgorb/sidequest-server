@@ -41,3 +41,17 @@ def test_corpusmine_requires_save_and_out_flags() -> None:
         capture_output=True, text=True,
     )
     assert result.returncode != 0
+
+
+def test_corpusmine_fails_loud_on_non_sqlite_save(tmp_path: Path) -> None:
+    not_a_db = tmp_path / "not.db"
+    not_a_db.write_text("this is not a sqlite file")
+    result = subprocess.run(
+        [sys.executable, "-m", "sidequest.cli.corpusmine",
+         "--save", str(not_a_db),
+         "--out", str(tmp_path / "x.jsonl")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    combined = result.stderr.lower()
+    assert "not a valid sqlite" in combined or "database" in combined

@@ -36,5 +36,5 @@ class LabeledPair(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pair: TrainingPair
     disputes: list[DisputeTag]
-    corrected_output: str
-    labeler: str
+    corrected_output: str = Field(min_length=1)
+    labeler: str = Field(min_length=1)

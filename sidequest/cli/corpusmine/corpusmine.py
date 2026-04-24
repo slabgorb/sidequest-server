@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -21,7 +22,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: save not found: {args.save}", file=sys.stderr)
         return 2
 
-    pairs = list(mine_save(args.save))
+    try:
+        pairs = list(mine_save(args.save))
+    except sqlite3.DatabaseError as e:
+        print(f"error: not a valid sqlite save: {args.save}: {e}", file=sys.stderr)
+        return 2
+    except RuntimeError as e:  # e.g. missing session_meta
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
     write_pairs(args.out, pairs)
     print(f"wrote {len(pairs)} pairs to {args.out}")
     return 0

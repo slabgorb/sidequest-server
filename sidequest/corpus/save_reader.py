@@ -33,7 +33,10 @@ class SaveReader:
         self._conn: sqlite3.Connection | None = None
 
     def __enter__(self) -> SaveReader:
-        uri = f"file:{self._path}?mode=ro"
+        # immutable=1 tells SQLite the file won't change, skipping lock acquisition
+        # and avoiding any touch of -wal/-shm sidecars. Necessary for the
+        # "does not mutate mtime" contract when mining live WAL-mode saves.
+        uri = f"file:{self._path}?mode=ro&immutable=1"
         self._conn = sqlite3.connect(uri, uri=True)
         return self
 

@@ -116,3 +116,22 @@ def test_label_endpoint_rejects_malformed_body(tmp_path: Path) -> None:
     client = TestClient(build_app(corpus=corpus, labeled_out=labeled))
     resp = client.post("/api/label", json={"not_a_pair": True})
     assert resp.status_code == 422
+
+
+def test_pairs_endpoint_skips_malformed_line(tmp_path: Path) -> None:
+    corpus, labeled = _seed(tmp_path)
+    with corpus.open("a") as fh:
+        fh.write("{truncated\n")
+    client = TestClient(build_app(corpus=corpus, labeled_out=labeled))
+    resp = client.get("/api/pairs")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1  # the one valid pair, not a 500
+
+
+def test_count_endpoint_skips_malformed_labeled_line(tmp_path: Path) -> None:
+    corpus, labeled = _seed(tmp_path)
+    labeled.write_text("{truncated\n")
+    client = TestClient(build_app(corpus=corpus, labeled_out=labeled))
+    resp = client.get("/api/count")
+    assert resp.status_code == 200
+    assert resp.json() == {"unlabeled": 1, "labeled": 0}
