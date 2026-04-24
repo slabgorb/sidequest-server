@@ -16,12 +16,14 @@ from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.session_handler import _SessionData, _build_turn_context
 
+CONTENT_GENRE_PACKS = (
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+)
+
 
 def test_build_turn_context_populates_lethality_policy_from_pack():
     """A real caverns pack → TurnContext.lethality_policy is the pack's policy."""
-    pack = load_genre_pack(
-        Path("sidequest-content/genre_packs/caverns_and_claudes")
-    )
+    pack = load_genre_pack(CONTENT_GENRE_PACKS / "caverns_and_claudes")
     assert pack.lethality_policy is not None  # Task 4 wired it.
 
     snap = GameSnapshot(
@@ -50,9 +52,7 @@ def test_build_turn_context_populates_lethality_policy_from_pack():
 
 def test_build_turn_context_populates_empty_cores_when_no_pcs_or_npcs():
     """No characters, no NPCs → empty dicts (not None), arbiter becomes a no-op."""
-    pack = load_genre_pack(
-        Path("sidequest-content/genre_packs/caverns_and_claudes")
-    )
+    pack = load_genre_pack(CONTENT_GENRE_PACKS / "caverns_and_claudes")
     snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="sunken_keep",

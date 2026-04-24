@@ -27,6 +27,10 @@ SHIPPED_PACKS = [
     "spaghetti_western",
 ]
 
+CONTENT_GENRE_PACKS = (
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+)
+
 
 def _pc(current: int) -> CreatureCore:
     return CreatureCore(
@@ -38,7 +42,7 @@ def _pc(current: int) -> CreatureCore:
 
 @pytest.mark.parametrize("pack_name", SHIPPED_PACKS)
 def test_zero_edge_pc_produces_policy_declared_verdict(pack_name: str):
-    pack_dir = Path("sidequest-content/genre_packs") / pack_name
+    pack_dir = CONTENT_GENRE_PACKS / pack_name
     policy = load_lethality_policy(pack_dir)
     arbiter = LethalityArbiter(policy=policy)
     result = arbiter.arbitrate(
@@ -66,7 +70,7 @@ def test_zero_edge_pc_produces_policy_declared_verdict(pack_name: str):
 @pytest.mark.parametrize("pack_name", SHIPPED_PACKS)
 def test_pack_policy_files_load_without_error(pack_name: str):
     """Lightweight load check — catches YAML drift before integration runs."""
-    pack_dir = Path("sidequest-content/genre_packs") / pack_name
+    pack_dir = CONTENT_GENRE_PACKS / pack_name
     policy = load_lethality_policy(pack_dir)
     assert policy.genre_key == pack_name
     assert policy.must_narrate.strip()

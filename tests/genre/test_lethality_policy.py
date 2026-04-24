@@ -13,6 +13,10 @@ from sidequest.genre.lethality_policy_loader import (
 )
 from sidequest.genre.models.lethality import LethalityPolicy, VerdictsOnZeroEdge
 
+CONTENT_GENRE_PACKS = (
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+)
+
 
 def test_minimal_policy_roundtrips():
     policy = LethalityPolicy(
@@ -118,7 +122,7 @@ def test_genre_pack_exposes_lethality_policy():
 
     from sidequest.genre.loader import load_genre_pack
 
-    pack = load_genre_pack(Path("sidequest-content/genre_packs/caverns_and_claudes"))
+    pack = load_genre_pack(CONTENT_GENRE_PACKS / "caverns_and_claudes")
     assert pack.lethality_policy is not None
     assert pack.lethality_policy.genre_key == "caverns_and_claudes"
     assert pack.lethality_policy.verdicts_on_zero_edge.pc == "humiliated"
@@ -137,7 +141,7 @@ def test_load_genre_pack_wraps_malformed_lethality_policy_in_genre_load_error(tm
     from sidequest.genre.error import GenreLoadError
     from sidequest.genre.loader import load_genre_pack
 
-    src = Path("sidequest-content/genre_packs/caverns_and_claudes")
+    src = CONTENT_GENRE_PACKS / "caverns_and_claudes"
     dst = tmp_path / "caverns_and_claudes"
     shutil.copytree(src, dst)
     (dst / "lethality_policy.yaml").write_text(

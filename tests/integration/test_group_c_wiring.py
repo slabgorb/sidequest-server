@@ -35,6 +35,10 @@ from tests.agents.test_orchestrator import make_spawn_fn
 
 pytestmark = pytest.mark.asyncio
 
+CONTENT_GENRE_PACKS = (
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+)
+
 
 async def test_arbiter_is_invoked_on_real_prompt_build_path():
     """Spy on LethalityArbiter.arbitrate — it must be called exactly once."""
@@ -61,7 +65,7 @@ async def test_arbiter_is_invoked_on_real_prompt_build_path():
             characters=[character],
         ),
         store=MagicMock(),
-        genre_pack=load_genre_pack(Path("sidequest-content/genre_packs/caverns_and_claudes")),
+        genre_pack=load_genre_pack(CONTENT_GENRE_PACKS / "caverns_and_claudes"),
         orchestrator=MagicMock(),
     )
     ctx = _build_turn_context(sd)

@@ -62,6 +62,13 @@ class MessageType(str, Enum):
     GAME_PAUSED = "GAME_PAUSED"
     GAME_RESUMED = "GAME_RESUMED"
     SECRET_NOTE = "SECRET_NOTE"
+    # Reserved event kinds for Group B/C going-forward corpus capture.
+    # Payload schemas live in sidequest/corpus/going_forward.py. These are
+    # NOT yet filter-reachable (not in _KIND_TO_MESSAGE_CLS) — emitters land
+    # with the group that owns each subsystem.
+    DISPATCH_PACKAGE = "DISPATCH_PACKAGE"
+    NARRATOR_DIRECTIVE_USED = "NARRATOR_DIRECTIVE_USED"
+    VERDICT_OVERRIDE = "VERDICT_OVERRIDE"
 
 
 class NarratorVerbosity(str, Enum):
