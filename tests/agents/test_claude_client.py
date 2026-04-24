@@ -14,8 +14,8 @@ import pytest
 
 from sidequest.agents import ClaudeClient, ClaudeResponse
 from sidequest.agents.claude_client import (
-    ClaudeLike,
     EmptyResponse,
+    LlmClient,
     SubprocessFailed,
     TimeoutError,
 )
@@ -360,13 +360,26 @@ def test_claude_response_inequality():
 
 
 # =========================================================================
-# ClaudeLike protocol conformance
+# LlmClient protocol conformance
 # =========================================================================
 
 
-def test_claude_client_satisfies_claude_like_protocol():
+def test_claude_client_satisfies_llm_client_protocol():
     client = ClaudeClient()
-    assert isinstance(client, ClaudeLike)
+    assert isinstance(client, LlmClient)
+
+
+def test_llm_client_protocol_requires_capabilities():
+    class MissingCaps:
+        async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
+            raise NotImplementedError
+
+        async def send_with_session(self, prompt, model, session_id=None, system_prompt=None,
+                                     allowed_tools=None, env_vars=None):
+            raise NotImplementedError
+
+    # Missing capabilities() means it does NOT satisfy the Protocol.
+    assert not isinstance(MissingCaps(), LlmClient)
 
 
 # =========================================================================
@@ -383,3 +396,47 @@ async def test_wiring_import_from_public_api():
     client = ClaudeClient(spawn_fn=spawn)
     resp = await client.send_with_model("test", "haiku")
     assert resp.text == "wiring ok"
+
+
+def test_claude_client_reports_capabilities():
+    client = ClaudeClient()
+    caps = client.capabilities()
+    assert caps.supports_sessions is True
+    assert caps.supports_tools is True
+    assert caps.supports_streaming is False
+    assert caps.max_context_tokens >= 200_000
+    assert caps.backend_id == "claude-cli"
+
+
+def test_llm_capabilities_is_frozen():
+    from dataclasses import FrozenInstanceError
+
+    from sidequest.agents.claude_client import LlmCapabilities
+
+    caps = LlmCapabilities(
+        backend_id="x",
+        supports_sessions=True,
+        supports_tools=False,
+        max_context_tokens=1,
+        supports_streaming=False,
+    )
+    with pytest.raises(FrozenInstanceError):
+        caps.backend_id = "y"  # type: ignore[misc]
+
+
+def test_claude_response_carries_backend_tag():
+    r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None)
+    assert r.backend == "claude-cli"
+
+
+def test_claude_response_backend_accepts_override():
+    r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None, backend="ollama")
+    assert r.backend == "ollama"
+
+
+def test_claude_client_stamps_backend_on_response():
+    """End-to-end: a successful send_with_model call surfaces backend='claude-cli'."""
+    spawn = make_spawn_fn(stdout=json_envelope("hi back"))
+    client = ClaudeClient(spawn_fn=spawn)
+    response = asyncio.run(client.send_with_model("hi", model="sonnet"))
+    assert response.backend == "claude-cli"

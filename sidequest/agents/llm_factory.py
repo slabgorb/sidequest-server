@@ -1,0 +1,37 @@
+"""LlmClient factory — selects backend from env (ADR-073 Phase 1/2)."""
+
+from __future__ import annotations
+
+import os
+
+from sidequest.agents.claude_client import ClaudeClient, LlmClient, LlmClientError
+from sidequest.agents.ollama_client import DEFAULT_OLLAMA_URL, OllamaClient
+
+ENV_BACKEND = "SIDEQUEST_LLM_BACKEND"
+ENV_OLLAMA_URL = "SIDEQUEST_OLLAMA_URL"
+
+_VALID_BACKENDS = frozenset({"claude", "ollama"})
+
+
+class UnknownBackend(LlmClientError):
+    """SIDEQUEST_LLM_BACKEND value was not one of the supported backends."""
+
+
+def build_llm_client() -> LlmClient:
+    """Return the configured LlmClient. Default: ClaudeClient.
+
+    Fails loudly for unknown backend values — no silent fallback (CLAUDE.md).
+    """
+    raw = os.environ.get(ENV_BACKEND, "claude")
+    key = raw.strip().lower()
+    if key not in _VALID_BACKENDS:
+        raise UnknownBackend(
+            f"{ENV_BACKEND}={raw!r} not supported; pick one of {sorted(_VALID_BACKENDS)}"
+        )
+    if key == "claude":
+        return ClaudeClient()
+    if key == "ollama":
+        base_url = os.environ.get(ENV_OLLAMA_URL, DEFAULT_OLLAMA_URL)
+        return OllamaClient(base_url=base_url)
+    # Unreachable — the set check above covers all known backends.
+    raise UnknownBackend(f"backend {key!r} recognised but not wired")

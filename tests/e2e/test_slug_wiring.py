@@ -22,7 +22,7 @@ from sidequest.server.app import create_app
 
 
 def _make_mock_client() -> MagicMock:
-    """Create a mock ClaudeLike that returns canned narration."""
+    """Create a mock LlmClient that returns canned narration."""
     mock = MagicMock()
     mock.send_with_session = AsyncMock(
         return_value=ClaudeResponse(

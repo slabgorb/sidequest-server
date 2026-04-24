@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeLike, ClaudeResponse
+from sidequest.agents.claude_client import ClaudeClient, LlmClient, ClaudeResponse
 from sidequest.agents.narrator import NarratorAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import (
@@ -586,18 +586,18 @@ class Orchestrator:
 
     def __init__(
         self,
-        client: ClaudeLike | None = None,
+        client: LlmClient | None = None,
         soul_data: object | None = None,
     ) -> None:
         """Create an orchestrator.
 
         Args:
-            client: ClaudeLike client for LLM invocations.
+            client: LlmClient client for LLM invocations.
                     If None, creates a default ClaudeClient.
             soul_data: Optional SoulData for SOUL.md principle injection.
                        If None, SOUL.md is loaded from CWD (if present).
         """
-        self._client: ClaudeLike = client if client is not None else ClaudeClient()
+        self._client: LlmClient = client if client is not None else ClaudeClient()
         self._narrator = NarratorAgent()
 
         # Persistent session management (ADR-066)
@@ -1424,7 +1424,7 @@ class Orchestrator:
 
 
 async def run_narration_turn(
-    client: ClaudeLike,
+    client: LlmClient,
     session: GameSnapshot,
     genre: GenrePack,
     player_action: str,
@@ -1443,7 +1443,7 @@ async def run_narration_turn(
     delegates to Orchestrator.run_narration_turn().
 
     Args:
-        client: ClaudeLike (real or mocked) for LLM calls.
+        client: LlmClient (real or mocked) for LLM calls.
         session: Current game snapshot.
         genre: Loaded genre pack (for prompts.yaml injection).
         player_action: Raw player input text.

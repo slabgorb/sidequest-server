@@ -19,7 +19,7 @@ from sidequest.server.app import create_app
 
 
 def _make_mock_client() -> MagicMock:
-    """Create a mock ClaudeLike that returns canned narration."""
+    """Create a mock LlmClient that returns canned narration."""
     from sidequest.agents.claude_client import ClaudeResponse
 
     mock = MagicMock()

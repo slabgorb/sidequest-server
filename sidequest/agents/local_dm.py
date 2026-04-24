@@ -19,7 +19,7 @@ from threading import Lock
 
 from pydantic import ValidationError
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
+from sidequest.agents.claude_client import ClaudeClient, LlmClient
 from sidequest.genre.models.visibility import VisibilityBaseline
 from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.telemetry.spans import local_dm_decompose_span
@@ -257,11 +257,11 @@ class LocalDM:
     """Local DM decomposer.
 
     Haiku-backed in Group B; swap for local fine-tune in Group E by
-    replacing the `ClaudeLike` client injection.
+    replacing the `LlmClient` client injection.
     """
 
-    def __init__(self, client: ClaudeLike | None = None) -> None:
-        self._client: ClaudeLike = client if client is not None else ClaudeClient()
+    def __init__(self, client: LlmClient | None = None) -> None:
+        self._client: LlmClient = client if client is not None else ClaudeClient()
         self._session_id: str | None = None
         self._session_lock: Lock = Lock()
 

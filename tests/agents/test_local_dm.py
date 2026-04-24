@@ -123,7 +123,7 @@ def dispatch_json_absence():
 
 
 def _make_mock_client(response_text: str) -> AsyncMock:
-    """Build a mocked ClaudeLike client returning the given structured response."""
+    """Build a mocked LlmClient client returning the given structured response."""
     client = AsyncMock()
     client.send_with_session = AsyncMock(return_value=ClaudeResponse(
         text=response_text,

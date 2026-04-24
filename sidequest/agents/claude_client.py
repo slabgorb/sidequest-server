@@ -18,6 +18,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from sidequest.telemetry.spans import (
@@ -44,7 +45,22 @@ SpawnFn = Callable[..., Awaitable[Any]]
 # ---------------------------------------------------------------------------
 
 
-class ClaudeClientError(Exception):
+class LlmClientError(Exception):
+    """Base error for any LlmClient backend (Claude CLI, Ollama, future MLX)."""
+
+
+@dataclass(frozen=True, slots=True)
+class LlmCapabilities:
+    """Runtime capability report for an LlmClient backend."""
+
+    backend_id: str
+    supports_sessions: bool
+    supports_tools: bool
+    max_context_tokens: int
+    supports_streaming: bool
+
+
+class ClaudeClientError(LlmClientError):
     """Base error from Claude CLI subprocess invocations."""
 
 
@@ -78,9 +94,9 @@ class EmptyResponse(ClaudeClientError):
 
 
 class ClaudeResponse:
-    """Response from a Claude CLI invocation, including token usage telemetry."""
+    """Response from an LlmClient call, including token usage telemetry."""
 
-    __slots__ = ("text", "input_tokens", "output_tokens", "session_id")
+    __slots__ = ("text", "input_tokens", "output_tokens", "session_id", "backend")
 
     def __init__(
         self,
@@ -88,17 +104,19 @@ class ClaudeResponse:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         session_id: str | None = None,
+        backend: str = "claude-cli",
     ) -> None:
         self.text = text
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.session_id = session_id
+        self.backend = backend
 
     def __repr__(self) -> str:
         return (
             f"ClaudeResponse(text={self.text!r:.40}, "
             f"input_tokens={self.input_tokens}, output_tokens={self.output_tokens}, "
-            f"session_id={self.session_id!r})"
+            f"session_id={self.session_id!r}, backend={self.backend!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -109,6 +127,7 @@ class ClaudeResponse:
             and self.input_tokens == other.input_tokens
             and self.output_tokens == other.output_tokens
             and self.session_id == other.session_id
+            and self.backend == other.backend
         )
 
 
@@ -175,6 +194,16 @@ class ClaudeClient:
     def otel_endpoint(self) -> str | None:
         return self._otel_endpoint
 
+    def capabilities(self) -> LlmCapabilities:
+        """Report Claude CLI capabilities (ADR-073 Phase 1)."""
+        return LlmCapabilities(
+            backend_id="claude-cli",
+            supports_sessions=True,
+            supports_tools=True,
+            max_context_tokens=200_000,
+            supports_streaming=False,
+        )
+
     # ------------------------------------------------------------------
     # Builder-style constructors
     # ------------------------------------------------------------------
@@ -233,6 +262,7 @@ class ClaudeClient:
         with agent_call_session_span(
             model=model,
             prompt_len=len(prompt),
+            backend="claude-cli",
         ) as span:
             if not prompt.strip():
                 raise EmptyResponse()
@@ -275,7 +305,9 @@ class ClaudeClient:
         """Core subprocess execution used by all send methods."""
         model_label = model or "default"
 
-        with agent_call_span(model=model_label, prompt_len=len(prompt)) as span:
+        with agent_call_span(
+            model=model_label, prompt_len=len(prompt), backend="claude-cli"
+        ) as span:
             if not prompt.strip():
                 raise EmptyResponse()
 
@@ -418,6 +450,7 @@ class ClaudeClient:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             session_id=response_session_id,
+            backend="claude-cli",
         )
 
 
@@ -469,20 +502,25 @@ class ClaudeClientBuilder:
 
 
 # ---------------------------------------------------------------------------
-# ClaudeLike protocol (DI abstraction for testing — story 40-1)
+# LlmClient protocol (ADR-073 Phase 1 — generalised from ClaudeLike)
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
-class ClaudeLike(Protocol):
-    """Object-safe abstraction over the Claude CLI client (story 40-1).
+class LlmClient(Protocol):
+    """Object-safe abstraction over any LLM client backend.
 
-    Production code takes ClaudeLike so tests can substitute a mock without
-    spawning a real claude subprocess. This mirrors the Rust ClaudeLike trait.
+    Production code takes LlmClient so tests can substitute a mock and so
+    alternative backends (Ollama, MLX) can slot in via `build_llm_client`.
+    Maps to ADR-073 Phase 1 LlmClient trait.
     """
 
+    def capabilities(self) -> LlmCapabilities:
+        """Report backend capabilities (ADR-073 Phase 1)."""
+        ...
+
     async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
-        """Execute a one-shot subprocess call with an explicit model."""
+        """Execute a one-shot call with an explicit model."""
         ...
 
     async def send_with_session(
@@ -494,5 +532,5 @@ class ClaudeLike(Protocol):
         allowed_tools: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
     ) -> ClaudeResponse:
-        """Execute a persistent-session subprocess call (ADR-066)."""
+        """Execute a persistent-session call (ADR-066)."""
         ...
