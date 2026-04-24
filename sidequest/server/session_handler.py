@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 
@@ -429,6 +429,12 @@ class _SessionData:
     # turns. Constructed with a default factory so existing _SessionData
     # construction sites require no change.
     local_dm: LocalDM = field(default_factory=LocalDM)
+    # Last dice roll outcome (story 34 — physics-is-the-roll). Stashed on
+    # DICE_THROW resolution and read by the next narration turn's context
+    # builder so the narrator knows whether the roll succeeded. Cleared by
+    # the consuming turn (``take`` semantics). None when no roll is
+    # pending. Rust parity: ``pending_roll_outcome`` on SharedSession.
+    pending_roll_outcome: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +874,8 @@ class WebSocketSessionHandler:
             return await self._handle_character_creation(msg)
         elif msg_type == "PLAYER_SEAT":
             return self._handle_player_seat(msg)
+        elif msg_type == "DICE_THROW":
+            return await self._handle_dice_throw(msg)
         else:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
@@ -971,6 +979,88 @@ class WebSocketSessionHandler:
                 self._room.broadcast(confirmed_msg, exclude_socket_id=None)
 
         return []
+
+    # ------------------------------------------------------------------
+    # DICE_THROW dispatch (story 34 port — restored for 2026-04-24 playtest)
+    # ------------------------------------------------------------------
+
+    async def _handle_dice_throw(self, msg: GameMessage) -> list[object]:
+        """Resolve a DICE_THROW from the rolling player.
+
+        The UI drives all rolls via confrontation beat selection: it builds
+        the DiceRequest locally, auto-rolls in Rapier, and sends a single
+        DICE_THROW carrying the beat_id + physics-settled faces. The server
+        applies the beat, resolves the dice, broadcasts DiceRequest +
+        DiceResult to the room, and then runs the narrator inline so the
+        rolling player sees prose in the same round-trip.
+
+        Returns [] — all outbound messages go through the room broadcast
+        queue so every connected socket (rolling player included) sees the
+        same event stream.
+        """
+        from sidequest.server.dispatch.dice import (
+            DiceDispatchError,
+            dispatch_dice_throw,
+        )
+
+        if self._state != _State.Playing:
+            return [_error_msg("Cannot process DICE_THROW: not in Playing state")]
+        if self._session_data is None:
+            return [_error_msg("Internal error: session data missing")]
+
+        sd = self._session_data
+        payload = msg.payload  # type: ignore[attr-defined]
+        rolling_player_id = getattr(msg, "player_id", "") or sd.player_id
+
+        snapshot = sd.snapshot
+        encounter = snapshot.encounter
+        character = snapshot.characters[0] if snapshot.characters else None
+        character_name = character.core.name if character is not None else "Unknown"
+        stats: dict[str, int] = dict(character.stats) if character is not None else {}
+
+        room_broadcast = None
+        if self._room is not None:
+            # Wrap the room's broadcast to a simple callable the dispatcher
+            # can invoke without knowing about SessionRoom. exclude=None so
+            # every connected socket (rolling + spectators) receives the
+            # same DiceRequest + DiceResult stream.
+            def _broadcast(m: object) -> None:
+                assert self._room is not None  # captured under the guard above
+                self._room.broadcast(m, exclude_socket_id=None)
+
+            room_broadcast = _broadcast
+
+        try:
+            outcome = dispatch_dice_throw(
+                payload=payload,
+                rolling_player_id=rolling_player_id,
+                character_name=character_name,
+                character_stats=stats,
+                encounter=encounter,
+                pack=sd.genre_pack,
+                session_id=f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}",
+                round_number=snapshot.turn_manager.interaction,
+                room_broadcast=room_broadcast,
+            )
+        except DiceDispatchError as exc:
+            logger.warning("dice.dispatch_error error=%s", exc)
+            return [_error_msg(f"Dice throw failed: {exc}")]
+
+        # Persist the resolved outcome so follow-up narrator runs can use it
+        # (Rust parity: pending_roll_outcome). Stashed on session_data for
+        # the next turn's TurnContext to pick up if needed.
+        sd.pending_roll_outcome = outcome.outcome
+
+        # Run the narrator inline with the synthesized beat-resolved action
+        # so the rolling player sees prose in the same WebSocket round-trip.
+        # Matches the Rust deferred-narrator intent end-to-end, collapsed to
+        # a single server tick since Python's handler is sync w.r.t. the
+        # read loop.
+        lore_context = await self._retrieve_lore_for_turn(sd, outcome.replay_action_text)
+        turn_context = _build_turn_context(sd, lore_context=lore_context)
+        return await self._execute_narration_turn(
+            sd, outcome.replay_action_text, turn_context,
+        )
 
     # ------------------------------------------------------------------
     # SESSION_EVENT dispatch
