@@ -18,6 +18,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from sidequest.telemetry.spans import (
@@ -44,7 +45,22 @@ SpawnFn = Callable[..., Awaitable[Any]]
 # ---------------------------------------------------------------------------
 
 
-class ClaudeClientError(Exception):
+class LlmClientError(Exception):
+    """Base error for any LlmClient backend (Claude CLI, Ollama, future MLX)."""
+
+
+@dataclass(frozen=True, slots=True)
+class LlmCapabilities:
+    """Runtime capability report for an LlmClient backend."""
+
+    backend_id: str
+    supports_sessions: bool
+    supports_tools: bool
+    max_context_tokens: int
+    supports_streaming: bool
+
+
+class ClaudeClientError(LlmClientError):
     """Base error from Claude CLI subprocess invocations."""
 
 
@@ -174,6 +190,16 @@ class ClaudeClient:
     @property
     def otel_endpoint(self) -> str | None:
         return self._otel_endpoint
+
+    def capabilities(self) -> LlmCapabilities:
+        """Report Claude CLI capabilities (ADR-073 Phase 1)."""
+        return LlmCapabilities(
+            backend_id="claude-cli",
+            supports_sessions=True,
+            supports_tools=True,
+            max_context_tokens=200_000,
+            supports_streaming=False,
+        )
 
     # ------------------------------------------------------------------
     # Builder-style constructors

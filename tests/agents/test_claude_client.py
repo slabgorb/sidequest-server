@@ -383,3 +383,29 @@ async def test_wiring_import_from_public_api():
     client = ClaudeClient(spawn_fn=spawn)
     resp = await client.send_with_model("test", "haiku")
     assert resp.text == "wiring ok"
+
+
+def test_claude_client_reports_capabilities():
+    client = ClaudeClient()
+    caps = client.capabilities()
+    assert caps.supports_sessions is True
+    assert caps.supports_tools is True
+    assert caps.supports_streaming is False
+    assert caps.max_context_tokens >= 200_000
+    assert caps.backend_id == "claude-cli"
+
+
+def test_llm_capabilities_is_frozen():
+    from dataclasses import FrozenInstanceError
+
+    from sidequest.agents.claude_client import LlmCapabilities
+
+    caps = LlmCapabilities(
+        backend_id="x",
+        supports_sessions=True,
+        supports_tools=False,
+        max_context_tokens=1,
+        supports_streaming=False,
+    )
+    with pytest.raises(FrozenInstanceError):
+        caps.backend_id = "y"  # type: ignore[misc]
