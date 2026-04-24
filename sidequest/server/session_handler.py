@@ -182,6 +182,99 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
 
 
 # ---------------------------------------------------------------------------
+# Per-turn write-split: canonical save + per-peer filtered frames (G8)
+# ---------------------------------------------------------------------------
+#
+# MP spec 2026-04-22: the canonical save on the narrator-host holds the union
+# of every event as appended to EventLog (unfiltered). Each peer save holds
+# only the per-peer filtered subset — the frames whose FilterDecision.include
+# is True.
+#
+# `_project_frames` is the single shared core: given one envelope + filter +
+# list of connected players, compute the per-recipient decisions. Both the
+# production turn driver (`_emit_event`) and the test-facing helper
+# `apply_turn_writes_for_test` route through this function so the invariant
+# is tested in the same code path production exercises.
+
+
+@dataclass
+class SentFrame:
+    """One outbound frame to one peer after projection filter."""
+
+    player_id: str
+    payload_json: str
+
+
+def _project_frames(
+    *,
+    envelope: MessageEnvelope,
+    projection_filter: ProjectionFilter,
+    connected_players: list[str],
+    view: object = None,
+    on_decision: Callable[[str, FilterDecision], None] | None = None,
+) -> list[tuple[str, FilterDecision]]:
+    """Run the projection filter once per connected player.
+
+    Returns every (player_id, decision) pair — caller decides what to do with
+    excluded decisions (e.g. production still writes them to the projection
+    cache via ``on_decision`` before discarding the frame).
+
+    The canonical EventLog append is the caller's responsibility; this helper
+    is purely the filter fan-out step.
+    """
+    decisions: list[tuple[str, FilterDecision]] = []
+    for pid in connected_players:
+        decision = projection_filter.project(
+            envelope=envelope, view=view, player_id=pid
+        )
+        if on_decision is not None:
+            on_decision(pid, decision)
+        decisions.append((pid, decision))
+    return decisions
+
+
+def apply_turn_writes_for_test(
+    *,
+    event_log: object,
+    filter: ProjectionFilter,
+    envelope: dict,
+    connected_players: list[str],
+    view: object = None,
+) -> list[SentFrame]:
+    """Test-facing write-split helper: canonical append + per-peer filter.
+
+    Exercises the same core (`_project_frames`) as the production turn driver.
+    The test fake ``event_log`` accepts a single positional MessageEnvelope on
+    ``append``; production uses ``append_in_transaction(kind=..., payload_json=...)``
+    inside a DB transaction — both converge on `_project_frames` for the
+    per-peer decision loop.
+
+    Canonical save receives the raw envelope exactly once. Each peer frame is
+    emitted only when ``FilterDecision.include`` is True.
+    """
+    import json as _json
+
+    canonical_env = MessageEnvelope(
+        kind=envelope["kind"],
+        payload_json=_json.dumps(envelope["payload"]),
+        origin_seq=getattr(event_log, "next_seq", 0),
+    )
+    event_log.append(canonical_env)  # type: ignore[attr-defined]
+
+    decisions = _project_frames(
+        envelope=canonical_env,
+        projection_filter=filter,
+        connected_players=connected_players,
+        view=view,
+    )
+    return [
+        SentFrame(player_id=pid, payload_json=decision.payload_json)
+        for pid, decision in decisions
+        if decision.include
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Session state machine
 # ---------------------------------------------------------------------------
 
@@ -579,19 +672,33 @@ class WebSocketSessionHandler:
                     # event (not per recipient) — snapshot statuses don't
                     # change mid-fanout.
                     status_effects = self.status_effects_by_player()
-                    for other_pid in room.connected_player_ids():
-                        if other_pid == emitter_player_id:
-                            continue
-                        decision = projection_filter.project(
-                            envelope=envelope, view=view, player_id=other_pid
-                        )
+
+                    # G8: route through the shared write-split helper so the
+                    # per-peer filter loop is a single code path (test and
+                    # production exercise `_project_frames`).
+                    recipients = [
+                        pid
+                        for pid in room.connected_player_ids()
+                        if pid != emitter_player_id
+                    ]
+
+                    def _cache_decision(pid: str, decision: FilterDecision) -> None:
                         if self._projection_cache is not None:
                             self._projection_cache.write_in_transaction(
                                 event_seq=seq,
-                                player_id=other_pid,
+                                player_id=pid,
                                 decision=decision,
                                 conn=conn,
                             )
+
+                    decisions = _project_frames(
+                        envelope=envelope,
+                        projection_filter=projection_filter,
+                        connected_players=recipients,
+                        view=view,
+                        on_decision=_cache_decision,
+                    )
+                    for other_pid, decision in decisions:
                         filtered_data: dict = {}
                         if decision.include:
                             filtered_data = json.loads(decision.payload_json)
