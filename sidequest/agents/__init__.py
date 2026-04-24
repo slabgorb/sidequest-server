@@ -30,7 +30,10 @@ from sidequest.agents.claude_client import (
     SubprocessFailed,
 )
 from sidequest.agents.claude_client import TimeoutError as ClaudeTimeoutError
+from sidequest.agents.llm_factory import UnknownBackend, build_llm_client
+from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.narrator import NarratorAgent, narrator_output_format_text
+from sidequest.agents.ollama_client import OllamaClient, OllamaClientError
 from sidequest.agents.orchestrator import (
     ActionRewrite,
     BeatSelection,
@@ -43,7 +46,6 @@ from sidequest.agents.orchestrator import (
     extract_structured_from_response,
     run_narration_turn,
 )
-from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.prompt_framework import (
     AttentionZone,
     PromptComposer,
@@ -98,4 +100,11 @@ __all__ = [
     "SoulData",
     "SoulPrinciple",
     "parse_soul_md",
+]
+
+__all__ += [
+    "OllamaClient",
+    "OllamaClientError",
+    "UnknownBackend",
+    "build_llm_client",
 ]
