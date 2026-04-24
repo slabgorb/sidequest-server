@@ -127,3 +127,37 @@ def test_multiple_entities_at_zero_edge_produce_separate_verdicts():
     )
     entities = sorted(v.entity for v in result.verdicts)
     assert entities == ["npc:Gobbert", "player:alice"]
+
+
+# Task 7 — paired must_narrate + must_not_narrate directives
+
+
+def test_arbiter_emits_paired_directives_per_verdict():
+    """Spec §4.2: every verdict ships with must_narrate + must_not_narrate."""
+    arbiter = LethalityArbiter(policy=_heavy_metal_policy())
+    pc = _make_pc("Alice", edge_current=0)
+    result = arbiter.arbitrate(
+        package=_empty_package(player_id="alice"),
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": pc},
+        npc_cores_by_name={},
+    )
+    kinds = [d.kind for d in result.directives]
+    assert kinds.count("must_narrate") == 1
+    assert kinds.count("must_not_narrate") == 1
+    must = next(d for d in result.directives if d.kind == "must_narrate")
+    must_not = next(d for d in result.directives if d.kind == "must_not_narrate")
+    assert "Render the death" in must.payload
+    assert "narrate survival" in must_not.payload
+
+
+def test_no_directives_when_no_verdicts():
+    arbiter = LethalityArbiter(policy=_heavy_metal_policy())
+    pc = _make_pc("Alice", edge_current=7)
+    result = arbiter.arbitrate(
+        package=_empty_package(),
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": pc},
+        npc_cores_by_name={},
+    )
+    assert result.directives == []

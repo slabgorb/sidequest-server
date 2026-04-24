@@ -32,6 +32,7 @@ from sidequest.protocol.dispatch import (
     LethalityVerdict,
     LethalityVerdictKind,
     NarratorDirective,
+    VisibilityTag,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,25 +63,52 @@ class LethalityArbiter:
         result = LethalityResult()
         for player_id, core in pc_cores_by_player.items():
             if core.edge.current == 0:
-                result.verdicts.append(self._build_verdict(
+                self._emit(
+                    result,
                     entity=f"player:{player_id}",
                     verdict_kind=self._policy.verdicts_on_zero_edge.pc,
-                    cause=(
-                        f"{core.name} reduced to zero edge "
-                        f"(0/{core.edge.max})"
-                    ),
-                ))
+                    core=core,
+                )
         for npc_name, core in npc_cores_by_name.items():
             if core.edge.current == 0:
-                result.verdicts.append(self._build_verdict(
+                self._emit(
+                    result,
                     entity=f"npc:{npc_name}",
                     verdict_kind=self._policy.verdicts_on_zero_edge.npc,
-                    cause=(
-                        f"{core.name} reduced to zero edge "
-                        f"(0/{core.edge.max})"
-                    ),
-                ))
+                    core=core,
+                )
         return result
+
+    def _emit(
+        self,
+        result: LethalityResult,
+        *,
+        entity: str,
+        verdict_kind: LethalityVerdictKind,
+        core: CreatureCore,
+    ) -> None:
+        """Append one verdict + its paired must/must-not directives."""
+        cause = f"{core.name} reduced to zero edge (0/{core.edge.max})"
+        result.verdicts.append(self._build_verdict(
+            entity=entity, verdict_kind=verdict_kind, cause=cause,
+        ))
+        # Paired directives — narrator reads them as one constraint envelope.
+        shared_viz = VisibilityTag(
+            visible_to="all",
+            perception_fidelity={},
+            secrets_for=[],
+            redact_from_narrator_canonical=False,
+        )
+        result.directives.append(NarratorDirective(
+            kind="must_narrate",
+            payload=f"{entity} verdict={verdict_kind}. {self._policy.must_narrate}",
+            visibility=shared_viz,
+        ))
+        result.directives.append(NarratorDirective(
+            kind="must_not_narrate",
+            payload=self._policy.must_not_narrate,
+            visibility=shared_viz,
+        ))
 
     def _build_verdict(
         self,
