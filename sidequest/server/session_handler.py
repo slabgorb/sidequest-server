@@ -75,6 +75,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
 from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -2123,6 +2124,7 @@ class WebSocketSessionHandler:
             player_id=f"player:{sd.player_name}",
             raw_action=action,
             state_summary=turn_context.state_summary,
+            visibility_baseline=sd.genre_pack.visibility_baseline,
         )
         if dispatch_package.degraded:
             logger.info(
@@ -2265,6 +2267,7 @@ class WebSocketSessionHandler:
             text=narration_nbs,
             state_delta=None,
             footnotes=forwarded_footnotes,
+            visibility_sidecar=aggregate_visibility(dispatch_package),
         )
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
@@ -2941,6 +2944,34 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def aggregate_visibility(pkg: DispatchPackage) -> dict:
+    """Produce the _visibility sidecar for the canonical narration payload.
+
+    Rules:
+      - visible_to is the union of all non-redacted tags' visible_to lists.
+      - "all" is a stop word — any "all" tag collapses the union to "all".
+      - fidelity maps merge; later wins on collision (should not occur).
+      - redacted events (redact_from_narrator_canonical=True) are NOT aggregated
+        here — they route via SECRET_NOTE in Task 6 (not yet landed).
+    """
+    any_all = False
+    union: set[str] = set()
+    fidelity: dict[str, str] = {}
+    for pd in pkg.per_player:
+        for d in pd.dispatch:
+            if d.visibility.redact_from_narrator_canonical:
+                continue
+            if d.visibility.visible_to == "all":
+                any_all = True
+            else:
+                union.update(d.visibility.visible_to)
+            fidelity.update(d.visibility.perception_fidelity)
+    return {
+        "visible_to": "all" if any_all else sorted(union),
+        "fidelity": fidelity,
+    }
 
 
 def _build_turn_context(
