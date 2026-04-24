@@ -20,7 +20,6 @@ from pydantic import BaseModel
 class RenderTier(StrEnum):
     """Image generation tiers, each with distinct latency/quality tradeoffs."""
 
-    TACTICAL_SKETCH = "tactical_sketch"
     SCENE_ILLUSTRATION = "scene_illustration"
     PORTRAIT = "portrait"
     PORTRAIT_SQUARE = "portrait_square"
@@ -41,6 +40,7 @@ class StageCue(BaseModel):
     tags: list[str] = []
     seed: int | None = None
     turn_id: int = 0
+    camera: str | None = None
     metadata: dict[str, Any] = {}
 
 
