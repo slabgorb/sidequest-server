@@ -74,6 +74,11 @@ class NarrationPayload(ProtocolBase):
     seq: int = 0
     """Event-log sequence number assigned when this narration was persisted (MP-03 Task 3).
     Clients use this value as last_seen_seq on reconnect to catch up on missed events."""
+    visibility_sidecar: dict | None = Field(default=None, serialization_alias="_visibility")
+    """Aggregated VisibilityTag sidecar (Group G Task 4). Shape:
+    ``{"visible_to": ["player:Alice"] | "all", "fidelity": {entity_id: fidelity_level}}``.
+    Filled in from DispatchPackage by :func:`sidequest.server.session_handler.aggregate_visibility`.
+    Wire name is ``_visibility`` to signal "sidecar / out-of-band" to downstream consumers."""
 
 
 # ---------------------------------------------------------------------------

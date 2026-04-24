@@ -19,6 +19,7 @@ from sidequest.game.projection.rules import (
     ProjectionRules,
     RedactFieldsRule,
     TargetOnlyRule,
+    VisibilityTagRule,
 )
 from sidequest.game.projection.view import GameStateView
 from sidequest.game.projection_filter import FilterDecision
@@ -81,6 +82,23 @@ class GenreRuleStage:
         last_applied_idx: int | None = None
 
         for rule_idx, rule in rules:
+            if isinstance(rule, VisibilityTagRule):
+                viz = payload.get("_visibility")
+                if isinstance(viz, dict):
+                    visible_to = viz.get("visible_to")
+                    if visible_to != "all":
+                        if not isinstance(visible_to, list) or player_id not in visible_to:
+                            return GenreEvalResult(
+                                decision=FilterDecision(include=False, payload_json=""),
+                                matched_rule_index=rule_idx,
+                            )
+                    fidelity_map = viz.get("fidelity") or {}
+                    player_fidelity = fidelity_map.get(player_id)
+                    if player_fidelity:
+                        working = _apply_fidelity(working, player_fidelity)
+                        last_applied_idx = rule_idx
+                # If _visibility is absent, fall through (legacy events unaffected).
+
             if isinstance(rule, TargetOnlyRule):
                 to_value = payload.get(rule.target_only.field)
                 if not _match_to_value(to_value, player_id):
@@ -137,3 +155,43 @@ def _match_to_value(to_value: object, player_id: str) -> bool:
     if isinstance(to_value, list):
         return player_id in to_value
     return False
+
+
+def _apply_fidelity(payload: dict, fidelity: str) -> dict:
+    """Strip span entries whose 'kind' is incompatible with the recipient's fidelity.
+
+    Fidelity buckets (from sidequest.protocol.dispatch.PerceptionFidelity):
+        full                     — no change
+        audio_only               — drop visual_only spans
+        audio_only_muffled       — drop visual_only; tag audio_only with 'muffled'
+        visual_only              — drop audio_only spans
+        periphery_only           — keep only spans marked 'periphery_tolerant'
+        inferred_from_aftermath  — keep only spans marked 'aftermath'
+
+    Operates on payload['spans'] if present; no-op for legacy payloads without spans.
+    """
+    if fidelity == "full":
+        return payload
+    spans = payload.get("spans")
+    if not isinstance(spans, list):
+        return payload
+
+    def keep(span: dict) -> bool:
+        kind = span.get("kind", "full")
+        if fidelity == "audio_only":
+            return kind != "visual_only"
+        if fidelity == "audio_only_muffled":
+            return kind != "visual_only"
+        if fidelity == "visual_only":
+            return kind != "audio_only"
+        if fidelity == "periphery_only":
+            return bool(span.get("periphery_tolerant"))
+        if fidelity == "inferred_from_aftermath":
+            return bool(span.get("aftermath"))
+        return True
+
+    filtered = [s for s in spans if keep(s)]
+    if fidelity == "audio_only_muffled":
+        filtered = [{**s, "muffled": True} if s.get("kind") == "audio_only" else s
+                    for s in filtered]
+    return {**payload, "spans": filtered}

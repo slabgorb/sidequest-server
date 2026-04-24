@@ -19,6 +19,7 @@ from threading import Lock
 from pydantic import ValidationError
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
+from sidequest.genre.models.visibility import VisibilityBaseline
 from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.telemetry.spans import local_dm_decompose_span
 
@@ -107,6 +108,60 @@ RULES:
 - Output valid JSON only. No preamble. No code fences. No commentary."""
 
 
+def apply_visibility_baseline(
+    dispatch: dict,
+    *,
+    baseline: VisibilityBaseline,
+    actor_player_id: str,
+) -> dict:
+    """Fill in VisibilityTag defaults from baseline for a decomposer dispatch dict.
+
+    Respects explicit tags — a dispatch already flagged `_visibility_explicit: True`
+    keeps whatever the decomposer chose. Called per dispatch after LLM parse.
+
+    Unknown subsystems (not present in baseline.default_visibility) are left
+    as-is — the decomposer's emission wins. This avoids silent overrides on
+    subsystems the pack author didn't explicitly opine about.
+    """
+    if dispatch.get("_visibility_explicit"):
+        return dispatch
+    subsystem = dispatch.get("subsystem")
+    mode = baseline.default_visibility.get(subsystem) if subsystem else None
+    if mode is None:
+        return dispatch  # Unknown subsystem — leave as-is (decomposer's choice stands).
+    viz = dict(dispatch.get("visibility", {}))
+    if mode == "actor_only":
+        viz["visible_to"] = [actor_player_id]
+    elif mode == "all":
+        viz["visible_to"] = "all"
+    # "audio_only_muffled" is a fidelity statement, not a visible_to override —
+    # leave visible_to alone; fidelity handling is Task 5 ProjectionFilter territory.
+    return {**dispatch, "visibility": viz}
+
+
+def _apply_baseline_to_package_dict(
+    raw_dict: dict,
+    baseline: VisibilityBaseline,
+) -> None:
+    """Mutate a pre-validation DispatchPackage dict in place, defaulting
+    every VisibilityTag on every dispatch / narrator_instruction / lethality
+    via :func:`apply_visibility_baseline`.
+
+    The baseline keys on `subsystem`. Narrator directives and lethality
+    verdicts don't carry a subsystem, so only dispatches get baseline-driven
+    defaults — directives/verdicts keep whatever the decomposer emitted.
+    That matches the spec: the baseline is a per-subsystem policy.
+    """
+    for pd in raw_dict.get("per_player", []):
+        actor = pd.get("player_id", "")
+        new_dispatches = []
+        for d in pd.get("dispatch", []):
+            new_dispatches.append(apply_visibility_baseline(
+                d, baseline=baseline, actor_player_id=actor,
+            ))
+        pd["dispatch"] = new_dispatches
+
+
 def _build_user_prompt(turn_id: str, player_id: str, raw_action: str, state_summary: str) -> str:
     return (
         f"turn_id: {turn_id}\n"
@@ -141,11 +196,18 @@ class LocalDM:
         player_id: str,
         raw_action: str,
         state_summary: str,
+        visibility_baseline: VisibilityBaseline | None = None,
     ) -> DispatchPackage:
         """Decompose one player action into a DispatchPackage.
 
         On any failure returns a degraded=True package per spec §6.6 —
         the table never blocks.
+
+        If ``visibility_baseline`` is provided, every dispatch /
+        narrator_instruction / lethality verdict in the parsed package has
+        its VisibilityTag defaulted via :func:`apply_visibility_baseline`
+        before DispatchPackage validation. Explicit tags (future:
+        decomposer output marked ``_visibility_explicit``) are preserved.
         """
         with local_dm_decompose_span(
             turn_id=turn_id,
@@ -190,8 +252,20 @@ class LocalDM:
                 return _degraded_package(turn_id, reason="empty_response")
 
             try:
-                pkg = DispatchPackage.model_validate_json(raw_text)
+                # Parse to dict first so we can apply baseline defaults to
+                # VisibilityTags before Pydantic validation locks them in.
+                import json as _json
+                raw_dict = _json.loads(raw_text)
+                if visibility_baseline is not None:
+                    _apply_baseline_to_package_dict(raw_dict, visibility_baseline)
+                pkg = DispatchPackage.model_validate(raw_dict)
             except ValidationError as exc:
+                logger.warning("local_dm.parse_failure turn_id=%s exc=%s", turn_id, exc)
+                reason = f"parse_failure: {type(exc).__name__}"
+                span.set_attribute("degraded", True)
+                span.set_attribute("degraded_reason", reason)
+                return _degraded_package(turn_id, reason=reason)
+            except (ValueError, TypeError) as exc:  # json.JSONDecodeError is ValueError
                 logger.warning("local_dm.parse_failure turn_id=%s exc=%s", turn_id, exc)
                 reason = f"parse_failure: {type(exc).__name__}"
                 span.set_attribute("degraded", True)

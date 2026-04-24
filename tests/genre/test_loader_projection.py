@@ -21,8 +21,13 @@ def _clone_pack(src: Path, dst: Path) -> Path:
 
 
 def test_pack_without_projection_yaml_has_projection_rules_none(tmp_path: Path) -> None:
-    # caverns_and_claudes in the source tree has no projection.yaml.
-    pack = load_genre_pack(CAVERNS_PACK_DIR)
+    # All 6 shipping packs now ship a projection.yaml (Group G Task 3).
+    # Clone caverns and remove the file to exercise the missing-file path.
+    pack_dir = _clone_pack(CAVERNS_PACK_DIR, tmp_path / "caverns_no_proj")
+    projection_file = pack_dir / "projection.yaml"
+    if projection_file.exists():
+        projection_file.unlink()
+    pack = load_genre_pack(pack_dir)
     assert pack.projection_rules is None
 
 

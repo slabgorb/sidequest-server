@@ -598,6 +598,18 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         projection_rules = load_rules_from_yaml_path(projection_yaml)
         validate_projection_rules(projection_rules)  # raises on error — no silent fallback
 
+    # Group G Task 2: required visibility baseline — decomposer reads this at
+    # session init. No silent fallback: missing file is a pack-authoring bug.
+    from sidequest.genre.models.visibility import load_baseline
+
+    visibility_baseline_path = path / "visibility_baseline.yaml"
+    try:
+        visibility_baseline = load_baseline(visibility_baseline_path)
+    except FileNotFoundError as e:
+        raise GenreLoadError(path=visibility_baseline_path, detail=str(e)) from e
+    except Exception as e:
+        raise GenreLoadError(path=visibility_baseline_path, detail=str(e)) from e
+
     return GenrePack(
         meta=meta,
         rules=rules,
@@ -627,6 +639,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         archetype_constraints=archetype_constraints,
         npc_traits=npc_traits,
         projection_rules=projection_rules,
+        visibility_baseline=visibility_baseline,
         source_dir=path,
     )
 

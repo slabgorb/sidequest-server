@@ -16,6 +16,7 @@ from sidequest.game.projection.rules import (
     ProjectionRules,
     RedactFieldsRule,
     TargetOnlyRule,
+    VisibilityTagRule,
 )
 from sidequest.protocol.enums import MessageType
 
@@ -224,6 +225,12 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
             _check_predicate(
                 rule.include_if, kind=rule.kind, rule_idx=idx, schema=schema
             )
+
+        elif isinstance(rule, VisibilityTagRule):
+            # visibility_tag has no payload-schema dependency: it reads the
+            # runtime _visibility sidecar attached by the narration decomposer.
+            # No further validation needed.
+            pass
 
         elif isinstance(rule, RedactFieldsRule):
             for spec in rule.redact_fields:
