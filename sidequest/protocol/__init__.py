@@ -8,6 +8,18 @@ Port of sidequest-protocol (Rust crate) to Python via pydantic.
 
 from __future__ import annotations
 
+# Dice payloads (story 34 — ported 2026-04-24)
+from sidequest.protocol.dice import (
+    DiceRequestPayload,
+    DiceResultPayload,
+    DiceThrowPayload,
+    DieGroupResult,
+    DieSides,
+    DieSpec,
+    RollOutcome,
+    ThrowParams,
+)
+
 # Foundation types
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 
@@ -19,6 +31,9 @@ from sidequest.protocol.messages import (
     ChapterMarkerPayload,
     CharacterCreationMessage,
     CharacterCreationPayload,
+    DiceRequestMessage,
+    DiceResultMessage,
+    DiceThrowMessage,
     ErrorMessage,
     ErrorPayload,
     GameMessage,
@@ -119,6 +134,18 @@ from sidequest.protocol.sanitize import sanitize_player_text
 from sidequest.protocol.types import NonBlankString, Stat
 
 __all__ = [
+    # Dice payloads (story 34)
+    "DiceRequestPayload",
+    "DiceResultPayload",
+    "DiceThrowPayload",
+    "DieGroupResult",
+    "DieSides",
+    "DieSpec",
+    "RollOutcome",
+    "ThrowParams",
+    "DiceRequestMessage",
+    "DiceResultMessage",
+    "DiceThrowMessage",
     # Local DM decomposer (Group B)
     "CrossAction",
     "DispatchPackage",

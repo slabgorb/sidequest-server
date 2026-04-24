@@ -675,6 +675,13 @@ SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
 SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
 SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
 
+# Dice dispatch (story 34-11) — names byte-identical to Rust
+# ``emit_dice_request_sent`` / ``emit_dice_throw_received`` /
+# ``emit_dice_result_broadcast`` so GM-panel queries line up.
+SPAN_DICE_REQUEST_SENT = "dice.request_sent"
+SPAN_DICE_THROW_RECEIVED = "dice.throw_received"
+SPAN_DICE_RESULT_BROADCAST = "dice.result_broadcast"
+
 
 @contextmanager
 def combat_tick_span(
@@ -806,6 +813,82 @@ def encounter_confrontation_initiated_span(
         },
     ) as span:
         yield span
+
+
+def emit_dice_request_sent(
+    *,
+    request_id: str,
+    rolling_player_id: str,
+    stat: str,
+    difficulty: int,
+    modifier: int,
+) -> None:
+    """Fire an event on the current span when a DiceRequest is broadcast.
+
+    Mirrors ``emit_dice_request_sent`` in sidequest-server/src/lib.rs. GM-panel
+    "lie detector" — every DiceRequest we send to the room leaves a trail.
+    """
+    span = trace.get_current_span()
+    span.add_event(
+        SPAN_DICE_REQUEST_SENT,
+        attributes={
+            "request_id": request_id,
+            "rolling_player_id": rolling_player_id,
+            "stat": stat,
+            "difficulty": int(difficulty),
+            "modifier": int(modifier),
+        },
+    )
+
+
+def emit_dice_throw_received(
+    *,
+    request_id: str,
+    rolling_player_id: str,
+    face: list[int],
+) -> None:
+    """Fire on receipt of a DICE_THROW after correlation to a pending request.
+
+    Mirrors ``emit_dice_throw_received`` in the Rust server. Fires only after
+    the pending request was found — so absence of this span on a known
+    request_id is a real correlation drop, not noise.
+    """
+    span = trace.get_current_span()
+    span.add_event(
+        SPAN_DICE_THROW_RECEIVED,
+        attributes={
+            "request_id": request_id,
+            "rolling_player_id": rolling_player_id,
+            "face": list(face),
+        },
+    )
+
+
+def emit_dice_result_broadcast(
+    *,
+    request_id: str,
+    rolling_player_id: str,
+    total: int,
+    outcome: str,
+    seed: int,
+) -> None:
+    """Fire when a DiceResult is resolved + broadcast.
+
+    Mirrors ``emit_dice_result_broadcast`` in the Rust server — the final
+    "what actually happened" span for every roll, so the GM panel can verify
+    physics-is-the-roll end-to-end without trusting narrator self-reporting.
+    """
+    span = trace.get_current_span()
+    span.add_event(
+        SPAN_DICE_RESULT_BROADCAST,
+        attributes={
+            "request_id": request_id,
+            "rolling_player_id": rolling_player_id,
+            "total": int(total),
+            "outcome": outcome,
+            "seed": int(seed),
+        },
+    )
 
 
 @contextmanager

@@ -23,6 +23,11 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, RootModel
 
 from sidequest.protocol.base import ProtocolBase
+from sidequest.protocol.dice import (
+    DiceRequestPayload,
+    DiceResultPayload,
+    DiceThrowPayload,
+)
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
     CartographyMetadata,
@@ -677,6 +682,30 @@ class GameResumedMessage(ProtocolBase):
     player_id: str = ""
 
 
+class DiceRequestMessage(ProtocolBase):
+    """GameMessage::DiceRequest — server asks the rolling player to throw."""
+
+    type: Literal[MessageType.DICE_REQUEST] = MessageType.DICE_REQUEST
+    payload: DiceRequestPayload
+    player_id: str = ""
+
+
+class DiceThrowMessage(ProtocolBase):
+    """GameMessage::DiceThrow — rolling client submits physics-settled faces."""
+
+    type: Literal[MessageType.DICE_THROW] = MessageType.DICE_THROW
+    payload: DiceThrowPayload
+    player_id: str = ""
+
+
+class DiceResultMessage(ProtocolBase):
+    """GameMessage::DiceResult — server broadcasts resolved outcome."""
+
+    type: Literal[MessageType.DICE_RESULT] = MessageType.DICE_RESULT
+    payload: DiceResultPayload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -700,7 +729,10 @@ _Phase1Variant = Annotated[
     | GameResumedMessage
     | ImageMessage
     | RenderQueuedMessage
-    | AudioCueMessage,
+    | AudioCueMessage
+    | DiceRequestMessage
+    | DiceThrowMessage
+    | DiceResultMessage,
     Field(discriminator="type"),
 ]
 
