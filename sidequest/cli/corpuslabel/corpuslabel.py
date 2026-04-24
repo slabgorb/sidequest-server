@@ -29,7 +29,6 @@ def build_app(corpus: Path, labeled_out: Path) -> FastAPI:
     labeled_out.parent.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="SideQuest Corpus Labeler", version="0.1.0")
-    _STATIC.mkdir(parents=True, exist_ok=True)  # so StaticFiles mount doesn't fail pre-Task-9
     app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
     @app.get("/")

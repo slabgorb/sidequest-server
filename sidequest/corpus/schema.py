@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 CORPUS_SCHEMA_VERSION: Literal[1] = 1
 
@@ -26,9 +26,9 @@ class TrainingPair(BaseModel):
     schema_version: Literal[1]
     genre: str
     world: str
-    round_number: int
-    input_text: str
-    output_text: str
+    round_number: int = Field(ge=0)
+    input_text: str = Field(min_length=1)
+    output_text: str = Field(min_length=1)
     provenance: MineProvenance
 
 

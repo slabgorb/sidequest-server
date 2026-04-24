@@ -30,7 +30,7 @@ def test_group_d_pipeline_end_to_end(tmp_path: Path) -> None:
     # Read back the JSONL and confirm every line round-trips through TrainingPair.
     raw_lines = out.read_text().splitlines()
     assert len(raw_lines) == len(pairs)
-    for raw, original in zip(raw_lines, pairs):
+    for raw, original in zip(raw_lines, pairs, strict=True):
         assert json.loads(raw)["schema_version"] == 1
         parsed = TrainingPair.model_validate_json(raw)
         assert parsed == original, "JSONL round-trip changed a pair — contract drift"

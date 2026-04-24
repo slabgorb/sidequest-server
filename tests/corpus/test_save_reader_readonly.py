@@ -18,9 +18,8 @@ def test_save_reader_opens_readonly() -> None:
 
 
 def test_save_reader_refuses_writes() -> None:
-    with SaveReader(SINGLE) as reader:
-        with pytest.raises(sqlite3.OperationalError, match="readonly"):
-            reader.conn.execute("INSERT INTO events (kind, payload_json, created_at) VALUES ('X', '{}', 'now')")
+    with SaveReader(SINGLE) as reader, pytest.raises(sqlite3.OperationalError, match="readonly"):
+        reader.conn.execute("INSERT INTO events (kind, payload_json, created_at) VALUES ('X', '{}', 'now')")
 
 
 def test_save_reader_does_not_mutate_mtime(tmp_path: Path) -> None:

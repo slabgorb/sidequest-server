@@ -32,7 +32,7 @@ class SaveReader:
         self._path = Path(path)
         self._conn: sqlite3.Connection | None = None
 
-    def __enter__(self) -> "SaveReader":
+    def __enter__(self) -> SaveReader:
         uri = f"file:{self._path}?mode=ro"
         self._conn = sqlite3.connect(uri, uri=True)
         return self
