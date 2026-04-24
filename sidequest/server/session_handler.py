@@ -1234,14 +1234,29 @@ class WebSocketSessionHandler:
             # MP-03 Task 4 / ProjectionFilter-Rules Task 18: replay from
             # projection_cache when present (byte-identical to what the live
             # player received). Legacy fallback runs filter live.
+            #
+            # Lie-detector for pingpong 2026-04-24 "Empty narrative on
+            # resume" — the cache read + per-kind replay path are the
+            # failure-prone hot spots. Record the cache row counts, the
+            # include/exclude split, and the by-kind distribution on the
+            # current span so the GM dashboard can tell at a glance
+            # whether the replay had zero NARRATIONs (bug) or the UI
+            # dropped them after delivery (different bug).
             replay_msgs: list[object] = []
+            _replay_span = trace.get_current_span()
+            _replay_cache_rows = 0
+            _replay_excluded = 0
+            _replay_kind_lookup_miss = 0
+            _replay_kinds: dict[str, int] = {}
             if self._projection_cache is not None:
                 cached_rows = self._projection_cache.read_since(
                     player_id=self._current_player_id,
                     since_seq=self._last_seen_seq,
                 )
+                _replay_cache_rows = len(cached_rows)
                 for c in cached_rows:
                     if not c.include or c.payload_json is None:
+                        _replay_excluded += 1
                         continue
                     # Need the event kind to rebuild the message — look it up.
                     # Most sessions won't have many missed events on reconnect,
@@ -1249,10 +1264,13 @@ class WebSocketSessionHandler:
                     # for v1; optimize to a join query if it becomes hot.
                     kind_lookup = self._event_log.read_since(since_seq=c.event_seq - 1)
                     if not kind_lookup or kind_lookup[0].seq != c.event_seq:
+                        _replay_kind_lookup_miss += 1
                         continue
+                    _kind = kind_lookup[0].kind
+                    _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
                     replay_msgs.append(
                         _build_message_for_kind(
-                            kind=kind_lookup[0].kind,
+                            kind=_kind,
                             payload_json=c.payload_json,
                             seq=c.event_seq,
                         )
@@ -1273,6 +1291,9 @@ class WebSocketSessionHandler:
                     )
                     if not dec.include:
                         continue
+                    _replay_kinds[event_row.kind] = (
+                        _replay_kinds.get(event_row.kind, 0) + 1
+                    )
                     replay_msgs.append(
                         _build_message_for_kind(
                             kind=event_row.kind,
@@ -1280,6 +1301,36 @@ class WebSocketSessionHandler:
                             seq=event_row.seq,
                         )
                     )
+
+            # Always record the replay outcome — zero-replay is a bug signal
+            # the GM panel needs to see (pingpong 2026-04-24 "empty narrative
+            # on resume"). Attributes stay on the current mp.slug_connect
+            # span; matching log line for grep-friendly tailing.
+            _replay_span.set_attribute("slug_connect.replay.cache_rows", _replay_cache_rows)
+            _replay_span.set_attribute("slug_connect.replay.excluded", _replay_excluded)
+            _replay_span.set_attribute(
+                "slug_connect.replay.kind_lookup_miss", _replay_kind_lookup_miss
+            )
+            _replay_span.set_attribute("slug_connect.replay.emitted", len(replay_msgs))
+            _replay_span.set_attribute(
+                "slug_connect.replay.narration_count",
+                _replay_kinds.get("NARRATION", 0),
+            )
+            _replay_span.set_attribute(
+                "slug_connect.replay.last_seen_seq", self._last_seen_seq
+            )
+            logger.info(
+                "slug_connect.replay cache_rows=%d excluded=%d emitted=%d "
+                "narration=%d last_seen_seq=%d player=%s slug=%s kinds=%s",
+                _replay_cache_rows,
+                _replay_excluded,
+                len(replay_msgs),
+                _replay_kinds.get("NARRATION", 0),
+                self._last_seen_seq,
+                self._current_player_id,
+                slug,
+                dict(_replay_kinds),
+            )
 
             # Bootstrap messages (playtest 2026-04-23 parity with legacy
             # connect path). Without these the client lands on an empty

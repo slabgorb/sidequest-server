@@ -674,6 +674,107 @@ def test_rename_helper_idempotent_on_already_renamed_character(tmp_path: Path) -
     assert snap.characters[0].core.name == "Slabgorb"
 
 
+def _seed_resumable_game_with_narrations(
+    tmp_path: Path, slug: str, narrations: list[str]
+) -> None:
+    """Seed a resumable game with prior NARRATION events in the event_log.
+
+    Used by the "empty narrative on resume" regression test to prove
+    replay_msgs actually carries historical narration back to the
+    reconnecting client.
+    """
+    import json as _json
+
+    from sidequest.game.event_log import EventLog
+    from sidequest.protocol.messages import NarrationPayload
+
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(
+        store, slug=slug, mode=GameMode.SOLO,
+        genre_slug=_GENRE, world_slug=_WORLD,
+    )
+    core = CreatureCore(
+        name="Rux", description="A stoic fighter",
+        personality="stoic", inventory=Inventory(),
+    )
+    char = Character(
+        core=core, char_class="Fighter", race="Human",
+        backstory="A wandering fighter",
+    )
+    snap = GameSnapshot(
+        genre_slug=_GENRE, world_slug=_WORLD, location="Entrance",
+    )
+    snap.characters = [char]
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+
+    event_log = EventLog(store)
+    for prose in narrations:
+        payload = NarrationPayload(text=prose, seq=0)
+        event_log.append(
+            kind="NARRATION",
+            payload_json=payload.model_dump_json(exclude={"seq"}),
+        )
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_replays_prior_narration(tmp_path: Path) -> None:
+    """On resume with prior NARRATION events in the event_log, the
+    outbound batch MUST include those narrations (replayed via the
+    projection_cache / lazy_fill path) so the reconnecting client can
+    rehydrate the narrative column.
+
+    Pre-fix the slug-connect bootstrap returned no narration rows
+    because lazy_fill wasn't invoked OR the cache read skipped them.
+    Without this the UI lands on "The narrator gathers their
+    thoughts..." and the player has no context for the last scene
+    they were in. Pingpong 2026-04-24.
+    """
+    from sidequest.protocol.enums import MessageType
+
+    slug = "2026-04-24-narration-replay"
+    prior = [
+        "The vault's threshold yawns open before you.",
+        "Cold air rises from the stone below.",
+        "You step across the threshold and descend.",
+    ]
+    _seed_resumable_game_with_narrations(tmp_path, slug, prior)
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+            last_seen_seq=0,  # fresh reconnect — replay everything
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    narration_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
+    ]
+    assert len(narration_msgs) == len(prior), (
+        f"Expected {len(prior)} NARRATION frames on resume, got "
+        f"{len(narration_msgs)}. Outbound types: "
+        f"{[getattr(m, 'type', None) for m in outbound]}"
+    )
+    # NarrationPayload.text is a NonBlankString root model — compare
+    # str(…) so the assertion is about the underlying content, not the
+    # pydantic wrapper representation.
+    replayed_texts = [str(m.payload.text) for m in narration_msgs]
+    assert replayed_texts == prior, (
+        "Replayed narration text diverges from saved event_log "
+        f"payload. Saved={prior!r}; replayed={replayed_texts!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_slug_resume_emits_chapter_marker_for_saved_location(
     tmp_path: Path,
