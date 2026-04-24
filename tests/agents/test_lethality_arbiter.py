@@ -82,3 +82,48 @@ def test_pc_above_zero_edge_produces_no_verdict():
     )
     assert result.verdicts == []
     assert result.directives == []
+
+
+# Task 6 — NPC + multi-entity coverage
+
+
+def _caverns_policy() -> LethalityPolicy:
+    return LethalityPolicy(
+        genre_key="caverns_and_claudes",
+        default_reversibility="narrative_only",
+        verdicts_on_zero_edge=VerdictsOnZeroEdge(pc="humiliated", npc="defeated"),
+        soul_md_constraint="genre_truth:comedic_danger_no_permadeath",
+        must_narrate="Slapstick incapacitation.",
+        must_not_narrate="permadeath; solemn eulogy",
+    )
+
+
+def test_npc_at_zero_edge_produces_caverns_defeated_verdict():
+    arbiter = LethalityArbiter(policy=_caverns_policy())
+    npc = _make_pc("Gobbert", edge_current=0)
+    result = arbiter.arbitrate(
+        package=_empty_package(),
+        bank_result=BankResult(),
+        pc_cores_by_player={},
+        npc_cores_by_name={"Gobbert": npc},
+    )
+    assert len(result.verdicts) == 1
+    v = result.verdicts[0]
+    assert v.entity == "npc:Gobbert"
+    assert v.verdict == "defeated"
+    assert v.reversibility == "narrative_only"
+
+
+def test_multiple_entities_at_zero_edge_produce_separate_verdicts():
+    arbiter = LethalityArbiter(policy=_caverns_policy())
+    alice = _make_pc("Alice", edge_current=0)
+    bob = _make_pc("Bob", edge_current=3)
+    gobbert = _make_pc("Gobbert", edge_current=0)
+    result = arbiter.arbitrate(
+        package=_empty_package(),
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": alice, "bob": bob},
+        npc_cores_by_name={"Gobbert": gobbert},
+    )
+    entities = sorted(v.entity for v in result.verdicts)
+    assert entities == ["npc:Gobbert", "player:alice"]
