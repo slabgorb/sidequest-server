@@ -92,8 +92,6 @@ class OllamaClient:
             with self._http(req) as resp:
                 status = getattr(resp, "status", 200)
                 payload = resp.read()
-        except OllamaClientError:
-            raise
         except Exception as exc:
             raise OllamaClientError(
                 f"ollama /api/generate transport error: {exc}"
