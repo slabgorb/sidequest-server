@@ -102,6 +102,8 @@ from sidequest.protocol.messages import (
     RenderQueuedPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
+    SecretNoteMessage,
+    SecretNotePayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -136,6 +138,7 @@ logger = logging.getLogger(__name__)
 _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
     "CONFRONTATION": ConfrontationMessage,
+    "SECRET_NOTE": SecretNoteMessage,
 }
 
 
@@ -168,6 +171,9 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
 
     if kind == "CONFRONTATION":
         return message_cls(payload=ConfrontationPayload(**data))
+
+    if kind == "SECRET_NOTE":
+        return message_cls(payload=SecretNotePayload(**data))
 
     # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
     # Kept as a belt-and-suspenders hard fail.
@@ -2283,6 +2289,29 @@ class WebSocketSessionHandler:
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
+        # Group G Task 6: route prompt-redacted dispatches as SECRET_NOTE
+        # events. Task 5's ``redact_dispatch_package`` stripped these from the
+        # narrator prompt and parked them on ``result.secret_routes``; here we
+        # reify each one as its own event so the same ProjectionFilter /
+        # visibility_tag rule (Task 3) delivers it only to the recipients in
+        # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
+        # see ``build_secret_note_events`` for the skip rules.
+        for _envelope in build_secret_note_events(
+            result.secret_routes, turn_id=dispatch_package.turn_id,
+        ):
+            import json as _json
+            _payload_data = _json.loads(_envelope.payload_json)
+            self._emit_event(
+                "SECRET_NOTE",
+                SecretNotePayload(
+                    turn_id=_payload_data["turn_id"],
+                    idempotency_key=_payload_data["idempotency_key"],
+                    subsystem=_payload_data["subsystem"],
+                    params=_payload_data.get("params", {}),
+                    visibility_sidecar=_payload_data["_visibility"],
+                ),
+            )
+
         # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
         # OTEL visibility: add event to current span so the GM panel (Sebastien-
         # tier mechanical visibility) can see the dispatch decision end-to-end.
@@ -3023,6 +3052,73 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def build_secret_note_events(
+    removed: list,
+    *,
+    turn_id: str,
+) -> list[MessageEnvelope]:
+    """Build SECRET_NOTE envelopes from prompt-redacted dispatch entries.
+
+    Group G Task 6. ``removed`` is the second element of the tuple returned
+    by :func:`sidequest.agents.prompt_redaction.redact_dispatch_package`
+    (also stashed on ``NarrationTurnResult.secret_routes``).
+
+    Only ``SubsystemDispatch`` entries currently produce SECRET_NOTE events.
+    ``NarratorDirective`` entries were never externally visible; their
+    removal is already expressed by the narrator not mentioning the event.
+    ``LethalityVerdict`` does not carry a VisibilityTag in the current
+    protocol shape, so it falls through here too.
+
+    ``origin_seq`` is ``0`` — the session handler's event-log append assigns
+    the real seq at dispatch time (same pattern as NARRATION).
+    """
+    import json
+
+    from sidequest.protocol.dispatch import SubsystemDispatch
+
+    out: list[MessageEnvelope] = []
+    for entry in removed:
+        if not isinstance(entry, SubsystemDispatch):
+            continue
+        payload = {
+            "turn_id": turn_id,
+            "idempotency_key": entry.idempotency_key,
+            "subsystem": entry.subsystem,
+            "params": entry.params,
+            "_visibility": {
+                "visible_to": entry.visibility.visible_to,
+                "fidelity": entry.visibility.perception_fidelity,
+            },
+        }
+        out.append(MessageEnvelope(
+            kind="SECRET_NOTE",
+            payload_json=json.dumps(payload),
+            origin_seq=0,
+        ))
+    return out
+
+
+def emit_secret_notes(
+    *,
+    secret_routes: list,
+    turn_id: str,
+    event_log,
+) -> None:
+    """Log SECRET_NOTE events for every prompt-redacted dispatch on the turn.
+
+    Consumes ``NarrationTurnResult.secret_routes`` (Task 5) and appends one
+    SECRET_NOTE event per redacted ``SubsystemDispatch`` to the event log,
+    so the same ProjectionFilter fan-out path that handles NARRATION will
+    deliver each note to the recipients named in its ``_visibility.visible_to``.
+
+    ``event_log`` is the session's :class:`sidequest.game.event_log.EventLog`
+    (or a compatible fake in tests). Only the ``.append(kind, payload_json)``
+    shape is used, which matches the real EventLog surface.
+    """
+    for envelope in build_secret_note_events(secret_routes, turn_id=turn_id):
+        event_log.append(kind=envelope.kind, payload_json=envelope.payload_json)
 
 
 def aggregate_visibility(pkg: DispatchPackage) -> dict:
