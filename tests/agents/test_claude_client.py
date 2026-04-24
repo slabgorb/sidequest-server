@@ -14,8 +14,8 @@ import pytest
 
 from sidequest.agents import ClaudeClient, ClaudeResponse
 from sidequest.agents.claude_client import (
-    ClaudeLike,
     EmptyResponse,
+    LlmClient,
     SubprocessFailed,
     TimeoutError,
 )
@@ -360,13 +360,26 @@ def test_claude_response_inequality():
 
 
 # =========================================================================
-# ClaudeLike protocol conformance
+# LlmClient protocol conformance
 # =========================================================================
 
 
-def test_claude_client_satisfies_claude_like_protocol():
+def test_claude_client_satisfies_llm_client_protocol():
     client = ClaudeClient()
-    assert isinstance(client, ClaudeLike)
+    assert isinstance(client, LlmClient)
+
+
+def test_llm_client_protocol_requires_capabilities():
+    class MissingCaps:
+        async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
+            raise NotImplementedError
+
+        async def send_with_session(self, prompt, model, session_id=None, system_prompt=None,
+                                     allowed_tools=None, env_vars=None):
+            raise NotImplementedError
+
+    # Missing capabilities() means it does NOT satisfy the Protocol.
+    assert not isinstance(MissingCaps(), LlmClient)
 
 
 # =========================================================================

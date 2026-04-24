@@ -5,7 +5,7 @@ ADR-082: Python server narration vertical slice.
 
 Phase 1 exports:
 - Agent (Protocol), AgentResponse, BaseAgent, make_agent
-- ClaudeClient, ClaudeLike, ClaudeClientBuilder, ClaudeResponse
+- ClaudeClient, LlmClient, ClaudeClientBuilder, ClaudeResponse
 - ClaudeClientError, TimeoutError, SubprocessFailed, EmptyResponse
 - PromptComposer, PromptRegistry, PromptSection
 - AttentionZone, SectionCategory, RuleTier
@@ -22,9 +22,11 @@ from sidequest.agents.claude_client import (
     ClaudeClient,
     ClaudeClientBuilder,
     ClaudeClientError,
-    ClaudeLike,
     ClaudeResponse,
     EmptyResponse,
+    LlmCapabilities,
+    LlmClient,
+    LlmClientError,
     SubprocessFailed,
 )
 from sidequest.agents.claude_client import TimeoutError as ClaudeTimeoutError
@@ -79,10 +81,12 @@ __all__ = [
     "ClaudeClient",
     "ClaudeClientBuilder",
     "ClaudeClientError",
-    "ClaudeLike",
     "ClaudeResponse",
     "ClaudeTimeoutError",
     "EmptyResponse",
+    "LlmCapabilities",
+    "LlmClient",
+    "LlmClientError",
     "SubprocessFailed",
     # prompt_framework
     "AttentionZone",

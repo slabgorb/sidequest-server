@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
+from sidequest.agents.claude_client import ClaudeClient, LlmClient
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
@@ -452,11 +452,11 @@ class WebSocketSessionHandler:
     def __init__(
         self,
         *,
-        claude_client_factory: Callable[[], ClaudeLike] | None = None,
+        claude_client_factory: Callable[[], LlmClient] | None = None,
         genre_pack_search_paths: list[Path] | None = None,
         save_dir: Path,
     ) -> None:
-        self._client_factory: Callable[[], ClaudeLike] = (
+        self._client_factory: Callable[[], LlmClient] = (
             claude_client_factory if claude_client_factory is not None
             else ClaudeClient
         )

@@ -193,7 +193,7 @@ def _fake_dispatch_package_json(turn_id: str = "t-fake") -> str:
 
 
 class _FakeClaudeClient:
-    """In-process ``ClaudeLike`` that never spawns a subprocess.
+    """In-process ``LlmClient`` that never spawns a subprocess.
 
     Accepts any ``__init__`` args because production code constructs it as
     a zero-arg factory (``self._client_factory = ClaudeClient``) but

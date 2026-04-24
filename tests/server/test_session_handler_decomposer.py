@@ -111,7 +111,7 @@ ABSENCE_JSON = json.dumps({
 
 def _install_real_orchestrator(sd) -> None:
     """Replace ``sd.orchestrator`` (MagicMock by default in session_fixture)
-    with a real :class:`Orchestrator` wired to a MagicMock ClaudeLike client.
+    with a real :class:`Orchestrator` wired to a MagicMock LlmClient client.
 
     Integration tests that need the full narrator-prompt pipeline
     (``build_narrator_prompt`` + directive injection from the dispatch bank)

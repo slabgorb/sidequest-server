@@ -498,20 +498,25 @@ class ClaudeClientBuilder:
 
 
 # ---------------------------------------------------------------------------
-# ClaudeLike protocol (DI abstraction for testing — story 40-1)
+# LlmClient protocol (ADR-073 Phase 1 — generalised from ClaudeLike)
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
-class ClaudeLike(Protocol):
-    """Object-safe abstraction over the Claude CLI client (story 40-1).
+class LlmClient(Protocol):
+    """Object-safe abstraction over any LLM client backend.
 
-    Production code takes ClaudeLike so tests can substitute a mock without
-    spawning a real claude subprocess. This mirrors the Rust ClaudeLike trait.
+    Production code takes LlmClient so tests can substitute a mock and so
+    alternative backends (Ollama, MLX) can slot in via `build_llm_client`.
+    Maps to ADR-073 Phase 1 LlmClient trait.
     """
 
+    def capabilities(self) -> LlmCapabilities:
+        """Report backend capabilities (ADR-073 Phase 1)."""
+        ...
+
     async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
-        """Execute a one-shot subprocess call with an explicit model."""
+        """Execute a one-shot call with an explicit model."""
         ...
 
     async def send_with_session(
@@ -523,5 +528,5 @@ class ClaudeLike(Protocol):
         allowed_tools: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
     ) -> ClaudeResponse:
-        """Execute a persistent-session subprocess call (ADR-066)."""
+        """Execute a persistent-session call (ADR-066)."""
         ...
