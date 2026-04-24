@@ -46,6 +46,7 @@ from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
     CharacterBuilder,
+    humanize_snake_case,
 )
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore
@@ -691,6 +692,92 @@ class WebSocketSessionHandler:
         # first character. Any connected non-active player_id gets []
         # until MP seat-assignment plumbs a real mapping.
         return {sd.player_id: list(snapshot.characters[0].core.statuses)}
+
+    # ------------------------------------------------------------------
+    # Slug-resume narrative tail backfill (pingpong 2026-04-24)
+    # ------------------------------------------------------------------
+
+    def _backfill_last_narration_block(
+        self,
+        *,
+        player_id: str,
+    ) -> list[object]:
+        """Fetch the most recent NARRATION (and its preceding CHAPTER_MARKER,
+        if one was emitted without an intervening narration) from the event
+        log and re-emit them as cached-projection messages — regardless of
+        ``last_seen_seq``.
+
+        Used to paint the narrative pane on a fresh-browser slug-resume
+        where the normal replay would otherwise be empty because the
+        client's persisted ``last_seen_seq`` already covers the tail.
+
+        Returns the messages in emit order (CHAPTER_MARKER first if present,
+        then NARRATION). Silently returns an empty list when no narration
+        has been logged, when the cache has no include=True decision for
+        the relevant event, or when the event log is unavailable. The
+        caller is responsible for updating replay telemetry.
+        """
+        if self._event_log is None or self._projection_cache is None:
+            return []
+        store = self._event_log.store
+        with store._conn:
+            narration_row = store._conn.execute(
+                "SELECT seq, kind, payload_json FROM events "
+                "WHERE kind = 'NARRATION' "
+                "ORDER BY seq DESC LIMIT 1",
+            ).fetchone()
+        if narration_row is None:
+            return []
+        narration_seq = int(narration_row[0])
+
+        with store._conn:
+            chapter_row = store._conn.execute(
+                "SELECT seq, kind, payload_json FROM events "
+                "WHERE kind = 'CHAPTER_MARKER' AND seq < ? "
+                "  AND seq > COALESCE("
+                "    (SELECT MAX(seq) FROM events "
+                "     WHERE kind = 'NARRATION' AND seq < ?),"
+                "    0"
+                "  ) "
+                "ORDER BY seq DESC LIMIT 1",
+                (narration_seq, narration_seq),
+            ).fetchone()
+
+        def _cached_payload(seq: int) -> str | None:
+            with store._conn:
+                row = store._conn.execute(
+                    "SELECT include, payload_json FROM projection_cache "
+                    "WHERE player_id = ? AND event_seq = ?",
+                    (player_id, seq),
+                ).fetchone()
+            if row is None or not bool(row[0]) or row[1] is None:
+                return None
+            return str(row[1])
+
+        messages: list[object] = []
+        if chapter_row is not None:
+            chapter_seq = int(chapter_row[0])
+            chapter_payload = _cached_payload(chapter_seq)
+            if chapter_payload is not None:
+                messages.append(
+                    _build_message_for_kind(
+                        kind="CHAPTER_MARKER",
+                        payload_json=chapter_payload,
+                        seq=chapter_seq,
+                    )
+                )
+
+        narration_payload = _cached_payload(narration_seq)
+        if narration_payload is None:
+            return messages  # Can't emit bare chapter without its narration
+        messages.append(
+            _build_message_for_kind(
+                kind="NARRATION",
+                payload_json=narration_payload,
+                seq=narration_seq,
+            )
+        )
+        return messages
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -1397,6 +1484,34 @@ class WebSocketSessionHandler:
                         )
                     )
 
+            # Pingpong 2026-04-24 "Slug-resume shows empty Narrative pane on
+            # fresh browser session" — when the client's stored
+            # ``last_seen_seq`` already points at (or past) the most recent
+            # NARRATION, the replay loop above correctly emits zero narration
+            # messages. For a live resume that's the right behavior; for a
+            # fresh-browser resume the narrative pane paints blank because
+            # nothing the user can read is on-screen. Backfill the most
+            # recent NARRATION (plus any CHAPTER_MARKER that preceded it
+            # without an intervening narration) from the cache, regardless of
+            # ``last_seen_seq``, so the pane has at least the last chapter to
+            # render. Bounded to 2 messages to avoid dumping a long replay.
+            tail_backfill_count = 0
+            if (
+                _replay_kinds.get("NARRATION", 0) == 0
+                and self._projection_cache is not None
+            ):
+                tail_msgs = self._backfill_last_narration_block(
+                    player_id=self._current_player_id,
+                )
+                if tail_msgs:
+                    replay_msgs.extend(tail_msgs)
+                    tail_backfill_count = len(tail_msgs)
+                    for msg in tail_msgs:
+                        kind_name = getattr(msg, "type", "")
+                        _replay_kinds[kind_name] = (
+                            _replay_kinds.get(kind_name, 0) + 1
+                        )
+
             # Always record the replay outcome — zero-replay is a bug signal
             # the GM panel needs to see (pingpong 2026-04-24 "empty narrative
             # on resume"). Attributes stay on the current mp.slug_connect
@@ -1412,15 +1527,20 @@ class WebSocketSessionHandler:
                 _replay_kinds.get("NARRATION", 0),
             )
             _replay_span.set_attribute(
+                "slug_connect.replay.tail_backfill_count", tail_backfill_count
+            )
+            _replay_span.set_attribute(
                 "slug_connect.replay.last_seen_seq", self._last_seen_seq
             )
             logger.info(
                 "slug_connect.replay cache_rows=%d excluded=%d emitted=%d "
-                "narration=%d last_seen_seq=%d player=%s slug=%s kinds=%s",
+                "narration=%d tail_backfill=%d last_seen_seq=%d "
+                "player=%s slug=%s kinds=%s",
                 _replay_cache_rows,
                 _replay_excluded,
                 len(replay_msgs),
                 _replay_kinds.get("NARRATION", 0),
+                tail_backfill_count,
                 self._last_seen_seq,
                 self._current_player_id,
                 slug,
@@ -1519,7 +1639,13 @@ class WebSocketSessionHandler:
                         ChapterMarkerMessage(
                             payload=ChapterMarkerPayload(
                                 title=None,
-                                location=snapshot.location,
+                                location=_resolve_location_display(
+                                    self._session_data.genre_pack
+                                    if self._session_data is not None
+                                    else None,
+                                    row.world_slug,
+                                    snapshot.location,
+                                ),
                             ),
                             player_id=player_id,
                         )
@@ -2817,7 +2943,9 @@ class WebSocketSessionHandler:
                 ChapterMarkerMessage(
                     payload=ChapterMarkerPayload(
                         title=None,
-                        location=snapshot.location,
+                        location=_resolve_location_display(
+                            sd.genre_pack, sd.world_slug, snapshot.location
+                        ),
                     ),
                     player_id=sd.player_id,
                 ),
@@ -3226,7 +3354,9 @@ class WebSocketSessionHandler:
                     narration, sd.audio_backend._config,  # type: ignore[attr-defined]
                 )
                 payload = build_audio_cue_payload(
-                    cues, audio_backend=sd.audio_backend,
+                    cues,
+                    audio_backend=sd.audio_backend,
+                    genre_slug=sd.genre_slug,
                 )
                 # Emit the resolved cue shape so the GM panel can correlate
                 # a turn's dispatch with the client-side decode errors.
@@ -3592,10 +3722,12 @@ class WebSocketSessionHandler:
         )
 
         location_nbs: NonBlankString | None = None
-        loc_value = sd.snapshot.location or ""
-        if loc_value:
+        loc_display = _resolve_location_display(
+            sd.genre_pack, sd.world_slug, sd.snapshot.location
+        )
+        if loc_display:
             try:
-                location_nbs = NonBlankString(loc_value)
+                location_nbs = NonBlankString(loc_display)
             except Exception:
                 location_nbs = None
 
@@ -3803,7 +3935,12 @@ def _build_turn_context(
         genre=sd.genre_slug,
         genre_prompts=sd.genre_pack.prompts,
         character_name=char_name,
-        current_location=snapshot.location or "Unknown",
+        current_location=(
+            _resolve_location_display(
+                sd.genre_pack, sd.world_slug, snapshot.location
+            )
+            or "Unknown"
+        ),
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
         npc_registry=list(snapshot.npc_registry),
         npcs=list(snapshot.npcs),
@@ -3865,6 +4002,39 @@ def _presence_msg(player_id: str, state: str) -> PlayerPresenceMessage:
     return PlayerPresenceMessage(
         payload=PlayerPresencePayload(player_id=player_id, state=state),  # type: ignore[arg-type]
     )
+
+
+def _resolve_location_display(
+    pack: GenrePack | None,
+    world_slug: str | None,
+    location: str | None,
+) -> str:
+    """Turn a location id (or narrator-emitted slug) into a human-readable
+    display name for the UI.
+
+    1. If the world's ``cartography.rooms`` contains a room whose ``id``
+       matches ``location``, return that room's ``name`` (authoritative).
+    2. If ``location`` looks like snake_case (lowercase with underscores),
+       humanize it — catches narrator confabulations like
+       ``backstage_corridor`` that aren't in the room graph.
+    3. Otherwise return the value unchanged.
+
+    Returns an empty string when ``location`` is ``None`` or blank.
+    """
+    if not location:
+        return ""
+    if pack is not None and world_slug:
+        world = pack.worlds.get(world_slug)
+        if world is not None:
+            cart = getattr(world, "cartography", None)
+            rooms = getattr(cart, "rooms", None) if cart is not None else None
+            if rooms:
+                for room in rooms:
+                    if getattr(room, "id", None) == location:
+                        return room.name
+    if "_" in location and location == location.lower():
+        return humanize_snake_case(location)
+    return location
 
 
 def _sfx_ids_from_genre(genre_pack: GenrePack) -> list[str]:

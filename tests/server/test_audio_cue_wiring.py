@@ -99,13 +99,23 @@ def test_turn_end_outbound_includes_audio_cue_after_narration(
     assert isinstance(audio_msg, AudioCueMessage)
     assert audio_msg.type == MessageType.AUDIO_CUE
     assert audio_msg.payload.mood == "tension"
-    assert audio_msg.payload.music_track == "audio/music/tension/a.ogg"
+    # Playtest 2026-04-24: paths carry the /genre/{slug}/ prefix so the
+    # client fetches via the FastAPI static mount rather than the Vite
+    # dev root (which was 404ing and surfacing as "Unable to decode
+    # audio data" in the browser console every turn).
+    assert audio_msg.payload.music_track == (
+        "/genre/fixture_genre/audio/music/tension/a.ogg"
+    )
     assert audio_msg.player_id == "p-1"
 
     # The resolved music track must actually exist on disk — proves the
-    # DJ is library-backed, not hallucinating paths.
+    # DJ is library-backed, not hallucinating paths. Strip the mount
+    # prefix to recover the pack-relative filesystem path.
     assert audio_msg.payload.music_track is not None
-    full = pack_dir / audio_msg.payload.music_track
+    expected_rel = audio_msg.payload.music_track.removeprefix(
+        "/genre/fixture_genre/"
+    )
+    full = pack_dir / expected_rel
     assert full.exists(), f"library resolved a non-existent path: {full}"
 
 
