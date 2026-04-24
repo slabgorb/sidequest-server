@@ -458,20 +458,44 @@ def create_rest_router() -> APIRouter:
         return {"sessions": []}
 
     @router.get("/api/debug/state")
-    async def debug_state(request: Request) -> list[dict[str, Any]]:
+    async def debug_state(
+        request: Request,
+        session_key: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Enumerate persisted game sessions for the GM dashboard State tab.
 
         Walks ``<save_dir>/games/<slug>/save.db`` and projects each loaded
         :class:`GameSnapshot` onto the ``SessionStateView`` shape defined in
         ``sidequest-ui/src/types/watcher.ts``. Read-only; broken / empty DB
         files are skipped rather than failing the request.
+
+        Results are sorted by save-file modification time, newest first —
+        so the dashboard's default "index 0" pick lands on the
+        most-recently-touched session rather than an old save. Each view
+        includes ``last_activity_ts`` (ms since epoch) so the UI can also
+        pick explicitly.
+
+        If ``session_key`` is provided, only that slug's view is returned
+        (still as a list, to keep the wire shape stable). Missing slug →
+        empty list, not a 404 — the dashboard treats this endpoint as
+        lossy/best-effort.
         """
         save_dir: Path = request.app.state.save_dir
         games_root = save_dir / "games"
         views: list[dict[str, Any]] = []
         if not games_root.exists():
             return views
-        for slug_dir in sorted(games_root.iterdir()):
+        # Enumerate candidate slug dirs, optionally filtered to a single
+        # session_key so the dashboard can target the active session
+        # directly (playtest 2026-04-24 — the State tab defaulted to
+        # index 0 which was the oldest save, not the active one).
+        if session_key is not None:
+            candidates = [games_root / session_key]
+        else:
+            candidates = sorted(games_root.iterdir())
+        for slug_dir in candidates:
+            if not slug_dir.is_dir():
+                continue
             db_file = slug_dir / "save.db"
             if not db_file.is_file():
                 continue
@@ -552,6 +576,10 @@ def create_rest_router() -> APIRouter:
                         },
                     }
                 )
+            try:
+                last_activity_ts = int(db_file.stat().st_mtime * 1000)
+            except OSError:
+                last_activity_ts = 0
             views.append(
                 {
                     "session_key": slug_dir.name,
@@ -568,8 +596,15 @@ def create_rest_router() -> APIRouter:
                     "has_music_director": False,
                     "has_audio_mixer": False,
                     "region_names": [],
+                    "last_activity_ts": last_activity_ts,
                 }
             )
+        # Newest first — the dashboard's default "pick index 0" convention
+        # then lands on the active session instead of the oldest save.
+        views.sort(
+            key=lambda v: int(v.get("last_activity_ts") or 0),
+            reverse=True,
+        )
         return views
 
     @router.post("/api/games", status_code=201)
