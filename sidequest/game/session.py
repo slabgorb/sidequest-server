@@ -143,6 +143,39 @@ class NpcRegistryEntry(BaseModel):
     last_seen_turn: int = 0
 
 
+class PartyPeer(BaseModel):
+    """Canonical identity packet for another party member (not the acting PC).
+
+    Story 37-36: in sealed-letter multiplayer, each player's narrator turn
+    must see canonical identity for the *other* PCs — otherwise pronouns
+    and race/class drift across saves (playtest 3: Blutka he/him became
+    she/her in Orin's save because Orin's narrator had no ground truth).
+    Parallels NpcRegistryEntry, but for peer PCs rather than NPCs.
+
+    Physical identity is canonical (name/pronouns/race/char_class/level).
+    Perception — mood, tactics, feelings — stays POV and is not stored here.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    pronouns: str = ""
+    race: str
+    char_class: str
+    level: int = 1
+
+    @classmethod
+    def from_character(cls, character: Character) -> PartyPeer:
+        """Project a Character's canonical identity into a PartyPeer packet."""
+        return cls(
+            name=character.core.name,
+            pronouns=character.pronouns,
+            race=character.race,
+            char_class=character.char_class,
+            level=character.core.level,
+        )
+
+
 # ---------------------------------------------------------------------------
 # NpcPatch — used in WorldStatePatch.npcs_present
 # ---------------------------------------------------------------------------
