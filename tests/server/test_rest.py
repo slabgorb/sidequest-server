@@ -374,6 +374,70 @@ def test_debug_state_projects_saved_game(tmp_path):
     assert view["player_count"] == 0
 
 
+def test_debug_state_with_character_does_not_500(tmp_path):
+    """Regression for playtest 2026-04-23: a saved snapshot containing a
+    Character must not throw 500 when the dashboard polls /api/debug/state.
+
+    Character.name and Character.level are Combatant-equivalent methods (Rust
+    port), not attributes. rest.py used to do ``int(getattr(char, "level", 1))``
+    which gave it the bound method and crashed with
+    ``TypeError: int() argument must be a string ... not 'method'``.
+
+    This test creates a snapshot with a real Character and asserts the endpoint
+    returns 200 with the resolved name/level — covering both the call gate and
+    the wire path the previous test_debug_state_projects_saved_game (which had
+    no characters in its snapshot) never exercised.
+    """
+    from datetime import date
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+    from sidequest.game.game_slug import generate_slug
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+    from sidequest.game.session import GameSnapshot, TurnManager
+
+    client = _make_app(tmp_path)
+    save_dir = tmp_path / "saves"
+    slug = generate_slug(world_slug="dust_and_lead", today=date.today())
+    db = db_path_for_slug(save_dir, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    char = Character(
+        core=CreatureCore(
+            name="El Paso",
+            description="A weathered gunslinger",
+            personality="quiet",
+            inventory=Inventory(),
+            level=4,
+            xp=37,
+        ),
+        char_class="Gunslinger",
+        race="Human",
+        backstory="Rode in from the dust",
+    )
+    snap = GameSnapshot(
+        genre_slug="spaghetti_western",
+        world_slug="dust_and_lead",
+        location="Sangre River Ford",
+        characters=[char],
+        turn_manager=TurnManager(interaction=3),
+    )
+    store.save(snap)
+    store.close()
+
+    resp = client.get("/api/debug/state")
+    assert resp.status_code == 200, f"500 regression — body: {resp.text}"
+    body = resp.json()
+    assert len(body) == 1
+    view = body[0]
+    assert view["player_count"] == 1
+    player = view["players"][0]
+    # Methods must be CALLED, not stringified as "<bound method ...>"
+    assert player["character_name"] == "El Paso"
+    assert player["character_level"] == 4
+
+
 def test_cors_headers_present_for_dashboard(tmp_path):
     """Dev UI on :5173 must receive CORS headers so the dashboard's
     cross-origin fetch('/api/debug/state') polls don't spam the console."""
