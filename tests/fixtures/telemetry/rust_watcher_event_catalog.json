@@ -1,245 +1,45 @@
 {
   "_meta": {
-    "description": "Frozen snapshot of WatcherEventBuilder emit sites in the Rust mirror repo for component ∈ {combat, encounter}. Used by tests/telemetry/test_rust_span_name_parity.py (Story 42-4 AC3). Each entry pins a Rust emit site to a Python span constant, or documents a deliberate deviation.",
+    "description": "Frozen snapshot of WatcherEventBuilder emit sites in the Rust mirror repo for component ∈ {combat, encounter}. Used by tests/telemetry/test_rust_span_name_parity.py (Story 42-4 AC3).",
     "rust_source": "https://github.com/slabgorb/sidequest-api",
     "snapshot_date": "2026-04-24",
-    "extraction_method": "gh api search/code + grep for WatcherEventBuilder::new + field('event'|'action', ...)",
-    "convention": "Python SPAN_* span name == Rust component + '.' + field('event'|'action') value, EXCEPT where python_deviation is set.",
-    "update_procedure": "Re-run the gh-api extraction against the Rust mirror; add/remove entries and update snapshot_date. Commit fixture changes alongside any Python SPAN_* additions."
+    "extraction_method": "gh api search/code + grep for WatcherEventBuilder::new(\"combat\"|\"encounter\").field(\"event\"|\"action\", ...)",
+    "convention": "Each Rust event appears in exactly one of ``mapped`` (has Python SPAN_* constant) or ``deferred`` (explicit scope reason). Undocumented drift fails the parity test.",
+    "update_procedure": "Re-run gh-api extraction against the Rust mirror; any new event joins ``mapped`` with a Python SPAN_* or ``deferred`` with a scope reason. Never leave an event out entirely — the catalog is the source of truth."
   },
-  "rust_events": [
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.state.beat_applied",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": "SPAN_ENCOUNTER_BEAT_APPLIED",
-      "python_value": "encounter.beat_applied",
-      "python_deviation": "Rust uses .state. infix redundantly with component=encounter; Python flattens for span readability. Load-bearing consumer: GM panel query pattern 'encounter.*'. Documented deviation."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.state.escalated",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — no SPAN_ENCOUNTER_ESCALATED constant. Rust emits on chase→combat escalation (encounter.rs::escalate_to_combat). GM panel query pattern expects this span. AC3 REQUIRES: Python adds SPAN_ENCOUNTER_ESCALATED = 'encounter.escalated'."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.state.phase_transition",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": "SPAN_ENCOUNTER_PHASE_TRANSITION",
-      "python_value": "encounter.phase_transition",
-      "python_deviation": "Rust uses .state. infix; Python flattens. Documented deviation."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.state.resolved",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": "SPAN_ENCOUNTER_RESOLVED",
-      "python_value": "encounter.resolved",
-      "python_deviation": "Rust uses .state. infix; Python flattens. Documented deviation."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.state.resolved_by_trope",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — no SPAN_ENCOUNTER_RESOLVED_BY_TROPE constant. Rust emits distinct from encounter.state.resolved when resolution is trope-driven (AC5). GM panel distinguishes these in filters. AC3 REQUIRES: Python adds SPAN_ENCOUNTER_RESOLVED_BY_TROPE = 'encounter.resolved_by_trope' OR documents why trope-resolution collapses into SPAN_ENCOUNTER_RESOLVED."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.created",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": "SPAN_ENCOUNTER_CONFRONTATION_INITIATED",
-      "python_value": "encounter.confrontation_initiated",
-      "python_deviation": "Python uses 'confrontation_initiated' verbiage inherited from older story 3.4 scaffold; Rust uses 'created'. Documented naming deviation; behaviour is identical."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.beat_dispatched",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — no SPAN_ENCOUNTER_BEAT_DISPATCHED constant. Precedes beat_applied; observable lifecycle event. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.stat_check_resolved",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — no SPAN_ENCOUNTER_STAT_CHECK_RESOLVED constant. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.beat_skipped_resolved",
-      "source_path": "crates/sidequest-game/src/encounter.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — no equivalent. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.beat_no_def",
-      "source_path": "crates/sidequest-server/src/dispatch/beat.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — beat dispatched but no ConfrontationDef. Error-path observability. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.beat_no_encounter",
-      "source_path": "crates/sidequest-server/src/dispatch/beat.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — beat dispatched but no active encounter. Error-path observability. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.beat_id.unknown",
-      "source_path": "crates/sidequest-server/src/dispatch/beat.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — unknown beat id. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.composure_break",
-      "source_path": "crates/sidequest-server/src/dispatch/state_mutations.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — Edge/composure system break event (ADR-014 Diamonds and Coal relevant). AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.creation_failed_unknown_type",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — fail-loud on unknown encounter_type. Maps to 42-1 AC5 (ValidationError). Observability hook for the same failure. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.escalation_failed",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — escalation path observability. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.escalation_started",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — escalation path observability. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.gold_delta",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — encounter-scoped gold mutation. Possibly out-of-scope for Phase 3 (narrative currency). AC3: document scope deferral if intentional."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.gold_overspend_rejected",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — inverse of encounter.gold_delta. AC3: document scope deferral if intentional."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.new_type_rejected_mid_encounter",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — narrator tried to re-declare encounter. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.redeclare_noop",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — narrator re-declared same encounter. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.replaced_pre_beat",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — encounter replaced before any beat fired. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "event",
-      "value": "encounter.transition_guidance_injected",
-      "source_path": "crates/sidequest-server/src/dispatch/prompt.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — prompt-zone injection observability. AC3 REQUIRES: add or document scope deferral."
-    },
-    {
-      "component": "encounter",
-      "field_name": "action",
-      "value": "beats_sent",
-      "source_path": "crates/sidequest-server/src/dispatch/response.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — counts beats dispatched per encounter. Action-style field rather than event-style. AC3: add SPAN_ENCOUNTER_BEATS_SENT or document."
-    },
-    {
-      "component": "encounter",
-      "field_name": "action",
-      "value": "confrontation_def_missing",
-      "source_path": "crates/sidequest-server/src/dispatch/beat.rs",
-      "python_span": null,
-      "python_deviation": "MISSING IN PYTHON — action-style field. AC3: add or document."
-    }
+  "mapped": [
+    {"rust_value": "encounter.state.beat_applied", "python_span": "SPAN_ENCOUNTER_BEAT_APPLIED", "python_value": "encounter.beat_applied", "note": "Python flattens .state. infix."},
+    {"rust_value": "encounter.state.phase_transition", "python_span": "SPAN_ENCOUNTER_PHASE_TRANSITION", "python_value": "encounter.phase_transition", "note": "Python flattens .state. infix."},
+    {"rust_value": "encounter.state.resolved", "python_span": "SPAN_ENCOUNTER_RESOLVED", "python_value": "encounter.resolved", "note": "Python flattens .state. infix."},
+    {"rust_value": "encounter.state.resolved_by_trope", "python_span": "SPAN_ENCOUNTER_RESOLVED_BY_TROPE", "python_value": "encounter.resolved_by_trope", "note": "42-4 adds constant; emit site follow-up alongside resolve_encounter_from_trope."},
+    {"rust_value": "encounter.created", "python_span": "SPAN_ENCOUNTER_CONFRONTATION_INITIATED", "python_value": "encounter.confrontation_initiated", "note": "Python uses confrontation_initiated verbiage from story 3.4 scaffold; behaviour identical."},
+    {"rust_value": "encounter.beat_dispatched", "python_span": "SPAN_ENCOUNTER_BEAT_DISPATCHED", "python_value": "encounter.beat_dispatched", "note": "42-4 adds constant; emit-site wiring follow-up."},
+    {"rust_value": "encounter.stat_check_resolved", "python_span": "SPAN_ENCOUNTER_STAT_CHECK_RESOLVED", "python_value": "encounter.stat_check_resolved", "note": "42-4 adds constant; emit-site wiring follow-up."},
+    {"rust_value": "encounter.beat_skipped_resolved", "python_span": "SPAN_ENCOUNTER_BEAT_SKIPPED_RESOLVED", "python_value": "encounter.beat_skipped_resolved", "note": "42-4 adds constant; emit-site wiring follow-up."},
+    {"rust_value": "encounter.beat_no_def", "python_span": "SPAN_ENCOUNTER_BEAT_NO_DEF", "python_value": "encounter.beat_no_def", "note": "42-4 adds constant; emit-site wiring follow-up alongside find_confrontation_def error path."},
+    {"rust_value": "encounter.beat_no_encounter", "python_span": "SPAN_ENCOUNTER_BEAT_NO_ENCOUNTER", "python_value": "encounter.beat_no_encounter", "note": "42-4 adds constant; emit-site wiring follow-up."},
+    {"rust_value": "encounter.beat_id.unknown", "python_span": "SPAN_ENCOUNTER_BEAT_ID_UNKNOWN", "python_value": "encounter.beat_id.unknown", "note": "42-4 adds constant; emit-site wiring alongside existing ValueError('unknown beat_id')."},
+    {"rust_value": "encounter.creation_failed_unknown_type", "python_span": "SPAN_ENCOUNTER_CREATION_FAILED_UNKNOWN_TYPE", "python_value": "encounter.creation_failed_unknown_type", "note": "42-4 adds constant; emit-site wiring alongside 42-1 ValidationError."}
+  ],
+  "deferred": [
+    {"rust_value": "encounter.state.escalated", "deferred_to": "Phase 4 (chase cinematography, skipped per Keith 2026-04-20)"},
+    {"rust_value": "encounter.escalation_started", "deferred_to": "Phase 4 (chase cinematography)"},
+    {"rust_value": "encounter.escalation_failed", "deferred_to": "Phase 4 (chase cinematography)"},
+    {"rust_value": "encounter.composure_break", "deferred_to": "Epic 39 (Edge/Composure Combat) — 39-7 owns composure observability"},
+    {"rust_value": "encounter.new_type_rejected_mid_encounter", "deferred_to": "Narrator-guard observability follow-up"},
+    {"rust_value": "encounter.redeclare_noop", "deferred_to": "Narrator-guard observability follow-up"},
+    {"rust_value": "encounter.replaced_pre_beat", "deferred_to": "Narrator-guard observability follow-up"},
+    {"rust_value": "encounter.transition_guidance_injected", "deferred_to": "Prompt-zone instrumentation follow-up"},
+    {"rust_value": "encounter.gold_delta", "deferred_to": "Encounter-scoped economy observability (not yet scoped in Python)"},
+    {"rust_value": "encounter.gold_overspend_rejected", "deferred_to": "Encounter-scoped economy observability (not yet scoped in Python)"},
+    {"rust_value": "encounter.beats_sent", "deferred_to": "Per-turn beat-count metric; observability follow-up", "field_name": "action"},
+    {"rust_value": "encounter.confrontation_def_missing", "deferred_to": "Overlaps SPAN_ENCOUNTER_BEAT_NO_DEF; merge or differentiate in follow-up", "field_name": "action"}
   ],
   "python_only_spans": [
-    {
-      "python_span": "SPAN_COMBAT_TICK",
-      "python_value": "combat.tick",
-      "source_path": "sidequest/telemetry/spans.py",
-      "rust_equivalent": null,
-      "rust_deviation": "No production Rust emit site for component=combat found in mirror repo (only docstring examples). Python invented combat.* namespace for GM-panel per-tick visibility distinct from encounter.* domain events. ACCEPTED: Python-side convention, not drift."
-    },
-    {
-      "python_span": "SPAN_COMBAT_ENDED",
-      "python_value": "combat.ended",
-      "source_path": "sidequest/telemetry/spans.py",
-      "rust_equivalent": null,
-      "rust_deviation": "Python-side convention. ACCEPTED."
-    },
-    {
-      "python_span": "SPAN_COMBAT_PLAYER_DEAD",
-      "python_value": "combat.player_dead",
-      "source_path": "sidequest/telemetry/spans.py",
-      "rust_equivalent": null,
-      "rust_deviation": "Python-side convention; Rust has docstring example only. ACCEPTED."
-    },
-    {
-      "python_span": "SPAN_ENCOUNTER_EMPTY_ACTOR_LIST",
-      "python_value": "encounter.empty_actor_list",
-      "source_path": "sidequest/telemetry/spans.py",
-      "rust_equivalent": null,
-      "rust_deviation": "Python-added validation-warning span; no Rust equivalent. ACCEPTED as Python-side enrichment."
-    },
-    {
-      "python_span": "SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH",
-      "python_value": "encounter.beat_failure_branch",
-      "source_path": "sidequest/telemetry/spans.py",
-      "rust_equivalent": null,
-      "rust_deviation": "Python-added failure-branch diagnostic span. ACCEPTED."
-    }
+    {"python_span": "SPAN_COMBAT_TICK", "python_value": "combat.tick", "reason": "Python-invented namespace for per-tick GM-panel visibility; no Rust production emit site."},
+    {"python_span": "SPAN_COMBAT_ENDED", "python_value": "combat.ended", "reason": "Python-invented convention; Rust has docstring example only."},
+    {"python_span": "SPAN_COMBAT_PLAYER_DEAD", "python_value": "combat.player_dead", "reason": "Python-invented convention."},
+    {"python_span": "SPAN_ENCOUNTER_EMPTY_ACTOR_LIST", "python_value": "encounter.empty_actor_list", "reason": "Python-added validation-warning span."},
+    {"python_span": "SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH", "python_value": "encounter.beat_failure_branch", "reason": "Python-added failure-branch diagnostic."}
   ]
 }

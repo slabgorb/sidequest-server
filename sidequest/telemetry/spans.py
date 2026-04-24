@@ -674,6 +674,17 @@ SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
 SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
 SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
 SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
+# Story 42-4 AC3 — Rust-parity span constants for events declared in the
+# Rust source. Emit-site wiring lands with each subsystem's story; the
+# constants exist now so GM-panel queries (Sebastien) resolve cleanly.
+SPAN_ENCOUNTER_RESOLVED_BY_TROPE = "encounter.resolved_by_trope"
+SPAN_ENCOUNTER_BEAT_DISPATCHED = "encounter.beat_dispatched"
+SPAN_ENCOUNTER_STAT_CHECK_RESOLVED = "encounter.stat_check_resolved"
+SPAN_ENCOUNTER_BEAT_SKIPPED_RESOLVED = "encounter.beat_skipped_resolved"
+SPAN_ENCOUNTER_BEAT_NO_DEF = "encounter.beat_no_def"
+SPAN_ENCOUNTER_BEAT_NO_ENCOUNTER = "encounter.beat_no_encounter"
+SPAN_ENCOUNTER_BEAT_ID_UNKNOWN = "encounter.beat_id.unknown"
+SPAN_ENCOUNTER_CREATION_FAILED_UNKNOWN_TYPE = "encounter.creation_failed_unknown_type"
 
 # Dice dispatch (story 34-11) — names byte-identical to Rust
 # ``emit_dice_request_sent`` / ``emit_dice_throw_received`` /

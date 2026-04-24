@@ -68,6 +68,7 @@ from sidequest.game.room_movement import (
     init_room_graph_location,
 )
 from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
+from sidequest.game.tension_tracker import TensionTracker
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -435,6 +436,10 @@ class _SessionData:
     # the consuming turn (``take`` semantics). None when no roll is
     # pending. Rust parity: ``pending_roll_outcome`` on SharedSession.
     pending_roll_outcome: Any | None = None
+    # Per-session TensionTracker (42-4 AC6). Advanced by
+    # ``tick_tension_tracker_for_turn`` on each PLAYER_ACTION dispatch;
+    # consulted by ``_build_turn_context`` to populate TurnContext.pacing_hint.
+    tension_tracker: TensionTracker = field(default_factory=TensionTracker)
 
 
 # ---------------------------------------------------------------------------
@@ -2504,6 +2509,10 @@ class WebSocketSessionHandler:
             self._state = _State.Playing
 
         sd = self._session_data
+        # AC6 — advance the session's TensionTracker once per PLAYER_ACTION.
+        # Must run BEFORE _build_turn_context so the pacing_hint it
+        # computes reflects the post-tick tension state.
+        tick_tension_tracker_for_turn(sd, action="player_action", stakes="normal")
         lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(sd, lore_context=lore_context)
         return await self._execute_narration_turn(sd, action, turn_context)
@@ -3750,6 +3759,12 @@ def _build_turn_context(
         npc.core.name: npc.core for npc in snapshot.npcs
     }
 
+    # AC6 — derive PacingHint from the session's TensionTracker. Quiet
+    # trackers (drama_weight below the sentence-delivery threshold and no
+    # escalation_streak) surface as None so the narrator's Early/Late zone
+    # section is suppressed rather than rendered empty (ADR-009).
+    pacing_hint = _pacing_hint_from_tracker(sd)
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -3773,7 +3788,66 @@ def _build_turn_context(
         lethality_policy=sd.genre_pack.lethality_policy,
         pc_cores_by_player=pc_cores_by_player,
         npc_cores_by_name=npc_cores_by_name,
+        pacing_hint=pacing_hint,
     )
+
+
+def _pacing_hint_from_tracker(sd: _SessionData):
+    """Compute a PacingHint from the session's TensionTracker.
+
+    Returns None when the tracker is quiet — drama_weight below
+    ``sentence_delivery_min`` and no escalation_streak — so the narrator
+    prompt zone is skipped rather than rendered empty.
+
+    If the genre pack doesn't declare ``drama_thresholds``, falls back
+    to the ``DramaThresholds`` pydantic defaults. This is an explicit
+    default, not a silent fallback: the defaults are visible in
+    ``sidequest.genre.models.ocean.DramaThresholds`` and surface in
+    logs via the tracker's own debug output.
+    """
+    from sidequest.game.tension_tracker import DeliveryMode
+    from sidequest.genre.models.ocean import DramaThresholds
+
+    tracker = sd.tension_tracker
+    pack_thresholds = getattr(sd.genre_pack, "drama_thresholds", None)
+    # MagicMock.drama_thresholds is truthy but not a DramaThresholds, so
+    # isinstance is the right check — truthiness would let test-mocked
+    # packs slip through and crash in tracker.pacing_hint().
+    thresholds = (
+        pack_thresholds
+        if isinstance(pack_thresholds, DramaThresholds)
+        else DramaThresholds()
+    )
+    hint = tracker.pacing_hint(thresholds)
+
+    # Quiet tracker: low drama, no escalation, no boring-streak nudge —
+    # suppress the section entirely.
+    if (
+        hint.delivery_mode == DeliveryMode.Instant
+        and hint.escalation_beat is None
+        and tracker.boring_streak() < thresholds.escalation_streak
+    ):
+        return None
+    return hint
+
+
+def tick_tension_tracker_for_turn(
+    sd: _SessionData,
+    *,
+    action: str,
+    stakes: str,
+) -> None:
+    """Advance the session's TensionTracker one turn.
+
+    Called from ``_handle_player_action`` once per PLAYER_ACTION dispatch.
+    The ``action`` and ``stakes`` string tags are informational — the
+    tracker's ``tick()`` mutates only time-decay state. Fuller event
+    classification (CombatEvent / HP-stakes updates) is follow-up work
+    that reuses this seam; the call count invariant (one tick per turn)
+    is what AC6 pins.
+    """
+    del action, stakes  # reserved for future CombatEvent classification
+    sd.tension_tracker.tick()
 
 
 def _find_confrontation_def(pack: GenrePack, confrontation_type: str) -> object | None:

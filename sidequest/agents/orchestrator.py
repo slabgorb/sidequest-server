@@ -567,6 +567,37 @@ def _build_vocabulary_section(vocabulary: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Prompt zone introspection (Story 42-4 AC6)
+# ---------------------------------------------------------------------------
+
+
+def build_prompt_zones(context: TurnContext) -> dict[str, dict[str, str]]:
+    """Return a deterministic map of prompt zone → section name → text.
+
+    Lightweight introspection of which attention-aware zones (Early /
+    Valley / Late, per ADR-009) *would* register for the given context.
+    Used by AC6 wiring tests to assert that skipped sections (e.g.
+    ``pacing_hint`` when ``context.pacing_hint is None``) do not leak
+    empty stubs into the prompt.
+
+    Keys are always present ("early", "valley", "late") for caller
+    convenience; only populated sub-dicts carry section entries.
+
+    Rust parity: the Rust side builds the full prompt each turn and
+    inspects the resulting PromptRegistry; Python exposes the same
+    registration decisions without paying the prompt-assembly cost.
+    """
+    zones: dict[str, dict[str, str]] = {"early": {}, "valley": {}, "late": {}}
+    if context.pacing_hint is not None:
+        # PacingHint registers in the Late zone (orchestrator.build_narrator_prompt
+        # line 1124 rationale: per-turn dynamic state must reach Delta tier).
+        zones["late"]["pacing_hint"] = context.pacing_hint.narrator_directive()
+    if context.encounter_summary is not None:
+        zones["valley"]["encounter_summary"] = context.encounter_summary
+    return zones
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
