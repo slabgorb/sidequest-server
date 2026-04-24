@@ -44,7 +44,7 @@ from sidequest.agents.prompt_framework.types import (
     SectionCategory,
 )
 from sidequest.game.creature_core import CreatureCore
-from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
+from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
@@ -293,6 +293,12 @@ class TurnContext:
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
     npcs: list[Npc] = field(default_factory=list)
+
+    # Party peer identity packets (Story 37-36). Canonical name/pronouns/
+    # race/class/level for every non-self PC in the session. Empty on
+    # solo sessions — in that case the injector registers no section so
+    # we keep the zero-byte-leak discipline (see NPC roster for parallel).
+    party_peers: list[PartyPeer] = field(default_factory=list)
 
     # PacingHint from TensionTracker (Late zone — Rust parity at
     # sidequest-api/crates/sidequest-agents/src/prompt_framework/mod.rs:108).
@@ -994,6 +1000,21 @@ class Orchestrator:
                 agent_name, context.npc_registry
             )
 
+        # Party-peer roster — canonical identity anchor for other PCs.
+        # Story 37-36 (port-drift reopen). In sealed-letter multiplayer,
+        # Player A's narrator turn needs ground truth about Players B/C/...
+        # or their pronouns/race/class drift save-to-save (playtest 3:
+        # Blutka he/him in own save became she/her in Orin's save).
+        if context.party_peers:
+            logger.info(
+                "orchestrator.party_peer_injection party_size=%d current_player=%s",
+                len(context.party_peers),
+                context.character_name,
+            )
+            registry.register_party_peer_section(
+                agent_name, context.party_peers
+            )
+
         # Game state (Valley zone)
         if context.state_summary:
             registry.register_section(
@@ -1481,6 +1502,13 @@ async def run_narration_turn(
                 str(getattr(s, "id", s)) for s in sfx_lib
             ]
 
+    # Story 37-36: canonical peer-identity packets for every non-self PC.
+    party_peers = [
+        PartyPeer.from_character(pc)
+        for pc in session.characters
+        if pc.core.name != char_name
+    ]
+
     context = TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -1495,6 +1523,7 @@ async def run_narration_turn(
         available_sfx=available_sfx,
         npc_registry=list(session.npc_registry),
         npcs=list(session.npcs),
+        party_peers=party_peers,
     )
 
     orchestrator = Orchestrator(client=client)

@@ -67,7 +67,12 @@ from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
 )
-from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
+from sidequest.game.session import (
+    GameSnapshot,
+    NarrativeEntry,
+    NpcRegistryEntry,
+    PartyPeer,
+)
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -3750,6 +3755,16 @@ def _build_turn_context(
         npc.core.name: npc.core for npc in snapshot.npcs
     }
 
+    # Story 37-36: canonical peer-identity packets for every non-self PC.
+    # Exclude the acting player's own character by name match against
+    # ``sd.player_name``. Single-player sessions produce an empty list
+    # (zero-byte leak at the prompt layer).
+    party_peers: list[PartyPeer] = [
+        PartyPeer.from_character(pc)
+        for pc in snapshot.characters
+        if pc.core.name != char_name
+    ]
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -3767,6 +3782,7 @@ def _build_turn_context(
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
         npc_registry=list(snapshot.npc_registry),
         npcs=list(snapshot.npcs),
+        party_peers=party_peers,
         opening_directive=opening_directive,
         world_context=sd.world_context,
         lore_context=lore_context,

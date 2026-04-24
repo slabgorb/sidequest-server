@@ -25,7 +25,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 
 if TYPE_CHECKING:
-    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.game.session import NpcRegistryEntry, PartyPeer
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +387,52 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
             agent_name,
             PromptSection.new(
                 "npc_roster",
+                "\n".join(lines),
+                AttentionZone.Early,
+                SectionCategory.State,
+            ),
+        )
+
+    def register_party_peer_section(
+        self,
+        agent_name: str,
+        party_peers: list[PartyPeer],
+    ) -> None:
+        """Inject canonical party-peer identity data into the narrator prompt.
+
+        Story 37-36 (port-drift reopen): in sealed-letter multiplayer, the
+        acting player's narrator turn must see canonical identity for other
+        PCs — otherwise pronouns/race/class drift across saves (playtest 3:
+        Blutka he/him became she/her in Orin's save). Parallels
+        ``register_npc_roster_section`` for PCs instead of NPCs.
+
+        Physical identity is canonical; perception (mood, tactics, feelings)
+        stays POV and is not rendered here. Empty list produces no section
+        (zero-byte leak discipline — solo sessions pay nothing). Placed in
+        the Early zone next to the NPC roster: identity is acute data, not
+        background lore.
+        """
+        if not party_peers:
+            return
+
+        lines = ["## PARTY MEMBERS — Canonical Identity (do not contradict)"]
+        for peer in party_peers:
+            tags: list[str] = []
+            if peer.pronouns:
+                tags.append(peer.pronouns)
+            tags.append(f"{peer.race} {peer.char_class}")
+            tags.append(f"level {peer.level}")
+            lines.append(f"- {peer.name} ({', '.join(tags)})")
+        lines.append(
+            "Use these exact pronouns, race, and class for every party "
+            "member. Physical identity is canonical; only emotional "
+            "perception is POV."
+        )
+
+        self.register_section(
+            agent_name,
+            PromptSection.new(
+                "party_peer_roster",
                 "\n".join(lines),
                 AttentionZone.Early,
                 SectionCategory.State,

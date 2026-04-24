@@ -218,7 +218,7 @@ def _find_party_peer_cls():
         except ImportError:
             continue
         if hasattr(mod, "PartyPeer"):
-            return getattr(mod, "PartyPeer")
+            return mod.PartyPeer
     raise AssertionError("PartyPeer not found — see test_party_peer_type_is_importable")
 
 
@@ -726,7 +726,7 @@ async def test_wiring_sd_to_prompt_delivers_peer_identity(sd_factory):
         "regardless — a registry check is the only way to verify the "
         "dossier subsystem is live.)"
     )
-    section_body = peer_sections[0].body
+    section_body = peer_sections[0].content
     assert "Blutka" in section_body, (
         "End-to-end wire broken: peer dossier section registered but "
         "missing Blutka."
