@@ -36,6 +36,13 @@ packages = ["sidequest"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# tests/e2e/ holds TestClient/websocket-driven integration tests that spin
+# real FastAPI/ASGI wiring and violate the 30 s unit-suite budget. Run
+# explicitly with `pytest tests/e2e/` when needed.
+addopts = "--ignore=tests/e2e"
+markers = [
+    "e2e: integration test that spins a real ASGI app / websocket / services",
+]
 
 [tool.ruff]
 line-length = 100
