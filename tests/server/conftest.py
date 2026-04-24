@@ -44,6 +44,45 @@ _FIXTURE_PACKS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
 # ---------------------------------------------------------------------------
+# Genre-pack cache patch — replace GenreLoader.load() with a cached version
+# for the entire test session. A fresh pack load from the frozen fixture is
+# ~128 ms; 290 tests × 128 ms = 37 s just in pack loading, over budget by
+# itself. Every test in this suite resolves to the same ``test_genre/`` pack
+# (slugs are symlinks), so a single cached instance is correct.
+#
+# Applied at conftest import (before any test collects) so tests that hit
+# the production ``_load_and_index_pack`` path on connect also benefit.
+# No teardown: the class attribute replacement lives for the process
+# lifetime, which is exactly the test run.
+# ---------------------------------------------------------------------------
+
+
+def _install_genre_loader_cache_patch() -> None:
+    import sidequest.genre.loader as _genre_loader_mod
+
+    _pack_cache: dict[str, object] = {}
+
+    original_load = _genre_loader_mod.GenreLoader.load
+
+    def _cached_load(self, code):  # noqa: ANN001
+        code_str = str(code)
+        if code_str in _pack_cache:
+            return _pack_cache[code_str]
+        pack = original_load(self, code)
+        _pack_cache[code_str] = pack
+        return pack
+
+    # Guard against double-install when pytest rewrites/reimports conftest.
+    if getattr(_genre_loader_mod.GenreLoader.load, "_is_test_cache", False):
+        return
+    _cached_load._is_test_cache = True  # type: ignore[attr-defined]
+    _genre_loader_mod.GenreLoader.load = _cached_load
+
+
+_install_genre_loader_cache_patch()
+
+
+# ---------------------------------------------------------------------------
 # Daemon guard — autouse. Prevents any server test from reaching the real
 # /tmp/sidequest-renderer.sock, which would otherwise burn up to 180 s per
 # embed()/render() call when the daemon is slow, warming, or dead.
@@ -123,6 +162,119 @@ def _fixture_pack_search_paths(monkeypatch):
     monkeypatch.setattr(
         "sidequest.genre.loader.DEFAULT_GENRE_PACK_SEARCH_PATHS",
         [_FIXTURE_PACKS_DIR],
+    )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeClient guard — autouse. Prevents any server test from spawning a
+# real ``claude -p`` subprocess. Without this guard, every test that runs
+# through ``_handle_player_action`` fires two real Claude subprocesses per
+# turn (Orchestrator's narrator + LocalDM's decomposer), each with its own
+# multi-second startup, blowing the 30s suite budget by 20x.
+#
+# The fake dispatches by model: ``"haiku"`` → canned DispatchPackage JSON
+# (LocalDM's decomposer), anything else → canned narration text with an
+# empty ``game_patch`` fence (Orchestrator's narrator). Tests that already
+# mock ``Orchestrator.run_narration_turn`` via ``patch.object`` shadow this
+# guard on the narrator path; LocalDM still routes through the fake.
+# ---------------------------------------------------------------------------
+
+
+_FAKE_NARRATION_TEXT = (
+    "The world takes shape around you. Light filters through the morning "
+    "haze and the day begins.\n\n"
+    "```game_patch\n{}\n```"
+)
+
+
+def _fake_dispatch_package_json(turn_id: str = "t-fake") -> str:
+    """Minimum valid DispatchPackage JSON for LocalDM.model_validate_json."""
+    return (
+        '{"turn_id":"' + turn_id + '",'
+        '"per_player":[],"cross_player":[],'
+        '"confidence_global":0.0,"degraded":false,"degraded_reason":null}'
+    )
+
+
+class _FakeClaudeClient:
+    """In-process ``ClaudeLike`` that never spawns a subprocess.
+
+    Accepts any ``__init__`` args because production code constructs it as
+    a zero-arg factory (``self._client_factory = ClaudeClient``) but
+    ``ClaudeClient.__init__`` also takes ``timeout``/``command_path``/etc.
+    """
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self._session_id = "fake-session"
+
+    async def send(self, prompt: str) -> ClaudeResponse:  # noqa: ARG002
+        return ClaudeResponse(
+            text=_FAKE_NARRATION_TEXT,
+            session_id=self._session_id,
+            input_tokens=10,
+            output_tokens=10,
+        )
+
+    async def send_with_model(
+        self, prompt: str, model: str,  # noqa: ARG002
+    ) -> ClaudeResponse:
+        return self._respond_for_model(model)
+
+    async def send_with_session(
+        self,
+        prompt: str,  # noqa: ARG002
+        model: str,
+        session_id: str | None = None,
+        system_prompt: str | None = None,  # noqa: ARG002
+        allowed_tools: list[str] | None = None,  # noqa: ARG002
+        env_vars: dict[str, str] | None = None,  # noqa: ARG002
+    ) -> ClaudeResponse:
+        return self._respond_for_model(
+            model, session_id=session_id or self._session_id,
+        )
+
+    def _respond_for_model(
+        self, model: str, session_id: str | None = None,
+    ) -> ClaudeResponse:
+        if model == "haiku":
+            text = _fake_dispatch_package_json()
+        else:
+            text = _FAKE_NARRATION_TEXT
+        return ClaudeResponse(
+            text=text,
+            session_id=session_id or self._session_id,
+            input_tokens=10,
+            output_tokens=10,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _mock_claude_client(monkeypatch):
+    """Autouse guard: replace ``ClaudeClient`` at every import site.
+
+    ``from sidequest.agents.claude_client import ClaudeClient`` creates a
+    fresh per-module binding, so ``monkeypatch.setattr`` on the original
+    module does NOT propagate to consumers. Patch the three sites that
+    instantiate one inline:
+
+    - ``orchestrator.ClaudeClient`` — Orchestrator's default narrator client
+    - ``local_dm.ClaudeClient`` — LocalDM's default decomposer client
+    - ``session_handler.ClaudeClient`` — the factory default in
+      ``WebSocketSessionHandler`` when no ``claude_client_factory`` is
+      passed
+
+    Tests that want to inspect prompts install their own mock via
+    ``monkeypatch.setattr`` / ``claude_client_factory=`` — those shadow
+    this guard for the duration of that test and teardown unwinds in LIFO.
+    """
+    monkeypatch.setattr(
+        "sidequest.agents.orchestrator.ClaudeClient", _FakeClaudeClient,
+    )
+    monkeypatch.setattr(
+        "sidequest.agents.local_dm.ClaudeClient", _FakeClaudeClient,
+    )
+    monkeypatch.setattr(
+        "sidequest.server.session_handler.ClaudeClient", _FakeClaudeClient,
     )
 
 
