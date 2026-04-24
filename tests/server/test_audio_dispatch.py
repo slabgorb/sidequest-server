@@ -214,3 +214,57 @@ def test_maybe_dispatch_audio_swallows_exceptions_from_interpreter(
     boom = MagicMock(side_effect=RuntimeError("interpreter blew up"))
     with patch.object(sh.AudioInterpreter, "interpret", boom):
         assert handler._maybe_dispatch_audio(sd, result) is None
+
+
+def test_maybe_dispatch_audio_span_carries_dj_decision_attributes(
+    fake_audio_pack_dir: Path,
+) -> None:
+    """sidequest.audio.dispatch span carries the resolved DJ decision.
+
+    Regression for playtest 2026-04-24 "sidequest.audio.dispatch span
+    has zero attributes — blind OTEL". Without attributes the GM panel
+    can't correlate a turn's dispatch with the client-side "Unable to
+    decode audio data" errors.
+    """
+    import opentelemetry.trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.server.session_handler import WebSocketSessionHandler
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        backend = LibraryBackend(
+            _minimal_audio_config(), base_path=fake_audio_pack_dir,
+        )
+        sd = _dispatcher_fixture(backend)
+        result = _narration_result(
+            "The dungeon falls silent. Tension coils through every shadow."
+        )
+        handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+
+        handler._maybe_dispatch_audio(sd, result)
+
+        dispatch_spans = [
+            s for s in exporter.get_finished_spans()
+            if s.name == "sidequest.audio.dispatch"
+        ]
+        assert len(dispatch_spans) == 1
+        attrs = dispatch_spans[0].attributes
+        assert attrs["genre"] == "test_genre"
+        assert attrs["turn_number"] == 5
+        # mood hit — reason=dispatched, mood + music_track populated.
+        assert attrs["reason"] == "dispatched"
+        assert attrs["mood"] == "tension"
+        assert attrs["music_track"] == "audio/music/tension/a.ogg"
+    finally:
+        processor.shutdown()

@@ -3213,12 +3213,37 @@ class WebSocketSessionHandler:
             return None
 
         try:
-            with tracer.start_as_current_span("sidequest.audio.dispatch"):
+            # Keep the span open across interpret + payload build so its
+            # attributes can carry the *final* DJ decision (mood/track/
+            # sfx). Playtest 2026-04-24 "sidequest.audio.dispatch span has
+            # zero attributes — blind OTEL" — the prior impl opened the
+            # span with no attributes and the GM panel couldn't tell why
+            # the client was firing "Unable to decode audio data".
+            with tracer.start_as_current_span("sidequest.audio.dispatch") as span:
+                span.set_attribute("genre", sd.genre_slug)
+                span.set_attribute("turn_number", sd.snapshot.turn_manager.interaction)
                 cues = _AUDIO_INTERPRETER.interpret(
                     narration, sd.audio_backend._config,  # type: ignore[attr-defined]
                 )
                 payload = build_audio_cue_payload(
                     cues, audio_backend=sd.audio_backend,
+                )
+                # Emit the resolved cue shape so the GM panel can correlate
+                # a turn's dispatch with the client-side decode errors.
+                span.set_attribute("mood", payload.mood or "")
+                span.set_attribute("music_track", payload.music_track or "")
+                span.set_attribute("sfx_count", len(payload.sfx_triggers))
+                if payload.sfx_triggers:
+                    # Spans accept list attributes; truncate to keep the
+                    # trace payload bounded even with long SFX batches.
+                    span.set_attribute(
+                        "sfx_triggers", list(payload.sfx_triggers[:16]),
+                    )
+                span.set_attribute(
+                    "reason",
+                    "empty_cues"
+                    if payload.mood is None and not payload.sfx_triggers
+                    else "dispatched",
                 )
         except Exception as exc:  # noqa: BLE001 — best-effort; never crash a turn
             logger.warning("audio.dispatch_failed error=%s", exc)
