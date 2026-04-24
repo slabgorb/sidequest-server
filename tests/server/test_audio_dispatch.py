@@ -155,7 +155,10 @@ def test_maybe_dispatch_audio_returns_message_on_mood_hit(
     assert isinstance(msg, AudioCueMessage)
     assert msg.type == MessageType.AUDIO_CUE
     assert msg.payload.mood == "tension"
-    assert msg.payload.music_track == "audio/music/tension/a.ogg"
+    # Playtest 2026-04-24: server prefixes pack-relative paths with
+    # /genre/{slug}/ so the client fetches from the FastAPI static mount
+    # rather than the Vite dev root.
+    assert msg.payload.music_track == "/genre/test_genre/audio/music/tension/a.ogg"
     assert msg.player_id == "p-1"
 
 
@@ -265,6 +268,6 @@ def test_maybe_dispatch_audio_span_carries_dj_decision_attributes(
         # mood hit — reason=dispatched, mood + music_track populated.
         assert attrs["reason"] == "dispatched"
         assert attrs["mood"] == "tension"
-        assert attrs["music_track"] == "audio/music/tension/a.ogg"
+        assert attrs["music_track"] == "/genre/test_genre/audio/music/tension/a.ogg"
     finally:
         processor.shutdown()

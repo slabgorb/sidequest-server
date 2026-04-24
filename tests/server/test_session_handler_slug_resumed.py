@@ -880,6 +880,95 @@ async def test_slug_resume_without_saved_location_skips_chapter_marker(
     )
 
 
+@pytest.mark.asyncio
+async def test_slug_resume_backfills_last_narration_when_replay_is_empty(
+    tmp_path: Path,
+) -> None:
+    """Fresh-browser resume: client's persisted ``last_seen_seq`` already
+    covers the tail (nothing new happened while the tab was closed), so the
+    normal replay loop emits zero narrations — leaving the narrative pane
+    blank. The tail backfill must re-emit the most recent NARRATION
+    regardless of ``last_seen_seq`` so the player lands with the last
+    chapter on screen. Pingpong 2026-04-24 "Slug-resume shows empty
+    Narrative pane on fresh browser session".
+    """
+    from sidequest.protocol.enums import MessageType
+
+    slug = "2026-04-24-tail-backfill"
+    prior = [
+        "The corridor yawns open before you.",
+        "You step across the threshold.",
+        "A brass memory core blinks in the dust.",
+    ]
+    _seed_resumable_game_with_narrations(tmp_path, slug, prior)
+    handler = _make_handler(tmp_path)
+
+    # Simulate a fresh browser tab resuming a live session: the client's
+    # persisted ``last_seen_seq`` is pinned at the most recent event the
+    # previous tab observed. The seq is 1-indexed and NarrationPayload's
+    # three rows landed at seq=1,2,3 so last_seen_seq=3 covers the tail.
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+            last_seen_seq=3,
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    narration_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
+    ]
+    assert len(narration_msgs) == 1, (
+        "Expected exactly one NARRATION from the tail backfill — the last "
+        f"one. Got {len(narration_msgs)}: types="
+        f"{[getattr(m, 'type', None) for m in outbound]}"
+    )
+    assert str(narration_msgs[0].payload.text) == prior[-1], (
+        "Tail backfill must pick the most recent narration, not the first."
+    )
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_backfill_skips_when_normal_replay_has_narration(
+    tmp_path: Path,
+) -> None:
+    """When the normal replay already carries narration forward, the
+    tail backfill must not fire — otherwise the most recent narration
+    would be duplicated in the replay batch.
+    """
+    from sidequest.protocol.enums import MessageType
+
+    slug = "2026-04-24-tail-backfill-skip"
+    prior = ["One", "Two", "Three"]
+    _seed_resumable_game_with_narrations(tmp_path, slug, prior)
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+            last_seen_seq=0,  # replay everything
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    narration_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
+    ]
+    texts = [str(m.payload.text) for m in narration_msgs]
+    assert texts == prior, (
+        f"Full replay path must not be duplicated by tail backfill. "
+        f"Got {texts!r}, expected {prior!r}."
+    )
+
+
 def test_rename_helper_declines_when_display_name_is_also_uuid(
     tmp_path: Path,
 ) -> None:
