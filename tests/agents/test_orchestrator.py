@@ -807,3 +807,80 @@ async def test_build_narrator_prompt_omits_narrator_directives_when_no_dispatch_
 
     section_names = [s.name for s in registry.registry(orch._narrator.name())]
     assert "narrator_directives" not in section_names
+
+
+# ---------------------------------------------------------------------------
+# Group G Task 5 — structural hiding in narrator prompt assembly
+# ---------------------------------------------------------------------------
+
+
+def _tag_redacted(who: str) -> VisibilityTag:
+    return VisibilityTag(
+        visible_to=[who],
+        perception_fidelity={},
+        secrets_for=[who],
+        redact_from_narrator_canonical=True,
+    )
+
+
+async def test_build_narrator_prompt_strips_redacted_directive_payload():
+    """A NarratorDirective flagged ``redact_from_narrator_canonical`` MUST NOT
+    have its payload appear in the rendered narrator prompt — the LLM
+    cannot leak what it never saw.
+
+    Paired with the orchestrator exposing the removed entries via
+    ``_last_secret_routes`` for SECRET_NOTE routing (Task 6)."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    pkg = DispatchPackage(
+        turn_id="t1",
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="poison wine",
+                narrator_instructions=[
+                    NarratorDirective(
+                        kind="canonical_only_do_not_reveal_to_others",
+                        payload="zzz-SECRET-alice-poisons-wine-zzz",
+                        visibility=_tag_redacted("player:Alice"),
+                    ),
+                    NarratorDirective(
+                        kind="must_narrate",
+                        payload="zzz-PUBLIC-dogs-bark-zzz",
+                        visibility=_tag_all(),
+                    ),
+                ],
+            )
+        ],
+        confidence_global=1.0,
+    )
+    ctx = TurnContext(dispatch_package=pkg)
+
+    prompt_text, registry = await orch.build_narrator_prompt(
+        "poison wine", ctx, tier=NarratorPromptTier.Full
+    )
+
+    # The redacted payload MUST NOT appear in the prompt string.
+    assert "zzz-SECRET-alice-poisons-wine-zzz" not in prompt_text
+    # The open directive MUST still be present.
+    assert "zzz-PUBLIC-dogs-bark-zzz" in prompt_text
+
+    # The removed entry is exposed on the orchestrator for Task 6.
+    assert len(orch._last_secret_routes) == 1
+    removed = orch._last_secret_routes[0]
+    assert isinstance(removed, NarratorDirective)
+    assert removed.payload == "zzz-SECRET-alice-poisons-wine-zzz"
+
+
+async def test_build_narrator_prompt_clears_secret_routes_when_no_dispatch_package():
+    """Calls with no DispatchPackage must leave ``_last_secret_routes`` empty,
+    so a previous turn's secrets never leak into a future turn's result."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    # Pretend a previous turn left stale state behind.
+    orch._last_secret_routes = [object()]
+
+    ctx = TurnContext(dispatch_package=None)
+    await orch.build_narrator_prompt("look", ctx, tier=NarratorPromptTier.Full)
+
+    assert orch._last_secret_routes == []

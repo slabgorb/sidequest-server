@@ -209,6 +209,14 @@ class NarrationTurnResult:
     prompt_text: str | None = None
     raw_response_text: str | None = None
 
+    # Group G Task 5 — entries stripped from the DispatchPackage during
+    # structural hiding. Items are ``SubsystemDispatch`` / ``NarratorDirective`` /
+    # ``LethalityVerdict``; the session handler consumes these to emit
+    # SECRET_NOTE events to their intended recipients (Task 6). Empty whenever
+    # the decomposer did not run, or no entries were flagged with
+    # ``redact_from_narrator_canonical``.
+    secret_routes: list[Any] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # TurnContext — Phase 1 slice of orchestrator.rs::TurnContext
@@ -597,6 +605,14 @@ class Orchestrator:
             loaded = parse_soul_md(soul_path)
             self._soul_data = loaded if loaded else None
 
+        # Group G Task 5 — secret routes captured during the most recent
+        # ``build_narrator_prompt`` call. Populated by ``redact_dispatch_package``
+        # when the incoming DispatchPackage contains entries flagged
+        # ``redact_from_narrator_canonical``. Read by ``run_narration_turn`` to
+        # attach onto the NarrationTurnResult so the session handler can route
+        # them as SECRET_NOTE events (Task 6).
+        self._last_secret_routes: list[object] = []
+
     # ------------------------------------------------------------------
     # Session lifecycle (ADR-066)
     # ------------------------------------------------------------------
@@ -677,6 +693,23 @@ class Orchestrator:
         registry = PromptRegistry()
         agent_name = self._narrator.name()
         is_full = tier == NarratorPromptTier.Full
+
+        # Group G Task 5 — Structural hiding. Strip every DispatchPackage
+        # entry flagged ``redact_from_narrator_canonical`` BEFORE anything
+        # downstream reads it. The narrator prompt never sees a redacted
+        # entry; ``removed`` is stashed on the orchestrator so
+        # ``run_narration_turn`` can forward it to the session handler for
+        # SECRET_NOTE routing (Task 6).
+        visible_dispatch_package = context.dispatch_package
+        if context.dispatch_package is not None:
+            from sidequest.agents.prompt_redaction import redact_dispatch_package
+
+            visible_dispatch_package, removed = redact_dispatch_package(
+                context.dispatch_package
+            )
+            self._last_secret_routes = list(removed)
+        else:
+            self._last_secret_routes = []
 
         # === STATIC SECTIONS (Full tier only — already in session history on Delta) ===
 
@@ -1060,7 +1093,10 @@ class Orchestrator:
         # When the decomposer ran, run its dispatch bank here and inject the
         # aggregated directives as a high-attention section so they land just
         # before the player action (load-bearing, not ambient context).
-        if context.dispatch_package is not None:
+        # Group G Task 5: ``visible_dispatch_package`` is the redacted view
+        # computed at the top of this method — entries flagged
+        # ``redact_from_narrator_canonical`` are already gone.
+        if visible_dispatch_package is not None:
             from sidequest.agents.subsystems import run_dispatch_bank
 
             bank_context: dict[str, object] = {}
@@ -1068,7 +1104,7 @@ class Orchestrator:
                 bank_context["npc_registry"] = context.npc_registry
 
             bank_result = await run_dispatch_bank(
-                context.dispatch_package, context=bank_context,
+                visible_dispatch_package, context=bank_context,
             )
             if bank_result.directives:
                 block = "\n".join(
@@ -1201,6 +1237,7 @@ class Orchestrator:
                         agent_duration_ms=elapsed_ms,
                         prompt_tier=tier,
                         prompt_text=prompt_text,
+                        secret_routes=list(self._last_secret_routes),
                     )
 
             # Store session ID from response (ADR-066)
@@ -1299,6 +1336,7 @@ class Orchestrator:
                 prompt_tier=tier,
                 prompt_text=prompt_text,
                 raw_response_text=raw_response,
+                secret_routes=list(self._last_secret_routes),
             )
 
 
