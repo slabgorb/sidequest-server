@@ -76,6 +76,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
 from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
@@ -332,13 +333,36 @@ class WebSocketSessionHandler:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
+    # Status tokens the engine uses to mark a creature as non-visible for
+    # projection purposes. Compared case-insensitively against
+    # ``CreatureCore.statuses`` via **whole-token membership** — substring
+    # matching produced false-positives like ``"unhidden"`` or
+    # ``"hidden_buff_removed"`` silently masking characters. Genre packs
+    # that mint stealth/invisibility mechanics must emit statuses that are
+    # exactly one of these tokens (case-insensitive) for the projection
+    # filter's ``visible_to()`` to mask the creature. Kept conservative:
+    # a missing/unknown marker must never unmask a target.
+    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset({
+        "hidden",
+        "invisible",
+        "stealth",
+        "concealed",
+    })
+
+    @classmethod
+    def _is_hidden_status_list(cls, statuses: list[str]) -> bool:
+        return any(s.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
+
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
 
-        Phase-3 engine state does not yet track zones / visibility /
-        per-item ownership — those fields stay at their conservative
-        SessionGameStateView defaults. Player-character mapping grows
-        as engine state grows.
+        Zone + visibility state is populated from the live ``GameSnapshot``:
+        all player-characters share the party-level ``snapshot.location``,
+        and NPCs report their per-entity ``Npc.location``. Creatures whose
+        ``statuses`` contain a stealth-like marker go into
+        ``hidden_characters`` so ``visible_to()`` masks them even when
+        co-located with the viewer. Per-item ownership is not yet tracked
+        and stays at the conservative default.
 
         **GM identity wiring (C1, still partial):**
 
@@ -357,9 +381,13 @@ class WebSocketSessionHandler:
           (the safe direction: over-redact rather than leak).
 
         **Player-character mapping:** ``Character`` does not yet carry a
-        ``player_id`` attribute, so the mapping is empty. Conservative
-        defaults apply — ``seat_of`` / ``zone_of`` return ``None``, and
-        predicates dependent on the mapping evaluate to ``False`` (the
+        ``player_id`` attribute, so the session's active player_id
+        (``sd.player_id``) is mapped to the first entry in
+        ``snapshot.characters`` — the single-player case this branch is
+        authoritative for today. MP seat-assignment (sprint 2) will feed
+        the multi-player case via ``SessionRoom``. When no character
+        exists yet (pre-chargen) the mapping stays empty and predicates
+        that depend on ``character_of()`` evaluate to ``False`` (the
         masked direction).
         """
         sd = self._session_data
@@ -388,12 +416,68 @@ class WebSocketSessionHandler:
                 )
                 self._gm_wiring_warned = True
 
+        snapshot = sd.snapshot
+
+        # Player -> Character.name mapping. Solo / single-player sessions
+        # today have exactly one character; that character belongs to the
+        # session's active player_id. Without this mapping, the predicate
+        # path (e.g. ``visible_to(target)``) receives
+        # ``view.character_of(player_id) is None`` and short-circuits to
+        # False before ever consulting zone data. Populated from the
+        # existing session state — no new fields introduced.
         mapping: dict[str, str] = {}
-        # Character does not carry player_id — no mapping possible yet.
-        # When the engine model gains player_id on Character, populate mapping here.
+        if snapshot.characters:
+            mapping[sd.player_id] = snapshot.characters[0].core.name
+
+        # Zone + hidden-character tracking from the live snapshot. Characters
+        # share the party-level location today (no per-character zone split
+        # in the engine yet); NPCs carry their own ``location``. Keys are
+        # creature names — the same identity the rest of the projection
+        # system uses when it refers to characters by ID. Single pass per
+        # collection so character_zones and hidden_characters stay in sync.
+        character_zones: dict[str, str] = {}
+        hidden_characters: set[str] = set()
+        party_zone = snapshot.location or None
+
+        # One-shot OTEL breadcrumb: if we have player-characters but no
+        # party zone, every co-located visible_to() collapses to False.
+        # The direction is conservative-correct but invisible to the GM
+        # panel — surface it once per session so rule authors can see why
+        # their ``visible_to`` rules are masking everything.
+        if (
+            party_zone is None
+            and snapshot.characters
+            and not getattr(self, "_party_zone_absent_warned", False)
+        ):
+            logger.warning(
+                "projection.party_zone_absent_with_characters slug=%s "
+                "characters=%d — snapshot.location is empty while "
+                "snapshot.characters is non-empty; visible_to() / "
+                "in_same_zone() will mask every co-located target until "
+                "a location is set (typically the first encounter).",
+                sd.game_slug,
+                len(snapshot.characters),
+            )
+            self._party_zone_absent_warned = True
+
+        for ch in snapshot.characters:
+            name = ch.core.name
+            if party_zone is not None:
+                character_zones[name] = party_zone
+            if self._is_hidden_status_list(ch.core.statuses):
+                hidden_characters.add(name)
+        for npc in snapshot.npcs:
+            name = npc.core.name
+            if npc.location:
+                character_zones[name] = npc.location
+            if self._is_hidden_status_list(npc.core.statuses):
+                hidden_characters.add(name)
+
         return SessionGameStateView(
             gm_player_id=gm_player_id,
             player_id_to_character=mapping,
+            character_zones=character_zones,
+            hidden_characters=hidden_characters,
         )
 
     # ------------------------------------------------------------------
@@ -2051,6 +2135,7 @@ class WebSocketSessionHandler:
             player_id=f"player:{sd.player_name}",
             raw_action=action,
             state_summary=turn_context.state_summary,
+            visibility_baseline=sd.genre_pack.visibility_baseline,
         )
         if dispatch_package.degraded:
             logger.info(
@@ -2193,6 +2278,7 @@ class WebSocketSessionHandler:
             text=narration_nbs,
             state_delta=None,
             footnotes=forwarded_footnotes,
+            visibility_sidecar=aggregate_visibility(dispatch_package),
         )
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
@@ -2937,6 +3023,34 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def aggregate_visibility(pkg: DispatchPackage) -> dict:
+    """Produce the _visibility sidecar for the canonical narration payload.
+
+    Rules:
+      - visible_to is the union of all non-redacted tags' visible_to lists.
+      - "all" is a stop word — any "all" tag collapses the union to "all".
+      - fidelity maps merge; later wins on collision (should not occur).
+      - redacted events (redact_from_narrator_canonical=True) are NOT aggregated
+        here — they route via SECRET_NOTE in Task 6 (not yet landed).
+    """
+    any_all = False
+    union: set[str] = set()
+    fidelity: dict[str, str] = {}
+    for pd in pkg.per_player:
+        for d in pd.dispatch:
+            if d.visibility.redact_from_narrator_canonical:
+                continue
+            if d.visibility.visible_to == "all":
+                any_all = True
+            else:
+                union.update(d.visibility.visible_to)
+            fidelity.update(d.visibility.perception_fidelity)
+    return {
+        "visible_to": "all" if any_all else sorted(union),
+        "fidelity": fidelity,
+    }
 
 
 def _build_turn_context(

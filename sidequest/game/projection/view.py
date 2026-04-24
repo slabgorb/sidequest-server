@@ -24,19 +24,23 @@ class GameStateView(Protocol):
 class SessionGameStateView:
     """Conservative GameStateView implementation.
 
-    Phase-3 engine state does not yet track zones, per-item ownership, or
-    detailed visibility. This adapter returns None / False for those
-    relationships — which for redaction rules means the field stays
-    masked. That is the safe direction: a missing relationship must never
-    unmask a field.
-
-    Fields can be populated incrementally as engine state grows.
+    Zone tracking populated by
+    ``WebSocketSessionHandler._build_game_state_view`` from
+    ``snapshot.location`` (all player-characters share the party-level
+    location) and ``Npc.location`` (NPCs). ``hidden_characters``
+    populated from stealth-flavored tokens on ``CreatureCore.statuses``
+    (whole-token match; see ``WebSocketSessionHandler._HIDDEN_STATUS_TOKENS``).
+    ``player_id_to_character`` maps the session's active ``player_id`` to
+    the first entry in ``snapshot.characters`` — single-player today;
+    MP seat-assignment (sprint 2) will feed the multi-player case.
     """
 
     gm_player_id: str | None
     player_id_to_character: dict[str, str] = field(default_factory=dict)
     party_id: str | None = None
     seat_assignments: dict[str, str] = field(default_factory=dict)
+    character_zones: dict[str, str] = field(default_factory=dict)
+    hidden_characters: set[str] = field(default_factory=set)
 
     def is_gm(self, player_id: str) -> bool:
         return self.gm_player_id is not None and player_id == self.gm_player_id
@@ -48,13 +52,19 @@ class SessionGameStateView:
         return self.player_id_to_character.get(player_id)
 
     def zone_of(self, character_id: str) -> str | None:
-        return None  # Conservative: zones not yet tracked.
+        return self.character_zones.get(character_id)
 
     def visible_to(self, viewer_character_id: str, target_character_id: str) -> bool:
-        return False  # Conservative: unknown visibility stays masked.
+        if target_character_id in self.hidden_characters:
+            return False
+        viewer_zone = self.character_zones.get(viewer_character_id)
+        target_zone = self.character_zones.get(target_character_id)
+        if viewer_zone is None or target_zone is None:
+            return False
+        return viewer_zone == target_zone
 
     def owner_of_item(self, item_id: str) -> str | None:
-        return None  # Conservative: ownership not yet tracked.
+        return None  # Not yet tracked — stays conservative.
 
     def party_of(self, player_id: str) -> str | None:
         if player_id not in self.player_id_to_character:

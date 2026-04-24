@@ -83,8 +83,18 @@ class RedactFieldsRule(_RuleBase):
     redact_fields: list[RedactSpec] = Field(default_factory=list)
 
 
+class VisibilityTagSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    # No fields yet — the rule reads _visibility from payload. Reserved for
+    # future GM-panel overrides.
+
+
+class VisibilityTagRule(_RuleBase):
+    visibility_tag: VisibilityTagSpec
+
+
 ProjectionRule = Annotated[
-    TargetOnlyRule | IncludeIfRule | RedactFieldsRule,
+    TargetOnlyRule | IncludeIfRule | RedactFieldsRule | VisibilityTagRule,
     Field(discriminator=None),
 ]
 
@@ -107,11 +117,14 @@ class ProjectionRules(BaseModel):
         for r in raw_rules:
             if not isinstance(r, dict):
                 raise ValueError(f"rule entry must be a mapping, got {type(r).__name__}")
-            present = [k for k in ("target_only", "include_if", "redact_fields") if k in r]
+            present = [
+                k for k in ("target_only", "include_if", "redact_fields", "visibility_tag")
+                if k in r
+            ]
             if len(present) != 1:
                 raise ValueError(
                     f"rule for kind={r.get('kind')!r} must carry exactly one of "
-                    f"target_only/include_if/redact_fields; found {present}"
+                    f"target_only/include_if/redact_fields/visibility_tag; found {present}"
                 )
             coerced.append(r)
         return {**data, "rules": coerced}
