@@ -65,6 +65,7 @@ from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
 )
+from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -3445,6 +3446,18 @@ def _build_turn_context(
             in_chase = confrontation_def.category == "movement"
         encounter_summary = render_encounter_summary(encounter)
 
+    # Group C — LethalityArbiter inputs. Policy is pack-level; cores are
+    # pulled straight off the live snapshot (every PC + every on-scene NPC).
+    # Single-player mapping today: snapshot.characters[0] belongs to
+    # sd.player_id. Multiplayer will want a per-player index on the
+    # snapshot; the arbiter reads whatever mapping this helper provides.
+    pc_cores_by_player: dict[str, CreatureCore] = {}
+    if snapshot.characters:
+        pc_cores_by_player[sd.player_id] = snapshot.characters[0].core
+    npc_cores_by_name: dict[str, CreatureCore] = {
+        npc.core.name: npc.core for npc in snapshot.npcs
+    }
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -3465,6 +3478,9 @@ def _build_turn_context(
         opening_directive=opening_directive,
         world_context=sd.world_context,
         lore_context=lore_context,
+        lethality_policy=sd.genre_pack.lethality_policy,
+        pc_cores_by_player=pc_cores_by_player,
+        npc_cores_by_name=npc_cores_by_name,
     )
 
 
