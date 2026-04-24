@@ -36,6 +36,10 @@ from tests.agents.test_orchestrator import make_spawn_fn
 
 pytestmark = pytest.mark.asyncio
 
+CONTENT_GENRE_PACKS = (
+    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+)
+
 
 def _character(name: str, edge_current: int) -> Character:
     core = CreatureCore(
@@ -69,7 +73,7 @@ def _session(genre_slug: str, world_slug: str, character: Character) -> _Session
         player_id="player:alice",
         snapshot=_snapshot(genre_slug, world_slug, character),
         store=MagicMock(),
-        genre_pack=load_genre_pack(Path(f"sidequest-content/genre_packs/{genre_slug}")),
+        genre_pack=load_genre_pack(CONTENT_GENRE_PACKS / genre_slug),
         orchestrator=MagicMock(),
     )
 
