@@ -14,6 +14,7 @@ degraded=True package (spec §6.6) — the table never blocks.
 from __future__ import annotations
 
 import logging
+import re
 from threading import Lock
 
 from pydantic import ValidationError
@@ -162,6 +163,86 @@ def _apply_baseline_to_package_dict(
         pd["dispatch"] = new_dispatches
 
 
+_CODE_FENCE_RE = re.compile(
+    r"(?s)^\s*```(?:json)?\s*\n?(?P<body>.*?)\n?```\s*$",
+)
+
+
+def _extract_json_object(raw: str) -> tuple[str, list[str]]:
+    """Strip common LLM wrappers off a JSON response.
+
+    Handles three failure modes seen in production (playtest 2026-04-24):
+
+      1. The Haiku response is wrapped in a ```json ... ``` code fence
+         despite the system prompt saying "no fences". The fence breaks
+         ``json.loads`` with a ``JSONDecodeError``.
+      2. The response has preamble text before the first ``{`` — e.g.
+         "Here is the DispatchPackage:\n{...}".
+      3. Trailing commentary after the closing ``}``.
+
+    Strategy: try a fenced-block extract first, then fall back to
+    "first ``{`` through matching ``}``" balanced-brace slicing. Returns
+    ``(cleaned_text, applied_steps)`` where ``applied_steps`` is a list
+    of labels like ``["strip_fence", "strip_preamble"]`` suitable for
+    OTEL span attributes so the GM panel can see the contract is being
+    violated even when the parse ultimately succeeds.
+
+    Silent fallbacks are forbidden by the project's No Silent Fallbacks
+    rule — hence ``applied_steps``. Downstream loudly records every
+    wrapper we had to peel off.
+    """
+    applied: list[str] = []
+    text = raw.strip()
+
+    # Step 1: strip code fences if the whole response is wrapped in one.
+    fence_match = _CODE_FENCE_RE.match(text)
+    if fence_match is not None:
+        text = fence_match.group("body").strip()
+        applied.append("strip_fence")
+
+    # Step 2: balanced-brace slicing — find the first `{` and scan until
+    # the matching `}` at depth 0. Honors quoted strings with escapes so
+    # a `}` inside a string value doesn't end the scan early.
+    start = text.find("{")
+    if start == -1:
+        return text, applied  # No object at all — let json.loads raise.
+    depth = 0
+    in_string = False
+    escape = False
+    end = -1
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        # Unbalanced braces — leave text as-is; json.loads will report.
+        return text, applied
+
+    if start != 0:
+        applied.append("strip_preamble")
+    if end != len(text) - 1:
+        applied.append("strip_trailing")
+    return text[start : end + 1], applied
+
+
 def _build_user_prompt(turn_id: str, player_id: str, raw_action: str, state_summary: str) -> str:
     return (
         f"turn_id: {turn_id}\n"
@@ -251,11 +332,27 @@ class LocalDM:
                 span.set_attribute("degraded_reason", "empty_response")
                 return _degraded_package(turn_id, reason="empty_response")
 
+            # Peel common LLM wrappers (code fences, preamble, trailing
+            # commentary) off the response before json.loads. Every peel
+            # is recorded as a span attribute so the GM panel can see when
+            # Haiku is violating the "JSON only, no fences" contract —
+            # silent recovery would mask a prompt regression.
+            cleaned_text, cleanup_steps = _extract_json_object(raw_text)
+            if cleanup_steps:
+                span.set_attribute(
+                    "json_cleanup_steps", ",".join(cleanup_steps),
+                )
+                logger.info(
+                    "local_dm.json_cleanup turn_id=%s steps=%s",
+                    turn_id,
+                    cleanup_steps,
+                )
+
             try:
                 # Parse to dict first so we can apply baseline defaults to
                 # VisibilityTags before Pydantic validation locks them in.
                 import json as _json
-                raw_dict = _json.loads(raw_text)
+                raw_dict = _json.loads(cleaned_text)
                 if visibility_baseline is not None:
                     _apply_baseline_to_package_dict(raw_dict, visibility_baseline)
                 pkg = DispatchPackage.model_validate(raw_dict)
@@ -266,10 +363,16 @@ class LocalDM:
                 span.set_attribute("degraded_reason", reason)
                 return _degraded_package(turn_id, reason=reason)
             except (ValueError, TypeError) as exc:  # json.JSONDecodeError is ValueError
-                logger.warning("local_dm.parse_failure turn_id=%s exc=%s", turn_id, exc)
+                logger.warning(
+                    "local_dm.parse_failure turn_id=%s exc=%s preview=%r",
+                    turn_id, exc, cleaned_text[:160],
+                )
                 reason = f"parse_failure: {type(exc).__name__}"
                 span.set_attribute("degraded", True)
                 span.set_attribute("degraded_reason", reason)
+                # Surface a short preview so the GM panel can see what
+                # Haiku actually returned instead of guessing.
+                span.set_attribute("parse_preview", cleaned_text[:160])
                 return _degraded_package(turn_id, reason=reason)
 
             span.set_attribute("degraded", pkg.degraded)

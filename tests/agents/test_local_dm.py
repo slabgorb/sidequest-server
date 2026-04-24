@@ -328,3 +328,146 @@ def test_decomposer_system_prompt_includes_schema_shape():
     # Directive kinds
     for kind in ("must_narrate", "must_not_narrate", "distinctive_detail_for_referent"):
         assert kind in _DECOMPOSER_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# JSON extraction — regression for playtest 2026-04-24
+#
+# Bug: Haiku returned responses wrapped in ```json ... ``` fences (and/or with
+# preamble/trailing prose). `json.loads` blew up with JSONDecodeError on every
+# turn, leaving dispatch_count=0 and burning 45s on the critical path.
+#
+# Fix: `_extract_json_object` strips fences + prose before the parse, and
+# records every peel as an OTEL span attribute so the GM panel can see when
+# Haiku is violating the "JSON only" contract.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_json_object_passes_through_clean_json():
+    from sidequest.agents.local_dm import _extract_json_object
+
+    cleaned, steps = _extract_json_object('{"a": 1, "b": "c"}')
+    assert cleaned == '{"a": 1, "b": "c"}'
+    assert steps == []
+
+
+def test_extract_json_object_strips_code_fence():
+    from sidequest.agents.local_dm import _extract_json_object
+
+    raw = '```json\n{"a": 1}\n```'
+    cleaned, steps = _extract_json_object(raw)
+    assert cleaned == '{"a": 1}'
+    assert "strip_fence" in steps
+
+
+def test_extract_json_object_strips_preamble_and_trailing():
+    from sidequest.agents.local_dm import _extract_json_object
+
+    raw = 'Here is the DispatchPackage:\n{"a": 1}\n\nHope that helps!'
+    cleaned, steps = _extract_json_object(raw)
+    assert cleaned == '{"a": 1}'
+    assert "strip_preamble" in steps
+    assert "strip_trailing" in steps
+
+
+def test_extract_json_object_honors_braces_inside_strings():
+    from sidequest.agents.local_dm import _extract_json_object
+
+    # A `}` inside a quoted string value must NOT end the balanced-brace scan
+    # — otherwise the extractor would truncate mid-object.
+    raw = '{"msg": "a } inside a string", "n": 7}'
+    cleaned, _ = _extract_json_object(raw)
+    assert cleaned == raw
+
+
+@pytest.fixture
+def dispatch_json_minimal():
+    """Smallest valid DispatchPackage — used as the body inside wrappers."""
+    return json.dumps({
+        "turn_id": "turn-parse",
+        "per_player": [],
+        "cross_player": [],
+        "confidence_global": 1.0,
+        "degraded": False,
+        "degraded_reason": None,
+    })
+
+
+@pytest.mark.asyncio
+async def test_local_dm_parses_response_wrapped_in_code_fence(
+    dispatch_json_minimal, otel_capture,
+):
+    """Regression wiring test — production Haiku output (Playtest 2026-04-24
+    Bug 3) arrived wrapped in a ```json ... ``` fence, which `json.loads`
+    rejected with JSONDecodeError → every turn degraded, dispatch_count=0.
+
+    The decomposer must strip the fence and parse cleanly. The OTEL span
+    must record ``json_cleanup_steps=strip_fence`` so the GM panel can see
+    the contract is being violated even though the turn recovered."""
+    fenced = f"```json\n{dispatch_json_minimal}\n```"
+    client = _make_mock_client(fenced)
+    dm = LocalDM(client=client)
+
+    pkg = await dm.decompose(
+        turn_id="turn-parse",
+        player_id="player:Alice",
+        raw_action="look around",
+        state_summary="...",
+    )
+
+    # Clean parse — no degradation.
+    assert pkg.degraded is False, (
+        f"fenced response should parse cleanly, got degraded: {pkg.degraded_reason}"
+    )
+    assert pkg.turn_id == "turn-parse"
+
+    # OTEL contract: cleanup was recorded so the GM panel sees it.
+    decompose_spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "local_dm.decompose"
+    ]
+    assert len(decompose_spans) == 1
+    attrs = dict(decompose_spans[0].attributes or {})
+    assert "json_cleanup_steps" in attrs
+    assert "strip_fence" in attrs["json_cleanup_steps"]
+
+
+@pytest.mark.asyncio
+async def test_local_dm_parses_response_with_preamble(dispatch_json_minimal):
+    """Preamble prose before the JSON object must not break the parse."""
+    wrapped = f"Here is the DispatchPackage:\n{dispatch_json_minimal}"
+    client = _make_mock_client(wrapped)
+    dm = LocalDM(client=client)
+
+    pkg = await dm.decompose(
+        turn_id="turn-parse",
+        player_id="player:Alice",
+        raw_action="x",
+        state_summary="y",
+    )
+    assert pkg.degraded is False
+    assert pkg.turn_id == "turn-parse"
+
+
+@pytest.mark.asyncio
+async def test_local_dm_parse_failure_records_preview_on_span(otel_capture):
+    """When extraction still can't salvage the response, the span must
+    expose a short ``parse_preview`` attribute so the GM panel can see
+    what Haiku actually returned instead of guessing from a
+    JSONDecodeError classname."""
+    client = _make_mock_client("not json at all, just chatter")
+    dm = LocalDM(client=client)
+    await dm.decompose(
+        turn_id="turn-bad",
+        player_id="player:Alice",
+        raw_action="x",
+        state_summary="y",
+    )
+    spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "local_dm.decompose"
+    ]
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes or {})
+    assert attrs["degraded"] is True
+    assert attrs.get("parse_preview", "").startswith("not json")

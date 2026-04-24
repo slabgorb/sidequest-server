@@ -438,6 +438,74 @@ def test_debug_state_with_character_does_not_500(tmp_path):
     assert player["character_level"] == 4
 
 
+def test_debug_state_sorts_newest_first_and_filters_by_session_key(tmp_path):
+    """Regression for playtest 2026-04-24: /api/debug/state returned sessions
+    in alphabetical (slug) order, so the dashboard's ``debugState[0]`` pick
+    landed on the oldest save instead of the active one.
+
+    Two saves are written with staggered mtimes; the newer one must appear
+    first, and ``?session_key=<slug>`` must filter to exactly one entry.
+    """
+    import os
+    import time as _time
+    from datetime import date as _date
+
+    from sidequest.game.game_slug import generate_slug
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+    from sidequest.game.session import GameSnapshot, TurnManager
+
+    client = _make_app(tmp_path)
+    save_dir = tmp_path / "saves"
+
+    def _write_snapshot(world_slug: str, day: _date, location: str) -> str:
+        slug = generate_slug(world_slug=world_slug, today=day)
+        db = db_path_for_slug(save_dir, slug)
+        db.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteStore(db)
+        store.initialize()
+        snap = GameSnapshot(
+            genre_slug="spaghetti_western",
+            world_slug=world_slug,
+            location=location,
+            turn_manager=TurnManager(interaction=0),
+        )
+        store.save(snap)
+        store.close()
+        return slug
+
+    # Older save — touch mtime well in the past so sort order is
+    # unambiguous across filesystems with coarse mtime resolution.
+    old_slug = _write_snapshot("ghost_town", _date(2026, 4, 22), "Graveyard")
+    old_db = db_path_for_slug(save_dir, old_slug)
+    past_ts = _time.time() - 3600
+    os.utime(old_db, (past_ts, past_ts))
+
+    # Newer save — leave its mtime at "now".
+    new_slug = _write_snapshot(
+        "flickering_reach", _date(2026, 4, 24), "The Filtration Warren",
+    )
+
+    resp = client.get("/api/debug/state")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [v["session_key"] for v in body] == [new_slug, old_slug], (
+        "debug_state must sort newest-mtime first so the dashboard's "
+        "default [0] pick lands on the active session"
+    )
+    # last_activity_ts must be present and strictly ordered.
+    assert body[0]["last_activity_ts"] > body[1]["last_activity_ts"]
+
+    # session_key filter narrows to exactly one entry.
+    filtered = client.get(f"/api/debug/state?session_key={old_slug}").json()
+    assert len(filtered) == 1
+    assert filtered[0]["session_key"] == old_slug
+
+    # Unknown session_key returns []; no 404.
+    missing = client.get("/api/debug/state?session_key=does-not-exist")
+    assert missing.status_code == 200
+    assert missing.json() == []
+
+
 def test_cors_headers_present_for_dashboard(tmp_path):
     """Dev UI on :5173 must receive CORS headers so the dashboard's
     cross-origin fetch('/api/debug/state') polls don't spam the console."""
