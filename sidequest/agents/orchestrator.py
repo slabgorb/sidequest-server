@@ -43,11 +43,13 @@ from sidequest.agents.prompt_framework.types import (
     PromptSection,
     SectionCategory,
 )
+from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry
 from sidequest.game.tension_tracker import PacingHint
+from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
-from sidequest.protocol.dispatch import DispatchPackage
+from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
@@ -340,6 +342,15 @@ class TurnContext:
     # run_narration_turn. Consumed by build_narrator_prompt to register the
     # narrator_directives PromptSection. Default None = decomposer did not run.
     dispatch_package: DispatchPackage | None = None
+
+    # Group C — LethalityArbiter inputs. Session handler populates all three
+    # from the active GenrePack + live snapshot before run_narration_turn.
+    # When ``lethality_policy`` is non-None, build_narrator_prompt runs the
+    # arbiter after run_dispatch_bank and merges its paired must/must-not
+    # directives into the same narrator_directives PromptSection.
+    lethality_policy: LethalityPolicy | None = None
+    pc_cores_by_player: dict[str, CreatureCore] = field(default_factory=dict)
+    npc_cores_by_name: dict[str, CreatureCore] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1140,9 +1151,30 @@ class Orchestrator:
             bank_result = await run_dispatch_bank(
                 visible_dispatch_package, context=bank_context,
             )
-            if bank_result.directives:
+
+            # Group C — lethality arbitration runs after the bank and before
+            # the narrator_directives section is registered, so the arbiter's
+            # paired must_narrate / must_not_narrate directives join the bank
+            # directives in the same high-attention block. Determinism is
+            # the point: the arbiter decides what verdict fires, the narrator
+            # only decides how to describe it (spec §4.1).
+            arbiter_directives: list[NarratorDirective] = []
+            if context.lethality_policy is not None:
+                from sidequest.agents.lethality_arbiter import LethalityArbiter
+
+                arbiter = LethalityArbiter(policy=context.lethality_policy)
+                l_result = arbiter.arbitrate(
+                    package=visible_dispatch_package,
+                    bank_result=bank_result,
+                    pc_cores_by_player=context.pc_cores_by_player,
+                    npc_cores_by_name=context.npc_cores_by_name,
+                )
+                arbiter_directives = l_result.directives
+
+            combined_directives = list(bank_result.directives) + arbiter_directives
+            if combined_directives:
                 block = "\n".join(
-                    f"- [{d.kind}] {d.payload}" for d in bank_result.directives
+                    f"- [{d.kind}] {d.payload}" for d in combined_directives
                 )
                 registry.register_section(
                     agent_name,
