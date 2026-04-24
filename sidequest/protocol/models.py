@@ -225,7 +225,14 @@ class InventoryPayload(ProtocolBase):
     items: list[InventoryItem]
     """All inventory items."""
     gold: int
-    """Gold/currency amount."""
+    """Currency amount. Numeric — the noun is ``currency_name`` below."""
+    currency_name: str | None = None
+    """Genre-declared currency noun (e.g. "credits" for space_opera,
+    "Salvage" for mutant_wasteland, "gold" for caverns_and_claudes). Read
+    from ``inventory.yaml::currency.name`` on the active genre pack.
+    ``None`` when the genre pack doesn't declare one — UI falls back to
+    a neutral default rather than hardcoding "gold" (which leaks fantasy
+    tone into space/cyberpunk/etc. packs)."""
 
 
 # ---------------------------------------------------------------------------

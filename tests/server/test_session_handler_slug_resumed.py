@@ -523,6 +523,18 @@ async def test_slug_chargen_complete_party_status_has_stats(
     assert member.sheet.race, (
         "sheet.race must be populated — used for sheet subtitle."
     )
+    # Inventory currency carries the pack-declared noun — mutant_wasteland
+    # is "Salvage" per genre_packs/mutant_wasteland/inventory.yaml. UI
+    # reads this to render "42 Salvage" instead of the legacy hardcoded
+    # "42 gold" fantasy leak. Pingpong 2026-04-24 "500 gold in Space Opera".
+    assert member.inventory is not None, (
+        "PartyMember.inventory must be populated post-chargen"
+    )
+    assert member.inventory.currency_name == "Salvage", (
+        f"expected mutant_wasteland currency_name 'Salvage'; got "
+        f"{member.inventory.currency_name!r}. The server reads the noun "
+        f"from inventory.yaml::currency.name on the active pack."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -683,8 +695,6 @@ def _seed_resumable_game_with_narrations(
     replay_msgs actually carries historical narration back to the
     reconnecting client.
     """
-    import json as _json
-
     from sidequest.game.event_log import EventLog
     from sidequest.protocol.messages import NarrationPayload
 

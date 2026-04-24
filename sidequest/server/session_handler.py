@@ -3441,6 +3441,17 @@ class WebSocketSessionHandler:
             equipment=equipment,
         )
 
+        # Pull the currency noun from the active genre pack's
+        # inventory.yaml::currency.name so the UI can render
+        # "500 credits" in space_opera instead of the hardcoded
+        # "500 gold" (pingpong 2026-04-24 fantasy-leak bug).
+        # Falls to None when the pack doesn't declare one — UI renders
+        # a neutral fallback (never the word "gold" for non-fantasy
+        # genres). No silent fallback to a default currency noun.
+        currency_name: str | None = None
+        if sd.genre_pack.inventory is not None and sd.genre_pack.inventory.currency is not None:
+            currency_name = sd.genre_pack.inventory.currency.name
+
         inventory_payload = InventoryPayload(
             items=[
                 InventoryItem(
@@ -3457,6 +3468,7 @@ class WebSocketSessionHandler:
                 for item in carried
             ],
             gold=character.core.inventory.gold,
+            currency_name=currency_name,
         )
 
         location_nbs: NonBlankString | None = None
