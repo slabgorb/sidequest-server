@@ -3681,6 +3681,7 @@ def _apply_narration_result_to_snapshot(
         from sidequest.telemetry.spans import (
             combat_tick_span,
             encounter_beat_applied_span,
+            encounter_empty_actor_list_span,
             encounter_phase_transition_span,
             encounter_resolved_span,
         )
@@ -3689,6 +3690,26 @@ def _apply_narration_result_to_snapshot(
         if result.confrontation and (
             snapshot.encounter is None or snapshot.encounter.resolved
         ):
+            # Lie-detector: narrator emitted confrontation but extraction has
+            # no npcs_present. Combatant list will be [player_name] only and
+            # the confrontation panel will render without adversaries. The
+            # proper fix is in the extraction prompt (narrator.py) requiring
+            # every adversary referenced in prose to appear in npcs_met —
+            # this span surfaces when that contract breaks. See pingpong
+            # "Confrontation panel has no enemy combatants" (2026-04-24).
+            if not result.npcs_present:
+                with encounter_empty_actor_list_span(
+                    encounter_type=result.confrontation,
+                    genre_slug=snapshot.genre_slug or "",
+                    player_name=player_name,
+                ):
+                    logger.warning(
+                        "encounter.empty_actor_list confrontation=%s player=%s — "
+                        "narrator emitted confrontation without npcs_present; "
+                        "panel will render with player only",
+                        result.confrontation,
+                        player_name,
+                    )
             combatants = [e.name for e in result.npcs_present] or [player_name]
             combatants = [player_name] + [c for c in combatants if c != player_name]
             instantiate_encounter_from_trigger(

@@ -19,6 +19,7 @@ def test_combat_encounter_span_constants_match_rust_names() -> None:
         SPAN_COMBAT_TICK,
         SPAN_ENCOUNTER_BEAT_APPLIED,
         SPAN_ENCOUNTER_CONFRONTATION_INITIATED,
+        SPAN_ENCOUNTER_EMPTY_ACTOR_LIST,
         SPAN_ENCOUNTER_PHASE_TRANSITION,
         SPAN_ENCOUNTER_RESOLVED,
     )
@@ -31,6 +32,28 @@ def test_combat_encounter_span_constants_match_rust_names() -> None:
     assert SPAN_ENCOUNTER_CONFRONTATION_INITIATED == (
         "encounter.confrontation_initiated"
     )
+    assert SPAN_ENCOUNTER_EMPTY_ACTOR_LIST == "encounter.empty_actor_list"
+
+
+def test_encounter_empty_actor_list_emits_attrs() -> None:
+    from sidequest.telemetry.spans import encounter_empty_actor_list_span
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+    with encounter_empty_actor_list_span(
+        _tracer=tracer,
+        encounter_type="combat",
+        genre_slug="mutant_wasteland",
+        player_name="Slabgorb",
+    ):
+        pass
+    [span] = exporter.get_finished_spans()
+    assert span.name == "encounter.empty_actor_list"
+    assert span.attributes["encounter_type"] == "combat"
+    assert span.attributes["genre_slug"] == "mutant_wasteland"
+    assert span.attributes["player_name"] == "Slabgorb"
 
 
 def test_combat_tick_span_emits_attributes() -> None:

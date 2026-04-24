@@ -35,7 +35,13 @@ def load_lethality_policy(pack_dir: Path) -> LethalityPolicy:
     with path.open("r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
     policy = LethalityPolicy.model_validate(raw)
-    if policy.genre_key != pack_dir.name:
+    # Accept either the literal dir name or its symlink-resolved target so
+    # test fixtures that alias every genre slug to a frozen pack (e.g.
+    # tests/fixtures/packs/*/ → test_genre/) don't trip the mismatch guard.
+    # On real content (no symlinks) both names are identical and the check
+    # is equivalent to the original ``policy.genre_key != pack_dir.name``.
+    expected = {pack_dir.name, pack_dir.resolve().name}
+    if policy.genre_key not in expected:
         raise ValueError(
             f"genre_key mismatch: yaml says {policy.genre_key!r}, "
             f"pack dir is {pack_dir.name!r}"

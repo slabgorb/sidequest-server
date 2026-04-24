@@ -159,6 +159,21 @@ def test_build_output_format_content_contains_game_patch():
     assert "game_patch" in section.content
 
 
+def test_narrator_output_format_requires_adversaries_in_npcs_met():
+    """CRITICAL ADVERSARY RULE must be present in the narrator prompt.
+
+    Regression for pingpong 2026-04-24 "Confrontation panel has no enemy
+    combatants" — the narrator emitted confrontation without populating
+    npcs_met, so the encounter instantiated with only the player. This rule
+    instructs the narrator that every adversary referenced in prose on a
+    confrontation turn MUST appear in npcs_met with name + role.
+    """
+    assert "CRITICAL ADVERSARY RULE" in NARRATOR_OUTPUT_ONLY
+    assert "npcs_met" in NARRATOR_OUTPUT_ONLY
+    # The wording should reference the contract explicitly.
+    assert "name AND role" in NARRATOR_OUTPUT_ONLY
+
+
 # ---------------------------------------------------------------------------
 # NarratorAgent.build_encounter_context
 # ---------------------------------------------------------------------------

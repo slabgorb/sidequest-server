@@ -149,6 +149,31 @@ de-escalation gracefully.
 Only include on the turn the encounter STARTS, not on subsequent rounds. Once \
 the encounter is active, use beat_selections instead.
 
+CRITICAL ADVERSARY RULE — MANDATORY when you emit confrontation: every \
+adversary, enemy, creature, or antagonist NPC referenced in this turn's prose \
+MUST also appear in npcs_met for the same turn with both name AND role \
+populated. The server constructs the combatant list from npcs_met — if it is \
+empty, the confrontation panel renders with only the player and the \
+encounter is mechanically broken from the start.
+- Named individual: one entry, e.g. {"name": "Gristle the Rat-King", \
+"role": "hostile", "is_new": true}.
+- Named group or pack: one entry with the group name, e.g. {"name": \
+"Filter-leech pack", "role": "hostile", "appearance": "five keens, \
+one drops a leech"}. Do NOT omit the group just because members are unnamed.
+- Unnamed but distinct creature: give it a short descriptive name — \
+"Ruin-rat", "Dome cultist", "Road gang leader" — whatever the prose uses.
+Err on the side of including: every creature your prose describes as present \
+and menacing is a combatant.
+
+npcs_met: Array of NPC mentions from this turn's prose. Format each entry:
+  {"name": "<NPC or group name>", "role": "<hostile|friendly|neutral|merchant\
+|ally|patron|quest_giver|...>", "pronouns": "<she/her|he/him|they/them|it/its\
+>", "appearance": "<short physical/attire note>", "is_new": true}
+Only name and role are required; the rest are optional but recommended on \
+first appearance. Include every named NPC, creature, or distinct group the \
+player encounters, especially adversaries during a confrontation (see rule \
+above).
+
 beat_selections: When an encounter is active (the encounter context section will \
 list available beats and actors), include beat_selections — an array of beat \
 choices for EVERY actor listed in the encounter context. Each entry has: actor \

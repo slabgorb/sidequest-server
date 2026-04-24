@@ -672,6 +672,7 @@ SPAN_ENCOUNTER_PHASE_TRANSITION = "encounter.phase_transition"
 SPAN_ENCOUNTER_RESOLVED = "encounter.resolved"
 SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
 SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
+SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
 
 
 @contextmanager
@@ -800,6 +801,36 @@ def encounter_confrontation_initiated_span(
         attributes={
             "encounter_type": encounter_type,
             "genre_slug": genre_slug,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_empty_actor_list_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    player_name: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_EMPTY_ACTOR_LIST.
+
+    Fires when the narrator emits ``confrontation=...`` but the structured
+    extraction has no ``npcs_present`` entries, so the encounter is
+    instantiated with only the player in the combatant list. This indicates
+    a narrator-extraction lie: the prose names adversaries but the JSON
+    game_patch omits them. Confrontation panel will render only the player.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_EMPTY_ACTOR_LIST,
+        attributes={
+            "encounter_type": encounter_type,
+            "genre_slug": genre_slug,
+            "player_name": player_name,
             **attrs,
         },
     ) as span:
