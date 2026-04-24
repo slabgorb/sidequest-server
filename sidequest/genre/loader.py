@@ -610,6 +610,19 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     except Exception as e:
         raise GenreLoadError(path=visibility_baseline_path, detail=str(e)) from e
 
+    # Group C Task 4: required lethality policy — LethalityArbiter reads this
+    # at every turn. No silent fallback: missing file is a pack-authoring bug,
+    # same pattern as visibility_baseline above.
+    from sidequest.genre.lethality_policy_loader import (
+        LethalityPolicyMissingError,
+        load_lethality_policy,
+    )
+
+    try:
+        lethality_policy = load_lethality_policy(path)
+    except LethalityPolicyMissingError as e:
+        raise GenreLoadError(path=path / "lethality_policy.yaml", detail=str(e)) from e
+
     return GenrePack(
         meta=meta,
         rules=rules,
@@ -640,6 +653,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         npc_traits=npc_traits,
         projection_rules=projection_rules,
         visibility_baseline=visibility_baseline,
+        lethality_policy=lethality_policy,
         source_dir=path,
     )
 

@@ -46,6 +46,25 @@ def _has_real_content() -> bool:
     return CC_PACK_DIR.is_dir()
 
 
+def _clone_pack_with_updated_genre_key(src: Path, dst: Path) -> Path:
+    """Clone a pack and update its lethality_policy.yaml genre_key to match the new directory name.
+
+    This is needed because the lethality_policy loader validates that genre_key in the YAML
+    matches the directory name. When tests clone a pack and give it a different name, we must
+    update the YAML so the genre_key matches the new directory.
+    """
+    shutil.copytree(src, dst)
+    lethality_yaml = dst / "lethality_policy.yaml"
+    if lethality_yaml.exists():
+        # Read the YAML, update genre_key to match the new directory name, write it back
+        with lethality_yaml.open("r", encoding="utf-8") as f:
+            policy_data = yaml.safe_load(f)
+        policy_data["genre_key"] = dst.name
+        with lethality_yaml.open("w", encoding="utf-8") as f:
+            yaml.dump(policy_data, f, default_flow_style=False, sort_keys=False)
+    return dst
+
+
 # ---------------------------------------------------------------------------
 # GenreLoader — search path behavior
 # ---------------------------------------------------------------------------
@@ -233,8 +252,7 @@ def test_optional_beat_vocabulary_defaults_to_none(tmp_path: Path) -> None:
     """beat_vocabulary.yaml absent → pack.beat_vocabulary is None (no error)."""
     if not _has_real_content():
         pytest.skip("sidequest-content not available")
-    pack_dir = tmp_path / "cc_no_beat_vocab"
-    shutil.copytree(CC_PACK_DIR, pack_dir)
+    pack_dir = _clone_pack_with_updated_genre_key(CC_PACK_DIR, tmp_path / "cc_no_beat_vocab")
     beat_path = pack_dir / "beat_vocabulary.yaml"
     if beat_path.exists():
         beat_path.unlink()
@@ -246,8 +264,7 @@ def test_optional_achievements_defaults_to_empty(tmp_path: Path) -> None:
     """achievements.yaml absent → pack.achievements is [] (no error)."""
     if not _has_real_content():
         pytest.skip("sidequest-content not available")
-    pack_dir = tmp_path / "cc_no_achievements"
-    shutil.copytree(CC_PACK_DIR, pack_dir)
+    pack_dir = _clone_pack_with_updated_genre_key(CC_PACK_DIR, tmp_path / "cc_no_achievements")
     ach_path = pack_dir / "achievements.yaml"
     if ach_path.exists():
         ach_path.unlink()
@@ -259,8 +276,7 @@ def test_optional_pacing_defaults_to_none(tmp_path: Path) -> None:
     """pacing.yaml absent → pack.drama_thresholds is None."""
     if not _has_real_content():
         pytest.skip("sidequest-content not available")
-    pack_dir = tmp_path / "cc_no_pacing"
-    shutil.copytree(CC_PACK_DIR, pack_dir)
+    pack_dir = _clone_pack_with_updated_genre_key(CC_PACK_DIR, tmp_path / "cc_no_pacing")
     pacing_path = pack_dir / "pacing.yaml"
     if pacing_path.exists():
         pacing_path.unlink()
@@ -316,8 +332,7 @@ def test_worlds_with_tropes_inherit_from_genre(tmp_path: Path) -> None:
     """World tropes with extends are resolved against genre-level tropes."""
     if not _has_real_content():
         pytest.skip("sidequest-content not available")
-    pack_dir = tmp_path / "cc_trope_test"
-    shutil.copytree(CC_PACK_DIR, pack_dir)
+    pack_dir = _clone_pack_with_updated_genre_key(CC_PACK_DIR, tmp_path / "cc_trope_test")
 
     # Inject a genre-level abstract trope
     abstract_trope = [{"name": "The Eternal Dungeon", "abstract": True, "category": "recurring", "triggers": ["dark", "deep"]}]

@@ -45,6 +45,7 @@ from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
 from sidequest.genre.models.tropes import TropeDefinition
+from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.visibility import VisibilityBaseline
 from sidequest.genre.models.world import CartographyConfig, WorldConfig
 
@@ -171,6 +172,7 @@ class GenrePack(BaseModel):
     npc_traits: NpcTraitsDatabase | None = None
     projection_rules: ProjectionRules | None = None
     visibility_baseline: VisibilityBaseline | None = None
+    lethality_policy: LethalityPolicy | None = None
     source_dir: Path | None = None
 
     # Convenience accessor for pack name

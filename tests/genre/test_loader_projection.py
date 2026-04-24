@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from sidequest.genre.loader import load_genre_pack
 
@@ -15,8 +16,19 @@ CAVERNS_PACK_DIR = _REPO_ROOT / "sidequest-content" / "genre_packs" / "caverns_a
 
 
 def _clone_pack(src: Path, dst: Path) -> Path:
-    """Deep-copy a pack so the test can mutate the copy safely."""
+    """Deep-copy a pack so the test can mutate the copy safely.
+
+    Also updates lethality_policy.yaml genre_key to match the new directory name,
+    since the loader validates that genre_key matches the pack directory name.
+    """
     shutil.copytree(src, dst)
+    lethality_yaml = dst / "lethality_policy.yaml"
+    if lethality_yaml.exists():
+        with lethality_yaml.open("r", encoding="utf-8") as f:
+            policy_data = yaml.safe_load(f)
+        policy_data["genre_key"] = dst.name
+        with lethality_yaml.open("w", encoding="utf-8") as f:
+            yaml.dump(policy_data, f, default_flow_style=False, sort_keys=False)
     return dst
 
 

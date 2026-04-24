@@ -107,3 +107,18 @@ def test_loader_rejects_genre_key_mismatch(tmp_path: Path):
     with pytest.raises(ValueError) as exc:
         load_lethality_policy(pack_dir)
     assert "genre_key mismatch" in str(exc.value)
+
+
+# GenrePack wiring test (Task 4)
+
+
+def test_genre_pack_exposes_lethality_policy():
+    """Once a pack is loaded, its `lethality_policy` attribute is populated."""
+    from pathlib import Path
+
+    from sidequest.genre.loader import load_genre_pack
+
+    pack = load_genre_pack(Path("sidequest-content/genre_packs/caverns_and_claudes"))
+    assert pack.lethality_policy is not None
+    assert pack.lethality_policy.genre_key == "caverns_and_claudes"
+    assert pack.lethality_policy.verdicts_on_zero_edge.pc == "humiliated"
