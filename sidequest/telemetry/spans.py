@@ -673,6 +673,7 @@ SPAN_ENCOUNTER_RESOLVED = "encounter.resolved"
 SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
 SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
 SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
+SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
 
 
 @contextmanager
@@ -801,6 +802,40 @@ def encounter_confrontation_initiated_span(
         attributes={
             "encounter_type": encounter_type,
             "genre_slug": genre_slug,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_beat_failure_branch_span(
+    *,
+    encounter_type: str,
+    beat_id: str,
+    actor: str,
+    base_delta: int,
+    failure_delta: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH.
+
+    Fires when a beat's failure branch is taken — i.e. a dice roll
+    classified as Fail / CritFail and the engine substituted
+    ``failure_metric_delta`` for the default ``metric_delta``. Lets the GM
+    panel surface when a beat's risk clause actually paid out, vs the
+    narrator merely saying a roll failed without mechanical consequence.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH,
+        attributes={
+            "encounter_type": encounter_type,
+            "beat_id": beat_id,
+            "actor": actor,
+            "base_delta": base_delta,
+            "failure_delta": failure_delta,
             **attrs,
         },
     ) as span:

@@ -47,6 +47,7 @@ from sidequest.game.builder import (
     CharacterBuilder,
 )
 from sidequest.game.character import Character
+from sidequest.game.creature_core import CreatureCore
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_embedding import (
     embed_pending_fragments,
@@ -65,7 +66,6 @@ from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
 )
-from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import GameSnapshot, NarrativeEntry, NpcRegistryEntry
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -2335,9 +2335,25 @@ class WebSocketSessionHandler:
         # that emits the Story-3.4 OTEL spans the GM panel reads). The
         # develop-side ``apply_encounter_updates`` split was supplanted by
         # this richer combined helper; see merge commit for details.
+        #
+        # ADR-074 dice integration — read the most recent dice outcome
+        # stashed by the DICE_THROW handler (if any) and classify it as
+        # success/failure for the beat application. Uses getattr so this
+        # stays forward-compatible with the in-flight ``pending_roll_outcome``
+        # field on ``_SessionData`` that OQ-2 is landing in parallel —
+        # when the field is absent the call is a no-op.
+        dice_outcome = getattr(sd, "pending_roll_outcome", None)
+        dice_failed: bool | None = None
+        if dice_outcome is not None:
+            outcome_name = getattr(dice_outcome, "name", None) or str(dice_outcome)
+            dice_failed = outcome_name in ("Fail", "CritFail")
         _apply_narration_result_to_snapshot(
-            snapshot, result, sd.player_name, pack=sd.genre_pack,
+            snapshot, result, sd.player_name,
+            pack=sd.genre_pack, dice_failed=dice_failed,
         )
+        # Consume the pending outcome — one turn per roll.
+        if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
+            sd.pending_roll_outcome = None
         snapshot.turn_manager.record_interaction()
 
         now_encounter = snapshot.encounter
@@ -3552,11 +3568,20 @@ def _apply_narration_result_to_snapshot(
     player_name: str,
     *,
     pack: GenrePack | None = None,
+    dice_failed: bool | None = None,
 ) -> None:
     """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
 
     Phase 1: location, quest_updates, lore_established, npc_registry updates.
     Story 3.4: encounter instantiation and beat application (when pack provided).
+
+    ``dice_failed`` carries the most recent dice outcome classification when
+    known. When ``True`` and the resolved BeatDef has a structured
+    ``failure_metric_delta``, the engine substitutes that value for the
+    beat's default ``metric_delta`` — matching the ``risk`` clause in the
+    pack YAML. ``None`` means "no dice outcome is attached to this turn";
+    the beat applies its default delta (legacy behavior). ``False`` is
+    success — default delta applies.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
@@ -3681,6 +3706,7 @@ def _apply_narration_result_to_snapshot(
         from sidequest.telemetry.spans import (
             combat_tick_span,
             encounter_beat_applied_span,
+            encounter_beat_failure_branch_span,
             encounter_empty_actor_list_span,
             encounter_phase_transition_span,
             encounter_resolved_span,
@@ -3741,13 +3767,42 @@ def _apply_narration_result_to_snapshot(
                         f"unknown beat_id {sel.beat_id!r} for encounter "
                         f"{enc.encounter_type!r}"
                     )
+                # ADR-074 dice integration — if the most recent roll failed
+                # AND the beat defines a structured failure branch, apply
+                # the failure delta instead of the default. Matches the
+                # ``risk`` clause the narrator surfaces in the beat
+                # tooltip. When dice_failed is None or the beat has no
+                # failure branch, legacy behavior is preserved.
+                applied_delta = beat.metric_delta
+                took_failure_branch = (
+                    dice_failed is True
+                    and beat.failure_metric_delta is not None
+                )
+                if took_failure_branch:
+                    applied_delta = beat.failure_metric_delta
+                    with encounter_beat_failure_branch_span(
+                        encounter_type=enc.encounter_type,
+                        beat_id=sel.beat_id,
+                        actor=sel.actor,
+                        base_delta=beat.metric_delta,
+                        failure_delta=beat.failure_metric_delta,
+                    ):
+                        logger.info(
+                            "encounter.beat_failure_branch beat=%s actor=%s "
+                            "base=%d failure=%d effect=%r",
+                            sel.beat_id,
+                            sel.actor,
+                            beat.metric_delta,
+                            beat.failure_metric_delta,
+                            beat.failure_effect,
+                        )
                 with encounter_beat_applied_span(
                     encounter_type=enc.encounter_type,
                     actor=sel.actor,
                     beat_id=sel.beat_id,
-                    metric_delta=beat.metric_delta,
+                    metric_delta=applied_delta,
                 ):
-                    enc.metric.current += beat.metric_delta
+                    enc.metric.current += applied_delta
                     # Ascending metrics clamp at 0 (port of Rust encounter.rs).
                     if (
                         enc.metric.direction == MetricDirection.Ascending

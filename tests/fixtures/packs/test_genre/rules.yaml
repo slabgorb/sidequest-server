@@ -110,6 +110,8 @@ confrontations:
         metric_delta: 3
         stat_check: Reflexes
         risk: "exposed if it fails — lose 2 momentum and take extra damage"
+        failure_metric_delta: -2
+        failure_effect: "exposed — the repositioning leaves you open; narrate extra damage this beat"
         effect: "gain positional advantage"
         narrator_hint: "Risky repositioning for a better angle of attack."
       - id: mutant_ability
@@ -117,6 +119,8 @@ confrontations:
         metric_delta: 4
         stat_check: Instinct
         risk: "mutation instability — lose 2 momentum and suffer side effect on failure"
+        failure_metric_delta: -2
+        failure_effect: "mutation instability — the power turns on the caster; narrate a visible side effect"
         effect: "unleash mutation on target"
         narrator_hint: "The mutation manifests visibly. Show the cost as well as the power."
       - id: flee

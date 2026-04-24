@@ -77,7 +77,19 @@ class BeatDef(BaseModel):
     label: str
     metric_delta: int
     stat_check: str
+    # Legacy freeform documentation of the failure branch. Prefer the
+    # structured ``failure_metric_delta`` + ``failure_effect`` below when
+    # the beat has mechanical failure consequences — ``risk`` is for the
+    # narrator's prose cue only and does NOT drive the engine.
     risk: str | None = None
+    # Failure branch (ADR-074 dice resolution integration). When a dice
+    # roll classifies the beat as Fail / CritFail, the encounter engine
+    # substitutes ``failure_metric_delta`` for ``metric_delta`` and passes
+    # ``failure_effect`` to the narrator as a structured cue. Both are
+    # optional — beats without a failure branch keep the legacy behavior
+    # (always apply ``metric_delta``).
+    failure_metric_delta: int | None = None
+    failure_effect: str | None = None
     reveals: str | None = None
     resolution: bool | None = None
     effect: str | None = None
