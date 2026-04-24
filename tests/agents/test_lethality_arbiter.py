@@ -6,8 +6,6 @@ and paired narrator directives. Edge-based triggers only for Phase A.
 """
 from __future__ import annotations
 
-import pytest
-
 from sidequest.agents.lethality_arbiter import LethalityArbiter, LethalityResult
 from sidequest.agents.subsystems import BankResult
 from sidequest.game.creature_core import CreatureCore, EdgePool, Inventory
@@ -15,7 +13,6 @@ from sidequest.genre.models.lethality import LethalityPolicy, VerdictsOnZeroEdge
 from sidequest.protocol.dispatch import (
     DispatchPackage,
     PlayerDispatch,
-    VisibilityTag,
 )
 
 

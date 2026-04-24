@@ -30,8 +30,8 @@ from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.protocol.dispatch import (
     DispatchPackage,
     LethalityVerdict,
+    LethalityVerdictKind,
     NarratorDirective,
-    VisibilityTag,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class LethalityArbiter:
         self,
         *,
         entity: str,
-        verdict_kind: str,
+        verdict_kind: LethalityVerdictKind,
         cause: str,
     ) -> LethalityVerdict:
         policy = self._policy
@@ -97,7 +97,7 @@ class LethalityArbiter:
         )
         return LethalityVerdict(
             entity=entity,
-            verdict=verdict_kind,  # type: ignore[arg-type]  # validated against Literal at ctor
+            verdict=verdict_kind,
             cause=cause,
             reversibility=policy.default_reversibility,
             narrator_directive=directive,
