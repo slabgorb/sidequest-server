@@ -523,3 +523,187 @@ async def test_slug_chargen_complete_party_status_has_stats(
     assert member.sheet.race, (
         "sheet.race must be populated — used for sheet subtitle."
     )
+
+
+# ---------------------------------------------------------------------------
+# Rename-on-resume for pre-fix UUID saves
+# (pingpong 2026-04-24 — "Resumed character shows UUID as name")
+# ---------------------------------------------------------------------------
+
+
+def _seed_resumable_game_with_uuid_name(
+    tmp_path: Path, slug: str, player_id: str
+) -> None:
+    """Seed a save whose character.core.name is the opaque player_id UUID.
+
+    Mirrors pre-fix chargen state: CharacterBuilder committed the character
+    before the with_lobby_name() rename landed, so core.name == player_id.
+    """
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
+    )
+    core = CreatureCore(
+        name=player_id,  # the bug: UUID leaked into the display name
+        description="A pre-fix save",
+        personality="stoic",
+        inventory=Inventory(),
+    )
+    char = Character(
+        core=core,
+        char_class="Fighter",
+        race="Human",
+        backstory="A pre-fix fighter",
+    )
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_renames_uuid_character_to_display_name(
+    tmp_path: Path,
+) -> None:
+    """Pre-fix save: character.core.name is the player_id UUID. On resume,
+    the handler must rename it to the display_name the client sent on
+    connect AND persist the change so the next turn's PARTY_STATUS
+    reflects the real name.
+    """
+    player_id = "116f74b2-ba0f-4899-9277-2933cbe6e097"
+    slug = "2026-04-24-uuid-rename"
+    _seed_resumable_game_with_uuid_name(tmp_path, slug, player_id)
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id=player_id,
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Slabgorb",
+        ),
+    )
+    await handler.handle_message(msg)
+
+    sd = handler._session_data  # type: ignore[attr-defined]
+    assert sd is not None
+    assert sd.snapshot.characters, "expected resumed character in snapshot"
+    assert sd.snapshot.characters[0].core.name == "Slabgorb", (
+        "UUID-shaped core.name must be swapped for the client-provided "
+        f"display_name on resume; got {sd.snapshot.characters[0].core.name!r}"
+    )
+
+    # Persisted — reopen the store from disk and confirm the rename stuck,
+    # so a subsequent reconnect doesn't re-detect the UUID and double-rename.
+    db = db_path_for_slug(tmp_path, slug)
+    reopened = SqliteStore(db)
+    try:
+        loaded = reopened.load()
+        assert loaded is not None
+        assert loaded.snapshot.characters[0].core.name == "Slabgorb"
+    finally:
+        reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_leaves_real_name_untouched(tmp_path: Path) -> None:
+    """Resume with a non-UUID character name (e.g. Slabgorb's actual name
+    after the fix lands) must NOT rename anything, even if display_name
+    differs — don't overwrite a legitimate name with every reconnect.
+    """
+    slug = "2026-04-24-real-name-untouched"
+    _seed_resumable_game(tmp_path, slug)  # seeds core.name="Rux"
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="116f74b2-ba0f-4899-9277-2933cbe6e097",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Slabgorb",  # different from saved "Rux"
+        ),
+    )
+    await handler.handle_message(msg)
+
+    sd = handler._session_data  # type: ignore[attr-defined]
+    assert sd.snapshot.characters[0].core.name == "Rux", (
+        "Real character name must not be overwritten on resume; only "
+        "UUID-shaped names get the rename treatment."
+    )
+
+
+def test_rename_helper_idempotent_on_already_renamed_character(tmp_path: Path) -> None:
+    """Calling the rename helper again after a successful rename is a
+    no-op — guards against the helper introducing drift when a resume
+    cycle fires twice (e.g. StrictMode double-mount or a reconnect).
+    """
+    from sidequest.server.session_handler import (
+        _rename_resumed_character_if_uuid,
+    )
+
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="x")
+    snap.characters = [
+        Character(
+            core=CreatureCore(
+                name="Slabgorb",
+                description="post-rename",
+                personality="stoic",
+                inventory=Inventory(),
+            ),
+            char_class="Fighter",
+            race="Human",
+            backstory="ok",
+        )
+    ]
+    changed = _rename_resumed_character_if_uuid(
+        snapshot=snap,
+        display_name="Slabgorb",
+        player_id="116f74b2-ba0f-4899-9277-2933cbe6e097",
+    )
+    assert changed is False
+    assert snap.characters[0].core.name == "Slabgorb"
+
+
+def test_rename_helper_declines_when_display_name_is_also_uuid(
+    tmp_path: Path,
+) -> None:
+    """If the client-provided display_name is itself UUID-shaped, the
+    helper declines to rename — replacing one opaque id with another
+    accomplishes nothing.
+    """
+    from sidequest.server.session_handler import (
+        _rename_resumed_character_if_uuid,
+    )
+
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="x")
+    snap.characters = [
+        Character(
+            core=CreatureCore(
+                name="116f74b2-ba0f-4899-9277-2933cbe6e097",
+                description="pre-fix",
+                personality="stoic",
+                inventory=Inventory(),
+            ),
+            char_class="Fighter",
+            race="Human",
+            backstory="ok",
+        )
+    ]
+    changed = _rename_resumed_character_if_uuid(
+        snapshot=snap,
+        display_name="deadbeef-dead-beef-dead-beefdeadbeef",
+        player_id="116f74b2-ba0f-4899-9277-2933cbe6e097",
+    )
+    assert changed is False
+    # Leave the UUID — don't replace with another UUID.
+    assert snap.characters[0].core.name == "116f74b2-ba0f-4899-9277-2933cbe6e097"

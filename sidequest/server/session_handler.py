@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -161,6 +162,65 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
 # Distinct from _emit_event (live fan-out) but reuses _KIND_TO_MESSAGE_CLS as
 # the single source of truth for kind → message class mapping.
 # ---------------------------------------------------------------------------
+
+# Canonical 8-4-4-4-12 hex UUID pattern. Used to detect saves that wrote
+# ``core.name`` as the opaque player UUID before the with_lobby_name fix
+# landed. Anchored to reject partial matches (e.g. a UUID embedded inside
+# a legitimate name like "Rux-116f74b2-...").
+_UUID_HEX_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _looks_like_uuid(value: str) -> bool:
+    """True when ``value`` is shaped like a canonical UUID hex string.
+
+    Case-insensitive, anchored at both ends. ``uuid.UUID(...)`` would be
+    stricter (rejects weird variants), but for rename-on-resume we want
+    the naive pattern match — if the saved name looks like a UUID, it's
+    almost certainly the player_id that leaked in pre-fix.
+    """
+    return bool(_UUID_HEX_RE.match(value))
+
+
+def _rename_resumed_character_if_uuid(
+    *,
+    snapshot: GameSnapshot,
+    display_name: str,
+    player_id: str,
+) -> bool:
+    """Rename characters whose ``core.name`` matches a UUID pattern.
+
+    Walks ``snapshot.characters`` and, for each one whose ``core.name`` either
+    equals the active ``player_id`` OR matches the canonical UUID regex,
+    replaces the name with the ``display_name`` the client sent on connect.
+    Returns True iff at least one character was renamed, so the caller can
+    persist the snapshot. When ``display_name`` is blank or itself looks
+    like a UUID we decline to rename — better to leave the UUID than to
+    replace one opaque identifier with another.
+
+    Context: pingpong 2026-04-24 — "Resumed character shows UUID as name".
+    Pre-fix chargen used ``CharacterBuilder`` without ``with_lobby_name``,
+    so the committed Character carried the player_id as its display name.
+    The chargen path is fixed, but existing saves persist the UUID until
+    the player is renamed. This function patches them on resume.
+
+    Pydantic lets us assign through ``core.name``; the field_validator
+    rejects blank strings, which is why we guard on ``display_name``.
+    """
+    if not display_name.strip():
+        return False
+    if _looks_like_uuid(display_name):
+        return False
+    renamed = False
+    for character in snapshot.characters:
+        current = character.core.name
+        if current == player_id or _looks_like_uuid(current):
+            character.core.name = display_name
+            renamed = True
+    return renamed
+
 
 def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object:
     """Build a typed protocol message from a persisted event row for replay.
@@ -1039,6 +1099,27 @@ class WebSocketSessionHandler:
             if saved is not None:
                 snapshot = saved.snapshot
                 has_character = bool(snapshot.characters)
+                # Rename-on-resume: pre-fix saves stored ``core.name`` as the
+                # opaque player UUID because chargen used ``with_lobby_name``
+                # AFTER the name fix landed. Detect the UUID pattern and
+                # swap in the lobby display_name on resume, then persist so
+                # the rename sticks and the next turn's PARTY_STATUS sees the
+                # real name. See pingpong 2026-04-24 "Resumed character shows
+                # UUID as name" (medium, user-visible everywhere).
+                renamed = _rename_resumed_character_if_uuid(
+                    snapshot=snapshot,
+                    display_name=display_name,
+                    player_id=player_id,
+                )
+                if renamed:
+                    store.save(snapshot)
+                    logger.info(
+                        "session.slug_resumed.renamed_uuid player_id=%s "
+                        "old=%s new=%s",
+                        player_id,
+                        player_id,  # equal to the pre-rename value
+                        display_name,
+                    )
                 logger.info(
                     "session.slug_resumed genre=%s world=%s slug=%s turn=%s",
                     row.genre_slug,
