@@ -3925,6 +3925,95 @@ def _apply_narration_result_to_snapshot(
             component="quest_log",
         )
 
+    # Inventory — apply items_gained / items_lost to the rolling player's
+    # character. Playtest 2026-04-24 pingpong "items_gained=1 on Warden
+    # defeat — brass memory core never appears in Inventory" exposed this
+    # wiring gap: the narrator's extraction emitted a watcher patch
+    # (session_handler.py ~line 2906) but never landed the item on the
+    # character's ``inventory.items`` list, so the UI inventory panel
+    # stayed out of sync with the narrative. The shape we write here
+    # matches ``_item_dict_from_catalog`` / ``_item_dict_minimal`` in
+    # ``dispatch/chargen_loadout.py`` so the UI's ``InventoryPanel``
+    # renders narrator-granted items the same way as starting equipment.
+    # items_lost removes the first matching name (case-insensitive) —
+    # no quantity math yet since narrator-granted items currently arrive
+    # as quantity=1 singletons.
+    if (result.items_gained or result.items_lost) and snapshot.characters:
+        character = snapshot.characters[0]
+        turn_num = snapshot.turn_manager.interaction
+
+        def _narrator_item_dict(entry: dict[str, object]) -> dict[str, object]:
+            name_val = str(entry.get("name", "") or "").strip() or "Unknown Item"
+            desc_val = str(entry.get("description", "") or "").strip() or (
+                "An item acquired during adventure."
+            )
+            category_raw = str(entry.get("category", "") or "").strip().lower()
+            # Narrator prompt allows weapon/armor/tool/consumable/quest/treasure/misc.
+            # Anything else normalizes to misc — don't silently fabricate a
+            # category the UI filter isn't prepared to render.
+            allowed = {
+                "weapon", "armor", "tool", "consumable", "quest", "treasure", "misc",
+            }
+            category = category_raw if category_raw in allowed else "misc"
+            # Derive a stable-ish id from the name for dedup/targeting. Not
+            # expected to collide with catalog ids (those use snake_case from
+            # inventory.yaml); narrator-granted items live in a separate
+            # ``narrator:`` namespace so UI telemetry can tell them apart.
+            slug = name_val.lower().replace(" ", "_").replace("-", "_")
+            return {
+                "id": f"narrator:{slug}",
+                "name": name_val,
+                "description": desc_val,
+                "category": category,
+                "value": 0,
+                "weight": 0.0,
+                "rarity": "common",
+                "narrative_weight": 0.5,
+                "tags": [],
+                "equipped": False,
+                "quantity": 1,
+                "uses_remaining": None,
+                "state": "Carried",
+            }
+
+        added_names: list[str] = []
+        for entry in result.items_gained or []:
+            item_dict = _narrator_item_dict(entry)
+            character.core.inventory.items.append(item_dict)
+            added_names.append(str(item_dict["name"]))
+
+        removed_names: list[str] = []
+        for entry in result.items_lost or []:
+            lost_name = str(entry.get("name", "") or "").strip().lower()
+            if not lost_name:
+                continue
+            for idx, existing in enumerate(character.core.inventory.items):
+                existing_name = str(existing.get("name", "") or "").strip().lower()
+                if existing_name == lost_name:
+                    character.core.inventory.items.pop(idx)
+                    removed_names.append(lost_name)
+                    break
+
+        logger.info(
+            "state.inventory_update player=%s turn=%d gained=%s lost=%s",
+            player_name,
+            turn_num,
+            added_names,
+            removed_names,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "inventory",
+                "op": "narrator_extracted",
+                "gained": added_names,
+                "lost": removed_names,
+                "player_name": player_name,
+                "turn_number": turn_num,
+            },
+            component="inventory",
+        )
+
     # Lore established
     if result.lore_established:
         for lore in result.lore_established:

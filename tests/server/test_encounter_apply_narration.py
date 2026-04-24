@@ -400,6 +400,154 @@ def test_all_beat_selections_dropped_on_dice_turn(
     assert "encounter.beat_failure_branch" not in span_names
 
 
+# ---------------------------------------------------------------------------
+# Narrator-granted items land on character inventory
+# (pingpong 2026-04-24 — "items_gained=1 on Warden defeat — brass memory
+# core never appears in Inventory")
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cac_snap_with_character(cac_snap):
+    """CAC snapshot with a minimal Character so inventory tests have a
+    target for narrator-granted items. Mirrors the shape used by
+    test_perception_rewriter_wiring._make_character."""
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    snap, pack = cac_snap
+    core = CreatureCore(
+        name="Slabgorb",
+        description="A scavenger.",
+        personality="Cautious.",
+        inventory=Inventory(),
+        statuses=[],
+    )
+    character = Character(
+        core=core, char_class="Ranger", race="Human", backstory="A wanderer.",
+    )
+    snap.characters.append(character)
+    return snap, pack, character
+
+
+def test_items_gained_lands_on_character_inventory(
+    cac_snap_with_character,
+) -> None:
+    """Narrator-granted items must reach ``character.core.inventory.items``.
+
+    Regression for pingpong 2026-04-24 "items_gained=1 on Warden defeat —
+    brass memory core never appears in Inventory". The orchestrator
+    extracted ``items_gained`` but the server only used it for a
+    watcher-patch summary — the item never landed on inventory, so the
+    UI panel stayed out of sync with the narrative.
+    """
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack, character = cac_snap_with_character
+    assert len(character.core.inventory.items) == 0
+    result = NarrationTurnResult(
+        narration="In its chest cavity, a brass-cased memory core still blinks.",
+        items_gained=[
+            {
+                "name": "Brass Memory Core",
+                "description": "A scavenged data spindle; it hums when handled.",
+                "category": "quest",
+            },
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+    assert len(character.core.inventory.items) == 1
+    item = character.core.inventory.items[0]
+    assert item["name"] == "Brass Memory Core"
+    assert item["category"] == "quest"
+    assert item["description"].startswith("A scavenged")
+    assert item["state"] == "Carried"
+    assert item["equipped"] is False
+    assert item["quantity"] == 1
+    assert item["id"] == "narrator:brass_memory_core"
+
+
+def test_items_gained_normalizes_unknown_category_to_misc(
+    cac_snap_with_character,
+) -> None:
+    """Narrator-declared categories outside the allowed set normalize to
+    ``misc`` rather than flow through unchecked — guards against the UI
+    filter (``InventoryPanel``) receiving a category it can't render.
+    """
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack, character = cac_snap_with_character
+    result = NarrationTurnResult(
+        narration="You pocket the oddity.",
+        items_gained=[
+            {"name": "Strange Trinket", "description": "Odd.", "category": "junk"},
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+    assert character.core.inventory.items[0]["category"] == "misc"
+
+
+def test_items_lost_removes_first_matching_name_case_insensitive(
+    cac_snap_with_character,
+) -> None:
+    """Narrator-declared ``items_lost`` removes the first matching item
+    from inventory by name (case-insensitive). Missing entries are
+    silently skipped (narrator may hallucinate a lost item that wasn't
+    actually in inventory).
+    """
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack, character = cac_snap_with_character
+    character.core.inventory.items.append(
+        {
+            "id": "narrator:rusty_compass",
+            "name": "Rusty Compass",
+            "description": "A corroded compass.",
+            "category": "tool",
+            "value": 0, "weight": 0.1, "rarity": "common",
+            "narrative_weight": 0.3, "tags": [],
+            "equipped": False, "quantity": 1,
+            "uses_remaining": None, "state": "Carried",
+        }
+    )
+    assert len(character.core.inventory.items) == 1
+
+    result = NarrationTurnResult(
+        narration="The merchant palms your compass.",
+        items_lost=[
+            {"name": "RUSTY COMPASS", "description": "lost", "category": "tool"},
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+    assert character.core.inventory.items == []
+
+
+def test_items_update_tolerates_missing_characters(cac_snap) -> None:
+    """Called with no character seated (e.g., pre-chargen narration), the
+    inventory block must no-op without raising. Single-player saves
+    populate ``snapshot.characters[0]`` before any narration turn so this
+    is a safety net, not a hot path.
+    """
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack = cac_snap
+    assert snap.characters == []
+    result = NarrationTurnResult(
+        narration="Something shifts in the dust.",
+        items_gained=[{"name": "Phantom Item", "description": "nil", "category": "misc"}],
+    )
+    # Must not raise.
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+
+
 def test_beat_selections_apply_on_non_dice_turn(
     mw_snap_with_combat, otel_capture: InMemorySpanExporter
 ) -> None:
