@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from sidequest.agents.claude_client import LlmClient
+from sidequest.agents.llm_factory import build_llm_client
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
@@ -68,14 +69,12 @@ def create_app(
 
     Args:
         claude_client_factory: Factory that returns a LlmClient client.
-            Defaults to ``lambda: ClaudeClient()``.
+            Defaults to ``build_llm_client`` (honours ``SIDEQUEST_LLM_BACKEND``).
         genre_pack_search_paths: Ordered list of directories to search for
             genre packs. Defaults to DEFAULT_GENRE_PACK_SEARCH_PATHS.
         save_dir: Root directory for SQLite save files.
             Defaults to ``~/.sidequest/saves``.
     """
-    from sidequest.agents.claude_client import ClaudeClient
-
     resolved_save_dir: Path = save_dir or (
         Path.home() / ".sidequest" / "saves"
     )
@@ -86,7 +85,7 @@ def create_app(
     )
     resolved_client_factory: Callable[[], LlmClient] = (
         claude_client_factory if claude_client_factory is not None
-        else ClaudeClient
+        else build_llm_client
     )
 
     _install_uvicorn_log_bridge()
