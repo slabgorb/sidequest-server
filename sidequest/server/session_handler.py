@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
     DaemonClient,
@@ -486,6 +487,33 @@ class WebSocketSessionHandler:
             hidden_characters=hidden_characters,
         )
 
+    def status_effects_by_player(self) -> dict[str, list[str]]:
+        """Per-player status-effect tokens, for PerceptionRewriter.
+
+        Reads the *existing* character-status map on the active
+        ``GameSnapshot`` — no new state is introduced. Mirrors the
+        player->character mapping used by :meth:`_build_game_state_view`:
+        the session's active ``player_id`` is mapped to the first entry
+        in ``snapshot.characters`` (single-player authoritative today;
+        MP seat-assignment will feed the multi-player case via
+        ``SessionRoom`` in a later sprint, at which point this accessor
+        should fan out the same way).
+
+        Returns ``dict[player_id, list[status_token]]``. An empty dict
+        (no session, no snapshot, no characters) is safe: the rewriter
+        treats missing entries as "no status effects".
+        """
+        sd = self._session_data
+        if sd is None:
+            return {}
+        snapshot = sd.snapshot
+        if not snapshot.characters:
+            return {}
+        # Mirror _build_game_state_view's mapping: active player_id ->
+        # first character. Any connected non-active player_id gets []
+        # until MP seat-assignment plumbs a real mapping.
+        return {sd.player_id: list(snapshot.characters[0].core.statuses)}
+
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
     # ------------------------------------------------------------------
@@ -547,6 +575,10 @@ class WebSocketSessionHandler:
                         payload_json=row.payload_json,
                         origin_seq=row.seq,
                     )
+                    # G6: status-effect perception overlay. Built once per
+                    # event (not per recipient) — snapshot statuses don't
+                    # change mid-fanout.
+                    status_effects = self.status_effects_by_player()
                     for other_pid in room.connected_player_ids():
                         if other_pid == emitter_player_id:
                             continue
@@ -563,6 +595,17 @@ class WebSocketSessionHandler:
                         filtered_data: dict = {}
                         if decision.include:
                             filtered_data = json.loads(decision.payload_json)
+                            # G6: PerceptionRewriter — strip spans whose kind
+                            # is incompatible with the recipient's effective
+                            # fidelity (base fidelity + status effects like
+                            # blinded/deafened). Runs on the already-filtered
+                            # payload, before WS send. Deterministic only;
+                            # LLM re-voicing is deferred to post-MP.
+                            filtered_data = rewrite_for_recipient(
+                                canonical_payload=filtered_data,
+                                viewer_player_id=other_pid,
+                                status_effects=status_effects,
+                            )
                         fanout.append((other_pid, decision, filtered_data))
 
             # Build emitter's message with raw, unfiltered payload + seq
