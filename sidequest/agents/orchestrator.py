@@ -48,6 +48,7 @@ from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dispatch import DispatchPackage
+from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
@@ -208,6 +209,14 @@ class NarrationTurnResult:
     prompt_tier: str = NarratorPromptTier.Full
     prompt_text: str | None = None
     raw_response_text: str | None = None
+
+    # Group G Task 5 — entries stripped from the DispatchPackage during
+    # structural hiding. Items are ``SubsystemDispatch`` / ``NarratorDirective`` /
+    # ``LethalityVerdict``; the session handler consumes these to emit
+    # SECRET_NOTE events to their intended recipients (Task 6). Empty whenever
+    # the decomposer did not run, or no entries were flagged with
+    # ``redact_from_narrator_canonical``.
+    secret_routes: list[Any] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +606,14 @@ class Orchestrator:
             loaded = parse_soul_md(soul_path)
             self._soul_data = loaded if loaded else None
 
+        # Group G Task 5 — secret routes captured during the most recent
+        # ``build_narrator_prompt`` call. Populated by ``redact_dispatch_package``
+        # when the incoming DispatchPackage contains entries flagged
+        # ``redact_from_narrator_canonical``. Read by ``run_narration_turn`` to
+        # attach onto the NarrationTurnResult so the session handler can route
+        # them as SECRET_NOTE events (Task 6).
+        self._last_secret_routes: list[object] = []
+
     # ------------------------------------------------------------------
     # Session lifecycle (ADR-066)
     # ------------------------------------------------------------------
@@ -618,6 +635,39 @@ class Orchestrator:
         """Set the narrator session ID (for testing and server dispatch)."""
         with self._session_lock:
             self._narrator_session_id = session_id
+
+    # ------------------------------------------------------------------
+    # Group G Task 7 — entity token resolver for the leak audit
+    # ------------------------------------------------------------------
+
+    def _entity_tokens_for_registry(
+        self, context: TurnContext,
+    ) -> dict[str, list[str]]:
+        """Build ``entity_id -> [tokens]`` from the session's NPC registry.
+
+        In the current data model the ``target`` field in a SubsystemDispatch
+        is the NPC name (there is no separate entity_id on
+        :class:`NpcRegistryEntry` yet). We therefore key the token map by
+        ``entry.name`` and populate with ``[name, role]`` where ``role`` is
+        a non-empty role noun. No alias field exists today — a partial
+        token set is still a working audit.
+        """
+        tokens: dict[str, list[str]] = {}
+        for entry in context.npc_registry:
+            toks: list[str] = []
+            if entry.name:
+                toks.append(entry.name)
+            if entry.role:
+                toks.append(entry.role)
+            if toks:
+                tokens[entry.name] = toks
+        for npc in context.npcs:
+            name = npc.core.name if npc.core else None
+            if not name or name in tokens:
+                continue
+            toks = [name]
+            tokens[name] = toks
+        return tokens
 
     def has_active_narrator_session(self) -> bool:
         """Check whether a narrator session is currently active."""
@@ -677,6 +727,23 @@ class Orchestrator:
         registry = PromptRegistry()
         agent_name = self._narrator.name()
         is_full = tier == NarratorPromptTier.Full
+
+        # Group G Task 5 — Structural hiding. Strip every DispatchPackage
+        # entry flagged ``redact_from_narrator_canonical`` BEFORE anything
+        # downstream reads it. The narrator prompt never sees a redacted
+        # entry; ``removed`` is stashed on the orchestrator so
+        # ``run_narration_turn`` can forward it to the session handler for
+        # SECRET_NOTE routing (Task 6).
+        visible_dispatch_package = context.dispatch_package
+        if context.dispatch_package is not None:
+            from sidequest.agents.prompt_redaction import redact_dispatch_package
+
+            visible_dispatch_package, removed = redact_dispatch_package(
+                context.dispatch_package
+            )
+            self._last_secret_routes = list(removed)
+        else:
+            self._last_secret_routes = []
 
         # === STATIC SECTIONS (Full tier only — already in session history on Delta) ===
 
@@ -1060,7 +1127,10 @@ class Orchestrator:
         # When the decomposer ran, run its dispatch bank here and inject the
         # aggregated directives as a high-attention section so they land just
         # before the player action (load-bearing, not ambient context).
-        if context.dispatch_package is not None:
+        # Group G Task 5: ``visible_dispatch_package`` is the redacted view
+        # computed at the top of this method — entries flagged
+        # ``redact_from_narrator_canonical`` are already gone.
+        if visible_dispatch_package is not None:
             from sidequest.agents.subsystems import run_dispatch_bank
 
             bank_context: dict[str, object] = {}
@@ -1068,7 +1138,7 @@ class Orchestrator:
                 bank_context["npc_registry"] = context.npc_registry
 
             bank_result = await run_dispatch_bank(
-                context.dispatch_package, context=bank_context,
+                visible_dispatch_package, context=bank_context,
             )
             if bank_result.directives:
                 block = "\n".join(
@@ -1201,6 +1271,7 @@ class Orchestrator:
                         agent_duration_ms=elapsed_ms,
                         prompt_tier=tier,
                         prompt_text=prompt_text,
+                        secret_routes=list(self._last_secret_routes),
                     )
 
             # Store session ID from response (ADR-066)
@@ -1227,6 +1298,18 @@ class Orchestrator:
             extraction = extract_structured_from_response(raw_response)
 
             prose = extraction["prose"]
+
+            # Group G Task 7 — canonical-leak audit (safety net).
+            # Structural hiding (Task 5) is the primary defense; this is
+            # the lie-detector. Pass the ORIGINAL DispatchPackage so the
+            # audit knows what was supposed to be hidden. Expected-zero
+            # in steady state; any non-zero fire is a hiding-hole bug.
+            if context.dispatch_package is not None:
+                audit_canonical_prose(
+                    prose=prose,
+                    package=context.dispatch_package,
+                    entity_tokens_by_id=self._entity_tokens_for_registry(context),
+                )
 
             # Warn on missing action_rewrite
             if extraction["action_rewrite"] is None:
@@ -1299,6 +1382,7 @@ class Orchestrator:
                 prompt_tier=tier,
                 prompt_text=prompt_text,
                 raw_response_text=raw_response,
+                secret_routes=list(self._last_secret_routes),
             )
 
 

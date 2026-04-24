@@ -82,6 +82,37 @@ class NarrationPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# SecretNotePayload (Group G Task 6)
+# ---------------------------------------------------------------------------
+
+
+class SecretNotePayload(ProtocolBase):
+    """Per-recipient note derived from a prompt-redacted SubsystemDispatch.
+
+    Group G Task 6. When Task 5's ``redact_dispatch_package`` strips entries
+    marked ``redact_from_narrator_canonical=True`` from the narrator prompt,
+    the session handler routes each stripped ``SubsystemDispatch`` as a
+    SECRET_NOTE event through the same EventLog + ProjectionFilter pipeline
+    as NARRATION. The ``visibility_tag`` rule (Task 3) then delivers the
+    SECRET_NOTE only to recipients in ``_visibility.visible_to``.
+    """
+
+    turn_id: str
+    """DispatchPackage turn id this note belongs to."""
+    idempotency_key: str
+    """Matches the originating SubsystemDispatch.idempotency_key."""
+    subsystem: str
+    """Subsystem name from the originating dispatch."""
+    params: dict = Field(default_factory=dict)
+    """Opaque params from the originating dispatch."""
+    visibility_sidecar: dict | None = Field(default=None, serialization_alias="_visibility")
+    """Wire name is ``_visibility``; same shape as NarrationPayload.visibility_sidecar:
+    ``{"visible_to": ["player:Alice"], "fidelity": {entity_id: fidelity_level}}``."""
+    seq: int = 0
+    """Event-log sequence number assigned when the note is persisted."""
+
+
+# ---------------------------------------------------------------------------
 # NarrationEndPayload
 # ---------------------------------------------------------------------------
 
@@ -485,6 +516,14 @@ class NarrationEndMessage(ProtocolBase):
     player_id: str = ""
 
 
+class SecretNoteMessage(ProtocolBase):
+    """GameMessage::SecretNote wire representation (Group G Task 6)."""
+
+    type: Literal[MessageType.SECRET_NOTE] = MessageType.SECRET_NOTE
+    payload: SecretNotePayload
+    player_id: str = ""
+
+
 class ThinkingMessage(ProtocolBase):
     """GameMessage::Thinking wire representation."""
 
@@ -643,6 +682,7 @@ _Phase1Variant = Annotated[
     PlayerActionMessage
     | NarrationMessage
     | NarrationEndMessage
+    | SecretNoteMessage
     | ThinkingMessage
     | SessionEventMessage
     | CharacterCreationMessage

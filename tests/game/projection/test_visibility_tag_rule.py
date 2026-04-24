@@ -8,7 +8,6 @@ from sidequest.game.projection.genre_stage import GenreRuleStage
 from sidequest.game.projection.rules import load_rules_from_yaml_str
 from sidequest.game.projection.view import SessionGameStateView
 
-
 YAML = """
 rules:
   - kind: NARRATION
@@ -115,4 +114,34 @@ def test_every_shipping_pack_projection_has_visibility_tag_rule(pack):
     narration_rules = [r for r in rules.rules if r.kind == "NARRATION"]
     assert any(isinstance(r, VisibilityTagRule) for r in narration_rules), (
         f"{pack}/projection.yaml must have a visibility_tag rule for NARRATION"
+    )
+
+
+@pytest.mark.parametrize("pack", [
+    "caverns_and_claudes",
+    "elemental_harmony",
+    "heavy_metal",
+    "mutant_wasteland",
+    "space_opera",
+    "spaghetti_western",
+])
+def test_every_shipping_pack_projection_has_secret_note_rule(pack):
+    """Group G Task 6 — every pack must route SECRET_NOTE through visibility_tag.
+
+    SECRET_NOTE carries per-recipient dispatches redacted from the narrator
+    prompt (Task 5). Without a visibility_tag rule for the kind, the
+    ProjectionFilter would pass-through — defeating the whole structural-
+    hiding pair. The rule has the same shape as the NARRATION one.
+    """
+    from sidequest.game.projection.rules import (
+        VisibilityTagRule,
+        load_rules_from_yaml_path,
+    )
+    content_root = Path(__file__).resolve().parents[4] / "sidequest-content"
+    path = content_root / "genre_packs" / pack / "projection.yaml"
+    assert path.exists(), f"missing: {path}"
+    rules = load_rules_from_yaml_path(path)
+    secret_rules = [r for r in rules.rules if r.kind == "SECRET_NOTE"]
+    assert any(isinstance(r, VisibilityTagRule) for r in secret_rules), (
+        f"{pack}/projection.yaml must have a visibility_tag rule for SECRET_NOTE"
     )

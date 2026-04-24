@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, ClaudeLike
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
     DaemonClient,
@@ -102,6 +103,8 @@ from sidequest.protocol.messages import (
     RenderQueuedPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
+    SecretNoteMessage,
+    SecretNotePayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -136,6 +139,7 @@ logger = logging.getLogger(__name__)
 _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
     "CONFRONTATION": ConfrontationMessage,
+    "SECRET_NOTE": SecretNoteMessage,
 }
 
 
@@ -169,9 +173,105 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
     if kind == "CONFRONTATION":
         return message_cls(payload=ConfrontationPayload(**data))
 
+    if kind == "SECRET_NOTE":
+        return message_cls(payload=SecretNotePayload(**data))
+
     # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
     # Kept as a belt-and-suspenders hard fail.
     raise ValueError(f"_build_message_for_kind: no payload constructor for kind {kind!r}")
+
+
+# ---------------------------------------------------------------------------
+# Per-turn write-split: canonical save + per-peer filtered frames (G8)
+# ---------------------------------------------------------------------------
+#
+# MP spec 2026-04-22: the canonical save on the narrator-host holds the union
+# of every event as appended to EventLog (unfiltered). Each peer save holds
+# only the per-peer filtered subset — the frames whose FilterDecision.include
+# is True.
+#
+# `_project_frames` is the single shared core: given one envelope + filter +
+# list of connected players, compute the per-recipient decisions. Both the
+# production turn driver (`_emit_event`) and the test-facing helper
+# `apply_turn_writes_for_test` route through this function so the invariant
+# is tested in the same code path production exercises.
+
+
+@dataclass
+class SentFrame:
+    """One outbound frame to one peer after projection filter."""
+
+    player_id: str
+    payload_json: str
+
+
+def _project_frames(
+    *,
+    envelope: MessageEnvelope,
+    projection_filter: ProjectionFilter,
+    connected_players: list[str],
+    view: object = None,
+    on_decision: Callable[[str, FilterDecision], None] | None = None,
+) -> list[tuple[str, FilterDecision]]:
+    """Run the projection filter once per connected player.
+
+    Returns every (player_id, decision) pair — caller decides what to do with
+    excluded decisions (e.g. production still writes them to the projection
+    cache via ``on_decision`` before discarding the frame).
+
+    The canonical EventLog append is the caller's responsibility; this helper
+    is purely the filter fan-out step.
+    """
+    decisions: list[tuple[str, FilterDecision]] = []
+    for pid in connected_players:
+        decision = projection_filter.project(
+            envelope=envelope, view=view, player_id=pid
+        )
+        if on_decision is not None:
+            on_decision(pid, decision)
+        decisions.append((pid, decision))
+    return decisions
+
+
+def apply_turn_writes_for_test(
+    *,
+    event_log: object,
+    filter: ProjectionFilter,
+    envelope: dict,
+    connected_players: list[str],
+    view: object = None,
+) -> list[SentFrame]:
+    """Test-facing write-split helper: canonical append + per-peer filter.
+
+    Exercises the same core (`_project_frames`) as the production turn driver.
+    The test fake ``event_log`` accepts a single positional MessageEnvelope on
+    ``append``; production uses ``append_in_transaction(kind=..., payload_json=...)``
+    inside a DB transaction — both converge on `_project_frames` for the
+    per-peer decision loop.
+
+    Canonical save receives the raw envelope exactly once. Each peer frame is
+    emitted only when ``FilterDecision.include`` is True.
+    """
+    import json as _json
+
+    canonical_env = MessageEnvelope(
+        kind=envelope["kind"],
+        payload_json=_json.dumps(envelope["payload"]),
+        origin_seq=getattr(event_log, "next_seq", 0),
+    )
+    event_log.append(canonical_env)  # type: ignore[attr-defined]
+
+    decisions = _project_frames(
+        envelope=canonical_env,
+        projection_filter=filter,
+        connected_players=connected_players,
+        view=view,
+    )
+    return [
+        SentFrame(player_id=pid, payload_json=decision.payload_json)
+        for pid, decision in decisions
+        if decision.include
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +580,33 @@ class WebSocketSessionHandler:
             hidden_characters=hidden_characters,
         )
 
+    def status_effects_by_player(self) -> dict[str, list[str]]:
+        """Per-player status-effect tokens, for PerceptionRewriter.
+
+        Reads the *existing* character-status map on the active
+        ``GameSnapshot`` — no new state is introduced. Mirrors the
+        player->character mapping used by :meth:`_build_game_state_view`:
+        the session's active ``player_id`` is mapped to the first entry
+        in ``snapshot.characters`` (single-player authoritative today;
+        MP seat-assignment will feed the multi-player case via
+        ``SessionRoom`` in a later sprint, at which point this accessor
+        should fan out the same way).
+
+        Returns ``dict[player_id, list[status_token]]``. An empty dict
+        (no session, no snapshot, no characters) is safe: the rewriter
+        treats missing entries as "no status effects".
+        """
+        sd = self._session_data
+        if sd is None:
+            return {}
+        snapshot = sd.snapshot
+        if not snapshot.characters:
+            return {}
+        # Mirror _build_game_state_view's mapping: active player_id ->
+        # first character. Any connected non-active player_id gets []
+        # until MP seat-assignment plumbs a real mapping.
+        return {sd.player_id: list(snapshot.characters[0].core.statuses)}
+
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
     # ------------------------------------------------------------------
@@ -541,22 +668,51 @@ class WebSocketSessionHandler:
                         payload_json=row.payload_json,
                         origin_seq=row.seq,
                     )
-                    for other_pid in room.connected_player_ids():
-                        if other_pid == emitter_player_id:
-                            continue
-                        decision = projection_filter.project(
-                            envelope=envelope, view=view, player_id=other_pid
-                        )
+                    # G6: status-effect perception overlay. Built once per
+                    # event (not per recipient) — snapshot statuses don't
+                    # change mid-fanout.
+                    status_effects = self.status_effects_by_player()
+
+                    # G8: route through the shared write-split helper so the
+                    # per-peer filter loop is a single code path (test and
+                    # production exercise `_project_frames`).
+                    recipients = [
+                        pid
+                        for pid in room.connected_player_ids()
+                        if pid != emitter_player_id
+                    ]
+
+                    def _cache_decision(pid: str, decision: FilterDecision) -> None:
                         if self._projection_cache is not None:
                             self._projection_cache.write_in_transaction(
                                 event_seq=seq,
-                                player_id=other_pid,
+                                player_id=pid,
                                 decision=decision,
                                 conn=conn,
                             )
+
+                    decisions = _project_frames(
+                        envelope=envelope,
+                        projection_filter=projection_filter,
+                        connected_players=recipients,
+                        view=view,
+                        on_decision=_cache_decision,
+                    )
+                    for other_pid, decision in decisions:
                         filtered_data: dict = {}
                         if decision.include:
                             filtered_data = json.loads(decision.payload_json)
+                            # G6: PerceptionRewriter — strip spans whose kind
+                            # is incompatible with the recipient's effective
+                            # fidelity (base fidelity + status effects like
+                            # blinded/deafened). Runs on the already-filtered
+                            # payload, before WS send. Deterministic only;
+                            # LLM re-voicing is deferred to post-MP.
+                            filtered_data = rewrite_for_recipient(
+                                canonical_payload=filtered_data,
+                                viewer_player_id=other_pid,
+                                status_effects=status_effects,
+                            )
                         fanout.append((other_pid, decision, filtered_data))
 
             # Build emitter's message with raw, unfiltered payload + seq
@@ -2283,6 +2439,29 @@ class WebSocketSessionHandler:
         # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
         narration_msg = self._emit_event("NARRATION", narration_payload)
 
+        # Group G Task 6: route prompt-redacted dispatches as SECRET_NOTE
+        # events. Task 5's ``redact_dispatch_package`` stripped these from the
+        # narrator prompt and parked them on ``result.secret_routes``; here we
+        # reify each one as its own event so the same ProjectionFilter /
+        # visibility_tag rule (Task 3) delivers it only to the recipients in
+        # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
+        # see ``build_secret_note_events`` for the skip rules.
+        for _envelope in build_secret_note_events(
+            result.secret_routes, turn_id=dispatch_package.turn_id,
+        ):
+            import json as _json
+            _payload_data = _json.loads(_envelope.payload_json)
+            self._emit_event(
+                "SECRET_NOTE",
+                SecretNotePayload(
+                    turn_id=_payload_data["turn_id"],
+                    idempotency_key=_payload_data["idempotency_key"],
+                    subsystem=_payload_data["subsystem"],
+                    params=_payload_data.get("params", {}),
+                    visibility_sidecar=_payload_data["_visibility"],
+                ),
+            )
+
         # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
         # OTEL visibility: add event to current span so the GM panel (Sebastien-
         # tier mechanical visibility) can see the dispatch decision end-to-end.
@@ -3023,6 +3202,73 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def build_secret_note_events(
+    removed: list,
+    *,
+    turn_id: str,
+) -> list[MessageEnvelope]:
+    """Build SECRET_NOTE envelopes from prompt-redacted dispatch entries.
+
+    Group G Task 6. ``removed`` is the second element of the tuple returned
+    by :func:`sidequest.agents.prompt_redaction.redact_dispatch_package`
+    (also stashed on ``NarrationTurnResult.secret_routes``).
+
+    Only ``SubsystemDispatch`` entries currently produce SECRET_NOTE events.
+    ``NarratorDirective`` entries were never externally visible; their
+    removal is already expressed by the narrator not mentioning the event.
+    ``LethalityVerdict`` does not carry a VisibilityTag in the current
+    protocol shape, so it falls through here too.
+
+    ``origin_seq`` is ``0`` — the session handler's event-log append assigns
+    the real seq at dispatch time (same pattern as NARRATION).
+    """
+    import json
+
+    from sidequest.protocol.dispatch import SubsystemDispatch
+
+    out: list[MessageEnvelope] = []
+    for entry in removed:
+        if not isinstance(entry, SubsystemDispatch):
+            continue
+        payload = {
+            "turn_id": turn_id,
+            "idempotency_key": entry.idempotency_key,
+            "subsystem": entry.subsystem,
+            "params": entry.params,
+            "_visibility": {
+                "visible_to": entry.visibility.visible_to,
+                "fidelity": entry.visibility.perception_fidelity,
+            },
+        }
+        out.append(MessageEnvelope(
+            kind="SECRET_NOTE",
+            payload_json=json.dumps(payload),
+            origin_seq=0,
+        ))
+    return out
+
+
+def emit_secret_notes(
+    *,
+    secret_routes: list,
+    turn_id: str,
+    event_log,
+) -> None:
+    """Log SECRET_NOTE events for every prompt-redacted dispatch on the turn.
+
+    Consumes ``NarrationTurnResult.secret_routes`` (Task 5) and appends one
+    SECRET_NOTE event per redacted ``SubsystemDispatch`` to the event log,
+    so the same ProjectionFilter fan-out path that handles NARRATION will
+    deliver each note to the recipients named in its ``_visibility.visible_to``.
+
+    ``event_log`` is the session's :class:`sidequest.game.event_log.EventLog`
+    (or a compatible fake in tests). Only the ``.append(kind, payload_json)``
+    shape is used, which matches the real EventLog surface.
+    """
+    for envelope in build_secret_note_events(secret_routes, turn_id=turn_id):
+        event_log.append(kind=envelope.kind, payload_json=envelope.payload_json)
 
 
 def aggregate_visibility(pkg: DispatchPackage) -> dict:
