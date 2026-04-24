@@ -43,43 +43,6 @@ from sidequest.agents.claude_client import ClaudeResponse
 _FIXTURE_PACKS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
-# ---------------------------------------------------------------------------
-# Genre-pack cache patch — replace GenreLoader.load() with a cached version
-# for the entire test session. A fresh pack load from the frozen fixture is
-# ~128 ms; 290 tests × 128 ms = 37 s just in pack loading, over budget by
-# itself. Every test in this suite resolves to the same ``test_genre/`` pack
-# (slugs are symlinks), so a single cached instance is correct.
-#
-# Applied at conftest import (before any test collects) so tests that hit
-# the production ``_load_and_index_pack`` path on connect also benefit.
-# No teardown: the class attribute replacement lives for the process
-# lifetime, which is exactly the test run.
-# ---------------------------------------------------------------------------
-
-
-def _install_genre_loader_cache_patch() -> None:
-    import sidequest.genre.loader as _genre_loader_mod
-
-    _pack_cache: dict[str, object] = {}
-
-    original_load = _genre_loader_mod.GenreLoader.load
-
-    def _cached_load(self, code):  # noqa: ANN001
-        code_str = str(code)
-        if code_str in _pack_cache:
-            return _pack_cache[code_str]
-        pack = original_load(self, code)
-        _pack_cache[code_str] = pack
-        return pack
-
-    # Guard against double-install when pytest rewrites/reimports conftest.
-    if getattr(_genre_loader_mod.GenreLoader.load, "_is_test_cache", False):
-        return
-    _cached_load._is_test_cache = True  # type: ignore[attr-defined]
-    _genre_loader_mod.GenreLoader.load = _cached_load
-
-
-_install_genre_loader_cache_patch()
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +115,39 @@ def _mock_daemon_client(monkeypatch):
 # NOT affected — they construct their own loader with a fixed path and add
 # their own pytest.skip guards for when sidequest-content is missing.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Genre-pack cache patch — replace GenreLoader.load() with a cached version
+# for the entire test session. Real content packs (caverns_and_claudes,
+# spaghetti_western, ...) load in ~100-200 ms each; tests that load many
+# packs add up to 20+ s without this. Deep-copy on return so tests that
+# mutate ``pack.scenarios`` / ``pack.worlds`` in-place never leak state
+# into the next test.
+# ---------------------------------------------------------------------------
+
+
+def _install_genre_loader_cache_patch() -> None:
+    import copy as _copy
+
+    import sidequest.genre.loader as _genre_loader_mod
+
+    _pack_cache: dict[str, object] = {}
+    original_load = _genre_loader_mod.GenreLoader.load
+
+    def _cached_load(self, code):  # noqa: ANN001
+        code_str = str(code)
+        if code_str not in _pack_cache:
+            _pack_cache[code_str] = original_load(self, code)
+        return _copy.deepcopy(_pack_cache[code_str])
+
+    if getattr(_genre_loader_mod.GenreLoader.load, "_is_test_cache", False):
+        return
+    _cached_load._is_test_cache = True  # type: ignore[attr-defined]
+    _genre_loader_mod.GenreLoader.load = _cached_load
+
+
+_install_genre_loader_cache_patch()
 
 
 @pytest.fixture(autouse=True)
