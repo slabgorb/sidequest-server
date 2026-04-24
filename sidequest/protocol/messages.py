@@ -79,11 +79,13 @@ class NarrationPayload(ProtocolBase):
     seq: int = 0
     """Event-log sequence number assigned when this narration was persisted (MP-03 Task 3).
     Clients use this value as last_seen_seq on reconnect to catch up on missed events."""
-    visibility_sidecar: dict | None = Field(default=None, serialization_alias="_visibility")
+    visibility_sidecar: dict | None = Field(default=None, alias="_visibility")
     """Aggregated VisibilityTag sidecar (Group G Task 4). Shape:
     ``{"visible_to": ["player:Alice"] | "all", "fidelity": {entity_id: fidelity_level}}``.
     Filled in from DispatchPackage by :func:`sidequest.server.session_handler.aggregate_visibility`.
-    Wire name is ``_visibility`` to signal "sidecar / out-of-band" to downstream consumers."""
+    Wire name is ``_visibility`` to signal "sidecar / out-of-band" to downstream consumers;
+    full ``alias`` (not just ``serialization_alias``) so that event-log replay — which
+    deserializes the wire-format payload — round-trips correctly."""
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +112,10 @@ class SecretNotePayload(ProtocolBase):
     """Subsystem name from the originating dispatch."""
     params: dict = Field(default_factory=dict)
     """Opaque params from the originating dispatch."""
-    visibility_sidecar: dict | None = Field(default=None, serialization_alias="_visibility")
+    visibility_sidecar: dict | None = Field(default=None, alias="_visibility")
     """Wire name is ``_visibility``; same shape as NarrationPayload.visibility_sidecar:
-    ``{"visible_to": ["player:Alice"], "fidelity": {entity_id: fidelity_level}}``."""
+    ``{"visible_to": ["player:Alice"], "fidelity": {entity_id: fidelity_level}}``.
+    Full ``alias`` (not ``serialization_alias``) so event-log replay round-trips cleanly."""
     seq: int = 0
     """Event-log sequence number assigned when the note is persisted."""
 

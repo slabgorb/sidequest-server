@@ -804,3 +804,51 @@ def test_all_phase1_variants_parse_correctly() -> None:
         wire: dict[str, object] = {"type": msg_type.value, "player_id": "", **extra}
         msg = GameMessage.model_validate(wire)
         assert msg.type == msg_type, f"Expected {msg_type}, got {msg.type}"
+
+
+# ---------------------------------------------------------------------------
+# Visibility sidecar round-trip (regression: session_handler.py:250 crash
+# on slug-resume when _NarrationPayload(**data) saw the serialized
+# _visibility key that it couldn't validate as input).
+# ---------------------------------------------------------------------------
+
+
+def test_narration_payload_accepts_visibility_wire_alias() -> None:
+    """NarrationPayload must deserialize from the _visibility wire alias —
+    event-log replay re-hydrates payloads using the already-serialized form
+    which uses the wire name, not the field name."""
+    payload = NarrationPayload(
+        text="The auditorium dims.",
+        _visibility={"visible_to": "all", "fidelity": {}},
+    )
+    assert payload.visibility_sidecar == {"visible_to": "all", "fidelity": {}}
+
+
+def test_narration_payload_round_trips_visibility() -> None:
+    """Serialize by alias, deserialize again — must equal the original."""
+    original = NarrationPayload(
+        text="The host raises an arm.",
+        visibility_sidecar={"visible_to": "all", "fidelity": {"pc:alice": "full"}},
+    )
+    wire_json = original.model_dump_json(by_alias=True)
+    wire_dict = json.loads(wire_json)
+    assert "_visibility" in wire_dict
+    assert "visibility_sidecar" not in wire_dict
+    rebuilt = NarrationPayload.model_validate(wire_dict)
+    assert rebuilt.visibility_sidecar == original.visibility_sidecar
+
+
+def test_secret_note_payload_round_trips_visibility() -> None:
+    """Same round-trip guarantee for SECRET_NOTE replay."""
+    from sidequest.protocol.messages import SecretNotePayload
+
+    original = SecretNotePayload(
+        turn_id="t-1",
+        idempotency_key="k-1",
+        subsystem="inventory",
+        visibility_sidecar={"visible_to": ["player:Alice"], "fidelity": {}},
+    )
+    wire_dict = json.loads(original.model_dump_json(by_alias=True))
+    assert "_visibility" in wire_dict
+    rebuilt = SecretNotePayload.model_validate(wire_dict)
+    assert rebuilt.visibility_sidecar == original.visibility_sidecar
