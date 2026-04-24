@@ -674,6 +674,101 @@ def test_rename_helper_idempotent_on_already_renamed_character(tmp_path: Path) -
     assert snap.characters[0].core.name == "Slabgorb"
 
 
+@pytest.mark.asyncio
+async def test_slug_resume_emits_chapter_marker_for_saved_location(
+    tmp_path: Path,
+) -> None:
+    """On resume, the server must emit CHAPTER_MARKER with the saved
+    location so the UI's ``useRunningHeader`` hook populates the
+    running-header chapter title. Pre-fix the header was empty on
+    resume because CHAPTER_MARKER was an orphan protocol type the
+    server never emitted.
+    """
+    from sidequest.protocol.enums import MessageType
+
+    slug = "2026-04-24-chapter-marker-resume"
+    _seed_resumable_game(tmp_path, slug)  # seeds location="Entrance"
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    chapter_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER
+    ]
+    assert chapter_msgs, (
+        "Expected CHAPTER_MARKER on slug resume with a saved location. "
+        f"Got message types: {[getattr(m, 'type', None) for m in outbound]}"
+    )
+    assert chapter_msgs[0].payload.location == "Entrance"
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_without_saved_location_skips_chapter_marker(
+    tmp_path: Path,
+) -> None:
+    """When the saved snapshot has no location set (brand-new session
+    resumed mid-chargen), the server must NOT emit a CHAPTER_MARKER
+    with an empty location — the UI's hook would clobber any prior
+    title with a blank string. Follow CLAUDE.md 'no silent fallbacks'.
+    """
+    from sidequest.protocol.enums import MessageType
+
+    slug = "2026-04-24-chapter-marker-skip"
+    # Seed a resumable game but with empty location.
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(
+        store, slug=slug, mode=GameMode.SOLO,
+        genre_slug=_GENRE, world_slug=_WORLD,
+    )
+    core = CreatureCore(
+        name="Rux", description="A stoic fighter",
+        personality="stoic", inventory=Inventory(),
+    )
+    char = Character(
+        core=core, char_class="Fighter", race="Human",
+        backstory="A wandering fighter",
+    )
+    snap = GameSnapshot(
+        genre_slug=_GENRE, world_slug=_WORLD, location="",  # no location
+    )
+    snap.characters = [char]
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path)
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    chapter_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER
+    ]
+    assert not chapter_msgs, (
+        "CHAPTER_MARKER must be skipped when snapshot.location is empty "
+        "— no silent fallback to a blank title."
+    )
+
+
 def test_rename_helper_declines_when_display_name_is_also_uuid(
     tmp_path: Path,
 ) -> None:

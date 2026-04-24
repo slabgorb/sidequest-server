@@ -85,6 +85,8 @@ from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     AudioCueMessage,
     AudioCuePayload,
+    ChapterMarkerMessage,
+    ChapterMarkerPayload,
     CharacterCreationMessage,
     CharacterCreationPayload,
     ConfrontationMessage,
@@ -1357,6 +1359,25 @@ class WebSocketSessionHandler:
                         logger.warning(
                             "session.resume_party_status_failed error=%s", exc
                         )
+                # CHAPTER_MARKER — restore the running-header chapter title
+                # on resume so the saved location shows up immediately
+                # (not only after the next narration turn). Pingpong
+                # 2026-04-24 "Location not rendered in the header on
+                # resume": the client's ``useRunningHeader`` hook reads
+                # CHAPTER_MARKER events but the server was never emitting
+                # them — orphan protocol type. Emit once here; subsequent
+                # turns emit their own CHAPTER_MARKER when the narrator
+                # changes location (see _execute_narration_turn).
+                if snapshot.location:
+                    bootstrap_msgs.append(
+                        ChapterMarkerMessage(
+                            payload=ChapterMarkerPayload(
+                                title=None,
+                                location=snapshot.location,
+                            ),
+                            player_id=player_id,
+                        )
+                    )
 
             return [connected_msg, *bootstrap_msgs, *replay_msgs]
 
@@ -2634,6 +2655,27 @@ class WebSocketSessionHandler:
         outbound: list[object] = [narration_msg]
         if confrontation_msg is not None:
             outbound.append(confrontation_msg)
+        # CHAPTER_MARKER — the UI's ``useRunningHeader`` hook derives the
+        # running-header chapter title from this frame. When the narrator
+        # emits a location in game_patch, the new location is already on
+        # ``snapshot.location`` (applied in
+        # ``_apply_narration_result_to_snapshot``). Emit one frame per
+        # location change so the header updates in lock-step with
+        # narration. Without this the header stays blank since the UI
+        # never saw the server's ``state.location_update`` log line.
+        # Pingpong 2026-04-24 — "Location not rendered in the header on
+        # resume" — fix is symmetric (slug-resume bootstrap also emits
+        # CHAPTER_MARKER; see the slug-connect block).
+        if result.location:
+            outbound.append(
+                ChapterMarkerMessage(
+                    payload=ChapterMarkerPayload(
+                        title=None,
+                        location=snapshot.location,
+                    ),
+                    player_id=sd.player_id,
+                ),
+            )
         outbound.append(
             NarrationEndMessage(
                 type="NARRATION_END",  # type: ignore[arg-type]

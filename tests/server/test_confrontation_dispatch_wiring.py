@@ -198,6 +198,72 @@ async def test_pending_roll_outcome_threads_into_beat_application_on_failure(
     assert sd.pending_roll_outcome is None
 
 
+# ---------------------------------------------------------------------------
+# CHAPTER_MARKER emission on narrator-driven location change
+# (pingpong 2026-04-24 — "Location not rendered in the header on resume")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_narration_with_location_emits_chapter_marker(
+    session_handler_factory,
+):
+    """When the narrator sets ``result.location``, the outbound frames
+    include a CHAPTER_MARKER carrying the new location. The UI's
+    ``useRunningHeader`` hook reads CHAPTER_MARKER events — without
+    this emission the running-header chapter title stays blank.
+
+    Wiring guard: this is the server-side half of a half-wired feature
+    (the UI hook existed; the server never emitted). Regression here
+    would silently break the running header again.
+    """
+    from sidequest.protocol.enums import MessageType
+    from sidequest.protocol.messages import ChapterMarkerMessage
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=_result(
+            narration="You step through the arch.",
+            location="The Inner Sanctum",
+        ),
+    )
+    from sidequest.server.session_handler import _build_turn_context
+    msgs = await handler._execute_narration_turn(
+        sd, "Move forward.", _build_turn_context(sd),
+    )
+
+    chapter = [m for m in msgs if isinstance(m, ChapterMarkerMessage)]
+    assert len(chapter) == 1, (
+        f"Expected exactly one CHAPTER_MARKER for a location change; got "
+        f"{[type(m).__name__ for m in msgs]}"
+    )
+    assert chapter[0].type == MessageType.CHAPTER_MARKER
+    assert chapter[0].payload.location == "The Inner Sanctum"
+
+
+@pytest.mark.asyncio
+async def test_narration_without_location_skips_chapter_marker(
+    session_handler_factory,
+):
+    """Narration turns that do NOT change the location must not emit
+    a CHAPTER_MARKER — the UI's hook would clobber the prior title
+    if we emitted with the unchanged location on every turn. Scoped
+    to actual location changes only.
+    """
+    from sidequest.protocol.messages import ChapterMarkerMessage
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=_result(narration="You look around."),
+    )
+    from sidequest.server.session_handler import _build_turn_context
+    msgs = await handler._execute_narration_turn(
+        sd, "Look.", _build_turn_context(sd),
+    )
+    chapter = [m for m in msgs if isinstance(m, ChapterMarkerMessage)]
+    assert chapter == []
+
+
 @pytest.mark.asyncio
 async def test_pending_roll_outcome_success_applies_default_delta(
     session_handler_factory,
