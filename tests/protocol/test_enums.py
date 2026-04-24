@@ -173,8 +173,13 @@ def test_message_type_game_resumed_wire_string() -> None:
 
 
 def test_message_type_complete_count() -> None:
-    """All 37 GameMessage variants must be represented."""
-    assert len(MessageType) == 37
+    """All 38 GameMessage variants must be represented.
+
+    Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
+    When new variants land, update this count and the individual wire-string
+    test above so the contract test keeps catching silent drift.
+    """
+    assert len(MessageType) == 38
 
 
 # ===========================================================================
