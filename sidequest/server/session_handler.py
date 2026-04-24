@@ -4052,7 +4052,34 @@ def _apply_narration_result_to_snapshot(
                 )
             beat_by_id = {b.id: b for b in cdef.beats}
             prev_phase = enc.structured_phase
-            for sel in result.beat_selections:
+            # SOUL Agency — when the player already chose + rolled a beat this
+            # turn (dice_failed is not None signals DICE_THROW ran), the
+            # dice dispatch path in dispatch/dice.py already applied that
+            # beat. Narrator-extracted beat_selections for the player's
+            # actor are filtered here so the system can't auto-play a
+            # second player action on their behalf. NPC beats still apply
+            # (Living World). Playtest 2026-04-24 "Player auto-plays
+            # 'attack' beat after a failed Flank — Agency violation".
+            selections = result.beat_selections
+            if dice_failed is not None:
+                pname = player_name.casefold()
+                filtered = [
+                    s for s in selections if s.actor.casefold() != pname
+                ]
+                if len(filtered) != len(selections):
+                    dropped = [
+                        (s.actor, s.beat_id)
+                        for s in selections
+                        if s.actor.casefold() == pname
+                    ]
+                    logger.info(
+                        "encounter.agent_beat_selection_filtered "
+                        "reason=player_dice_turn player=%s dropped=%s",
+                        player_name,
+                        dropped,
+                    )
+                selections = filtered
+            for sel in selections:
                 beat = beat_by_id.get(sel.beat_id)
                 if beat is None:
                     raise ValueError(

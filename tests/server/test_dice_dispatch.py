@@ -69,6 +69,18 @@ def _pack_with_combat() -> object:
                 metric_delta=1,
                 stat_check="   ",  # blank — used for validation test
             ),
+            # Parallels mutant_wasteland Flank / Use Mutation — structured
+            # failure branch pays out -2 momentum on Fail/CritFail instead of
+            # the default +3 success delta.
+            BeatDef(
+                id="flank",
+                label="Flank",
+                metric_delta=3,
+                stat_check="STRENGTH",
+                risk="exposed if it fails — lose 2 momentum",
+                failure_metric_delta=-2,
+                failure_effect="exposed",
+            ),
         ],
     )
     rules = MagicMock(spec=RulesConfig)
@@ -278,6 +290,91 @@ class TestDispatchDiceThrow:
         assert isinstance(broadcasts[1], DiceResultMessage)
         assert broadcasts[0].payload.request_id == "req-1"
         assert broadcasts[1].payload.request_id == "req-1"
+
+    def test_failed_roll_applies_failure_metric_delta(self) -> None:
+        """Flank-style beat with structured failure branch.
+
+        Regression for playtest 2026-04-24: a failed Flank (metric_delta=+3,
+        failure_metric_delta=-2) was bumping momentum +3 because
+        _apply_beat ran before dice resolution. With resolve-first ordering,
+        a Fail outcome must substitute the failure branch delta.
+        """
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        # Face 3 + modifier 0 = total 3 < DC(10 + |3|*2 = 16) → Fail.
+        outcome = dispatch_dice_throw(
+            payload=_throw(face=3, beat_id="flank"),
+            rolling_player_id="p1",
+            character_name="Bob",
+            character_stats={"STRENGTH": 10},
+            encounter=enc,
+            pack=pack,  # type: ignore[arg-type]
+            session_id="s",
+            round_number=1,
+            room_broadcast=None,
+        )
+        assert outcome.outcome is RollOutcome.Fail
+        # Failure branch pays out — momentum drops by 2, not up by 3.
+        assert enc.metric.current == -2
+        # Replay text reflects the actually-applied delta (0 → -2).
+        assert "momentum 0 → -2" in outcome.replay_action_text.lower() or \
+            "Momentum 0 → -2" in outcome.replay_action_text
+
+    def test_crit_fail_applies_failure_metric_delta(self) -> None:
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        # Face 1 always resolves CritFail, regardless of modifier.
+        outcome = dispatch_dice_throw(
+            payload=_throw(face=1, beat_id="flank"),
+            rolling_player_id="p1",
+            character_name="Bob",
+            character_stats={"STRENGTH": 30},  # huge modifier; face 1 wins
+            encounter=enc,
+            pack=pack,  # type: ignore[arg-type]
+            session_id="s",
+            round_number=1,
+            room_broadcast=None,
+        )
+        assert outcome.outcome is RollOutcome.CritFail
+        assert enc.metric.current == -2
+
+    def test_success_roll_applies_default_metric_delta(self) -> None:
+        """Success on a failure-branch beat keeps the normal delta."""
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        outcome = dispatch_dice_throw(
+            payload=_throw(face=17, beat_id="flank"),
+            rolling_player_id="p1",
+            character_name="Bob",
+            character_stats={"STRENGTH": 10},  # +0 modifier; total=17 >= 16
+            encounter=enc,
+            pack=pack,  # type: ignore[arg-type]
+            session_id="s",
+            round_number=1,
+            room_broadcast=None,
+        )
+        assert outcome.outcome is RollOutcome.Success
+        assert enc.metric.current == 3  # default metric_delta
+
+    def test_failed_roll_without_failure_branch_keeps_default_delta(self) -> None:
+        """Beats without failure_metric_delta keep legacy unconditional apply."""
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        # kick_door has metric_delta=2, no failure_metric_delta. DC = 14.
+        # Face 3 + STR 10 = total 3 → Fail. Legacy behavior: +2 still applies.
+        outcome = dispatch_dice_throw(
+            payload=_throw(face=3, beat_id="kick_door"),
+            rolling_player_id="p1",
+            character_name="Bob",
+            character_stats={"STRENGTH": 10},
+            encounter=enc,
+            pack=pack,  # type: ignore[arg-type]
+            session_id="s",
+            round_number=1,
+            room_broadcast=None,
+        )
+        assert outcome.outcome is RollOutcome.Fail
+        assert enc.metric.current == 2
 
     def test_encounter_resolves_when_beat_hits_threshold(self) -> None:
         pack = _pack_with_combat()

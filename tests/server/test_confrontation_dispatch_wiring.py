@@ -176,16 +176,19 @@ async def test_pending_roll_outcome_threads_into_beat_application_on_failure(
     # for OQ-2's ``RollOutcome.Fail`` without requiring that module to exist.
     sd.pending_roll_outcome = SimpleNamespace(name="Fail")
 
+    # SOUL-Agency: player-actor beats are filtered on dice turns (the player
+    # already selected + rolled via DICE_THROW). Use an NPC actor to exercise
+    # the failure-branch path in the narrator-apply code.
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
-                BeatSelection(actor="Rux", beat_id="mutant_ability", target=None),
+                BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
             ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
     msgs = await handler._execute_narration_turn(
-        sd, "I channel the mutation.", _build_turn_context(sd),
+        sd, "The Warden channels the mutation.", _build_turn_context(sd),
     )
 
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
@@ -288,16 +291,17 @@ async def test_pending_roll_outcome_success_applies_default_delta(
     )
     sd.snapshot.encounter = enc
     sd.pending_roll_outcome = SimpleNamespace(name="Success")
+    # NPC actor — player-actor beats are filtered on dice turns (SOUL Agency).
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
-                BeatSelection(actor="Rux", beat_id="mutant_ability", target=None),
+                BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
             ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
     msgs = await handler._execute_narration_turn(
-        sd, "I channel the mutation.", _build_turn_context(sd),
+        sd, "The Warden channels the mutation.", _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert conf[0].payload.metric["current"] == 4

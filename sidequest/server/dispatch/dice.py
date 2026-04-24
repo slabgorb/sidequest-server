@@ -49,6 +49,7 @@ from sidequest.telemetry.spans import (
     emit_dice_result_broadcast,
     emit_dice_throw_received,
     encounter_beat_applied_span,
+    encounter_beat_failure_branch_span,
     encounter_resolved_span,
 )
 
@@ -109,18 +110,37 @@ def _compute_dc(beat: BeatDef) -> int:
     return max(10, min(30, 10 + abs(beat.metric_delta) * 2))
 
 
+def _resolve_applied_delta(beat: BeatDef, outcome: RollOutcome) -> tuple[int, bool]:
+    """Pick the metric delta to apply, honoring structured failure branches.
+
+    Returns ``(applied_delta, took_failure_branch)``. Mirrors the
+    ``failure_metric_delta`` logic in ``_apply_narration_result_to_snapshot``
+    so dice-dispatched beats and narrator-extracted beats behave the same
+    way on Fail/CritFail.
+    """
+    dice_failed = outcome in (RollOutcome.Fail, RollOutcome.CritFail)
+    if dice_failed and beat.failure_metric_delta is not None:
+        return beat.failure_metric_delta, True
+    return beat.metric_delta, False
+
+
 def _apply_beat(
     encounter: StructuredEncounter,
     beat: BeatDef,
+    applied_delta: int,
 ) -> tuple[int, int, bool]:
     """Apply a beat's metric delta + resolution check.
 
     Returns ``(metric_before, metric_after, encounter_resolved)``. Logic
     mirrors the existing narrator-beat path in session_handler.py:3700-3756
     so both entry points end up with consistent encounter state.
+
+    ``applied_delta`` is the delta the caller decided to use for this
+    resolution (default ``beat.metric_delta`` or, on Fail/CritFail with a
+    structured failure branch, ``beat.failure_metric_delta``).
     """
     metric_before = encounter.metric.current
-    encounter.metric.current += beat.metric_delta
+    encounter.metric.current += applied_delta
     if (
         encounter.metric.direction == MetricDirection.Ascending
         and encounter.metric.current < 0
@@ -307,15 +327,42 @@ def dispatch_dice_throw(
         face=list(payload.face),
     )
 
-    # Apply beat *after* stat validation. OTEL span matches the narrator-beat
-    # path so GM-panel queries don't need to differentiate the two entry points.
+    # Resolve dice FIRST so beat application can honor Fail/CritFail and
+    # substitute ``failure_metric_delta`` when the beat declares one. The
+    # earlier ordering (apply → resolve) applied ``metric_delta``
+    # unconditionally, so a failed Flank still bumped momentum +3 instead of
+    # paying out the declared -2 failure branch (playtest 2026-04-24).
+    try:
+        resolved = resolve_dice_with_faces(
+            request.dice, list(payload.face), request.modifier, request.difficulty,
+        )
+    except ResolveError as exc:
+        raise DiceDispatchError(f"dice resolution failed: {exc}") from exc
+
+    applied_delta, took_failure_branch = _resolve_applied_delta(beat, resolved.outcome)
+
+    # Apply beat *after* stat + dice resolution. OTEL span matches the
+    # narrator-beat path so GM-panel queries don't need to differentiate
+    # the two entry points. ``metric_delta`` on the span is the delta that
+    # actually landed on the encounter (failure-branch-aware).
     with encounter_beat_applied_span(
         encounter_type=encounter.encounter_type,
         actor="player",
         beat_id=payload.beat_id,
-        metric_delta=beat.metric_delta,
+        metric_delta=applied_delta,
     ):
-        metric_before, metric_after, encounter_resolved = _apply_beat(encounter, beat)
+        metric_before, metric_after, encounter_resolved = _apply_beat(
+            encounter, beat, applied_delta,
+        )
+    if took_failure_branch:
+        with encounter_beat_failure_branch_span(
+            encounter_type=encounter.encounter_type,
+            beat_id=payload.beat_id,
+            actor="player",
+            base_delta=beat.metric_delta,
+            failure_delta=beat.failure_metric_delta,  # type: ignore[arg-type]
+        ):
+            pass
     with combat_tick_span(
         encounter_type=encounter.encounter_type,
         beat=encounter.beat,
@@ -329,13 +376,6 @@ def dispatch_dice_throw(
             source="dice_throw_beat",
         ):
             pass
-
-    try:
-        resolved = resolve_dice_with_faces(
-            request.dice, list(payload.face), request.modifier, request.difficulty,
-        )
-    except ResolveError as exc:
-        raise DiceDispatchError(f"dice resolution failed: {exc}") from exc
 
     # Seed drives spectator replay animation only — face values are already
     # authoritative from the rolling player's Rapier settle.
