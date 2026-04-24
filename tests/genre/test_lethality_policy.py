@@ -1,9 +1,16 @@
 """LethalityPolicy — per-genre lethality tuning (Group C spec §4.4 + §10)."""
 from __future__ import annotations
 
+import textwrap
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
+from sidequest.genre.lethality_policy_loader import (
+    LethalityPolicyMissingError,
+    load_lethality_policy,
+)
 from sidequest.genre.models.lethality import LethalityPolicy, VerdictsOnZeroEdge
 
 
@@ -52,3 +59,51 @@ def test_must_narrate_and_must_not_narrate_both_non_blank():
             must_narrate="",
             must_not_narrate="nope",
         )
+
+
+# Loader tests (appended for Task 2)
+
+
+def test_loader_reads_valid_yaml(tmp_path: Path):
+    pack_dir = tmp_path / "caverns_and_claudes"
+    pack_dir.mkdir()
+    (pack_dir / "lethality_policy.yaml").write_text(textwrap.dedent("""
+        genre_key: caverns_and_claudes
+        default_reversibility: narrative_only
+        verdicts_on_zero_edge:
+          pc: humiliated
+          npc: defeated
+        soul_md_constraint: "genre_truth:comedic_danger_no_permadeath"
+        must_narrate: "A beat of slapstick pain. Keep it comedic."
+        must_not_narrate: "graphic permadeath; somber elegy; last-rites speech"
+    """).strip())
+    policy = load_lethality_policy(pack_dir)
+    assert policy.genre_key == "caverns_and_claudes"
+    assert policy.verdicts_on_zero_edge.pc == "humiliated"
+
+
+def test_loader_fails_loud_on_missing_file(tmp_path: Path):
+    pack_dir = tmp_path / "empty_pack"
+    pack_dir.mkdir()
+    with pytest.raises(LethalityPolicyMissingError) as exc:
+        load_lethality_policy(pack_dir)
+    assert "empty_pack" in str(exc.value)
+
+
+def test_loader_rejects_genre_key_mismatch(tmp_path: Path):
+    """genre_key inside the YAML must match the pack directory name."""
+    pack_dir = tmp_path / "caverns_and_claudes"
+    pack_dir.mkdir()
+    (pack_dir / "lethality_policy.yaml").write_text(textwrap.dedent("""
+        genre_key: some_other_pack
+        default_reversibility: permanent
+        verdicts_on_zero_edge:
+          pc: dead
+          npc: dead
+        soul_md_constraint: x
+        must_narrate: x
+        must_not_narrate: x
+    """).strip())
+    with pytest.raises(ValueError) as exc:
+        load_lethality_policy(pack_dir)
+    assert "genre_key mismatch" in str(exc.value)
