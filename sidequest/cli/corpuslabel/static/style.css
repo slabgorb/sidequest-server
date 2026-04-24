@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 2em; max-width: 900px; }
+h1 { margin-bottom: 0.2em; }
+#counts { color: #666; margin-bottom: 1em; }
+pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; border-radius: 4px; }
+textarea { width: 100%; font-family: inherit; padding: 0.5em; }
+label { display: block; margin: 0.2em 0; }
+.buttons { margin-top: 1em; }
+button { padding: 0.6em 1.2em; margin-right: 0.5em; }

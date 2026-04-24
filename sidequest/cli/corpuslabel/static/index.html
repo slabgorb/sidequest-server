@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SideQuest Corpus Labeler</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>SideQuest Corpus Labeler</h1>
+    <div id="counts"></div>
+  </header>
+  <main>
+    <section id="current-pair">
+      <h2>Input</h2>
+      <pre id="input-text"></pre>
+      <h2>Narrator output</h2>
+      <pre id="output-text"></pre>
+    </section>
+    <section id="labeling">
+      <h3>Disputes</h3>
+      <label><input type="checkbox" name="dispute" value="mis_resolved_referent"> Mis-resolved referent</label>
+      <label><input type="checkbox" name="dispute" value="invented_npc"> Invented NPC</label>
+      <label><input type="checkbox" name="dispute" value="softened_lethality"> Softened lethality</label>
+      <label><input type="checkbox" name="dispute" value="gm_override"> GM override</label>
+      <h3>Corrected output</h3>
+      <textarea id="corrected" rows="10"></textarea>
+      <div class="buttons">
+        <button id="submit">Save label</button>
+        <button id="skip">Skip</button>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
