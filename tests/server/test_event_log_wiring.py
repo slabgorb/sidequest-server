@@ -1,22 +1,20 @@
-"""Integration: narrator outputs routed through EventLog + ProjectionFilter (MP-03 Task 3).
+"""NARRATION seq wiring + EventLog persistence (via direct handler dispatch).
 
-Verifies:
-1. Alice connects via slug.
-2. Alice sends PLAYER_ACTION.
-3. The NARRATION response carries payload["seq"] >= 1.
-4. EventLog has at least one NARRATION row after the turn.
-
-Uses caverns_and_claudes / grimvault (same as other MP integration tests).
+Two assertions, both inside SessionHandler: NARRATION payloads carry a
+monotonic ``seq`` field sourced from EventLog, and EventLog gains a
+NARRATION row per turn. No FastAPI, no TestClient, no websocket hop.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
+from sidequest.game.character import Character
+from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.event_log import EventLog
 from sidequest.game.persistence import (
     GameMode,
@@ -24,38 +22,45 @@ from sidequest.game.persistence import (
     db_path_for_slug,
     upsert_game,
 )
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
-from sidequest.server.app import create_app
+from sidequest.game.session import GameSnapshot
+from sidequest.protocol import GameMessage
+from sidequest.protocol.enums import MessageType
+from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
 
-_GENRE = "caverns_and_claudes"
-_WORLD = "grimvault"
-_SLUG = "2026-04-22-grimvault-event-log-wiring"
+_GENRE = "test_genre"
+_WORLD = "flickering_reach"
+_SLUG = "event-log-wiring-fixture"
+_FIXTURE_PACKS = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
-def _seed(tmp_path: Path, slug: str) -> None:
+def _seed_with_character(tmp_path: Path, slug: str) -> None:
+    """Seed a SOLO game row + a saved snapshot carrying one Character, so
+    the slug-connect branch goes straight to Playing (skipping chargen)."""
     db = db_path_for_slug(tmp_path, slug)
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store,
-        slug=slug,
-        mode=GameMode.SOLO,
-        genre_slug=_GENRE,
-        world_slug=_WORLD,
+        store, slug=slug, mode=GameMode.SOLO, genre_slug=_GENRE, world_slug=_WORLD,
     )
+    core = CreatureCore(
+        name="Thorn",
+        description="A wandering fighter",
+        personality="Grim",
+        inventory=Inventory(),
+    )
+    char = Character(
+        core=core, char_class="Fighter", race="Human", backstory="A wanderer.",
+    )
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
+    snap.characters = [char]
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
     store.close()
 
 
-def _genre_packs_path() -> Path | None:
-    return next(
-        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()),
-        None,
-    )
-
-
-def _make_fake_narration_result() -> object:
-    """Minimal NarrationTurnResult-like object for mocking the orchestrator."""
+def _fake_narration_result():
     from sidequest.agents.orchestrator import NarrationTurnResult
 
     return NarrationTurnResult(
@@ -69,24 +74,20 @@ def _make_fake_narration_result() -> object:
     )
 
 
-def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> None:
-    """NARRATION response must carry seq >= 1 and EventLog must persist the row."""
-    packs = _genre_packs_path()
-    if packs is None:
-        pytest.skip(f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}")
+@pytest.mark.asyncio
+async def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> None:
+    _seed_with_character(tmp_path, _SLUG)
+    registry = RoomRegistry()
+    handler = WebSocketSessionHandler(
+        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+    )
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=registry, socket_id="sock-alice", out_queue=queue,
+    )
 
-    _seed(tmp_path, _SLUG)
-    app = create_app(genre_pack_search_paths=[packs], save_dir=tmp_path)
-    client = TestClient(app)
-
-    fake_result = _make_fake_narration_result()
-
-    with patch(
-        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-        new=AsyncMock(return_value=fake_result),
-    ), client.websocket_connect("/ws") as ws:
-        # Connect via slug
-        ws.send_json({
+    connect = GameMessage.model_validate(
+        {
             "type": "SESSION_EVENT",
             "player_id": "alice",
             "payload": {
@@ -94,94 +95,51 @@ def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> None:
                 "game_slug": _SLUG,
                 "last_seen_seq": 0,
             },
-        })
-        connected = ws.receive_json()
-        assert connected["type"] == "SESSION_EVENT"
-        assert connected["payload"]["event"] == "connected"
-
-            # Skip chargen — send a PLAYER_ACTION (caverns_and_claudes has chargen
-            # so we need to complete it first, but we can't in a unit test easily.
-            # Instead use has_character=True by injecting a saved snapshot.
-            # The mock narration result means the orchestrator won't actually be called.
-
-    # Re-seed with a snapshot that has a character so we skip chargen
-    from sidequest.game.character import Character
-    from sidequest.game.creature_core import CreatureCore, Inventory
-    from sidequest.game.session import GameSnapshot
-
-    db = db_path_for_slug(tmp_path, _SLUG)
-    store = SqliteStore(db)
-    store.initialize()
-    # Build minimal character to mark has_character=True
-    core = CreatureCore(
-        name="Thorn",
-        description="A wandering fighter",
-        personality="Grim",
-        inventory=Inventory(),
+        }
     )
-    char = Character(
-        core=core,
-        char_class="Fighter",
-        race="Human",
-        backstory="A wanderer.",
-    )
-    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
-    snap.characters = [char]
-    store.init_session(_GENRE, _WORLD)
-    store.save(snap)
-    store.close()
-
     with patch(
         "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-        new=AsyncMock(return_value=fake_result),
-    ), client.websocket_connect("/ws") as ws:
-        # Connect (now has_character=True, skips chargen → Playing)
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {
-                "event": "connect",
-                "game_slug": _SLUG,
-                "last_seen_seq": 0,
-            },
-        })
-        connected = ws.receive_json()
-        assert connected["type"] == "SESSION_EVENT"
-        assert connected["payload"]["event"] == "connected"
-        assert connected["payload"]["has_character"] is True
+        new=AsyncMock(return_value=_fake_narration_result()),
+    ):
+        connect_out = await handler.handle_message(connect)
 
-        # Send PLAYER_ACTION
-        ws.send_json({
-            "type": "PLAYER_ACTION",
-            "player_id": "alice",
-            "payload": {"action": "I look around the dungeon."},
-        })
+        # Sanity: connected event must advertise has_character=True so the
+        # session is in Playing state for the PLAYER_ACTION below.
+        connected = [
+            m for m in connect_out
+            if getattr(m, "type", None) == MessageType.SESSION_EVENT
+        ]
+        assert connected, f"expected SESSION_EVENT connected; got {connect_out}"
+        assert getattr(connected[0].payload, "has_character", False) is True
 
-        # Drain until we see NARRATION
-        narration_msg = None
-        for _ in range(10):
-            m = ws.receive_json()
-            if m["type"] == "NARRATION":
-                narration_msg = m
-                break
-
-        assert narration_msg is not None, "Expected NARRATION message"
-        # Core invariant: seq field present and >= 1
-        assert "seq" in narration_msg["payload"], (
-            f"NARRATION payload missing 'seq': {narration_msg['payload']}"
+        action = GameMessage.model_validate(
+            {
+                "type": "PLAYER_ACTION",
+                "player_id": "alice",
+                "payload": {"action": "I look around the dungeon."},
+            }
         )
-        assert narration_msg["payload"]["seq"] >= 1, (
-            f"Expected seq >= 1, got {narration_msg['payload']['seq']}"
-        )
+        action_out = await handler.handle_message(action)
 
-    # Confirm EventLog has at least one NARRATION row
+    narrations = [
+        m for m in action_out if getattr(m, "type", None) == MessageType.NARRATION
+    ]
+    assert narrations, (
+        f"PLAYER_ACTION must produce a NARRATION frame; got {action_out}"
+    )
+    seq = getattr(narrations[0].payload, "seq", None)
+    assert seq is not None, f"NARRATION payload missing seq: {narrations[0].payload}"
+    assert seq >= 1, f"expected seq >= 1, got {seq}"
+
+    # Verify EventLog persisted the row.
     db = db_path_for_slug(tmp_path, _SLUG)
     store = SqliteStore(db)
     store.initialize()
-    event_log = EventLog(store)
-    rows = event_log.read_since(since_seq=0)
-    narration_rows = [r for r in rows if r.kind == "NARRATION"]
-    assert len(narration_rows) >= 1, (
-        f"Expected at least one NARRATION row in EventLog, got {rows}"
-    )
-    store.close()
+    try:
+        rows = EventLog(store).read_since(since_seq=0)
+        narration_rows = [r for r in rows if r.kind == "NARRATION"]
+        assert narration_rows, (
+            f"expected at least one NARRATION row in EventLog; got {rows}"
+        )
+    finally:
+        store.close()

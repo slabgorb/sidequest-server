@@ -308,6 +308,29 @@ class RenderQueuedPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# AudioCuePayload — DJ cue dispatch (mood + SFX, no daemon round-trip)
+# ---------------------------------------------------------------------------
+
+
+class AudioCuePayload(ProtocolBase):
+    """Audio cue emitted alongside NARRATION. Tells the UI's audio provider
+    which mood to crossfade to (if any) and which SFX to trigger this turn.
+    Music persists across turns client-side; a turn with no mood change
+    simply has ``mood=None``."""
+
+    mood: str | None = None
+    """MoodCategory.value if the interpreter detected a mood change, else None.
+    None explicitly means 'no change' — the UI keeps the current track."""
+
+    music_track: str | None = None
+    """Library-relative path for the music track LibraryBackend selected.
+    ``None`` when mood is None."""
+
+    sfx_triggers: list[str] = Field(default_factory=list)
+    """Zero or more SFX track paths (library-relative) to fire on this turn."""
+
+
+# ---------------------------------------------------------------------------
 # ErrorPayload
 # ---------------------------------------------------------------------------
 
@@ -590,6 +613,14 @@ class RenderQueuedMessage(ProtocolBase):
     player_id: str = ""
 
 
+class AudioCueMessage(ProtocolBase):
+    """GameMessage::AudioCue — DJ cue shipped with NARRATION."""
+
+    type: Literal[MessageType.AUDIO_CUE] = MessageType.AUDIO_CUE
+    payload: AudioCuePayload
+    player_id: str = ""
+
+
 class GameResumedMessage(ProtocolBase):
     """GameMessage::GameResumed wire representation (MP-02 Task 6).
 
@@ -623,7 +654,8 @@ _Phase1Variant = Annotated[
     | GamePausedMessage
     | GameResumedMessage
     | ImageMessage
-    | RenderQueuedMessage,
+    | RenderQueuedMessage
+    | AudioCueMessage,
     Field(discriminator="type"),
 ]
 

@@ -1,27 +1,35 @@
-"""Integration: PLAYER_SEAT message + SEAT_CONFIRMED broadcast (MP-02 Task 5).
+"""PLAYER_SEAT → SEAT_CONFIRMED via direct handler dispatch (MP-02 Task 5).
 
-Verifies that:
-1. A player can send PLAYER_SEAT{character_slot: "rux"} to claim a character slot.
-2. The server responds with SEAT_CONFIRMED broadcast to all players.
-3. The room's seated_player_ids() includes the claiming player.
-
-Uses caverns_and_claudes / grimvault (genre/world available in the content repo).
+The original test drove this through a real FastAPI app + TestClient +
+websocket_connect. The only thing that added over the test body itself
+was minutes of startup time; none of the assertions here need HTTP/WS
+transport. ``WebSocketSessionHandler.handle_message`` already returns
+the outbound list (``SEAT_CONFIRMED`` for the claimer) and the room
+broadcast lands on the attached out-queue.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from sidequest.game.persistence import GameMode, SqliteStore, db_path_for_slug, upsert_game
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
-from sidequest.server.app import create_app
+from sidequest.game.persistence import (
+    GameMode,
+    SqliteStore,
+    db_path_for_slug,
+    upsert_game,
+)
+from sidequest.protocol import GameMessage
+from sidequest.protocol.enums import MessageType
+from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
 
-_GENRE = "caverns_and_claudes"
-_WORLD = "grimvault"
-_SLUG = "2026-04-22-grimvault-seat"
+_GENRE = "test_genre"
+_WORLD = "flickering_reach"
+_SLUG = "seat-claim-fixture"
+_FIXTURE_PACKS = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
 def _seed(tmp_path: Path, slug: str) -> None:
@@ -39,53 +47,53 @@ def _seed(tmp_path: Path, slug: str) -> None:
     store.close()
 
 
-def test_player_seat_claim_broadcasts_seat_confirmed(tmp_path: Path):
-    """Alice connects, sends PLAYER_SEAT{character_slot: 'rux'}, receives SEAT_CONFIRMED."""
-    genre_packs_path: Path | None = next(
-        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()),
-        None,
-    )
-    if genre_packs_path is None:
-        pytest.skip(
-            f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}"
-        )
-
+@pytest.mark.asyncio
+async def test_player_seat_claim_broadcasts_seat_confirmed(tmp_path: Path) -> None:
     _seed(tmp_path, _SLUG)
-    app = create_app(
-        genre_pack_search_paths=[genre_packs_path],
+    registry = RoomRegistry()
+    handler = WebSocketSessionHandler(
         save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
-    client = TestClient(app)
+    out_queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=registry, socket_id="sock-alice", out_queue=out_queue,
+    )
 
-    with client.websocket_connect("/ws") as ws_a:
-        # Connect alice
-        ws_a.send_json({
+    connect = GameMessage.model_validate(
+        {
             "type": "SESSION_EVENT",
             "player_id": "alice",
             "payload": {"event": "connect", "game_slug": _SLUG},
-        })
-        connected_msg = ws_a.receive_json()
-        assert connected_msg["type"] == "SESSION_EVENT"
-        assert connected_msg["payload"]["event"] == "connected"
-        # Drain chargen bootstrap (slug path emits CHARACTER_CREATION when
-        # has_character=False — playtest 2026-04-23 fix).
-        ws_a.receive_json()
+        }
+    )
+    connect_out = await handler.handle_message(connect)
+    assert connect_out, "connect must produce at least SESSION_CONNECTED"
 
-        # Send PLAYER_SEAT to claim character_slot "rux"
-        ws_a.send_json({
+    seat = GameMessage.model_validate(
+        {
             "type": "PLAYER_SEAT",
             "player_id": "alice",
             "payload": {"character_slot": "rux"},
-        })
+        }
+    )
+    seat_out = await handler.handle_message(seat)
 
-        # Expect SEAT_CONFIRMED broadcast
-        seat_confirmed = ws_a.receive_json()
-        assert seat_confirmed["type"] == "SEAT_CONFIRMED", (
-            f"Expected SEAT_CONFIRMED, got {seat_confirmed['type']}"
-        )
-        assert seat_confirmed["payload"]["player_id"] == "alice", (
-            f"Expected player_id='alice', got {seat_confirmed['payload'].get('player_id')}"
-        )
-        assert seat_confirmed["payload"]["character_slot"] == "rux", (
-            f"Expected character_slot='rux', got {seat_confirmed['payload'].get('character_slot')}"
-        )
+    confirmed = [m for m in seat_out if getattr(m, "type", None) == MessageType.SEAT_CONFIRMED]
+    if not confirmed:
+        # Broadcast path: SEAT_CONFIRMED may land on the outbound queue
+        # rather than the method return value (room.broadcast semantics).
+        queued: list[object] = []
+        while not out_queue.empty():
+            queued.append(out_queue.get_nowait())
+        confirmed = [
+            m for m in queued if getattr(m, "type", None) == MessageType.SEAT_CONFIRMED
+        ]
+
+    assert confirmed, (
+        f"PLAYER_SEAT must produce a SEAT_CONFIRMED (via handler return or "
+        f"room broadcast); got seat_out={seat_out}"
+    )
+    msg = confirmed[0]
+    assert msg.payload.player_id == "alice"
+    assert msg.payload.character_slot == "rux"

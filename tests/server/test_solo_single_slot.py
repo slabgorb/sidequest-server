@@ -1,103 +1,93 @@
-"""Integration: solo game slug rejects second connection.
+"""Solo game slug rejects second connection (via direct handler dispatch).
 
-Verifies that when a SOLO-mode game is connected to, a second player
-connecting with the same slug receives a SoloSlotConflict error message.
-
-Task 2 (commit 85d70f9) wired SoloSlotConflict → ERROR into the slug-connect
-branch of session_handler. This test confirms the wiring works end-to-end.
+Two ``WebSocketSessionHandler`` instances sharing a ``RoomRegistry``
+stand in for the two websockets. Second handler's connect must yield
+an ERROR with 'solo' in the message. No FastAPI, no TestClient.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from sidequest.game.persistence import GameMode, SqliteStore, db_path_for_slug, upsert_game
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
-from sidequest.server.app import create_app
+from sidequest.game.persistence import (
+    GameMode,
+    SqliteStore,
+    db_path_for_slug,
+    upsert_game,
+)
+from sidequest.protocol import GameMessage
+from sidequest.protocol.enums import MessageType
+from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
 
-# Real genre/world available in the content repo
-_GENRE = "caverns_and_claudes"
-_WORLD = "grimvault"
-_SLUG = "2026-04-22-grimvault"
+_GENRE = "test_genre"
+_WORLD = "flickering_reach"
+_SLUG = "solo-slot-fixture"
+_FIXTURE_PACKS = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
-def _seed_game(save_dir: Path, slug: str, mode: str) -> None:
-    """Seed a game row into the SQLite database."""
-    db = db_path_for_slug(save_dir, slug)
+def _seed_solo(tmp_path: Path, slug: str) -> None:
+    db = db_path_for_slug(tmp_path, slug)
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
         store,
         slug=slug,
-        mode=GameMode(mode),
+        mode=GameMode.SOLO,
         genre_slug=_GENRE,
         world_slug=_WORLD,
     )
     store.close()
 
 
-def test_second_connection_to_solo_is_rejected(tmp_path: Path):
-    """Verify that a second player connecting to a SOLO game is rejected.
-
-    Flow:
-    1. Seed a SOLO-mode game row for slug
-    2. First WebSocket (alice) connects → drain SESSION_EVENT{connected}
-    3. Second WebSocket (bob) connects with same slug → expect ERROR with 'solo'
-    """
-    # Find the actual genre_packs directory
-    genre_packs_path: Path | None = next(
-        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()),
-        None,
-    )
-    if genre_packs_path is None:
-        pytest.skip(
-            f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}"
-        )
-
-    # Seed the game as SOLO mode
-    _seed_game(tmp_path, _SLUG, "solo")
-
-    # Create app
-    app = create_app(
-        genre_pack_search_paths=[genre_packs_path],
+def _make_handler(
+    tmp_path: Path,
+    registry: RoomRegistry,
+    socket_id: str,
+) -> tuple[WebSocketSessionHandler, asyncio.Queue[object]]:
+    handler = WebSocketSessionHandler(
         save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
-    client = TestClient(app)
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=registry, socket_id=socket_id, out_queue=queue,
+    )
+    return handler, queue
 
-    # First connection: alice
-    with client.websocket_connect("/ws") as alice_ws:
-        alice_ws.send_json(
+
+@pytest.mark.asyncio
+async def test_second_connection_to_solo_is_rejected(tmp_path: Path) -> None:
+    _seed_solo(tmp_path, _SLUG)
+    registry = RoomRegistry()
+
+    alice, _alice_q = _make_handler(tmp_path, registry, "sock-alice")
+    await alice.handle_message(
+        GameMessage.model_validate(
             {
                 "type": "SESSION_EVENT",
                 "player_id": "alice",
                 "payload": {"event": "connect", "game_slug": _SLUG},
             }
         )
-        # Drain SESSION_EVENT{connected}
-        msg = alice_ws.receive_json()
-        assert msg["type"] == "SESSION_EVENT"
-        assert msg["payload"]["event"] == "connected"
+    )
 
-        # Second connection: bob (same slug, while alice is still connected)
-        with client.websocket_connect("/ws") as bob_ws:
-            bob_ws.send_json(
-                {
-                    "type": "SESSION_EVENT",
-                    "player_id": "bob",
-                    "payload": {"event": "connect", "game_slug": _SLUG},
-                }
-            )
-            # Expect ERROR message with "solo" in the message
-            error_msg = bob_ws.receive_json()
-            assert error_msg["type"] == "ERROR", (
-                f"Expected ERROR message, got {error_msg['type']}"
-            )
-            error_payload = error_msg.get("payload", {})
-            error_message = error_payload.get("message", "")
-            assert "solo" in error_message.lower(), (
-                f"Expected 'solo' in error message, got: {error_message}"
-            )
+    bob, _bob_q = _make_handler(tmp_path, registry, "sock-bob")
+    bob_out = await bob.handle_message(
+        GameMessage.model_validate(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "bob",
+                "payload": {"event": "connect", "game_slug": _SLUG},
+            }
+        )
+    )
+
+    errors = [m for m in bob_out if getattr(m, "type", None) == MessageType.ERROR]
+    assert errors, f"bob's connect to a SOLO room must produce ERROR; got {bob_out}"
+    msg = str(errors[0].payload.message).lower()
+    assert "solo" in msg, f"expected 'solo' in error; got {msg!r}"

@@ -1,38 +1,35 @@
-"""Wiring test: RoomRegistry is attached to app.state and WebSocket lifecycle.
+"""Wiring test: RoomRegistry + WebSocketSessionHandler join/leave lifecycle.
 
-Verifies that:
-1. `app.state.room_registry` exists after `create_app()`
-2. A WebSocket connect via game_slug adds the player to the room
-3. On disconnect the player is removed from the room
-
-Uses caverns_and_claudes / grimvault (same as other wiring tests) since
-low_fantasy is not present in the content repo search paths.
+Exercises the handler directly with a fake outbound queue — no FastAPI app,
+no TestClient, no websocket_connect. The point of the test is that a
+slug-connect adds the player to the room and the cleanup path removes
+them; none of that needs HTTP transport.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
-from sidequest.server.app import create_app
+from sidequest.game.persistence import (
+    GameMode,
+    SqliteStore,
+    db_path_for_slug,
+    upsert_game,
+)
+from sidequest.protocol import GameMessage
+from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry
 
-# Real genre/world available in the content repo
-_GENRE = "caverns_and_claudes"
-_WORLD = "grimvault"
-_SLUG = "2026-04-22-grimvault"
+_GENRE = "test_genre"
+_WORLD = "flickering_reach"
+_SLUG = "room-wired-fixture"
+_FIXTURE_PACKS = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
-def _seed_game(save_dir: Path, slug: str, mode: str) -> None:
-    from sidequest.game.persistence import (
-        GameMode,
-        SqliteStore,
-        db_path_for_slug,
-        upsert_game,
-    )
-
+def _seed_game(save_dir: Path, slug: str) -> None:
     db = db_path_for_slug(save_dir, slug)
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
@@ -40,50 +37,52 @@ def _seed_game(save_dir: Path, slug: str, mode: str) -> None:
     upsert_game(
         store,
         slug=slug,
-        mode=GameMode(mode),
+        mode=GameMode("multiplayer"),
         genre_slug=_GENRE,
         world_slug=_WORLD,
     )
     store.close()
 
 
-def test_connecting_adds_player_to_room(tmp_path: Path):
-    """Connect by slug → player in room; disconnect → player gone."""
-    genre_packs_path: Path | None = next(
-        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()),
-        None,
-    )
-    if genre_packs_path is None:
-        pytest.skip(
-            f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}"
-        )
-
-    app = create_app(
-        genre_pack_search_paths=[genre_packs_path],
+@pytest.mark.asyncio
+async def test_slug_connect_adds_player_and_cleanup_removes_them(
+    tmp_path: Path,
+) -> None:
+    _seed_game(tmp_path, _SLUG)
+    registry = RoomRegistry()
+    handler = WebSocketSessionHandler(
         save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
-    _seed_game(tmp_path, _SLUG, "multiplayer")
+    out_queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=registry,
+        socket_id="sock-alice",
+        out_queue=out_queue,
+    )
 
-    client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        ws.send_json(
-            {
-                "type": "SESSION_EVENT",
-                "player_id": "alice",
-                "payload": {"event": "connect", "game_slug": _SLUG},
-            }
-        )
-        ws.receive_json()  # drain SESSION_CONNECTED
+    connect = GameMessage.model_validate(
+        {
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {"event": "connect", "game_slug": _SLUG},
+        }
+    )
+    await handler.handle_message(connect)
 
-        room = app.state.room_registry.get(_SLUG)
-        assert room is not None, "Room must be created after slug-connect"
-        assert "alice" in room.connected_player_ids(), (
-            f"alice must appear in connected_player_ids(); got {room.connected_player_ids()}"
-        )
+    room = registry.get(_SLUG)
+    assert room is not None, "room must exist after slug-connect"
+    assert "alice" in room.connected_player_ids(), (
+        f"alice must appear in room.connected_player_ids(); got {room.connected_player_ids()}"
+    )
 
-    # Socket closed — player should be removed
-    room = app.state.room_registry.get(_SLUG)
-    assert room is not None, "Room must still exist after disconnect"
-    assert "alice" not in room.connected_player_ids(), (
-        f"alice must be removed on disconnect; got {room.connected_player_ids()}"
+    # Simulate the ws_endpoint finally block: detach + disconnect + cleanup.
+    room.detach_outbound("sock-alice")
+    room.disconnect(socket_id="sock-alice")
+    await handler.cleanup()
+
+    room_after = registry.get(_SLUG)
+    assert room_after is not None, "room must survive individual disconnect"
+    assert "alice" not in room_after.connected_player_ids(), (
+        f"alice must be removed on disconnect; got {room_after.connected_player_ids()}"
     )
