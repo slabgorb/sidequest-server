@@ -48,6 +48,7 @@ from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dispatch import DispatchPackage
+from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
@@ -634,6 +635,39 @@ class Orchestrator:
         """Set the narrator session ID (for testing and server dispatch)."""
         with self._session_lock:
             self._narrator_session_id = session_id
+
+    # ------------------------------------------------------------------
+    # Group G Task 7 — entity token resolver for the leak audit
+    # ------------------------------------------------------------------
+
+    def _entity_tokens_for_registry(
+        self, context: TurnContext,
+    ) -> dict[str, list[str]]:
+        """Build ``entity_id -> [tokens]`` from the session's NPC registry.
+
+        In the current data model the ``target`` field in a SubsystemDispatch
+        is the NPC name (there is no separate entity_id on
+        :class:`NpcRegistryEntry` yet). We therefore key the token map by
+        ``entry.name`` and populate with ``[name, role]`` where ``role`` is
+        a non-empty role noun. No alias field exists today — a partial
+        token set is still a working audit.
+        """
+        tokens: dict[str, list[str]] = {}
+        for entry in context.npc_registry:
+            toks: list[str] = []
+            if entry.name:
+                toks.append(entry.name)
+            if entry.role:
+                toks.append(entry.role)
+            if toks:
+                tokens[entry.name] = toks
+        for npc in context.npcs:
+            name = npc.core.name if npc.core else None
+            if not name or name in tokens:
+                continue
+            toks = [name]
+            tokens[name] = toks
+        return tokens
 
     def has_active_narrator_session(self) -> bool:
         """Check whether a narrator session is currently active."""
@@ -1264,6 +1298,18 @@ class Orchestrator:
             extraction = extract_structured_from_response(raw_response)
 
             prose = extraction["prose"]
+
+            # Group G Task 7 — canonical-leak audit (safety net).
+            # Structural hiding (Task 5) is the primary defense; this is
+            # the lie-detector. Pass the ORIGINAL DispatchPackage so the
+            # audit knows what was supposed to be hidden. Expected-zero
+            # in steady state; any non-zero fire is a hiding-hole bug.
+            if context.dispatch_package is not None:
+                audit_canonical_prose(
+                    prose=prose,
+                    package=context.dispatch_package,
+                    entity_tokens_by_id=self._entity_tokens_for_registry(context),
+                )
 
             # Warn on missing action_rewrite
             if extraction["action_rewrite"] is None:

@@ -884,3 +884,82 @@ async def test_build_narrator_prompt_clears_secret_routes_when_no_dispatch_packa
     await orch.build_narrator_prompt("look", ctx, tier=NarratorPromptTier.Full)
 
     assert orch._last_secret_routes == []
+
+
+# ---------------------------------------------------------------------------
+# Group G Task 7 — canonical-leak audit wiring in run_narration_turn
+# ---------------------------------------------------------------------------
+
+
+async def test_run_narration_turn_emits_leak_audit_span_with_zero_leaks(
+    otel_capture,
+):
+    """run_narration_turn must emit the ``narrator.canonical_leak_audit`` span
+    for every turn that had a DispatchPackage, with ``leaks_detected=0`` when
+    the canonical prose does not contain any redacted-entity tokens.
+
+    This is the safety-net verification: structural hiding (Task 5) removed
+    the redacted entry from the prompt, and the canned narration below does
+    not mention the hidden target, so the audit fires clean."""
+    from sidequest.protocol.dispatch import SubsystemDispatch
+    from sidequest.game.session import NpcRegistryEntry
+
+    # Canned narrator response — no reference to the hidden target.
+    client = make_canned_client("The evening wears on at the inn.")
+    orch = Orchestrator(client=client)
+
+    pkg = DispatchPackage(
+        turn_id="t-audit",
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="sneak and strike",
+                dispatch=[
+                    SubsystemDispatch(
+                        subsystem="lethal_strike",
+                        params={"target": "Rickard"},
+                        idempotency_key="k1",
+                        visibility=_tag_redacted("player:Alice"),
+                    ),
+                ],
+            )
+        ],
+        confidence_global=1.0,
+    )
+    ctx = TurnContext(
+        dispatch_package=pkg,
+        npc_registry=[NpcRegistryEntry(name="Rickard", role="guard")],
+    )
+
+    await orch.run_narration_turn("sneak and strike", ctx)
+
+    spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "narrator.canonical_leak_audit"
+    ]
+    assert len(spans) == 1, (
+        f"expected exactly one leak_audit span, got {[s.name for s in otel_capture.get_finished_spans()]}"
+    )
+    attrs = dict(spans[0].attributes or {})
+    assert attrs.get("leaks_detected") == 0
+    assert attrs.get("turn_id") == "t-audit"
+    assert attrs.get("redact_tag_count") == 1
+
+
+async def test_run_narration_turn_skips_leak_audit_when_no_dispatch_package(
+    otel_capture,
+):
+    """With no DispatchPackage, there is nothing to audit — the span must not
+    fire. Keeps the expected-zero telemetry shape meaningful: a span in the
+    stream means we ran an audit, not that we shrugged."""
+    client = make_canned_client("Nothing happens.")
+    orch = Orchestrator(client=client)
+    ctx = TurnContext(dispatch_package=None)
+
+    await orch.run_narration_turn("look", ctx)
+
+    spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "narrator.canonical_leak_audit"
+    ]
+    assert spans == []
