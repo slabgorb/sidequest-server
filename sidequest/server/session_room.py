@@ -81,6 +81,21 @@ class SessionRoom:
         with self._lock:
             return [p for p in self._seated if p not in self._connected]
 
+    def slot_to_player_id(self) -> dict[str, str]:
+        """Return a snapshot of {character_slot: player_id} for seated players.
+
+        Used by PARTY_STATUS construction in multiplayer to map peer
+        characters (identified by their slot label, e.g. "Shirley") back
+        to the player_id that claimed the seat. Seats with no slot label
+        are skipped. Returns an empty dict in solo / pre-seat states.
+        """
+        with self._lock:
+            return {
+                seat.character_slot: pid
+                for pid, seat in self._seated.items()
+                if seat.character_slot is not None
+            }
+
     def is_paused(self) -> bool:
         """Game is paused if any seated player is not currently connected."""
         return len(self.absent_seated_player_ids()) > 0

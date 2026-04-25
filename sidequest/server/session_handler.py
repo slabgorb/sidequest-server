@@ -1149,7 +1149,9 @@ class WebSocketSessionHandler:
         # a single server tick since Python's handler is sync w.r.t. the
         # read loop.
         lore_context = await self._retrieve_lore_for_turn(sd, outcome.replay_action_text)
-        turn_context = _build_turn_context(sd, lore_context=lore_context)
+        turn_context = _build_turn_context(
+            sd, lore_context=lore_context, room=self._room
+        )
         return await self._execute_narration_turn(
             sd, outcome.replay_action_text, turn_context,
         )
@@ -2178,174 +2180,237 @@ class WebSocketSessionHandler:
         # is wired in here. Rust parity: connect.rs:1745-1864.
         apply_starting_loadout(character, sd.genre_pack.inventory)
 
-        # World materialization (Story 2.3 Slice C). Build a fresh
-        # snapshot from pack history at Fresh maturity (chargen is always
-        # Fresh — the player just arrived), then inject the built
-        # character. Replaces ``sd.snapshot`` so history chapters' lore,
-        # NPCs, notes, and scene context (location/time_of_day/atmosphere/
-        # active_stakes) populate the snapshot the narrator will read.
-        # Rust parity: connect.rs:1892-1946.
+        # Multiplayer support: another PC may have already committed for
+        # this slug and persisted a fully-materialized snapshot (world
+        # history, scenario, region/room init, peer characters). Detect
+        # that case by reloading from the store BEFORE rebuilding — if
+        # we find existing characters, append this PC to the persisted
+        # snapshot instead of clobbering it.
         #
-        # Parse failure → log-and-fall-back to an empty snapshot with
-        # just genre/world slugs set (Rust parity: ``unwrap_or_else``
-        # with a warn log). The dispatch must not hard-fail on malformed
-        # pack history — the player is mid-confirm and the character is
-        # already built.
-        try:
-            materialized = materialize_from_genre_pack(
-                _world_history_value(sd.genre_pack, sd.world_slug),
-                CampaignMaturity.Fresh,
-                sd.genre_slug,
-                sd.world_slug,
-            )
-        except HistoryParseError as exc:
-            logger.warning(
-                "world_materialization.parse_failed genre=%s world=%s error=%s",
-                sd.genre_slug,
-                sd.world_slug,
-                exc,
-            )
-            materialized = GameSnapshot(
-                genre_slug=sd.genre_slug, world_slug=sd.world_slug
-            )
-        # The fresh chapter may have authored an "Adventurer" placeholder
-        # character — discard it; the chargen-built character owns that
-        # slot. Inventory on the built character already reflects the
-        # post-loadout state from Slice A.
-        materialized.characters = [character]
-        sd.snapshot = materialized
-        span.add_event(
-            "character_creation.world_materialized",
-            {
-                "event": "world_materialized",
-                "genre": sd.genre_slug,
-                "world": sd.world_slug,
-                "chapters_applied": len(materialized.world_history),
-                "maturity": materialized.campaign_maturity,
-                "trigger": "new_player_chargen",
-                "player_id": player_id,
-            },
-        )
+        # Why reload here: each socket has its own ``_SessionData`` and
+        # ``sd.snapshot`` was loaded at slug-connect time, BEFORE the
+        # peer's commit. By the moment the second player confirms, the
+        # peer may have persisted their own commit on a different socket;
+        # the only authoritative shared state is the SQLite save.
+        existing_saved = sd.store.load()
+        existing_chars: list = []
+        if existing_saved is not None and existing_saved.snapshot.characters:
+            existing_chars = list(existing_saved.snapshot.characters)
+        is_first_commit = not existing_chars
 
-        # Scenario binding (Story 2.3 Slice D). When the pack declares a
-        # scenario, bind the first one to a ScenarioState, seed matching
-        # NPC belief states, and stash the chosen pack on the session
-        # for later consumers (pressure events, scene budget, accusation
-        # UI). Rust parity: connect.rs:1948-2023. No-op when the pack
-        # has no scenarios.
-        bind_result = bind_scenario(
-            sd.genre_pack,
-            sd.snapshot,
-            genre_slug=sd.genre_slug,
-            world_slug=sd.world_slug,
-        )
-        if bind_result is not None:
-            _, active_pack = bind_result
-            sd.active_scenario = active_pack
-
-        # Room-graph init (Story 2.3 Slice E). When the selected world
-        # uses ``navigation_mode: room_graph`` and loaded a non-empty
-        # rooms list, set ``snap.location`` to the entrance room. Rust
-        # parity: connect.rs:2025-2069. No-op for region-mode worlds
-        # (the rules-based default_location path handles those; lands
-        # with a later slice when the snapshot currently leaves it
-        # blank). RoomGraphInitError is a pack authoring bug — log
-        # loudly at error level and leave ``snap.location`` blank
-        # rather than hard-fail the confirmation frame.
-        world = sd.genre_pack.worlds.get(sd.world_slug)
-
-        # Region init (Story 37-31). Runs for every world that carries
-        # cartography, regardless of navigation mode: region-mode worlds
-        # need current_region to be their canonical location, and
-        # room_graph worlds still surface a region label alongside the
-        # room-level position so the Map tab is load-bearing from turn
-        # 1. RegionInitError is a pack authoring bug (missing / stale
-        # starting_region) — log loudly at error level and leave
-        # current_region blank rather than strand the player mid-
-        # commit, matching the room_graph error path.
-        if world is not None:
+        if is_first_commit:
+            # World materialization (Story 2.3 Slice C). Build a fresh
+            # snapshot from pack history at Fresh maturity (chargen is always
+            # Fresh — the player just arrived), then inject the built
+            # character. Replaces ``sd.snapshot`` so history chapters' lore,
+            # NPCs, notes, and scene context (location/time_of_day/atmosphere/
+            # active_stakes) populate the snapshot the narrator will read.
+            # Rust parity: connect.rs:1892-1946.
+            #
+            # Parse failure → log-and-fall-back to an empty snapshot with
+            # just genre/world slugs set (Rust parity: ``unwrap_or_else``
+            # with a warn log). The dispatch must not hard-fail on malformed
+            # pack history — the player is mid-confirm and the character is
+            # already built.
             try:
-                region_id = init_region_location(sd.snapshot, world.cartography)
-                span.add_event(
-                    "region.initialized",
-                    {
-                        "event": "region.initialized",
-                        "region": region_id,
-                        "mode": world.cartography.navigation_mode.value,
-                        "source": "starting_region",
-                        "genre": sd.genre_slug,
-                        "world": sd.world_slug,
-                    },
-                )
-                logger.info(
-                    "region.init genre=%s world=%s region=%s discovered_regions=%d",
+                materialized = materialize_from_genre_pack(
+                    _world_history_value(sd.genre_pack, sd.world_slug),
+                    CampaignMaturity.Fresh,
                     sd.genre_slug,
                     sd.world_slug,
-                    region_id,
-                    len(sd.snapshot.discovered_regions),
                 )
-            except RegionInitError as exc:
-                logger.error(
-                    "region.init_failed genre=%s world=%s error=%s",
+            except HistoryParseError as exc:
+                logger.warning(
+                    "world_materialization.parse_failed genre=%s world=%s error=%s",
                     sd.genre_slug,
                     sd.world_slug,
                     exc,
                 )
-                span.add_event(
-                    "region.init_failed",
-                    {
-                        "event": "region.init_failed",
-                        "mode": world.cartography.navigation_mode.value,
-                        "genre": sd.genre_slug,
-                        "world": sd.world_slug,
-                        "error": str(exc),
-                    },
+                materialized = GameSnapshot(
+                    genre_slug=sd.genre_slug, world_slug=sd.world_slug
                 )
+            # The fresh chapter may have authored an "Adventurer" placeholder
+            # character — discard it; the chargen-built character owns that
+            # slot. Inventory on the built character already reflects the
+            # post-loadout state from Slice A.
+            materialized.characters = [character]
+            sd.snapshot = materialized
+            span.add_event(
+                "character_creation.world_materialized",
+                {
+                    "event": "world_materialized",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "chapters_applied": len(materialized.world_history),
+                    "maturity": materialized.campaign_maturity,
+                    "trigger": "new_player_chargen",
+                    "player_id": player_id,
+                },
+            )
 
-        if (
-            world is not None
-            and world.cartography.navigation_mode == NavigationMode.room_graph
-            and world.cartography.rooms
-        ):
-            try:
-                entrance_id = init_room_graph_location(
-                    sd.snapshot, list(world.cartography.rooms)
+            # Scenario binding (Story 2.3 Slice D). When the pack declares a
+            # scenario, bind the first one to a ScenarioState, seed matching
+            # NPC belief states, and stash the chosen pack on the session
+            # for later consumers (pressure events, scene budget, accusation
+            # UI). Rust parity: connect.rs:1948-2023. No-op when the pack
+            # has no scenarios.
+            bind_result = bind_scenario(
+                sd.genre_pack,
+                sd.snapshot,
+                genre_slug=sd.genre_slug,
+                world_slug=sd.world_slug,
+            )
+            if bind_result is not None:
+                _, active_pack = bind_result
+                sd.active_scenario = active_pack
+
+            # Room-graph init (Story 2.3 Slice E). When the selected world
+            # uses ``navigation_mode: room_graph`` and loaded a non-empty
+            # rooms list, set ``snap.location`` to the entrance room. Rust
+            # parity: connect.rs:2025-2069. No-op for region-mode worlds
+            # (the rules-based default_location path handles those; lands
+            # with a later slice when the snapshot currently leaves it
+            # blank). RoomGraphInitError is a pack authoring bug — log
+            # loudly at error level and leave ``snap.location`` blank
+            # rather than hard-fail the confirmation frame.
+            world = sd.genre_pack.worlds.get(sd.world_slug)
+
+            # Region init (Story 37-31). Runs for every world that carries
+            # cartography, regardless of navigation mode: region-mode worlds
+            # need current_region to be their canonical location, and
+            # room_graph worlds still surface a region label alongside the
+            # room-level position so the Map tab is load-bearing from turn
+            # 1. RegionInitError is a pack authoring bug (missing / stale
+            # starting_region) — log loudly at error level and leave
+            # current_region blank rather than strand the player mid-
+            # commit, matching the room_graph error path.
+            if world is not None:
+                try:
+                    region_id = init_region_location(sd.snapshot, world.cartography)
+                    span.add_event(
+                        "region.initialized",
+                        {
+                            "event": "region.initialized",
+                            "region": region_id,
+                            "mode": world.cartography.navigation_mode.value,
+                            "source": "starting_region",
+                            "genre": sd.genre_slug,
+                            "world": sd.world_slug,
+                        },
+                    )
+                    logger.info(
+                        "region.init genre=%s world=%s region=%s discovered_regions=%d",
+                        sd.genre_slug,
+                        sd.world_slug,
+                        region_id,
+                        len(sd.snapshot.discovered_regions),
+                    )
+                except RegionInitError as exc:
+                    logger.error(
+                        "region.init_failed genre=%s world=%s error=%s",
+                        sd.genre_slug,
+                        sd.world_slug,
+                        exc,
+                    )
+                    span.add_event(
+                        "region.init_failed",
+                        {
+                            "event": "region.init_failed",
+                            "mode": world.cartography.navigation_mode.value,
+                            "genre": sd.genre_slug,
+                            "world": sd.world_slug,
+                            "error": str(exc),
+                        },
+                    )
+
+            if (
+                world is not None
+                and world.cartography.navigation_mode == NavigationMode.room_graph
+                and world.cartography.rooms
+            ):
+                try:
+                    entrance_id = init_room_graph_location(
+                        sd.snapshot, list(world.cartography.rooms)
+                    )
+                    span.add_event(
+                        "location.initialized",
+                        {
+                            "event": "location.initialized",
+                            "location": entrance_id,
+                            "mode": "room_graph",
+                            "source": "entrance_room",
+                            "genre": sd.genre_slug,
+                            "world": sd.world_slug,
+                        },
+                    )
+                    logger.info(
+                        "room_graph.init genre=%s world=%s entrance=%s discovered_rooms=%d",
+                        sd.genre_slug,
+                        sd.world_slug,
+                        entrance_id,
+                        len(sd.snapshot.discovered_rooms),
+                    )
+                except RoomGraphInitError as exc:
+                    logger.error(
+                        "room_graph.init_failed genre=%s world=%s error=%s",
+                        sd.genre_slug,
+                        sd.world_slug,
+                        exc,
+                    )
+                    span.add_event(
+                        "location.init_failed",
+                        {
+                            "event": "location.init_failed",
+                            "mode": "room_graph",
+                            "genre": sd.genre_slug,
+                            "world": sd.world_slug,
+                            "error": str(exc),
+                        },
+                    )
+        else:
+            # Multiplayer second commit. Reuse the peer's persisted
+            # snapshot (already materialized: world history, scenario,
+            # region, room init, peer character) and append our PC.
+            # Skips world materialize / scenario bind / region+room init
+            # — the peer's commit owns those and re-running them would
+            # clobber any state the peer accumulated since.
+            sd.snapshot = existing_saved.snapshot
+            existing_names = {c.core.name for c in sd.snapshot.characters}
+            if character.core.name not in existing_names:
+                sd.snapshot.characters.append(character)
+            # Re-bind active_scenario on this socket from whatever the
+            # peer wrote — its presence on sd.active_scenario is what
+            # downstream pressure / accusation code keys off.
+            if sd.active_scenario is None:
+                bind_result = bind_scenario(
+                    sd.genre_pack,
+                    sd.snapshot,
+                    genre_slug=sd.genre_slug,
+                    world_slug=sd.world_slug,
                 )
-                span.add_event(
-                    "location.initialized",
-                    {
-                        "event": "location.initialized",
-                        "location": entrance_id,
-                        "mode": "room_graph",
-                        "source": "entrance_room",
-                        "genre": sd.genre_slug,
-                        "world": sd.world_slug,
-                    },
-                )
-                logger.info(
-                    "room_graph.init genre=%s world=%s entrance=%s discovered_rooms=%d",
-                    sd.genre_slug,
-                    sd.world_slug,
-                    entrance_id,
-                    len(sd.snapshot.discovered_rooms),
-                )
-            except RoomGraphInitError as exc:
-                logger.error(
-                    "room_graph.init_failed genre=%s world=%s error=%s",
-                    sd.genre_slug,
-                    sd.world_slug,
-                    exc,
-                )
-                span.add_event(
-                    "location.init_failed",
-                    {
-                        "event": "location.init_failed",
-                        "mode": "room_graph",
-                        "genre": sd.genre_slug,
-                        "world": sd.world_slug,
-                        "error": str(exc),
-                    },
-                )
+                if bind_result is not None:
+                    _, active_pack = bind_result
+                    sd.active_scenario = active_pack
+            span.add_event(
+                "character_creation.mp_world_reused",
+                {
+                    "event": "mp_world_reused",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "existing_pc_count": len(existing_chars),
+                    "appended_pc": character.core.name,
+                    "total_pc_count": len(sd.snapshot.characters),
+                    "player_id": player_id,
+                },
+            )
+            logger.info(
+                "session.mp_second_commit genre=%s world=%s existing_pcs=%d new_pc=%s total=%d",
+                sd.genre_slug,
+                sd.world_slug,
+                len(existing_chars),
+                character.core.name,
+                len(sd.snapshot.characters),
+            )
 
         # Lore seeding (Story 2.3 Slice F). Must run BEFORE clearing
         # the builder — the builder owns the scene list, and the
@@ -2395,26 +2460,32 @@ class WebSocketSessionHandler:
         # World-level state — lore, tropes, region discovery, world
         # history — MUST persist; only the per-narration NPC registry
         # is wiped. Rust parity: connect.rs:2136-2157.
-        prev_registry_len = len(sd.snapshot.npc_registry)
-        sd.snapshot.npc_registry.clear()
-        span.add_event(
-            "npc_registry.cleared_on_chargen_complete",
-            {
-                "event": "npc_registry.cleared_on_chargen_complete",
-                "genre": sd.genre_slug,
-                "world": sd.world_slug,
-                "player": sd.player_name,
-                "previous_len": prev_registry_len,
-                "reason": "fresh_character_narrative_reset",
-            },
-        )
-        logger.info(
-            "npc_registry.cleared genre=%s world=%s player=%s prev_len=%d",
-            sd.genre_slug,
-            sd.world_slug,
-            sd.player_name,
-            prev_registry_len,
-        )
+        #
+        # Multiplayer: only the FIRST commit clears. The second commit
+        # must preserve any NPCs the peer's opening turn already
+        # registered; clearing them would strand peer-narrated NPCs
+        # halfway through their narrative arcs.
+        if is_first_commit:
+            prev_registry_len = len(sd.snapshot.npc_registry)
+            sd.snapshot.npc_registry.clear()
+            span.add_event(
+                "npc_registry.cleared_on_chargen_complete",
+                {
+                    "event": "npc_registry.cleared_on_chargen_complete",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player": sd.player_name,
+                    "previous_len": prev_registry_len,
+                    "reason": "fresh_character_narrative_reset",
+                },
+            )
+            logger.info(
+                "npc_registry.cleared genre=%s world=%s player=%s prev_len=%d",
+                sd.genre_slug,
+                sd.world_slug,
+                sd.player_name,
+                prev_registry_len,
+            )
 
         # Persist (Story 2.3 Slice G). Writes the fully-populated
         # snapshot — character in characters[], NPCs from world
@@ -2493,10 +2564,29 @@ class WebSocketSessionHandler:
         # Emits the populated character sheet so the client Character
         # tab lands populated at session-start without waiting for the
         # first turn's PARTY_STATUS update.
+        #
+        # Multiplayer: also broadcast to peers in the room so a player
+        # who already finished chargen sees the new arrival in their
+        # Party panel without waiting for their own turn-end refresh.
+        # The same frame goes to every socket — _build_session_start
+        # _party_status enumerates every PC, and clients merge by
+        # player_id on receipt.
         try:
-            out.append(
-                self._build_session_start_party_status(sd, character, player_id)
+            party_status_msg = self._build_session_start_party_status(
+                sd, character, player_id
             )
+            out.append(party_status_msg)
+            from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
+                GameMode as _GameMode,
+            )
+            if (
+                self._room is not None
+                and sd.mode == _GameMode.MULTIPLAYER
+                and self._socket_id is not None
+            ):
+                self._room.broadcast(
+                    party_status_msg, exclude_socket_id=self._socket_id
+                )
             span.add_event(
                 "session.start.character_snapshot_emitted",
                 {
@@ -2636,7 +2726,9 @@ class WebSocketSessionHandler:
 
         sd = self._session_data
         lore_context = await self._retrieve_lore_for_turn(sd, action)
-        turn_context = _build_turn_context(sd, lore_context=lore_context)
+        turn_context = _build_turn_context(
+            sd, lore_context=lore_context, room=self._room
+        )
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
@@ -3102,6 +3194,7 @@ class WebSocketSessionHandler:
             sd,
             opening_directive=sd.opening_directive,
             lore_context=lore_context,
+            room=self._room,
         )
 
         span.add_event(
@@ -3654,17 +3747,18 @@ class WebSocketSessionHandler:
             component="render",
         )
 
-    def _build_session_start_party_status(
+    def _party_member_from_character(
         self,
         sd: _SessionData,
         character: Character,
         player_id: str,
-    ) -> PartyStatusMessage:
-        """Build the PARTY_STATUS frame emitted at the end of chargen.
+        player_name: str,
+    ) -> PartyMember:
+        """Build a single PartyMember from a Character object.
 
-        Carries a fully populated :class:`CharacterSheetDetails` so the
-        client's Character tab lands populated on session-start. Rust
-        parity: connect.rs:2533-2609 (`session_start_party_status`).
+        Factored out of :meth:`_build_session_start_party_status` so the
+        same construction can run for the requesting socket's PC and for
+        peer PCs that landed in the snapshot via multiplayer chargen.
         """
         # Inventory is stored as list[dict] in Phase 1 (creature_core.py:158).
         # Filter to Carried items — identical to Rust's inventory.carried()
@@ -3734,9 +3828,9 @@ class WebSocketSessionHandler:
         class_nbs = NonBlankString(character.char_class or "Adventurer")
         char_name_nbs = NonBlankString(character.core.name)
 
-        member = PartyMember(
+        return PartyMember(
             player_id=NonBlankString(player_id or "anon"),
-            name=NonBlankString(sd.player_name or "Player"),
+            name=NonBlankString(player_name or "Player"),
             character_name=char_name_nbs,
             current_hp=character.core.edge.current,
             max_hp=character.core.edge.max,
@@ -3749,9 +3843,59 @@ class WebSocketSessionHandler:
             inventory=inventory_payload,
         )
 
+    def _build_session_start_party_status(
+        self,
+        sd: _SessionData,
+        character: Character,
+        player_id: str,
+    ) -> PartyStatusMessage:
+        """Build the PARTY_STATUS frame emitted at the end of chargen.
+
+        Carries a fully populated :class:`CharacterSheetDetails` so the
+        client's Character tab lands populated on session-start. Rust
+        parity: connect.rs:2533-2609 (`session_start_party_status`).
+
+        Multiplayer: enumerates every PC in ``sd.snapshot.characters``
+        so a player who commits second sees the peer in their party
+        panel and the peer sees the new arrival on the next refresh
+        broadcast. Maps each character's slot label back to the
+        seating player_id via the room's seat table; falls back to
+        a stable ``peer:<character_name>`` synthetic id when no seat
+        record exists (solo path / room not yet bound).
+        """
+        seat_map: dict[str, str] = {}
+        if self._room is not None:
+            seat_lookup = getattr(self._room, "slot_to_player_id", None)
+            if callable(seat_lookup):
+                seat_map = seat_lookup()
+
+        members: list[PartyMember] = []
+        # Use snapshot.characters when populated (multiplayer + post-chargen
+        # path). When the snapshot is mid-chargen and the character isn't
+        # yet in the snapshot list (legacy / solo) fall back to building
+        # only the requesting socket's PC.
+        all_chars = list(sd.snapshot.characters or [])
+        if not all_chars:
+            all_chars = [character]
+        # Stable ordering: requesting-socket PC first, then peers in
+        # snapshot order. Keeps Party panel layout deterministic.
+        self_chars = [c for c in all_chars if c.core.name == character.core.name]
+        peer_chars = [c for c in all_chars if c.core.name != character.core.name]
+        for char in self_chars + peer_chars:
+            is_self = char.core.name == character.core.name
+            if is_self:
+                pid = player_id or "anon"
+                pname = sd.player_name or "Player"
+            else:
+                pid = seat_map.get(char.core.name) or f"peer:{char.core.name}"
+                pname = char.core.name
+            members.append(
+                self._party_member_from_character(sd, char, pid, pname)
+            )
+
         return PartyStatusMessage(
             type="PARTY_STATUS",  # type: ignore[arg-type]
-            payload=PartyStatusPayload(members=[member]),
+            payload=PartyStatusPayload(members=members),
             player_id=player_id,
         )
 
@@ -3856,11 +4000,49 @@ def aggregate_visibility(pkg: DispatchPackage) -> dict:
     }
 
 
+def _resolve_acting_character_name(
+    sd: _SessionData, room: SessionRoom | None
+) -> str:
+    """Identify the requesting socket's PC name in the snapshot.
+
+    Resolution order:
+    1. Room seat lookup: if ``room`` is bound and ``sd.player_id`` has
+       a seat, use that seat's ``character_slot`` — the canonical
+       MP binding established at PLAYER_SEAT time.
+    2. Snapshot match by player_name: fall back to the character whose
+       core.name matches ``sd.player_name`` (resume path before any
+       seat claim has landed).
+    3. First character: legacy single-player default.
+    4. Lobby player_name: empty snapshot fallback.
+
+    Returning the wrong name causes the narrator's party-peer block
+    to misidentify peers (the bug the playtest GM saw — narrator
+    canonized the second player as a hireling because char_name
+    pointed at the wrong PC).
+    """
+    snapshot = sd.snapshot
+    if not snapshot.characters:
+        return sd.player_name
+    seat_lookup = getattr(room, "slot_to_player_id", None) if room is not None else None
+    if callable(seat_lookup) and sd.player_id:
+        seat_map = seat_lookup()
+        for slot, pid in seat_map.items():
+            if pid == sd.player_id and any(
+                c.core.name == slot for c in snapshot.characters
+            ):
+                return slot
+    for char in snapshot.characters:
+        if char.core.name == sd.player_name:
+            return char.core.name
+    return snapshot.characters[0].core.name
+
+
 def _build_turn_context(
     sd: _SessionData,
     *,
     opening_directive: str | None = None,
     lore_context: str | None = None,
+    room: SessionRoom | None = None,
 ) -> TurnContext:
     """Assemble the :class:`TurnContext` for a single narration turn.
 
@@ -3871,14 +4053,18 @@ def _build_turn_context(
     (story 37-33) is the pre-rendered ``<lore>`` block from
     :func:`sidequest.game.lore_embedding.retrieve_lore_context`;
     ``None`` means no lore section is registered on this turn.
+
+    Multiplayer: ``room`` provides the {character_slot → player_id}
+    seat map so the acting PC can be identified by ``sd.player_id``
+    rather than guessed via ``snapshot.characters[0]`` (which is
+    arbitrary across player commit order). ``None`` (solo / pre-MP
+    paths) keeps the legacy "first character" behavior.
     """
     from sidequest.agents.encounter_render import render_encounter_summary
     from sidequest.server.dispatch.confrontation import find_confrontation_def
 
     snapshot = sd.snapshot
-    char_name = (
-        snapshot.characters[0].core.name if snapshot.characters else sd.player_name
-    )
+    char_name = _resolve_acting_character_name(sd, room)
 
     # Derive encounter flags from snapshot.encounter (Story 3.4).
     # Uses category-based flags from the matched ConfrontationDef
@@ -3902,20 +4088,27 @@ def _build_turn_context(
 
     # Group C — LethalityArbiter inputs. Policy is pack-level; cores are
     # pulled straight off the live snapshot (every PC + every on-scene NPC).
-    # Single-player mapping today: snapshot.characters[0] belongs to
-    # sd.player_id. Multiplayer will want a per-player index on the
-    # snapshot; the arbiter reads whatever mapping this helper provides.
+    # Map every PC to its owning player_id via the room's seat table; the
+    # acting socket's PC also lands under sd.player_id so the arbiter can
+    # look up the actor without an extra hop.
     pc_cores_by_player: dict[str, CreatureCore] = {}
-    if snapshot.characters:
-        pc_cores_by_player[sd.player_id] = snapshot.characters[0].core
+    seat_lookup_fn = getattr(room, "slot_to_player_id", None) if room is not None else None
+    seat_map: dict[str, str] = seat_lookup_fn() if callable(seat_lookup_fn) else {}
+    char_to_player = {slot: pid for slot, pid in seat_map.items()}
+    for pc in snapshot.characters:
+        owner_pid = char_to_player.get(pc.core.name)
+        if owner_pid is None and pc.core.name == char_name:
+            owner_pid = sd.player_id
+        if owner_pid:
+            pc_cores_by_player[owner_pid] = pc.core
     npc_cores_by_name: dict[str, CreatureCore] = {
         npc.core.name: npc.core for npc in snapshot.npcs
     }
 
     # Story 37-36: canonical peer-identity packets for every non-self PC.
-    # Exclude the acting player's own character by name match against
-    # ``sd.player_name``. Single-player sessions produce an empty list
-    # (zero-byte leak at the prompt layer).
+    # Exclude the acting player's own character — char_name is the
+    # MP-aware resolution from _resolve_acting_character_name (single-
+    # player produces an empty list; zero-byte leak at the prompt layer).
     party_peers: list[PartyPeer] = [
         PartyPeer.from_character(pc)
         for pc in snapshot.characters

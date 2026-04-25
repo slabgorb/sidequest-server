@@ -57,3 +57,22 @@ def test_seated_players_separate_from_connected():
     assert set(room.seated_player_ids()) == {"alice", "bob"}
     assert set(room.connected_player_ids()) == {"alice"}
     assert set(room.absent_seated_player_ids()) == {"bob"}
+
+
+def test_slot_to_player_id_returns_seat_map():
+    room = SessionRoom(slug="slug-a", mode=GameMode.MULTIPLAYER)
+    room.seat("alice", character_slot="Laverne")
+    room.seat("bob", character_slot="Shirley")
+    assert room.slot_to_player_id() == {"Laverne": "alice", "Shirley": "bob"}
+
+
+def test_slot_to_player_id_skips_seats_without_slot():
+    room = SessionRoom(slug="slug-a", mode=GameMode.MULTIPLAYER)
+    room.seat("alice", character_slot=None)  # legacy / pre-slot seat
+    room.seat("bob", character_slot="Shirley")
+    assert room.slot_to_player_id() == {"Shirley": "bob"}
+
+
+def test_slot_to_player_id_empty_when_no_seats():
+    room = SessionRoom(slug="slug-a", mode=GameMode.MULTIPLAYER)
+    assert room.slot_to_player_id() == {}
