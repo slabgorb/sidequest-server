@@ -439,6 +439,8 @@ class NarratorAgent(BaseAgent):
         encounter: StructuredEncounter | None = None,
         cdef: ConfrontationDef | None = None,
         encounter_summary: str | None = None,
+        statuses_by_actor: dict[str, list] | None = None,
+        resolution_signal: object | None = None,
     ) -> None:
         """Inject encounter-specific narration rules + live encounter state.
 
@@ -446,9 +448,15 @@ class NarratorAgent(BaseAgent):
         1. The generic encounter-rules prose (unchanged — backwards compatible).
         2. The matched ConfrontationDef's beats + actors so the LLM emits
            valid ``beat_selections``.
-        3. The encounter_summary (metric / phase / beat) in the Valley zone.
+        3. Both ascending dials (player_metric / opponent_metric).
+        4. Per-actor statuses from ``statuses_by_actor``.
+        5. Encounter tags.
+
+        When ``resolution_signal`` is set, short-circuits to the one-shot
+        [ENCOUNTER RESOLVED] zone and skips the live zone entirely.
 
         Port of NarratorAgent::build_encounter_context() in narrator.rs.
+        Task 18: dual-dial encounter zone + resolution signal short-circuit.
         """
         from sidequest.agents.prompt_framework.core import PromptRegistry
 
@@ -466,19 +474,77 @@ class NarratorAgent(BaseAgent):
             ),
         )
 
+        # One-shot resolution zone — wins over the active zone.
+        if resolution_signal is not None:
+            body = (
+                "[ENCOUNTER RESOLVED]\n"
+                f"type: {resolution_signal.encounter_type}\n"
+                f"outcome: {resolution_signal.outcome}\n"
+                f"final_player_metric: {resolution_signal.final_player_metric}\n"
+                f"final_opponent_metric: {resolution_signal.final_opponent_metric}\n"
+            )
+            if resolution_signal.outcome == "yielded":
+                yielded = ", ".join(resolution_signal.yielded_actors) or "(none)"
+                body += (
+                    f"yielded_actors: [{yielded}]\n"
+                    f"edge_refreshed: {resolution_signal.edge_refreshed}\n"
+                    "Describe the actor's exit on their own terms — they chose "
+                    "to leave. Honor the choice. The opposing side does not "
+                    "pursue or strike further.\n"
+                )
+            else:
+                body += (
+                    "The encounter has ended this turn. Describe the resolution "
+                    "and any immediate transition out of the scene. Do NOT emit "
+                    "beat_selections. Do NOT continue describing the encounter "
+                    "as if it were active.\n"
+                )
+            registry.register_section(
+                self.name(),
+                PromptSection.new(
+                    "narrator_encounter_resolved",
+                    body,
+                    AttentionZone.Early,
+                    SectionCategory.State,
+                ),
+            )
+            return  # short-circuit: do not render the live zone
+
         if encounter is not None and cdef is not None:
-            actor_lines = "\n".join(f"- {a.name} ({a.role})" for a in encounter.actors)
+            statuses_by_actor = statuses_by_actor or {}
+            actor_lines: list[str] = []
+            for a in encounter.actors:
+                statuses = statuses_by_actor.get(a.name, [])
+                status_text = (
+                    f"statuses: [{', '.join(f'{s.text} ({s.severity.value})' for s in statuses)}]"
+                    if statuses else "statuses: []"
+                )
+                actor_lines.append(
+                    f"  - {a.name} (side={a.side}, {status_text})"
+                )
             beat_lines = "\n".join(
-                f"- {b.id}: {b.label} (metric_delta={b.metric_delta})"
+                f"  - {b.id}: {b.label} (kind={b.kind.value}, base={b.base})"
                 for b in cdef.beats
             )
+            tag_lines = "\n".join(
+                f"  - \"{t.text}\" on {t.target or '(scene)'} "
+                f"({'fleeting' if t.fleeting else f'leverage {t.leverage}'}, "
+                f"created turn {t.created_turn})"
+                for t in encounter.tags
+            ) or "  (none)"
             body = (
                 f"<encounter-live>\n"
                 f"Active encounter: {cdef.label} ({cdef.confrontation_type})\n"
+                f"Player metric: {encounter.player_metric.current} / "
+                f"{encounter.player_metric.threshold}\n"
+                f"Opponent metric: {encounter.opponent_metric.current} / "
+                f"{encounter.opponent_metric.threshold}\n"
                 f"Available beats — beat_selections.beat_id MUST be one of:\n"
                 f"{beat_lines}\n"
-                f"Actors — emit a beat_selection for every actor:\n"
-                f"{actor_lines}\n"
+                f"Actors — emit a beat_selection for every non-withdrawn "
+                f"non-neutral actor:\n"
+                + "\n".join(actor_lines) + "\n"
+                f"Encounter tags:\n{tag_lines}\n"
                 f"</encounter-live>"
             )
             registry.register_section(
