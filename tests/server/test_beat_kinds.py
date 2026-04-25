@@ -189,3 +189,20 @@ def test_default_deltas_table_covers_all_kinds_and_tiers():
     }
     for kind in BeatKind:
         assert set(DEFAULT_DELTAS[kind].keys()) == tiers
+
+
+# ---- raise-path coverage --------------------------------------------------
+
+def test_unknown_outcome_raises():
+    with pytest.raises(ValueError, match="Unknown"):
+        resolve_tier_deltas(
+            kind=BeatKind.strike, base=3, outcome=RollOutcome.Unknown,
+            overrides=None, target_tag=None,
+        )
+
+
+def test_eval_expr_rejects_unknown_form():
+    from sidequest.game.beat_kinds import _eval_expr
+
+    with pytest.raises(ValueError, match="unsupported delta expression"):
+        _eval_expr("b * 2", base=3)
