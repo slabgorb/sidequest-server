@@ -227,14 +227,33 @@ def create_app(
         )
 
     # --- Static /renders/* mount — serve daemon-generated images. ---
-    # The daemon writes every render under SIDEQUEST_OUTPUT_DIR (same env
-    # both processes read), and session_handler._render_url_from_path
-    # maps those filesystem paths to /renders/<relative>. When the env
-    # isn't set (unit tests, first-run) we skip the mount rather than
-    # raise — renders are optional and the lobby stays usable.
+    # Source-of-truth precedence:
+    #   1. SIDEQUEST_OUTPUT_DIR env (explicit override, prod or shared dev).
+    #   2. ~/.sidequest/daemon-output-dir handshake file written by the
+    #      daemon at startup (covers the dev-default case where the daemon
+    #      picks a random tmpdir and the server can't discover it through
+    #      env). Resolves the playtest 2026-04-25 [P1] regression where
+    #      every render landed in the daemon's tmpdir and the UI 404'd
+    #      because no /renders mount existed.
+    #   3. No mount — renders unreachable; logged loudly.
+    # Once resolved, propagate into the env so `_render_url_from_path`
+    # (called per render in session_handler) sees the same value.
     import os as _os
 
     render_root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
+    handshake_source = "env"
+    if not render_root:
+        handshake_path = Path.home() / ".sidequest" / "daemon-output-dir"
+        if handshake_path.is_file():
+            try:
+                render_root = handshake_path.read_text().strip()
+                handshake_source = "handshake"
+                _os.environ["SIDEQUEST_OUTPUT_DIR"] = render_root
+            except OSError as exc:
+                logger.warning(
+                    "render_assets.handshake_read_failed path=%s error=%s",
+                    handshake_path, exc,
+                )
     if render_root:
         render_dir = Path(render_root)
         render_dir.mkdir(parents=True, exist_ok=True)
@@ -243,10 +262,14 @@ def create_app(
             StaticFiles(directory=str(render_dir)),
             name="render_assets",
         )
-        logger.info("render_assets.mount_registered dir=%s", render_dir)
-    else:
         logger.info(
-            "render_assets.mount_skipped reason=SIDEQUEST_OUTPUT_DIR_unset"
+            "render_assets.mount_registered dir=%s source=%s",
+            render_dir, handshake_source,
+        )
+    else:
+        logger.warning(
+            "render_assets.mount_skipped reason=no_env_no_handshake — "
+            "every render will fall through unrewritten and the UI will 404"
         )
 
     return app

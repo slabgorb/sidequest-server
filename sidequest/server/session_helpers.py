@@ -327,21 +327,41 @@ def _render_url_from_path(image_path: str) -> str:
     """Translate a daemon filesystem path into a /renders/* URL.
 
     Returns the absolute path verbatim when it isn't inside
-    SIDEQUEST_OUTPUT_DIR — UI 404 beats silent replacement.
+    SIDEQUEST_OUTPUT_DIR — UI 404 beats silent replacement. Each
+    fallthrough emits an ``image_unavailable`` watcher event so the GM
+    panel surfaces "image generated but not deliverable" rather than
+    looking like nothing happened (CLAUDE.md OTEL principle).
     """
     import os as _os
     import pathlib as _pathlib
 
     root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
     if not root or not image_path:
+        _publish_image_unavailable(image_path, reason="output_dir_unset")
         return image_path
     try:
         rel = _pathlib.Path(image_path).resolve().relative_to(
             _pathlib.Path(root).resolve()
         )
     except ValueError:
+        _publish_image_unavailable(image_path, reason="path_outside_output_dir")
         return image_path
     return "/renders/" + str(rel).replace(_os.sep, "/")
+
+
+def _publish_image_unavailable(image_path: str, *, reason: str) -> None:
+    """Emit a watcher event for an unrewriteable render path. Lazy import
+    avoids a server↔telemetry import cycle at module load."""
+    try:
+        from sidequest.telemetry.watcher_hub import publish_event
+    except ImportError:
+        return
+    publish_event(
+        "image_unavailable",
+        {"image_path": image_path, "reason": reason},
+        component="render",
+        severity="warning",
+    )
 
 
 def _detect_npc_identity_drift(
