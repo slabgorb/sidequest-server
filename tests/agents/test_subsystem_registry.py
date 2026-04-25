@@ -116,11 +116,14 @@ async def test_run_dispatch_bank_directives_include_decomposer_authored():
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_subsystem_exception_is_caught():
+async def test_run_dispatch_bank_subsystem_exception_is_caught(minimal_npc_registry):
     """A subsystem raising inside the bank logs and continues."""
-    d = _make_dispatch("distinctive_detail_hint", "k_err", params={"hint": "x"})  # no target
+    # npc_agency raises ValueError when params.npc_name is missing —
+    # use that as the raising subsystem rather than distinctive_detail_hint
+    # (which now degrades to a no-op rather than raising).
+    d = _make_dispatch("npc_agency", "k_err", params={})  # no npc_name
     pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg)
+    res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
     assert len(res.errors) == 1
     assert res.errors[0][0] == "k_err"
     # No directives from the failing subsystem.
@@ -138,6 +141,52 @@ async def test_run_dispatch_bank_threads_context_to_subsystems(minimal_npc_regis
     res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
     out: SubsystemOutput = res.outputs_by_key["k1"]
     assert out.data["role"] == "innkeeper"
+
+
+@pytest.mark.asyncio
+async def test_run_dispatch_bank_filters_context_per_subsystem_signature(
+    minimal_npc_registry,
+):
+    """Bank forwards only the kwargs each subsystem declares.
+
+    `run_distinctive_detail` accepts only ``dispatch`` — without per-callable
+    filtering, blasting ``npc_registry`` into it would raise
+    ``TypeError: unexpected keyword argument 'npc_registry'``.
+    """
+    d_npc = _make_dispatch(
+        "npc_agency", "knpc",
+        params={"npc_name": "Harlan", "situation": "spotted"},
+    )
+    d_dd = _make_dispatch(
+        "distinctive_detail_hint", "kdd",
+        params={"target": "npc:goblin", "hint": "broken tooth"},
+    )
+    pkg = _make_package([[d_npc], [d_dd]])
+    res = await run_dispatch_bank(
+        pkg, context={"npc_registry": minimal_npc_registry},
+    )
+    # Both subsystems ran; neither raised.
+    assert res.errors == []
+    assert "knpc" in res.outputs_by_key
+    assert "kdd" in res.outputs_by_key
+
+
+@pytest.mark.asyncio
+async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has_none():
+    """`run_npc_agency` requires ``npc_registry`` even when empty —
+    orchestrator now passes ``[]`` instead of omitting the kwarg, so the
+    subsystem invokes without TypeError and degrades cleanly to
+    ``npc_not_registered``."""
+    d = _make_dispatch(
+        "npc_agency", "k_empty",
+        params={"npc_name": "Stranger", "situation": "spotted"},
+    )
+    pkg = _make_package([[d]])
+    res = await run_dispatch_bank(pkg, context={"npc_registry": []})
+    # Subsystem ran without raising; data['error'] surfaces the lookup miss.
+    assert res.errors == []
+    out = res.outputs_by_key["k_empty"]
+    assert out.data["error"] == "npc_not_registered"
 
 
 @pytest.mark.asyncio
@@ -264,20 +313,22 @@ async def test_run_dispatch_bank_emits_bank_and_subsystem_spans(otel_capture):
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_subsystem_span_records_error(otel_capture):
+async def test_run_dispatch_bank_subsystem_span_records_error(
+    otel_capture, minimal_npc_registry,
+):
     """When a subsystem raises, its local_dm.subsystem span records the
     error type and produced_directives=0 — no clean span for a broken run."""
-    # distinctive_detail_hint raises without a target param (Task 7 semantics).
-    d = _make_dispatch("distinctive_detail_hint", "k_err", params={"hint": "x"})
+    # npc_agency raises ValueError when npc_name is missing.
+    d = _make_dispatch("npc_agency", "k_err", params={})
     pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg)
+    res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
     assert len(res.errors) == 1
 
     spans = otel_capture.get_finished_spans()
     sub_spans = [s for s in spans if s.name == "local_dm.subsystem"]
     assert len(sub_spans) == 1
     attrs = dict(sub_spans[0].attributes or {})
-    assert attrs["subsystem"] == "distinctive_detail_hint"
+    assert attrs["subsystem"] == "npc_agency"
     assert attrs["produced_directives"] == 0
     assert "error" in attrs
 

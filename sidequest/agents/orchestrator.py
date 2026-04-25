@@ -1165,9 +1165,14 @@ class Orchestrator:
         if visible_dispatch_package is not None:
             from sidequest.agents.subsystems import run_dispatch_bank
 
-            bank_context: dict[str, object] = {}
-            if context.npc_registry:
-                bank_context["npc_registry"] = context.npc_registry
+            # ``npc_registry`` is required by ``run_npc_agency`` (kw-only,
+            # no default). Always include it — even when empty — so the
+            # subsystem can invoke without TypeError. The bank filters
+            # context keys per subsystem signature so we don't accidentally
+            # blast ``npc_registry`` into subsystems that don't accept it.
+            bank_context: dict[str, object] = {
+                "npc_registry": list(context.npc_registry or []),
+            }
 
             bank_result = await run_dispatch_bank(
                 visible_dispatch_package, context=bank_context,

@@ -60,6 +60,36 @@ def _item_dict_from_catalog(catalog_item: CatalogItem) -> dict:
     }
 
 
+def _upgrade_hint_items_from_catalog(
+    items: list[dict], catalog_by_id: dict[str, CatalogItem]
+) -> int:
+    """Rewrite builder-produced ``item_hint`` dicts from the catalog.
+
+    The chargen ``CharacterBuilder`` (builder.py) produces minimal item
+    dicts from scene ``item_hint`` ids — without access to the pack
+    inventory catalog it hardcodes ``category: weapon`` and a boilerplate
+    description. Once the catalog is available in ``apply_starting_loadout``
+    we can upgrade each matching hint to the canonical entry, preserving
+    the builder's ``equipped`` / ``quantity`` flags.
+
+    Returns the number of items upgraded. Items whose id isn't in the
+    catalog are left untouched (minimal fallback stands).
+    """
+    upgraded = 0
+    for i, item in enumerate(items):
+        catalog_item = catalog_by_id.get(item.get("id", ""))
+        if catalog_item is None:
+            continue
+        preserved_equipped = item.get("equipped", False)
+        preserved_quantity = item.get("quantity", 1)
+        replacement = _item_dict_from_catalog(catalog_item)
+        replacement["equipped"] = preserved_equipped
+        replacement["quantity"] = preserved_quantity
+        items[i] = replacement
+        upgraded += 1
+    return upgraded
+
+
 def _item_dict_minimal(item_id: str) -> dict:
     """Build a minimal item dict for ids that aren't in the catalog.
 
@@ -120,6 +150,15 @@ def apply_starting_loadout(
     gold: int = inventory_config.starting_gold[gold_key] if gold_key else 0
 
     catalog_by_id = {item.id: item for item in inventory_config.item_catalog}
+
+    # Upgrade builder-produced item_hint dicts (from chargen scene choices
+    # like "Mystery Compass") against the catalog. Without this, those
+    # items ship to the UI with the builder's stub metadata —
+    # ``category: weapon`` + ``description: "Starting equipment: X"``.
+    items_upgraded = _upgrade_hint_items_from_catalog(
+        character.core.inventory.items, catalog_by_id
+    )
+
     items_added = 0
     for item_id in equipment_ids:
         catalog_item = catalog_by_id.get(item_id)
@@ -132,12 +171,13 @@ def apply_starting_loadout(
     if gold:
         character.core.inventory.gold += gold
 
-    if items_added or gold:
+    if items_added or gold or items_upgraded:
         logger.info(
             "chargen.starting_equipment — wired from inventory.yaml "
-            "class=%s items_added=%d gold_added=%d",
+            "class=%s items_added=%d items_upgraded=%d gold_added=%d",
             class_name,
             items_added,
+            items_upgraded,
             gold,
         )
 

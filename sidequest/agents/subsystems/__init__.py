@@ -7,6 +7,7 @@ of dispatches, respecting depends_on and idempotency keys.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,41 @@ from sidequest.telemetry.spans import (
 logger = logging.getLogger(__name__)
 
 SubsystemCallable = Callable[..., Awaitable["SubsystemOutput"]]
+
+
+def _filter_context_for_callable(
+    fn: SubsystemCallable, context: dict[str, Any]
+) -> dict[str, Any]:
+    """Return only the ``context`` keys that ``fn`` actually accepts.
+
+    Subsystems have heterogeneous signatures — ``run_npc_agency`` requires
+    ``npc_registry`` (kw-only), ``run_distinctive_detail`` takes only the
+    ``dispatch``. Blasting ``**context`` into either raises TypeError:
+    the registry-required subsystem fails on missing kwarg if context is
+    empty, and the dispatch-only subsystem fails on unexpected kwarg if
+    context is full. Filtering by signature keeps both happy.
+
+    If ``fn`` declares ``**kwargs``, the full context is forwarded.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return dict(context)
+    accepts_var_keyword = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    if accepts_var_keyword:
+        return dict(context)
+    accepted_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    }
+    return {k: v for k, v in context.items() if k in accepted_names}
 
 
 @dataclass
@@ -177,8 +213,15 @@ async def run_dispatch_bank(
                     sub_span.set_attribute("error", "unknown_subsystem")
                     sub_span.set_attribute("produced_directives", 0)
                     continue
+                # Filter ``context`` to only the kwargs ``fn`` declares —
+                # subsystems have heterogeneous signatures (e.g.,
+                # ``run_npc_agency`` requires ``npc_registry`` but
+                # ``run_distinctive_detail`` accepts only ``dispatch``).
+                # Without filtering, blasting ``**context`` into the latter
+                # raises ``TypeError: unexpected keyword argument``.
+                fn_kwargs = _filter_context_for_callable(fn, context)
                 try:
-                    out = await fn(d, **context)
+                    out = await fn(d, **fn_kwargs)
                 except Exception as exc:
                     logger.warning(
                         "subsystems.dispatch_failed subsystem=%s key=%s exc=%s",

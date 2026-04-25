@@ -196,3 +196,77 @@ def test_builder_item_hints_are_preserved() -> None:
     assert ids == ["family_charm", "rusted_lantern"], (
         "loadout must append to existing items, not replace them"
     )
+
+
+def test_builder_item_hint_upgraded_from_catalog() -> None:
+    """Builder stub (category=weapon, boilerplate description) is rewritten
+    from the catalog when the id matches."""
+    char = _make_character("Delver")
+    # Simulate what CharacterBuilder emits for a scene item_hint — bogus
+    # category "weapon" + "Starting equipment:" boilerplate description.
+    char.core.inventory.items.append(
+        {
+            "id": "rusted_lantern",
+            "name": "Rusted Lantern",
+            "description": "Starting equipment: Rusted Lantern",
+            "category": "weapon",
+            "value": 10,
+            "weight": 3.0,
+            "rarity": "common",
+            "narrative_weight": 0.3,
+            "tags": [],
+            "equipped": True,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
+        }
+    )
+    config = InventoryConfig(
+        item_catalog=_basic_catalog(),
+        starting_equipment={"Delver": []},
+        starting_gold={"Delver": 0},
+    )
+
+    apply_starting_loadout(char, config)
+
+    upgraded = char.core.inventory.items[0]
+    assert upgraded["category"] == "tool", "catalog category must win over stub"
+    assert upgraded["description"] == "Throws a weak amber glow."
+    assert upgraded["tags"] == ["light"]
+    assert upgraded["equipped"] is True, (
+        "builder-set equipped flag must be preserved through upgrade"
+    )
+    assert upgraded["quantity"] == 1
+
+
+def test_hint_upgrade_skipped_when_id_not_in_catalog() -> None:
+    """Unknown item_hint ids keep their builder metadata — no silent drop."""
+    char = _make_character("Delver")
+    char.core.inventory.items.append(
+        {
+            "id": "unknown_trinket",
+            "name": "Unknown Trinket",
+            "description": "Starting equipment: Unknown Trinket",
+            "category": "weapon",
+            "value": 10,
+            "weight": 3.0,
+            "rarity": "common",
+            "narrative_weight": 0.3,
+            "tags": [],
+            "equipped": True,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
+        }
+    )
+    config = InventoryConfig(
+        item_catalog=_basic_catalog(),
+        starting_equipment={"Delver": []},
+        starting_gold={"Delver": 0},
+    )
+
+    apply_starting_loadout(char, config)
+
+    # Item still present, unchanged — we don't silently drop it.
+    assert [i["id"] for i in char.core.inventory.items] == ["unknown_trinket"]
+    assert char.core.inventory.items[0]["category"] == "weapon"
