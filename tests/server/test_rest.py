@@ -126,6 +126,36 @@ def test_list_genres_has_worlds(tmp_path):
     assert world["inspirations"] == ["Tombstone", "High Noon"]
 
 
+def test_list_genres_skips_symlinked_world_aliases(tmp_path):
+    """A world directory that is a symlink to another world (used as a
+    backwards-compat alias for renamed slugs) must NOT be listed as a
+    separate world. Otherwise the lobby renders the same world twice
+    under both the old and new slug, with identical display names.
+    """
+    packs_dir = tmp_path / "genre_packs"
+    packs_dir.mkdir()
+    _create_mock_genre_pack(packs_dir, "caverns_and_claudes", "dungeon_survivor")
+
+    # Create a backwards-compat symlink alias: primetime → dungeon_survivor
+    worlds_dir = packs_dir / "caverns_and_claudes" / "worlds"
+    (worlds_dir / "primetime").symlink_to(
+        worlds_dir / "dungeon_survivor", target_is_directory=True
+    )
+
+    saves_dir = tmp_path / "saves"
+    saves_dir.mkdir()
+    app = create_app(
+        genre_pack_search_paths=[packs_dir],
+        save_dir=saves_dir,
+    )
+    client = TestClient(app)
+    worlds = client.get("/api/genres").json()["caverns_and_claudes"]["worlds"]
+    slugs = [w["slug"] for w in worlds]
+    assert slugs == ["dungeon_survivor"], (
+        f"symlinked alias must be skipped; got {slugs}"
+    )
+
+
 def test_list_genres_empty_when_no_packs_dir(tmp_path):
     """GET /api/genres returns {} when no valid genre pack directories exist."""
     nonexistent = tmp_path / "no_such_dir"
