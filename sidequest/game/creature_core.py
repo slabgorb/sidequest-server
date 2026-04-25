@@ -28,6 +28,7 @@ class RecoveryTrigger(str):
     OnResolution = "OnResolution"
     OnRest = "OnRest"
     OnSceneChange = "OnSceneChange"
+    OnYield = "OnYield"
 
 
 class EdgeThreshold(BaseModel):
