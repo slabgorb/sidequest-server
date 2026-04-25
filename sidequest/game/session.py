@@ -430,6 +430,16 @@ class GameSnapshot(BaseModel):
     # Named resource pools (story 42-2 — ADR-033 port)
     resources: dict[str, ResourcePool] = Field(default_factory=dict)
 
+    # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
+    # ``player_id`` → ``character.core.name`` so a slug-resume can route
+    # an unbound player_id to chargen instead of handing them the first
+    # character it finds. Populated by ``_chargen_confirmation`` on
+    # commit; consumed by ``_handle_slug_connect`` to decide ``State.Playing``
+    # vs ``State.Creating`` per player. Empty on solo / pre-MP saves —
+    # the slug-connect path treats an empty map plus non-empty
+    # ``characters`` as a single-character resume (back-compat).
+    player_seats: dict[str, str] = Field(default_factory=dict)
+
     # ------------------------------------------------------------------
     # Legacy save migration (story 42-2 / resource-consolidation phase 4)
     #

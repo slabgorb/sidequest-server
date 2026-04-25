@@ -26,13 +26,12 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 
 if TYPE_CHECKING:
-    from sidequest.game.encounter import StructuredEncounter
     from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
 from sidequest.agents.local_dm import LocalDM
-from sidequest.agents.orchestrator import NpcMention, Orchestrator, TurnContext
+from sidequest.agents.orchestrator import Orchestrator, TurnContext
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
@@ -46,10 +45,8 @@ from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
     CharacterBuilder,
-    humanize_snake_case,
 )
 from sidequest.game.character import Character
-from sidequest.game.creature_core import CreatureCore
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_embedding import (
     embed_pending_fragments,
@@ -71,8 +68,6 @@ from sidequest.game.room_movement import (
 from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
-    NpcRegistryEntry,
-    PartyPeer,
 )
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -86,7 +81,6 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.world import NavigationMode
 from sidequest.protocol import GameMessage, sanitize_player_text
-from sidequest.protocol.dispatch import DispatchPackage
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     AudioCueMessage,
@@ -97,8 +91,6 @@ from sidequest.protocol.messages import (
     CharacterCreationPayload,
     ConfrontationMessage,
     ConfrontationPayload,
-    ErrorMessage,
-    ErrorPayload,
     GamePausedMessage,
     GamePausedPayload,
     GameResumedMessage,
@@ -110,8 +102,6 @@ from sidequest.protocol.messages import (
     NarrationPayload,
     PartyStatusMessage,
     PartyStatusPayload,
-    PlayerPresenceMessage,
-    PlayerPresencePayload,
     RenderQueuedMessage,
     RenderQueuedPayload,
     SeatConfirmedMessage,
@@ -136,8 +126,6 @@ from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
-    SPAN_NPC_AUTO_REGISTERED,
-    SPAN_NPC_REINVENTED,
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     orchestrator_process_action_span,
 )
@@ -1284,7 +1272,16 @@ class WebSocketSessionHandler:
             saved = store.load()
             if saved is not None:
                 snapshot = saved.snapshot
-                has_character = bool(snapshot.characters)
+                # Per-player chargen gate (playtest 2026-04-25). MP: a new
+                # player_id joining a slug that already has a character must
+                # route to chargen, not auto-claim the existing PC. Use the
+                # snapshot.player_seats binding when present; fall back to
+                # legacy "any character" gate for solo / pre-MP saves where
+                # player_seats is empty.
+                if snapshot.player_seats:
+                    has_character = player_id in snapshot.player_seats
+                else:
+                    has_character = bool(snapshot.characters)
                 # Rename-on-resume: pre-fix saves stored ``core.name`` as the
                 # opaque player UUID because chargen used ``with_lobby_name``
                 # AFTER the name fix landed. Detect the UUID pattern and
@@ -2180,18 +2177,11 @@ class WebSocketSessionHandler:
         # is wired in here. Rust parity: connect.rs:1745-1864.
         apply_starting_loadout(character, sd.genre_pack.inventory)
 
-        # Multiplayer support: another PC may have already committed for
-        # this slug and persisted a fully-materialized snapshot (world
-        # history, scenario, region/room init, peer characters). Detect
-        # that case by reloading from the store BEFORE rebuilding — if
-        # we find existing characters, append this PC to the persisted
-        # snapshot instead of clobbering it.
-        #
-        # Why reload here: each socket has its own ``_SessionData`` and
-        # ``sd.snapshot`` was loaded at slug-connect time, BEFORE the
-        # peer's commit. By the moment the second player confirms, the
-        # peer may have persisted their own commit on a different socket;
-        # the only authoritative shared state is the SQLite save.
+        # MP: peer may have already committed and persisted a fully-
+        # materialized snapshot. Reload-before-rebuild so we can append
+        # this PC to the shared snapshot instead of clobbering the peer's
+        # state. Each socket's ``sd.snapshot`` was loaded at slug-connect
+        # time, before the peer's commit; SQLite is the only shared truth.
         existing_saved = sd.store.load()
         existing_chars: list = []
         if existing_saved is not None and existing_saved.snapshot.characters:
@@ -2199,19 +2189,9 @@ class WebSocketSessionHandler:
         is_first_commit = not existing_chars
 
         if is_first_commit:
-            # World materialization (Story 2.3 Slice C). Build a fresh
-            # snapshot from pack history at Fresh maturity (chargen is always
-            # Fresh — the player just arrived), then inject the built
-            # character. Replaces ``sd.snapshot`` so history chapters' lore,
-            # NPCs, notes, and scene context (location/time_of_day/atmosphere/
-            # active_stakes) populate the snapshot the narrator will read.
-            # Rust parity: connect.rs:1892-1946.
-            #
-            # Parse failure → log-and-fall-back to an empty snapshot with
-            # just genre/world slugs set (Rust parity: ``unwrap_or_else``
-            # with a warn log). The dispatch must not hard-fail on malformed
-            # pack history — the player is mid-confirm and the character is
-            # already built.
+            # World materialization (Story 2.3 Slice C / Rust connect.rs:1892).
+            # Parse failure → empty-snapshot fallback (must not hard-fail mid-
+            # commit when the character is already built).
             try:
                 materialized = materialize_from_genre_pack(
                     _world_history_value(sd.genre_pack, sd.world_slug),
@@ -2229,10 +2209,8 @@ class WebSocketSessionHandler:
                 materialized = GameSnapshot(
                     genre_slug=sd.genre_slug, world_slug=sd.world_slug
                 )
-            # The fresh chapter may have authored an "Adventurer" placeholder
-            # character — discard it; the chargen-built character owns that
-            # slot. Inventory on the built character already reflects the
-            # post-loadout state from Slice A.
+            # Discard the "Adventurer" placeholder the fresh chapter may
+            # author — the chargen-built character owns that slot.
             materialized.characters = [character]
             sd.snapshot = materialized
             span.add_event(
@@ -2248,12 +2226,9 @@ class WebSocketSessionHandler:
                 },
             )
 
-            # Scenario binding (Story 2.3 Slice D). When the pack declares a
-            # scenario, bind the first one to a ScenarioState, seed matching
-            # NPC belief states, and stash the chosen pack on the session
-            # for later consumers (pressure events, scene budget, accusation
-            # UI). Rust parity: connect.rs:1948-2023. No-op when the pack
-            # has no scenarios.
+            # Scenario binding (Slice D / connect.rs:1948). No-op without
+            # scenarios; sets active_scenario on the session for later
+            # pressure / scene-budget / accusation consumers.
             bind_result = bind_scenario(
                 sd.genre_pack,
                 sd.snapshot,
@@ -2264,26 +2239,11 @@ class WebSocketSessionHandler:
                 _, active_pack = bind_result
                 sd.active_scenario = active_pack
 
-            # Room-graph init (Story 2.3 Slice E). When the selected world
-            # uses ``navigation_mode: room_graph`` and loaded a non-empty
-            # rooms list, set ``snap.location`` to the entrance room. Rust
-            # parity: connect.rs:2025-2069. No-op for region-mode worlds
-            # (the rules-based default_location path handles those; lands
-            # with a later slice when the snapshot currently leaves it
-            # blank). RoomGraphInitError is a pack authoring bug — log
-            # loudly at error level and leave ``snap.location`` blank
-            # rather than hard-fail the confirmation frame.
             world = sd.genre_pack.worlds.get(sd.world_slug)
 
-            # Region init (Story 37-31). Runs for every world that carries
-            # cartography, regardless of navigation mode: region-mode worlds
-            # need current_region to be their canonical location, and
-            # room_graph worlds still surface a region label alongside the
-            # room-level position so the Map tab is load-bearing from turn
-            # 1. RegionInitError is a pack authoring bug (missing / stale
-            # starting_region) — log loudly at error level and leave
-            # current_region blank rather than strand the player mid-
-            # commit, matching the room_graph error path.
+            # Region init (Story 37-31). Runs for every world with
+            # cartography. Init errors are pack-authoring bugs — log loud,
+            # don't hard-fail the confirmation frame.
             if world is not None:
                 try:
                     region_id = init_region_location(sd.snapshot, world.cartography)
@@ -2368,12 +2328,10 @@ class WebSocketSessionHandler:
                         },
                     )
         else:
-            # Multiplayer second commit. Reuse the peer's persisted
-            # snapshot (already materialized: world history, scenario,
-            # region, room init, peer character) and append our PC.
-            # Skips world materialize / scenario bind / region+room init
-            # — the peer's commit owns those and re-running them would
-            # clobber any state the peer accumulated since.
+            # MP second commit. Reuse the peer's persisted snapshot
+            # (world / scenario / region / room already initialized) and
+            # append our PC. Skipping init prevents clobbering anything
+            # the peer accumulated since their commit.
             sd.snapshot = existing_saved.snapshot
             existing_names = {c.core.name for c in sd.snapshot.characters}
             if character.core.name not in existing_names:
@@ -2412,14 +2370,9 @@ class WebSocketSessionHandler:
                 len(sd.snapshot.characters),
             )
 
-        # Lore seeding (Story 2.3 Slice F). Must run BEFORE clearing
-        # the builder — the builder owns the scene list, and the
-        # seeder reads per-choice label/description text to build
-        # Character-category lore fragments. Rust parity:
-        # connect.rs:2196-2201 ("seed_lore_from_char_creation BEFORE
-        # clearing the builder"). Without this, backstory choices
-        # made during chargen are invisible to the narrator's RAG
-        # retrieval pipeline.
+        # Lore seeding (Slice F / connect.rs:2196). Must run BEFORE
+        # clearing the builder — the seeder reads scene choices to
+        # build Character-category lore fragments for narrator RAG.
         lore_added = seed_lore_from_char_creation(
             sd.lore_store, list(builder.scenes())
         )
@@ -2454,17 +2407,11 @@ class WebSocketSessionHandler:
             component="rag",
         )
 
-        # NPC registry reset (Story 2.3 Slice G). A fresh character
-        # entering the world must not inherit chargen-tier NPC name
-        # extractions (the character's own name, lobby filler, etc.).
-        # World-level state — lore, tropes, region discovery, world
-        # history — MUST persist; only the per-narration NPC registry
-        # is wiped. Rust parity: connect.rs:2136-2157.
-        #
-        # Multiplayer: only the FIRST commit clears. The second commit
-        # must preserve any NPCs the peer's opening turn already
-        # registered; clearing them would strand peer-narrated NPCs
-        # halfway through their narrative arcs.
+        # NPC registry reset (Slice G / connect.rs:2136). Drops chargen-
+        # tier name extractions (player's own name, lobby filler) so the
+        # narrator starts clean. Lore / tropes / regions / history persist.
+        # MP: only the first commit clears — second-commit preservation
+        # avoids stranding peer-narrated NPCs mid-arc.
         if is_first_commit:
             prev_registry_len = len(sd.snapshot.npc_registry)
             sd.snapshot.npc_registry.clear()
@@ -2487,12 +2434,15 @@ class WebSocketSessionHandler:
                 prev_registry_len,
             )
 
-        # Persist (Story 2.3 Slice G). Writes the fully-populated
-        # snapshot — character in characters[], NPCs from world
-        # materialization, scenario bound, room-graph entrance set
-        # — to SQLite so a reconnect hits has_character=True and
-        # skips chargen. Without this, the player walks chargen
-        # again on every connect. Rust parity: connect.rs:2174-2180.
+        # MP per-player chargen binding (playtest 2026-04-25). Maps
+        # player_id → character_name so slug-resume routes new players
+        # to chargen instead of auto-claiming an existing PC.
+        if sd.player_id and character.core.name:
+            sd.snapshot.player_seats[sd.player_id] = character.core.name
+
+        # Persist (Slice G / connect.rs:2174). Snapshot save makes the
+        # next slug-resume hit has_character=True; failure must not
+        # strand the player mid-commit (log loud, continue).
         try:
             sd.store.save(sd.snapshot)
             span.add_event(
@@ -2512,11 +2462,8 @@ class WebSocketSessionHandler:
                 sd.player_name,
             )
         except Exception as exc:
-            # Persistence failure must NOT strand the player mid-
-            # commit — log loudly (not silent) and proceed. On next
-            # reconnect the save will be absent so chargen repeats;
-            # the OTEL event surfaces the underlying fault for the
-            # GM panel / ops review.
+            # Don't strand mid-commit — log + OTEL event, then proceed.
+            # On next reconnect the save will be absent so chargen repeats.
             logger.error(
                 "session.persist_failed_at_chargen_complete genre=%s world=%s error=%s",
                 sd.genre_slug,
@@ -2534,12 +2481,9 @@ class WebSocketSessionHandler:
                 },
             )
 
-        # Flip state to Playing (Story 2.3 Slice G). Before this, the
-        # session stayed in Creating until the first PLAYER_ACTION —
-        # which meant a disconnect-between-confirmation-and-first-
-        # action lost the save state flag. Now the transition happens
-        # atomically with persistence. Rust parity: connect.rs:2183
-        # (session.complete_character_creation).
+        # Flip to Playing atomically with persistence (Slice G /
+        # connect.rs:2183). Pre-fix, a disconnect between confirm and
+        # first action lost the save-state flag.
         self._state = _State.Playing
 
         sd.builder = None
@@ -2560,17 +2504,10 @@ class WebSocketSessionHandler:
             CharacterCreationMessage(payload=payload, player_id=player_id)
         ]
 
-        # PARTY_STATUS snapshot (Story 2.3 Slice H / Rust connect.rs:2533-2609).
-        # Emits the populated character sheet so the client Character
-        # tab lands populated at session-start without waiting for the
-        # first turn's PARTY_STATUS update.
-        #
-        # Multiplayer: also broadcast to peers in the room so a player
-        # who already finished chargen sees the new arrival in their
-        # Party panel without waiting for their own turn-end refresh.
-        # The same frame goes to every socket — _build_session_start
-        # _party_status enumerates every PC, and clients merge by
-        # player_id on receipt.
+        # PARTY_STATUS snapshot (Slice H / connect.rs:2533). Lands the
+        # Character tab populated at session-start. MP: also broadcast
+        # to peers so they see the new arrival without waiting for their
+        # own turn-end refresh.
         try:
             party_status_msg = self._build_session_start_party_status(
                 sd, character, player_id
@@ -2605,9 +2542,7 @@ class WebSocketSessionHandler:
                 },
             )
         except Exception as exc:
-            # The character-snapshot frame is a convenience for the UI;
-            # a failure to build it MUST NOT block the player from
-            # entering the world. Log loud and continue.
+            # Snapshot frame is UI convenience — log loud, don't block.
             logger.error(
                 "session.start.character_snapshot_failed player=%s error=%s",
                 sd.player_name,
@@ -2622,11 +2557,9 @@ class WebSocketSessionHandler:
                 },
             )
 
-        # Opening-turn bootstrap (Story 2.3 Slice H / Rust connect.rs:2270-2529).
-        # Fires the narrator using ``opening_seed`` (or a generic look-
-        # around fallback) and ``opening_directive`` injected into the
-        # Early zone. Consumes both fields on the session so subsequent
-        # PLAYER_ACTION turns run directive-free.
+        # Opening-turn bootstrap (Slice H / connect.rs:2270). Fires
+        # narrator with opening_seed + opening_directive (Early zone),
+        # consumed once so subsequent turns run directive-free.
         opening_messages = await self._run_opening_turn_narration(
             sd, player_id, span
         )
@@ -3785,13 +3718,9 @@ class WebSocketSessionHandler:
             equipment=equipment,
         )
 
-        # Pull the currency noun from the active genre pack's
-        # inventory.yaml::currency.name so the UI can render
-        # "500 credits" in space_opera instead of the hardcoded
-        # "500 gold" (pingpong 2026-04-24 fantasy-leak bug).
-        # Falls to None when the pack doesn't declare one — UI renders
-        # a neutral fallback (never the word "gold" for non-fantasy
-        # genres). No silent fallback to a default currency noun.
+        # Currency noun from inventory.yaml::currency.name (pingpong
+        # 2026-04-24 fantasy-leak bug). None → UI neutral fallback;
+        # no silent default to "gold".
         currency_name: str | None = None
         if sd.genre_pack.inventory is not None and sd.genre_pack.inventory.currency is not None:
             currency_name = sd.genre_pack.inventory.currency.name
@@ -3849,19 +3778,11 @@ class WebSocketSessionHandler:
         character: Character,
         player_id: str,
     ) -> PartyStatusMessage:
-        """Build the PARTY_STATUS frame emitted at the end of chargen.
+        """PARTY_STATUS frame at chargen end (Rust connect.rs:2533).
 
-        Carries a fully populated :class:`CharacterSheetDetails` so the
-        client's Character tab lands populated on session-start. Rust
-        parity: connect.rs:2533-2609 (`session_start_party_status`).
-
-        Multiplayer: enumerates every PC in ``sd.snapshot.characters``
-        so a player who commits second sees the peer in their party
-        panel and the peer sees the new arrival on the next refresh
-        broadcast. Maps each character's slot label back to the
-        seating player_id via the room's seat table; falls back to
-        a stable ``peer:<character_name>`` synthetic id when no seat
-        record exists (solo path / room not yet bound).
+        MP: enumerates every PC; maps each slot back to its seating
+        player_id via the room. Falls back to ``peer:<name>`` when
+        no seat record is available.
         """
         seat_map: dict[str, str] = {}
         if self._room is not None:
@@ -3870,15 +3791,10 @@ class WebSocketSessionHandler:
                 seat_map = seat_lookup()
 
         members: list[PartyMember] = []
-        # Use snapshot.characters when populated (multiplayer + post-chargen
-        # path). When the snapshot is mid-chargen and the character isn't
-        # yet in the snapshot list (legacy / solo) fall back to building
-        # only the requesting socket's PC.
         all_chars = list(sd.snapshot.characters or [])
         if not all_chars:
             all_chars = [character]
-        # Stable ordering: requesting-socket PC first, then peers in
-        # snapshot order. Keeps Party panel layout deterministic.
+        # Stable ordering: self first, then peers in snapshot order.
         self_chars = [c for c in all_chars if c.core.name == character.core.name]
         peer_chars = [c for c in all_chars if c.core.name != character.core.name]
         for char in self_chars + peer_chars:
@@ -3901,1073 +3817,53 @@ class WebSocketSessionHandler:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Module-level helpers — extracted to session_helpers.py and narration_apply.py.
+# Re-exported here so existing imports (tests, external callers) keep working.
 # ---------------------------------------------------------------------------
 
-
-def build_secret_note_events(
-    removed: list,
-    *,
-    turn_id: str,
-) -> list[MessageEnvelope]:
-    """Build SECRET_NOTE envelopes from prompt-redacted dispatch entries.
-
-    Group G Task 6. ``removed`` is the second element of the tuple returned
-    by :func:`sidequest.agents.prompt_redaction.redact_dispatch_package`
-    (also stashed on ``NarrationTurnResult.secret_routes``).
-
-    Only ``SubsystemDispatch`` entries currently produce SECRET_NOTE events.
-    ``NarratorDirective`` entries were never externally visible; their
-    removal is already expressed by the narrator not mentioning the event.
-    ``LethalityVerdict`` does not carry a VisibilityTag in the current
-    protocol shape, so it falls through here too.
-
-    ``origin_seq`` is ``0`` — the session handler's event-log append assigns
-    the real seq at dispatch time (same pattern as NARRATION).
-    """
-    import json
-
-    from sidequest.protocol.dispatch import SubsystemDispatch
-
-    out: list[MessageEnvelope] = []
-    for entry in removed:
-        if not isinstance(entry, SubsystemDispatch):
-            continue
-        payload = {
-            "turn_id": turn_id,
-            "idempotency_key": entry.idempotency_key,
-            "subsystem": entry.subsystem,
-            "params": entry.params,
-            "_visibility": {
-                "visible_to": entry.visibility.visible_to,
-                "fidelity": entry.visibility.perception_fidelity,
-            },
-        }
-        out.append(MessageEnvelope(
-            kind="SECRET_NOTE",
-            payload_json=json.dumps(payload),
-            origin_seq=0,
-        ))
-    return out
-
-
-def emit_secret_notes(
-    *,
-    secret_routes: list,
-    turn_id: str,
-    event_log,
-) -> None:
-    """Log SECRET_NOTE events for every prompt-redacted dispatch on the turn.
-
-    Consumes ``NarrationTurnResult.secret_routes`` (Task 5) and appends one
-    SECRET_NOTE event per redacted ``SubsystemDispatch`` to the event log,
-    so the same ProjectionFilter fan-out path that handles NARRATION will
-    deliver each note to the recipients named in its ``_visibility.visible_to``.
-
-    ``event_log`` is the session's :class:`sidequest.game.event_log.EventLog`
-    (or a compatible fake in tests). Only the ``.append(kind, payload_json)``
-    shape is used, which matches the real EventLog surface.
-    """
-    for envelope in build_secret_note_events(secret_routes, turn_id=turn_id):
-        event_log.append(kind=envelope.kind, payload_json=envelope.payload_json)
-
-
-def aggregate_visibility(pkg: DispatchPackage) -> dict:
-    """Produce the _visibility sidecar for the canonical narration payload.
-
-    Rules:
-      - visible_to is the union of all non-redacted tags' visible_to lists.
-      - "all" is a stop word — any "all" tag collapses the union to "all".
-      - fidelity maps merge; later wins on collision (should not occur).
-      - redacted events (redact_from_narrator_canonical=True) are NOT aggregated
-        here — they route via SECRET_NOTE in Task 6 (not yet landed).
-    """
-    any_all = False
-    union: set[str] = set()
-    fidelity: dict[str, str] = {}
-    for pd in pkg.per_player:
-        for d in pd.dispatch:
-            if d.visibility.redact_from_narrator_canonical:
-                continue
-            if d.visibility.visible_to == "all":
-                any_all = True
-            else:
-                union.update(d.visibility.visible_to)
-            fidelity.update(d.visibility.perception_fidelity)
-    return {
-        "visible_to": "all" if any_all else sorted(union),
-        "fidelity": fidelity,
-    }
-
-
-def _resolve_acting_character_name(
-    sd: _SessionData, room: SessionRoom | None
-) -> str:
-    """Identify the requesting socket's PC name in the snapshot.
-
-    Resolution order:
-    1. Room seat lookup: if ``room`` is bound and ``sd.player_id`` has
-       a seat, use that seat's ``character_slot`` — the canonical
-       MP binding established at PLAYER_SEAT time.
-    2. Snapshot match by player_name: fall back to the character whose
-       core.name matches ``sd.player_name`` (resume path before any
-       seat claim has landed).
-    3. First character: legacy single-player default.
-    4. Lobby player_name: empty snapshot fallback.
-
-    Returning the wrong name causes the narrator's party-peer block
-    to misidentify peers (the bug the playtest GM saw — narrator
-    canonized the second player as a hireling because char_name
-    pointed at the wrong PC).
-    """
-    snapshot = sd.snapshot
-    if not snapshot.characters:
-        return sd.player_name
-    seat_lookup = getattr(room, "slot_to_player_id", None) if room is not None else None
-    if callable(seat_lookup) and sd.player_id:
-        seat_map = seat_lookup()
-        for slot, pid in seat_map.items():
-            if pid == sd.player_id and any(
-                c.core.name == slot for c in snapshot.characters
-            ):
-                return slot
-    for char in snapshot.characters:
-        if char.core.name == sd.player_name:
-            return char.core.name
-    return snapshot.characters[0].core.name
-
-
-def _build_turn_context(
-    sd: _SessionData,
-    *,
-    opening_directive: str | None = None,
-    lore_context: str | None = None,
-    room: SessionRoom | None = None,
-) -> TurnContext:
-    """Assemble the :class:`TurnContext` for a single narration turn.
-
-    Shared by :meth:`_handle_player_action` and the opening-turn
-    bootstrap (Slice H). ``opening_directive`` is consumed by the
-    narrator on turn 0 only — the caller is responsible for clearing
-    the session-level directive after the turn runs. ``lore_context``
-    (story 37-33) is the pre-rendered ``<lore>`` block from
-    :func:`sidequest.game.lore_embedding.retrieve_lore_context`;
-    ``None`` means no lore section is registered on this turn.
-
-    Multiplayer: ``room`` provides the {character_slot → player_id}
-    seat map so the acting PC can be identified by ``sd.player_id``
-    rather than guessed via ``snapshot.characters[0]`` (which is
-    arbitrary across player commit order). ``None`` (solo / pre-MP
-    paths) keeps the legacy "first character" behavior.
-    """
-    from sidequest.agents.encounter_render import render_encounter_summary
-    from sidequest.server.dispatch.confrontation import find_confrontation_def
-
-    snapshot = sd.snapshot
-    char_name = _resolve_acting_character_name(sd, room)
-
-    # Derive encounter flags from snapshot.encounter (Story 3.4).
-    # Uses category-based flags from the matched ConfrontationDef
-    # (combat / movement) rather than string-matching on encounter_type,
-    # and skips resolved encounters so a just-closed combat doesn't keep
-    # flipping in_combat=True.
-    encounter = snapshot.encounter
-    confrontation_def = None
-    encounter_summary = None
-    in_combat = False
-    in_chase = False
-    in_encounter = False
-    if encounter is not None and not encounter.resolved:
-        in_encounter = True
-        defs = sd.genre_pack.rules.confrontations if sd.genre_pack.rules else []
-        confrontation_def = find_confrontation_def(defs, encounter.encounter_type)
-        if confrontation_def is not None:
-            in_combat = confrontation_def.category == "combat"
-            in_chase = confrontation_def.category == "movement"
-        encounter_summary = render_encounter_summary(encounter)
-
-    # Group C — LethalityArbiter inputs. Policy is pack-level; cores are
-    # pulled straight off the live snapshot (every PC + every on-scene NPC).
-    # Map every PC to its owning player_id via the room's seat table; the
-    # acting socket's PC also lands under sd.player_id so the arbiter can
-    # look up the actor without an extra hop.
-    pc_cores_by_player: dict[str, CreatureCore] = {}
-    seat_lookup_fn = getattr(room, "slot_to_player_id", None) if room is not None else None
-    seat_map: dict[str, str] = seat_lookup_fn() if callable(seat_lookup_fn) else {}
-    char_to_player = {slot: pid for slot, pid in seat_map.items()}
-    for pc in snapshot.characters:
-        owner_pid = char_to_player.get(pc.core.name)
-        if owner_pid is None and pc.core.name == char_name:
-            owner_pid = sd.player_id
-        if owner_pid:
-            pc_cores_by_player[owner_pid] = pc.core
-    npc_cores_by_name: dict[str, CreatureCore] = {
-        npc.core.name: npc.core for npc in snapshot.npcs
-    }
-
-    # Story 37-36: canonical peer-identity packets for every non-self PC.
-    # Exclude the acting player's own character — char_name is the
-    # MP-aware resolution from _resolve_acting_character_name (single-
-    # player produces an empty list; zero-byte leak at the prompt layer).
-    party_peers: list[PartyPeer] = [
-        PartyPeer.from_character(pc)
-        for pc in snapshot.characters
-        if pc.core.name != char_name
-    ]
-
-    return TurnContext(
-        in_combat=in_combat,
-        in_chase=in_chase,
-        in_encounter=in_encounter,
-        encounter=encounter if in_encounter else None,
-        confrontation_def=confrontation_def,
-        encounter_summary=encounter_summary,
-        state_summary=snapshot.model_dump_json(indent=2),
-        narrator_verbosity="standard",
-        narrator_vocabulary="literary",
-        genre=sd.genre_slug,
-        genre_prompts=sd.genre_pack.prompts,
-        character_name=char_name,
-        current_location=(
-            _resolve_location_display(
-                sd.genre_pack, sd.world_slug, snapshot.location
-            )
-            or "Unknown"
-        ),
-        available_sfx=_sfx_ids_from_genre(sd.genre_pack),
-        npc_registry=list(snapshot.npc_registry),
-        npcs=list(snapshot.npcs),
-        party_peers=party_peers,
-        opening_directive=opening_directive,
-        world_context=sd.world_context,
-        lore_context=lore_context,
-        lethality_policy=sd.genre_pack.lethality_policy,
-        pc_cores_by_player=pc_cores_by_player,
-        npc_cores_by_name=npc_cores_by_name,
-    )
-
-
-def _find_confrontation_def(pack: GenrePack, confrontation_type: str) -> object | None:
-    """Look up the ConfrontationDef matching the narrator's hint.
-
-    Returns ``None`` when the pack doesn't declare that confrontation
-    type; the caller skips encounter context injection and the narrator
-    will run without beats (narration-only fallback).
-    """
-    rules = getattr(pack, "rules", None)
-    if rules is None:
-        return None
-    confrontations = getattr(rules, "confrontations", None) or []
-    for cd in confrontations:
-        if getattr(cd, "confrontation_type", None) == confrontation_type:
-            return cd
-    return None
-
-
-def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
-    """Extract the raw world ``history.yaml`` payload for a world.
-
-    Rust reads ``pack.worlds.get(world).and_then(|w| w.history.as_ref())``;
-    the Python loader stores ``history`` on ``World`` as an untyped
-    ``Any`` (loader.py:383). Returns ``None`` when the world doesn't
-    declare history — ``materialize_from_genre_pack`` treats ``None`` as
-    zero chapters, producing a snapshot with just genre/world slugs set.
-    """
-    world = pack.worlds.get(world_slug)
-    if world is None:
-        return None
-    return world.history
-
-
-def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:
-    return ErrorMessage(
-        type="ERROR",  # type: ignore[arg-type]
-        payload=ErrorPayload(
-            message=NonBlankString(message),
-            reconnect_required=reconnect_required,
-        ),
-        player_id="",
-    )
-
-
-def _presence_msg(player_id: str, state: str) -> PlayerPresenceMessage:
-    """Build a PLAYER_PRESENCE message for connect/disconnect events (MP-02 Task 4)."""
-    return PlayerPresenceMessage(
-        payload=PlayerPresencePayload(player_id=player_id, state=state),  # type: ignore[arg-type]
-    )
-
-
-def _resolve_location_display(
-    pack: GenrePack | None,
-    world_slug: str | None,
-    location: str | None,
-) -> str:
-    """Turn a location id (or narrator-emitted slug) into a human-readable
-    display name for the UI.
-
-    1. If the world's ``cartography.rooms`` contains a room whose ``id``
-       matches ``location``, return that room's ``name`` (authoritative).
-    2. If ``location`` looks like snake_case (lowercase with underscores),
-       humanize it — catches narrator confabulations like
-       ``backstage_corridor`` that aren't in the room graph.
-    3. Otherwise return the value unchanged.
-
-    Returns an empty string when ``location`` is ``None`` or blank.
-    """
-    if not location:
-        return ""
-    if pack is not None and world_slug:
-        world = pack.worlds.get(world_slug)
-        if world is not None:
-            cart = getattr(world, "cartography", None)
-            rooms = getattr(cart, "rooms", None) if cart is not None else None
-            if rooms:
-                for room in rooms:
-                    if getattr(room, "id", None) == location:
-                        return room.name
-    if "_" in location and location == location.lower():
-        return humanize_snake_case(location)
-    return location
-
-
-def _sfx_ids_from_genre(genre_pack: GenrePack) -> list[str]:
-    """Extract SFX IDs from genre audio config."""
-    if genre_pack.audio is None:
-        return []
-    sfx_lib = getattr(genre_pack.audio, "sfx_library", None)
-    if not sfx_lib:
-        return []
-    if isinstance(sfx_lib, list):
-        return [str(getattr(s, "id", s)) for s in sfx_lib]
-    return []
-
-
-def _apply_narration_result_to_snapshot(
-    snapshot: GameSnapshot,
-    result: object,
-    player_name: str,
-    *,
-    pack: GenrePack | None = None,
-    dice_failed: bool | None = None,
-) -> None:
-    """Apply game_patch extracted fields from NarrationTurnResult to the snapshot.
-
-    Phase 1: location, quest_updates, lore_established, npc_registry updates.
-    Story 3.4: encounter instantiation and beat application (when pack provided).
-
-    ``dice_failed`` carries the most recent dice outcome classification when
-    known. When ``True`` and the resolved BeatDef has a structured
-    ``failure_metric_delta``, the engine substitutes that value for the
-    beat's default ``metric_delta`` — matching the ``risk`` clause in the
-    pack YAML. ``None`` means "no dice outcome is attached to this turn";
-    the beat applies its default delta (legacy behavior). ``False`` is
-    success — default delta applies.
-    """
-    from sidequest.agents.orchestrator import NarrationTurnResult
-
-    if not isinstance(result, NarrationTurnResult):
-        return
-
-    # Location update
-    if result.location:
-        old_loc = snapshot.location
-        snapshot.location = result.location
-        if result.location not in snapshot.discovered_regions:
-            snapshot.discovered_regions.append(result.location)
-        logger.info(
-            "state.location_update old=%r new=%r player=%s",
-            old_loc,
-            result.location,
-            player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "location",
-                "before": old_loc,
-                "after": result.location,
-                "player_name": player_name,
-                "turn_number": snapshot.turn_manager.interaction,
-                "discovered_count": len(snapshot.discovered_regions),
-            },
-            component="state.location",
-        )
-
-    # Quest updates
-    if result.quest_updates:
-        for quest_id, status in result.quest_updates.items():
-            snapshot.quest_log[quest_id] = status
-        logger.info(
-            "state.quest_update count=%d player=%s",
-            len(result.quest_updates),
-            player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "quest_log",
-                "updates": dict(result.quest_updates),
-                "player_name": player_name,
-                "turn_number": snapshot.turn_manager.interaction,
-            },
-            component="quest_log",
-        )
-
-    # Inventory — apply items_gained / items_lost to the rolling player's
-    # character. Playtest 2026-04-24 pingpong "items_gained=1 on Warden
-    # defeat — brass memory core never appears in Inventory" exposed this
-    # wiring gap: the narrator's extraction emitted a watcher patch
-    # (session_handler.py ~line 2906) but never landed the item on the
-    # character's ``inventory.items`` list, so the UI inventory panel
-    # stayed out of sync with the narrative. The shape we write here
-    # matches ``_item_dict_from_catalog`` / ``_item_dict_minimal`` in
-    # ``dispatch/chargen_loadout.py`` so the UI's ``InventoryPanel``
-    # renders narrator-granted items the same way as starting equipment.
-    # items_lost removes the first matching name (case-insensitive) —
-    # no quantity math yet since narrator-granted items currently arrive
-    # as quantity=1 singletons.
-    if (result.items_gained or result.items_lost) and snapshot.characters:
-        character = snapshot.characters[0]
-        turn_num = snapshot.turn_manager.interaction
-
-        def _narrator_item_dict(entry: dict[str, object]) -> dict[str, object]:
-            name_val = str(entry.get("name", "") or "").strip() or "Unknown Item"
-            desc_val = str(entry.get("description", "") or "").strip() or (
-                "An item acquired during adventure."
-            )
-            category_raw = str(entry.get("category", "") or "").strip().lower()
-            # Narrator prompt allows weapon/armor/tool/consumable/quest/treasure/misc.
-            # Anything else normalizes to misc — don't silently fabricate a
-            # category the UI filter isn't prepared to render.
-            allowed = {
-                "weapon", "armor", "tool", "consumable", "quest", "treasure", "misc",
-            }
-            category = category_raw if category_raw in allowed else "misc"
-            # Derive a stable-ish id from the name for dedup/targeting. Not
-            # expected to collide with catalog ids (those use snake_case from
-            # inventory.yaml); narrator-granted items live in a separate
-            # ``narrator:`` namespace so UI telemetry can tell them apart.
-            slug = name_val.lower().replace(" ", "_").replace("-", "_")
-            return {
-                "id": f"narrator:{slug}",
-                "name": name_val,
-                "description": desc_val,
-                "category": category,
-                "value": 0,
-                "weight": 0.0,
-                "rarity": "common",
-                "narrative_weight": 0.5,
-                "tags": [],
-                "equipped": False,
-                "quantity": 1,
-                "uses_remaining": None,
-                "state": "Carried",
-            }
-
-        added_names: list[str] = []
-        for entry in result.items_gained or []:
-            item_dict = _narrator_item_dict(entry)
-            character.core.inventory.items.append(item_dict)
-            added_names.append(str(item_dict["name"]))
-
-        removed_names: list[str] = []
-        for entry in result.items_lost or []:
-            lost_name = str(entry.get("name", "") or "").strip().lower()
-            if not lost_name:
-                continue
-            for idx, existing in enumerate(character.core.inventory.items):
-                existing_name = str(existing.get("name", "") or "").strip().lower()
-                if existing_name == lost_name:
-                    character.core.inventory.items.pop(idx)
-                    removed_names.append(lost_name)
-                    break
-
-        logger.info(
-            "state.inventory_update player=%s turn=%d gained=%s lost=%s",
-            player_name,
-            turn_num,
-            added_names,
-            removed_names,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "inventory",
-                "op": "narrator_extracted",
-                "gained": added_names,
-                "lost": removed_names,
-                "player_name": player_name,
-                "turn_number": turn_num,
-            },
-            component="inventory",
-        )
-
-    # Lore established
-    if result.lore_established:
-        for lore in result.lore_established:
-            if lore not in snapshot.lore_established:
-                snapshot.lore_established.append(lore)
-
-    # NPC registry — upsert from npcs_present (story 37-44: auto-register +
-    # drift detection). Fires `npc.auto_registered` for new entries and
-    # `npc.reinvented` when narrator-provided pronouns/role diverge from the
-    # canonical registry entry, so the GM panel can surface identity drift.
-    turn_num = snapshot.turn_manager.interaction
-    for npc_mention in result.npcs_present:
-        existing = next(
-            (e for e in snapshot.npc_registry if e.name.lower() == npc_mention.name.lower()),
-            None,
-        )
-        if existing is None:
-            snapshot.npc_registry.append(
-                NpcRegistryEntry(
-                    name=npc_mention.name,
-                    role=npc_mention.role or None,
-                    pronouns=npc_mention.pronouns or None,
-                    appearance=npc_mention.appearance or None,
-                    last_seen_location=snapshot.location or None,
-                    last_seen_turn=turn_num,
-                )
-            )
-            logger.info(
-                "%s name=%r pronouns=%r role=%r turn=%d",
-                SPAN_NPC_AUTO_REGISTERED,
-                npc_mention.name,
-                npc_mention.pronouns or "",
-                npc_mention.role or "",
-                turn_num,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "npc_registry",
-                    "op": "auto_registered",
-                    "name": npc_mention.name,
-                    "pronouns": npc_mention.pronouns or "",
-                    "role": npc_mention.role or "",
-                    "turn_number": turn_num,
-                    "registry_len": len(snapshot.npc_registry),
-                },
-                component="npc_registry",
-            )
-        else:
-            _detect_npc_identity_drift(existing, npc_mention, turn_num)
-            existing.last_seen_turn = turn_num
-            existing.last_seen_location = snapshot.location or None
-            # Additive-only upsert: never overwrite a canonical field once set.
-            # Without this guard, _detect_npc_identity_drift logs drift and then
-            # the drifted value silently canonicalizes — warning fires once,
-            # then the registry permanently holds the wrong identity.
-            if npc_mention.role and not existing.role:
-                existing.role = npc_mention.role
-            if npc_mention.pronouns and not existing.pronouns:
-                existing.pronouns = npc_mention.pronouns
-            if npc_mention.appearance and not existing.appearance:
-                existing.appearance = npc_mention.appearance
-
-    # --- Encounter lifecycle (Story 3.4) ---
-    if pack is not None:
-        from sidequest.game.encounter import EncounterPhase, MetricDirection
-        from sidequest.server.dispatch.confrontation import find_confrontation_def
-        from sidequest.server.dispatch.encounter_lifecycle import (
-            instantiate_encounter_from_trigger,
-        )
-        from sidequest.telemetry.spans import (
-            combat_tick_span,
-            encounter_beat_applied_span,
-            encounter_beat_failure_branch_span,
-            encounter_empty_actor_list_span,
-            encounter_phase_transition_span,
-            encounter_resolved_span,
-        )
-
-        # (a) Narrator-initiated encounter
-        if result.confrontation and (
-            snapshot.encounter is None or snapshot.encounter.resolved
-        ):
-            # Lie-detector: narrator emitted confrontation but extraction has
-            # no npcs_present. Combatant list will be [player_name] only and
-            # the confrontation panel will render without adversaries. The
-            # proper fix is in the extraction prompt (narrator.py) requiring
-            # every adversary referenced in prose to appear in npcs_met —
-            # this span surfaces when that contract breaks. See pingpong
-            # "Confrontation panel has no enemy combatants" (2026-04-24).
-            if not result.npcs_present:
-                with encounter_empty_actor_list_span(
-                    encounter_type=result.confrontation,
-                    genre_slug=snapshot.genre_slug or "",
-                    player_name=player_name,
-                ):
-                    logger.warning(
-                        "encounter.empty_actor_list confrontation=%s player=%s — "
-                        "narrator emitted confrontation without npcs_present; "
-                        "panel will render with player only",
-                        result.confrontation,
-                        player_name,
-                    )
-            combatants = [e.name for e in result.npcs_present] or [player_name]
-            combatants = [player_name] + [c for c in combatants if c != player_name]
-            instantiate_encounter_from_trigger(
-                snapshot=snapshot,
-                pack=pack,
-                encounter_type=result.confrontation,
-                combatants=combatants,
-                hp=10,
-                genre_slug=snapshot.genre_slug,
-            )
-
-        # (b) Apply beat_selections
-        enc = snapshot.encounter
-        if enc is not None and not enc.resolved and result.beat_selections:
-            cdef = find_confrontation_def(
-                pack.rules.confrontations if pack.rules else [],
-                enc.encounter_type,
-            )
-            if cdef is None:
-                raise ValueError(
-                    f"active encounter type {enc.encounter_type!r} not in pack"
-                )
-            beat_by_id = {b.id: b for b in cdef.beats}
-            prev_phase = enc.structured_phase
-            # SOUL Agency + "Crunch in the Genre" — on a dice-replay turn
-            # (``dice_failed is not None`` signals DICE_THROW ran), the
-            # player's beat was already applied mechanically by the dice
-            # dispatch path in ``dispatch/dice.py``. Narrator-extracted
-            # ``beat_selections`` on this turn are *narrative*, not
-            # mechanical:
-            #
-            #   - Player-actor beats would double-play on the player's
-            #     behalf (playtest 2026-04-24 "Player auto-plays 'attack'
-            #     beat after failed Flank — Agency violation").
-            #   - NPC-actor beats using player-positive ``metric_delta``
-            #     values (every beat in mutant_wasteland rules is
-            #     described from the player's perspective) would push
-            #     momentum in unexpected directions and silently resolve
-            #     the encounter mid-turn (playtest 2026-04-24
-            #     "Confrontation tab disappears mid-fight").
-            #
-            # Filtering ALL beat_selections on a dice-replay turn keeps
-            # the dice roll as the single mechanical event of the turn
-            # and lets the narrator describe NPC responses narratively
-            # without invisible-mechanics side effects. Non-dice turns
-            # (free-text action while an encounter is active) are
-            # untouched — that's the narrator-drives-everything path.
-            selections = result.beat_selections
-            if dice_failed is not None and selections:
-                dropped = [(s.actor, s.beat_id) for s in selections]
-                logger.info(
-                    "encounter.agent_beat_selection_filtered "
-                    "reason=dice_replay_turn player=%s dropped=%s",
-                    player_name,
-                    dropped,
-                )
-                selections = []
-            for sel in selections:
-                beat = beat_by_id.get(sel.beat_id)
-                if beat is None:
-                    raise ValueError(
-                        f"unknown beat_id {sel.beat_id!r} for encounter "
-                        f"{enc.encounter_type!r}"
-                    )
-                # ADR-074 dice integration — if the most recent roll failed
-                # AND the beat defines a structured failure branch, apply
-                # the failure delta instead of the default. Matches the
-                # ``risk`` clause the narrator surfaces in the beat
-                # tooltip. When dice_failed is None or the beat has no
-                # failure branch, legacy behavior is preserved.
-                applied_delta = beat.metric_delta
-                took_failure_branch = (
-                    dice_failed is True
-                    and beat.failure_metric_delta is not None
-                )
-                if took_failure_branch:
-                    applied_delta = beat.failure_metric_delta
-                    with encounter_beat_failure_branch_span(
-                        encounter_type=enc.encounter_type,
-                        beat_id=sel.beat_id,
-                        actor=sel.actor,
-                        base_delta=beat.metric_delta,
-                        failure_delta=beat.failure_metric_delta,
-                    ):
-                        logger.info(
-                            "encounter.beat_failure_branch beat=%s actor=%s "
-                            "base=%d failure=%d effect=%r",
-                            sel.beat_id,
-                            sel.actor,
-                            beat.metric_delta,
-                            beat.failure_metric_delta,
-                            beat.failure_effect,
-                        )
-                with encounter_beat_applied_span(
-                    encounter_type=enc.encounter_type,
-                    actor=sel.actor,
-                    beat_id=sel.beat_id,
-                    metric_delta=applied_delta,
-                ):
-                    enc.metric.current += applied_delta
-                    # Ascending metrics clamp at 0 (port of Rust encounter.rs).
-                    if (
-                        enc.metric.direction == MetricDirection.Ascending
-                        and enc.metric.current < 0
-                    ):
-                        enc.metric.current = 0
-                enc.beat += 1
-                _advance_phase(enc)
-                with combat_tick_span(
-                    encounter_type=enc.encounter_type,
-                    beat=enc.beat,
-                    phase=(enc.structured_phase or EncounterPhase.Setup).value,
-                ):
-                    pass
-                # Direction-aware threshold resolution (port of Rust encounter.rs):
-                # Ascending fires on high only; Descending on low only; Bidirectional
-                # on either. Cross-checking the wrong boundary would falsely resolve
-                # a chase the moment its counter dipped below zero.
-                m = enc.metric
-                if m.direction == MetricDirection.Ascending:
-                    threshold_hit = (
-                        m.threshold_high is not None and m.current >= m.threshold_high
-                    )
-                elif m.direction == MetricDirection.Descending:
-                    threshold_hit = (
-                        m.threshold_low is not None and m.current <= m.threshold_low
-                    )
-                else:  # Bidirectional
-                    threshold_hit = (
-                        (m.threshold_high is not None and m.current >= m.threshold_high)
-                        or (m.threshold_low is not None and m.current <= m.threshold_low)
-                    )
-                if threshold_hit or beat.resolution:
-                    enc.resolved = True
-                    enc.structured_phase = EncounterPhase.Resolution
-                    enc.outcome = f"resolved at beat {enc.beat}"
-                    with encounter_resolved_span(
-                        encounter_type=enc.encounter_type,
-                        outcome=enc.outcome,
-                        source="metric",
-                    ):
-                        pass
-                    break
-            if prev_phase != enc.structured_phase:
-                with encounter_phase_transition_span(
-                    from_phase=(prev_phase.value if prev_phase else "None"),
-                    to_phase=(enc.structured_phase.value
-                              if enc.structured_phase else "None"),
-                    encounter_type=enc.encounter_type,
-                ):
-                    pass
-
-
-def _advance_phase(enc: StructuredEncounter) -> None:
-    """Promote encounter phase by beat count. Port of Rust encounter.rs ladder."""
-    from sidequest.game.encounter import EncounterPhase
-    if enc.structured_phase is None:
-        enc.structured_phase = EncounterPhase.Setup
-    ladder = {
-        0: EncounterPhase.Setup,
-        1: EncounterPhase.Opening,
-        2: EncounterPhase.Escalation,
-        3: EncounterPhase.Escalation,
-        4: EncounterPhase.Escalation,
-    }
-    enc.structured_phase = ladder.get(enc.beat, EncounterPhase.Climax)
-
-
-def apply_encounter_updates(
-    snapshot: GameSnapshot,
-    result: object,
-    genre_pack: GenrePack,
-    player_name: str,
-) -> None:
-    """Materialize, advance, and resolve encounter state from narrator output.
-
-    Three cases, in order:
-
-    1. No encounter active + narrator hinted a confrontation type: look up
-       the matching :class:`ConfrontationDef` in ``genre_pack.rules`` and
-       instantiate a :class:`StructuredEncounter` from the def's metric +
-       actor list (player + recently-mentioned hostile NPCs). Writes to
-       ``snapshot.encounter``.
-    2. Encounter active + narrator emitted ``beat_selections``: for each
-       selection, find the matching :class:`BeatDef` and apply its
-       ``metric_delta`` to the encounter's metric. Resolution beats (and
-       any metric crossing a threshold) mark ``encounter.resolved`` and
-       clear ``snapshot.encounter``.
-    3. Encounter active + narrator hinted a new confrontation type: no-op.
-       The narrator should not be starting a second encounter while one
-       is running; we trust the existing state.
-
-    Each step emits a ``state_transition`` watcher event tagged
-    ``component=encounter`` so the dashboard Subsystems tab surfaces the
-    mechanical loop Sebastien wants to see.
-    """
-    from sidequest.agents.orchestrator import NarrationTurnResult
-    from sidequest.game.encounter import (
-        EncounterActor,
-        EncounterMetric,
-        EncounterPhase,
-        MetricDirection,
-        StructuredEncounter,
-    )
-
-    if not isinstance(result, NarrationTurnResult):
-        return
-
-    confrontation_hint = result.confrontation
-    turn_num = snapshot.turn_manager.interaction
-
-    # Case 1 — start a new encounter.
-    if snapshot.encounter is None and confrontation_hint:
-        conf_def = _find_confrontation_def(genre_pack, confrontation_hint)
-        if conf_def is None:
-            logger.warning(
-                "encounter.skipped reason=no_matching_def type=%s player=%s",
-                confrontation_hint,
-                player_name,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "encounter",
-                    "op": "skipped",
-                    "reason": "no_matching_def",
-                    "confrontation_type": confrontation_hint,
-                },
-                component="encounter",
-                severity="warning",
-            )
-            return
-        # Build actors from the player character and any hostile NPCs the
-        # narrator referenced this turn. Keeps per-turn state simple —
-        # tactical grid is Phase 4. Hostile-role detection is a rough
-        # heuristic (anything whose role contains "combat", "hostile",
-        # "enemy", or a named role like "bandit"/"creature"); the
-        # narrator also gets a chance to refine this via later turns.
-        actors: list[EncounterActor] = []
-        if snapshot.characters:
-            player_actor_name = snapshot.characters[0].core.name or player_name
-        else:
-            player_actor_name = player_name
-        actors.append(
-            EncounterActor(name=player_actor_name, role="player", per_actor_state={})
-        )
-        hostile_keywords = {"combat", "hostile", "enemy", "combatant"}
-        for npc in result.npcs_present or []:
-            role = (npc.role or "").lower()
-            if any(k in role for k in hostile_keywords) or role in {"brood-mother", "predator"}:
-                actors.append(
-                    EncounterActor(name=npc.name, role="combatant", per_actor_state={})
-                )
-        # Convert the pack metric def into the live EncounterMetric.
-        md = conf_def.metric
-        direction_map = {
-            "ascending": MetricDirection.Ascending,
-            "descending": MetricDirection.Descending,
-            "bidirectional": MetricDirection.Bidirectional,
-        }
-        metric = EncounterMetric(
-            name=md.name,
-            current=md.starting,
-            starting=md.starting,
-            direction=direction_map.get(md.direction, MetricDirection.Bidirectional),
-            threshold_high=md.threshold_high,
-            threshold_low=md.threshold_low,
-        )
-        snapshot.encounter = StructuredEncounter(
-            encounter_type=conf_def.confrontation_type,
-            metric=metric,
-            beat=0,
-            structured_phase=EncounterPhase.Setup,
-            actors=actors,
-            outcome=None,
-            resolved=False,
-            mood_override=conf_def.mood,
-            narrator_hints=[],
-        )
-        logger.info(
-            "encounter.started type=%s metric=%s=%d actors=%d player=%s",
-            conf_def.confrontation_type,
-            metric.name,
-            metric.current,
-            len(actors),
-            player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "encounter",
-                "op": "started",
-                "confrontation_type": conf_def.confrontation_type,
-                "metric_name": metric.name,
-                "metric_current": metric.current,
-                "actors": [a.name for a in actors],
-                "turn_number": turn_num,
-            },
-            component="encounter",
-        )
-
-    # Case 2 — advance an active encounter via beat_selections.
-    if snapshot.encounter is not None and result.beat_selections:
-        conf_def = _find_confrontation_def(
-            genre_pack, snapshot.encounter.encounter_type
-        )
-        if conf_def is None:
-            return
-        beat_lookup = {b.id: b for b in conf_def.beats}
-        resolved_this_turn = False
-        for selection in result.beat_selections:
-            beat_id = getattr(selection, "beat_id", None) or ""
-            actor = getattr(selection, "actor", None) or ""
-            beat_def = beat_lookup.get(beat_id)
-            if beat_def is None:
-                logger.warning(
-                    "encounter.beat_skipped reason=unknown_beat_id beat_id=%r actor=%r",
-                    beat_id,
-                    actor,
-                )
-                _watcher_publish(
-                    "state_transition",
-                    {
-                        "field": "encounter",
-                        "op": "beat_skipped",
-                        "reason": "unknown_beat_id",
-                        "beat_id": beat_id,
-                        "actor": actor,
-                    },
-                    component="encounter",
-                    severity="warning",
-                )
-                continue
-            before = snapshot.encounter.metric.current
-            snapshot.encounter.metric.current += int(beat_def.metric_delta or 0)
-            snapshot.encounter.beat += 1
-            logger.info(
-                "encounter.beat_applied beat=%s actor=%s metric=%s %d->%d",
-                beat_id,
-                actor,
-                snapshot.encounter.metric.name,
-                before,
-                snapshot.encounter.metric.current,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "encounter",
-                    "op": "beat_applied",
-                    "beat_id": beat_id,
-                    "actor": actor,
-                    "metric_before": before,
-                    "metric_after": snapshot.encounter.metric.current,
-                    "metric_delta": beat_def.metric_delta,
-                    "turn_number": turn_num,
-                },
-                component="encounter",
-            )
-            if beat_def.resolution:
-                resolved_this_turn = True
-                snapshot.encounter.outcome = beat_def.id
-        # Threshold crossing — resolve the encounter.
-        metric = snapshot.encounter.metric
-        hit_high = (
-            metric.threshold_high is not None
-            and metric.current >= metric.threshold_high
-        )
-        hit_low = (
-            metric.threshold_low is not None
-            and metric.current <= metric.threshold_low
-        )
-        if resolved_this_turn or hit_high or hit_low:
-            etype = snapshot.encounter.encounter_type
-            outcome = (
-                snapshot.encounter.outcome
-                or ("threshold_high" if hit_high else "threshold_low" if hit_low else "resolved")
-            )
-            logger.info(
-                "encounter.resolved type=%s outcome=%s final_metric=%d",
-                etype,
-                outcome,
-                metric.current,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "encounter",
-                    "op": "resolved",
-                    "confrontation_type": etype,
-                    "outcome": outcome,
-                    "final_metric": metric.current,
-                    "turn_number": turn_num,
-                },
-                component="encounter",
-            )
-            snapshot.encounter = None
-
-
-def _render_url_from_path(image_path: str) -> str:
-    """Translate a daemon-returned filesystem path into a URL the UI can
-    fetch via the server's ``/renders/*`` static mount.
-
-    The daemon writes every image under ``SIDEQUEST_OUTPUT_DIR`` (or a
-    tempdir when the env var is unset). The server mounts that same
-    directory at ``/renders``, so the mapping is purely a prefix swap.
-    When the path isn't inside that root (tempdir the server can't see),
-    the absolute path is returned verbatim; the UI will fail to load the
-    image, but a clear 404 is better than a silent replacement.
-    """
-    import os as _os
-    import pathlib as _pathlib
-
-    root = _os.environ.get("SIDEQUEST_OUTPUT_DIR")
-    if not root or not image_path:
-        return image_path
-    try:
-        rel = _pathlib.Path(image_path).resolve().relative_to(
-            _pathlib.Path(root).resolve()
-        )
-    except ValueError:
-        return image_path
-    return "/renders/" + str(rel).replace(_os.sep, "/")
-
-
-def _detect_npc_identity_drift(
-    existing: NpcRegistryEntry,
-    mention: NpcMention,
-    turn_num: int,
-) -> None:
-    """Warn when a narrator-provided NPC mention disagrees with the canonical
-    registry entry on pronouns or role. Fires `npc.reinvented` at WARNING
-    level so the GM panel can surface drift (story 37-44).
-
-    Empty fields on the mention are treated as "no opinion" and never trigger
-    drift — only explicit disagreement counts. Pronoun and role comparisons
-    are case-insensitive. No return value; side-effect only (logger.warning).
-    Does not mutate `existing` or `mention`.
-    """
-    for field, m_val, e_val in (
-        ("pronouns", mention.pronouns, existing.pronouns),
-        ("role", mention.role, existing.role),
-    ):
-        if m_val and e_val and m_val.strip().lower() != e_val.strip().lower():
-            logger.warning(
-                "%s name=%r field=%s expected=%r narrator=%r turn=%d",
-                SPAN_NPC_REINVENTED,
-                existing.name,
-                field,
-                e_val,
-                m_val,
-                turn_num,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "npc_registry",
-                    "op": "reinvented",
-                    "name": existing.name,
-                    "drift_field": field,
-                    "expected": e_val,
-                    "narrator": m_val,
-                    "turn_number": turn_num,
-                },
-                component="npc_registry",
-                severity="warning",
-            )
+from sidequest.server.narration_apply import (  # noqa: E402 — back-compat re-export
+    _advance_phase,
+    _apply_narration_result_to_snapshot,
+    apply_encounter_updates,
+)
+from sidequest.server.session_helpers import (  # noqa: E402 — back-compat re-export
+    _build_turn_context,
+    _detect_npc_identity_drift,
+    _error_msg,
+    _find_confrontation_def,
+    _presence_msg,
+    _render_url_from_path,
+    _resolve_acting_character_name,
+    _resolve_location_display,
+    _sfx_ids_from_genre,
+    _world_history_value,
+    aggregate_visibility,
+    build_secret_note_events,
+    emit_secret_notes,
+)
+
+__all__ = [
+    # Top-level types defined in this module
+    "SentFrame",
+    "WebSocketSessionHandler",
+    "_SessionData",
+    "_State",
+    # Module-level helpers re-exported from session_helpers / narration_apply
+    "_advance_phase",
+    "_apply_narration_result_to_snapshot",
+    "_build_turn_context",
+    "_detect_npc_identity_drift",
+    "_error_msg",
+    "_find_confrontation_def",
+    "_presence_msg",
+    "_render_url_from_path",
+    "_resolve_acting_character_name",
+    "_resolve_location_display",
+    "_sfx_ids_from_genre",
+    "_world_history_value",
+    "aggregate_visibility",
+    "apply_encounter_updates",
+    "apply_turn_writes_for_test",
+    "build_secret_note_events",
+    "emit_secret_notes",
+]
