@@ -514,7 +514,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
         "beat_selections=%d confrontation=%r "
-        "has_location=%s gold_change=%r",
+        "has_location=%s gold_change=%r status_changes=%d",
         len(patch.get("footnotes", [])),
         len(patch.get("items_gained", [])),
         len(patch.get("npcs_present", patch.get("npcs_met", []))),
@@ -527,6 +527,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         patch.get("confrontation"),
         patch.get("location") is not None,
         patch.get("gold_change"),
+        len(patch.get("status_changes", [])),
     )
 
     prose = _strip_json_fence(raw)
@@ -552,6 +553,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         ],
         "gold_change": patch.get("gold_change"),
         "lore_established": patch.get("lore_established"),
+        "status_changes": patch.get("status_changes", []),
     }
 
 
@@ -1495,6 +1497,7 @@ class Orchestrator:
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
+                status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,
