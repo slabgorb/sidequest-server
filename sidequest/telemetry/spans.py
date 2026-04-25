@@ -1272,3 +1272,114 @@ def projection_cache_lazy_fill_span(
         attributes={"player_id": player_id},
     ) as span:
         yield span
+
+
+# ----------------------------------------------------------------------
+# Phase 2 deferred — currently-dead spans. Each Phase 2 family rollout
+# moves entries OUT of this baseline and into SPAN_ROUTES with proper
+# extract lambdas. See ADR-089 + docs/superpowers/specs/2026-04-25-otel-dashboard-restoration-design.md §4.1.
+# ----------------------------------------------------------------------
+FLAT_ONLY_SPANS.update(
+    {
+        # Turn pipeline
+        SPAN_TURN,  # turn_span() helper added; validator owns turn_complete
+        SPAN_TURN_BARRIER,
+        SPAN_TURN_STATE_UPDATE,
+        SPAN_TURN_SYSTEM_TICK,
+        SPAN_TURN_SYSTEM_TICK_TROPES,
+        SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
+        SPAN_TURN_MEDIA,
+        SPAN_TURN_TROPES,
+        SPAN_TURN_PHASE_TRANSITION,
+        SPAN_TURN_SLASH_COMMAND,
+        SPAN_TURN_PREPROCESS_LLM,
+        SPAN_TURN_PREPROCESS_PARSE,
+        SPAN_TURN_PREPROCESS_WISH_CHECK,
+        SPAN_TURN_ASSEMBLE,
+        # Narrator
+        SPAN_NARRATOR_SEALED_ROUND,
+        # Orchestrator
+        SPAN_ORCHESTRATOR_PROCESS_ACTION,
+        SPAN_ORCHESTRATOR_NARRATOR_SESSION_RESET,
+        SPAN_ORCHESTRATOR_GENRE_IDENTITY_INJECTION,
+        SPAN_ORCHESTRATOR_TACTICAL_GRID_INJECTION,
+        SPAN_ORCHESTRATOR_TROPE_BEAT_INJECTION,
+        SPAN_ORCHESTRATOR_PARTY_PEER_INJECTION,
+        SPAN_ORCHESTRATOR_LORE_FILTER,
+        # Turn LLM pipeline
+        SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
+        SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
+        # Content resolution
+        SPAN_CONTENT_RESOLVE,
+        # Trope engine
+        SPAN_TROPE_TICK,
+        SPAN_TROPE_TICK_PER,
+        SPAN_TROPE_ROOM_TICK,
+        SPAN_TROPE_ACTIVATE,
+        SPAN_TROPE_RESOLVE,
+        SPAN_TROPE_CROSS_SESSION,
+        SPAN_TROPE_EVALUATE_TRIGGERS,
+        # Barrier
+        SPAN_BARRIER_ACTIVATED,
+        SPAN_BARRIER_RESOLVED,
+        # Music / audio
+        SPAN_MUSIC_EVALUATE,
+        SPAN_MUSIC_CLASSIFY_MOOD,
+        # Persistence
+        SPAN_PERSISTENCE_SAVE,
+        SPAN_PERSISTENCE_LOAD,
+        SPAN_PERSISTENCE_DELETE,
+        # Character generation
+        SPAN_CHARGEN_STAT_ROLL,
+        SPAN_CHARGEN_STATS_GENERATED,
+        SPAN_CHARGEN_HP_FORMULA,
+        SPAN_CHARGEN_BACKSTORY_COMPOSED,
+        # NPC
+        SPAN_NPC_MERGE_PATCH,
+        SPAN_NPC_REGISTRATION,
+        SPAN_NPC_AUTO_REGISTERED,
+        SPAN_NPC_REINVENTED,
+        # Creature
+        SPAN_CREATURE_HP_DELTA,
+        # Disposition
+        SPAN_DISPOSITION_SHIFT,
+        # State patches
+        SPAN_APPLY_WORLD_PATCH,
+        SPAN_QUEST_UPDATE,
+        SPAN_BUILD_PROTOCOL_DELTA,
+        # Delta
+        SPAN_COMPUTE_DELTA,
+        # Merchant
+        SPAN_MERCHANT_CONTEXT_INJECTED,
+        SPAN_MERCHANT_TRANSACTION,
+        # Inventory
+        SPAN_INVENTORY_EXTRACTION,
+        # Continuity
+        SPAN_CONTINUITY_LLM_VALIDATION,
+        # Context builder
+        SPAN_COMPOSE,
+        # World builder
+        SPAN_WORLD_MATERIALIZED,
+        # RAG
+        SPAN_RAG_PROSE_CLEANUP,
+        # Script tool
+        SPAN_SCRIPT_TOOL_PROMPT_INJECTED,
+        # Reminders
+        SPAN_REMINDER_SPAWNED,
+        SPAN_REMINDER_FIRED,
+        # Pregen
+        SPAN_PREGEN_SEED_MANUAL,
+        # Catch-up narration
+        SPAN_CATCH_UP_GENERATE,
+        # Scenario
+        SPAN_SCENARIO_ADVANCE,
+        SPAN_SCENARIO_ACCUSATION,
+        # Monster manual
+        SPAN_MONSTER_MANUAL_INJECTED,
+        # Multiplayer lifecycle
+        SPAN_MP_GAME_CREATED,
+        SPAN_MP_SLUG_CONNECT,
+        SPAN_MP_SEAT,
+        SPAN_MP_PLAYER_ACTION_PAUSED,
+    }
+)
