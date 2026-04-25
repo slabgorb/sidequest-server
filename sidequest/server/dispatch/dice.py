@@ -52,6 +52,7 @@ from sidequest.telemetry.spans import (
     encounter_beat_applied_span,
     encounter_resolved_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,23 @@ def dispatch_dice_throw(
         metric_delta=own_delta,
     ):
         pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "beat_applied",
+            "actor": character_name,
+            "actor_side": actor.side,
+            "beat_id": payload.beat_id,
+            "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
+            "outcome_tier": resolved.outcome.value if hasattr(resolved.outcome, "value") else str(resolved.outcome),
+            "own_delta": own_delta,
+            "opponent_delta": apply_result.deltas.opponent if apply_result.deltas else 0,
+            "metric_target": encounter.encounter_type,
+            "source": "dice_throw",
+        },
+        component="encounter",
+    )
 
     encounter_resolved = apply_result.resolved
 
@@ -332,6 +350,19 @@ def dispatch_dice_throw(
             source="dice_throw_beat",
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "resolved",
+                "encounter_type": encounter.encounter_type,
+                "outcome": encounter.outcome or "",
+                "source": "dice_throw_beat",
+                "final_player_metric": encounter.player_metric.current,
+                "final_opponent_metric": encounter.opponent_metric.current,
+            },
+            component="encounter",
+        )
 
     # Seed drives spectator replay animation only — face values are already
     # authoritative from the rolling player's Rapier settle.

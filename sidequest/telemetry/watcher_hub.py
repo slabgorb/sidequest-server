@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -137,6 +138,63 @@ else:
     setattr(builtins, _BUILTINS_HUB_ATTR, watcher_hub)
 
 
+# ---------------------------------------------------------------------------
+# Process-wide event store binding — persists encounter state_transition events
+# to the SQLite events table. Bound at session-handler startup; global by
+# design (one session per process during playtest). See Task 20 doc comment.
+# ---------------------------------------------------------------------------
+
+_event_store = None  # bound at session-handler startup; weakref-safe by class id
+
+
+def bind_event_store(store) -> None:
+    """Bind a SqliteStore so encounter watcher events persist as rows.
+
+    Multiple binds replace; ``None`` clears (used by tests).
+    """
+    global _event_store
+    _event_store = store
+
+
+_KIND_BY_OP: dict[str, str] = {
+    "started": "ENCOUNTER_STARTED",
+    "beat_applied": "ENCOUNTER_BEAT_APPLIED",
+    "metric_advance": "ENCOUNTER_METRIC_ADVANCE",
+    "beat_skipped": "ENCOUNTER_BEAT_SKIPPED",
+    "tag_created": "ENCOUNTER_TAG_CREATED",
+    "tag_backfire": "ENCOUNTER_TAG_CREATED",  # backfire is still a tag-creation row
+    "status_added": "ENCOUNTER_STATUS_ADDED",
+    "yield_received": "ENCOUNTER_YIELD",
+    "yield_resolved": "ENCOUNTER_YIELD",
+    "resolved": "ENCOUNTER_RESOLVED",
+    # Reserved — no current callsite emits this op (would break ENCOUNTER_RESOLVED-last
+    # ordering invariant). Future sites that emit signal-creation outside of resolution
+    # may use it.
+    "resolution_signal_emitted": "ENCOUNTER_RESOLUTION_SIGNAL",
+    "resolution_signal_consumed": "ENCOUNTER_RESOLUTION_SIGNAL",
+}
+
+
+def _maybe_persist_encounter_row(event: dict) -> None:
+    if _event_store is None:
+        return
+    if event.get("event_type") != "state_transition":
+        return
+    fields = event.get("fields", {})
+    if fields.get("field") != "encounter":
+        return
+    op = str(fields.get("op", ""))
+    kind = _KIND_BY_OP.get(op)
+    if kind is None:
+        return
+    payload = json.dumps(fields)
+    _event_store._conn.execute(
+        "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        (kind, payload),
+    )
+    _event_store._conn.commit()
+
+
 def publish_event(
     event_type: str,
     fields: dict[str, Any],
@@ -170,3 +228,4 @@ def publish_event(
             "fields": fields,
         }
     )
+    _maybe_persist_encounter_row({"event_type": event_type, "fields": fields})

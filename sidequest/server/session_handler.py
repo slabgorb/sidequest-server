@@ -1189,6 +1189,8 @@ class WebSocketSessionHandler:
                 return [_error_msg(f"unknown game slug: {slug}")]
             store = SqliteStore(db)
             store.initialize()
+            from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
+            _bind_event_store(store)
             row = get_game(store, slug)
             if row is None:
                 return [_error_msg(f"unknown game slug: {slug}")]
@@ -1747,6 +1749,8 @@ class WebSocketSessionHandler:
         db_path = db_path_for_session(self._save_dir, genre_slug, world_slug, player_name)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteStore.open(str(db_path))
+        from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
+        _bind_event_store(store)
 
         # Load existing session or start fresh
         saved = store.load()
