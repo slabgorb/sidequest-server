@@ -124,6 +124,14 @@ class WatcherSpanProcessor(SpanProcessor):
             tier = fields.get("tier")
             if isinstance(tier, int) and tier > 1:
                 typed_severity = "warning"
+        # Span-attribute escape hatch for routes that need warning-grade
+        # state_transition (e.g. NPC identity drift). The translator
+        # otherwise can't express "warning" because OK/ERROR are the
+        # only two OTEL Status states. Set ``severity`` as a span
+        # attribute in the helper to opt in.
+        attr_severity = attrs.get("severity")
+        if isinstance(attr_severity, str) and attr_severity in {"info", "warning", "error"}:
+            typed_severity = attr_severity
 
         self._hub.publish(
             {

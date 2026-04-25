@@ -14,7 +14,7 @@ from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
     _find_confrontation_def,
 )
-from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED, quest_update_span
+from sidequest.telemetry.spans import npc_auto_registered_span, quest_update_span
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -185,27 +185,23 @@ def _apply_narration_result_to_snapshot(
                     last_seen_turn=turn_num,
                 )
             )
-            logger.info(
-                "%s name=%r pronouns=%r role=%r turn=%d",
-                SPAN_NPC_AUTO_REGISTERED,
-                npc_mention.name,
-                npc_mention.pronouns or "",
-                npc_mention.role or "",
-                turn_num,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "npc_registry",
-                    "op": "auto_registered",
-                    "name": npc_mention.name,
-                    "pronouns": npc_mention.pronouns or "",
-                    "role": npc_mention.role or "",
-                    "turn_number": turn_num,
-                    "registry_len": len(snapshot.npc_registry),
-                },
-                component="npc_registry",
-            )
+            # Span emission replaces the prior direct ``_watcher_publish`` —
+            # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
+            # event via ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]``.
+            with npc_auto_registered_span(
+                npc_name=npc_mention.name,
+                pronouns=npc_mention.pronouns or "",
+                role=npc_mention.role or "",
+                turn_number=turn_num,
+                registry_len=len(snapshot.npc_registry),
+            ):
+                logger.info(
+                    "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
+                    npc_mention.name,
+                    npc_mention.pronouns or "",
+                    npc_mention.role or "",
+                    turn_num,
+                )
         else:
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
