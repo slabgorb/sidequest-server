@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -25,6 +26,56 @@ from sidequest.telemetry.watcher_hub import publish_event
 logger = logging.getLogger(__name__)
 
 CheckFn = Callable[[TurnRecord], Awaitable[None]]
+
+# Capitalized two-word noun phrases — heuristic for "named entity in
+# narration." Matches "Sir Reginald", "The Ironwood", "Lady Ashes" etc.
+# False positives are fine — entity_check is a hint, not an oracle.
+_NAMED_ENTITY_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+
+
+async def entity_check(record: TurnRecord) -> None:
+    """Warn when narration names an NPC / region / item absent from the
+    snapshot.
+
+    Reads:
+      - narration
+      - snapshot_after.npc_registry (mapping name -> NpcRegistryEntry)
+      - snapshot_after.discovered_regions (iterable of region names)
+      - snapshot_after.inventory.items (iterable of item names)
+    """
+    snap = record.snapshot_after
+    known_names: set[str] = set()
+    npc_registry = getattr(snap, "npc_registry", None) or {}
+    if isinstance(npc_registry, dict):
+        known_names.update(npc_registry.keys())
+    regions = getattr(snap, "discovered_regions", None) or ()
+    known_names.update(str(r) for r in regions)
+    inventory = getattr(snap, "inventory", None)
+    if inventory is not None:
+        items = getattr(inventory, "items", None) or ()
+        for it in items:
+            name = getattr(it, "name", None) or str(it)
+            known_names.add(name)
+
+    if not record.narration:
+        return
+
+    for match in _NAMED_ENTITY_RE.finditer(record.narration):
+        candidate = match.group(1)
+        if candidate not in known_names:
+            publish_event(
+                "validation_warning",
+                {
+                    "check": "entity",
+                    "turn_id": record.turn_id,
+                    "candidate": candidate,
+                    "rationale": "narration names an entity not in snapshot",
+                },
+                component="validator",
+                severity="warning",
+            )
+            # One warning per turn is sufficient; don't spam.
+            return
 
 
 class Validator:
@@ -40,6 +91,7 @@ class Validator:
         # Health counters
         self.dropped_records: int = 0
         self._check_durations_ms: deque[tuple[str, float]] = deque(maxlen=200)
+        self.register_check(entity_check)
 
     def register_check(self, fn: CheckFn) -> None:
         """Register a check coroutine. Called once per TurnRecord."""

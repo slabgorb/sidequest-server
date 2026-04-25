@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from sidequest.telemetry import watcher_hub as wh_mod  # noqa: F401
 from sidequest.telemetry.turn_record import TurnRecord
-from sidequest.telemetry.validator import Validator
+from sidequest.telemetry.validator import Validator, entity_check
 
 
 def _make_record(turn_id: int = 1) -> TurnRecord:
@@ -52,3 +53,53 @@ async def test_submit_drops_oldest_under_backpressure() -> None:
         await v.submit(_make_record(turn_id=i))
 
     assert v.dropped_records >= 3
+
+
+class _CapturedEvents(list):
+    pass
+
+
+@pytest.fixture
+def captured_events(monkeypatch):
+    captured = _CapturedEvents()
+
+    def fake_publish(event_type, fields, *, component="sidequest-server", severity="info"):
+        captured.append({
+            "event_type": event_type,
+            "fields": fields,
+            "component": component,
+            "severity": severity,
+        })
+
+    monkeypatch.setattr(
+        "sidequest.telemetry.validator.publish_event",
+        fake_publish,
+    )
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_entity_check_warns_on_unknown_npc(captured_events) -> None:
+    """Narration mentioning an NPC not in the registry produces a
+    validation_warning."""
+    snapshot_after = type(
+        "Snap",
+        (),
+        {
+            "npc_registry": {},  # empty
+            "discovered_regions": [],
+            "inventory": type("Inv", (), {"items": []})(),
+        },
+    )()
+
+    record = _make_record()
+    record_dict = record.__dict__.copy()
+    record_dict["narration"] = "Sir Reginald nods grimly."
+    record_dict["snapshot_after"] = snapshot_after
+    new_record = TurnRecord(**record_dict)
+
+    await entity_check(new_record)
+
+    warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
+    assert warnings, "entity_check should warn on unknown NPC"
+    assert "Sir Reginald" in str(warnings[0]["fields"])
