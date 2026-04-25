@@ -518,6 +518,8 @@ async def test_end_to_end_render_routes_through_registry_on_happy_path(
     assert queued.type == MessageType.RENDER_QUEUED
 
     image_msg = await asyncio.wait_for(queue.get(), timeout=2.0)
+    # Give the background _run_render task time to emit the completed watcher event
+    await asyncio.sleep(0.05)
     await daemon.stop()
 
     assert image_msg.type == MessageType.IMAGE
