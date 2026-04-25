@@ -10,6 +10,10 @@ Story 34 port (2026-04-24). Asserts that:
    see the roll outcome via TurnContext.
 4. The narrator runs inline with a synthesized beat-resolved action, so
    the rolling player gets ``NARRATION`` in the same round trip.
+
+Task 12 (2026-04-25): Rewritten for dual-dial encounters. The module-level
+skip added in Task 8 (MetricDirection removed) is lifted. Helpers updated
+to use player_metric + opponent_metric.
 """
 from __future__ import annotations
 
@@ -23,7 +27,6 @@ from sidequest.game.encounter import (
     EncounterActor,
     EncounterMetric,
     EncounterPhase,
-    MetricDirection,
     StructuredEncounter,
 )
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef, MetricDef
@@ -46,20 +49,16 @@ def _install_combat_def(sd) -> None:
         type="combat",
         label="Dungeon Combat",
         category="combat",
-        metric=MetricDef(
-            name="momentum",
-            direction="bidirectional",
-            starting=0,
-            threshold_high=5,
-            threshold_low=-5,
-        ),
+        player_metric=MetricDef(name="momentum", starting=0, threshold=10),
+        opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef(
-                id="attack",
-                label="Attack",
-                metric_delta=2,
-                stat_check="STRENGTH",
-            ),
+            BeatDef.model_validate({
+                "id": "attack",
+                "label": "Attack",
+                "kind": "strike",
+                "base": 2,
+                "stat_check": "STRENGTH",
+            }),
         ],
     )
     sd.genre_pack.rules.confrontations = [cdef]
@@ -68,18 +67,22 @@ def _install_combat_def(sd) -> None:
 def _install_active_encounter(sd) -> None:
     enc = StructuredEncounter(
         encounter_type="combat",
-        metric=EncounterMetric(
+        player_metric=EncounterMetric(
             name="momentum",
             current=0,
             starting=0,
-            direction=MetricDirection.Bidirectional,
-            threshold_high=5,
-            threshold_low=-5,
+            threshold=10,
+        ),
+        opponent_metric=EncounterMetric(
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         beat=0,
         structured_phase=EncounterPhase.Setup,
         secondary_stats=None,
-        actors=[EncounterActor(name="Rux", role="combatant", per_actor_state={})],
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
         outcome=None,
         resolved=False,
         mood_override=None,
@@ -88,7 +91,7 @@ def _install_active_encounter(sd) -> None:
     sd.snapshot.encounter = enc
 
 
-def _throw(face: int = 14, beat_id: str = "attack") -> DiceThrowMessage:
+def _throw(face: int = 15, beat_id: str = "attack") -> DiceThrowMessage:
     return DiceThrowMessage(
         payload=DiceThrowPayload(
             request_id="wire-req-1",
@@ -203,6 +206,8 @@ async def test_dice_throw_stashes_pending_roll_outcome(session_handler_factory):
     failure-branch wiring — see ``_execute_narration_turn``). To observe the
     stash before it's consumed, stub ``_execute_narration_turn`` so the
     dispatch returns before the consumer runs.
+
+    face=14, STRENGTH=14 (+2), DC=14 → total 16 → Success (margin 2 < DECISIVE_MARGIN=3).
     """
     from sidequest.server.session_handler import _State
 
@@ -222,7 +227,7 @@ async def test_dice_throw_stashes_pending_roll_outcome(session_handler_factory):
 
     handler._execute_narration_turn = _capture_and_skip  # type: ignore[method-assign]
 
-    await handler.handle_message(_throw(face=18))
+    await handler.handle_message(_throw(face=14))
 
     assert stashed == [RollOutcome.Success], (
         f"DICE_THROW must stash the RollOutcome on sd.pending_roll_outcome "

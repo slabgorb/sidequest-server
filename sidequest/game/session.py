@@ -23,6 +23,7 @@ from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_ed
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import LoreStore
+from sidequest.game.resolution_signal import ResolutionSignal
 from sidequest.game.resource_pool import (
     NotVoluntary,
     ResourcePatch,
@@ -429,6 +430,11 @@ class GameSnapshot(BaseModel):
 
     # Named resource pools (story 42-2 — ADR-033 port)
     resources: dict[str, ResourcePool] = Field(default_factory=dict)
+
+    # Transient resolution signal (Task 14 — dual-track momentum, Phase 1).
+    # Set by apply_beat when encounter resolves; read by narrator on next turn
+    # to populate [ENCOUNTER RESOLVED] zone; cleared after consumption.
+    pending_resolution_signal: ResolutionSignal | None = None
 
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route

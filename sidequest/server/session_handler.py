@@ -71,6 +71,7 @@ from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
 )
+from sidequest.game.status import Status
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -542,8 +543,8 @@ class WebSocketSessionHandler:
     })
 
     @classmethod
-    def _is_hidden_status_list(cls, statuses: list[str]) -> bool:
-        return any(s.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
+    def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
+        return any(s.text.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
 
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
@@ -697,7 +698,7 @@ class WebSocketSessionHandler:
         # Mirror _build_game_state_view's mapping: active player_id ->
         # first character. Any connected non-active player_id gets []
         # until MP seat-assignment plumbs a real mapping.
-        return {sd.player_id: list(snapshot.characters[0].core.statuses)}
+        return {sd.player_id: [s.text for s in snapshot.characters[0].core.statuses]}
 
     # ------------------------------------------------------------------
     # Slug-resume narrative tail backfill (pingpong 2026-04-24)
@@ -4081,7 +4082,7 @@ class WebSocketSessionHandler:
             character_name=char_name_nbs,
             current_hp=character.core.edge.current,
             max_hp=character.core.edge.max,
-            statuses=list(character.core.statuses),
+            statuses=[s.text for s in character.core.statuses],
             **{"class": class_nbs},  # type: ignore[arg-type]
             level=character.core.level,
             portrait_url=None,
@@ -4176,9 +4177,7 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 
 from sidequest.server.narration_apply import (  # noqa: E402 — back-compat re-export
-    _advance_phase,
     _apply_narration_result_to_snapshot,
-    apply_encounter_updates,
 )
 from sidequest.server.session_helpers import (  # noqa: E402 — back-compat re-export
     _build_turn_context,
@@ -4203,7 +4202,6 @@ __all__ = [
     "_SessionData",
     "_State",
     # Module-level helpers re-exported from session_helpers / narration_apply
-    "_advance_phase",
     "_apply_narration_result_to_snapshot",
     "_build_turn_context",
     "_detect_npc_identity_drift",
@@ -4216,7 +4214,6 @@ __all__ = [
     "_sfx_ids_from_genre",
     "_world_history_value",
     "aggregate_visibility",
-    "apply_encounter_updates",
     "apply_turn_writes_for_test",
     "build_secret_note_events",
     "emit_secret_notes",

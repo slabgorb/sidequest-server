@@ -5,7 +5,7 @@ Port of the dice types from sidequest-protocol/src/message.rs:
 - DieSides — enum serialized as u32 face count (4, 6, 8, 10, 12, 20, 100; 0 = Unknown)
 - DieSpec — {sides, count} one group in a pool
 - ThrowParams — physics gesture params (animation only, not outcome)
-- RollOutcome — CritSuccess / Success / Fail / CritFail (+Unknown for forward-compat)
+- RollOutcome — CritSuccess / Success / Tie / Fail / CritFail (+Unknown for forward-compat)
 - DieGroupResult — per-group rolled faces paired with originating spec
 - DiceRequestPayload — server -> all clients: "roll for me"
 - DiceThrowPayload — rolling client -> server: physics-is-the-roll result
@@ -62,10 +62,14 @@ class RollOutcome(str, Enum):  # noqa: UP042 — matches project convention (see
     Serializes as the variant name (``"CritSuccess"`` etc.). Unknown wire
     values map to ``Unknown`` via ``_missing_`` so a newer variant from a
     future wire version doesn't hard-error at parse time.
+
+    Tie is the 5th tier added for dual-track momentum (spec
+    2026-04-25-dual-track-momentum-design.md): fired when total == difficulty.
     """
 
     CritSuccess = "CritSuccess"
     Success = "Success"
+    Tie = "Tie"
     Fail = "Fail"
     CritFail = "CritFail"
     Unknown = "Unknown"

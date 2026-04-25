@@ -343,12 +343,12 @@ def session_handler_factory(tmp_path):
     XP-award tests can inspect ``sd.snapshot.characters[0].core.xp``.
     """
 
+    import sidequest.genre.loader as _genre_loader_mod
     from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
     from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
-    import sidequest.genre.loader as _genre_loader_mod
     from sidequest.genre.loader import GenreLoader
     from sidequest.server.session_handler import (
         WebSocketSessionHandler,
@@ -469,3 +469,112 @@ def _make_minimal_narration_turn_result(narration: str = "ok"):
         is_degraded=False,
         agent_duration_ms=1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Dual-track momentum fixtures (Task 11)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def synthetic_two_dial_pack():
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import (
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
+        RulesConfig,
+    )
+
+    cdef = ConfrontationDef(
+        type="combat",
+        label="Combat",
+        category="combat",
+        player_metric=MetricDef(name="momentum", starting=0, threshold=10),
+        opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
+        beats=[
+            BeatDef.model_validate({
+                "id": "attack", "label": "Attack", "kind": "strike",
+                "base": 2, "stat_check": "STR",
+            }),
+            BeatDef.model_validate({
+                "id": "defend", "label": "Defend", "kind": "brace",
+                "base": 1, "stat_check": "CON",
+            }),
+            BeatDef.model_validate({
+                "id": "flee", "label": "Flee", "kind": "push",
+                "base": 1, "stat_check": "DEX",
+            }),
+            BeatDef.model_validate({
+                "id": "feint", "label": "Feint", "kind": "angle",
+                "target_tag": "Off-Balance", "stat_check": "DEX",
+            }),
+        ],
+    )
+    # GenrePack requires many fields; use MagicMock for everything except
+    # rules so the encounter engine can look up confrontation defs without
+    # loading a full pack from disk.
+    from unittest.mock import MagicMock
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+    return pack
+
+
+@pytest.fixture
+def dual_dial_test_setup(synthetic_two_dial_pack):
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
+    )
+    from sidequest.protocol.dice import DiceThrowPayload, ThrowParams
+    from sidequest.server.dispatch.dice import dispatch_dice_throw
+
+    class _Setup:
+        def __init__(self, encounter, pack):
+            self.encounter = encounter
+            self.pack = pack
+
+        def run_dice_throw(self, *, beat_id, faces, modifier):
+            payload = DiceThrowPayload(
+                request_id="r1",
+                throw_params=ThrowParams(
+                    velocity=(0, 0, 0),
+                    angular=(0, 0, 0),
+                    position=(0, 0),
+                ),
+                face=faces,
+                beat_id=beat_id,
+            )
+            return dispatch_dice_throw(
+                payload=payload,
+                rolling_player_id="p1",
+                character_name="Sam",
+                character_stats={"STR": 10, "DEX": 10, "CON": 10, "INT": 10, "WIS": 10, "CHA": 10},
+                encounter=self.encounter,
+                pack=self.pack,
+                session_id="s1",
+                round_number=1,
+                room_broadcast=None,
+            )
+
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Sam", role="combatant", side="player")],
+    )
+    return _Setup(encounter=enc, pack=synthetic_two_dial_pack)
+
+
+@pytest.fixture
+def snapshot_with_pack(synthetic_two_dial_pack):
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    return snap, synthetic_two_dial_pack

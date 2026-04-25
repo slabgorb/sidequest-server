@@ -7,39 +7,39 @@ from __future__ import annotations
 
 from sidequest.game.encounter import (
     EncounterActor,
-    EncounterMetric,
     EncounterPhase,
-    MetricDirection,
     StructuredEncounter,
 )
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.resource_pool import ResourceThreshold
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import ConfrontationDef
 from sidequest.server.dispatch.confrontation import find_confrontation_def
 from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_resolved_span,
 )
 
-_DIRECTION_BY_NAME: dict[str, MetricDirection] = {
-    "ascending": MetricDirection.Ascending,
-    "descending": MetricDirection.Descending,
-    "bidirectional": MetricDirection.Bidirectional,
-}
+_VALID_SIDES = ("player", "opponent", "neutral")
 
 
-def _metric_from_cdef(cdef: ConfrontationDef) -> EncounterMetric:
-    """Build an EncounterMetric from the pack's declared MetricDef."""
-    direction = _DIRECTION_BY_NAME[cdef.metric.direction]
-    return EncounterMetric(
-        name=cdef.metric.name,
-        current=cdef.metric.starting,
-        starting=cdef.metric.starting,
-        direction=direction,
-        threshold_high=cdef.metric.threshold_high,
-        threshold_low=cdef.metric.threshold_low,
+def _validate_side(actor_name: str, declared: str) -> str:
+    """Validate that side is in {player, opponent, neutral}.
+
+    Raises ValueError on invalid value, emitting encounter_invalid_side_span
+    for OTEL observability.
+    """
+    if declared in _VALID_SIDES:
+        return declared
+    from sidequest.telemetry.spans import encounter_invalid_side_span
+    with encounter_invalid_side_span(
+        actor_name=actor_name,
+        declared_side=declared,
+        valid_set="|".join(_VALID_SIDES),
+    ):
+        pass
+    raise ValueError(
+        f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}"
     )
 
 
@@ -48,9 +48,9 @@ def instantiate_encounter_from_trigger(
     snapshot: GameSnapshot,
     pack: GenrePack,
     encounter_type: str,
-    combatants: list[str],
-    hp: int,
-    genre_slug: str,
+    player_name: str,
+    npcs_present: list,
+    genre_slug: str | None,
 ) -> StructuredEncounter | None:
     """Create a StructuredEncounter when the narrator emits ``confrontation=T``.
 
@@ -61,14 +61,21 @@ def instantiate_encounter_from_trigger(
     Raises ``ValueError`` when ``encounter_type`` doesn't match any
     ConfrontationDef in the pack (CLAUDE.md: no silent fallback).
 
-    The encounter's metric is taken from the matched ConfrontationDef —
-    combat packs declare their own metric (e.g. caverns_and_claudes uses
-    "momentum" bidirectional, not generic HP).
+    Raises ``ValueError`` when any NPC's side is not in {player, opponent, neutral}
+    (CLAUDE.md: no silent fallback). Emits encounter_invalid_side_span for OTEL.
+
+    The encounter's dual dials are taken from the matched ConfrontationDef.
+    Actors are assigned side="player" for the calling player and side read from
+    each NpcMention's ``side`` field (validated against {player, opponent, neutral}).
+    When ``npcs_present`` is empty the encounter is instantiated with the player
+    only (lie-detector span is the caller's responsibility).
 
     Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
     passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
     ``snapshot.genre_slug``).
     """
+    from sidequest.game.encounter import EncounterMetric
+
     current = snapshot.encounter
     if current is not None and not current.resolved:
         return None
@@ -83,26 +90,37 @@ def instantiate_encounter_from_trigger(
 
     with encounter_confrontation_initiated_span(
         encounter_type=encounter_type,
-        genre_slug=genre_slug,
+        genre_slug=genre_slug or "",
     ):
+        role = "combatant" if cdef.category == "combat" else "participant"
         actors = [
-            EncounterActor(
-                name=n,
-                role="combatant" if cdef.category == "combat" else "participant",
-                per_actor_state={},
-            )
-            for n in combatants
+            EncounterActor(name=player_name, role=role, side="player"),
         ]
+        for npc in npcs_present:
+            npc_name = getattr(npc, "name", None) or str(npc)
+            side_raw = getattr(npc, "side", None) or "neutral"
+            side = _validate_side(npc_name, side_raw)
+            actors.append(EncounterActor(name=npc_name, role=role, side=side))
+
+        pm = cdef.player_metric
+        om = cdef.opponent_metric
         enc = StructuredEncounter(
             encounter_type=encounter_type,
-            metric=_metric_from_cdef(cdef),
+            player_metric=EncounterMetric(
+                name=pm.name, current=pm.starting,
+                starting=pm.starting, threshold=pm.threshold,
+            ),
+            opponent_metric=EncounterMetric(
+                name=om.name, current=om.starting,
+                starting=om.starting, threshold=om.threshold,
+            ),
             beat=0,
             structured_phase=EncounterPhase.Setup,
             secondary_stats=None,
             actors=actors,
             outcome=None,
             resolved=False,
-            mood_override=None,
+            mood_override=cdef.mood,
             narrator_hints=[],
         )
         snapshot.encounter = enc

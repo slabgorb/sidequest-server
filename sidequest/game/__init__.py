@@ -14,7 +14,7 @@ Phase 1 exports:
   ResourcePatch, ResourcePatchOp, ResourcePatchResult, ResourcePatchError,
   UnknownResource, NotVoluntary, detect_crossings, mint_threshold_lore
 - Encounter (story 42-1 — ADR-082 Phase 3): StructuredEncounter,
-  EncounterActor, EncounterMetric, EncounterPhase, MetricDirection,
+  EncounterActor, EncounterMetric, EncounterPhase,
   RigType, SecondaryStats, StatValue
 
 Phase 2+ (combat, dice, advancement) are deferred — not exported here.
@@ -60,7 +60,6 @@ from sidequest.game.encounter import (
     EncounterActor,
     EncounterMetric,
     EncounterPhase,
-    MetricDirection,
     RigType,
     SecondaryStats,
     StatValue,
@@ -143,7 +142,6 @@ __all__ = [
     "EncounterActor",
     "EncounterMetric",
     "EncounterPhase",
-    "MetricDirection",
     "RigType",
     "SecondaryStats",
     "StatValue",

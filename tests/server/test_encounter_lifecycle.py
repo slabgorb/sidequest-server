@@ -108,3 +108,76 @@ def test_resolve_from_trope_already_resolved_returns_none() -> None:
     enc.resolved = True
     snap.encounter = enc
     assert resolve_encounter_from_trope(snapshot=snap, trope_id="x") is None
+
+
+# ---------------------------------------------------------------------------
+# Task 13: Dual dials + side-from-payload + invalid-side fail-loud
+# ---------------------------------------------------------------------------
+
+
+def test_instantiate_two_dials_from_cdef(snapshot_with_pack):
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+    snap, pack = snapshot_with_pack
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=pack,
+        encounter_type="combat",
+        player_name="Sam",
+        npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
+        genre_slug="test_pack",
+    )
+    assert enc is not None
+    assert enc.player_metric.threshold == 10
+    assert enc.opponent_metric.threshold == 10
+
+
+def test_instantiate_routes_actor_sides_from_payload(snapshot_with_pack):
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+    snap, pack = snapshot_with_pack
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=pack,
+        encounter_type="combat",
+        player_name="Sam",
+        npcs_present=[
+            NpcMention(name="Promo", side="opponent", role="hostile"),
+            NpcMention(name="Host", side="neutral", role="bystander"),
+        ],
+        genre_slug="test_pack",
+    )
+    sides = {a.name: a.side for a in enc.actors}
+    assert sides["Sam"] == "player"
+    assert sides["Promo"] == "opponent"
+    assert sides["Host"] == "neutral"
+
+
+def test_invalid_side_raises_with_span(snapshot_with_pack):
+    """Invalid side at the lifecycle layer raises loudly.
+
+    NpcMention.from_value validates side at narrator-extraction time. If a
+    bypass path constructs an NpcMention directly with a bad side and reaches
+    the lifecycle (e.g., via test fixture), we still fail loud.
+    """
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+    snap, pack = snapshot_with_pack
+    # Bypass NpcMention.from_value: construct the dataclass directly with a
+    # bad side. Validation happens at lifecycle entry.
+    bad_npc = NpcMention(name="??", side="enemy", role="hostile")
+    with pytest.raises(ValueError, match="declared_side|enemy"):
+        instantiate_encounter_from_trigger(
+            snapshot=snap,
+            pack=pack,
+            encounter_type="combat",
+            player_name="Sam",
+            npcs_present=[bad_npc],
+            genre_slug="test_pack",
+        )

@@ -10,7 +10,9 @@ per-class base_max values.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from sidequest.game.status import Status, migrate_legacy_statuses
 
 # Default placeholder base_max for EdgePool when per-class YAML isn't wired (story 39-3).
 PLACEHOLDER_EDGE_BASE_MAX: int = 10
@@ -178,10 +180,22 @@ class CreatureCore(BaseModel):
     level: int = 1
     xp: int = 0
     inventory: Inventory = Field(default_factory=Inventory)
-    statuses: list[str] = Field(default_factory=list)
+    statuses: list[Status] = Field(default_factory=list)
     edge: EdgePool = Field(default_factory=placeholder_edge_pool)
     # P2-deferred: advancement tracking (epic 39-8, mechanical progression)
     acquired_advancements: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_statuses(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("statuses")
+        if raw is None:
+            return data
+        if isinstance(raw, list):
+            data = {**data, "statuses": migrate_legacy_statuses(raw)}
+        return data
 
     @field_validator("name")
     @classmethod
