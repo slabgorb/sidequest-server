@@ -990,12 +990,20 @@ class WebSocketSessionHandler:
                         exc_info=True,
                     )
             try:
+                # MP: pull peer state from persisted store before saving
+                # so a stale single-PC view can't stomp the multi-PC truth
+                # (playtest 2026-04-25 "Multi-PC state does not survive
+                # disconnect"). No-op for solo.
+                self._merge_peer_state_into_snapshot(self._session_data)
                 self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
-                    "session.disconnect_save genre=%s world=%s player=%s",
+                    "session.disconnect_save genre=%s world=%s player=%s "
+                    "char_count=%d seat_count=%d",
                     self._session_data.genre_slug,
                     self._session_data.world_slug,
                     self._session_data.player_name,
+                    len(self._session_data.snapshot.characters),
+                    len(self._session_data.snapshot.player_seats),
                 )
             except Exception as exc:
                 logger.error("session.disconnect_save_failed error=%s", exc)
@@ -2859,6 +2867,12 @@ class WebSocketSessionHandler:
             )
 
         try:
+            # MP: merge peer chars / seats from persisted store before
+            # save so Laverne's turn-end can't stomp Shirley's chargen-
+            # commit (playtest 2026-04-25 multi-PC persistence loss).
+            # snapshot is sd.snapshot (same identity) — merge mutates it
+            # in place.
+            self._merge_peer_state_into_snapshot(sd)
             sd.store.save(snapshot)
             narrative_entry = NarrativeEntry(
                 timestamp=0,
@@ -2869,9 +2883,11 @@ class WebSocketSessionHandler:
             )
             sd.store.append_narrative(narrative_entry)
             logger.info(
-                "session.persisted turn=%d player=%s",
+                "session.persisted turn=%d player=%s char_count=%d seat_count=%d",
                 snapshot.turn_manager.interaction,
                 sd.player_name,
+                len(snapshot.characters),
+                len(snapshot.player_seats),
             )
         except Exception as exc:
             logger.error("session.persist_failed error=%s", exc)
@@ -3851,6 +3867,73 @@ class WebSocketSessionHandler:
             sheet=sheet,
             inventory=inventory_payload,
         )
+
+    def _merge_peer_state_into_snapshot(self, sd: _SessionData) -> None:
+        """Pull peer characters / seat bindings from the persisted store
+        into ``sd.snapshot`` before save (MP only).
+
+        Each WebSocket session holds an independent ``sd.snapshot`` copy.
+        Without this merge, a session that never observed the peer's
+        chargen-commit will save its stale single-PC view over the
+        multi-PC truth — last-writer-wins data loss (playtest 2026-04-25
+        "Multi-PC state does not survive disconnect"). Local fields win
+        for shared keys (so turn deltas applied to the local PC are
+        preserved), peer-only entries are copied in.
+
+        Solo: no-op. Empty / missing persisted snapshot: no-op. Load
+        failure: no-op (logged at error, never raises out — save must
+        still proceed even if the merge is best-effort).
+        """
+        from sidequest.game.persistence import GameMode as _GameMode
+        if sd.mode != _GameMode.MULTIPLAYER:
+            return
+        try:
+            saved = sd.store.load()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "session.peer_merge_load_failed player=%s error=%s",
+                sd.player_name,
+                exc,
+            )
+            return
+        if saved is None:
+            return
+        persisted = saved.snapshot
+        # Characters: append peer-only entries by core.name; preserve
+        # any local turn deltas on shared names (local wins).
+        local_names = {c.core.name for c in sd.snapshot.characters}
+        appended: list[str] = []
+        for pc in persisted.characters:
+            if pc.core.name not in local_names:
+                sd.snapshot.characters.append(pc)
+                appended.append(pc.core.name)
+        # Seat bindings: union, local wins for shared keys.
+        merged_seats: list[str] = []
+        for pid, slot in persisted.player_seats.items():
+            if pid not in sd.snapshot.player_seats:
+                sd.snapshot.player_seats[pid] = slot
+                merged_seats.append(pid)
+        if appended or merged_seats:
+            logger.info(
+                "session.peer_state_merged player=%s appended_chars=%s "
+                "merged_seats=%s total_chars=%d total_seats=%d",
+                sd.player_name,
+                appended,
+                merged_seats,
+                len(sd.snapshot.characters),
+                len(sd.snapshot.player_seats),
+            )
+            _watcher_publish(
+                "session_peer_state_merged",
+                {
+                    "player_id": sd.player_id,
+                    "appended_characters": appended,
+                    "merged_seats": merged_seats,
+                    "total_characters": len(sd.snapshot.characters),
+                    "total_seats": len(sd.snapshot.player_seats),
+                },
+                component="session",
+            )
 
     def _resolve_self_character(
         self, sd: _SessionData

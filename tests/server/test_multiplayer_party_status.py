@@ -284,3 +284,123 @@ def test_party_status_uses_resolver_when_caller_passes_resolved_character() -> N
     assert len(set(pids)) == len(pids), (
         f"Duplicate player_id in PartyMember frame: {pids}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _merge_peer_state_into_snapshot — playtest 2026-04-25 multi-PC persistence
+# ---------------------------------------------------------------------------
+
+
+def _saved_snapshot_with(characters: list[Character], seats: dict[str, str]):
+    """Build a SavedGame-like duck-typed object with a `.snapshot` attribute.
+
+    The merge helper only reads `saved.snapshot.characters` and
+    `saved.snapshot.player_seats`, so a simple namespace-style dummy is
+    enough — no DB.
+    """
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        location="Test",
+        turn_manager=TurnManager(interaction=1),
+        characters=list(characters),
+    )
+    snap.player_seats = dict(seats)
+
+    class _Saved:
+        def __init__(self, snapshot):
+            self.snapshot = snapshot
+    return _Saved(snap)
+
+
+def test_merge_peer_state_pulls_peer_chars_and_seats_from_persisted() -> None:
+    """Playtest 2026-04-25 regression: Laverne's session has only [Laverne]
+    in `sd.snapshot` but the persisted store has [Laverne, Shirley] from
+    Shirley's chargen-commit. After merge, Laverne's session sees both.
+    """
+    laverne = _char("Laverne")
+    shirley = _char("Shirley")
+    sd = _sd("p:laverne", "Laverne", [laverne])
+    sd.snapshot.player_seats = {"p:laverne": "Laverne"}
+    sd.store.load.return_value = _saved_snapshot_with(
+        [laverne, shirley],
+        {"p:laverne": "Laverne", "p:shirley": "Shirley"},
+    )
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    handler._merge_peer_state_into_snapshot(sd)
+
+    char_names = sorted(c.core.name for c in sd.snapshot.characters)
+    assert char_names == ["Laverne", "Shirley"], (
+        "Merge must append peer characters from persisted store"
+    )
+    assert sd.snapshot.player_seats == {
+        "p:laverne": "Laverne",
+        "p:shirley": "Shirley",
+    }
+
+
+def test_merge_peer_state_local_wins_for_shared_character_names() -> None:
+    """Local turn deltas (HP changes, inventory) must not be overwritten
+    by older persisted state. Merge appends peer-only chars; shared
+    names keep the local copy.
+    """
+    laverne_local = _char("Laverne")
+    laverne_local.core.edge.current = 3  # took damage this turn
+    laverne_persisted = _char("Laverne")  # full HP, stale
+    shirley = _char("Shirley")
+    sd = _sd("p:laverne", "Laverne", [laverne_local])
+    sd.store.load.return_value = _saved_snapshot_with(
+        [laverne_persisted, shirley], {}
+    )
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    handler._merge_peer_state_into_snapshot(sd)
+
+    laverne_after = next(c for c in sd.snapshot.characters if c.core.name == "Laverne")
+    assert laverne_after.core.edge.current == 3, (
+        "Local Laverne (HP 3) must not be replaced by persisted Laverne (full HP)"
+    )
+
+
+def test_merge_peer_state_noop_for_solo() -> None:
+    """SOLO sessions must not load-merge (extra DB read, plus the fix is
+    only for the MP last-writer-wins problem).
+    """
+    pc = _char("Solo")
+    sd = _sd("p:solo", "Solo", [pc])
+    sd.mode = GameMode.SOLO
+    # If the merge ran, it would read from store — make load() blow up.
+    sd.store.load.side_effect = RuntimeError("merge should not call load() in solo")
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    handler._merge_peer_state_into_snapshot(sd)
+    sd.store.load.assert_not_called()
+
+
+def test_merge_peer_state_noop_when_persisted_missing() -> None:
+    """First-ever save (no persisted row): load() returns None → no-op."""
+    pc = _char("Solo")
+    sd = _sd("p:solo", "Solo", [pc])
+    sd.store.load.return_value = None
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    handler._merge_peer_state_into_snapshot(sd)
+    # Snapshot unchanged.
+    assert [c.core.name for c in sd.snapshot.characters] == ["Solo"]
+
+
+def test_merge_peer_state_swallows_load_errors() -> None:
+    """A best-effort merge must never raise out of the save path — a
+    transient store error during merge would otherwise turn into a
+    hard save failure for the disconnecting / turn-ending player.
+    """
+    laverne = _char("Laverne")
+    sd = _sd("p:laverne", "Laverne", [laverne])
+    sd.store.load.side_effect = RuntimeError("transient store error")
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    # Must not raise.
+    handler._merge_peer_state_into_snapshot(sd)
+    # Snapshot unchanged.
+    assert [c.core.name for c in sd.snapshot.characters] == ["Laverne"]
