@@ -43,7 +43,6 @@ from sidequest.server.session_handler import (
 from sidequest.server.session_room import RoomRegistry
 from sidequest.telemetry.watcher_hub import WatcherHub, watcher_hub
 
-
 # ----------------------------------------------------------------------
 # Shared fixtures and helpers
 # ----------------------------------------------------------------------
