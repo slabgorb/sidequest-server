@@ -20,6 +20,28 @@ from sidequest.telemetry.spans import (
     encounter_resolved_span,
 )
 
+_VALID_SIDES = ("player", "opponent", "neutral")
+
+
+def _validate_side(actor_name: str, declared: str) -> str:
+    """Validate that side is in {player, opponent, neutral}.
+
+    Raises ValueError on invalid value, emitting encounter_invalid_side_span
+    for OTEL observability.
+    """
+    if declared in _VALID_SIDES:
+        return declared
+    from sidequest.telemetry.spans import encounter_invalid_side_span
+    with encounter_invalid_side_span(
+        actor_name=actor_name,
+        declared_side=declared,
+        valid_set="|".join(_VALID_SIDES),
+    ):
+        pass
+    raise ValueError(
+        f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}"
+    )
+
 
 def instantiate_encounter_from_trigger(
     *,
@@ -39,11 +61,14 @@ def instantiate_encounter_from_trigger(
     Raises ``ValueError`` when ``encounter_type`` doesn't match any
     ConfrontationDef in the pack (CLAUDE.md: no silent fallback).
 
+    Raises ``ValueError`` when any NPC's side is not in {player, opponent, neutral}
+    (CLAUDE.md: no silent fallback). Emits encounter_invalid_side_span for OTEL.
+
     The encounter's dual dials are taken from the matched ConfrontationDef.
-    Actors are assigned side="player" for the calling player and
-    side="opponent" for each NpcMention. When ``npcs_present`` is empty
-    the encounter is instantiated with the player only (lie-detector span
-    is the caller's responsibility).
+    Actors are assigned side="player" for the calling player and side read from
+    each NpcMention's ``side`` field (validated against {player, opponent, neutral}).
+    When ``npcs_present`` is empty the encounter is instantiated with the player
+    only (lie-detector span is the caller's responsibility).
 
     Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
     passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
@@ -73,7 +98,9 @@ def instantiate_encounter_from_trigger(
         ]
         for npc in npcs_present:
             npc_name = getattr(npc, "name", None) or str(npc)
-            actors.append(EncounterActor(name=npc_name, role=role, side="opponent"))
+            side_raw = getattr(npc, "side", None) or "neutral"
+            side = _validate_side(npc_name, side_raw)
+            actors.append(EncounterActor(name=npc_name, role=role, side=side))
 
         pm = cdef.player_metric
         om = cdef.opponent_metric
