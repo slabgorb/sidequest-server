@@ -450,6 +450,15 @@ class _SessionData:
     # the consuming turn (``take`` semantics). None when no roll is
     # pending. Rust parity: ``pending_roll_outcome`` on SharedSession.
     pending_roll_outcome: Any | None = None
+    # Rolling character's name for the dice-replay turn — paired with
+    # ``pending_roll_outcome``. Read by ``_apply_narration_result_to_snapshot``
+    # so it can drop ONLY the rolling actor's beat from the narrator's
+    # ``beat_selections`` (already applied via ``dispatch_dice_throw``)
+    # while still applying opponent-side beat selections so the opponent
+    # dial can advance. Playtest 2026-04-25 [P0] regression: dropping all
+    # selections wholesale left the opponent dial inert and made combat
+    # one-sided. Cleared together with ``pending_roll_outcome``.
+    pending_roll_actor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1165,6 +1174,7 @@ class WebSocketSessionHandler:
         # (Rust parity: pending_roll_outcome). Stashed on session_data for
         # the next turn's TurnContext to pick up if needed.
         sd.pending_roll_outcome = outcome.outcome
+        sd.pending_roll_actor = character_name
 
         # Run the narrator inline with the synthesized beat-resolved action
         # so the rolling player sees prose in the same WebSocket round-trip.
@@ -3026,13 +3036,17 @@ class WebSocketSessionHandler:
             if dice_outcome is not None:
                 outcome_name = getattr(dice_outcome, "name", None) or str(dice_outcome)
                 dice_failed = outcome_name in ("Fail", "CritFail")
+            dice_actor: str | None = getattr(sd, "pending_roll_actor", None)
             _apply_narration_result_to_snapshot(
                 snapshot, result, sd.player_name,
                 pack=sd.genre_pack, dice_failed=dice_failed,
+                dice_actor=dice_actor,
             )
             # Consume the pending outcome — one turn per roll.
             if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
                 sd.pending_roll_outcome = None
+            if hasattr(sd, "pending_roll_actor"):
+                sd.pending_roll_actor = None
             snapshot.turn_manager.record_interaction()
     
             now_encounter = snapshot.encounter

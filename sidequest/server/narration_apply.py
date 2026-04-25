@@ -30,6 +30,7 @@ def _apply_narration_result_to_snapshot(
     *,
     pack: GenrePack | None = None,
     dice_failed: bool | None = None,
+    dice_actor: str | None = None,
 ) -> None:
     """Apply narrator-extracted fields to the snapshot.
 
@@ -37,9 +38,18 @@ def _apply_narration_result_to_snapshot(
     inventory items_gained / items_lost.
     Story 3.4: encounter instantiation and beat application (when pack provided).
 
-    ``dice_failed=True`` signals a dice-replay turn where the narrator's
-    beat_selections should be filtered out — the dice roll is the mechanical
-    event. ``None`` = no dice this turn. ``False`` = success.
+    ``dice_failed=True`` / ``False`` signals a dice-replay turn — the dice
+    is the mechanical event for the rolling player. ``None`` means no dice
+    this turn (free-text turn; narrator's beat_selections stand on their
+    declared tier).
+
+    ``dice_actor`` is the rolling actor's name (paired with ``dice_failed``).
+    On a dice-replay turn, only that actor's beat selection is filtered out —
+    ``dispatch_dice_throw`` already applied it. Other actors' selections
+    (typically opponent-side NPCs the narrator routes the round-trip through)
+    still apply so the opponent dial can advance and combat is two-sided.
+    Playtest 2026-04-25 [P0]: prior behavior dropped *all* selections,
+    leaving the opponent dial inert and combat structurally unresolvable.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
@@ -288,29 +298,47 @@ def _apply_narration_result_to_snapshot(
 
             selections = result.beat_selections
             if dice_failed is not None and selections:
-                # Dice-replay turns: dispatch/dice.py already applied the beat;
-                # narrator beat_selections are dropped.
+                # Dice-replay turns: dispatch/dice.py already applied the
+                # rolling actor's beat. Drop just THAT actor's selection
+                # (would otherwise double-apply); keep every other actor's
+                # selection so opponent-side beats actually advance the
+                # opponent dial. Playtest 2026-04-25 [P0]: dropping all
+                # selections wholesale left opponent_metric stuck at 0
+                # forever and combat was structurally one-sided.
+                kept: list = []
                 for sel in selections:
                     actor = enc.find_actor(sel.actor)
                     side = actor.side if actor else "unknown"
-                    with encounter_beat_skipped_span(
-                        reason="dice_replay_turn",
-                        actor=sel.actor, actor_side=side, beat_id=sel.beat_id,
-                    ):
-                        pass
-                    _watcher_publish(
-                        "state_transition",
-                        {
-                            "field": "encounter",
-                            "op": "beat_skipped",
-                            "reason": "dice_replay_turn",
-                            "actor": sel.actor,
-                            "actor_side": side,
-                            "beat_id": sel.beat_id,
-                        },
-                        component="encounter",
+                    is_rolling_actor = (
+                        dice_actor is not None and sel.actor == dice_actor
                     )
-                selections = []
+                    # Fallback when dice_actor wasn't threaded through (older
+                    # call sites): drop player-side selections to preserve
+                    # the prior no-double-apply guarantee, but no longer
+                    # blanket-drop opponent-side selections.
+                    if dice_actor is None and side == "player":
+                        is_rolling_actor = True
+                    if is_rolling_actor:
+                        with encounter_beat_skipped_span(
+                            reason="dice_replay_turn",
+                            actor=sel.actor, actor_side=side, beat_id=sel.beat_id,
+                        ):
+                            pass
+                        _watcher_publish(
+                            "state_transition",
+                            {
+                                "field": "encounter",
+                                "op": "beat_skipped",
+                                "reason": "dice_replay_turn",
+                                "actor": sel.actor,
+                                "actor_side": side,
+                                "beat_id": sel.beat_id,
+                            },
+                            component="encounter",
+                        )
+                        continue
+                    kept.append(sel)
+                selections = kept
 
             turn_num = snapshot.turn_manager.interaction
             for sel in selections:

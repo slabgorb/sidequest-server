@@ -136,31 +136,32 @@ async def test_confrontation_message_refreshed_on_live_to_live(
 
 
 @pytest.mark.asyncio
-async def test_dice_turn_filters_narrator_beat_selections(
+async def test_dice_turn_filters_only_rolling_actor_beat_selection(
     session_handler_factory,
 ):
-    """Wiring test: when ``sd.pending_roll_outcome`` is set at narration
-    time (dice-replay turn), all narrator-extracted ``beat_selections``
-    are filtered so the turn has exactly one mechanical event — the
-    player's rolled beat, applied by DICE_THROW dispatch.
+    """Wiring test: on a dice-replay turn, only the rolling actor's
+    ``beat_selection`` is filtered (already applied by ``dispatch_dice_throw``).
+    Opponent-side actor selections still apply so the opponent dial can
+    advance and combat is two-sided.
 
-    Regression for playtest 2026-04-24 pingpong entries "Player
-    auto-plays 'attack' beat after failed Flank" and "Confrontation
-    tab disappears mid-fight (resolved_encounter=False)". The
-    pre-filter behavior let the narrator push momentum past threshold
-    via invisible NPC beat extractions, silently resolving the
-    encounter mid-fight.
-
-    Verifies the full path: ``_execute_narration_turn`` reads
-    ``pending_roll_outcome``, threads ``dice_failed`` into
-    ``_apply_narration_result_to_snapshot``, which drops the
-    narrator's beat_selections and leaves the encounter untouched.
+    Original 2026-04-24 regression (playtest pingpong "Player auto-plays
+    'attack' beat after failed Flank", "Confrontation tab disappears
+    mid-fight") was about silent threshold-crossing via invisible NPC
+    beat extractions. The original fix dropped *all* selections — but
+    that overcorrected, leaving the opponent dial inert (playtest
+    2026-04-25 [P0] "Beat resolution has zero effect on momentum
+    dials"). The current contract keeps the no-double-apply guarantee
+    for the rolling actor while preserving opponent agency. Each kept
+    application emits an ``encounter.beat_applied`` watcher event — the
+    GM panel sees every advance, so silent threshold-crossing is
+    surfaced via the lie-detector rather than suppressed.
     """
     from sidequest.game.encounter import (
         EncounterActor,
         EncounterMetric,
         StructuredEncounter,
     )
+    from sidequest.protocol.dice import RollOutcome
 
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
     # Bypass the session-wide pack cache — otherwise a prior test that
@@ -172,23 +173,30 @@ async def test_dice_turn_filters_narrator_beat_selections(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
         opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
-        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+        actors=[
+            EncounterActor(name="Rux", role="combatant", side="player"),
+            EncounterActor(name="Warden", role="hostile", side="opponent"),
+        ],
     )
     sd.snapshot.encounter = enc
 
-    # Stash a Fail-classified outcome. The handler reads via
-    # ``getattr(sd, "pending_roll_outcome", None)`` + ``outcome.name``, so a
-    # SimpleNamespace with ``.name = "Fail"`` is a faithful duck-typed stand-in
-    # for ``RollOutcome.Fail``.
+    # Dice-replay context: Rux just rolled (and dispatch/dice already
+    # applied Rux's beat). pending_roll_outcome=Fail so the rolling
+    # actor's beat would be a no-op anyway, but that's not what's under
+    # test — we're testing that Warden's selection still applies.
     sd.pending_roll_outcome = SimpleNamespace(name="Fail")
+    sd.pending_roll_actor = "Rux"
 
-    # Narrator extracted beats for both player and NPC. Both must be
-    # filtered out on a dice-replay turn — dice was the mechanical event.
+    # Narrator extracted beats for both player and NPC. The rolling
+    # actor's (Rux) beat is filtered; the opponent's (Warden) is applied.
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
                 BeatSelection(actor="Rux", beat_id="mutant_ability", target=None),
-                BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
+                BeatSelection(
+                    actor="Warden", beat_id="mutant_ability",
+                    outcome=RollOutcome.Success, target=None,
+                ),
             ],
         ),
     )
@@ -199,12 +207,17 @@ async def test_dice_turn_filters_narrator_beat_selections(
 
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
-    # No narrator beat applied — player_metric stays at pre-narration 0.
+    # Player dial untouched — Rux's selection was filtered (dice already
+    # applied) and the dice itself rolled Fail.
     assert conf[0].payload.player_metric["current"] == 0
+    # Opponent dial advanced — Warden's selection is kept. mutant_ability
+    # is kind=strike, base=4; on Success, own_delta=4 routed to the
+    # opponent side's own metric (= opponent_metric).
+    assert conf[0].payload.opponent_metric["current"] == 4
 
-    # Consumed — pending outcome is cleared after the turn so the next beat
-    # doesn't re-use a stale roll.
+    # Consumed — both pending fields cleared after the turn.
     assert sd.pending_roll_outcome is None
+    assert sd.pending_roll_actor is None
 
 
 # ---------------------------------------------------------------------------
@@ -274,20 +287,21 @@ async def test_narration_without_location_skips_chapter_marker(
 
 
 @pytest.mark.asyncio
-async def test_dice_turn_success_also_filters_narrator_beats(
+async def test_dice_turn_success_applies_opponent_beat_selections(
     session_handler_factory,
 ):
-    """Success roll branch of the narrator-beat filter. Same contract as
-    the Fail branch — the dice roll is the mechanical event, the
-    narrator's beat_selections are narrative-only. Guards against
-    accidentally applying the filter only on Fail and missing the
-    Success side.
+    """Success roll branch of the dice-replay filter. The rolling
+    actor's beat is filtered (dice already applied it via
+    ``dispatch_dice_throw``); the opponent's beat is applied so the
+    opponent dial advances. Guards against the filter incorrectly
+    suppressing opponent agency on the Success branch.
     """
     from sidequest.game.encounter import (
         EncounterActor,
         EncounterMetric,
         StructuredEncounter,
     )
+    from sidequest.protocol.dice import RollOutcome
 
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
     sd.genre_pack = load_genre_pack(_FIXTURE_PACK)
@@ -295,14 +309,21 @@ async def test_dice_turn_success_also_filters_narrator_beats(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=3, starting=0, threshold=10),
         opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
-        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+        actors=[
+            EncounterActor(name="Rux", role="combatant", side="player"),
+            EncounterActor(name="Warden", role="hostile", side="opponent"),
+        ],
     )
     sd.snapshot.encounter = enc
     sd.pending_roll_outcome = SimpleNamespace(name="Success")
+    sd.pending_roll_actor = "Rux"
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
             beat_selections=[
-                BeatSelection(actor="Warden", beat_id="mutant_ability", target=None),
+                BeatSelection(
+                    actor="Warden", beat_id="mutant_ability",
+                    outcome=RollOutcome.Success, target=None,
+                ),
             ],
         ),
     )
@@ -311,6 +332,8 @@ async def test_dice_turn_success_also_filters_narrator_beats(
         sd, "[BEAT_RESOLVED] ...", _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
-    # player_metric stays at 3 — the narrator's Warden beat is filtered on a
-    # dice-replay turn.
+    # Player dial untouched by the narrator's beat_selections (Rux not in
+    # the list; dice handled Rux's roll out-of-band).
     assert conf[0].payload.player_metric["current"] == 3
+    # Opponent dial advances by Warden's mutant_ability (strike, base=4).
+    assert conf[0].payload.opponent_metric["current"] == 4
