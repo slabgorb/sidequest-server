@@ -9,12 +9,13 @@ import pytest
 from sidequest.telemetry import watcher_hub as wh_mod  # noqa: F401
 from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
 from sidequest.telemetry.validator import (
+    TROPE_KEYWORDS_SOURCE,
     Validator,
     entity_check,
     inventory_check,
     patch_legality_check,
+    subsystem_exercise_check,
     trope_alignment_check,
-    TROPE_KEYWORDS_SOURCE,
 )
 
 
@@ -198,6 +199,33 @@ async def test_trope_alignment_warns_when_keywords_absent(
     assert any(
         "trope_alignment" in str(w["fields"]) for w in warnings
     )
+
+
+@pytest.mark.asyncio
+async def test_subsystem_exercise_emits_per_turn_summary(captured_events) -> None:
+    record = _make_record()
+    await subsystem_exercise_check(record)
+    summaries = [
+        e for e in captured_events
+        if e["event_type"] == "subsystem_exercise_summary"
+    ]
+    assert summaries, "subsystem_exercise_check should emit a per-turn summary"
+
+
+@pytest.mark.asyncio
+async def test_subsystem_exercise_emits_coverage_gap_after_silence(
+    captured_events,
+) -> None:
+    from sidequest.telemetry.validator import _reset_subsystem_window
+
+    _reset_subsystem_window()
+    for i in range(11):
+        record_dict = _make_record(turn_id=i).__dict__.copy()
+        record_dict["agent_name"] = "narrator"
+        await subsystem_exercise_check(TurnRecord(**record_dict))
+
+    gaps = [e for e in captured_events if e["event_type"] == "coverage_gap"]
+    assert gaps, "Expected a coverage_gap after a long subsystem silence"
 
 
 @pytest.mark.asyncio

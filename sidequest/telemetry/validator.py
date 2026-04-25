@@ -246,6 +246,56 @@ async def trope_alignment_check(record: TurnRecord) -> None:
             )
 
 
+_SUBSYSTEM_WINDOW: deque[tuple[int, str]] = deque(maxlen=50)
+_KNOWN_SUBSYSTEMS = {
+    "narrator", "combat", "merchant", "world_builder",
+    "scenario", "encounter", "chargen", "trope", "barrier",
+}
+_COVERAGE_GAP_THRESHOLD_TURNS = 10
+
+
+def _reset_subsystem_window() -> None:
+    """Test helper — clears the sliding window."""
+    _SUBSYSTEM_WINDOW.clear()
+
+
+async def subsystem_exercise_check(record: TurnRecord) -> None:
+    """Per-turn rollup of which subsystem ran, plus periodic coverage_gap
+    when a subsystem hasn't been exercised in N turns."""
+    _SUBSYSTEM_WINDOW.append((record.turn_id, record.agent_name))
+
+    publish_event(
+        "subsystem_exercise_summary",
+        {
+            "turn_id": record.turn_id,
+            "agent_name": record.agent_name,
+            "window_depth": len(_SUBSYSTEM_WINDOW),
+        },
+        component="validator",
+        severity="info",
+    )
+
+    if len(_SUBSYSTEM_WINDOW) < _COVERAGE_GAP_THRESHOLD_TURNS:
+        return
+
+    recent_agents = {
+        agent for _t, agent in list(_SUBSYSTEM_WINDOW)[-_COVERAGE_GAP_THRESHOLD_TURNS:]
+    }
+    silent = _KNOWN_SUBSYSTEMS - recent_agents
+    for sub in silent:
+        publish_event(
+            "coverage_gap",
+            {
+                "turn_id": record.turn_id,
+                "subsystem": sub,
+                "silent_turns": _COVERAGE_GAP_THRESHOLD_TURNS,
+                "rationale": "no agent invocation in sliding window",
+            },
+            component="validator",
+            severity="info",
+        )
+
+
 class Validator:
     """Single-consumer narrative validator pipeline."""
 
@@ -263,6 +313,7 @@ class Validator:
         self.register_check(inventory_check)
         self.register_check(patch_legality_check)
         self.register_check(trope_alignment_check)
+        self.register_check(subsystem_exercise_check)
 
     def register_check(self, fn: CheckFn) -> None:
         """Register a check coroutine. Called once per TurnRecord."""
