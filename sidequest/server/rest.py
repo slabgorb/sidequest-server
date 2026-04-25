@@ -666,6 +666,22 @@ def create_rest_router() -> APIRouter:
                 resumed=False,
             )
 
+    @router.get("/api/sessions/{slug}/encounter_events")
+    async def get_encounter_events(slug: str, request: Request):
+        """Return ordered ENCOUNTER_* event rows for the given session.
+
+        Reads from the SQLite events table populated by the watcher hub
+        (Task 20). Used by the GM panel timeline view (Task 22).
+        """
+        save_dir: Path = request.app.state.save_dir
+        db = db_path_for_slug(save_dir, slug)
+        if not db.exists():
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        store = SqliteStore(db)
+        store.initialize()
+        from sidequest.game.persistence import query_encounter_events
+        return query_encounter_events(store)
+
     @router.get("/api/games/{slug}")
     async def get_game_endpoint(slug: str, request: Request) -> GameResponse:
         """Return metadata for a game by slug.
