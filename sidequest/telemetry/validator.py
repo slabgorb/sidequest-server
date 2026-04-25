@@ -78,6 +78,66 @@ async def entity_check(record: TurnRecord) -> None:
             return
 
 
+_GRAB_VERBS = (
+    "grab",
+    "take",
+    "pick up",
+    "pocket",
+    "stash",
+    "loot",
+    "snatch",
+    "scoop",
+    "lift",
+    "claim",
+)
+
+
+async def inventory_check(record: TurnRecord) -> None:
+    """Cross-check narration against inventory deltas."""
+    narration = (record.narration or "").lower()
+    delta = record.delta
+    inv_changes = getattr(delta, "inventory_changes", None) or []
+    has_inventory_patch = bool(inv_changes) or any(
+        any("inventory" in f for f in p.fields_changed)
+        for p in record.patches_applied
+    )
+
+    grabbed_in_narration = any(v in narration for v in _GRAB_VERBS)
+
+    if grabbed_in_narration and not has_inventory_patch:
+        publish_event(
+            "validation_warning",
+            {
+                "check": "inventory",
+                "turn_id": record.turn_id,
+                "rationale": "narration describes a grab but no inventory patch",
+            },
+            component="validator",
+            severity="warning",
+        )
+
+    for change in inv_changes:
+        item = (
+            change.get("item")
+            if isinstance(change, dict)
+            else getattr(change, "item", None)
+        )
+        if not item:
+            continue
+        if str(item).lower() not in narration:
+            publish_event(
+                "validation_warning",
+                {
+                    "check": "inventory",
+                    "turn_id": record.turn_id,
+                    "item": item,
+                    "rationale": "patch added item but narration is silent",
+                },
+                component="validator",
+                severity="warning",
+            )
+
+
 class Validator:
     """Single-consumer narrative validator pipeline."""
 
@@ -92,6 +152,7 @@ class Validator:
         self.dropped_records: int = 0
         self._check_durations_ms: deque[tuple[str, float]] = deque(maxlen=200)
         self.register_check(entity_check)
+        self.register_check(inventory_check)
 
     def register_check(self, fn: CheckFn) -> None:
         """Register a check coroutine. Called once per TurnRecord."""

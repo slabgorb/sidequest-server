@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 import pytest
 
 from sidequest.telemetry import watcher_hub as wh_mod  # noqa: F401
-from sidequest.telemetry.turn_record import TurnRecord
-from sidequest.telemetry.validator import Validator, entity_check
+from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
+from sidequest.telemetry.validator import Validator, entity_check, inventory_check
 
 
 def _make_record(turn_id: int = 1) -> TurnRecord:
@@ -103,3 +103,37 @@ async def test_entity_check_warns_on_unknown_npc(captured_events) -> None:
     warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
     assert warnings, "entity_check should warn on unknown NPC"
     assert "Sir Reginald" in str(warnings[0]["fields"])
+
+
+@pytest.mark.asyncio
+async def test_inventory_check_warns_on_narration_grab_with_no_patch(
+    captured_events,
+) -> None:
+    record_dict = _make_record().__dict__.copy()
+    record_dict["narration"] = "You grab the lantern from the shelf."
+    record_dict["patches_applied"] = []
+    record_dict["delta"] = type("Delta", (), {"inventory_changes": []})()
+    record = TurnRecord(**record_dict)
+
+    await inventory_check(record)
+    warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
+    assert any("inventory" in str(w["fields"]) for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_inventory_check_warns_on_silent_patch(captured_events) -> None:
+    record_dict = _make_record().__dict__.copy()
+    record_dict["narration"] = "You walk forward."
+    record_dict["patches_applied"] = [
+        PatchSummary(patch_type="world", fields_changed=["inventory.rope"]),
+    ]
+    record_dict["delta"] = type(
+        "Delta",
+        (),
+        {"inventory_changes": [{"item": "rope", "delta": 1}]},
+    )()
+    record = TurnRecord(**record_dict)
+
+    await inventory_check(record)
+    warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
+    assert any("rope" in str(w["fields"]) for w in warnings)
