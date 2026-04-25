@@ -5,7 +5,9 @@ import pytest
 
 from sidequest.agents.subsystems import (
     SubsystemOutput,
+    _REGISTRY,
     get_registered,
+    register_subsystem,
     run_dispatch_bank,
 )
 from sidequest.protocol.dispatch import (
@@ -116,18 +118,32 @@ async def test_run_dispatch_bank_directives_include_decomposer_authored():
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_subsystem_exception_is_caught(minimal_npc_registry):
-    """A subsystem raising inside the bank logs and continues."""
-    # npc_agency raises ValueError when params.npc_name is missing —
-    # use that as the raising subsystem rather than distinctive_detail_hint
-    # (which now degrades to a no-op rather than raising).
-    d = _make_dispatch("npc_agency", "k_err", params={})  # no npc_name
-    pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
-    assert len(res.errors) == 1
-    assert res.errors[0][0] == "k_err"
-    # No directives from the failing subsystem.
-    assert res.directives == []
+async def test_run_dispatch_bank_subsystem_exception_is_caught():
+    """A subsystem raising inside the bank logs and continues.
+
+    Uses a stub subsystem that always raises, registered under a
+    test-only name and unregistered after the test. Previously this
+    test relied on ``npc_agency`` raising for missing ``npc_name``,
+    but per playtest 2026-04-25 [P3-MED] that subsystem now no-ops
+    (returns ``data["error"] = "no_npc_name"``) so opening-crisis
+    cascades on turn 1 don't pollute the warning stream. The bank's
+    try/except infrastructure is still exercised by any subsystem
+    that raises — we just need a deterministic raiser.
+    """
+    async def _always_raises(_dispatch):  # noqa: ANN001 — kw-less stub
+        raise RuntimeError("test-only stub: always raises")
+
+    register_subsystem("__test_raises", _always_raises)
+    try:
+        d = _make_dispatch("__test_raises", "k_err")
+        pkg = _make_package([[d]])
+        res = await run_dispatch_bank(pkg)
+        assert len(res.errors) == 1
+        assert res.errors[0][0] == "k_err"
+        # No directives from the failing subsystem.
+        assert res.directives == []
+    finally:
+        _REGISTRY.pop("__test_raises", None)
 
 
 @pytest.mark.asyncio
@@ -187,6 +203,33 @@ async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has
     assert res.errors == []
     out = res.outputs_by_key["k_empty"]
     assert out.data["error"] == "npc_not_registered"
+
+
+@pytest.mark.asyncio
+async def test_npc_agency_noops_on_missing_npc_name(minimal_npc_registry):
+    """Playtest 2026-04-25 [P3-MED] regression. ``npc_agency`` must NOT
+    raise when ``params.npc_name`` is missing — opening-crisis cascades
+    fire on turn 1 of every fresh game across all packs, before any NPC
+    is auto-registered. Raising fired ``subsystems.dispatch_failed`` +
+    ``orchestrator.subsystem_error`` warnings on every fresh-game first
+    turn, polluting the GM-panel signal stream and training the user to
+    ignore exceptions. The subsystem now returns a structured skip via
+    ``data["error"] = "no_npc_name"`` — no exception, no warning, but
+    the skip is surfaced as a span attribute for GM-panel visibility.
+    """
+    d = _make_dispatch("npc_agency", "k_no_name", params={})  # no npc_name
+    pkg = _make_package([[d]])
+    res = await run_dispatch_bank(
+        pkg, context={"npc_registry": minimal_npc_registry},
+    )
+    # Critical: no exceptions captured by the bank's try/except.
+    assert res.errors == []
+    out = res.outputs_by_key["k_no_name"]
+    # Structured skip surfaces the rationale for the GM panel.
+    assert out.data["error"] == "no_npc_name"
+    assert out.data["skipped"] is True
+    # No directives produced for an empty cascade.
+    assert out.directives == []
 
 
 @pytest.mark.asyncio
@@ -313,24 +356,33 @@ async def test_run_dispatch_bank_emits_bank_and_subsystem_spans(otel_capture):
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_subsystem_span_records_error(
-    otel_capture, minimal_npc_registry,
-):
+async def test_run_dispatch_bank_subsystem_span_records_error(otel_capture):
     """When a subsystem raises, its local_dm.subsystem span records the
-    error type and produced_directives=0 — no clean span for a broken run."""
-    # npc_agency raises ValueError when npc_name is missing.
-    d = _make_dispatch("npc_agency", "k_err", params={})
-    pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
-    assert len(res.errors) == 1
+    error type and produced_directives=0 — no clean span for a broken run.
 
-    spans = otel_capture.get_finished_spans()
-    sub_spans = [s for s in spans if s.name == "local_dm.subsystem"]
-    assert len(sub_spans) == 1
-    attrs = dict(sub_spans[0].attributes or {})
-    assert attrs["subsystem"] == "npc_agency"
-    assert attrs["produced_directives"] == 0
-    assert "error" in attrs
+    See ``test_run_dispatch_bank_subsystem_exception_is_caught`` for the
+    history of why this no longer rides on ``npc_agency`` (post
+    [P3-MED] no-op fix).
+    """
+    async def _always_raises(_dispatch):  # noqa: ANN001 — kw-less stub
+        raise RuntimeError("test-only stub: always raises")
+
+    register_subsystem("__test_raises_span", _always_raises)
+    try:
+        d = _make_dispatch("__test_raises_span", "k_err")
+        pkg = _make_package([[d]])
+        res = await run_dispatch_bank(pkg)
+        assert len(res.errors) == 1
+
+        spans = otel_capture.get_finished_spans()
+        sub_spans = [s for s in spans if s.name == "local_dm.subsystem"]
+        assert len(sub_spans) == 1
+        attrs = dict(sub_spans[0].attributes or {})
+        assert attrs["subsystem"] == "__test_raises_span"
+        assert attrs["produced_directives"] == 0
+        assert "error" in attrs
+    finally:
+        _REGISTRY.pop("__test_raises_span", None)
 
 
 @pytest.mark.asyncio
