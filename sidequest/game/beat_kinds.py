@@ -180,6 +180,7 @@ from sidequest.telemetry.spans import (  # noqa: E402
     encounter_tag_backfire_span,
     encounter_tag_created_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -277,18 +278,45 @@ def apply_beat(
             before=before, after=own_metric.current,
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "metric_advance",
+                "side": actor.side,
+                "delta_kind": "own",
+                "delta": deltas.own,
+                "before": before,
+                "after": own_metric.current,
+            },
+            component="encounter",
+        )
 
     if deltas.opponent != 0:
         before = other_metric.current
         # Opponent dial: ``brace`` emits a negative delta; ascending dials
         # are clamped at 0.
         other_metric.current = max(0, other_metric.current + deltas.opponent)
+        cross_side = "opponent" if actor.side == "player" else "player"
         with encounter_metric_advance_span(
-            side=("opponent" if actor.side == "player" else "player"),
+            side=cross_side,
             delta_kind="cross", delta=deltas.opponent,
             before=before, after=other_metric.current,
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "metric_advance",
+                "side": cross_side,
+                "delta_kind": "cross",
+                "delta": deltas.opponent,
+                "before": before,
+                "after": other_metric.current,
+            },
+            component="encounter",
+        )
 
     if deltas.tag_backfire:
         # Angle CritFail: tag goes onto the opposing side, fleeting.
@@ -307,6 +335,20 @@ def apply_beat(
             target=target_actor_name or "", triggering_beat=beat.id,
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "tag_backfire",
+                "tag_text": tag.text,
+                "created_by": actor.name,
+                "target": target_actor_name or "",
+                "triggering_beat": beat.id,
+                "fleeting": True,
+                "leverage": 1,
+            },
+            component="encounter",
+        )
     elif deltas.grants_tag:
         tag = EncounterTag(
             text=deltas.grants_tag,
@@ -323,6 +365,20 @@ def apply_beat(
             created_via="angle_beat",
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "tag_created",
+                "tag_text": tag.text,
+                "created_by": actor.name,
+                "target": tag.target or "",
+                "leverage": tag.leverage,
+                "fleeting": False,
+                "created_via": "angle_beat",
+            },
+            component="encounter",
+        )
 
     if deltas.grants_fleeting_tag and not deltas.tag_backfire:
         tag = EncounterTag(
@@ -340,6 +396,20 @@ def apply_beat(
             created_via="extras",
         ):
             pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "tag_created",
+                "tag_text": tag.text,
+                "created_by": actor.name,
+                "target": tag.target or "",
+                "leverage": 1,
+                "fleeting": True,
+                "created_via": "extras",
+            },
+            component="encounter",
+        )
 
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)

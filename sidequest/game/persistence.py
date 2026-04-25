@@ -457,6 +457,28 @@ def set_claude_session_id(store: SqliteStore, slug: str, claude_session_id: str)
         )
 
 
+def query_encounter_events(store: SqliteStore) -> list[dict]:
+    """Return ordered ENCOUNTER_* event rows as dicts.
+
+    The GM panel reads this for its post-hoc timeline view (spec
+    2026-04-25-dual-track-momentum-design.md §"GM panel verification").
+    """
+    import json
+    rows = store._conn.execute(
+        "SELECT seq, kind, payload_json, created_at FROM events "
+        "WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        out.append({
+            "seq": r[0],
+            "kind": r[1],
+            "payload": json.loads(r[2]),
+            "created_at": r[3],
+        })
+    return out
+
+
 def _generate_recap(
     entries: list[NarrativeEntry],
     character_names: list[str],

@@ -623,6 +623,24 @@ async def test_run_narration_turn_extracts_items_gained():
 
 
 @pytest.mark.asyncio
+async def test_run_narration_turn_extracts_status_changes():
+    """Wiring: status_changes from game_patch flows through to NarrationTurnResult."""
+    narration_text = (
+        "**The Arena**\n\nSam ducks the swing.\n\n"
+        "```game_patch\n"
+        '{"status_changes": [{"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}}]}\n'
+        "```"
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Sam")
+    result = await orch.run_narration_turn("defend", context)
+    assert result.status_changes == [
+        {"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_run_narration_turn_genre_prompts_injected():
     """Genre prompts from prompts.yaml appear in the assembled prompt."""
     from sidequest.genre.models.narrative import Prompts
@@ -963,3 +981,65 @@ async def test_run_narration_turn_skips_leak_audit_when_no_dispatch_package(
         if s.name == "narrator.canonical_leak_audit"
     ]
     assert spans == []
+
+
+# ---------------------------------------------------------------------------
+# Task 18 — module-level run_narration_turn wrapper: signal-clear safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_narration_turn_clears_pending_resolution_signal_on_error(
+    monkeypatch,
+):
+    """If the orchestrator raises, the one-shot resolution signal still gets
+    cleared from the snapshot — otherwise a transient failure causes the
+    [ENCOUNTER RESOLVED] zone to fire twice on the next turn (and the
+    encounter_resolution_signal_consumed_span fires twice).
+
+    Wraps the bare ``orchestrator.run_narration_turn(...) → assignment →
+    cleanup`` shape in a try/finally so the cleanup is exception-safe.
+    """
+    from types import SimpleNamespace
+
+    from sidequest.agents import orchestrator as orch_mod
+    from sidequest.game.resolution_signal import ResolutionSignal
+    from sidequest.game.session import GameSnapshot
+
+    # Snapshot with a pending resolution signal — the thing the wrapper must
+    # clear even on failure.
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        location="The Pit",
+        pending_resolution_signal=ResolutionSignal(
+            encounter_type="combat",
+            outcome="opponent_victory",
+            final_player_metric=4,
+            final_opponent_metric=11,
+        ),
+    )
+    assert snapshot.pending_resolution_signal is not None  # arrange sanity
+
+    # Minimal genre stand-in: the wrapper only reads ``audio`` (for sfx) and
+    # ``prompts`` (passed through to TurnContext, never executed because we
+    # short-circuit the orchestrator).
+    fake_genre = SimpleNamespace(audio=SimpleNamespace(), prompts=None)
+
+    async def boom(self, player_action, context):
+        raise RuntimeError("simulated orchestrator failure")
+
+    monkeypatch.setattr(Orchestrator, "run_narration_turn", boom)
+
+    client = make_canned_client("unused")
+
+    with pytest.raises(RuntimeError, match="simulated orchestrator failure"):
+        await orch_mod.run_narration_turn(
+            client=client,
+            session=snapshot,
+            genre=fake_genre,
+            player_action="attack",
+        )
+
+    # The contract: signal cleared even though the orchestrator raised.
+    assert snapshot.pending_resolution_signal is None

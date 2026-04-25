@@ -420,6 +420,21 @@ class TurnContext:
     pc_cores_by_player: dict[str, CreatureCore] = field(default_factory=dict)
     npc_cores_by_name: dict[str, CreatureCore] = field(default_factory=dict)
 
+    # Per-actor status lists (Task 18 — dual-track momentum). Populated by
+    # run_narration_turn from session.characters so the live encounter zone
+    # renders Status objects per actor. Typed as dict[str, list[Any]] to avoid
+    # a circular import on Status — matches the existing pattern for
+    # ``confrontation_def: Any`` and ``encounter: Any``.
+    statuses_by_actor: dict[str, list[Any]] = field(default_factory=dict)
+
+    # One-shot ResolutionSignal (Task 18 — dual-track momentum). Populated by
+    # run_narration_turn from session.pending_resolution_signal. Consumed in
+    # build_narrator_prompt: passed to build_encounter_context, span fired.
+    # Cleared on the snapshot in the module-level wrapper after the orchestrator
+    # returns — TurnContext is a local copy; the snapshot isn't in scope here.
+    # Typed as Any to avoid a circular import on ResolutionSignal.
+    pending_resolution_signal: Any = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -514,7 +529,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
         "beat_selections=%d confrontation=%r "
-        "has_location=%s gold_change=%r",
+        "has_location=%s gold_change=%r status_changes=%d",
         len(patch.get("footnotes", [])),
         len(patch.get("items_gained", [])),
         len(patch.get("npcs_present", patch.get("npcs_met", []))),
@@ -527,6 +542,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         patch.get("confrontation"),
         patch.get("location") is not None,
         patch.get("gold_change"),
+        len(patch.get("status_changes", [])),
     )
 
     prose = _strip_json_fence(raw)
@@ -552,6 +568,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         ],
         "gold_change": patch.get("gold_change"),
         "lore_established": patch.get("lore_established"),
+        "status_changes": patch.get("status_changes", []),
     }
 
 
@@ -1005,15 +1022,44 @@ class Orchestrator:
         # === STATE-DEPENDENT SECTIONS (every tier) ===
 
         # Encounter rules for ANY active encounter type. The narrator's
-        # build_encounter_context call (encounter / cdef / summary) renders
-        # live beats + actors directly into the registry.
-        if context.in_combat or context.in_chase or context.in_encounter:
+        # build_encounter_context call renders live beats + actors + both dials
+        # + per-actor statuses + tags directly into the registry.
+        # Also fires when only pending_resolution_signal is set — the encounter
+        # flags may have been cleared by the engine on the resolution turn, but
+        # the [ENCOUNTER RESOLVED] zone must still be emitted this turn.
+        if (context.in_combat or context.in_chase or context.in_encounter
+                or context.pending_resolution_signal is not None):
             self._narrator.build_encounter_context(
                 registry,
                 encounter=context.encounter,
                 cdef=context.confrontation_def,
                 encounter_summary=context.encounter_summary,
+                statuses_by_actor=context.statuses_by_actor,
+                resolution_signal=context.pending_resolution_signal,
             )
+            if context.pending_resolution_signal is not None:
+                from sidequest.telemetry.spans import (
+                    encounter_resolution_signal_consumed_span,
+                )
+                from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+                sig = context.pending_resolution_signal
+                with encounter_resolution_signal_consumed_span(
+                    outcome=sig.outcome,
+                    final_player_metric=sig.final_player_metric,
+                    final_opponent_metric=sig.final_opponent_metric,
+                ):
+                    pass
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "resolution_signal_consumed",
+                        "outcome": sig.outcome,
+                        "final_player_metric": sig.final_player_metric,
+                        "final_opponent_metric": sig.final_opponent_metric,
+                    },
+                    component="encounter",
+                )
 
         # Phase 1 slice: tactical grid injection deferred to Story 41-9
         # Phase 1 slice: lore filter (world_graph) deferred to Story 41-7
@@ -1495,6 +1541,7 @@ class Orchestrator:
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
+                status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,
@@ -1576,6 +1623,17 @@ async def run_narration_turn(
         if pc.core.name != char_name
     ]
 
+    # Task 18 (dual-track momentum): build per-actor status map from session
+    # characters so the live encounter zone can render Status objects per actor.
+    statuses_by_actor = {
+        ch.core.name: list(ch.core.statuses) for ch in session.characters
+    }
+
+    # Task 18 (dual-track momentum): capture the one-shot resolution signal
+    # before building TurnContext so we can clear it from the snapshot after
+    # the orchestrator consumes it.
+    pending_signal = session.pending_resolution_signal
+
     context = TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -1591,7 +1649,22 @@ async def run_narration_turn(
         npc_registry=list(session.npc_registry),
         npcs=list(session.npcs),
         party_peers=party_peers,
+        statuses_by_actor=statuses_by_actor,
+        pending_resolution_signal=pending_signal,
     )
 
     orchestrator = Orchestrator(client=client)
-    return await orchestrator.run_narration_turn(player_action, context)
+    try:
+        return await orchestrator.run_narration_turn(player_action, context)
+    finally:
+        # Clear the one-shot signal after consumption — even if the orchestrator
+        # raised. TurnContext is a local copy; the mutation must happen on the
+        # session snapshot directly. This mirrors Rust's
+        # ``snapshot.pending_resolution_signal.take()`` but is hoisted here
+        # because the snapshot is not in scope inside build_narrator_prompt.
+        # Must run in a finally: a transient orchestrator failure (LLM timeout,
+        # validation error, anything below the degraded-response catch) would
+        # otherwise leave the signal in place and re-fire the [ENCOUNTER
+        # RESOLVED] zone + consume span on the next turn.
+        if pending_signal is not None:
+            session.pending_resolution_signal = None

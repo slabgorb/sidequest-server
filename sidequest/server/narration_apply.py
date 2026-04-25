@@ -298,6 +298,18 @@ def _apply_narration_result_to_snapshot(
                         actor=sel.actor, actor_side=side, beat_id=sel.beat_id,
                     ):
                         pass
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "field": "encounter",
+                            "op": "beat_skipped",
+                            "reason": "dice_replay_turn",
+                            "actor": sel.actor,
+                            "actor_side": side,
+                            "beat_id": sel.beat_id,
+                        },
+                        component="encounter",
+                    )
                 selections = []
 
             turn_num = snapshot.turn_manager.interaction
@@ -319,7 +331,39 @@ def _apply_narration_result_to_snapshot(
                         beat_id=sel.beat_id,
                     ):
                         pass
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "field": "encounter",
+                            "op": "beat_skipped",
+                            "reason": result_apply.skipped_reason,
+                            "actor": actor.name,
+                            "actor_side": actor.side,
+                            "beat_id": sel.beat_id,
+                        },
+                        component="encounter",
+                    )
                     continue
+                # Beat was applied successfully — emit ENCOUNTER_BEAT_APPLIED
+                own_delta = result_apply.deltas.own if result_apply.deltas else 0
+                opp_delta = result_apply.deltas.opponent if result_apply.deltas else 0
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "beat_applied",
+                        "actor": actor.name,
+                        "actor_side": actor.side,
+                        "beat_id": sel.beat_id,
+                        "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
+                        "outcome_tier": sel.outcome.value if hasattr(sel.outcome, "value") else str(sel.outcome),
+                        "own_delta": own_delta,
+                        "opponent_delta": opp_delta,
+                        "metric_target": enc.encounter_type,
+                        "turn": turn_num,
+                    },
+                    component="encounter",
+                )
                 if result_apply.resolved:
                     with encounter_resolved_span(
                         encounter_type=enc.encounter_type,
@@ -328,7 +372,79 @@ def _apply_narration_result_to_snapshot(
                     ):
                         pass
                     snapshot.pending_resolution_signal = _build_resolution_signal(enc)
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "field": "encounter",
+                            "op": "resolved",
+                            "encounter_type": enc.encounter_type,
+                            "outcome": enc.outcome or "",
+                            "source": "narrator_beat",
+                            "final_player_metric": enc.player_metric.current,
+                            "final_opponent_metric": enc.opponent_metric.current,
+                        },
+                        component="encounter",
+                    )
                     break
+
+    if result.status_changes:
+        from sidequest.game.status import Status, StatusSeverity
+        from sidequest.telemetry.spans import encounter_status_added_span
+        turn_num = snapshot.turn_manager.interaction
+        encounter_type = (
+            snapshot.encounter.encounter_type if snapshot.encounter else None
+        )
+        for entry in result.status_changes:
+            actor_name = str(entry.get("actor", "")).strip()
+            status_payload = entry.get("status") or {}
+            text = str(status_payload.get("text", "")).strip()
+            severity_raw = str(status_payload.get("severity", "Scratch"))
+            try:
+                severity = StatusSeverity(severity_raw)
+            except ValueError:
+                logger.warning(
+                    "status_change.invalid_severity actor=%s severity=%s",
+                    actor_name, severity_raw,
+                )
+                continue
+            if not actor_name or not text:
+                continue
+            target = next(
+                (c for c in snapshot.characters if c.core.name == actor_name),
+                None,
+            )
+            if target is None:
+                logger.warning(
+                    "status_change.unknown_actor actor=%s text=%s",
+                    actor_name, text,
+                )
+                continue
+            target.core.statuses.append(Status(
+                text=text,
+                severity=severity,
+                absorbed_shifts=0,
+                created_turn=turn_num,
+                created_in_encounter=encounter_type,
+            ))
+            with encounter_status_added_span(
+                actor=actor_name, text=text, severity=severity.value,
+                source="narrator_extraction",
+            ):
+                pass
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "status_added",
+                    "actor": actor_name,
+                    "text": text,
+                    "severity": severity.value,
+                    "source": "narrator_extraction",
+                    "turn": turn_num,
+                    "encounter_type": encounter_type,
+                },
+                component="encounter",
+            )
 
 
 def _build_resolution_signal(enc: object) -> object:

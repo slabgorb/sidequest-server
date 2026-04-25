@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from sidequest.agents.narrator import NarratorAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
-from sidequest.game.encounter import StructuredEncounter
+from sidequest.game.encounter import (
+    EncounterActor,
+    EncounterMetric,
+    StructuredEncounter,
+)
 from sidequest.genre.models.rules import (
     BeatDef,
     ConfrontationDef,
@@ -13,11 +17,23 @@ from sidequest.genre.models.rules import (
 def _cdef() -> ConfrontationDef:
     return ConfrontationDef(
         type="combat", label="Dungeon Combat", category="combat",
-        metric=MetricDef(name="hp", direction="descending",
-                         starting=10, threshold_low=0),
+        player_metric=MetricDef(name="momentum", threshold=10),
+        opponent_metric=MetricDef(name="momentum", threshold=10),
         beats=[
-            BeatDef(id="attack", label="Attack", metric_delta=2, stat_check="STR"),
-            BeatDef(id="defend", label="Defend", metric_delta=1, stat_check="CON"),
+            BeatDef(id="attack", label="Attack", kind="strike", base=2, stat_check="STR"),
+            BeatDef(id="defend", label="Defend", kind="brace", base=1, stat_check="CON"),
+        ],
+    )
+
+
+def _enc() -> StructuredEncounter:
+    return StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Rux", role="combatant", side="player"),
+            EncounterActor(name="Goblin", role="combatant", side="opponent"),
         ],
     )
 
@@ -25,9 +41,8 @@ def _cdef() -> ConfrontationDef:
 def test_build_encounter_context_lists_beats_and_actors() -> None:
     narrator = NarratorAgent()
     reg = PromptRegistry()
-    enc = StructuredEncounter.combat(combatants=["Rux", "Goblin"], hp=10)
     narrator.build_encounter_context(
-        reg, encounter=enc, cdef=_cdef(), encounter_summary="stub summary"
+        reg, encounter=_enc(), cdef=_cdef(), encounter_summary="stub summary"
     )
     composed = reg.compose(narrator.name())
     assert "stub summary" in composed

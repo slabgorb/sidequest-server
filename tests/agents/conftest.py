@@ -3,7 +3,15 @@ from __future__ import annotations
 
 import pytest
 
+from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.game.session import NpcRegistryEntry
+
+
+@pytest.fixture
+def build_registry():
+    def _build():
+        return PromptRegistry()
+    return _build
 
 
 @pytest.fixture

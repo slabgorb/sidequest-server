@@ -19,6 +19,7 @@ from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_resolved_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 _VALID_SIDES = ("player", "opponent", "neutral")
 
@@ -124,6 +125,19 @@ def instantiate_encounter_from_trigger(
             narrator_hints=[],
         )
         snapshot.encounter = enc
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "started",
+                "encounter_type": encounter_type,
+                "player_metric_threshold": pm.threshold,
+                "opponent_metric_threshold": om.threshold,
+                "turn": snapshot.turn_manager.interaction if hasattr(snapshot, "turn_manager") else 0,
+                "genre_slug": genre_slug or "",
+            },
+            component="encounter",
+        )
         return enc
 
 
@@ -152,6 +166,19 @@ def resolve_encounter_from_trope(
         source="trope",
     ):
         enc.resolve_from_trope(trope_id)
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "resolved",
+            "encounter_type": enc.encounter_type,
+            "outcome": enc.outcome or f"resolved by trope completion: {trope_id}",
+            "source": "trope",
+            "final_player_metric": enc.player_metric.current,
+            "final_opponent_metric": enc.opponent_metric.current,
+        },
+        component="encounter",
+    )
     return enc
 
 

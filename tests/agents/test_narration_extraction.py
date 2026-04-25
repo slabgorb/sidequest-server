@@ -5,7 +5,7 @@ validation. Dual-track momentum (spec §Outcome declaration, §Side declaration)
 """
 import pytest
 
-from sidequest.agents.orchestrator import BeatSelection, NpcMention
+from sidequest.agents.orchestrator import BeatSelection, NpcMention, extract_structured_from_response
 from sidequest.protocol.dice import RollOutcome
 
 
@@ -47,3 +47,24 @@ def test_npc_mention_bare_string_default_side_neutral():
     """NpcMention.from_value accepts bare string and defaults side to neutral."""
     npc = NpcMention.from_value("Random Bystander")
     assert npc.side == "neutral"
+
+
+def test_narration_result_parses_status_changes():
+    """extract_structured_from_response picks up status_changes from game_patch."""
+    raw = (
+        "**The Arena**\n\n"
+        "Sam ducks the swing.\n\n"
+        "```game_patch\n"
+        "{\n"
+        '  "beat_selections": [{"actor": "Sam", "beat_id": "defend", "outcome": "Success"}],\n'
+        '  "npcs_present": [{"name": "Promo", "side": "opponent", "role": "hostile"}],\n'
+        '  "status_changes": [{"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}}]\n'
+        "}\n"
+        "```\n"
+    )
+    result = extract_structured_from_response(raw)
+    assert result["beat_selections"][0]["outcome"] == "Success"
+    assert result["npcs_present"][0]["side"] == "opponent"
+    assert result["status_changes"] == [
+        {"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}},
+    ]
