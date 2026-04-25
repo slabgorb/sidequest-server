@@ -79,7 +79,7 @@ After your prose, emit a fenced JSON block labeled game_patch containing \
 mechanical intents from this turn. Only include fields that changed.\
 Valid fields: confrontation, items_gained, items_lost, location, npcs_met, \
 mood, state_snapshot, beat_selections, visual_scene, footnotes, gold_change, \
-action_rewrite.
+action_rewrite, status_changes.
 gold_change: Integer. Emit when the player gains or loses gold/currency \
 outside of beat costs (e.g., winning a poker hand: +50, paying a bribe: -20, \
 finding a coin purse: +10). Beat costs are handled automatically — only emit \
@@ -174,12 +174,36 @@ first appearance. Include every named NPC, creature, or distinct group the \
 player encounters, especially adversaries during a confrontation (see rule \
 above).
 
+Each entry MUST include "side": one of "player" (party allies), "opponent" \
+(anyone the party is fighting), or "neutral" (bystanders, narrators, \
+audience). This is structural — `role` remains free-form prose, `side` is \
+a closed enum the engine routes on. Wrong sides break momentum routing.
+
 beat_selections: When an encounter is active (the encounter context section will \
 list available beats and actors), include beat_selections — an array of beat \
 choices for EVERY actor listed in the encounter context. Each entry has: actor \
 (who acts — must match an actor name from the encounter), beat_id (which beat \
 from the available list), and optional target (who the action targets). Include \
 beat_selections for ALL actors (player AND NPCs) every encounter turn.
+
+Each beat_selection MUST include "outcome": one of "CritFail", "Fail", \
+"Tie", "Success", "CritSuccess". This is the tier the prose describes — \
+"Fail" if the action did not succeed, "Success" if it cleanly worked, \
+"Tie" if it succeeded at a minor cost or partially, "CritSuccess" if it \
+succeeded with a notable extra benefit, "CritFail" if it failed badly \
+and the actor is now in a worse position than before. Match the tier to \
+the prose. On dice-replay turns the engine will overwrite this from the \
+actual roll.
+
+status_changes: Array. Emit when prose describes a new lingering injury, \
+shaken nerve, social mark, or other actor-level cost. Format:
+  {"actor": "<actor name>", "status": {"text": "<short prose label>", "severity": "Scratch|Wound|Scar"}}
+- Scratch: clears at scene end (a graze, a lost composure beat).
+- Wound: clears at session end or with rest (a real injury, a notable shake).
+- Scar: persists until a milestone or healing event (a permanent mark — \
+  reputation, broken bone, lost trust).
+Use sparingly — every status is narrative gravity. Align severity with \
+how seriously the prose treats the cost.
 
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch
