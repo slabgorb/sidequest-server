@@ -281,8 +281,31 @@ SPAN_MERCHANT_TRANSACTION = "merchant.transaction"
 
 # ---------------------------------------------------------------------------
 # Inventory — sidequest-agents/inventory_extractor.rs
+#
+# Python-port note (ADR-082): ``SPAN_INVENTORY_EXTRACTION`` mirrors the Rust
+# ``inventory_extractor`` agent which the Python port did not reimplement; it
+# stays in ``FLAT_ONLY_SPANS`` until that agent is ported.
+# ``SPAN_INVENTORY_NARRATOR_EXTRACTED`` IS live — it fires from the
+# items_gained/items_lost block of ``server/narration_apply.py`` (the
+# integrated narrator pipeline replaces the standalone extractor agent in
+# the port).
 # ---------------------------------------------------------------------------
 SPAN_INVENTORY_EXTRACTION = "inventory.extraction"
+SPAN_INVENTORY_NARRATOR_EXTRACTED = "inventory.narrator_extracted"
+SPAN_ROUTES[SPAN_INVENTORY_NARRATOR_EXTRACTED] = SpanRoute(
+    event_type="state_transition",
+    component="inventory",
+    extract=lambda span: {
+        "field": "inventory",
+        "op": "narrator_extracted",
+        "gained": (span.attributes or {}).get("gained_json", "[]"),
+        "lost": (span.attributes or {}).get("lost_json", "[]"),
+        "gained_count": (span.attributes or {}).get("gained_count", 0),
+        "lost_count": (span.attributes or {}).get("lost_count", 0),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
 
 # ---------------------------------------------------------------------------
 # Continuity — sidequest-agents/continuity_validator.rs
@@ -1442,6 +1465,44 @@ def quest_update_span(
         **attrs,
     }
     with t.start_as_current_span(SPAN_QUEST_UPDATE, attributes=attributes) as span:
+        yield span
+
+
+@contextmanager
+def inventory_narrator_extracted_span(
+    *,
+    gained: list[str],
+    lost: list[str],
+    player_name: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap a narrator-extracted inventory mutation block. Replaces the
+    direct ``publish_event("state_transition", ..., component="inventory",
+    op="narrator_extracted")`` that ``server/narration_apply.py`` used
+    pre-Phase-2 — the route preserves the dashboard payload shape (the
+    validator's ``inventory_check`` already correlates on these fields).
+
+    ``gained`` / ``lost`` are serialized as JSON strings so OTEL doesn't
+    drop the list attributes (the primitive-types restriction silently
+    discards dict/list values).
+    """
+    import json as _json
+
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "gained_json": _json.dumps(list(gained)),
+        "lost_json": _json.dumps(list(lost)),
+        "gained_count": len(gained),
+        "lost_count": len(lost),
+        "player_name": player_name,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_INVENTORY_NARRATOR_EXTRACTED, attributes=attributes
+    ) as span:
         yield span
 
 
