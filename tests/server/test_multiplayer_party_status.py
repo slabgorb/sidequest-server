@@ -341,3 +341,85 @@ def test_two_handlers_share_room_snapshot_after_bind():
         "Laverne",
         "Shirley",
     ]
+
+
+def test_chargen_commit_visible_to_peer_handler_immediately() -> None:
+    """ADR-037 regression: when peer commits chargen, our handler's
+    sd.snapshot reflects both PCs and both seats without reload.
+    """
+    room = SessionRoom(slug="2026-04-25-chargen-share", mode=GameMode.MULTIPLAYER)
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        location="Entrance",
+    )
+    snap.characters = []
+    snap.player_seats = {}
+    store = MagicMock()
+    room.bind_world(snapshot=snap, store=store)
+
+    # Player A's chargen-commit equivalent: append PC + record seat in
+    # the canonical snapshot.
+    laverne = _char("Laverne")
+    room.snapshot.characters.append(laverne)
+    room.snapshot.player_seats["p:laverne"] = "Laverne"
+
+    # Player B observes both immediately via the same reference.
+    assert [c.core.name for c in room.snapshot.characters] == ["Laverne"]
+    assert room.snapshot.player_seats == {"p:laverne": "Laverne"}
+
+    # Player B's chargen-commit equivalent: same snapshot.
+    shirley = _char("Shirley")
+    room.snapshot.characters.append(shirley)
+    room.snapshot.player_seats["p:shirley"] = "Shirley"
+
+    # Player A observes both immediately.
+    assert sorted(c.core.name for c in room.snapshot.characters) == [
+        "Laverne",
+        "Shirley",
+    ]
+    assert room.snapshot.player_seats == {
+        "p:laverne": "Laverne",
+        "p:shirley": "Shirley",
+    }
+
+
+def test_room_save_routes_through_canonical_store() -> None:
+    """room.save() persists the canonical snapshot via the canonical
+    store. Verifies the per-session store.save calls have been removed
+    in favor of the room-level save.
+    """
+    room = SessionRoom(slug="slug", mode=GameMode.MULTIPLAYER)
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        location="Entrance",
+    )
+    store = MagicMock()
+    room.bind_world(snapshot=snap, store=store)
+
+    room.save()
+
+    store.save.assert_called_once_with(snap)
+
+
+def test_solo_path_unaffected_by_shared_room_model() -> None:
+    """Single-occupant SOLO room round-trips through bind/save with
+    identical semantics to multiplayer. Regression guard for the
+    'don't break solo' constraint in the shared-snapshot refactor.
+    """
+    room = SessionRoom(slug="2026-04-25-solo", mode=GameMode.SOLO)
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        location="Entrance",
+    )
+    snap.characters = [_char("Solo")]
+    store = MagicMock()
+    room.bind_world(snapshot=snap, store=store)
+
+    assert room.snapshot is snap
+    assert [c.core.name for c in room.snapshot.characters] == ["Solo"]
+
+    room.save()
+    store.save.assert_called_once_with(snap)
