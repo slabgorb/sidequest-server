@@ -404,3 +404,60 @@ def test_merge_peer_state_swallows_load_errors() -> None:
     handler._merge_peer_state_into_snapshot(sd)
     # Snapshot unchanged.
     assert [c.core.name for c in sd.snapshot.characters] == ["Laverne"]
+
+
+# ---------------------------------------------------------------------------
+# Shared Room.snapshot wiring (ADR-037 Python port)
+# ---------------------------------------------------------------------------
+
+
+def test_two_handlers_share_room_snapshot_after_bind():
+    """Two handlers bound to the same room observe the same snapshot
+    object — mutating one's sd.snapshot.characters is visible to the
+    other without any reload.
+
+    This is the core regression guard for the per-session divergence
+    that the _merge_peer_state_into_snapshot band-aid was masking.
+    """
+    from pathlib import Path as _Path
+
+    room = SessionRoom(slug="2026-04-25-shared-test", mode=GameMode.MULTIPLAYER)
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        location="Entrance",
+    )
+    snap.characters = []
+    store = MagicMock()
+    room.bind_world(snapshot=snap, store=store)
+
+    laverne = _char("Laverne")
+    shirley = _char("Shirley")
+
+    # Two handlers, each with sd bound to the same room snapshot ref.
+    handler_a = WebSocketSessionHandler(save_dir=_Path("/tmp/sq-test-saves"))
+    handler_a._room = room
+    sd_a = _sd("p:laverne", "Laverne", [])
+    sd_a.snapshot = room.snapshot  # type: ignore[assignment]
+    sd_a.store = room.store  # type: ignore[assignment]
+    handler_a._session_data = sd_a
+
+    handler_b = WebSocketSessionHandler(save_dir=_Path("/tmp/sq-test-saves"))
+    handler_b._room = room
+    sd_b = _sd("p:shirley", "Shirley", [])
+    sd_b.snapshot = room.snapshot  # type: ignore[assignment]
+    sd_b.store = room.store  # type: ignore[assignment]
+    handler_b._session_data = sd_b
+
+    # Mutate via handler_a's sd; handler_b sees it.
+    handler_a._session_data.snapshot.characters.append(laverne)
+    assert [c.core.name for c in handler_b._session_data.snapshot.characters] == [
+        "Laverne",
+    ]
+
+    # And vice versa.
+    handler_b._session_data.snapshot.characters.append(shirley)
+    assert sorted(c.core.name for c in handler_a._session_data.snapshot.characters) == [
+        "Laverne",
+        "Shirley",
+    ]

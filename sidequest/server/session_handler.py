@@ -1329,8 +1329,17 @@ class WebSocketSessionHandler:
                     display_name=display_name,
                     player_id=player_id,
                 )
+                # ADR-037 Python port: bind the canonical snapshot to the
+                # room BEFORE the rename-save below. Idempotent — if a peer
+                # got here first, our load is discarded and we observe the
+                # already-bound snapshot.
+                room.bind_world(snapshot=snapshot, store=store)
+                # All subsequent reads must come from the canonical room
+                # binding (which may differ from our local ``snapshot`` if
+                # we lost the bind race).
+                snapshot = room.snapshot  # type: ignore[assignment]
                 if renamed:
-                    store.save(snapshot)
+                    room.save()
                     logger.info(
                         "session.slug_resumed.renamed_uuid player_id=%s "
                         "old=%s new=%s",
@@ -1352,6 +1361,10 @@ class WebSocketSessionHandler:
                     location="Unknown",
                 )
                 store.init_session(row.genre_slug, row.world_slug)
+                # ADR-037 Python port: bind the fresh snapshot to the room
+                # so the second-connect handler observes the same object.
+                room.bind_world(snapshot=snapshot, store=store)
+                snapshot = room.snapshot  # type: ignore[assignment]
                 has_character = False
                 logger.info(
                     "session.slug_new_session genre=%s world=%s slug=%s",
