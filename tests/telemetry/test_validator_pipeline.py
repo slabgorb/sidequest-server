@@ -8,7 +8,12 @@ import pytest
 
 from sidequest.telemetry import watcher_hub as wh_mod  # noqa: F401
 from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
-from sidequest.telemetry.validator import Validator, entity_check, inventory_check
+from sidequest.telemetry.validator import (
+    Validator,
+    entity_check,
+    inventory_check,
+    patch_legality_check,
+)
 
 
 def _make_record(turn_id: int = 1) -> TurnRecord:
@@ -137,3 +142,35 @@ async def test_inventory_check_warns_on_silent_patch(captured_events) -> None:
     await inventory_check(record)
     warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
     assert any("rope" in str(w["fields"]) for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_patch_legality_warns_on_hp_over_max(captured_events) -> None:
+    """HP > max in snapshot_after is an illegal patch outcome."""
+
+    class _Char:
+        def __init__(self, hp: int, hp_max: int) -> None:
+            self.hp = hp
+            self.hp_max = hp_max
+
+    snapshot_after = type(
+        "Snap",
+        (),
+        {
+            "characters": {"alice": _Char(hp=120, hp_max=100)},
+            "npc_registry": {},
+        },
+    )()
+    record_dict = _make_record().__dict__.copy()
+    record_dict["snapshot_after"] = snapshot_after
+    record_dict["patches_applied"] = [
+        PatchSummary(patch_type="combat", fields_changed=["characters.alice.hp"]),
+    ]
+    record = TurnRecord(**record_dict)
+
+    await patch_legality_check(record)
+    errors = [
+        e for e in captured_events
+        if e["event_type"] == "validation_warning" and e["severity"] == "error"
+    ]
+    assert errors, "HP-over-max should produce an error-severity warning"

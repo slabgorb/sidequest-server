@@ -138,6 +138,70 @@ async def inventory_check(record: TurnRecord) -> None:
             )
 
 
+async def patch_legality_check(record: TurnRecord) -> None:
+    """Detect illegal post-patch state.
+
+    Checks (per ADR-031 §"Patch legality"):
+      - HP > max for any character or NPC
+      - Dead NPC (hp <= 0) appears in patches_applied as an actor
+      - Cartography graph adjacency check is deferred until ADR-019 is ported.
+    """
+    snap = record.snapshot_after
+    characters = getattr(snap, "characters", None) or {}
+    npc_registry = getattr(snap, "npc_registry", None) or {}
+
+    def _check_hp(label: str, owner: str, ch: object) -> None:
+        hp = getattr(ch, "hp", None)
+        hp_max = getattr(ch, "hp_max", None)
+        if isinstance(hp, int) and isinstance(hp_max, int) and hp > hp_max:
+            publish_event(
+                "validation_warning",
+                {
+                    "check": "patch_legality",
+                    "turn_id": record.turn_id,
+                    "subject": owner,
+                    "subject_kind": label,
+                    "hp": hp,
+                    "hp_max": hp_max,
+                    "rationale": "HP exceeds maximum",
+                },
+                component="validator",
+                severity="error",
+            )
+
+    for owner, ch in characters.items():
+        _check_hp("character", str(owner), ch)
+    if isinstance(npc_registry, dict):
+        for owner, npc in npc_registry.items():
+            _check_hp("npc", str(owner), npc)
+
+    # Dead-actor check
+    dead_npcs = {
+        name
+        for name, npc in (npc_registry.items() if isinstance(npc_registry, dict) else ())
+        if isinstance(getattr(npc, "hp", None), int)
+        and getattr(npc, "hp", 0) <= 0
+    }
+    for patch in record.patches_applied:
+        if patch.patch_type != "combat":
+            continue
+        for field in patch.fields_changed:
+            for dead in dead_npcs:
+                if dead in field and "hp" not in field:
+                    publish_event(
+                        "validation_warning",
+                        {
+                            "check": "patch_legality",
+                            "turn_id": record.turn_id,
+                            "actor": dead,
+                            "rationale": "dead NPC referenced as actor in combat patch",
+                        },
+                        component="validator",
+                        severity="error",
+                    )
+                    return
+
+
 class Validator:
     """Single-consumer narrative validator pipeline."""
 
@@ -153,6 +217,7 @@ class Validator:
         self._check_durations_ms: deque[tuple[str, float]] = deque(maxlen=200)
         self.register_check(entity_check)
         self.register_check(inventory_check)
+        self.register_check(patch_legality_check)
 
     def register_check(self, fn: CheckFn) -> None:
         """Register a check coroutine. Called once per TurnRecord."""
