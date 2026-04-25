@@ -3471,6 +3471,38 @@ class WebSocketSessionHandler:
         action = sd.opening_seed or "I look around and take in my surroundings."
         source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
 
+        # Cold-open delivery (playtest 2026-04-25 [P2]). The opening seed
+        # is in-medias-res prose the world author wrote for the player to
+        # READ — not narrator prompt-context. Previously it was passed only
+        # as `action='...'` and the narrator silently consumed it: long
+        # hooks got truncated (player saw "the iron door grinds inward" but
+        # never the kidnapping setup), short hooks survived expansion by
+        # accident. The contract was broken either way.
+        #
+        # Fix: emit the seed directly to the player as a NARRATION message
+        # BEFORE running the narrator. The narrator's first turn still
+        # receives the seed as `action` and continues from where the hook
+        # ends — so what the player sees is hook + continuation as a
+        # single coherent opening beat, instead of the hook being a ghost
+        # in the prompt. Suppressed when the pack has no opening hook
+        # (the fallback "I look around…" is the player's implicit action,
+        # not authored cold-open prose).
+        cold_open_messages: list[object] = []
+        if sd.opening_seed:
+            cold_open_messages.append(NarrationMessage(
+                payload=NarrationPayload(text=NonBlankString(sd.opening_seed)),
+            ))
+            _watcher_publish(
+                "cold_open_emitted",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "seed_len": len(sd.opening_seed),
+                },
+                component="opening_hook",
+                severity="info",
+            )
+
         lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(
             sd,
@@ -3488,10 +3520,12 @@ class WebSocketSessionHandler:
                 "action_len": len(action),
                 "genre": sd.genre_slug,
                 "world": sd.world_slug,
+                "cold_open_emitted": bool(cold_open_messages),
             },
         )
 
-        messages = await self._execute_narration_turn(sd, action, turn_context)
+        narrator_messages = await self._execute_narration_turn(sd, action, turn_context)
+        messages = cold_open_messages + list(narrator_messages)
 
         # Consume once — Rust uses `opening_directive.take()`; subsequent
         # turns must run directive-free. Same for the seed: it's a

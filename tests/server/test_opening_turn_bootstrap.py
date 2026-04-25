@@ -151,19 +151,24 @@ class TestOpeningTurnFrames:
             await _connect(handler)
             out = await _walk_and_confirm(handler)
 
-            # Expect 6 frames: CHARACTER_CREATION, PARTY_STATUS (session-
-            # start), NARRATION, NARRATION_END, PARTY_STATUS (post-turn
-            # refresh carrying current_location landed by the opening
-            # narration), AUDIO_CUE (DJ dispatch for the opening
-            # narration's mood) — in that order.
-            assert len(out) == 6, [type(m).__name__ for m in out]
+            # Expect 7 frames: CHARACTER_CREATION, PARTY_STATUS (session-
+            # start), NARRATION (cold-open seed — the world.yaml opening
+            # hook prose, emitted directly to the player so the
+            # in-medias-res setup isn't lost as silent narrator prompt-
+            # context per playtest 2026-04-25 [P2]), NARRATION (narrator's
+            # continuation — same flow, different beat), NARRATION_END,
+            # PARTY_STATUS (post-turn refresh carrying current_location
+            # landed by the opening narration), AUDIO_CUE (DJ dispatch
+            # for the opening narration's mood) — in that order.
+            assert len(out) == 7, [type(m).__name__ for m in out]
             assert isinstance(out[0], CharacterCreationMessage)
             assert out[0].payload.phase == "complete"
             assert isinstance(out[1], PartyStatusMessage)
-            assert isinstance(out[2], NarrationMessage)
-            assert isinstance(out[3], NarrationEndMessage)
-            assert isinstance(out[4], PartyStatusMessage)
-            assert isinstance(out[5], AudioCueMessage)
+            assert isinstance(out[2], NarrationMessage)  # cold-open seed
+            assert isinstance(out[3], NarrationMessage)  # narrator response
+            assert isinstance(out[4], NarrationEndMessage)
+            assert isinstance(out[5], PartyStatusMessage)
+            assert isinstance(out[6], AudioCueMessage)
 
         asyncio.run(body())
 
@@ -196,10 +201,42 @@ class TestOpeningTurnFrames:
             await _connect(handler)
             out = await _walk_and_confirm(handler)
 
-            narration = next(m for m in out if isinstance(m, NarrationMessage))
-            text = str(narration.payload.text)
-            # Opening text includes the canned response (pre-fence portion).
-            assert "vault's threshold" in text
+            narrations = [m for m in out if isinstance(m, NarrationMessage)]
+            # Two NARRATION frames: the cold-open seed first, then the
+            # narrator's continuation. Both carry text the player reads.
+            assert len(narrations) == 2
+            cold_open_text = str(narrations[0].payload.text)
+            narrator_text = str(narrations[1].payload.text)
+            # Cold open is the world's first_turn_seed — non-empty prose
+            # the world author wrote (real grimvault content, not the
+            # canned narrator response).
+            assert cold_open_text  # non-blank
+            assert "vault's threshold" not in cold_open_text  # ≠ narrator
+            # Narrator continuation echoes the canned response.
+            assert "vault's threshold" in narrator_text
+
+        asyncio.run(body())
+
+    def test_cold_open_emitted_only_when_opening_seed_present(
+        self, handler: WebSocketSessionHandler
+    ) -> None:
+        """Regression: when the pack has no opening hook (sd.opening_seed
+        is None), the cold-open NARRATION frame must NOT fire. Otherwise
+        the fallback prompt ("I look around and take in my surroundings.")
+        would leak as player-facing prose, when it's actually the
+        engine's implicit action.
+        """
+        async def body() -> None:
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            sd.opening_seed = None
+            sd.opening_directive = None
+
+            out = await _walk_and_confirm(handler)
+            narrations = [m for m in out if isinstance(m, NarrationMessage)]
+            # Without a seed, only the narrator's response narration fires.
+            assert len(narrations) == 1
+            assert "vault's threshold" in str(narrations[0].payload.text)
 
         asyncio.run(body())
 
