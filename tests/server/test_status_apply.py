@@ -3,7 +3,7 @@
 Task 19 — Wire status_changes into engine state mutation.
 """
 from sidequest.agents.orchestrator import NarrationTurnResult
-from sidequest.game.status import Status, StatusSeverity
+from sidequest.game.status import StatusSeverity
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 
 
