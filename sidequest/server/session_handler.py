@@ -19,7 +19,9 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum, auto
+from hashlib import blake2b
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -130,11 +132,23 @@ from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
+    audio_backend_disabled_span,
+    audio_backend_enabled_span,
+    audio_dispatched_span,
+    audio_skipped_span,
     orchestrator_process_action_span,
+    turn_span,
 )
+from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
+from sidequest.telemetry.validator import Validator
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_snapshot(snap: object) -> str:
+    """BLAKE2b-16 fingerprint of a snapshot's repr. Used for before/after change detection."""
+    return blake2b(repr(snap).encode(), digest_size=16).hexdigest()
 
 tracer = trace.get_tracer("sidequest.server.session_handler")
 
@@ -452,6 +466,7 @@ class WebSocketSessionHandler:
         claude_client_factory: Callable[[], LlmClient] | None = None,
         genre_pack_search_paths: list[Path] | None = None,
         save_dir: Path,
+        validator: Validator | None = None,
     ) -> None:
         self._client_factory: Callable[[], LlmClient] = (
             claude_client_factory if claude_client_factory is not None
@@ -463,6 +478,7 @@ class WebSocketSessionHandler:
             else DEFAULT_GENRE_PACK_SEARCH_PATHS
         )
         self._save_dir = save_dir
+        self._validator: Validator | None = validator
         self._state = _State.AwaitingConnect
         self._session_data: _SessionData | None = None
         # Room context fields — populated by attach_room_context() during the
@@ -2827,478 +2843,496 @@ class WebSocketSessionHandler:
         trope beats on subsequent turns) without leaking responsibility.
         """
         snapshot = sd.snapshot
-
-        # Group B — Local DM decomposer runs between sealed-letter and narrator.
-        # LocalDM.decompose catches expected client failures internally and
-        # returns a degraded DispatchPackage. Any exception escaping here is a
-        # programmer bug (rename, signature drift); let it propagate — failing
-        # the turn loudly beats silently demoting bugs to degraded.
-        turn_id = (
-            f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:"
-            f"{snapshot.turn_manager.interaction}"
-        )
-        assert turn_context.state_summary is not None, (
-            "TurnContext.state_summary must be populated by _build_turn_context"
-        )
-        dispatch_package = await sd.local_dm.decompose(
-            turn_id=turn_id,
-            player_id=f"player:{sd.player_name}",
-            raw_action=action,
-            state_summary=turn_context.state_summary,
-            visibility_baseline=sd.genre_pack.visibility_baseline,
-        )
-        if dispatch_package.degraded:
-            logger.info(
-                "session.decomposer_degraded reason=%s turn_id=%s",
-                dispatch_package.degraded_reason, turn_id,
-            )
-        turn_context.dispatch_package = dispatch_package
-
-        with orchestrator_process_action_span(action_len=len(action)):
-            result = await sd.orchestrator.run_narration_turn(action, turn_context)
-
-        logger.info(
-            "session.narration_complete genre=%s world=%s degraded=%s duration_ms=%s",
-            sd.genre_slug,
-            sd.world_slug,
-            result.is_degraded,
-            result.agent_duration_ms,
-        )
-
-        # Capture encounter state BEFORE applying the narration result so we
-        # can detect transitions (live→resolved) after the dispatch below and
-        # emit the corresponding state_transition / resolve events.
-        prior_encounter = snapshot.encounter
-        prior_live = prior_encounter is not None and not prior_encounter.resolved
-        prior_type = prior_encounter.encounter_type if prior_encounter else None
-
-        # Unified dispatch — passes the pack so encounter instantiation /
-        # beat application / resolution happen in one place (the version
-        # that emits the Story-3.4 OTEL spans the GM panel reads). The
-        # develop-side ``apply_encounter_updates`` split was supplanted by
-        # this richer combined helper; see merge commit for details.
-        #
-        # ADR-074 dice integration — read the most recent dice outcome
-        # stashed by the DICE_THROW handler (if any) and classify it as
-        # success/failure for the beat application. Uses getattr so this
-        # stays forward-compatible with the in-flight ``pending_roll_outcome``
-        # field on ``_SessionData`` that OQ-2 is landing in parallel —
-        # when the field is absent the call is a no-op.
-        dice_outcome = getattr(sd, "pending_roll_outcome", None)
-        dice_failed: bool | None = None
-        if dice_outcome is not None:
-            outcome_name = getattr(dice_outcome, "name", None) or str(dice_outcome)
-            dice_failed = outcome_name in ("Fail", "CritFail")
-        _apply_narration_result_to_snapshot(
-            snapshot, result, sd.player_name,
-            pack=sd.genre_pack, dice_failed=dice_failed,
-        )
-        # Consume the pending outcome — one turn per roll.
-        if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
-            sd.pending_roll_outcome = None
-        snapshot.turn_manager.record_interaction()
-
-        now_encounter = snapshot.encounter
-        now_live = now_encounter is not None and not now_encounter.resolved
-
-        from sidequest.server.dispatch.encounter_lifecycle import (
-            _is_combat_category,
-            apply_resource_patches,
-            award_turn_xp,
-        )
-        in_combat_now = (
-            snapshot.encounter is not None
-            and not snapshot.encounter.resolved
-            and _is_combat_category(
-                sd.genre_pack, snapshot.encounter.encounter_type
-            )
-        )
-        award_turn_xp(snapshot, in_combat=in_combat_now)
-
-        try:
-            crossed_thresholds = apply_resource_patches(
-                snapshot,
-                affinity_progress=result.affinity_progress or [],
-                lore_store=sd.lore_store,
-                turn=snapshot.turn_manager.interaction,
-            )
-        except Exception as exc:  # noqa: BLE001 — LLM typos must not kill the turn
-            logger.warning(
-                "resource.patch_failed error=%s — skipping threshold mint for this turn",
-                exc,
-            )
-            crossed_thresholds = []
-        for t in crossed_thresholds:
-            logger.info(
-                "resource.threshold_crossed event_id=%s at=%s",
-                t.event_id, t.at,
-            )
-
-        try:
-            # ADR-037 Python port: room owns the canonical snapshot, so a
-            # plain room.save() is sufficient — there is no per-session
-            # divergence to merge. Falls back to sd.store.save when the
-            # legacy non-slug path didn't bind a room.
-            if self._room is not None:
-                self._room.save()
-            else:
-                sd.store.save(snapshot)
-            narrative_entry = NarrativeEntry(
-                timestamp=0,
-                round=snapshot.turn_manager.interaction,
-                author="narrator",
-                content=result.narration,
-                tags=[],
-            )
-            sd.store.append_narrative(narrative_entry)
-            logger.info(
-                "session.persisted turn=%d player=%s char_count=%d seat_count=%d",
-                snapshot.turn_manager.interaction,
-                sd.player_name,
-                len(snapshot.characters),
-                len(snapshot.player_seats),
-            )
-        except Exception as exc:
-            logger.error("session.persist_failed error=%s", exc)
-
-        # Story 37-33: embed newly-seeded / pending lore fragments in the
-        # background so the *next* turn's RAG retrieval can find them.
-        # Spawns a fire-and-forget task — the narration turn returns to
-        # the player immediately; embeds populate during the human's
-        # reading time.
-        self._dispatch_embed_worker(sd)
-
-        narration_text = result.narration or "(The world holds its breath...)"
-        try:
-            narration_nbs = NonBlankString(narration_text)
-        except Exception:
-            narration_nbs = NonBlankString("The world holds its breath...")
-
-        # Forward extracted footnotes into the NarrationPayload so the UI
-        # Knowledge journal fills. Narrator produces them every turn
-        # (see `game_patch.extracted footnotes=N` in the server log) and
-        # the UI's useStateMirror was already wired to consume them — the
-        # session handler was the only missing link. Coerce raw dicts
-        # from the extraction into typed Footnote models, skipping any
-        # that fail validation rather than crashing the turn.
-        forwarded_footnotes: list[Footnote] = []
-        for fn in result.footnotes or []:
-            if not isinstance(fn, dict):
-                continue
-            try:
-                forwarded_footnotes.append(Footnote(**fn))
-            except Exception as exc:  # noqa: BLE001 — drop-and-log is safer than a mid-turn crash
-                logger.warning(
-                    "state.footnote_coerce_failed error=%s payload=%r",
-                    exc,
-                    fn,
-                )
-        logger.info(
-            "state.footnotes_forwarded count=%d player=%s",
-            len(forwarded_footnotes),
-            sd.player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "footnotes",
-                "count": len(forwarded_footnotes),
-                "player_id": sd.player_id,
-                "turn_number": snapshot.turn_manager.interaction,
-                "summaries": [fn.summary for fn in forwarded_footnotes][:10],
-            },
-            component="footnotes",
-        )
-        narration_payload = NarrationPayload(
-            text=narration_nbs,
-            state_delta=None,
-            footnotes=forwarded_footnotes,
-            visibility_sidecar=aggregate_visibility(dispatch_package),
-        )
-        # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
-        narration_msg = self._emit_event("NARRATION", narration_payload)
-
-        # Group G Task 6: route prompt-redacted dispatches as SECRET_NOTE
-        # events. Task 5's ``redact_dispatch_package`` stripped these from the
-        # narrator prompt and parked them on ``result.secret_routes``; here we
-        # reify each one as its own event so the same ProjectionFilter /
-        # visibility_tag rule (Task 3) delivers it only to the recipients in
-        # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
-        # see ``build_secret_note_events`` for the skip rules.
-        for _envelope in build_secret_note_events(
-            result.secret_routes, turn_id=dispatch_package.turn_id,
+        snapshot_before_hash = _hash_snapshot(snapshot)
+        with turn_span(
+            turn_id=snapshot.turn_manager.interaction,
+            player_id=sd.player_id,
+            agent_name="narrator",
+            genre=sd.genre_slug,
+            world=sd.world_slug,
+            action_len=len(action),
         ):
-            import json as _json
-            _payload_data = _json.loads(_envelope.payload_json)
-            self._emit_event(
-                "SECRET_NOTE",
-                SecretNotePayload(
-                    turn_id=_payload_data["turn_id"],
-                    idempotency_key=_payload_data["idempotency_key"],
-                    subsystem=_payload_data["subsystem"],
-                    params=_payload_data.get("params", {}),
-                    visibility_sidecar=_payload_data["_visibility"],
-                ),
-            )
 
-        # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
-        # OTEL visibility: add event to current span so the GM panel (Sebastien-
-        # tier mechanical visibility) can see the dispatch decision end-to-end.
-        confrontation_msg: ConfrontationMessage | None = None
-        if now_live and now_encounter is not None:
-            from sidequest.server.dispatch.confrontation import (
-                build_confrontation_payload,
-                find_confrontation_def,
+            # Group B — Local DM decomposer runs between sealed-letter and narrator.
+            # LocalDM.decompose catches expected client failures internally and
+            # returns a degraded DispatchPackage. Any exception escaping here is a
+            # programmer bug (rename, signature drift); let it propagate — failing
+            # the turn loudly beats silently demoting bugs to degraded.
+            turn_id = (
+                f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:"
+                f"{snapshot.turn_manager.interaction}"
             )
-            cdef = find_confrontation_def(
-                sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
-                now_encounter.encounter_type,
+            assert turn_context.state_summary is not None, (
+                "TurnContext.state_summary must be populated by _build_turn_context"
             )
-            # No silent fallback: an active encounter whose type is not in the
-            # pack is a pack-data bug. Task 10 raises in the same case during
-            # beat-apply; the dispatch path matches.
-            if cdef is None:
-                raise ValueError(
-                    f"active encounter type {now_encounter.encounter_type!r} "
-                    f"not in pack confrontations (genre={sd.genre_slug!r})"
+            dispatch_package = await sd.local_dm.decompose(
+                turn_id=turn_id,
+                player_id=f"player:{sd.player_name}",
+                raw_action=action,
+                state_summary=turn_context.state_summary,
+                visibility_baseline=sd.genre_pack.visibility_baseline,
+            )
+            if dispatch_package.degraded:
+                logger.info(
+                    "session.decomposer_degraded reason=%s turn_id=%s",
+                    dispatch_package.degraded_reason, turn_id,
                 )
-            payload_dict = build_confrontation_payload(
-                encounter=now_encounter,
-                cdef=cdef,
-                genre_slug=sd.genre_slug,
+            turn_context.dispatch_package = dispatch_package
+    
+            with orchestrator_process_action_span(action_len=len(action)):
+                result = await sd.orchestrator.run_narration_turn(action, turn_context)
+    
+            logger.info(
+                "session.narration_complete genre=%s world=%s degraded=%s duration_ms=%s",
+                sd.genre_slug,
+                sd.world_slug,
+                result.is_degraded,
+                result.agent_duration_ms,
             )
-            confrontation_msg = ConfrontationMessage(
-                payload=ConfrontationPayload(**payload_dict),
-                player_id=sd.player_id,
+    
+            # Capture encounter state BEFORE applying the narration result so we
+            # can detect transitions (live→resolved) after the dispatch below and
+            # emit the corresponding state_transition / resolve events.
+            prior_encounter = snapshot.encounter
+            prior_live = prior_encounter is not None and not prior_encounter.resolved
+            prior_type = prior_encounter.encounter_type if prior_encounter else None
+    
+            # Unified dispatch — passes the pack so encounter instantiation /
+            # beat application / resolution happen in one place (the version
+            # that emits the Story-3.4 OTEL spans the GM panel reads). The
+            # develop-side ``apply_encounter_updates`` split was supplanted by
+            # this richer combined helper; see merge commit for details.
+            #
+            # ADR-074 dice integration — read the most recent dice outcome
+            # stashed by the DICE_THROW handler (if any) and classify it as
+            # success/failure for the beat application. Uses getattr so this
+            # stays forward-compatible with the in-flight ``pending_roll_outcome``
+            # field on ``_SessionData`` that OQ-2 is landing in parallel —
+            # when the field is absent the call is a no-op.
+            dice_outcome = getattr(sd, "pending_roll_outcome", None)
+            dice_failed: bool | None = None
+            if dice_outcome is not None:
+                outcome_name = getattr(dice_outcome, "name", None) or str(dice_outcome)
+                dice_failed = outcome_name in ("Fail", "CritFail")
+            _apply_narration_result_to_snapshot(
+                snapshot, result, sd.player_name,
+                pack=sd.genre_pack, dice_failed=dice_failed,
             )
-            trace.get_current_span().add_event(
-                "confrontation.dispatched",
+            # Consume the pending outcome — one turn per roll.
+            if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
+                sd.pending_roll_outcome = None
+            snapshot.turn_manager.record_interaction()
+    
+            now_encounter = snapshot.encounter
+            now_live = now_encounter is not None and not now_encounter.resolved
+    
+            from sidequest.server.dispatch.encounter_lifecycle import (
+                _is_combat_category,
+                apply_resource_patches,
+                award_turn_xp,
+            )
+            in_combat_now = (
+                snapshot.encounter is not None
+                and not snapshot.encounter.resolved
+                and _is_combat_category(
+                    sd.genre_pack, snapshot.encounter.encounter_type
+                )
+            )
+            award_turn_xp(snapshot, in_combat=in_combat_now)
+    
+            try:
+                crossed_thresholds = apply_resource_patches(
+                    snapshot,
+                    affinity_progress=result.affinity_progress or [],
+                    lore_store=sd.lore_store,
+                    turn=snapshot.turn_manager.interaction,
+                )
+            except Exception as exc:  # noqa: BLE001 — LLM typos must not kill the turn
+                logger.warning(
+                    "resource.patch_failed error=%s — skipping threshold mint for this turn",
+                    exc,
+                )
+                crossed_thresholds = []
+            for t in crossed_thresholds:
+                logger.info(
+                    "resource.threshold_crossed event_id=%s at=%s",
+                    t.event_id, t.at,
+                )
+    
+            try:
+                # ADR-037 Python port: room owns the canonical snapshot, so a
+                # plain room.save() is sufficient — there is no per-session
+                # divergence to merge. Falls back to sd.store.save when the
+                # legacy non-slug path didn't bind a room.
+                if self._room is not None:
+                    self._room.save()
+                else:
+                    sd.store.save(snapshot)
+                narrative_entry = NarrativeEntry(
+                    timestamp=0,
+                    round=snapshot.turn_manager.interaction,
+                    author="narrator",
+                    content=result.narration,
+                    tags=[],
+                )
+                sd.store.append_narrative(narrative_entry)
+                logger.info(
+                    "session.persisted turn=%d player=%s char_count=%d seat_count=%d",
+                    snapshot.turn_manager.interaction,
+                    sd.player_name,
+                    len(snapshot.characters),
+                    len(snapshot.player_seats),
+                )
+            except Exception as exc:
+                logger.error("session.persist_failed error=%s", exc)
+    
+            # Story 37-33: embed newly-seeded / pending lore fragments in the
+            # background so the *next* turn's RAG retrieval can find them.
+            # Spawns a fire-and-forget task — the narration turn returns to
+            # the player immediately; embeds populate during the human's
+            # reading time.
+            self._dispatch_embed_worker(sd)
+    
+            narration_text = result.narration or "(The world holds its breath...)"
+            try:
+                narration_nbs = NonBlankString(narration_text)
+            except Exception:
+                narration_nbs = NonBlankString("The world holds its breath...")
+    
+            # Forward extracted footnotes into the NarrationPayload so the UI
+            # Knowledge journal fills. Narrator produces them every turn
+            # (see `game_patch.extracted footnotes=N` in the server log) and
+            # the UI's useStateMirror was already wired to consume them — the
+            # session handler was the only missing link. Coerce raw dicts
+            # from the extraction into typed Footnote models, skipping any
+            # that fail validation rather than crashing the turn.
+            forwarded_footnotes: list[Footnote] = []
+            for fn in result.footnotes or []:
+                if not isinstance(fn, dict):
+                    continue
+                try:
+                    forwarded_footnotes.append(Footnote(**fn))
+                except Exception as exc:  # noqa: BLE001 — drop-and-log is safer than a mid-turn crash
+                    logger.warning(
+                        "state.footnote_coerce_failed error=%s payload=%r",
+                        exc,
+                        fn,
+                    )
+            logger.info(
+                "state.footnotes_forwarded count=%d player=%s",
+                len(forwarded_footnotes),
+                sd.player_name,
+            )
+            _watcher_publish(
+                "state_transition",
                 {
-                    "active": True,
-                    "encounter_type": now_encounter.encounter_type,
-                    "genre_slug": sd.genre_slug,
+                    "field": "footnotes",
+                    "count": len(forwarded_footnotes),
+                    "player_id": sd.player_id,
+                    "turn_number": snapshot.turn_manager.interaction,
+                    "summaries": [fn.summary for fn in forwarded_footnotes][:10],
                 },
+                component="footnotes",
             )
-        elif prior_live and not now_live:
-            from sidequest.server.dispatch.confrontation import (
-                build_clear_confrontation_payload,
+            narration_payload = NarrationPayload(
+                text=narration_nbs,
+                state_delta=None,
+                footnotes=forwarded_footnotes,
+                visibility_sidecar=aggregate_visibility(dispatch_package),
             )
-            assert prior_type is not None  # guaranteed by prior_live=True
-            payload_dict = build_clear_confrontation_payload(
-                encounter_type=prior_type,
-                genre_slug=sd.genre_slug,
-            )
-            confrontation_msg = ConfrontationMessage(
-                payload=ConfrontationPayload(**payload_dict),
-                player_id=sd.player_id,
-            )
-            trace.get_current_span().add_event(
-                "confrontation.dispatched",
-                {
-                    "active": False,
-                    "encounter_type": prior_type,
-                    "genre_slug": sd.genre_slug,
-                },
-            )
-
-        outbound: list[object] = [narration_msg]
-        if confrontation_msg is not None:
-            outbound.append(confrontation_msg)
-        # CHAPTER_MARKER — the UI's ``useRunningHeader`` hook derives the
-        # running-header chapter title from this frame. When the narrator
-        # emits a location in game_patch, the new location is already on
-        # ``snapshot.location`` (applied in
-        # ``_apply_narration_result_to_snapshot``). Emit one frame per
-        # location change so the header updates in lock-step with
-        # narration. Without this the header stays blank since the UI
-        # never saw the server's ``state.location_update`` log line.
-        # Pingpong 2026-04-24 — "Location not rendered in the header on
-        # resume" — fix is symmetric (slug-resume bootstrap also emits
-        # CHAPTER_MARKER; see the slug-connect block).
-        if result.location:
-            outbound.append(
-                ChapterMarkerMessage(
-                    payload=ChapterMarkerPayload(
-                        title=None,
-                        location=_resolve_location_display(
-                            sd.genre_pack, sd.world_slug, snapshot.location
-                        ),
+            # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
+            narration_msg = self._emit_event("NARRATION", narration_payload)
+    
+            # Group G Task 6: route prompt-redacted dispatches as SECRET_NOTE
+            # events. Task 5's ``redact_dispatch_package`` stripped these from the
+            # narrator prompt and parked them on ``result.secret_routes``; here we
+            # reify each one as its own event so the same ProjectionFilter /
+            # visibility_tag rule (Task 3) delivers it only to the recipients in
+            # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
+            # see ``build_secret_note_events`` for the skip rules.
+            for _envelope in build_secret_note_events(
+                result.secret_routes, turn_id=dispatch_package.turn_id,
+            ):
+                import json as _json
+                _payload_data = _json.loads(_envelope.payload_json)
+                self._emit_event(
+                    "SECRET_NOTE",
+                    SecretNotePayload(
+                        turn_id=_payload_data["turn_id"],
+                        idempotency_key=_payload_data["idempotency_key"],
+                        subsystem=_payload_data["subsystem"],
+                        params=_payload_data.get("params", {}),
+                        visibility_sidecar=_payload_data["_visibility"],
                     ),
+                )
+    
+            # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
+            # OTEL visibility: add event to current span so the GM panel (Sebastien-
+            # tier mechanical visibility) can see the dispatch decision end-to-end.
+            confrontation_msg: ConfrontationMessage | None = None
+            if now_live and now_encounter is not None:
+                from sidequest.server.dispatch.confrontation import (
+                    build_confrontation_payload,
+                    find_confrontation_def,
+                )
+                cdef = find_confrontation_def(
+                    sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
+                    now_encounter.encounter_type,
+                )
+                # No silent fallback: an active encounter whose type is not in the
+                # pack is a pack-data bug. Task 10 raises in the same case during
+                # beat-apply; the dispatch path matches.
+                if cdef is None:
+                    raise ValueError(
+                        f"active encounter type {now_encounter.encounter_type!r} "
+                        f"not in pack confrontations (genre={sd.genre_slug!r})"
+                    )
+                payload_dict = build_confrontation_payload(
+                    encounter=now_encounter,
+                    cdef=cdef,
+                    genre_slug=sd.genre_slug,
+                )
+                confrontation_msg = ConfrontationMessage(
+                    payload=ConfrontationPayload(**payload_dict),
+                    player_id=sd.player_id,
+                )
+                trace.get_current_span().add_event(
+                    "confrontation.dispatched",
+                    {
+                        "active": True,
+                        "encounter_type": now_encounter.encounter_type,
+                        "genre_slug": sd.genre_slug,
+                    },
+                )
+            elif prior_live and not now_live:
+                from sidequest.server.dispatch.confrontation import (
+                    build_clear_confrontation_payload,
+                )
+                assert prior_type is not None  # guaranteed by prior_live=True
+                payload_dict = build_clear_confrontation_payload(
+                    encounter_type=prior_type,
+                    genre_slug=sd.genre_slug,
+                )
+                confrontation_msg = ConfrontationMessage(
+                    payload=ConfrontationPayload(**payload_dict),
+                    player_id=sd.player_id,
+                )
+                trace.get_current_span().add_event(
+                    "confrontation.dispatched",
+                    {
+                        "active": False,
+                        "encounter_type": prior_type,
+                        "genre_slug": sd.genre_slug,
+                    },
+                )
+    
+            outbound: list[object] = [narration_msg]
+            if confrontation_msg is not None:
+                outbound.append(confrontation_msg)
+            # CHAPTER_MARKER — the UI's ``useRunningHeader`` hook derives the
+            # running-header chapter title from this frame. When the narrator
+            # emits a location in game_patch, the new location is already on
+            # ``snapshot.location`` (applied in
+            # ``_apply_narration_result_to_snapshot``). Emit one frame per
+            # location change so the header updates in lock-step with
+            # narration. Without this the header stays blank since the UI
+            # never saw the server's ``state.location_update`` log line.
+            # Pingpong 2026-04-24 — "Location not rendered in the header on
+            # resume" — fix is symmetric (slug-resume bootstrap also emits
+            # CHAPTER_MARKER; see the slug-connect block).
+            if result.location:
+                outbound.append(
+                    ChapterMarkerMessage(
+                        payload=ChapterMarkerPayload(
+                            title=None,
+                            location=_resolve_location_display(
+                                sd.genre_pack, sd.world_slug, snapshot.location
+                            ),
+                        ),
+                        player_id=sd.player_id,
+                    ),
+                )
+            outbound.append(
+                NarrationEndMessage(
+                    type="NARRATION_END",  # type: ignore[arg-type]
+                    payload=NarrationEndPayload(state_delta=None),
                     player_id=sd.player_id,
                 ),
             )
-        outbound.append(
-            NarrationEndMessage(
-                type="NARRATION_END",  # type: ignore[arg-type]
-                payload=NarrationEndPayload(state_delta=None),
-                player_id=sd.player_id,
-            ),
-        )
+    
+            # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
+            # the TURN_STATUS{active} broadcast at action receipt — peers' banner
+            # tone="peer" stays stuck without this clear. exclude_socket_id=None
+            # so every socket (including the actor) gets the resolved signal;
+            # the UI clears activePlayerName on status="resolved".
+            if self._room is not None and sd.player_name:
+                try:
+                    acting_name = _resolve_acting_character_name(sd, self._room)
+                    turn_resolved_msg = TurnStatusMessage(
+                        payload=TurnStatusPayload(
+                            player_name=NonBlankString(acting_name),
+                            status="resolved",
+                        ),
+                        player_id=sd.player_id or "",
+                    )
+                    self._room.broadcast(turn_resolved_msg, exclude_socket_id=None)
+                    logger.info(
+                        "session.turn_status_resolved player=%s player_id=%s slug=%s",
+                        acting_name,
+                        sd.player_id,
+                        self._room.slug,
+                    )
+                    _watcher_publish(
+                        "turn_status",
+                        {
+                            "status": "resolved",
+                            "player_name": acting_name,
+                            "player_id": sd.player_id,
+                            "slug": self._room.slug,
+                        },
+                        component="session",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "session.turn_status_resolved_broadcast_failed error=%s",
+                        exc,
+                    )
+    
+            # Refresh PARTY_STATUS so `current_location` and any HP/inventory
+            # mutations landed by the narration apply propagate to the client
+            # header / CharacterSheet / MapOverlay. Previously PARTY_STATUS
+            # was emitted exactly once at chargen-end (before the opening
+            # turn), which froze the location at its pre-opening value
+            # (typically empty). Playtest 2026-04-22.
+            if snapshot.characters:
+                try:
+                    # MP: resolve "self" by sd.player_id, not snapshot.characters[0].
+                    # The turn-end refresh fires per-socket; if the requesting
+                    # socket isn't characters[0] (any non-first-committed
+                    # player in MP), passing characters[0] mis-tags that PC's
+                    # data with the requesting socket's player_id and the UI
+                    # renders the wrong PC as "(YOU)" — playtest 2026-04-25
+                    # "Tab 2 sees Laverne (YOU)".
+                    self_char = (
+                        self._resolve_self_character(sd)
+                        or snapshot.characters[0]
+                    )
+                    party_status = self._build_session_start_party_status(
+                        sd, self_char, sd.player_id
+                    )
+                    outbound.append(party_status)
+                    logger.info(
+                        "state.party_status_emitted reason=turn_end location=%r turn=%d "
+                        "self_char=%s",
+                        snapshot.location or "",
+                        snapshot.turn_manager.interaction,
+                        self_char.core.name,
+                    )
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "field": "party_status",
+                            "reason": "turn_end",
+                            "location": snapshot.location or "",
+                            "turn_number": snapshot.turn_manager.interaction,
+                            "player_id": sd.player_id,
+                        },
+                        component="party_status",
+                    )
+                except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
+                    logger.warning(
+                        "state.party_status_refresh_failed error=%s", exc
+                    )
+    
+            # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
+            # message ships with the NARRATION payload; the async render task
+            # posts an IMAGE message onto the per-connection outbound queue
+            # when the daemon replies. Short-circuits without any socket work
+            # when: render flag off, no visual scene, daemon socket missing,
+            # or outbound queue unavailable (test configurations that don't
+            # attach room context).
+            render_queued = self._maybe_dispatch_render(sd, result)
+            if render_queued is not None:
+                outbound.append(render_queued)
+    
+            # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
+            # with this turn's outbound frames. No placeholder + later message
+            # dance — the DJ is a local filesystem lookup.
+            audio_cue = self._maybe_dispatch_audio(sd, result)
+            if audio_cue is not None:
+                outbound.append(audio_cue)
+    
+            # turn_complete is now emitted by the validator (per ADR-089 §6.7).
+            # The TurnRecord assembled below is the single source of truth.
 
-        # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
-        # the TURN_STATUS{active} broadcast at action receipt — peers' banner
-        # tone="peer" stays stuck without this clear. exclude_socket_id=None
-        # so every socket (including the actor) gets the resolved signal;
-        # the UI clears activePlayerName on status="resolved".
-        if self._room is not None and sd.player_name:
-            try:
-                acting_name = _resolve_acting_character_name(sd, self._room)
-                turn_resolved_msg = TurnStatusMessage(
-                    payload=TurnStatusPayload(
-                        player_name=NonBlankString(acting_name),
-                        status="resolved",
-                    ),
-                    player_id=sd.player_id or "",
-                )
-                self._room.broadcast(turn_resolved_msg, exclude_socket_id=None)
-                logger.info(
-                    "session.turn_status_resolved player=%s player_id=%s slug=%s",
-                    acting_name,
-                    sd.player_id,
-                    self._room.slug,
-                )
-                _watcher_publish(
-                    "turn_status",
-                    {
-                        "status": "resolved",
-                        "player_name": acting_name,
-                        "player_id": sd.player_id,
-                        "slug": self._room.slug,
-                    },
-                    component="session",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "session.turn_status_resolved_broadcast_failed error=%s",
-                    exc,
-                )
+            # --- TurnRecord assembly + validator submit ---
+            # Wrapped in try/except: the validator must NEVER crash the hot path.
+            if self._validator is not None:
+                try:
+                    _patch_summaries: list[PatchSummary] = []
+                    if result.location:
+                        _patch_summaries.append(
+                            PatchSummary(patch_type="location", fields_changed=["location"])
+                        )
+                    if result.quest_updates:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="quest", fields_changed=list(result.quest_updates)
+                            )
+                        )
+                    if result.lore_established:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="lore", fields_changed=["lore_established"]
+                            )
+                        )
+                    if result.npcs_present:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="npc_registry",
+                                fields_changed=[n.name for n in result.npcs_present],
+                            )
+                        )
+                    if result.items_gained or result.items_lost:
+                        _patch_summaries.append(
+                            PatchSummary(patch_type="inventory", fields_changed=[])
+                        )
 
-        # Refresh PARTY_STATUS so `current_location` and any HP/inventory
-        # mutations landed by the narration apply propagate to the client
-        # header / CharacterSheet / MapOverlay. Previously PARTY_STATUS
-        # was emitted exactly once at chargen-end (before the opening
-        # turn), which froze the location at its pre-opening value
-        # (typically empty). Playtest 2026-04-22.
-        if snapshot.characters:
-            try:
-                # MP: resolve "self" by sd.player_id, not snapshot.characters[0].
-                # The turn-end refresh fires per-socket; if the requesting
-                # socket isn't characters[0] (any non-first-committed
-                # player in MP), passing characters[0] mis-tags that PC's
-                # data with the requesting socket's player_id and the UI
-                # renders the wrong PC as "(YOU)" — playtest 2026-04-25
-                # "Tab 2 sees Laverne (YOU)".
-                self_char = (
-                    self._resolve_self_character(sd)
-                    or snapshot.characters[0]
-                )
-                party_status = self._build_session_start_party_status(
-                    sd, self_char, sd.player_id
-                )
-                outbound.append(party_status)
-                logger.info(
-                    "state.party_status_emitted reason=turn_end location=%r turn=%d "
-                    "self_char=%s",
-                    snapshot.location or "",
-                    snapshot.turn_manager.interaction,
-                    self_char.core.name,
-                )
-                _watcher_publish(
-                    "state_transition",
-                    {
-                        "field": "party_status",
-                        "reason": "turn_end",
-                        "location": snapshot.location or "",
-                        "turn_number": snapshot.turn_manager.interaction,
-                        "player_id": sd.player_id,
-                    },
-                    component="party_status",
-                )
-            except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
-                logger.warning(
-                    "state.party_status_refresh_failed error=%s", exc
-                )
+                    _beats_fired: list[tuple[str, float]] = []
+                    for beat in result.beat_selections or []:
+                        _beats_fired.append(
+                            (
+                                getattr(beat, "trope_id", None)
+                                or getattr(beat, "beat_id", None)
+                                or "unknown",
+                                float(getattr(beat, "threshold", 0.0) or 0.0),
+                            )
+                        )
 
-        # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
-        # message ships with the NARRATION payload; the async render task
-        # posts an IMAGE message onto the per-connection outbound queue
-        # when the daemon replies. Short-circuits without any socket work
-        # when: render flag off, no visual scene, daemon socket missing,
-        # or outbound queue unavailable (test configurations that don't
-        # attach room context).
-        render_queued = self._maybe_dispatch_render(sd, result)
-        if render_queued is not None:
-            outbound.append(render_queued)
+                    record = TurnRecord(
+                        turn_id=snapshot.turn_manager.interaction,
+                        timestamp=datetime.now(UTC),
+                        player_id=sd.player_id,
+                        player_input=action,
+                        classified_intent="unknown",  # TODO: tighten when LocalDM exposes intent
+                        agent_name=result.agent_name or "narrator",
+                        narration=result.narration or "",
+                        patches_applied=_patch_summaries,
+                        snapshot_before_hash=snapshot_before_hash,
+                        snapshot_after=snapshot,
+                        delta=None,  # TODO: tighten when StateDelta is wired
+                        beats_fired=_beats_fired,
+                        extraction_tier=1,  # TODO: map result.prompt_tier to int tier
+                        token_count_in=result.token_count_in or 0,
+                        token_count_out=result.token_count_out or 0,
+                        agent_duration_ms=result.agent_duration_ms or 0,
+                        is_degraded=result.is_degraded,
+                    )
+                    await self._validator.submit(record)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("turn_record.assemble_failed: %s", exc)
 
-        # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
-        # with this turn's outbound frames. No placeholder + later message
-        # dance — the DJ is a local filesystem lookup.
-        audio_cue = self._maybe_dispatch_audio(sd, result)
-        if audio_cue is not None:
-            outbound.append(audio_cue)
-
-        # Semantic watcher event — `turn_complete` is the highest-leverage
-        # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
-        # turn-buckets, Timing p95, and the Turn counter all at once.
-        # Field shape mirrors `TurnCompleteFields` in
-        # `sidequest-ui/src/types/watcher.ts`.
-        try:
-            patches: list[dict[str, object]] = []
-            if result.location:
-                patches.append({"patch_type": "location", "fields_changed": ["location"]})
-            if result.quest_updates:
-                patches.append(
-                    {"patch_type": "quest", "fields_changed": list(result.quest_updates)}
-                )
-            if result.lore_established:
-                patches.append({"patch_type": "lore", "fields_changed": ["lore_established"]})
-            if result.npcs_present:
-                patches.append(
-                    {
-                        "patch_type": "npc_registry",
-                        "fields_changed": [n.name for n in result.npcs_present],
-                    }
-                )
-            if result.items_gained or result.items_lost:
-                patches.append({"patch_type": "inventory", "fields_changed": []})
-
-            beats_fired: list[dict[str, object]] = []
-            for beat in result.beat_selections or []:
-                beats_fired.append(
-                    {
-                        "trope": getattr(beat, "trope_id", None)
-                        or getattr(beat, "beat_id", None)
-                        or "unknown",
-                        "threshold": getattr(beat, "threshold", None),
-                    }
-                )
-
-            _watcher_publish(
-                "turn_complete",
-                {
-                    "turn_number": snapshot.turn_manager.interaction,
-                    "agent_name": result.agent_name,
-                    "agent_duration_ms": result.agent_duration_ms,
-                    "total_duration_ms": result.agent_duration_ms,
-                    "is_degraded": result.is_degraded,
-                    "token_count_in": result.token_count_in,
-                    "token_count_out": result.token_count_out,
-                    "extraction_tier": str(result.prompt_tier),
-                    "player_input": action,
-                    "player_id": sd.player_id,
-                    "genre": sd.genre_slug,
-                    "world": sd.world_slug,
-                    "patches": patches,
-                    "beats_fired": beats_fired,
-                    "delta_empty": not patches and not beats_fired,
-                },
-                component="orchestrator",
-                severity="warning" if result.is_degraded else "info",
-            )
-        except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
-            logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
-
-        return outbound
+            return outbound
 
     async def _run_opening_turn_narration(
         self,
@@ -3373,54 +3407,39 @@ class WebSocketSessionHandler:
         try:
             pack_dir = GenreLoader().find(genre_slug)
         except Exception as exc:  # noqa: BLE001 — best-effort; never crash connect
-            logger.warning(
-                "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
-                genre_slug, exc,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "audio",
-                    "op": "disabled",
-                    "reason": "pack_dir_missing",
-                    "genre": genre_slug,
-                },
-                component="audio",
-            )
+            # Span emission replaces the prior direct ``_watcher_publish`` —
+            # ``WatcherSpanProcessor`` re-emits via
+            # ``SPAN_ROUTES[SPAN_AUDIO_BACKEND_DISABLED]``.
+            with audio_backend_disabled_span(
+                reason="pack_dir_missing",
+                genre=genre_slug,
+            ):
+                logger.warning(
+                    "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
+                    genre_slug, exc,
+                )
             return None
 
         audio_cfg = genre_pack.audio
         if not audio_cfg.mood_tracks and not audio_cfg.themes and not audio_cfg.sfx_library:
-            logger.info(
-                "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "audio",
-                    "op": "disabled",
-                    "reason": "empty_config",
-                    "genre": genre_slug,
-                },
-                component="audio",
-            )
+            with audio_backend_disabled_span(
+                reason="empty_config",
+                genre=genre_slug,
+            ):
+                logger.info(
+                    "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
+                )
             return None
 
-        logger.info(
-            "audio.backend_ready genre=%s pack_dir=%s",
-            genre_slug, pack_dir,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "audio",
-                "op": "enabled",
-                "genre": genre_slug,
-                "mood_count": len(audio_cfg.mood_tracks) + len(audio_cfg.themes),
-                "sfx_count": len(audio_cfg.sfx_library),
-            },
-            component="audio",
-        )
+        with audio_backend_enabled_span(
+            genre=genre_slug,
+            mood_count=len(audio_cfg.mood_tracks) + len(audio_cfg.themes),
+            sfx_count=len(audio_cfg.sfx_library),
+        ):
+            logger.info(
+                "audio.backend_ready genre=%s pack_dir=%s",
+                genre_slug, pack_dir,
+            )
         return LibraryBackend(audio_cfg, base_path=pack_dir)
 
     # ------------------------------------------------------------------
@@ -3650,33 +3669,33 @@ class WebSocketSessionHandler:
         *,
         extra: dict[str, object] | None = None,
     ) -> None:
-        fields: dict[str, object] = {
-            "field": "audio",
-            "op": "skipped",
-            "reason": reason,
-            "turn_number": sd.snapshot.turn_manager.interaction,
-        }
-        if extra:
-            fields.update(extra)
-        _watcher_publish("state_transition", fields, component="audio")
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits via
+        # ``SPAN_ROUTES[SPAN_AUDIO_SKIPPED]``. ``extra`` is JSON-encoded
+        # because OTEL drops dict attribute values; the route extract
+        # returns the JSON string for dashboard parity.
+        with audio_skipped_span(
+            reason=reason,
+            turn_number=sd.snapshot.turn_manager.interaction,
+            extra=extra,
+        ):
+            pass
 
     def _audio_dispatched(
         self,
         sd: _SessionData,
         payload: AudioCuePayload,
     ) -> None:
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "audio",
-                "op": "dispatched",
-                "turn_number": sd.snapshot.turn_manager.interaction,
-                "mood": payload.mood,
-                "music_track": payload.music_track,
-                "sfx_count": len(payload.sfx_triggers),
-            },
-            component="audio",
-        )
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits via
+        # ``SPAN_ROUTES[SPAN_AUDIO_DISPATCHED]``.
+        with audio_dispatched_span(
+            turn_number=sd.snapshot.turn_manager.interaction,
+            mood=payload.mood or "",
+            music_track=payload.music_track or "",
+            sfx_count=len(payload.sfx_triggers),
+        ):
+            pass
 
     # ------------------------------------------------------------------
     # Lore embedding — RAG retrieval (pre-turn) + worker dispatch (post-turn)

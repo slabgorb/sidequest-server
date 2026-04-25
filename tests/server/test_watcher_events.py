@@ -128,10 +128,27 @@ async def test_state_transition_fires_on_location_update(
 @pytest.mark.asyncio
 async def test_state_transition_fires_on_npc_auto_register(
     bound_hub: WatcherHub,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Auto-registered NPCs must emit `state_transition` so the
-    Subsystems tab's `npc_registry` component lights up."""
+    Subsystems tab's `npc_registry` component lights up.
+
+    Post-NPC-bundle (2026-04-25) the emission goes through
+    ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]`` instead of a direct
+    ``publish_event``, so the test installs a local TracerProvider with
+    the WatcherSpanProcessor and monkeypatches the helper's tracer."""
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry import spans as spans_module
+
     sock = await _capture(bound_hub)
+
+    provider = TracerProvider()
+    provider.add_span_processor(WatcherSpanProcessor(bound_hub))
+    local_tracer = provider.get_tracer("test-npc-auto-register-wiring")
+    monkeypatch.setattr(spans_module, "tracer", lambda: local_tracer)
+
     snapshot = GameSnapshot(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
@@ -234,6 +251,560 @@ async def test_span_processor_broadcasts_to_subscriber(
         f"expected 1 span_close event, got {len(sock.events)}: {sock.events}"
     )
     assert close_events[0]["fields"]["probe"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_agent_span_close_for_every_span() -> None:
+    """Backward-compat: every closed span still produces agent_span_close."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    class _CapturingSubscriber:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    sub = _CapturingSubscriber()
+    await hub.subscribe(sub)  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span("some.untracked.span", {"a": 1}))
+
+    # Allow the cross-thread coroutine hop to flush.
+    await asyncio.sleep(0.05)
+
+    assert any(e["event_type"] == "agent_span_close" for e in sub.events)
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_routed_span() -> None:
+    """When a span name is in SPAN_ROUTES, on_end ALSO emits the typed event."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_PROJECTION_DECIDE
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    class _CapturingSubscriber:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    sub = _CapturingSubscriber()
+    await hub.subscribe(sub)  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_PROJECTION_DECIDE,
+        {"event.kind": "narration", "decision.include": True},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in sub.events if e["event_type"] == "state_transition"]
+    flat = [e for e in sub.events if e["event_type"] == "agent_span_close"]
+    assert typed, "Routed span did not produce a typed state_transition event"
+    assert flat, "Routed span must STILL produce agent_span_close (augment, not replace)"
+    assert typed[0]["component"] == "projection"
+    assert typed[0]["fields"]["event_kind"] == "narration"
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_quest_update_span() -> None:
+    """``SPAN_QUEST_UPDATE`` is routed (Phase 2 state-patch bundle) — the
+    translator must emit a ``state_transition`` with component=``quest_log``
+    carrying the JSON-encoded ``updates`` payload, replacing the prior
+    direct ``publish_event`` from ``narration_apply.py``."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_QUEST_UPDATE
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    class _CapturingSubscriber:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    sub = _CapturingSubscriber()
+    await hub.subscribe(sub)  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_QUEST_UPDATE,
+        {
+            "updates_json": '{"find_crystal": "active"}',
+            "updates_count": 1,
+            "player_name": "Rux",
+            "turn_number": 7,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in sub.events if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_QUEST_UPDATE did not produce a state_transition event"
+    assert typed[0]["component"] == "quest_log"
+    assert typed[0]["fields"]["field"] == "quest_log"
+    assert typed[0]["fields"]["updates_count"] == 1
+    assert typed[0]["fields"]["player_name"] == "Rux"
+    assert typed[0]["fields"]["turn_number"] == 7
+    assert typed[0]["fields"]["updates"] == '{"find_crystal": "active"}'
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_npc_auto_registered_span() -> None:
+    """``SPAN_NPC_AUTO_REGISTERED`` is routed (NPC bundle) — translator
+    must emit a ``state_transition`` with ``component=npc_registry`` and
+    ``op=auto_registered`` carrying the same payload the prior direct
+    ``publish_event`` did."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_NPC_AUTO_REGISTERED,
+        {
+            "npc_name": "Vex",
+            "pronouns": "she/her",
+            "role": "scavenger",
+            "turn_number": 4,
+            "registry_len": 1,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_NPC_AUTO_REGISTERED did not produce state_transition"
+    assert typed[0]["component"] == "npc_registry"
+    assert typed[0]["severity"] == "info"
+    assert typed[0]["fields"]["op"] == "auto_registered"
+    assert typed[0]["fields"]["name"] == "Vex"
+    assert typed[0]["fields"]["pronouns"] == "she/her"
+    assert typed[0]["fields"]["registry_len"] == 1
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_npc_reinvented_span_with_warning_severity() -> None:
+    """``SPAN_NPC_REINVENTED`` is routed AND the helper sets
+    ``severity=warning`` as a span attribute, so the translator's typed
+    event must surface ``severity=warning`` (not the default ``info``)
+    — that's the GM panel signal that an identity drift happened."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_NPC_REINVENTED
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_NPC_REINVENTED,
+        {
+            "npc_name": "Vex",
+            "drift_field": "pronouns",
+            "expected": "she/her",
+            "narrator": "they/them",
+            "turn_number": 9,
+            "severity": "warning",
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_NPC_REINVENTED did not produce state_transition"
+    assert typed[0]["component"] == "npc_registry"
+    assert typed[0]["severity"] == "warning", (
+        "severity span-attribute escape hatch failed — "
+        "the translator must propagate the warning level"
+    )
+    assert typed[0]["fields"]["op"] == "reinvented"
+    assert typed[0]["fields"]["drift_field"] == "pronouns"
+    assert typed[0]["fields"]["expected"] == "she/her"
+    assert typed[0]["fields"]["narrator"] == "they/them"
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_inventory_narrator_extracted_span() -> None:
+    """``SPAN_INVENTORY_NARRATOR_EXTRACTED`` is routed (inventory bundle) —
+    translator must emit a ``state_transition`` with ``component=inventory``
+    and ``op=narrator_extracted`` carrying the JSON-encoded gained/lost
+    lists the prior direct ``publish_event`` from ``narration_apply.py``
+    sent. The validator's ``inventory_check`` correlates on these fields."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_INVENTORY_NARRATOR_EXTRACTED
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_INVENTORY_NARRATOR_EXTRACTED,
+        {
+            "gained_json": '["Rusty Spanner"]',
+            "lost_json": '["broken_torch"]',
+            "gained_count": 1,
+            "lost_count": 1,
+            "player_name": "Rux",
+            "turn_number": 5,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, (
+        "SPAN_INVENTORY_NARRATOR_EXTRACTED did not produce a "
+        "state_transition event"
+    )
+    assert typed[0]["component"] == "inventory"
+    assert typed[0]["severity"] == "info"
+    assert typed[0]["fields"]["field"] == "inventory"
+    assert typed[0]["fields"]["op"] == "narrator_extracted"
+    assert typed[0]["fields"]["gained"] == '["Rusty Spanner"]'
+    assert typed[0]["fields"]["lost"] == '["broken_torch"]'
+    assert typed[0]["fields"]["gained_count"] == 1
+    assert typed[0]["fields"]["lost_count"] == 1
+    assert typed[0]["fields"]["player_name"] == "Rux"
+    assert typed[0]["fields"]["turn_number"] == 5
+
+
+def _audio_fake_span_factory():
+    """Shared fake-span builder for audio translator-routing tests.
+    Returns a callable that builds a ``ReadableSpan`` mock with a name
+    and attributes — same shape used by the inventory / NPC tests above."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    def _make(name: str, attributes: dict | None = None) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK"
+        _ = StatusCode  # keep import alive for ReadableSpan typing
+        return span
+
+    return _make
+
+
+async def _audio_processor_with_capture():
+    """Boilerplate: bind hub to running loop, attach a capturing
+    subscriber, return (processor, captured_events)."""
+    from sidequest.server.watcher import WatcherSpanProcessor
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+    return WatcherSpanProcessor(hub), captured
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_backend_enabled_span() -> None:
+    """``SPAN_AUDIO_BACKEND_ENABLED`` is routed (audio bundle) — translator
+    must emit a ``state_transition`` with ``component=audio`` and
+    ``op=enabled`` carrying the same payload the prior direct
+    ``publish_event`` from ``session_handler._build_audio_backend`` did."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_BACKEND_ENABLED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_BACKEND_ENABLED,
+        {"genre": "mutant_wasteland", "mood_count": 4, "sfx_count": 12},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_BACKEND_ENABLED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "enabled"
+    assert typed[0]["fields"]["genre"] == "mutant_wasteland"
+    assert typed[0]["fields"]["mood_count"] == 4
+    assert typed[0]["fields"]["sfx_count"] == 12
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_backend_disabled_span() -> None:
+    """``SPAN_AUDIO_BACKEND_DISABLED`` is routed — translator emits
+    ``op=disabled`` carrying the bail reason (``pack_dir_missing`` /
+    ``empty_config``)."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_BACKEND_DISABLED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_BACKEND_DISABLED,
+        {"reason": "empty_config", "genre": "victoria"},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_BACKEND_DISABLED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "disabled"
+    assert typed[0]["fields"]["reason"] == "empty_config"
+    assert typed[0]["fields"]["genre"] == "victoria"
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_skipped_span() -> None:
+    """``SPAN_AUDIO_SKIPPED`` is routed — translator emits ``op=skipped``
+    with ``turn_number`` and a JSON-encoded ``extra`` field (OTEL drops
+    dict attributes; route serializes for dashboard parity with the
+    prior ``fields.update(extra)`` payload)."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_SKIPPED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_SKIPPED,
+        {
+            "reason": "error",
+            "turn_number": 4,
+            "extra_json": '{"error": "RuntimeError"}',
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_SKIPPED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "skipped"
+    assert typed[0]["fields"]["reason"] == "error"
+    assert typed[0]["fields"]["turn_number"] == 4
+    assert typed[0]["fields"]["extra"] == '{"error": "RuntimeError"}'
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_dispatched_span() -> None:
+    """``SPAN_AUDIO_DISPATCHED`` is routed — translator emits
+    ``op=dispatched`` carrying mood + music_track + sfx_count, the
+    payload the GM panel's audio component already consumes."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_DISPATCHED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_DISPATCHED,
+        {
+            "turn_number": 7,
+            "mood": "tense",
+            "music_track": "underground_chase",
+            "sfx_count": 2,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_DISPATCHED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "dispatched"
+    assert typed[0]["fields"]["turn_number"] == 7
+    assert typed[0]["fields"]["mood"] == "tense"
+    assert typed[0]["fields"]["music_track"] == "underground_chase"
+    assert typed[0]["fields"]["sfx_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_lore_established_span() -> None:
+    """``SPAN_LORE_ESTABLISHED`` is routed (lore bundle) — translator
+    must emit a ``lore_retrieval`` event with ``component=lore`` and
+    ``op=appended`` carrying the narrator-driven additions. Before this
+    bundle the GM panel's Lore tab was dark for narrator-extracted
+    canonical lore; the route lights it up."""
+    from sidequest.telemetry.spans import SPAN_LORE_ESTABLISHED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_LORE_ESTABLISHED,
+        {
+            "items_json": '["The reactor predates the Old Ones."]',
+            "added_count": 1,
+            "total": 5,
+            "player_name": "Rux",
+            "turn_number": 7,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "lore_retrieval"]
+    assert typed, "SPAN_LORE_ESTABLISHED did not produce lore_retrieval"
+    assert typed[0]["component"] == "lore"
+    assert typed[0]["fields"]["op"] == "appended"
+    assert typed[0]["fields"]["reason"] == "narrator_established"
+    # JSON-encoded — OTEL drops list attributes silently otherwise.
+    assert typed[0]["fields"]["items"] == (
+        '["The reactor predates the Old Ones."]'
+    )
+    assert typed[0]["fields"]["added_count"] == 1
+    assert typed[0]["fields"]["total"] == 5
+    assert typed[0]["fields"]["player_name"] == "Rux"
+    assert typed[0]["fields"]["turn_number"] == 7
 
 
 @pytest.mark.asyncio

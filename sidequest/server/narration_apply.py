@@ -12,7 +12,12 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
 )
-from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED
+from sidequest.telemetry.spans import (
+    inventory_narrator_extracted_span,
+    lore_established_span,
+    npc_auto_registered_span,
+    quest_update_span,
+)
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
@@ -66,23 +71,21 @@ def _apply_narration_result_to_snapshot(
         )
 
     if result.quest_updates:
-        for quest_id, status in result.quest_updates.items():
-            snapshot.quest_log[quest_id] = status
-        logger.info(
-            "state.quest_update count=%d player=%s",
-            len(result.quest_updates),
-            player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "quest_log",
-                "updates": dict(result.quest_updates),
-                "player_name": player_name,
-                "turn_number": snapshot.turn_manager.interaction,
-            },
-            component="quest_log",
-        )
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
+        # event via ``SPAN_ROUTES[SPAN_QUEST_UPDATE]``.
+        with quest_update_span(
+            updates=result.quest_updates,
+            player_name=player_name,
+            turn_number=snapshot.turn_manager.interaction,
+        ):
+            for quest_id, status in result.quest_updates.items():
+                snapshot.quest_log[quest_id] = status
+            logger.info(
+                "state.quest_update count=%d player=%s",
+                len(result.quest_updates),
+                player_name,
+            )
 
     # Inventory — apply narrator items_gained/items_lost on the rolling
     # player's character. Playtest 2026-04-24 found a wiring gap: watcher
@@ -122,12 +125,12 @@ def _apply_narration_result_to_snapshot(
             }
 
         added_names: list[str] = []
+        removed_names: list[str] = []
         for entry in result.items_gained or []:
             item_dict = _narrator_item_dict(entry)
             character.core.inventory.items.append(item_dict)
             added_names.append(str(item_dict["name"]))
 
-        removed_names: list[str] = []
         for entry in result.items_lost or []:
             lost_name = str(entry.get("name", "") or "").strip().lower()
             if not lost_name:
@@ -139,30 +142,52 @@ def _apply_narration_result_to_snapshot(
                     removed_names.append(lost_name)
                     break
 
-        logger.info(
-            "state.inventory_update player=%s turn=%d gained=%s lost=%s",
-            player_name,
-            turn_num,
-            added_names,
-            removed_names,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "inventory",
-                "op": "narrator_extracted",
-                "gained": added_names,
-                "lost": removed_names,
-                "player_name": player_name,
-                "turn_number": turn_num,
-            },
-            component="inventory",
-        )
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
+        # event via ``SPAN_ROUTES[SPAN_INVENTORY_NARRATOR_EXTRACTED]``.
+        # ``added_names`` / ``removed_names`` reflect the actual mutation
+        # outcome (items_lost is case-insensitive and only records
+        # successful matches), so the route-extracted payload is identical
+        # to what the prior ``_watcher_publish`` call sent.
+        with inventory_narrator_extracted_span(
+            gained=added_names,
+            lost=removed_names,
+            player_name=player_name,
+            turn_number=turn_num,
+        ):
+            logger.info(
+                "state.inventory_update player=%s turn=%d gained=%s lost=%s",
+                player_name,
+                turn_num,
+                added_names,
+                removed_names,
+            )
 
     if result.lore_established:
+        added: list[str] = []
         for lore in result.lore_established:
             if lore not in snapshot.lore_established:
                 snapshot.lore_established.append(lore)
+                added.append(lore)
+        # Span emission drives the ``lore_retrieval`` typed event with
+        # ``component=lore`` via ``SPAN_ROUTES[SPAN_LORE_ESTABLISHED]``.
+        # No prior ``_watcher_publish`` existed for this path — the GM
+        # panel's Lore tab was previously dark for narrator-driven
+        # additions.
+        with lore_established_span(
+            items=added,
+            added_count=len(added),
+            total=len(snapshot.lore_established),
+            player_name=player_name,
+            turn_number=snapshot.turn_manager.interaction,
+        ):
+            logger.info(
+                "state.lore_established player=%s turn=%d added=%d total=%d",
+                player_name,
+                snapshot.turn_manager.interaction,
+                len(added),
+                len(snapshot.lore_established),
+            )
 
     # NPC registry — auto-register + drift detection (Story 37-44).
     turn_num = snapshot.turn_manager.interaction
@@ -182,27 +207,23 @@ def _apply_narration_result_to_snapshot(
                     last_seen_turn=turn_num,
                 )
             )
-            logger.info(
-                "%s name=%r pronouns=%r role=%r turn=%d",
-                SPAN_NPC_AUTO_REGISTERED,
-                npc_mention.name,
-                npc_mention.pronouns or "",
-                npc_mention.role or "",
-                turn_num,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "npc_registry",
-                    "op": "auto_registered",
-                    "name": npc_mention.name,
-                    "pronouns": npc_mention.pronouns or "",
-                    "role": npc_mention.role or "",
-                    "turn_number": turn_num,
-                    "registry_len": len(snapshot.npc_registry),
-                },
-                component="npc_registry",
-            )
+            # Span emission replaces the prior direct ``_watcher_publish`` —
+            # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
+            # event via ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]``.
+            with npc_auto_registered_span(
+                npc_name=npc_mention.name,
+                pronouns=npc_mention.pronouns or "",
+                role=npc_mention.role or "",
+                turn_number=turn_num,
+                registry_len=len(snapshot.npc_registry),
+            ):
+                logger.info(
+                    "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
+                    npc_mention.name,
+                    npc_mention.pronouns or "",
+                    npc_mention.role or "",
+                    turn_num,
+                )
         else:
             _detect_npc_identity_drift(existing, npc_mention, turn_num)
             existing.last_seen_turn = turn_num
