@@ -131,6 +131,10 @@ from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
+    audio_backend_disabled_span,
+    audio_backend_enabled_span,
+    audio_dispatched_span,
+    audio_skipped_span,
     orchestrator_process_action_span,
     turn_span,
 )
@@ -3402,54 +3406,39 @@ class WebSocketSessionHandler:
         try:
             pack_dir = GenreLoader().find(genre_slug)
         except Exception as exc:  # noqa: BLE001 — best-effort; never crash connect
-            logger.warning(
-                "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
-                genre_slug, exc,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "audio",
-                    "op": "disabled",
-                    "reason": "pack_dir_missing",
-                    "genre": genre_slug,
-                },
-                component="audio",
-            )
+            # Span emission replaces the prior direct ``_watcher_publish`` —
+            # ``WatcherSpanProcessor`` re-emits via
+            # ``SPAN_ROUTES[SPAN_AUDIO_BACKEND_DISABLED]``.
+            with audio_backend_disabled_span(
+                reason="pack_dir_missing",
+                genre=genre_slug,
+            ):
+                logger.warning(
+                    "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
+                    genre_slug, exc,
+                )
             return None
 
         audio_cfg = genre_pack.audio
         if not audio_cfg.mood_tracks and not audio_cfg.themes and not audio_cfg.sfx_library:
-            logger.info(
-                "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "audio",
-                    "op": "disabled",
-                    "reason": "empty_config",
-                    "genre": genre_slug,
-                },
-                component="audio",
-            )
+            with audio_backend_disabled_span(
+                reason="empty_config",
+                genre=genre_slug,
+            ):
+                logger.info(
+                    "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
+                )
             return None
 
-        logger.info(
-            "audio.backend_ready genre=%s pack_dir=%s",
-            genre_slug, pack_dir,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "audio",
-                "op": "enabled",
-                "genre": genre_slug,
-                "mood_count": len(audio_cfg.mood_tracks) + len(audio_cfg.themes),
-                "sfx_count": len(audio_cfg.sfx_library),
-            },
-            component="audio",
-        )
+        with audio_backend_enabled_span(
+            genre=genre_slug,
+            mood_count=len(audio_cfg.mood_tracks) + len(audio_cfg.themes),
+            sfx_count=len(audio_cfg.sfx_library),
+        ):
+            logger.info(
+                "audio.backend_ready genre=%s pack_dir=%s",
+                genre_slug, pack_dir,
+            )
         return LibraryBackend(audio_cfg, base_path=pack_dir)
 
     # ------------------------------------------------------------------
@@ -3679,33 +3668,33 @@ class WebSocketSessionHandler:
         *,
         extra: dict[str, object] | None = None,
     ) -> None:
-        fields: dict[str, object] = {
-            "field": "audio",
-            "op": "skipped",
-            "reason": reason,
-            "turn_number": sd.snapshot.turn_manager.interaction,
-        }
-        if extra:
-            fields.update(extra)
-        _watcher_publish("state_transition", fields, component="audio")
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits via
+        # ``SPAN_ROUTES[SPAN_AUDIO_SKIPPED]``. ``extra`` is JSON-encoded
+        # because OTEL drops dict attribute values; the route extract
+        # returns the JSON string for dashboard parity.
+        with audio_skipped_span(
+            reason=reason,
+            turn_number=sd.snapshot.turn_manager.interaction,
+            extra=extra,
+        ):
+            pass
 
     def _audio_dispatched(
         self,
         sd: _SessionData,
         payload: AudioCuePayload,
     ) -> None:
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "audio",
-                "op": "dispatched",
-                "turn_number": sd.snapshot.turn_manager.interaction,
-                "mood": payload.mood,
-                "music_track": payload.music_track,
-                "sfx_count": len(payload.sfx_triggers),
-            },
-            component="audio",
-        )
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits via
+        # ``SPAN_ROUTES[SPAN_AUDIO_DISPATCHED]``.
+        with audio_dispatched_span(
+            turn_number=sd.snapshot.turn_manager.interaction,
+            mood=payload.mood or "",
+            music_track=payload.music_track or "",
+            sfx_count=len(payload.sfx_triggers),
+        ):
+            pass
 
     # ------------------------------------------------------------------
     # Lore embedding — RAG retrieval (pre-turn) + worker dispatch (post-turn)

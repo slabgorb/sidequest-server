@@ -620,6 +620,155 @@ async def test_on_end_emits_typed_event_for_inventory_narrator_extracted_span() 
     assert typed[0]["fields"]["turn_number"] == 5
 
 
+def _audio_fake_span_factory():
+    """Shared fake-span builder for audio translator-routing tests.
+    Returns a callable that builds a ``ReadableSpan`` mock with a name
+    and attributes — same shape used by the inventory / NPC tests above."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    def _make(name: str, attributes: dict | None = None) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK"
+        _ = StatusCode  # keep import alive for ReadableSpan typing
+        return span
+
+    return _make
+
+
+async def _audio_processor_with_capture():
+    """Boilerplate: bind hub to running loop, attach a capturing
+    subscriber, return (processor, captured_events)."""
+    from sidequest.server.watcher import WatcherSpanProcessor
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+    return WatcherSpanProcessor(hub), captured
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_backend_enabled_span() -> None:
+    """``SPAN_AUDIO_BACKEND_ENABLED`` is routed (audio bundle) — translator
+    must emit a ``state_transition`` with ``component=audio`` and
+    ``op=enabled`` carrying the same payload the prior direct
+    ``publish_event`` from ``session_handler._build_audio_backend`` did."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_BACKEND_ENABLED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_BACKEND_ENABLED,
+        {"genre": "mutant_wasteland", "mood_count": 4, "sfx_count": 12},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_BACKEND_ENABLED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "enabled"
+    assert typed[0]["fields"]["genre"] == "mutant_wasteland"
+    assert typed[0]["fields"]["mood_count"] == 4
+    assert typed[0]["fields"]["sfx_count"] == 12
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_backend_disabled_span() -> None:
+    """``SPAN_AUDIO_BACKEND_DISABLED`` is routed — translator emits
+    ``op=disabled`` carrying the bail reason (``pack_dir_missing`` /
+    ``empty_config``)."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_BACKEND_DISABLED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_BACKEND_DISABLED,
+        {"reason": "empty_config", "genre": "victoria"},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_BACKEND_DISABLED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "disabled"
+    assert typed[0]["fields"]["reason"] == "empty_config"
+    assert typed[0]["fields"]["genre"] == "victoria"
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_skipped_span() -> None:
+    """``SPAN_AUDIO_SKIPPED`` is routed — translator emits ``op=skipped``
+    with ``turn_number`` and a JSON-encoded ``extra`` field (OTEL drops
+    dict attributes; route serializes for dashboard parity with the
+    prior ``fields.update(extra)`` payload)."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_SKIPPED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_SKIPPED,
+        {
+            "reason": "error",
+            "turn_number": 4,
+            "extra_json": '{"error": "RuntimeError"}',
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_SKIPPED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "skipped"
+    assert typed[0]["fields"]["reason"] == "error"
+    assert typed[0]["fields"]["turn_number"] == 4
+    assert typed[0]["fields"]["extra"] == '{"error": "RuntimeError"}'
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_audio_dispatched_span() -> None:
+    """``SPAN_AUDIO_DISPATCHED`` is routed — translator emits
+    ``op=dispatched`` carrying mood + music_track + sfx_count, the
+    payload the GM panel's audio component already consumes."""
+    from sidequest.telemetry.spans import SPAN_AUDIO_DISPATCHED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_AUDIO_DISPATCHED,
+        {
+            "turn_number": 7,
+            "mood": "tense",
+            "music_track": "underground_chase",
+            "sfx_count": 2,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_AUDIO_DISPATCHED did not produce state_transition"
+    assert typed[0]["component"] == "audio"
+    assert typed[0]["fields"]["op"] == "dispatched"
+    assert typed[0]["fields"]["turn_number"] == 7
+    assert typed[0]["fields"]["mood"] == "tense"
+    assert typed[0]["fields"]["music_track"] == "underground_chase"
+    assert typed[0]["fields"]["sfx_count"] == 2
+
+
 @pytest.mark.asyncio
 async def test_dead_subscribers_are_pruned(bound_hub: WatcherHub) -> None:
     """A broken WebSocket must not prevent other subscribers from

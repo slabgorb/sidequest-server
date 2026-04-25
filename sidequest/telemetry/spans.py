@@ -165,9 +165,66 @@ SPAN_BARRIER_RESOLVED = "barrier.resolved"
 
 # ---------------------------------------------------------------------------
 # Music / audio — sidequest-game/music_director.rs
+#
+# Python-port note (ADR-082): ``SPAN_MUSIC_EVALUATE`` /
+# ``SPAN_MUSIC_CLASSIFY_MOOD`` mirror the Rust ``music_director`` agent
+# which the Python port did not reimplement; they stay in
+# ``FLAT_ONLY_SPANS`` until that agent is ported. The four
+# ``SPAN_AUDIO_*`` lifecycle spans below ARE live — they fire from the
+# audio backend setup and per-turn cue dispatch in
+# ``server/session_handler.py`` (the integrated cue pipeline replaces the
+# standalone music-director agent in the port).
 # ---------------------------------------------------------------------------
 SPAN_MUSIC_EVALUATE = "music_evaluate"
 SPAN_MUSIC_CLASSIFY_MOOD = "music_classify_mood"
+SPAN_AUDIO_BACKEND_ENABLED = "audio.backend_enabled"
+SPAN_ROUTES[SPAN_AUDIO_BACKEND_ENABLED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "enabled",
+        "genre": (span.attributes or {}).get("genre", ""),
+        "mood_count": (span.attributes or {}).get("mood_count", 0),
+        "sfx_count": (span.attributes or {}).get("sfx_count", 0),
+    },
+)
+SPAN_AUDIO_BACKEND_DISABLED = "audio.backend_disabled"
+SPAN_ROUTES[SPAN_AUDIO_BACKEND_DISABLED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "disabled",
+        "reason": (span.attributes or {}).get("reason", ""),
+        "genre": (span.attributes or {}).get("genre", ""),
+    },
+)
+SPAN_AUDIO_SKIPPED = "audio.skipped"
+SPAN_ROUTES[SPAN_AUDIO_SKIPPED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "skipped",
+        "reason": (span.attributes or {}).get("reason", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "extra": (span.attributes or {}).get("extra_json", "{}"),
+    },
+)
+SPAN_AUDIO_DISPATCHED = "audio.dispatched"
+SPAN_ROUTES[SPAN_AUDIO_DISPATCHED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "dispatched",
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "mood": (span.attributes or {}).get("mood", ""),
+        "music_track": (span.attributes or {}).get("music_track", ""),
+        "sfx_count": (span.attributes or {}).get("sfx_count", 0),
+    },
+)
 
 # ---------------------------------------------------------------------------
 # Persistence — sidequest-game/persistence.rs
@@ -1502,6 +1559,120 @@ def inventory_narrator_extracted_span(
     }
     with t.start_as_current_span(
         SPAN_INVENTORY_NARRATOR_EXTRACTED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def audio_backend_enabled_span(
+    *,
+    genre: str,
+    mood_count: int,
+    sfx_count: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap the audio-backend init success path. Replaces the direct
+    ``publish_event("state_transition", ..., component="audio",
+    op="enabled")`` from ``server/session_handler.py`` — the route
+    preserves the dashboard payload shape.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "genre": genre,
+        "mood_count": mood_count,
+        "sfx_count": sfx_count,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_AUDIO_BACKEND_ENABLED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def audio_backend_disabled_span(
+    *,
+    reason: str,
+    genre: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap an audio-backend init bail-out (no pack dir, empty config).
+    Replaces the direct ``publish_event(..., op="disabled")`` from
+    ``server/session_handler.py``. ``reason`` carries the bail cause
+    (``pack_dir_missing`` / ``empty_config``).
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "reason": reason,
+        "genre": genre,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_AUDIO_BACKEND_DISABLED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def audio_skipped_span(
+    *,
+    reason: str,
+    turn_number: int,
+    extra: dict[str, object] | None = None,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap a per-turn audio-cue skip (no audio config, no narration,
+    empty cues, dispatch error). Replaces the direct
+    ``publish_event(..., op="skipped")`` from
+    ``server/session_handler._audio_skip``.
+
+    ``extra`` is JSON-encoded into the span's ``extra_json`` attribute
+    because OTEL silently drops dict attribute values; the route
+    extract returns the JSON string for dashboard parity with the prior
+    flat ``fields.update(extra)`` payload.
+    """
+    import json as _json
+
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "reason": reason,
+        "turn_number": turn_number,
+        "extra_json": _json.dumps(dict(extra or {}), sort_keys=True),
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_AUDIO_SKIPPED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def audio_dispatched_span(
+    *,
+    turn_number: int,
+    mood: str,
+    music_track: str,
+    sfx_count: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap a per-turn audio-cue dispatch (mood + music_track + sfx).
+    Replaces the direct ``publish_event(..., op="dispatched")`` from
+    ``server/session_handler._audio_dispatched``.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "turn_number": turn_number,
+        "mood": mood,
+        "music_track": music_track,
+        "sfx_count": sfx_count,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_AUDIO_DISPATCHED, attributes=attributes
     ) as span:
         yield span
 
