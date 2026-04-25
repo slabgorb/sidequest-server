@@ -62,10 +62,14 @@ class RollOutcome(str, Enum):  # noqa: UP042 — matches project convention (see
     Serializes as the variant name (``"CritSuccess"`` etc.). Unknown wire
     values map to ``Unknown`` via ``_missing_`` so a newer variant from a
     future wire version doesn't hard-error at parse time.
+
+    Tie is the 5th tier added for dual-track momentum (spec
+    2026-04-25-dual-track-momentum-design.md): fired when total == difficulty.
     """
 
     CritSuccess = "CritSuccess"
     Success = "Success"
+    Tie = "Tie"
     Fail = "Fail"
     CritFail = "CritFail"
     Unknown = "Unknown"
