@@ -162,3 +162,207 @@ def resolve_tier_deltas(
         tag_backfire=tag_backfire,
         resolution=resolution,
     )
+
+
+# ---------------------------------------------------------------------------
+# apply_beat — shared between narrator and dice-throw paths
+# ---------------------------------------------------------------------------
+from dataclasses import dataclass  # noqa: E402
+
+from sidequest.game.encounter import (  # noqa: E402
+    EncounterActor,
+    EncounterPhase,
+    StructuredEncounter,
+)
+from sidequest.game.encounter_tag import EncounterTag  # noqa: E402
+from sidequest.telemetry.spans import (  # noqa: E402
+    encounter_metric_advance_span,
+    encounter_tag_backfire_span,
+    encounter_tag_created_span,
+)
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    """Outcome of one ``apply_beat`` invocation.
+
+    ``skipped_reason`` is non-None when the beat was dropped — the encounter
+    state is unchanged. ``resolved`` is True when this beat caused the
+    encounter to flip ``resolved=True``.
+    """
+
+    deltas: ResolvedDeltas | None
+    resolved: bool
+    skipped_reason: str | None = None
+
+
+def _phase_for_beat(beat: int) -> EncounterPhase:
+    ladder = {
+        0: EncounterPhase.Setup,
+        1: EncounterPhase.Opening,
+        2: EncounterPhase.Escalation,
+        3: EncounterPhase.Escalation,
+        4: EncounterPhase.Escalation,
+    }
+    return ladder.get(beat, EncounterPhase.Climax)
+
+
+def _opposite_side_first_actor(
+    enc: StructuredEncounter, side: str,
+) -> str | None:
+    other = "opponent" if side == "player" else "player"
+    for a in enc.actors:
+        if a.side == other and not a.withdrawn:
+            return a.name
+    return None
+
+
+def _normalize_overrides(
+    raw: dict[str, dict] | None,
+) -> dict[RollOutcome, dict] | None:
+    if raw is None:
+        return None
+    mapping = {
+        "crit_fail": RollOutcome.CritFail,
+        "fail": RollOutcome.Fail,
+        "tie": RollOutcome.Tie,
+        "success": RollOutcome.Success,
+        "crit_success": RollOutcome.CritSuccess,
+    }
+    return {mapping[k]: v for k, v in raw.items()}
+
+
+def apply_beat(
+    enc: StructuredEncounter,
+    actor: EncounterActor,
+    beat: Any,  # BeatDef — typed as Any to dodge circular import
+    outcome: RollOutcome,
+    *,
+    turn: int = 0,
+) -> ApplyResult:
+    """Apply one beat at one outcome tier to the encounter.
+
+    Routes the deltas to the actor's side, processes tag/resolution extras,
+    advances ``enc.beat`` and ``structured_phase``, and detects threshold
+    crossings. Emits ``encounter.metric_advance``, ``encounter.tag_created``,
+    and (on angle CritFail) ``encounter.tag_backfire`` spans.
+
+    Skips with a structured reason when the actor is neutral, withdrawn,
+    or the encounter is already resolved.
+    """
+    if enc.resolved:
+        return ApplyResult(deltas=None, resolved=False, skipped_reason="encounter_resolved")
+    if actor.side == "neutral":
+        return ApplyResult(deltas=None, resolved=False, skipped_reason="neutral_actor")
+    if actor.withdrawn:
+        return ApplyResult(deltas=None, resolved=False, skipped_reason="withdrawn_actor")
+
+    overrides = _normalize_overrides(getattr(beat, "deltas", None))
+    deltas = resolve_tier_deltas(
+        kind=beat.kind,
+        base=getattr(beat, "base", 1),
+        outcome=outcome,
+        overrides=overrides,
+        target_tag=getattr(beat, "target_tag", None),
+    )
+
+    own_metric = enc.player_metric if actor.side == "player" else enc.opponent_metric
+    other_metric = enc.opponent_metric if actor.side == "player" else enc.player_metric
+
+    if deltas.own != 0:
+        before = own_metric.current
+        own_metric.current = max(0, own_metric.current + deltas.own)
+        with encounter_metric_advance_span(
+            side=actor.side, delta_kind="own", delta=deltas.own,
+            before=before, after=own_metric.current,
+        ):
+            pass
+
+    if deltas.opponent != 0:
+        before = other_metric.current
+        # Opponent dial: ``brace`` emits a negative delta; ascending dials
+        # are clamped at 0.
+        other_metric.current = max(0, other_metric.current + deltas.opponent)
+        with encounter_metric_advance_span(
+            side=("opponent" if actor.side == "player" else "player"),
+            delta_kind="cross", delta=deltas.opponent,
+            before=before, after=other_metric.current,
+        ):
+            pass
+
+    if deltas.tag_backfire:
+        # Angle CritFail: tag goes onto the opposing side, fleeting.
+        target_actor_name = _opposite_side_first_actor(enc, actor.side)
+        tag = EncounterTag(
+            text=getattr(beat, "target_tag", "Backfire"),
+            created_by=actor.name,
+            target=target_actor_name,
+            leverage=1,
+            fleeting=True,
+            created_turn=turn,
+        )
+        enc.tags.append(tag)
+        with encounter_tag_backfire_span(
+            tag_text=tag.text, created_by=actor.name,
+            target=target_actor_name or "", triggering_beat=beat.id,
+        ):
+            pass
+    elif deltas.grants_tag:
+        tag = EncounterTag(
+            text=deltas.grants_tag,
+            created_by=actor.name,
+            target=_opposite_side_first_actor(enc, actor.side),
+            leverage=deltas.tag_leverage or 1,
+            fleeting=False,
+            created_turn=turn,
+        )
+        enc.tags.append(tag)
+        with encounter_tag_created_span(
+            tag_text=tag.text, created_by=actor.name,
+            target=tag.target, leverage=tag.leverage, fleeting=False,
+            created_via="angle_beat",
+        ):
+            pass
+
+    if deltas.grants_fleeting_tag and not deltas.tag_backfire:
+        tag = EncounterTag(
+            text=deltas.grants_fleeting_tag,
+            created_by=actor.name,
+            target=_opposite_side_first_actor(enc, actor.side),
+            leverage=1,
+            fleeting=True,
+            created_turn=turn,
+        )
+        enc.tags.append(tag)
+        with encounter_tag_created_span(
+            tag_text=tag.text, created_by=actor.name,
+            target=tag.target, leverage=1, fleeting=True,
+            created_via="extras",
+        ):
+            pass
+
+    enc.beat += 1
+    enc.structured_phase = _phase_for_beat(enc.beat)
+
+    resolved = False
+
+    # Player threshold first, then opponent — sealed-letter order via
+    # ADR-036 already places player beats first in the iteration; this
+    # second-level tie-break is "first crossing wins".
+    if enc.player_metric.current >= enc.player_metric.threshold:
+        enc.resolved = True
+        enc.outcome = "player_victory"
+        enc.structured_phase = EncounterPhase.Resolution
+        resolved = True
+    elif enc.opponent_metric.current >= enc.opponent_metric.threshold:
+        enc.resolved = True
+        enc.outcome = "opponent_victory"
+        enc.structured_phase = EncounterPhase.Resolution
+        resolved = True
+    elif deltas.resolution or getattr(beat, "resolution", False):
+        enc.resolved = True
+        enc.outcome = f"resolution_beat:{beat.id}"
+        enc.structured_phase = EncounterPhase.Resolution
+        resolved = True
+
+    return ApplyResult(deltas=deltas, resolved=resolved, skipped_reason=None)
