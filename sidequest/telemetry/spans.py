@@ -129,13 +129,16 @@ SPAN_ORCHESTRATOR_LORE_FILTER = "orchestrator.lore_filter"
 # Agent Claude subprocess calls — sidequest-agents/client.rs
 # ---------------------------------------------------------------------------
 SPAN_AGENT_CALL = "agent.call"
+FLAT_ONLY_SPANS.add(SPAN_AGENT_CALL)
 SPAN_AGENT_CALL_SESSION = "agent.call.session"
+FLAT_ONLY_SPANS.add(SPAN_AGENT_CALL_SESSION)
 
 # ---------------------------------------------------------------------------
 # Turn LLM pipeline — sidequest-agents/orchestrator.rs
 # ---------------------------------------------------------------------------
 SPAN_TURN_AGENT_LLM_PROMPT_BUILD = "turn.agent_llm.prompt_build"
 SPAN_TURN_AGENT_LLM_INFERENCE = "turn.agent_llm.inference"
+FLAT_ONLY_SPANS.add(SPAN_TURN_AGENT_LLM_INFERENCE)
 SPAN_TURN_AGENT_LLM_PARSE_RESPONSE = "turn.agent_llm.parse_response"
 
 # ---------------------------------------------------------------------------
@@ -290,9 +293,51 @@ SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 # fired on a given turn (CLAUDE.md OTEL observability principle).
 # ---------------------------------------------------------------------------
 SPAN_LOCAL_DM_DECOMPOSE = "local_dm.decompose"
+SPAN_ROUTES[SPAN_LOCAL_DM_DECOMPOSE] = SpanRoute(
+    event_type="state_transition",
+    component="local_dm",
+    extract=lambda span: {
+        "field": "local_dm.decompose",
+        "turn_id": (span.attributes or {}).get("turn_id", ""),
+        "player_id": (span.attributes or {}).get("player_id", ""),
+        "action_len": (span.attributes or {}).get("action_len", 0),
+        "degraded": (span.attributes or {}).get("degraded", False),
+        "degraded_reason": (span.attributes or {}).get("degraded_reason", ""),
+    },
+)
 SPAN_LOCAL_DM_DISPATCH_BANK = "local_dm.dispatch_bank"
+SPAN_ROUTES[SPAN_LOCAL_DM_DISPATCH_BANK] = SpanRoute(
+    event_type="state_transition",
+    component="local_dm",
+    extract=lambda span: {
+        "field": "local_dm.dispatch_bank",
+        "turn_id": (span.attributes or {}).get("turn_id", ""),
+        "dispatch_count": (span.attributes or {}).get("dispatch_count", 0),
+    },
+)
 SPAN_LOCAL_DM_SUBSYSTEM = "local_dm.subsystem"
+SPAN_ROUTES[SPAN_LOCAL_DM_SUBSYSTEM] = SpanRoute(
+    event_type="subsystem_exercise_summary",
+    component="local_dm",
+    extract=lambda span: {
+        "field": "local_dm.subsystem",
+        "subsystem": (span.attributes or {}).get("subsystem", ""),
+        "idempotency_key": (span.attributes or {}).get("idempotency_key", ""),
+        "produced_directives": (span.attributes or {}).get("produced_directives", 0),
+        "error": (span.attributes or {}).get("error", ""),
+    },
+)
 SPAN_LOCAL_DM_LETHALITY_ARBITRATE = "local_dm.lethality_arbitrate"
+SPAN_ROUTES[SPAN_LOCAL_DM_LETHALITY_ARBITRATE] = SpanRoute(
+    event_type="state_transition",
+    component="local_dm",
+    extract=lambda span: {
+        "field": "local_dm.lethality_arbitrate",
+        "turn_id": (span.attributes or {}).get("turn_id", ""),
+        "genre_key": (span.attributes or {}).get("genre_key", ""),
+        "verdict_count": (span.attributes or {}).get("verdict_count", 0),
+    },
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — context managers for Phase 1 spans
@@ -718,21 +763,116 @@ def lethality_arbitrate_span(
 # watcher!("...") emitters — GM-panel queries break on drift.
 # ---------------------------------------------------------------------------
 SPAN_COMBAT_TICK = "combat.tick"
+SPAN_ROUTES[SPAN_COMBAT_TICK] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "combat.tick",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "beat": (span.attributes or {}).get("beat", 0),
+        "phase": (span.attributes or {}).get("phase", ""),
+    },
+)
 SPAN_COMBAT_ENDED = "combat.ended"
+SPAN_ROUTES[SPAN_COMBAT_ENDED] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "combat.ended",
+        "outcome": (span.attributes or {}).get("outcome", ""),
+        "duration_beats": (span.attributes or {}).get("duration_beats", 0),
+    },
+)
 SPAN_COMBAT_PLAYER_DEAD = "combat.player_dead"
+SPAN_ROUTES[SPAN_COMBAT_PLAYER_DEAD] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "combat.player_dead",
+        "player_name": (span.attributes or {}).get("player_name", ""),
+    },
+)
 SPAN_ENCOUNTER_PHASE_TRANSITION = "encounter.phase_transition"
+SPAN_ROUTES[SPAN_ENCOUNTER_PHASE_TRANSITION] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.phase_transition",
+        # Emission site uses keys "from" and "to" (encounter_phase_transition_span)
+        "from_phase": (span.attributes or {}).get("from", ""),
+        "to_phase": (span.attributes or {}).get("to", ""),
+    },
+)
 SPAN_ENCOUNTER_RESOLVED = "encounter.resolved"
+SPAN_ROUTES[SPAN_ENCOUNTER_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.resolved",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "outcome": (span.attributes or {}).get("outcome", ""),
+        "source": (span.attributes or {}).get("source", ""),
+    },
+)
 SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
+SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_APPLIED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.beat_applied",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "actor": (span.attributes or {}).get("actor", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+        "metric_delta": (span.attributes or {}).get("metric_delta", 0),
+    },
+)
 SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
+SPAN_ROUTES[SPAN_ENCOUNTER_CONFRONTATION_INITIATED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.confrontation_initiated",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+    },
+)
 SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
+SPAN_ROUTES[SPAN_ENCOUNTER_EMPTY_ACTOR_LIST] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.empty_actor_list",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+    },
+)
 SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
+SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.beat_failure_branch",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+        "actor": (span.attributes or {}).get("actor", ""),
+        "base_delta": (span.attributes or {}).get("base_delta", 0),
+        "failure_delta": (span.attributes or {}).get("failure_delta", 0),
+    },
+)
 
 # Dice dispatch (story 34-11) — names byte-identical to Rust
 # ``emit_dice_request_sent`` / ``emit_dice_throw_received`` /
 # ``emit_dice_result_broadcast`` so GM-panel queries line up.
+# NOTE: these are span *events* added via span.add_event(), not standalone
+# spans created with start_as_current_span. They attach to the enclosing
+# turn span and are not routable as spans — no SPAN_ROUTES entry.
 SPAN_DICE_REQUEST_SENT = "dice.request_sent"
+FLAT_ONLY_SPANS.add(SPAN_DICE_REQUEST_SENT)
 SPAN_DICE_THROW_RECEIVED = "dice.throw_received"
+FLAT_ONLY_SPANS.add(SPAN_DICE_THROW_RECEIVED)
 SPAN_DICE_RESULT_BROADCAST = "dice.result_broadcast"
+FLAT_ONLY_SPANS.add(SPAN_DICE_RESULT_BROADCAST)
 
 
 @contextmanager
@@ -1057,8 +1197,38 @@ def combat_player_dead_span(
 # Projection — sidequest/game/projection/*
 # ---------------------------------------------------------------------------
 SPAN_PROJECTION_DECIDE = "projection.filter.decide"
+SPAN_ROUTES[SPAN_PROJECTION_DECIDE] = SpanRoute(
+    event_type="state_transition",
+    component="projection",
+    extract=lambda span: {
+        "field": "projection.filter.decide",
+        "player_id": (span.attributes or {}).get("player_id", ""),
+        "event_kind": (span.attributes or {}).get("event.kind", ""),
+        "event_seq": (span.attributes or {}).get("event.seq", 0),
+        "decision_include": (span.attributes or {}).get("decision.include", None),
+        "rule_source": (span.attributes or {}).get("rule.source", ""),
+    },
+)
 SPAN_PROJECTION_CACHE_FILL = "projection.cache.fill"
+SPAN_ROUTES[SPAN_PROJECTION_CACHE_FILL] = SpanRoute(
+    event_type="state_transition",
+    component="projection",
+    extract=lambda span: {
+        "field": "projection.cache.fill",
+        "player_id": (span.attributes or {}).get("player_id", ""),
+        "event_seq": (span.attributes or {}).get("event.seq", 0),
+    },
+)
 SPAN_PROJECTION_CACHE_LAZY_FILL = "projection.cache.lazy_fill"
+SPAN_ROUTES[SPAN_PROJECTION_CACHE_LAZY_FILL] = SpanRoute(
+    event_type="state_transition",
+    component="projection",
+    extract=lambda span: {
+        "field": "projection.cache.lazy_fill",
+        "player_id": (span.attributes or {}).get("player_id", ""),
+        "events_filled": (span.attributes or {}).get("events_filled", 0),
+    },
+)
 
 
 @contextmanager
