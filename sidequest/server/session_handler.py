@@ -992,12 +992,14 @@ class WebSocketSessionHandler:
                         exc_info=True,
                     )
             try:
-                # MP: pull peer state from persisted store before saving
-                # so a stale single-PC view can't stomp the multi-PC truth
-                # (playtest 2026-04-25 "Multi-PC state does not survive
-                # disconnect"). No-op for solo.
-                self._merge_peer_state_into_snapshot(self._session_data)
-                self._session_data.store.save(self._session_data.snapshot)
+                # ADR-037 Python port: room owns the canonical snapshot,
+                # so a plain room.save() persists it once for every
+                # session that disconnects. Legacy non-slug path falls
+                # back to the per-session store.
+                if self._room is not None:
+                    self._room.save()
+                else:
+                    self._session_data.store.save(self._session_data.snapshot)
                 logger.info(
                     "session.disconnect_save genre=%s world=%s player=%s "
                     "char_count=%d seat_count=%d",
