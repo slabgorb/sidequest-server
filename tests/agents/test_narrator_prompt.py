@@ -23,12 +23,16 @@ def test_prompt_documents_status_changes_field():
 def test_active_encounter_zone_renders_both_dials_and_tags(monkeypatch, build_registry):
     from sidequest.agents.narrator import NarratorAgent
     from sidequest.game.encounter import (
-        EncounterActor, EncounterMetric, StructuredEncounter,
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
     )
     from sidequest.game.encounter_tag import EncounterTag
     from sidequest.game.status import Status, StatusSeverity
     from sidequest.genre.models.rules import (
-        BeatDef, ConfrontationDef, MetricDef,
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
     )
 
     enc = StructuredEncounter(
@@ -77,11 +81,15 @@ def test_active_encounter_zone_renders_both_dials_and_tags(monkeypatch, build_re
 def test_resolved_encounter_short_circuits_to_resolution_zone(build_registry):
     from sidequest.agents.narrator import NarratorAgent
     from sidequest.game.encounter import (
-        EncounterActor, EncounterMetric, StructuredEncounter,
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
     )
     from sidequest.game.resolution_signal import ResolutionSignal
     from sidequest.genre.models.rules import (
-        ConfrontationDef, MetricDef, BeatDef,
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
     )
 
     enc = StructuredEncounter(

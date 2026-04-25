@@ -10,7 +10,6 @@ import json
 from datetime import date
 from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,7 +20,6 @@ from sidequest.game.persistence import (
     upsert_game,
 )
 from sidequest.server.rest import create_rest_router
-
 
 # ---------------------------------------------------------------------------
 # Helpers
