@@ -182,3 +182,105 @@ def test_party_status_solo_returns_single_member() -> None:
     msg = handler._build_session_start_party_status(sd, pc, "p:solo")
     assert len(msg.payload.members) == 1
     assert str(msg.payload.members[0].character_name) == "Solo"
+
+
+def test_resolve_self_character_uses_player_seats_binding() -> None:
+    """Playtest 2026-04-25 "Tab 2 sees Laverne (YOU)" regression test.
+
+    snapshot has [Laverne, Shirley]; player_seats binds Shirley→Shirley.
+    For sd.player_id=p:shirley the resolver must return the Shirley
+    Character, NOT snapshot.characters[0] (Laverne).
+    """
+    laverne = _char("Laverne")
+    shirley = _char("Shirley")
+    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
+    sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    resolved = handler._resolve_self_character(sd)
+    assert resolved is shirley
+    assert resolved is not laverne
+
+
+def test_resolve_self_character_uses_room_seat_when_player_seats_empty() -> None:
+    """Pre-2026-04-25 saves have empty player_seats but a live room seat.
+
+    The resolver must fall through to the room's slot_to_player_id() so
+    multi-PC snapshots still resolve correctly without a persisted
+    binding.
+    """
+    laverne = _char("Laverne")
+    shirley = _char("Shirley")
+    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
+    # No player_seats (legacy snapshot).
+    assert sd.snapshot.player_seats == {}
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    room = SessionRoom(slug="slug-x", mode=GameMode.MULTIPLAYER)
+    room.seat("p:laverne", character_slot="Laverne")
+    room.seat("p:shirley", character_slot="Shirley")
+    handler._room = room
+
+    resolved = handler._resolve_self_character(sd)
+    assert resolved is shirley
+
+
+def test_resolve_self_character_returns_none_for_legacy_solo() -> None:
+    """Legacy solo save: no player_seats, no room. Resolver returns None,
+    callers fall back to snapshot.characters[0].
+    """
+    pc = _char("Solo")
+    sd = _sd("p:solo", "Solo", [pc])
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    assert handler._resolve_self_character(sd) is None
+
+
+def test_party_status_uses_resolver_when_caller_passes_resolved_character() -> None:
+    """Wiring test: turn-end / slug-resume PARTY_STATUS callers MUST pass
+    the resolver's result (not snapshot.characters[0]) so the requesting
+    socket's PC is tagged as 'self', not whichever PC happened to be
+    appended first.
+
+    This test simulates the exact playtest 2026-04-25 repro: two PCs in
+    the snapshot, the requesting socket is the second player, and the
+    PARTY_STATUS frame is built via the resolver. Self-tagged member
+    must be Shirley with character_name="Shirley", not Laverne tagged
+    with Shirley's player_id.
+    """
+    laverne = _char("Laverne")
+    shirley = _char("Shirley")
+    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
+    sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
+
+    handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
+    room = SessionRoom(slug="slug-x", mode=GameMode.MULTIPLAYER)
+    room.seat("p:laverne", character_slot="Laverne")
+    room.seat("p:shirley", character_slot="Shirley")
+    handler._room = room
+
+    # Mimic the fixed call-site pattern: resolver-or-fallback.
+    self_char = (
+        handler._resolve_self_character(sd)
+        or sd.snapshot.characters[0]
+    )
+    assert self_char is shirley, (
+        "Resolver must pick Shirley for sd.player_id=p:shirley — picking "
+        "characters[0] (Laverne) is the bug we're regressing against"
+    )
+
+    msg = handler._build_session_start_party_status(sd, self_char, "p:shirley")
+    members = msg.payload.members
+    # Self comes first; self's character_name and player_id must agree.
+    self_member = members[0]
+    assert str(self_member.character_name) == "Shirley"
+    assert str(self_member.player_id) == "p:shirley"
+    # Peer is Laverne with Laverne's player_id (NOT Shirley's).
+    peer_member = members[1]
+    assert str(peer_member.character_name) == "Laverne"
+    assert str(peer_member.player_id) == "p:laverne"
+    # No two members share a player_id (the bug produced colliding ids).
+    pids = [str(m.player_id) for m in members]
+    assert len(set(pids)) == len(pids), (
+        f"Duplicate player_id in PartyMember frame: {pids}"
+    )

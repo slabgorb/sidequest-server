@@ -1637,12 +1637,20 @@ class WebSocketSessionHandler:
                     component="session",
                 )
                 # Refresh PARTY_STATUS so the resumed client's header / sheet
-                # / location update from the saved snapshot.
+                # / location update from the saved snapshot. MP: resolve
+                # self by player_id (snapshot.player_seats / room seat),
+                # not snapshot.characters[0] — picking the first PC mis-
+                # tags every non-first player's data with their own
+                # player_id (playtest 2026-04-25 "Tab 2 sees Laverne (YOU)").
                 if snapshot.characters:
                     try:
+                        self_char = (
+                            self._resolve_self_character(self._session_data)
+                            or snapshot.characters[0]
+                        )
                         bootstrap_msgs.append(
                             self._build_session_start_party_status(
-                                self._session_data, snapshot.characters[0], player_id
+                                self._session_data, self_char, player_id
                             )
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -1876,12 +1884,17 @@ class WebSocketSessionHandler:
             # Also refresh PARTY_STATUS so the resumed client's header /
             # sheet / location update from the saved snapshot. Without
             # this the UI has no character data until the next narration
-            # turn fires.
+            # turn fires. MP: resolve self by player_id (see notes at the
+            # other call site, ~line 1640).
             if snapshot.characters:
                 try:
+                    self_char = (
+                        self._resolve_self_character(self._session_data)
+                        or snapshot.characters[0]
+                    )
                     outbound.append(
                         self._build_session_start_party_status(
-                            self._session_data, snapshot.characters[0], player_id
+                            self._session_data, self_char, player_id
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -3045,14 +3058,27 @@ class WebSocketSessionHandler:
         # (typically empty). Playtest 2026-04-22.
         if snapshot.characters:
             try:
+                # MP: resolve "self" by sd.player_id, not snapshot.characters[0].
+                # The turn-end refresh fires per-socket; if the requesting
+                # socket isn't characters[0] (any non-first-committed
+                # player in MP), passing characters[0] mis-tags that PC's
+                # data with the requesting socket's player_id and the UI
+                # renders the wrong PC as "(YOU)" — playtest 2026-04-25
+                # "Tab 2 sees Laverne (YOU)".
+                self_char = (
+                    self._resolve_self_character(sd)
+                    or snapshot.characters[0]
+                )
                 party_status = self._build_session_start_party_status(
-                    sd, snapshot.characters[0], sd.player_id
+                    sd, self_char, sd.player_id
                 )
                 outbound.append(party_status)
                 logger.info(
-                    "state.party_status_emitted reason=turn_end location=%r turn=%d",
+                    "state.party_status_emitted reason=turn_end location=%r turn=%d "
+                    "self_char=%s",
                     snapshot.location or "",
                     snapshot.turn_manager.interaction,
+                    self_char.core.name,
                 )
                 _watcher_publish(
                     "state_transition",
@@ -3825,6 +3851,42 @@ class WebSocketSessionHandler:
             sheet=sheet,
             inventory=inventory_payload,
         )
+
+    def _resolve_self_character(
+        self, sd: _SessionData
+    ) -> Character | None:
+        """Find the Character belonging to ``sd.player_id`` in the snapshot.
+
+        Used to disambiguate "which PC is *me*" when the snapshot carries
+        multiple PCs (multiplayer). Returning ``snapshot.characters[0]`` is
+        wrong for any player whose seat isn't first — that's the playtest
+        2026-04-25 "Tab 2 sees Laverne (YOU)" bug. The seat map (written at
+        chargen-commit, lines 2440-2475) is the source of truth; the room
+        seat is the live runtime mirror used as a fallback.
+
+        Returns ``None`` for legacy saves with no ``player_seats`` binding
+        AND no live room seat (very old solo saves). Callers should fall
+        back to ``snapshot.characters[0]`` in that case to keep solo
+        single-PC sessions working.
+        """
+        snapshot = sd.snapshot
+        if not snapshot.characters:
+            return None
+        if sd.player_id and snapshot.player_seats:
+            char_name = snapshot.player_seats.get(sd.player_id)
+            if char_name:
+                for c in snapshot.characters:
+                    if c.core.name == char_name:
+                        return c
+        if sd.player_id and self._room is not None:
+            seat_lookup = getattr(self._room, "slot_to_player_id", None)
+            if callable(seat_lookup):
+                for slot, pid in seat_lookup().items():
+                    if pid == sd.player_id:
+                        for c in snapshot.characters:
+                            if c.core.name == slot:
+                                return c
+        return None
 
     def _build_session_start_party_status(
         self,
