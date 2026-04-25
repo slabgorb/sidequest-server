@@ -120,3 +120,28 @@ def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pac
     assert snap.encounter.resolved is True
     assert snap.encounter.outcome == "yielded"
     assert set(snap.pending_resolution_signal.yielded_actors) == {"Sam", "Alex"}
+
+
+def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, character_named_sam):
+    """Watcher events fire in row order: yield_received → yield_resolved → resolved.
+    The kinds[-1] == ENCOUNTER_RESOLVED invariant must hold for solo yield."""
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.telemetry.watcher_hub import bind_event_store
+
+    snap, _ = snapshot_with_pack
+    snap.encounter = _enc()
+    snap.characters.append(character_named_sam)
+
+    store = SqliteStore.open_in_memory()
+    bind_event_store(store)
+    try:
+        handle_yield(snap, player_id="p1", player_name="Sam")
+        rows = list(store._conn.execute(
+            "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
+        ).fetchall())
+        kinds = [r[0] for r in rows]
+        assert "ENCOUNTER_YIELD" in kinds, f"missing ENCOUNTER_YIELD; got {kinds}"
+        assert kinds[-1] == "ENCOUNTER_RESOLVED", f"last row must be ENCOUNTER_RESOLVED; got {kinds}"
+    finally:
+        bind_event_store(None)
+        store.close()

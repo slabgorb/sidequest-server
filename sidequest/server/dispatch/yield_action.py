@@ -15,6 +15,7 @@ from sidequest.telemetry.spans import (
     encounter_yield_received_span,
     encounter_yield_resolved_span,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 
 def _statuses_taken_in_encounter(
@@ -34,7 +35,7 @@ def _refund_edge_for_yielders(
         count = _statuses_taken_in_encounter(char.core.statuses, encounter_type)
         refund = 1 + count
         before = char.core.edge.current
-        char.core.edge.current = min(char.core.edge.max, before + refund)
+        char.core.apply_edge_delta(refund)
         total_refund += char.core.edge.current - before
     return total_refund
 
@@ -69,6 +70,20 @@ def handle_yield(
         statuses_taken_this_encounter=statuses_taken,
     ):
         pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "yield_received",
+            "encounter_type": enc.encounter_type,
+            "player_id": player_id,
+            "actor_name": player_name,
+            "prior_player_metric": enc.player_metric.current,
+            "prior_opponent_metric": enc.opponent_metric.current,
+            "statuses_taken_this_encounter": statuses_taken,
+        },
+        component="encounter",
+    )
 
     actor.withdrawn = True
 
@@ -100,9 +115,34 @@ def handle_yield(
         edge_refreshed=edge_refreshed,
     ):
         pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "yield_resolved",
+            "encounter_type": enc.encounter_type,
+            "outcome": "yielded",
+            "yielded_actors": list(yielded_names),
+            "edge_refreshed": edge_refreshed,
+        },
+        component="encounter",
+    )
     with encounter_resolution_signal_emitted_span(
         outcome="yielded",
         final_player_metric=enc.player_metric.current,
         final_opponent_metric=enc.opponent_metric.current,
     ):
         pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "resolved",
+            "encounter_type": enc.encounter_type,
+            "outcome": "yielded",
+            "source": "yield",
+            "final_player_metric": enc.player_metric.current,
+            "final_opponent_metric": enc.opponent_metric.current,
+        },
+        component="encounter",
+    )
