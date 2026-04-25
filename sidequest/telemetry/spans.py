@@ -350,18 +350,30 @@ SPAN_ROUTES[SPAN_LOCAL_DM_LETHALITY_ARBITRATE] = SpanRoute(
 
 @contextmanager
 def turn_span(
-    player_id: str,
-    action: str,
     *,
+    turn_id: int,
+    player_id: str,
+    agent_name: str,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Context manager wrapping SPAN_TURN with standard attrs."""
+    """Open the root `turn` span for a dispatch.
+
+    Every other span opened during this dispatch becomes a child of this
+    span. Without it, traces are orphaned — the Timing tab cannot group by
+    turn and the Subsystems tab cannot derive per-turn exercise summaries.
+
+    Required attributes match ADR-031 §"Layer 2" turn-root contract:
+    turn_id, player_id, agent_name. Extras are accepted via **attrs and
+    set on the span verbatim.
+    """
     t = _tracer if _tracer is not None else tracer()
-    with t.start_as_current_span(
-        SPAN_TURN,
-        attributes={"player_id": player_id, "action": action[:80], **attrs},
-    ) as span:
+    with t.start_as_current_span(SPAN_TURN) as span:
+        span.set_attribute("turn_id", turn_id)
+        span.set_attribute("player_id", player_id)
+        span.set_attribute("agent_name", agent_name)
+        for k, v in attrs.items():
+            span.set_attribute(k, v)
         yield span
 
 
