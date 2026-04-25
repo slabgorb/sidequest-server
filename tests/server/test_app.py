@@ -30,3 +30,20 @@ def test_create_app_honours_ollama_env(monkeypatch):
 
     client = app.state.claude_client_factory()
     assert isinstance(client, OllamaClient)
+
+
+def test_validator_starts_with_app() -> None:
+    """create_app() registers a startup hook that boots the validator."""
+    from fastapi.testclient import TestClient
+
+    from sidequest.server.app import create_app
+
+    app = create_app()
+    with TestClient(app):
+        validator = getattr(app.state, "validator", None)
+        assert validator is not None, (
+            "app.state.validator should be populated at startup"
+        )
+        assert validator.is_running()
+    # On exit, the TestClient's shutdown lifespan triggers shutdown.
+    assert not validator.is_running()
