@@ -142,6 +142,60 @@ def test_strike_critsuccess_creates_fleeting_opening_tag():
     assert any(t.text == "Opening" and t.fleeting for t in enc.tags)
 
 
+def test_strike_fail_publishes_beat_no_op_for_gm_panel(monkeypatch):
+    """Regression: per spec, default delta tables for Fail tier on every
+    kind are {own=0, opponent=0} — a Fail rolls narratively but neither
+    dial moves. Without an OTEL surface for this case, the GM panel
+    sees the beat fire and assumes the engine is responsive; nothing
+    surfaces the silent stalemate. Playtest 2026-04-25 [P0] flagged
+    the dual-track engine as "decorative" specifically because of this
+    invisibility — the engine works as specified, but Fails feel inert.
+    The `state_transition op=beat_no_op` event makes the design choice
+    observable so Sebastien can see the encounter didn't progress.
+    """
+    captured: list[tuple[str, dict, dict]] = []
+
+    def fake_publish(event_type, fields, *, component="", severity="info"):
+        captured.append((event_type, fields, {"component": component, "severity": severity}))
+
+    import sidequest.game.beat_kinds as _bk
+    monkeypatch.setattr(_bk, "_watcher_publish", fake_publish)
+
+    enc = _enc()
+    sam = enc.find_actor("Sam")
+    apply_beat(enc, sam, _strike_beat(base=2), RollOutcome.Fail)
+
+    no_ops = [
+        (fields, meta) for et, fields, meta in captured
+        if et == "state_transition" and fields.get("op") == "beat_no_op"
+    ]
+    assert no_ops, "Fail-tier strike must publish beat_no_op for GM panel visibility"
+    fields, meta = no_ops[0]
+    assert fields["actor_side"] == "player"
+    assert fields["beat_kind"] == "strike"
+    assert "spec" in fields["rationale"].lower()
+    assert meta["component"] == "encounter"
+
+
+def test_strike_success_does_not_publish_beat_no_op(monkeypatch):
+    """Counterpart: a Success-tier strike DOES move the dial, so the
+    no-op event must NOT fire (otherwise the GM panel would mis-flag a
+    working engine as inert)."""
+    captured: list[str] = []
+
+    def fake_publish(event_type, fields, *, component="", severity="info"):
+        if event_type == "state_transition" and fields.get("op") == "beat_no_op":
+            captured.append(fields["beat_id"])
+
+    import sidequest.game.beat_kinds as _bk
+    monkeypatch.setattr(_bk, "_watcher_publish", fake_publish)
+
+    enc = _enc()
+    sam = enc.find_actor("Sam")
+    apply_beat(enc, sam, _strike_beat(base=2), RollOutcome.Success)
+    assert captured == []
+
+
 def test_post_resolution_apply_is_dropped_with_skipped_reason():
     enc = _enc()
     enc.resolved = True

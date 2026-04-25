@@ -414,6 +414,39 @@ def apply_beat(
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)
 
+    # GM-panel visibility for inert beats. Per spec, default delta tables
+    # for Fail tier on every kind are {own=0, opponent=0} — a Fail rolls
+    # narratively but neither dial moves. Without this event the GM panel
+    # sees the beat fire and assumes the engine is responsive; nothing
+    # surfaces the silent stalemate. Playtest 2026-04-25 [P0] flagged
+    # this as a P0 because from the player's view the dual-track engine
+    # looked decorative when in fact it was working as specified.
+    # Surfacing the no-op turns the design choice from invisible into
+    # observable — Sebastien-the-mechanics-player can see that the
+    # encounter didn't progress, and Keith debugging can audit whether
+    # the spec's intent matches the playtest experience.
+    if (deltas.own == 0 and deltas.opponent == 0
+            and not deltas.grants_tag and not deltas.grants_fleeting_tag
+            and not deltas.tag_backfire and not deltas.resolution):
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "beat_no_op",
+                "actor": actor.name,
+                "actor_side": actor.side,
+                "beat_id": getattr(beat, "id", "?"),
+                "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
+                "rationale": (
+                    "default delta table for this kind+outcome tier "
+                    "is {own=0, opponent=0} (per spec) — beat fired "
+                    "but neither dial moved"
+                ),
+            },
+            component="encounter",
+            severity="info",
+        )
+
     resolved = False
 
     # Player threshold first, then opponent — sealed-letter order via
