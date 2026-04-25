@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -226,6 +227,25 @@ async def test_subsystem_exercise_emits_coverage_gap_after_silence(
 
     gaps = [e for e in captured_events if e["event_type"] == "coverage_gap"]
     assert gaps, "Expected a coverage_gap after a long subsystem silence"
+
+
+@pytest.mark.asyncio
+async def test_validator_emits_turn_complete_first(captured_events) -> None:
+    """turn_complete is emitted before the five checks run, and carries
+    fields populated from the TurnRecord."""
+    v = Validator()
+    await v.start()
+    try:
+        record = _make_record(turn_id=99)
+        await v.submit(record)
+        await asyncio.sleep(0.1)
+    finally:
+        await v.shutdown()
+
+    completes = [e for e in captured_events if e["event_type"] == "turn_complete"]
+    assert completes, "validator must emit turn_complete per TurnRecord"
+    assert completes[0]["fields"]["turn_id"] == 99
+    assert completes[0]["fields"]["agent_name"] == "narrator"
 
 
 @pytest.mark.asyncio

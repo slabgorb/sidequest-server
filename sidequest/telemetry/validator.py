@@ -391,6 +391,23 @@ class Validator:
                 self._queue.task_done()
 
     async def _validate(self, record: TurnRecord) -> None:
+        publish_event(
+            "turn_complete",
+            {
+                "turn_id": record.turn_id,
+                "player_id": record.player_id,
+                "agent_name": record.agent_name,
+                "extraction_tier": record.extraction_tier,
+                "token_count_in": record.token_count_in,
+                "token_count_out": record.token_count_out,
+                "agent_duration_ms": record.agent_duration_ms,
+                "is_degraded": record.is_degraded,
+                "patches_applied": [p.patch_type for p in record.patches_applied],
+                "beats_fired": [t for t, _ in record.beats_fired],
+            },
+            component="validator",
+            severity="info",
+        )
         for check in self._checks:
             t0 = time.perf_counter()
             try:
