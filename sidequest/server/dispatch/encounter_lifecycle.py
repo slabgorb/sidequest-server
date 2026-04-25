@@ -14,23 +14,11 @@ from sidequest.game.lore_store import LoreStore
 from sidequest.game.resource_pool import ResourceThreshold
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import ConfrontationDef
 from sidequest.server.dispatch.confrontation import find_confrontation_def
 from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_resolved_span,
 )
-
-# TODO Task 11: _DIRECTION_BY_NAME and _metric_from_cdef removed — MetricDirection
-# is gone. instantiate_encounter_from_trigger must be rewritten for dual dials.
-
-
-def _metric_from_cdef(cdef: ConfrontationDef) -> None:
-    """Stub — rewrite pending in Task 11 (dual-dial migration)."""
-    raise NotImplementedError(
-        "_metric_from_cdef: rewrite pending in Task 11 "
-        "(MetricDirection removed; use player_metric + opponent_metric)"
-    )
 
 
 def instantiate_encounter_from_trigger(
@@ -38,9 +26,9 @@ def instantiate_encounter_from_trigger(
     snapshot: GameSnapshot,
     pack: GenrePack,
     encounter_type: str,
-    combatants: list[str],
-    hp: int,
-    genre_slug: str,
+    player_name: str,
+    npcs_present: list,
+    genre_slug: str | None,
 ) -> StructuredEncounter | None:
     """Create a StructuredEncounter when the narrator emits ``confrontation=T``.
 
@@ -51,14 +39,18 @@ def instantiate_encounter_from_trigger(
     Raises ``ValueError`` when ``encounter_type`` doesn't match any
     ConfrontationDef in the pack (CLAUDE.md: no silent fallback).
 
-    The encounter's metric is taken from the matched ConfrontationDef —
-    combat packs declare their own metric (e.g. caverns_and_claudes uses
-    "momentum" bidirectional, not generic HP).
+    The encounter's dual dials are taken from the matched ConfrontationDef.
+    Actors are assigned side="player" for the calling player and
+    side="opponent" for each NpcMention. When ``npcs_present`` is empty
+    the encounter is instantiated with the player only (lie-detector span
+    is the caller's responsibility).
 
     Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
     passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
     ``snapshot.genre_slug``).
     """
+    from sidequest.game.encounter import EncounterMetric
+
     current = snapshot.encounter
     if current is not None and not current.resolved:
         return None
@@ -73,26 +65,35 @@ def instantiate_encounter_from_trigger(
 
     with encounter_confrontation_initiated_span(
         encounter_type=encounter_type,
-        genre_slug=genre_slug,
+        genre_slug=genre_slug or "",
     ):
+        role = "combatant" if cdef.category == "combat" else "participant"
         actors = [
-            EncounterActor(
-                name=n,
-                role="combatant" if cdef.category == "combat" else "participant",
-                per_actor_state={},
-            )
-            for n in combatants
+            EncounterActor(name=player_name, role=role, side="player"),
         ]
+        for npc in npcs_present:
+            npc_name = getattr(npc, "name", None) or str(npc)
+            actors.append(EncounterActor(name=npc_name, role=role, side="opponent"))
+
+        pm = cdef.player_metric
+        om = cdef.opponent_metric
         enc = StructuredEncounter(
             encounter_type=encounter_type,
-            metric=_metric_from_cdef(cdef),
+            player_metric=EncounterMetric(
+                name=pm.name, current=pm.starting,
+                starting=pm.starting, threshold=pm.threshold,
+            ),
+            opponent_metric=EncounterMetric(
+                name=om.name, current=om.starting,
+                starting=om.starting, threshold=om.threshold,
+            ),
             beat=0,
             structured_phase=EncounterPhase.Setup,
             secondary_stats=None,
             actors=actors,
             outcome=None,
             resolved=False,
-            mood_override=None,
+            mood_override=cdef.mood,
             narrator_hints=[],
         )
         snapshot.encounter = enc

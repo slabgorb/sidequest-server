@@ -4158,9 +4158,7 @@ class WebSocketSessionHandler:
 # ---------------------------------------------------------------------------
 
 from sidequest.server.narration_apply import (  # noqa: E402 — back-compat re-export
-    _advance_phase,
     _apply_narration_result_to_snapshot,
-    apply_encounter_updates,
 )
 from sidequest.server.session_helpers import (  # noqa: E402 — back-compat re-export
     _build_turn_context,
@@ -4185,7 +4183,6 @@ __all__ = [
     "_SessionData",
     "_State",
     # Module-level helpers re-exported from session_helpers / narration_apply
-    "_advance_phase",
     "_apply_narration_result_to_snapshot",
     "_build_turn_context",
     "_detect_npc_identity_drift",
@@ -4198,7 +4195,6 @@ __all__ = [
     "_sfx_ids_from_genre",
     "_world_history_value",
     "aggregate_visibility",
-    "apply_encounter_updates",
     "apply_turn_writes_for_test",
     "build_secret_note_events",
     "emit_secret_notes",
