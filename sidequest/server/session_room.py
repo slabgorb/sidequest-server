@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any
 
-from sidequest.game.persistence import GameMode
+from sidequest.game.persistence import GameMode, SqliteStore
+from sidequest.game.session import GameSnapshot
 
 
 class SoloSlotConflict(Exception):
@@ -35,6 +36,75 @@ class SessionRoom:
     _lock: RLock = field(default_factory=RLock, repr=False)
     # socket_id -> asyncio.Queue for per-socket outbound message fan-out (MP-02 Task 4)
     _outbound_queues: dict[str, asyncio.Queue[Any]] = field(default_factory=dict)
+    # Canonical world state (ADR-037 Python port). The room owns the
+    # GameSnapshot and SqliteStore for its slug; every WS session bound
+    # to the room reads/writes the same in-memory snapshot reference.
+    _snapshot: GameSnapshot | None = field(default=None, repr=False)
+    _store: SqliteStore | None = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------
+    # Canonical world state (ADR-037 Python port). The room owns the
+    # GameSnapshot and SqliteStore; every WS session bound to this slug
+    # reads and writes the same in-memory snapshot reference.
+    # ------------------------------------------------------------------
+
+    def bind_world(
+        self,
+        *,
+        snapshot: GameSnapshot,
+        store: SqliteStore,
+    ) -> None:
+        """Bind canonical snapshot + store to the room. Idempotent.
+
+        First slug-connect on the room calls this with the loaded (or
+        freshly constructed) snapshot. Subsequent connects observe the
+        existing binding via the ``snapshot`` / ``store`` properties and
+        do not call ``bind_world`` themselves; this idempotency is
+        defense for any path that does retry the bind.
+        """
+        with self._lock:
+            if self._snapshot is not None:
+                return
+            self._snapshot = snapshot
+            self._store = store
+
+    @property
+    def snapshot(self) -> GameSnapshot | None:
+        """Canonical snapshot for the slug, or None before first bind."""
+        return self._snapshot
+
+    @property
+    def store(self) -> SqliteStore | None:
+        """Canonical SqliteStore for the slug, or None before first bind."""
+        return self._store
+
+    def save(self) -> None:
+        """Persist the canonical snapshot through the canonical store.
+
+        Acquires ``_lock`` so concurrent saves from disconnect / turn-end
+        / chargen-commit on different sessions don't interleave. No-op
+        when the room hasn't been bound — paths that haven't reached
+        slug-connect must not crash on save.
+        """
+        with self._lock:
+            if self._snapshot is None or self._store is None:
+                return
+            self._store.save(self._snapshot)
+
+    def close_store(self) -> None:
+        """Close the canonical store exactly once. Idempotent.
+
+        Called by ``RoomRegistry`` (or last-disconnect cleanup) so the
+        underlying SQLite handle is released. Safe to call when never
+        bound.
+        """
+        with self._lock:
+            if self._store is None:
+                return
+            try:
+                self._store.close()
+            finally:
+                self._store = None
 
     def connect(self, player_id: str, *, socket_id: str) -> None:
         with self._lock:
