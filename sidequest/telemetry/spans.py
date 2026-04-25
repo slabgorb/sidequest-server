@@ -1063,3 +1063,160 @@ def projection_cache_lazy_fill_span(
         attributes={"player_id": player_id},
     ) as span:
         yield span
+
+
+# ---------------------------------------------------------------------------
+# Encounter (dual-track momentum, spec 2026-04-25)
+# ---------------------------------------------------------------------------
+SPAN_ENCOUNTER_BEAT_SKIPPED = "encounter.beat_skipped"
+SPAN_ENCOUNTER_INVALID_SIDE = "encounter.invalid_side"
+SPAN_ENCOUNTER_INVALID_OUTCOME_TIER = "encounter.invalid_outcome_tier"
+SPAN_ENCOUNTER_METRIC_ADVANCE = "encounter.metric_advance"
+SPAN_ENCOUNTER_TAG_CREATED = "encounter.tag_created"
+SPAN_ENCOUNTER_TAG_BACKFIRE = "encounter.tag_backfire"
+SPAN_ENCOUNTER_STATUS_ADDED = "encounter.status_added"
+SPAN_ENCOUNTER_YIELD_RECEIVED = "encounter.yield_received"
+SPAN_ENCOUNTER_YIELD_RESOLVED = "encounter.yield_resolved"
+SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
+SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consumed"
+
+
+@contextmanager
+def encounter_beat_skipped_span(
+    *, reason: str, actor: str, actor_side: str, beat_id: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_BEAT_SKIPPED,
+        attributes={"reason": reason, "actor": actor,
+                    "actor_side": actor_side, "beat_id": beat_id, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_invalid_side_span(
+    *, actor_name: str, declared_side: str, valid_set: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_INVALID_SIDE,
+        attributes={"actor_name": actor_name, "declared_side": declared_side,
+                    "valid_set": valid_set, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_invalid_outcome_tier_span(
+    *, beat_id: str, actor: str, declared_tier: str, valid_set: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_INVALID_OUTCOME_TIER,
+        attributes={"beat_id": beat_id, "actor": actor,
+                    "declared_tier": declared_tier, "valid_set": valid_set, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_metric_advance_span(
+    *, side: str, delta_kind: str, delta: int, before: int, after: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_METRIC_ADVANCE,
+        attributes={"side": side, "delta_kind": delta_kind, "delta": delta,
+                    "before": before, "after": after, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_tag_created_span(
+    *, tag_text: str, created_by: str, target: str | None,
+    leverage: int, fleeting: bool, created_via: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_TAG_CREATED,
+        attributes={"tag_text": tag_text, "created_by": created_by,
+                    "target": target or "", "leverage": leverage,
+                    "fleeting": fleeting, "created_via": created_via, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_tag_backfire_span(
+    *, tag_text: str, created_by: str, target: str, triggering_beat: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_TAG_BACKFIRE,
+        attributes={"tag_text": tag_text, "created_by": created_by,
+                    "target": target, "triggering_beat": triggering_beat, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_status_added_span(
+    *, actor: str, text: str, severity: str, source: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_STATUS_ADDED,
+        attributes={"actor": actor, "text": text, "severity": severity,
+                    "source": source, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_yield_received_span(
+    *, player_id: str, actor_name: str, prior_player_metric: int,
+    prior_opponent_metric: int, statuses_taken_this_encounter: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_YIELD_RECEIVED,
+        attributes={"player_id": player_id, "actor_name": actor_name,
+                    "prior_player_metric": prior_player_metric,
+                    "prior_opponent_metric": prior_opponent_metric,
+                    "statuses_taken_this_encounter": statuses_taken_this_encounter,
+                    **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_yield_resolved_span(
+    *, outcome: str, yielded_actors: tuple[str, ...], edge_refreshed: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_YIELD_RESOLVED,
+        attributes={"outcome": outcome,
+                    "yielded_actors": ",".join(yielded_actors),
+                    "edge_refreshed": edge_refreshed, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_resolution_signal_emitted_span(
+    *, outcome: str, final_player_metric: int, final_opponent_metric: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
+        attributes={"outcome": outcome,
+                    "final_player_metric": final_player_metric,
+                    "final_opponent_metric": final_opponent_metric, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_resolution_signal_consumed_span(
+    *, outcome: str, final_player_metric: int, final_opponent_metric: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
+        attributes={"outcome": outcome,
+                    "final_player_metric": final_player_metric,
+                    "final_opponent_metric": final_opponent_metric, **attrs},
+    ) as s:
+        yield s
