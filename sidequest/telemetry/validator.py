@@ -404,19 +404,32 @@ class Validator:
         publish_event(
             "turn_complete",
             {
+                # Identity
                 "turn_id": record.turn_id,
+                "turn_number": record.turn_id,  # alias for legacy dashboard consumers
                 "player_id": record.player_id,
+                "player_input": record.player_input,
                 "agent_name": record.agent_name,
-                "extraction_tier": record.extraction_tier,
+                # Timing & metering
+                "agent_duration_ms": record.agent_duration_ms,
+                "total_duration_ms": record.agent_duration_ms,
                 "token_count_in": record.token_count_in,
                 "token_count_out": record.token_count_out,
-                "agent_duration_ms": record.agent_duration_ms,
+                "extraction_tier": record.extraction_tier,  # int
                 "is_degraded": record.is_degraded,
-                "patches_applied": [p.patch_type for p in record.patches_applied],
-                "beats_fired": [t for t, _ in record.beats_fired],
+                # Mechanical detail
+                "patches": [
+                    {"patch_type": p.patch_type, "fields_changed": list(p.fields_changed)}
+                    for p in record.patches_applied
+                ],
+                "patches_applied": [p.patch_type for p in record.patches_applied],  # legacy short-form
+                "beats_fired": [
+                    {"trope": t, "threshold": th} for t, th in record.beats_fired
+                ],
+                "delta_empty": not record.patches_applied and not record.beats_fired,
             },
             component="validator",
-            severity="info",
+            severity="warning" if record.is_degraded else "info",
         )
         for check in self._checks:
             t0 = time.perf_counter()

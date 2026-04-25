@@ -3257,66 +3257,8 @@ class WebSocketSessionHandler:
             if audio_cue is not None:
                 outbound.append(audio_cue)
     
-            # Semantic watcher event — `turn_complete` is the highest-leverage
-            # frame the dashboard consumes. It unlocks Timeline rows, Subsystems
-            # turn-buckets, Timing p95, and the Turn counter all at once.
-            # Field shape mirrors `TurnCompleteFields` in
-            # `sidequest-ui/src/types/watcher.ts`.
-            try:
-                patches: list[dict[str, object]] = []
-                if result.location:
-                    patches.append({"patch_type": "location", "fields_changed": ["location"]})
-                if result.quest_updates:
-                    patches.append(
-                        {"patch_type": "quest", "fields_changed": list(result.quest_updates)}
-                    )
-                if result.lore_established:
-                    patches.append({"patch_type": "lore", "fields_changed": ["lore_established"]})
-                if result.npcs_present:
-                    patches.append(
-                        {
-                            "patch_type": "npc_registry",
-                            "fields_changed": [n.name for n in result.npcs_present],
-                        }
-                    )
-                if result.items_gained or result.items_lost:
-                    patches.append({"patch_type": "inventory", "fields_changed": []})
-    
-                beats_fired: list[dict[str, object]] = []
-                for beat in result.beat_selections or []:
-                    beats_fired.append(
-                        {
-                            "trope": getattr(beat, "trope_id", None)
-                            or getattr(beat, "beat_id", None)
-                            or "unknown",
-                            "threshold": getattr(beat, "threshold", None),
-                        }
-                    )
-    
-                _watcher_publish(
-                    "turn_complete",
-                    {
-                        "turn_number": snapshot.turn_manager.interaction,
-                        "agent_name": result.agent_name,
-                        "agent_duration_ms": result.agent_duration_ms,
-                        "total_duration_ms": result.agent_duration_ms,
-                        "is_degraded": result.is_degraded,
-                        "token_count_in": result.token_count_in,
-                        "token_count_out": result.token_count_out,
-                        "extraction_tier": str(result.prompt_tier),
-                        "player_input": action,
-                        "player_id": sd.player_id,
-                        "genre": sd.genre_slug,
-                        "world": sd.world_slug,
-                        "patches": patches,
-                        "beats_fired": beats_fired,
-                        "delta_empty": not patches and not beats_fired,
-                    },
-                    component="orchestrator",
-                    severity="warning" if result.is_degraded else "info",
-                )
-            except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
-                logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
+            # turn_complete is now emitted by the validator (per ADR-089 §6.7).
+            # The TurnRecord assembled below is the single source of truth.
 
             # --- TurnRecord assembly + validator submit ---
             # Wrapped in try/except: the validator must NEVER crash the hot path.
