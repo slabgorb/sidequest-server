@@ -1435,6 +1435,112 @@ SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consumed"
 
 
+# ---------------------------------------------------------------------------
+# Dogfight sealed-letter resolution — sidequest-server/dispatch/sealed_letter.py
+#
+# Three spans bracket the simultaneous-commit lookup pipeline so the GM
+# panel can prove the engine ran (vs. the narrator improvising):
+#   1. confrontation_started — handler entry, names both actors
+#   2. maneuver_committed    — fires once per actor with the chosen maneuver
+#   3. cell_resolved         — fires after lookup with cell name + shape
+#
+# Routing decisions are deferred to the dashboard rollout for the
+# dogfight timeline (T4); kept flat-only here so the routing-completeness
+# lint passes without speculatively shipping a SpanRoute payload that
+# would change.
+# ---------------------------------------------------------------------------
+SPAN_DOGFIGHT_CONFRONTATION_STARTED = "dogfight.confrontation_started"
+SPAN_DOGFIGHT_MANEUVER_COMMITTED = "dogfight.maneuver_committed"
+SPAN_DOGFIGHT_CELL_RESOLVED = "dogfight.cell_resolved"
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_DOGFIGHT_CONFRONTATION_STARTED,
+        SPAN_DOGFIGHT_MANEUVER_COMMITTED,
+        SPAN_DOGFIGHT_CELL_RESOLVED,
+    }
+)
+
+
+@contextmanager
+def dogfight_confrontation_started_span(
+    *,
+    encounter_type: str,
+    red_actor: str,
+    blue_actor: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap the sealed-letter handler entry. Names both pilots so the GM
+    panel can correlate the resolution with the active encounter actors.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_DOGFIGHT_CONFRONTATION_STARTED,
+        attributes={
+            "encounter_type": encounter_type,
+            "red_actor": red_actor,
+            "blue_actor": blue_actor,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def dogfight_maneuver_committed_span(
+    *,
+    actor: str,
+    maneuver: str,
+    role: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap a single committed maneuver. Fires twice per resolution turn
+    (once for red, once for blue) so the timeline shows both commits.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_DOGFIGHT_MANEUVER_COMMITTED,
+        attributes={
+            "actor": actor,
+            "maneuver": maneuver,
+            "role": role,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def dogfight_cell_resolved_span(
+    *,
+    cell_name: str,
+    shape: str,
+    red_maneuver: str,
+    blue_maneuver: str,
+    extend_and_return_triggered: bool,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap the post-lookup span. Carries the matched cell name, the
+    cell ``shape`` (passive/offense/evasive descriptor authored in the
+    interaction table), and whether the extend-and-return rule fired.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_DOGFIGHT_CELL_RESOLVED,
+        attributes={
+            "cell_name": cell_name,
+            "shape": shape,
+            "red_maneuver": red_maneuver,
+            "blue_maneuver": blue_maneuver,
+            "extend_and_return_triggered": extend_and_return_triggered,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
 @contextmanager
 def encounter_beat_skipped_span(
     *, reason: str, actor: str, actor_side: str, beat_id: str, **attrs: Any,
