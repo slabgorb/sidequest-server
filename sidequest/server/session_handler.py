@@ -975,6 +975,8 @@ class WebSocketSessionHandler:
             return self._handle_player_seat(msg)
         elif msg_type == "DICE_THROW":
             return await self._handle_dice_throw(msg)
+        elif msg_type == "YIELD":
+            return self._handle_yield(msg)
         else:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
@@ -1172,6 +1174,36 @@ class WebSocketSessionHandler:
         return await self._execute_narration_turn(
             sd, outcome.replay_action_text, turn_context,
         )
+
+    # ------------------------------------------------------------------
+    # YIELD dispatch (dual-track momentum Phase 3)
+    # ------------------------------------------------------------------
+
+    def _handle_yield(self, msg: GameMessage) -> list[object]:
+        """Handle a YIELD message — player withdraws from the active encounter.
+
+        Marks the actor withdrawn; resolves the encounter when every
+        player-side actor has yielded or been taken out; refunds edge.
+        Returns [] on success — encounter outcome fans out via the next
+        narrator turn which reads and clears ``pending_resolution_signal``.
+        """
+        from sidequest.server.dispatch.yield_action import handle_yield
+
+        if self._state != _State.Playing:
+            return [_error_msg("Cannot process YIELD: not in Playing state")]
+        if self._session_data is None:
+            return [_error_msg("Internal error: session data missing")]
+
+        sd = self._session_data
+        player_id = getattr(msg, "player_id", "") or sd.player_id
+        player_name = sd.player_name
+
+        try:
+            handle_yield(sd.snapshot, player_id=player_id, player_name=player_name)
+        except ValueError as exc:
+            return [_error_msg(str(exc))]
+
+        return []
 
     # ------------------------------------------------------------------
     # SESSION_EVENT dispatch
@@ -2902,10 +2934,8 @@ class WebSocketSessionHandler:
             prior_type = prior_encounter.encounter_type if prior_encounter else None
     
             # Unified dispatch — passes the pack so encounter instantiation /
-            # beat application / resolution happen in one place (the version
-            # that emits the Story-3.4 OTEL spans the GM panel reads). The
-            # develop-side ``apply_encounter_updates`` split was supplanted by
-            # this richer combined helper; see merge commit for details.
+            # beat application / resolution happen in one place (emits the
+            # Story-3.4 OTEL spans the GM panel reads).
             #
             # ADR-074 dice integration — read the most recent dice outcome
             # stashed by the DICE_THROW handler (if any) and classify it as

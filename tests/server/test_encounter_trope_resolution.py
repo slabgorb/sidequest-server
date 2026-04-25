@@ -6,8 +6,17 @@ marking trope resolution as testable coverage when the trope engine port lands.
 """
 from __future__ import annotations
 
-from sidequest.game.encounter import StructuredEncounter
+from sidequest.game.encounter import EncounterActor, EncounterMetric, StructuredEncounter
 from sidequest.game.session import GameSnapshot
+
+
+def _make_combat_enc(*, current: int = 0) -> StructuredEncounter:
+    return StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=current, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+    )
 
 
 def test_resolve_from_trope_marks_resolved() -> None:
@@ -16,7 +25,7 @@ def test_resolve_from_trope_marks_resolved() -> None:
         resolve_encounter_from_trope,
     )
     snap = GameSnapshot(genre_slug="cac")
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc = _make_combat_enc()
     snap.encounter = enc
     result = resolve_encounter_from_trope(snapshot=snap, trope_id="last_stand")
     assert result is enc
@@ -39,7 +48,7 @@ def test_resolve_from_trope_already_resolved_returns_none() -> None:
         resolve_encounter_from_trope,
     )
     snap = GameSnapshot(genre_slug="cac")
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc = _make_combat_enc()
     enc.resolved = True
     snap.encounter = enc
     assert resolve_encounter_from_trope(snapshot=snap, trope_id="x") is None

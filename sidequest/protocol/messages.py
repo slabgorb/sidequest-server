@@ -689,6 +689,18 @@ class GameResumedMessage(ProtocolBase):
     player_id: str = ""
 
 
+class YieldMessage(ProtocolBase):
+    """GameMessage::Yield — player declares they pass their turn (no action).
+
+    Structural intent only; no payload fields. The empty dict payload matches
+    the GameResumedMessage precedent for messages with no meaningful payload.
+    """
+
+    type: Literal[MessageType.YIELD] = MessageType.YIELD
+    payload: dict = {}  # noqa: RUF012 — intentionally empty payload
+    player_id: str = ""
+
+
 class DiceRequestMessage(ProtocolBase):
     """GameMessage::DiceRequest — server asks the rolling player to throw."""
 
@@ -739,7 +751,8 @@ _Phase1Variant = Annotated[
     | AudioCueMessage
     | DiceRequestMessage
     | DiceThrowMessage
-    | DiceResultMessage,
+    | DiceResultMessage
+    | YieldMessage,
     Field(discriminator="type"),
 ]
 

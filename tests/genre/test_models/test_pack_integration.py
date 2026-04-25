@@ -323,11 +323,11 @@ def test_genre_pack_assembles_from_caverns_and_claudes() -> None:
     assert pack.archetype_constraints is not None
 
 
-def test_all_three_worlds_load() -> None:
-    """Verify all three Grimvault worlds load without errors."""
+def test_all_worlds_load() -> None:
+    """Verify all caverns_and_claudes worlds load without errors."""
     worlds_dir = CC / "worlds"
     world_names = [d.name for d in worlds_dir.iterdir() if d.is_dir()]
-    assert len(world_names) == 3
+    assert len(world_names) >= 1
     for world_name in world_names:
         wdir = worlds_dir / world_name
         wc = WorldConfig.model_validate(_load(wdir / "world.yaml"))

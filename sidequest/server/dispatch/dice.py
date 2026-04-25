@@ -272,10 +272,10 @@ def dispatch_dice_throw(
     )
 
     # Resolve dice FIRST so beat application can honor Fail/CritFail and
-    # substitute ``failure_metric_delta`` when the beat declares one. The
-    # earlier ordering (apply → resolve) applied ``metric_delta``
-    # unconditionally, so a failed Flank still bumped momentum +3 instead of
-    # paying out the declared -2 failure branch (playtest 2026-04-24).
+    # apply the correct per-tier delta override. The earlier ordering
+    # (apply → resolve) used the default delta unconditionally, so a failed
+    # Flank still bumped momentum +3 instead of the Fail tier's -2
+    # (playtest 2026-04-24 regression).
     try:
         resolved = resolve_dice_with_faces(
             request.dice, list(payload.face), request.modifier, request.difficulty,

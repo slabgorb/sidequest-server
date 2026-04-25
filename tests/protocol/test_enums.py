@@ -184,16 +184,21 @@ def test_message_type_verdict_override_wire_string() -> None:
     assert MessageType.VERDICT_OVERRIDE == "VERDICT_OVERRIDE"
 
 
+def test_message_type_yield_wire_string() -> None:
+    assert MessageType.YIELD == "YIELD"
+
+
 def test_message_type_complete_count() -> None:
-    """All 41 GameMessage variants must be represented.
+    """All 42 GameMessage variants must be represented.
 
     Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
     Group D Task 7 reserved DISPATCH_PACKAGE, NARRATOR_DIRECTIVE_USED,
     VERDICT_OVERRIDE for corpus going-forward capture; bumped 38 → 41.
+    Task 23 (dual-track momentum Phase 3) added YIELD; bumped 41 → 42.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 41
+    assert len(MessageType) == 42
 
 
 # ===========================================================================

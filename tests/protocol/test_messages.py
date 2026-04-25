@@ -852,3 +852,41 @@ def test_secret_note_payload_round_trips_visibility() -> None:
     assert "_visibility" in wire_dict
     rebuilt = SecretNotePayload.model_validate(wire_dict)
     assert rebuilt.visibility_sidecar == original.visibility_sidecar
+
+
+# ===========================================================================
+# YieldMessage (Task 23 — dual-track momentum Phase 3)
+# ===========================================================================
+
+
+def test_message_type_has_yield() -> None:
+    """MessageType enum must include a YIELD variant with value "YIELD"."""
+    assert MessageType.YIELD.value == "YIELD"
+
+
+def test_yield_message_no_payload_fields() -> None:
+    """YieldMessage serializes with type YIELD and player_id; payload is empty."""
+    from sidequest.protocol.messages import YieldMessage
+
+    msg = YieldMessage(player_id="p1")
+    raw = msg.model_dump_json()
+    parsed = json.loads(raw)
+    assert parsed["type"] == "YIELD"
+    assert parsed["player_id"] == "p1"
+
+
+def test_yield_message_round_trip() -> None:
+    """YieldMessage must survive a JSON round-trip unchanged."""
+    from sidequest.protocol.messages import YieldMessage
+
+    msg = YieldMessage(player_id="p1")
+    re_msg = YieldMessage.model_validate_json(msg.model_dump_json())
+    assert re_msg == msg
+
+
+def test_yield_message_parses_via_game_message() -> None:
+    """Integration: YieldMessage must be parseable via the GameMessage union."""
+    wire = {"type": "YIELD", "player_id": "p1", "payload": {}}
+    msg = GameMessage.model_validate(wire)
+    assert msg.type == MessageType.YIELD
+    assert msg.player_id == "p1"

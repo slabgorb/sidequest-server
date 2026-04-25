@@ -42,6 +42,7 @@ python_files = ["test_*.py"]
 addopts = "--ignore=tests/e2e"
 markers = [
     "e2e: integration test that spins a real ASGI app / websocket / services",
+    "integration: end-to-end wiring test spanning multiple subsystems without a live server",
 ]
 
 [tool.ruff]

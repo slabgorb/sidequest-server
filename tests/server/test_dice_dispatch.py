@@ -284,38 +284,6 @@ class TestDispatchDiceThrow:
         assert broadcasts[0].payload.request_id == "req-1"
         assert broadcasts[1].payload.request_id == "req-1"
 
-    @pytest.mark.skip(
-        reason="Pre-existing test relied on single-dial failure_metric_delta "
-        "schema (BeatDef.failure_metric_delta removed in Task 9). "
-        "Phase-3 cleanup: migrate flank beat to dual-dial deltas override."
-    )
-    def test_failed_roll_applies_failure_metric_delta(self) -> None:
-        pass
-
-    @pytest.mark.skip(
-        reason="Pre-existing test relied on single-dial failure_metric_delta "
-        "schema (BeatDef.failure_metric_delta removed in Task 9). "
-        "Phase-3 cleanup: migrate flank beat to dual-dial deltas override."
-    )
-    def test_crit_fail_applies_failure_metric_delta(self) -> None:
-        pass
-
-    @pytest.mark.skip(
-        reason="Pre-existing test relied on single-dial failure_metric_delta "
-        "schema (BeatDef.failure_metric_delta removed in Task 9). "
-        "Phase-3 cleanup: migrate flank beat to dual-dial deltas override."
-    )
-    def test_success_roll_applies_default_metric_delta(self) -> None:
-        pass
-
-    @pytest.mark.skip(
-        reason="Pre-existing test: 'fail keeps +2 delta' assumed single-dial "
-        "unconditional apply. New strike kind: Fail tier → 0 delta (no advance). "
-        "Phase-3 cleanup: define correct expected Fail behavior under dual-track."
-    )
-    def test_failed_roll_without_failure_branch_keeps_default_delta(self) -> None:
-        pass
-
     def test_encounter_resolves_when_beat_hits_threshold(self) -> None:
         pack = _pack_with_combat()
         # Threshold=10; push player_metric to 9 so a +2 strike crosses it.
