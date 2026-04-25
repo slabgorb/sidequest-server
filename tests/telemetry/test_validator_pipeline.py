@@ -13,6 +13,8 @@ from sidequest.telemetry.validator import (
     entity_check,
     inventory_check,
     patch_legality_check,
+    trope_alignment_check,
+    TROPE_KEYWORDS_SOURCE,
 )
 
 
@@ -174,3 +176,45 @@ async def test_patch_legality_warns_on_hp_over_max(captured_events) -> None:
         if e["event_type"] == "validation_warning" and e["severity"] == "error"
     ]
     assert errors, "HP-over-max should produce an error-severity warning"
+
+
+@pytest.mark.asyncio
+async def test_trope_alignment_warns_when_keywords_absent(
+    captured_events, monkeypatch,
+) -> None:
+    monkeypatch.setitem(
+        TROPE_KEYWORDS_SOURCE,
+        "desperation",
+        ["frantic", "shaking", "ragged", "trembling"],
+    )
+
+    record_dict = _make_record().__dict__.copy()
+    record_dict["beats_fired"] = [("desperation", 0.7)]
+    record_dict["narration"] = "You walk down the hallway calmly."
+    record = TurnRecord(**record_dict)
+
+    await trope_alignment_check(record)
+    warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
+    assert any(
+        "trope_alignment" in str(w["fields"]) for w in warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_trope_alignment_silent_when_keywords_present(
+    captured_events, monkeypatch,
+) -> None:
+    monkeypatch.setitem(
+        TROPE_KEYWORDS_SOURCE,
+        "desperation",
+        ["frantic", "shaking", "ragged"],
+    )
+
+    record_dict = _make_record().__dict__.copy()
+    record_dict["beats_fired"] = [("desperation", 0.7)]
+    record_dict["narration"] = "Your hands are shaking as you reach for the door."
+    record = TurnRecord(**record_dict)
+
+    await trope_alignment_check(record)
+    warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
+    assert not any("trope_alignment" in str(w["fields"]) for w in warnings)

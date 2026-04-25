@@ -202,6 +202,50 @@ async def patch_legality_check(record: TurnRecord) -> None:
                     return
 
 
+# Per-trope keyword sources — populated lazily from genre packs.
+# Tests can monkeypatch this dict directly.
+TROPE_KEYWORDS_SOURCE: dict[str, list[str]] = {}
+
+
+def _trope_keywords(trope: str) -> list[str]:
+    if trope in TROPE_KEYWORDS_SOURCE:
+        return TROPE_KEYWORDS_SOURCE[trope]
+    # Lazy load — sidequest.game.trope import deferred to avoid cycles.
+    try:
+        from sidequest.game import trope as trope_mod  # noqa: PLC0415
+
+        keywords = getattr(trope_mod, "keywords_for", lambda _t: [])(trope)
+        TROPE_KEYWORDS_SOURCE[trope] = list(keywords)
+        return TROPE_KEYWORDS_SOURCE[trope]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def trope_alignment_check(record: TurnRecord) -> None:
+    """For each beat that fired, warn if none of the trope's keywords
+    appear in narration."""
+    if not record.beats_fired:
+        return
+    narration_lower = (record.narration or "").lower()
+    for trope, _threshold in record.beats_fired:
+        keywords = _trope_keywords(trope)
+        if not keywords:
+            continue
+        if not any(kw.lower() in narration_lower for kw in keywords):
+            publish_event(
+                "validation_warning",
+                {
+                    "check": "trope_alignment",
+                    "turn_id": record.turn_id,
+                    "trope": trope,
+                    "expected_any_of": keywords,
+                    "rationale": "trope beat fired but no keywords in narration",
+                },
+                component="validator",
+                severity="warning",
+            )
+
+
 class Validator:
     """Single-consumer narrative validator pipeline."""
 
@@ -218,6 +262,7 @@ class Validator:
         self.register_check(entity_check)
         self.register_check(inventory_check)
         self.register_check(patch_legality_check)
+        self.register_check(trope_alignment_check)
 
     def register_check(self, fn: CheckFn) -> None:
         """Register a check coroutine. Called once per TurnRecord."""
