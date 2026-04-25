@@ -13,6 +13,7 @@ import pytest
 
 from sidequest.game.persistence import (
     SavedSession,
+    SaveSchemaIncompatibleError,
     SqliteStore,
     db_path_for_session,
 )
@@ -74,6 +75,36 @@ def test_save_and_load_roundtrip():
     assert saved.snapshot.quest_log == {"Find the Warden": "active"}
     assert saved.snapshot.lore_established == ["The mines run deep"]
     store.close()
+
+
+def test_load_raises_save_schema_incompatible_on_legacy_snapshot():
+    """Regression: a save written under a prior schema (e.g. legacy
+    single-`metric` encounter from before the dual-track momentum
+    migration) must raise ``SaveSchemaIncompatibleError`` rather than
+    let pydantic's ``ValidationError`` bubble up to the WebSocket layer
+    (which closes the socket without explanation, trapping the user
+    in an infinite reconnect loop). Playtest 2026-04-25.
+    """
+    store = SqliteStore.open_in_memory()
+    # Bypass the model and write raw JSON that the current schema rejects.
+    # Missing required `genre_slug` is the simplest pydantic-rejecting
+    # shape; the real-world trigger was a `metric` field on encounter,
+    # but ANY snapshot that fails validation must surface as our typed
+    # error.
+    store._conn.execute(
+        "INSERT INTO game_state (id, snapshot_json, saved_at) VALUES (1, ?, ?)",
+        ('{"characters": "this is not a list"}', "2026-04-25T00:00:00Z"),
+    )
+    store._conn.commit()
+
+    with pytest.raises(SaveSchemaIncompatibleError) as excinfo:
+        store.load()
+
+    # The typed error preserves the pydantic ValidationError + path so
+    # callers can surface a specific message to the user.
+    assert excinfo.value.underlying is not None
+    # In-memory store has no path on disk; load() falls back to a sentinel.
+    assert "in-memory" in str(excinfo.value.save_path).lower()
 
 
 def test_load_returns_none_when_no_save():

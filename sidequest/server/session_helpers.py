@@ -261,12 +261,18 @@ def _world_history_value(pack: GenrePack, world_slug: str) -> object | None:
     return world.history
 
 
-def _error_msg(message: str, reconnect_required: bool = False) -> ErrorMessage:
+def _error_msg(
+    message: str,
+    reconnect_required: bool = False,
+    *,
+    code: str | None = None,
+) -> ErrorMessage:
     return ErrorMessage(
         type="ERROR",  # type: ignore[arg-type]
         payload=ErrorPayload(
             message=NonBlankString(message),
             reconnect_required=reconnect_required,
+            code=code,
         ),
         player_id="",
     )

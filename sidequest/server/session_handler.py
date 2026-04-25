@@ -56,7 +56,11 @@ from sidequest.game.lore_embedding import (
 )
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
-from sidequest.game.persistence import SqliteStore, db_path_for_session
+from sidequest.game.persistence import (
+    SaveSchemaIncompatibleError,
+    SqliteStore,
+    db_path_for_session,
+)
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
@@ -1332,7 +1336,36 @@ class WebSocketSessionHandler:
                 return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
 
             # Restore saved snapshot, or start fresh (Bug 2 fix: resume semantics).
-            saved = store.load()
+            try:
+                saved = store.load()
+            except SaveSchemaIncompatibleError as exc:
+                # Schema-incompatible save (e.g. legacy single-metric encounter
+                # under dual-dial migration). Don't let pydantic's
+                # ValidationError bubble up to websocket.py — that path closes
+                # the socket without surfacing a reason and the UI sits in an
+                # infinite reconnect loop. Return a typed ERROR so the UI can
+                # render an actual error panel with escape actions.
+                logger.warning(
+                    "session.save_schema_invalid slug=%s path=%s error=%s",
+                    slug, exc.save_path, exc.underlying,
+                )
+                _watcher_publish(
+                    "save_schema_invalid",
+                    {
+                        "slug": slug,
+                        "save_path": str(exc.save_path),
+                        "validation_error": str(exc.underlying),
+                    },
+                    component="session",
+                    severity="error",
+                )
+                return [_error_msg(
+                    f"This save predates the current schema and cannot be "
+                    f"loaded. Start a new adventure or move the save aside: "
+                    f"{exc.save_path}",
+                    reconnect_required=False,
+                    code="save_schema_invalid",
+                )]
             if saved is not None:
                 snapshot = saved.snapshot
                 # Per-player chargen gate (playtest 2026-04-25). MP: a new
@@ -1800,8 +1833,37 @@ class WebSocketSessionHandler:
         from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
         _bind_event_store(store)
 
-        # Load existing session or start fresh
-        saved = store.load()
+        # Load existing session or start fresh. Schema-incompatible saves
+        # (legacy snapshots that fail current GameSnapshot validation)
+        # surface as a typed ERROR with code=save_schema_invalid; see the
+        # `_handle_connect` slug branch for the rationale.
+        try:
+            saved = store.load()
+        except SaveSchemaIncompatibleError as exc:
+            logger.warning(
+                "session.save_schema_invalid genre=%s world=%s player=%s "
+                "path=%s error=%s",
+                genre_slug, world_slug, player_name, exc.save_path, exc.underlying,
+            )
+            _watcher_publish(
+                "save_schema_invalid",
+                {
+                    "genre_slug": genre_slug,
+                    "world_slug": world_slug,
+                    "player_name": player_name,
+                    "save_path": str(exc.save_path),
+                    "validation_error": str(exc.underlying),
+                },
+                component="session",
+                severity="error",
+            )
+            return [_error_msg(
+                f"This save predates the current schema and cannot be "
+                f"loaded. Start a new adventure or move the save aside: "
+                f"{exc.save_path}",
+                reconnect_required=False,
+                code="save_schema_invalid",
+            )]
         has_character: bool
         if saved is not None:
             snapshot = saved.snapshot

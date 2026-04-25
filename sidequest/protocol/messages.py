@@ -389,6 +389,14 @@ class ErrorPayload(ProtocolBase):
     """Human-readable error message. Non-blank."""
     reconnect_required: bool | None = None
     """When true, client must re-send SESSION_EVENT{connect} before retrying."""
+    code: str | None = None
+    """Optional machine-readable error code so the UI can branch without
+    keyword-matching the human message. Known codes:
+    ``save_schema_invalid`` — saved snapshot does not match the current
+    schema (e.g. legacy single-metric encounter under dual-dial migration);
+    ``server_error`` — unexpected exception during message handling
+    (caught at the WebSocket boundary as a safety net). Absent for
+    legacy callers."""
 
 
 # ---------------------------------------------------------------------------

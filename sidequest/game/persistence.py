@@ -30,7 +30,37 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from sidequest.game.session import GameSnapshot, NarrativeEntry
+
+
+class SaveSchemaIncompatibleError(Exception):
+    """Raised by :meth:`SqliteStore.load` when the saved snapshot fails
+    Pydantic validation against the current ``GameSnapshot`` schema.
+
+    The save is not corrupt; it was written by a build whose schema has
+    since drifted (e.g. legacy single-``metric`` encounter under the
+    dual-dial migration). Callers (session_handler) should catch this
+    and surface a typed error frame to the UI rather than letting the
+    raw ``ValidationError`` bubble up to the WebSocket layer's broad
+    exception handler — which closes the socket without explanation
+    and traps the user in an infinite reconnect loop (playtest
+    2026-04-25).
+
+    Attributes:
+        save_path: Filesystem path of the offending save (for the user-
+            facing message — they can move it aside manually if needed).
+        underlying: The pydantic ValidationError, preserved for logs.
+    """
+
+    def __init__(self, save_path: Path, underlying: ValidationError) -> None:
+        self.save_path = save_path
+        self.underlying = underlying
+        super().__init__(
+            f"saved snapshot at {save_path} fails current GameSnapshot "
+            f"schema: {underlying}"
+        )
 
 # ---------------------------------------------------------------------------
 # GameMode
@@ -220,8 +250,10 @@ class SqliteStore:
             c = sqlite3.connect(str(conn))
             _configure_connection(c)
             self._conn = c
+            self._path: Path | None = conn
         else:
             self._conn = conn
+            self._path = None
         self._init_schema()
 
     @classmethod
@@ -236,7 +268,9 @@ class SqliteStore:
         """Open a file-backed store."""
         conn = sqlite3.connect(path)
         _configure_connection(conn)
-        return cls(conn)
+        store = cls(conn)
+        store._path = Path(path)
+        return store
 
     def _init_schema(self) -> None:
         self._conn.executescript(SCHEMA_SQL)
@@ -280,14 +314,28 @@ class SqliteStore:
             )
 
     def load(self) -> SavedSession | None:
-        """Load the saved session, or None if no save exists."""
+        """Load the saved session, or None if no save exists.
+
+        Raises ``SaveSchemaIncompatibleError`` when the snapshot JSON
+        fails Pydantic validation against the current ``GameSnapshot``
+        schema. Callers must catch this and surface a typed error frame
+        to the UI rather than letting the raw ValidationError bubble up
+        to the WebSocket layer (which closes the socket without
+        explanation, trapping the user in an infinite reconnect loop).
+        """
         row = self._conn.execute(
             "SELECT snapshot_json FROM game_state WHERE id = 1"
         ).fetchone()
         if row is None:
             return None
 
-        snapshot = GameSnapshot.model_validate_json(row[0])
+        try:
+            snapshot = GameSnapshot.model_validate_json(row[0])
+        except ValidationError as exc:
+            raise SaveSchemaIncompatibleError(
+                save_path=self._path or Path("<in-memory>"),
+                underlying=exc,
+            ) from exc
         meta = self._load_meta() or SessionMeta(
             genre_slug=snapshot.genre_slug,
             world_slug=snapshot.world_slug,

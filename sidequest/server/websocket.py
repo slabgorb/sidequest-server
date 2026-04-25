@@ -87,7 +87,20 @@ async def ws_endpoint(websocket: WebSocket, handler: WebSocketSessionHandler) ->
     except WebSocketDisconnect as exc:
         logger.info("ws.disconnected code=%s", exc.code)
     except Exception as exc:
+        # Safety net for unhandled exceptions in handler.handle_message
+        # (e.g. a programmer bug, a subsystem raising before the per-handler
+        # try/except wraps it). Surface a typed error frame BEFORE the
+        # finally-block close so the UI sees a reason instead of silently
+        # reconnecting into the same crash. Per playtest 2026-04-25 bug
+        # ticket: "WebSocket exception path leaves UI stuck on Reconnecting…
+        # with no surfaced reason."
         logger.exception("ws.unexpected_error error=%s", exc)
+        await _send_error(
+            websocket,
+            f"Server error while processing message: {exc}",
+            reconnect_required=False,
+            code="server_error",
+        )
     finally:
         writer_task.cancel()
         room = handler.current_room()
@@ -138,6 +151,8 @@ async def _send_error(
     websocket: WebSocket,
     message: str,
     reconnect_required: bool = False,
+    *,
+    code: str | None = None,
 ) -> None:
     """Send an ERROR message, ignoring send failures (connection may be closing)."""
     try:
@@ -146,6 +161,7 @@ async def _send_error(
             payload=ErrorPayload(
                 message=NonBlankString(message),
                 reconnect_required=reconnect_required,
+                code=code,
             ),
             player_id="",
         )
