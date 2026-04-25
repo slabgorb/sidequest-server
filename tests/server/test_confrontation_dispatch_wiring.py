@@ -50,16 +50,16 @@ async def test_confrontation_message_active_false_when_resolved(
     session_handler_factory,
 ):
     from sidequest.game.encounter import (
+        EncounterActor,
         EncounterMetric,
-        MetricDirection,
         StructuredEncounter,
     )
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
-    enc.metric = EncounterMetric(
-        name="momentum", current=9, starting=0,
-        direction=MetricDirection.Bidirectional,
-        threshold_high=10, threshold_low=-10,
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=9, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
     )
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
@@ -100,17 +100,17 @@ async def test_confrontation_message_refreshed_on_live_to_live(
     """A live encounter that stays live still emits CONFRONTATION with updated
     metric — the UI needs the new payload each turn to repaint beats/bars."""
     from sidequest.game.encounter import (
+        EncounterActor,
         EncounterMetric,
-        MetricDirection,
         StructuredEncounter,
     )
 
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
-    enc.metric = EncounterMetric(
-        name="momentum", current=0, starting=0,
-        direction=MetricDirection.Bidirectional,
-        threshold_high=10, threshold_low=-10,
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
     )
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
@@ -125,8 +125,8 @@ async def test_confrontation_message_refreshed_on_live_to_live(
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
     assert conf[0].payload.active is True
-    # attack metric_delta=2 → momentum 0+2=2, still inside ±10 bounds.
-    assert conf[0].payload.metric["current"] == 2
+    # attack beat: kind=strike, base=2 → player_metric advances 0+2=2, within threshold=10.
+    assert conf[0].payload.player_metric["current"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +157,8 @@ async def test_dice_turn_filters_narrator_beat_selections(
     narrator's beat_selections and leaves the encounter untouched.
     """
     from sidequest.game.encounter import (
+        EncounterActor,
         EncounterMetric,
-        MetricDirection,
         StructuredEncounter,
     )
 
@@ -168,11 +168,11 @@ async def test_dice_turn_filters_narrator_beat_selections(
     # has no ``mutant_ability`` beat (see tests/server/conftest.py pack
     # cache comment). load_genre_pack() reads directly from disk.
     sd.genre_pack = load_genre_pack(_FIXTURE_PACK)
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
-    enc.metric = EncounterMetric(
-        name="momentum", current=0, starting=0,
-        direction=MetricDirection.Bidirectional,
-        threshold_high=10, threshold_low=-10,
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
     )
     sd.snapshot.encounter = enc
 
@@ -199,8 +199,8 @@ async def test_dice_turn_filters_narrator_beat_selections(
 
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
-    # No narrator beat applied — momentum stays at pre-narration 0.
-    assert conf[0].payload.metric["current"] == 0
+    # No narrator beat applied — player_metric stays at pre-narration 0.
+    assert conf[0].payload.player_metric["current"] == 0
 
     # Consumed — pending outcome is cleared after the turn so the next beat
     # doesn't re-use a stale roll.
@@ -284,18 +284,18 @@ async def test_dice_turn_success_also_filters_narrator_beats(
     Success side.
     """
     from sidequest.game.encounter import (
+        EncounterActor,
         EncounterMetric,
-        MetricDirection,
         StructuredEncounter,
     )
 
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
     sd.genre_pack = load_genre_pack(_FIXTURE_PACK)
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
-    enc.metric = EncounterMetric(
-        name="momentum", current=3, starting=0,
-        direction=MetricDirection.Bidirectional,
-        threshold_high=10, threshold_low=-10,
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=3, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
     )
     sd.snapshot.encounter = enc
     sd.pending_roll_outcome = SimpleNamespace(name="Success")
@@ -311,6 +311,6 @@ async def test_dice_turn_success_also_filters_narrator_beats(
         sd, "[BEAT_RESOLVED] ...", _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
-    # Momentum stays at 3 — the narrator's Warden beat is filtered on a
+    # player_metric stays at 3 — the narrator's Warden beat is filtered on a
     # dice-replay turn.
-    assert conf[0].payload.metric["current"] == 3
+    assert conf[0].payload.player_metric["current"] == 3

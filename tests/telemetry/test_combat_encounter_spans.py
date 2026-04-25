@@ -18,7 +18,6 @@ def test_combat_encounter_span_constants_match_rust_names() -> None:
         SPAN_COMBAT_PLAYER_DEAD,
         SPAN_COMBAT_TICK,
         SPAN_ENCOUNTER_BEAT_APPLIED,
-        SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH,
         SPAN_ENCOUNTER_CONFRONTATION_INITIATED,
         SPAN_ENCOUNTER_EMPTY_ACTOR_LIST,
         SPAN_ENCOUNTER_PHASE_TRANSITION,
@@ -34,32 +33,6 @@ def test_combat_encounter_span_constants_match_rust_names() -> None:
         "encounter.confrontation_initiated"
     )
     assert SPAN_ENCOUNTER_EMPTY_ACTOR_LIST == "encounter.empty_actor_list"
-    assert SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH == "encounter.beat_failure_branch"
-
-
-def test_encounter_beat_failure_branch_emits_attrs() -> None:
-    from sidequest.telemetry.spans import encounter_beat_failure_branch_span
-
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    tracer = provider.get_tracer("test")
-    with encounter_beat_failure_branch_span(
-        _tracer=tracer,
-        encounter_type="combat",
-        beat_id="mutant_ability",
-        actor="Slabgorb",
-        base_delta=4,
-        failure_delta=-2,
-    ):
-        pass
-    [span] = exporter.get_finished_spans()
-    assert span.name == "encounter.beat_failure_branch"
-    assert span.attributes["encounter_type"] == "combat"
-    assert span.attributes["beat_id"] == "mutant_ability"
-    assert span.attributes["actor"] == "Slabgorb"
-    assert span.attributes["base_delta"] == 4
-    assert span.attributes["failure_delta"] == -2
 
 
 def test_encounter_empty_actor_list_emits_attrs() -> None:

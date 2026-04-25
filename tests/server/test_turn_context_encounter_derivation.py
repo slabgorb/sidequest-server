@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidequest.game.encounter import StructuredEncounter
+from sidequest.game.encounter import EncounterActor, EncounterMetric, StructuredEncounter
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 
@@ -46,7 +46,12 @@ def test_no_encounter_defaults_to_all_false(sd_factory) -> None:
 
 def test_combat_encounter_sets_in_combat_true(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+    )
     sd = sd_factory(enc)
     ctx = _build_turn_context(sd)
     assert ctx.in_combat is True
@@ -56,12 +61,17 @@ def test_combat_encounter_sets_in_combat_true(sd_factory) -> None:
     assert ctx.confrontation_def is not None
     assert ctx.confrontation_def.confrontation_type == "combat"
     assert ctx.encounter_summary is not None
-    assert "encounter_type: combat" in ctx.encounter_summary
+    assert "combat" in ctx.encounter_summary
 
 
 def test_resolved_encounter_flags_all_false(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
-    enc = StructuredEncounter.combat(combatants=["Rux"], hp=10)
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+    )
     enc.resolved = True
     sd = sd_factory(enc)
     ctx = _build_turn_context(sd)
@@ -76,7 +86,12 @@ def test_resolved_encounter_flags_all_false(sd_factory) -> None:
 
 def test_chase_encounter_sets_in_chase_true(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
-    enc = StructuredEncounter.chase(escape_threshold=1.0, rig_type=None, goal=20)
+    enc = StructuredEncounter(
+        encounter_type="chase",
+        player_metric=EncounterMetric(name="separation", current=0, starting=0, threshold=20),
+        opponent_metric=EncounterMetric(name="separation", current=0, starting=0, threshold=20),
+        actors=[EncounterActor(name="Rux", role="participant", side="player")],
+    )
     sd = sd_factory(enc)
     ctx = _build_turn_context(sd)
     assert ctx.in_chase is True
