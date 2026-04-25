@@ -181,6 +181,59 @@ async def test_patch_legality_warns_on_hp_over_max(captured_events) -> None:
 
 
 @pytest.mark.asyncio
+async def test_patch_legality_handles_list_shaped_snapshot(captured_events) -> None:
+    """Regression: GameSnapshot.characters / npc_registry are typed as
+    ``list``, not ``dict``. The check must iterate either shape without
+    raising AttributeError (playtest 2026-04-25 — validator was crashing
+    every turn with `'list' object has no attribute 'items'`, silently
+    blanking the OTEL surface for one row of validation per turn).
+    """
+
+    class _Core:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _Char:
+        def __init__(self, name: str, hp: int, hp_max: int) -> None:
+            self.core = _Core(name)
+            self.hp = hp
+            self.hp_max = hp_max
+
+    class _Npc:
+        def __init__(self, name: str, hp: int) -> None:
+            self.name = name
+            self.hp = hp
+
+    snapshot_after = type(
+        "Snap",
+        (),
+        {
+            "characters": [_Char(name="alice", hp=120, hp_max=100)],
+            "npc_registry": [_Npc(name="ghoul", hp=0)],
+        },
+    )()
+    record_dict = _make_record().__dict__.copy()
+    record_dict["snapshot_after"] = snapshot_after
+    record_dict["patches_applied"] = [
+        PatchSummary(patch_type="combat", fields_changed=["characters.alice.hp"]),
+    ]
+    record = TurnRecord(**record_dict)
+
+    # Must not raise.
+    await patch_legality_check(record)
+
+    # HP-over-max should still fire even when characters is a list. The
+    # owner key falls back to `core.name` per the _iter_owned contract.
+    errors = [
+        e for e in captured_events
+        if e["event_type"] == "validation_warning"
+        and e["severity"] == "error"
+        and e["fields"].get("subject") == "alice"
+    ]
+    assert errors, "HP-over-max must fire on list-shaped characters"
+
+
+@pytest.mark.asyncio
 async def test_trope_alignment_warns_when_keywords_absent(
     captured_events, monkeypatch,
 ) -> None:

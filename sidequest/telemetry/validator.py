@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 
 from sidequest.telemetry.turn_record import TurnRecord
 from sidequest.telemetry.watcher_hub import publish_event
@@ -138,6 +138,27 @@ async def inventory_check(record: TurnRecord) -> None:
             )
 
 
+def _iter_owned(coll: object) -> Iterable[tuple[str, object]]:
+    """Yield ``(owner_name, entry)`` for snapshot collections.
+
+    ``GameSnapshot.characters`` and ``GameSnapshot.npc_registry`` are typed
+    as ``list`` (each entry holds its own name on ``.core.name`` or
+    ``.name``), but this validator was authored against the legacy
+    ``dict[name, entry]`` shape. This helper accepts either: list entries
+    are keyed by their ``core.name`` / ``name`` / index fallback so the
+    rest of the check is shape-agnostic.
+    """
+    if isinstance(coll, dict):
+        for k, v in coll.items():
+            yield (str(k), v)
+        return
+    if isinstance(coll, list):
+        for i, v in enumerate(coll):
+            core = getattr(v, "core", None)
+            name = getattr(core, "name", None) or getattr(v, "name", None) or f"[{i}]"
+            yield (str(name), v)
+
+
 async def patch_legality_check(record: TurnRecord) -> None:
     """Detect illegal post-patch state.
 
@@ -147,8 +168,8 @@ async def patch_legality_check(record: TurnRecord) -> None:
       - Cartography graph adjacency check is deferred until ADR-019 is ported.
     """
     snap = record.snapshot_after
-    characters = getattr(snap, "characters", None) or {}
-    npc_registry = getattr(snap, "npc_registry", None) or {}
+    characters = getattr(snap, "characters", None) or []
+    npc_registry = getattr(snap, "npc_registry", None) or []
 
     def _check_hp(label: str, owner: str, ch: object) -> None:
         hp = getattr(ch, "hp", None)
@@ -169,16 +190,15 @@ async def patch_legality_check(record: TurnRecord) -> None:
                 severity="error",
             )
 
-    for owner, ch in characters.items():
-        _check_hp("character", str(owner), ch)
-    if isinstance(npc_registry, dict):
-        for owner, npc in npc_registry.items():
-            _check_hp("npc", str(owner), npc)
+    for owner, ch in _iter_owned(characters):
+        _check_hp("character", owner, ch)
+    for owner, npc in _iter_owned(npc_registry):
+        _check_hp("npc", owner, npc)
 
     # Dead-actor check
     dead_npcs = {
         name
-        for name, npc in (npc_registry.items() if isinstance(npc_registry, dict) else ())
+        for name, npc in _iter_owned(npc_registry)
         if isinstance(getattr(npc, "hp", None), int)
         and getattr(npc, "hp", 0) <= 0
     }
