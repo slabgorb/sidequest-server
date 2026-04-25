@@ -44,13 +44,52 @@ Span groups mirror the Rust source crate that emits them:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from opentelemetry import trace
 
 from sidequest.telemetry.setup import tracer
+
+
+class _SpanLike(Protocol):
+    """Structural stand-in for opentelemetry.sdk.trace.ReadableSpan."""
+
+    name: str
+    attributes: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class SpanRoute:
+    """Routing decision for a span family.
+
+    The translator consults the SPAN_ROUTES dict keyed by span name. When a
+    span closes, if its name is in the dict, the matching SpanRoute is used
+    to emit a typed WatcherEvent IN ADDITION TO the always-on
+    agent_span_close fan-out. The extractor pulls the typed event's
+    `fields` from the span's attributes — span attributes are the single
+    source of truth for typed-event payloads.
+    """
+
+    event_type: str
+    component: str
+    extract: Callable[[_SpanLike], dict[str, Any]]
+
+
+# Spans that intentionally have no typed-event route. Closing one of these
+# emits agent_span_close only — they carry timing data but no semantic
+# payload the dashboard needs to classify. Membership is a deliberate
+# decision, enforced by tests/telemetry/test_routing_completeness.py.
+FLAT_ONLY_SPANS: set[str] = set()
+
+
+# Span name -> SpanRoute. Populated near each SPAN_* constant below so
+# that renaming a constant breaks the route at import time, and a new
+# constant without a routing decision trips the completeness lint test.
+SPAN_ROUTES: dict[str, SpanRoute] = {}
+
 
 # ---------------------------------------------------------------------------
 # Turn — sidequest-server/dispatch/mod.rs, dispatch/tropes.rs

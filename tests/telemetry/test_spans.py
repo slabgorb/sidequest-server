@@ -713,3 +713,28 @@ def test_mp_player_action_paused_span_emits_absent_list() -> None:
     assert span.name == "mp.player_action_paused"
     assert span.attributes["absent_count"] == 2
     assert span.attributes["absent_player_ids"] == "bob,carol"
+
+
+def test_span_route_dataclass_shape() -> None:
+    """SpanRoute carries event_type, component, and an attribute extractor."""
+    from sidequest.telemetry.spans import SpanRoute
+
+    route = SpanRoute(
+        event_type="state_transition",
+        component="disposition",
+        extract=lambda span: {"npc": "alice"},
+    )
+    assert route.event_type == "state_transition"
+    assert route.component == "disposition"
+    # The extractor takes a span-like object and returns a dict.
+    fake = type("FakeSpan", (), {"attributes": {}, "name": "x"})()
+    assert route.extract(fake) == {"npc": "alice"}
+
+
+def test_flat_only_spans_is_a_set_of_strings() -> None:
+    """FLAT_ONLY_SPANS contains span name strings, not SpanRoute objects."""
+    from sidequest.telemetry.spans import FLAT_ONLY_SPANS
+
+    assert isinstance(FLAT_ONLY_SPANS, set)
+    for name in FLAT_ONLY_SPANS:
+        assert isinstance(name, str)
