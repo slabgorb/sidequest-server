@@ -10,6 +10,7 @@ from __future__ import annotations
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.session import Npc
+from sidequest.game.status import Status, StatusSeverity
 
 
 def _make_character(name: str, *, statuses: list[str] | None = None) -> Character:
@@ -222,25 +223,28 @@ def test_hidden_status_whole_token_membership() -> None:
 
     check = WebSocketSessionHandler._is_hidden_status_list
 
+    def s(text: str) -> Status:
+        return Status(text=text, severity=StatusSeverity.Scratch)
+
     # Exact tokens -> True.
-    assert check(["hidden"]) is True
-    assert check(["invisible"]) is True
-    assert check(["stealth"]) is True
-    assert check(["concealed"]) is True
+    assert check([s("hidden")]) is True
+    assert check([s("invisible")]) is True
+    assert check([s("stealth")]) is True
+    assert check([s("concealed")]) is True
 
     # Case-insensitive exact tokens -> True.
-    assert check(["Hidden"]) is True
-    assert check(["INVISIBLE"]) is True
+    assert check([s("Hidden")]) is True
+    assert check([s("INVISIBLE")]) is True
 
     # Substring false-positives previously matched; must be rejected now.
-    assert check(["unhidden"]) is False
-    assert check(["hidden_buff_removed"]) is False
-    assert check(["no_longer_concealed"]) is False
-    assert check(["revealed"]) is False
+    assert check([s("unhidden")]) is False
+    assert check([s("hidden_buff_removed")]) is False
+    assert check([s("no_longer_concealed")]) is False
+    assert check([s("revealed")]) is False
 
     # Empty / unrelated.
     assert check([]) is False
-    assert check(["bleeding", "poisoned"]) is False
+    assert check([s("bleeding"), s("poisoned")]) is False
 
     # Mixed list with one exact match -> True.
-    assert check(["bleeding", "hidden"]) is True
+    assert check([s("bleeding"), s("hidden")]) is True

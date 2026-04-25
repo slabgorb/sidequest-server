@@ -69,6 +69,7 @@ from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
 )
+from sidequest.game.status import Status
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -526,8 +527,8 @@ class WebSocketSessionHandler:
     })
 
     @classmethod
-    def _is_hidden_status_list(cls, statuses: list[str]) -> bool:
-        return any(s.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
+    def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
+        return any(s.text.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
 
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
@@ -681,7 +682,7 @@ class WebSocketSessionHandler:
         # Mirror _build_game_state_view's mapping: active player_id ->
         # first character. Any connected non-active player_id gets []
         # until MP seat-assignment plumbs a real mapping.
-        return {sd.player_id: list(snapshot.characters[0].core.statuses)}
+        return {sd.player_id: [s.text for s in snapshot.characters[0].core.statuses]}
 
     # ------------------------------------------------------------------
     # Slug-resume narrative tail backfill (pingpong 2026-04-24)
@@ -4062,7 +4063,7 @@ class WebSocketSessionHandler:
             character_name=char_name_nbs,
             current_hp=character.core.edge.current,
             max_hp=character.core.edge.max,
-            statuses=list(character.core.statuses),
+            statuses=[s.text for s in character.core.statuses],
             **{"class": class_nbs},  # type: ignore[arg-type]
             level=character.core.level,
             portrait_url=None,

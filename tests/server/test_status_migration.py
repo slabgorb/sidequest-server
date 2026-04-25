@@ -1,5 +1,6 @@
 import pytest
 
+from sidequest.game.creature_core import CreatureCore
 from sidequest.game.status import Status, StatusSeverity, migrate_legacy_statuses
 
 
@@ -64,3 +65,52 @@ def test_migrate_mixed_list_raises():
     # Mixing dict and bare string is a content bug — fail loud.
     with pytest.raises(TypeError):
         migrate_legacy_statuses(["Bleeding", 12345])  # type: ignore[list-item]
+
+
+# ---------------------------------------------------------------------------
+# CreatureCore integration
+# ---------------------------------------------------------------------------
+
+
+def _core_kwargs(**over):
+    base = dict(
+        name="Sam",
+        description="A dungeon delver.",
+        personality="Stoic.",
+    )
+    base.update(over)
+    return base
+
+
+def test_creature_core_loads_legacy_string_statuses():
+    raw_json = (
+        '{"name":"Sam","description":"A dungeon delver.",'
+        '"personality":"Stoic.","statuses":["Bleeding","Stunned"]}'
+    )
+    core = CreatureCore.model_validate_json(raw_json)
+    assert all(isinstance(s, Status) for s in core.statuses)
+    assert [s.text for s in core.statuses] == ["Bleeding", "Stunned"]
+    assert all(s.severity is StatusSeverity.Scratch for s in core.statuses)
+
+
+def test_creature_core_loads_structured_statuses():
+    structured = Status(
+        text="Cracked Temple",
+        severity=StatusSeverity.Wound,
+        absorbed_shifts=0,
+        created_turn=4,
+        created_in_encounter="combat",
+    )
+    core = CreatureCore(**_core_kwargs(statuses=[structured]))
+    assert core.statuses == [structured]
+
+
+def test_creature_core_round_trip_after_migration():
+    raw_json = (
+        '{"name":"Sam","description":"A dungeon delver.",'
+        '"personality":"Stoic.","statuses":["Bleeding"]}'
+    )
+    core = CreatureCore.model_validate_json(raw_json)
+    re_serialized = core.model_dump_json()
+    re_loaded = CreatureCore.model_validate_json(re_serialized)
+    assert re_loaded.statuses == core.statuses
