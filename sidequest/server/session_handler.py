@@ -2926,13 +2926,14 @@ class WebSocketSessionHandler:
             )
 
         try:
-            # MP: merge peer chars / seats from persisted store before
-            # save so Laverne's turn-end can't stomp Shirley's chargen-
-            # commit (playtest 2026-04-25 multi-PC persistence loss).
-            # snapshot is sd.snapshot (same identity) — merge mutates it
-            # in place.
-            self._merge_peer_state_into_snapshot(sd)
-            sd.store.save(snapshot)
+            # ADR-037 Python port: room owns the canonical snapshot, so a
+            # plain room.save() is sufficient — there is no per-session
+            # divergence to merge. Falls back to sd.store.save when the
+            # legacy non-slug path didn't bind a room.
+            if self._room is not None:
+                self._room.save()
+            else:
+                sd.store.save(snapshot)
             narrative_entry = NarrativeEntry(
                 timestamp=0,
                 round=snapshot.turn_manager.interaction,
