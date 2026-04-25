@@ -55,7 +55,19 @@ async def test_npc_agency_unknown_npc_returns_no_directive_with_error_data(minim
 
 
 @pytest.mark.asyncio
-async def test_npc_agency_raises_on_missing_npc_name(minimal_npc_registry):
+async def test_npc_agency_skips_with_structured_data_when_npc_name_missing(
+    minimal_npc_registry,
+):
+    """Regression: previously raised `ValueError("npc_agency requires
+    params.npc_name")`. The local_dm decomposer emits opening-crisis
+    `npc_agency` cascades on turn 1 of every fresh game across packs,
+    before any NPCs are auto-registered — raising fired
+    `subsystems.dispatch_failed` warnings every fresh game (playtest
+    2026-04-25 [P3-MED]). Now returns an empty-directive output with
+    structured `error: no_npc_name` + `skipped: True` so the GM panel
+    sees the skip via the dispatcher's normal `data` channel without
+    polluting the WARNING stream.
+    """
     dispatch = SubsystemDispatch(
         subsystem="npc_agency",
         params={"situation": "x"},
@@ -63,8 +75,11 @@ async def test_npc_agency_raises_on_missing_npc_name(minimal_npc_registry):
         idempotency_key="idem:c",
         visibility=_tag_all(),
     )
-    with pytest.raises(ValueError, match="npc_name"):
-        await run_npc_agency(dispatch, npc_registry=minimal_npc_registry)
+    out = await run_npc_agency(dispatch, npc_registry=minimal_npc_registry)
+    assert out.directives == []
+    assert out.data["error"] == "no_npc_name"
+    assert out.data["skipped"] is True
+    assert out.data["situation"] == "x"
 
 
 @pytest.mark.asyncio

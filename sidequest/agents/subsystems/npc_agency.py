@@ -20,11 +20,33 @@ async def run_npc_agency(
     *,
     npc_registry: list[NpcRegistryEntry],
 ) -> SubsystemOutput:
-    """Surface NpcRegistryEntry facts as a narrator directive + structured data."""
+    """Surface NpcRegistryEntry facts as a narrator directive + structured data.
+
+    Tolerates a missing ``params.npc_name`` (returns empty directives + a
+    structured skip marker) rather than raising — the local_dm decomposer
+    emits opening-crisis ``npc_agency`` cascades on turn 1 of every fresh
+    game across packs, before any NPCs are auto-registered. Raising fired
+    `subsystems.dispatch_failed` + `orchestrator.subsystem_error` warnings
+    on every fresh-game first turn (playtest 2026-04-25 [P3-MED]); the
+    structured skip surfaces in the GM panel via the dispatcher's normal
+    `data` channel without polluting the warning stream.
+    """
     npc_name = dispatch.params.get("npc_name")
     situation = dispatch.params.get("situation", "unspecified")
     if not npc_name:
-        raise ValueError("npc_agency requires params.npc_name")
+        return SubsystemOutput(
+            directives=[],
+            data={
+                "error": "no_npc_name",
+                "skipped": True,
+                "rationale": (
+                    "dispatch arrived without params.npc_name "
+                    "(typically an opening-crisis cascade before any NPC "
+                    "is registered); no-op is correct for the empty-registry case"
+                ),
+                "situation": situation,
+            },
+        )
 
     needle = npc_name.lower()
     entry = next((e for e in npc_registry if e.name.lower() == needle), None)
