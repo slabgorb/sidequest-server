@@ -37,10 +37,20 @@ from sidequest.telemetry.spans import (
     dogfight_maneuver_committed_span,
 )
 
+# Handler-protocol identifiers (NOT content schema keys). The sealed-letter
+# pipeline addresses actors by these role tags; content-side keys
+# ("opening_fast", "gun_solution", etc.) stay inline because they belong
+# to the descriptor schema, not the handler contract.
+ROLE_RED = "red"
+ROLE_BLUE = "blue"
+
 # Merge starting state (from descriptor_schema.yaml). Used by the
 # extend-and-return rule to reset geometric fields after the engagement
 # breaks apart. Energy fields are intentionally NOT in this dict so they
 # survive the reset.
+# TODO(T5): drive from descriptor_schema.starting_states (where id == "merge")
+# instead of hardcoding — until then, test_merge_starting_geometry_matches_descriptor_schema
+# guards against content/code drift.
 _MERGE_STARTING_GEOMETRY: dict[str, object] = {
     "target_bearing": "12",
     "target_range": "close",
@@ -92,24 +102,25 @@ def resolve_sealed_letter_lookup(
         extend-and-return flag.
 
     Raises:
-        ValueError: ``commits`` is missing the "red" or "blue" key, or
-            the committed maneuver is not in ``table.maneuvers_consumed``.
+        ValueError: ``commits`` is missing the "red" or "blue" key, the
+            committed maneuver is not in ``table.maneuvers_consumed``, or
+            the encounter has no actor for one of the required roles.
         KeyError: No interaction cell matches the (red, blue) pair (no
             silent fallback per CLAUDE.md).
     """
     # ---- Step 1: validate commits ----
-    if "red" not in commits:
+    if ROLE_RED not in commits:
         raise ValueError(
             "committed maneuvers missing 'red' key — sealed-letter "
             "resolution requires both 'red' and 'blue' commits"
         )
-    if "blue" not in commits:
+    if ROLE_BLUE not in commits:
         raise ValueError(
             "committed maneuvers missing 'blue' key — sealed-letter "
             "resolution requires both 'red' and 'blue' commits"
         )
-    red_maneuver = commits["red"]
-    blue_maneuver = commits["blue"]
+    red_maneuver = commits[ROLE_RED]
+    blue_maneuver = commits[ROLE_BLUE]
 
     legal = set(table.maneuvers_consumed)
     if red_maneuver not in legal:
@@ -123,31 +134,48 @@ def resolve_sealed_letter_lookup(
             f"(legal: {sorted(legal)})"
         )
 
-    # ---- OTEL: confrontation_started + per-actor maneuver_committed ----
-    red_actor = _find_actor_by_role(encounter, "red")
-    blue_actor = _find_actor_by_role(encounter, "blue")
+    # ---- Step 2: validate actor presence (no silent fallback) ----
+    # Both roles must be present BEFORE we emit any spans — otherwise the
+    # GM panel sees a confrontation_started event with empty actor names
+    # and silently-skipped delta application, which is exactly the kind of
+    # "engine ran but did nothing" lie CLAUDE.md forbids.
+    red_actor = _find_actor_by_role(encounter, ROLE_RED)
+    blue_actor = _find_actor_by_role(encounter, ROLE_BLUE)
+    if red_actor is None or blue_actor is None:
+        missing = [
+            role for role, actor in (
+                (ROLE_RED, red_actor), (ROLE_BLUE, blue_actor),
+            )
+            if actor is None
+        ]
+        present_roles = sorted({a.role for a in encounter.actors})
+        raise ValueError(
+            f"sealed-letter encounter requires actors with role(s) {missing}; "
+            f"found roles: {present_roles}"
+        )
 
+    # ---- OTEL: confrontation_started + per-actor maneuver_committed ----
     with dogfight_confrontation_started_span(
         encounter_type=encounter.encounter_type,
-        red_actor=red_actor.name if red_actor else "",
-        blue_actor=blue_actor.name if blue_actor else "",
+        red_actor=red_actor.name,
+        blue_actor=blue_actor.name,
     ):
         pass
 
     with dogfight_maneuver_committed_span(
-        actor=red_actor.name if red_actor else "",
+        actor=red_actor.name,
         maneuver=red_maneuver,
-        role="red",
+        role=ROLE_RED,
     ):
         pass
     with dogfight_maneuver_committed_span(
-        actor=blue_actor.name if blue_actor else "",
+        actor=blue_actor.name,
         maneuver=blue_maneuver,
-        role="blue",
+        role=ROLE_BLUE,
     ):
         pass
 
-    # ---- Step 2: cell lookup ----
+    # ---- Step 3: cell lookup ----
     cell = _find_cell(table, red_maneuver, blue_maneuver)
     if cell is None:
         raise KeyError(
@@ -155,17 +183,15 @@ def resolve_sealed_letter_lookup(
             f"({red_maneuver!r}, {blue_maneuver!r}) in table"
         )
 
-    # ---- Step 3: apply view deltas to per_actor_state ----
+    # ---- Step 4: apply view deltas to per_actor_state ----
     # InteractionCell.red_view / blue_view are ``Any`` from pydantic — YAML
     # mappings come through as native dicts (PyYAML safe_load), so we don't
     # need a yaml→json converter the way the Rust source does. Verified
     # empirically by the wiring test against the real space_opera content.
-    if red_actor is not None:
-        _apply_view_deltas(red_actor, cell.red_view)
-    if blue_actor is not None:
-        _apply_view_deltas(blue_actor, cell.blue_view)
+    _apply_view_deltas(red_actor, cell.red_view)
+    _apply_view_deltas(blue_actor, cell.blue_view)
 
-    # ---- Step 4: maybe extend-and-return ----
+    # ---- Step 5: maybe extend-and-return ----
     extend_triggered = _maybe_apply_extend_and_return(encounter, cell)
 
     # ---- OTEL: cell_resolved ----

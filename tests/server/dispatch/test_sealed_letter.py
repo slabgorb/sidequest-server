@@ -32,6 +32,7 @@ from sidequest.game.encounter import (
 )
 from sidequest.genre.models.rules import InteractionCell, InteractionTable
 from sidequest.server.dispatch.sealed_letter import (
+    _MERGE_STARTING_GEOMETRY,
     SealedLetterOutcome,
     resolve_sealed_letter_lookup,
 )
@@ -482,3 +483,113 @@ def test_wiring_real_space_opera_dogfight_table() -> None:
     blue = next(a for a in enc.actors if a.role == "blue")
     assert red.per_actor_state, "red view did not apply"
     assert blue.per_actor_state, "blue view did not apply"
+
+
+# ---------------------------------------------------------------------------
+# 11. Missing actor for required role raises (no silent fallback)
+# ---------------------------------------------------------------------------
+
+
+def _encounter_missing_role(role_to_drop: str) -> StructuredEncounter:
+    """Encounter that's missing one of the required dogfight roles."""
+    keep = [
+        a for a in _make_encounter().actors if a.role != role_to_drop
+    ]
+    return StructuredEncounter(
+        encounter_type="dogfight",
+        player_metric=EncounterMetric(name="hits", current=0, threshold=3),
+        opponent_metric=EncounterMetric(name="hits", current=0, threshold=3),
+        actors=keep,
+    )
+
+
+def test_missing_red_actor_raises() -> None:
+    enc = _encounter_missing_role("red")
+    table = _make_table(_hit_cell())
+
+    with pytest.raises(ValueError, match=r"role\(s\) \['red'\]"):
+        resolve_sealed_letter_lookup(
+            enc, {"red": "straight", "blue": "loop"}, table,
+        )
+
+
+def test_missing_blue_actor_raises() -> None:
+    enc = _encounter_missing_role("blue")
+    table = _make_table(_hit_cell())
+
+    with pytest.raises(ValueError, match=r"role\(s\) \['blue'\]"):
+        resolve_sealed_letter_lookup(
+            enc, {"red": "straight", "blue": "loop"}, table,
+        )
+
+
+def test_no_spans_emitted_when_actor_validation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation must fail BEFORE any OTEL span fires.
+
+    If validation emitted spans first the GM panel would see a
+    "confrontation_started" event with empty actor names — the exact
+    silent-fallback lie this fix closes.
+    """
+    from sidequest.telemetry import spans as spans_module
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    test_tracer = provider.get_tracer("test")
+    monkeypatch.setattr(spans_module, "tracer", lambda: test_tracer)
+
+    enc = _encounter_missing_role("red")
+    table = _make_table(_hit_cell())
+
+    with pytest.raises(ValueError):
+        resolve_sealed_letter_lookup(
+            enc, {"red": "straight", "blue": "loop"}, table,
+        )
+
+    finished = exporter.get_finished_spans()
+    dogfight_spans = [
+        s for s in finished if s.name.startswith("dogfight.")
+    ]
+    assert dogfight_spans == [], (
+        f"expected no dogfight.* spans on validation failure, "
+        f"got: {[s.name for s in dogfight_spans]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12. Content/code drift regression — _MERGE_STARTING_GEOMETRY vs. YAML
+# ---------------------------------------------------------------------------
+
+
+def test_merge_starting_geometry_matches_descriptor_schema() -> None:
+    """Hardcoded merge geometry must stay in sync with content YAML.
+
+    If this test fails, either:
+    - Content tuned the merge starting state — update _MERGE_STARTING_GEOMETRY
+    - Engine drifted from content — fix the engine
+
+    Drift between content and engine is a CLAUDE.md violation. T5 will
+    replace the hardcoded constant with a runtime read from
+    descriptor_schema.starting_states; until then this test is the guard.
+    """
+    import yaml
+
+    schema_path = (
+        Path(__file__).resolve().parents[4]
+        / "sidequest-content/genre_packs/space_opera/dogfight/descriptor_schema.yaml"
+    )
+    if not schema_path.exists():
+        pytest.skip(f"sidequest-content not available at {schema_path}")
+
+    schema = yaml.safe_load(schema_path.read_text())
+    merge = next(s for s in schema["starting_states"] if s["id"] == "merge")
+    descriptor = merge["initial_descriptor"]
+
+    for key, expected in _MERGE_STARTING_GEOMETRY.items():
+        assert descriptor[key] == expected, (
+            f"Drift: _MERGE_STARTING_GEOMETRY[{key!r}] = {expected!r} "
+            f"but descriptor_schema.yaml merge.initial_descriptor[{key!r}] "
+            f"= {descriptor[key]!r}"
+        )
