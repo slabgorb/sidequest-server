@@ -102,10 +102,24 @@ OUTPUT SHAPE (exact field names required; Pydantic rejects unknown fields):
 }
 
 RULES:
-- "lethality" stays empty in Phase A (Group C wires the verdict producer).
+- "lethality" MUST be an empty list `[]` in Phase A. Group C wires the
+  verdict producer — until then, do NOT emit lethality entries even if
+  the action involves harm. The narrator handles consequence framing.
 - "cross_player" stays empty in Phase A single-player decompose.
 - Every dispatch REQUIRES a unique idempotency_key (string).
 - Every dispatch and directive REQUIRES a full visibility tag.
+- "narrator_instructions[].kind" is a CLOSED ENUM. The only legal values
+  are the four listed above:
+    must_narrate / must_not_narrate /
+    distinctive_detail_for_referent / canonical_only_do_not_reveal_to_others
+  Do NOT invent kinds like `establish_location`, `npc_response`,
+  `encounter_preparation`, `set_scene`, etc. The narrator handles scene
+  framing on its own. If you need to push narrative content, encode it
+  as `must_narrate` with the content in `payload`.
+- Pydantic rejects any unknown kind, missing field, or extra field. A
+  rejected package falls back to a degraded empty package — losing the
+  per-player narrator instructions you spent tokens producing. Stay
+  inside the schema.
 - Output valid JSON only. No preamble. No code fences. No commentary."""
 
 

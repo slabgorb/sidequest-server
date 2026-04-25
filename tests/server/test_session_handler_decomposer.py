@@ -185,6 +185,52 @@ async def test_execute_narration_turn_continues_when_decomposer_degraded(session
     assert narrator_called, "narrator must still run when decomposer is degraded"
 
 
+async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded(
+    session_fixture,
+):
+    """Decomposer degradation MUST surface as a watcher event so the GM
+    panel sees that this turn lost its per-player narrator instructions
+    (lie-detector visibility per CLAUDE.md OTEL principle, playtest
+    2026-04-25). Logging-only is not enough; the lie detector lives in
+    the watcher stream.
+    """
+    sd, handler = session_fixture
+
+    async def degraded_decompose(**kwargs):
+        from sidequest.protocol.dispatch import DispatchPackage
+        return DispatchPackage(
+            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
+            confidence_global=0.0, degraded=True,
+            degraded_reason="parse_failure: ValidationError",
+        )
+
+    async def fake_run(action, context):
+        return _make_minimal_narration_turn_result(narration="ok")
+
+    captured: list[tuple[str, dict, dict]] = []
+
+    def fake_publish(event_type: str, fields: dict, *, component: str = "", severity: str = "info"):
+        captured.append((event_type, fields, {"component": component, "severity": severity}))
+
+    with patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose), \
+         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)), \
+         patch("sidequest.server.session_handler._watcher_publish", side_effect=fake_publish):
+        await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
+
+    degraded_events = [
+        (fields, meta) for et, fields, meta in captured if et == "decomposer_degraded"
+    ]
+    assert degraded_events, (
+        "session_handler must publish decomposer_degraded watcher event when "
+        "the dispatch package is degraded"
+    )
+    fields, meta = degraded_events[0]
+    assert fields["reason"] == "parse_failure: ValidationError"
+    assert "turn_id" in fields
+    assert meta["component"] == "local_dm"
+    assert meta["severity"] == "warning"
+
+
 async def test_execute_narration_turn_propagates_programmer_bug_exceptions(session_fixture):
     """Exceptions escaping LocalDM.decompose indicate programmer bugs
     (rename, signature drift). The session handler must NOT swallow them —

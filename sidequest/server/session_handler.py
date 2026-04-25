@@ -2913,6 +2913,22 @@ class WebSocketSessionHandler:
                     "session.decomposer_degraded reason=%s turn_id=%s",
                     dispatch_package.degraded_reason, turn_id,
                 )
+                # Surface to GM panel — per CLAUDE.md OTEL principle, every
+                # subsystem decision must be visible. Decomposer degradation
+                # silently strips per-player narrator instructions (which
+                # ADR-028/036 multiplayer isolation depends on); without
+                # this event the lie detector can't tell the dispatcher
+                # ran on a degraded package.
+                _watcher_publish(
+                    "decomposer_degraded",
+                    {
+                        "turn_id": turn_id,
+                        "reason": dispatch_package.degraded_reason or "",
+                        "player_id": f"player:{sd.player_name}",
+                    },
+                    component="local_dm",
+                    severity="warning",
+                )
             turn_context.dispatch_package = dispatch_package
     
             with orchestrator_process_action_span(action_len=len(action)):
