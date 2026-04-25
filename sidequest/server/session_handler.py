@@ -1044,10 +1044,24 @@ class WebSocketSessionHandler:
             except Exception as exc:
                 logger.error("session.disconnect_save_failed error=%s", exc)
             finally:
-                try:
-                    self._session_data.store.close()
-                except Exception:
-                    pass
+                # ADR-037 Python port: when the session is bound to a room,
+                # the room owns the SqliteStore lifecycle — every WS session
+                # bound to the slug shares the same store reference, so
+                # closing it from one session's cleanup() leaves
+                # ``room.save()`` operating on a closed connection from any
+                # other session's perspective and produces
+                # ``session.disconnect_save_failed error=Cannot operate on
+                # a closed database`` (playtest 2026-04-25 [BUG-LOW]). The
+                # room's store is closed via ``room.close_store()`` at room
+                # teardown — not from per-session cleanup.
+                #
+                # Legacy non-slug path (no room) still closes its
+                # per-session store here — it is owned by the session.
+                if self._room is None:
+                    try:
+                        self._session_data.store.close()
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------------------
     # PLAYER_SEAT dispatch (MP-02 Task 5)

@@ -145,3 +145,99 @@ def test_close_store_when_unbound_is_noop():
     """Pre-bind / never-bound rooms must not raise on close."""
     room = SessionRoom(slug="slug", mode=GameMode.MULTIPLAYER)
     room.close_store()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Disconnect-save store-lifecycle invariant
+# (playtest 2026-04-25 [BUG-LOW] "Cannot operate on a closed database")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cleanup_does_not_close_room_owned_store(tmp_path):
+    """When the session is bound to a room, ``cleanup()`` must NOT close
+    the underlying SqliteStore — the room owns the store lifecycle and
+    the same store is shared with every other session bound to the slug.
+    Closing it from one cleanup leaves ``room.save()`` operating on a
+    closed connection from any other path's perspective and produces
+    ``session.disconnect_save_failed error=Cannot operate on a closed
+    database``.
+
+    Regression for playtest 2026-04-25 [BUG-LOW]. The bug was triggered
+    by trigger-the-confrontation-crash → return to lobby → server
+    cleanup of the prior WS — the per-session ``store.close()`` ran in
+    the finally block of cleanup, but the same store reference was
+    reachable through the room's ``room.save()`` path (e.g., from a
+    later turn-end save on a sibling connection or a disconnect-save
+    from a peer player in MP).
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.server.session_handler import _SessionData, WebSocketSessionHandler
+
+    handler = WebSocketSessionHandler(save_dir=tmp_path)
+    snap = _fresh_snapshot()
+    store = SqliteStore.open_in_memory()
+
+    room = SessionRoom(slug="slug-cleanup", mode=GameMode.SOLO)
+    room.bind_world(snapshot=snap, store=store)
+
+    sd = _SessionData(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        player_name="Rux",
+        player_id="player-1",
+        snapshot=snap,
+        store=store,  # same store reference the room holds
+        genre_pack=MagicMock(),
+        orchestrator=MagicMock(run_narration_turn=AsyncMock()),
+    )
+    handler._session_data = sd
+    handler._room = room
+
+    await handler.cleanup()
+
+    # The underlying SQLite connection must still be open — the room
+    # owns the lifecycle, not the per-session cleanup.
+    assert room.store is store, "room.store reference must not be None'd by cleanup"
+    # Operating on the store after cleanup must succeed. If cleanup
+    # closed the connection, ``room.save()`` raises sqlite3.ProgrammingError.
+    room.save()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_cleanup_closes_per_session_store_when_no_room(tmp_path):
+    """Legacy non-slug path: ``cleanup()`` must still close the
+    per-session store when no room is bound — the session owns the
+    store lifecycle in that path. Preserves the original close-on-
+    disconnect behavior for any code path that hasn't been migrated to
+    the room model.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.server.session_handler import _SessionData, WebSocketSessionHandler
+
+    handler = WebSocketSessionHandler(save_dir=tmp_path)
+    store = SqliteStore.open_in_memory()
+    sd = _SessionData(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        player_name="Rux",
+        player_id="player-1",
+        snapshot=_fresh_snapshot(),
+        store=store,
+        genre_pack=MagicMock(),
+        orchestrator=MagicMock(run_narration_turn=AsyncMock()),
+    )
+    handler._session_data = sd
+    handler._room = None  # explicit: legacy non-slug path
+
+    await handler.cleanup()
+
+    # The store WAS closed — non-slug path owns its own store. Operating
+    # on it now should raise.
+    import sqlite3
+    with pytest.raises(sqlite3.ProgrammingError):
+        store.save(_fresh_snapshot())
