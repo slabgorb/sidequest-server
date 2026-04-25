@@ -16,6 +16,7 @@ from sidequest.server.session_helpers import (
 )
 from sidequest.telemetry.spans import (
     inventory_narrator_extracted_span,
+    lore_established_span,
     npc_auto_registered_span,
     quest_update_span,
 )
@@ -168,9 +169,30 @@ def _apply_narration_result_to_snapshot(
             )
 
     if result.lore_established:
+        added: list[str] = []
         for lore in result.lore_established:
             if lore not in snapshot.lore_established:
                 snapshot.lore_established.append(lore)
+                added.append(lore)
+        # Span emission drives the ``lore_retrieval`` typed event with
+        # ``component=lore`` via ``SPAN_ROUTES[SPAN_LORE_ESTABLISHED]``.
+        # No prior ``_watcher_publish`` existed for this path — the GM
+        # panel's Lore tab was previously dark for narrator-driven
+        # additions.
+        with lore_established_span(
+            items=added,
+            added_count=len(added),
+            total=len(snapshot.lore_established),
+            player_name=player_name,
+            turn_number=snapshot.turn_manager.interaction,
+        ):
+            logger.info(
+                "state.lore_established player=%s turn=%d added=%d total=%d",
+                player_name,
+                snapshot.turn_manager.interaction,
+                len(added),
+                len(snapshot.lore_established),
+            )
 
     # NPC registry — auto-register + drift detection (Story 37-44).
     turn_num = snapshot.turn_manager.interaction

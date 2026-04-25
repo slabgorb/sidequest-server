@@ -385,6 +385,34 @@ SPAN_WORLD_MATERIALIZED = "world.materialized"
 SPAN_RAG_PROSE_CLEANUP = "rag.prose_cleanup"
 
 # ---------------------------------------------------------------------------
+# Lore — sidequest-server/narration_apply.py
+#
+# Python-port note (ADR-082): lore-establishment is a Python-port emission
+# path — the narrator extracts canonical lore statements from its turn
+# response (``NarrationTurnResult.lore_established``) and
+# ``narration_apply.py`` appends previously-unseen entries to
+# ``snapshot.lore_established``. The route emits the ``lore_retrieval``
+# typed event with ``component=lore`` so the GM panel's Lore tab shows
+# narrator-driven additions alongside the existing
+# character-creation-seed and retrieval-failure entries.
+# ---------------------------------------------------------------------------
+SPAN_LORE_ESTABLISHED = "lore.established"
+SPAN_ROUTES[SPAN_LORE_ESTABLISHED] = SpanRoute(
+    event_type="lore_retrieval",
+    component="lore",
+    extract=lambda span: {
+        "field": "lore_established",
+        "op": "appended",
+        "reason": "narrator_established",
+        "items": (span.attributes or {}).get("items_json", "[]"),
+        "added_count": (span.attributes or {}).get("added_count", 0),
+        "total": (span.attributes or {}).get("total", 0),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
+# ---------------------------------------------------------------------------
 # Script tool — sidequest-agents/orchestrator.rs
 # ---------------------------------------------------------------------------
 SPAN_SCRIPT_TOOL_PROMPT_INJECTED = "script_tool.prompt_injected"
@@ -1673,6 +1701,47 @@ def audio_dispatched_span(
     }
     with t.start_as_current_span(
         SPAN_AUDIO_DISPATCHED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def lore_established_span(
+    *,
+    items: list[str],
+    added_count: int,
+    total: int,
+    player_name: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap the narrator-driven lore-establishment block in
+    ``server/narration_apply.py``. The route emits the
+    ``lore_retrieval`` typed event with ``component=lore`` and
+    ``op=appended`` so the GM panel sees narrator-added canonical lore
+    in the same Lore tab as the existing character-creation-seed and
+    retrieval-failure entries.
+
+    ``items`` is the list of newly-appended lore strings (i.e. those
+    that were not already in ``snapshot.lore_established``). It is
+    JSON-encoded into ``items_json`` because OTEL silently drops list
+    attribute values; the route extract returns the JSON string so the
+    dashboard sees the exact set of strings the narrator just canonised.
+    """
+    import json as _json
+
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "items_json": _json.dumps(list(items)),
+        "added_count": added_count,
+        "total": total,
+        "player_name": player_name,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_LORE_ESTABLISHED, attributes=attributes
     ) as span:
         yield span
 

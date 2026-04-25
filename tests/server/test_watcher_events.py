@@ -770,6 +770,44 @@ async def test_on_end_emits_typed_event_for_audio_dispatched_span() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_lore_established_span() -> None:
+    """``SPAN_LORE_ESTABLISHED`` is routed (lore bundle) — translator
+    must emit a ``lore_retrieval`` event with ``component=lore`` and
+    ``op=appended`` carrying the narrator-driven additions. Before this
+    bundle the GM panel's Lore tab was dark for narrator-extracted
+    canonical lore; the route lights it up."""
+    from sidequest.telemetry.spans import SPAN_LORE_ESTABLISHED
+
+    fake = _audio_fake_span_factory()
+    processor, captured = await _audio_processor_with_capture()
+    processor.on_end(fake(
+        SPAN_LORE_ESTABLISHED,
+        {
+            "items_json": '["The reactor predates the Old Ones."]',
+            "added_count": 1,
+            "total": 5,
+            "player_name": "Rux",
+            "turn_number": 7,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "lore_retrieval"]
+    assert typed, "SPAN_LORE_ESTABLISHED did not produce lore_retrieval"
+    assert typed[0]["component"] == "lore"
+    assert typed[0]["fields"]["op"] == "appended"
+    assert typed[0]["fields"]["reason"] == "narrator_established"
+    # JSON-encoded — OTEL drops list attributes silently otherwise.
+    assert typed[0]["fields"]["items"] == (
+        '["The reactor predates the Old Ones."]'
+    )
+    assert typed[0]["fields"]["added_count"] == 1
+    assert typed[0]["fields"]["total"] == 5
+    assert typed[0]["fields"]["player_name"] == "Rux"
+    assert typed[0]["fields"]["turn_number"] == 7
+
+
+@pytest.mark.asyncio
 async def test_dead_subscribers_are_pruned(bound_hub: WatcherHub) -> None:
     """A broken WebSocket must not prevent other subscribers from
     receiving events. The hub drops failing sockets on next broadcast."""
