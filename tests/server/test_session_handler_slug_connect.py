@@ -228,6 +228,178 @@ async def test_slug_connect_emits_mp_span(seeded_game: Path):
 
 
 @pytest.mark.asyncio
+async def test_slug_connect_routes_new_player_to_chargen_when_seat_taken(tmp_path: Path):
+    """Per-player chargen gate (playtest 2026-04-25 bug 1).
+
+    A snapshot with ``player_seats={"P1": "Laverne"}`` already seats Player 1.
+    When Player 2 (a *new* player_id) connects to the same slug, the gate
+    must report ``has_character is False`` so the UI routes to chargen
+    instead of auto-claiming Laverne.
+
+    This is the wiring test OQ-2 flagged as missing — without it, a future
+    refactor could regress the gate to ``bool(snapshot.characters)`` and
+    no test would catch it.
+    """
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-25-multiseat-test"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    core = CreatureCore(
+        name="Laverne",
+        description="A blunt delver",
+        personality="brusque",
+        inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="P1's PC")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    snap.player_seats = {"P1": "Laverne"}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="P2",
+        payload=SessionEventPayload(event="connect", game_slug=slug),
+    )
+    outbound = await handler.handle_message(msg)
+
+    connected_msgs = [
+        m for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "connected"
+    ]
+    assert connected_msgs, f"Expected SESSION_EVENT(connected), got: {outbound}"
+    payload = connected_msgs[0].payload
+    assert payload.has_character is False, (
+        "P2 (new player_id) must NOT inherit P1's seat — gate must report "
+        "has_character=False so the UI routes to chargen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_resumes_seated_player_by_id(tmp_path: Path):
+    """Same-player_id resume keeps the gate at has_character=True.
+
+    Companion to the new-player-routes-to-chargen test above. P1 reconnecting
+    to a slug where ``player_seats`` already binds them must resume their PC.
+    """
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-25-resume-seated-test"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    core = CreatureCore(
+        name="Laverne",
+        description="A blunt delver",
+        personality="brusque",
+        inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="P1's PC")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    snap.player_seats = {"P1": "Laverne"}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="P1",
+        payload=SessionEventPayload(event="connect", game_slug=slug),
+    )
+    outbound = await handler.handle_message(msg)
+
+    connected_msgs = [
+        m for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "connected"
+    ]
+    assert connected_msgs, f"Expected SESSION_EVENT(connected), got: {outbound}"
+    payload = connected_msgs[0].payload
+    assert payload.has_character is True, (
+        "P1 reconnecting to their own seat must resume — gate reports "
+        "has_character=True"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_chargen_gate_logs_branch_decision(
+    tmp_path: Path, caplog
+):
+    """OTEL mandate (CLAUDE.md): the chargen-gate decision must be loggable.
+
+    Without this log line, GM panel can't tell whether the per-player gate
+    actually ran or whether the snapshot just happened to be empty. That's
+    a CLAUDE.md OTEL Observability Principle violation.
+    """
+    import logging
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-25-gate-log-test"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    core = CreatureCore(
+        name="Laverne", description="d", personality="p", inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    snap.player_seats = {"P1": "Laverne"}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="P2",
+        payload=SessionEventPayload(event="connect", game_slug=slug),
+    )
+    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+        await handler.handle_message(msg)
+
+    gate_records = [
+        r for r in caplog.records
+        if "session.chargen_gate" in r.getMessage()
+    ]
+    assert gate_records, (
+        "Chargen-gate must emit an info-level log line so GM panel can verify "
+        "which branch fired"
+    )
+    msg_text = gate_records[0].getMessage()
+    assert "branch=player_seats" in msg_text, (
+        f"With populated player_seats, branch=player_seats expected; got: {msg_text}"
+    )
+    assert "has_character=False" in msg_text, (
+        f"P2 connecting to a slug seated by P1 must log has_character=False; got: {msg_text}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_slug_connect_without_room_context_raises(seeded_game: Path):
     """Wiring test: slug-connect must fail loudly when attach_room_context was skipped.
 

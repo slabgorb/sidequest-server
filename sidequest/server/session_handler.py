@@ -1280,8 +1280,33 @@ class WebSocketSessionHandler:
                 # player_seats is empty.
                 if snapshot.player_seats:
                     has_character = player_id in snapshot.player_seats
+                    gate_branch = "player_seats"
                 else:
                     has_character = bool(snapshot.characters)
+                    gate_branch = "legacy_any_character"
+                logger.info(
+                    "session.chargen_gate slug=%s player_id=%s branch=%s "
+                    "has_character=%s seat_count=%d character_count=%d",
+                    slug,
+                    player_id,
+                    gate_branch,
+                    has_character,
+                    len(snapshot.player_seats),
+                    len(snapshot.characters),
+                )
+                _watcher_publish(
+                    "session_chargen_gate",
+                    {
+                        "slug": slug,
+                        "player_id": player_id,
+                        "branch": gate_branch,
+                        "has_character": has_character,
+                        "seat_count": len(snapshot.player_seats),
+                        "character_count": len(snapshot.characters),
+                        "seated_player_ids": list(snapshot.player_seats.keys()),
+                    },
+                    component="session",
+                )
                 # Rename-on-resume: pre-fix saves stored ``core.name`` as the
                 # opaque player UUID because chargen used ``with_lobby_name``
                 # AFTER the name fix landed. Detect the UUID pattern and
@@ -2439,6 +2464,35 @@ class WebSocketSessionHandler:
         # to chargen instead of auto-claiming an existing PC.
         if sd.player_id and character.core.name:
             sd.snapshot.player_seats[sd.player_id] = character.core.name
+            span.add_event(
+                "session.player_seat_bound",
+                {
+                    "event": "session.player_seat_bound",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player_id": sd.player_id,
+                    "character_name": character.core.name,
+                    "seat_count": len(sd.snapshot.player_seats),
+                },
+            )
+            logger.info(
+                "session.player_seat_bound player_id=%s character=%s seat_count=%d",
+                sd.player_id,
+                character.core.name,
+                len(sd.snapshot.player_seats),
+            )
+            _watcher_publish(
+                "session_player_seat_bound",
+                {
+                    "genre_slug": sd.genre_slug,
+                    "world_slug": sd.world_slug,
+                    "player_id": sd.player_id,
+                    "character_name": character.core.name,
+                    "seat_count": len(sd.snapshot.player_seats),
+                    "seated_player_ids": list(sd.snapshot.player_seats.keys()),
+                },
+                component="session",
+            )
 
         # Persist (Slice G / connect.rs:2174). Snapshot save makes the
         # next slug-resume hit has_character=True; failure must not
