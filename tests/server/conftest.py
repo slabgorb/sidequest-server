@@ -597,3 +597,118 @@ def character_named_sam():
         race="Human",
         backstory="A wandering survivor.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 20 — store_bound_to_hub + encounter_dispatch_helper fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def store_bound_to_hub(synthetic_two_dial_pack):
+    """Open an in-memory SqliteStore, bind it to the watcher hub, yield
+    (store, snapshot, pack).  Unbinds on teardown so other tests see no
+    leftover binding.
+    """
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
+    )
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.telemetry.watcher_hub import bind_event_store
+
+    store = SqliteStore.open_in_memory()
+    bind_event_store(store)
+
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    core = CreatureCore(
+        name="Sam",
+        description="A scrappy survivor",
+        personality="gritty",
+        inventory=Inventory(),
+    )
+    char = Character(
+        core=core, char_class="Rogue", race="Human", backstory="A wandering survivor.",
+    )
+    snap.characters.append(char)
+
+    snap.encounter = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Sam", role="combatant", side="player"),
+            EncounterActor(name="Promo", role="combatant", side="opponent"),
+        ],
+    )
+
+    try:
+        yield store, snap, synthetic_two_dial_pack
+    finally:
+        bind_event_store(None)
+
+
+@pytest.fixture
+def encounter_dispatch_helper():
+    """Helper that drives beats through the narration_apply path.
+
+    Methods:
+    - run_player_attack(snapshot, pack, beat_id, outcome) — apply one player beat
+    - run_to_resolution(snapshot, pack, winner) — drive opponent beats until resolved
+    """
+    from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult, NpcMention
+    from sidequest.protocol.dice import RollOutcome
+    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+
+    class _Helper:
+        def run_player_attack(self, snapshot, pack, *, beat_id="attack",
+                              outcome="Success"):
+            outcome_enum = RollOutcome(outcome)
+            result = NarrationTurnResult(
+                narration="Sam swings.",
+                beat_selections=[BeatSelection(
+                    actor="Sam", beat_id=beat_id, outcome=outcome_enum,
+                )],
+                npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
+            )
+            _apply_narration_result_to_snapshot(snapshot, result, "Sam", pack=pack)
+
+        def run_to_resolution(self, snapshot, pack, *, winner="opponent"):
+            """Drive opponent beats until a threshold is crossed.
+
+            Repeatedly applies "attack" beats on the winning side until
+            snapshot.encounter.resolved is True.
+            """
+            outcome_enum = RollOutcome.Success
+            for _ in range(20):
+                if snapshot.encounter is None or snapshot.encounter.resolved:
+                    break
+                if winner == "opponent":
+                    actor_name = "Promo"
+                    npc_side = "opponent"
+                else:
+                    actor_name = "Sam"
+                    npc_side = "player"
+                result = NarrationTurnResult(
+                    narration=f"{actor_name} strikes.",
+                    beat_selections=[BeatSelection(
+                        actor=actor_name, beat_id="attack", outcome=outcome_enum,
+                    )],
+                    npcs_present=[NpcMention(
+                        name="Promo", side="opponent", role="hostile",
+                    )],
+                )
+                _apply_narration_result_to_snapshot(
+                    snapshot, result, "Sam", pack=pack,
+                )
+
+    return _Helper()

@@ -1041,6 +1041,7 @@ class Orchestrator:
                 from sidequest.telemetry.spans import (
                     encounter_resolution_signal_consumed_span,
                 )
+                from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
                 sig = context.pending_resolution_signal
                 with encounter_resolution_signal_consumed_span(
                     outcome=sig.outcome,
@@ -1048,6 +1049,17 @@ class Orchestrator:
                     final_opponent_metric=sig.final_opponent_metric,
                 ):
                     pass
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "encounter",
+                        "op": "resolution_signal_consumed",
+                        "outcome": sig.outcome,
+                        "final_player_metric": sig.final_player_metric,
+                        "final_opponent_metric": sig.final_opponent_metric,
+                    },
+                    component="encounter",
+                )
 
         # Phase 1 slice: tactical grid injection deferred to Story 41-9
         # Phase 1 slice: lore filter (world_graph) deferred to Story 41-7
