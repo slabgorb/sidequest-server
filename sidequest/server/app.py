@@ -196,6 +196,7 @@ def create_app(
             claude_client_factory=app.state.claude_client_factory,
             genre_pack_search_paths=app.state.genre_pack_search_paths,
             save_dir=app.state.save_dir,
+            validator=app.state.validator,
         )
         await ws_endpoint(websocket, handler)
 

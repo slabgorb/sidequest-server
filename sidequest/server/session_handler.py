@@ -19,7 +19,9 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum, auto
+from hashlib import blake2b
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -132,9 +134,16 @@ from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_span,
 )
+from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
+from sidequest.telemetry.validator import Validator
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_snapshot(snap: object) -> str:
+    """BLAKE2b-16 fingerprint of a snapshot's repr. Used for before/after change detection."""
+    return blake2b(repr(snap).encode(), digest_size=16).hexdigest()
 
 tracer = trace.get_tracer("sidequest.server.session_handler")
 
@@ -452,6 +461,7 @@ class WebSocketSessionHandler:
         claude_client_factory: Callable[[], LlmClient] | None = None,
         genre_pack_search_paths: list[Path] | None = None,
         save_dir: Path,
+        validator: Validator | None = None,
     ) -> None:
         self._client_factory: Callable[[], LlmClient] = (
             claude_client_factory if claude_client_factory is not None
@@ -463,6 +473,7 @@ class WebSocketSessionHandler:
             else DEFAULT_GENRE_PACK_SEARCH_PATHS
         )
         self._save_dir = save_dir
+        self._validator: Validator | None = validator
         self._state = _State.AwaitingConnect
         self._session_data: _SessionData | None = None
         # Room context fields — populated by attach_room_context() during the
@@ -2827,6 +2838,7 @@ class WebSocketSessionHandler:
         trope beats on subsequent turns) without leaking responsibility.
         """
         snapshot = sd.snapshot
+        snapshot_before_hash = _hash_snapshot(snapshot)
         with turn_span(
             turn_id=snapshot.turn_manager.interaction,
             player_id=sd.player_id,
@@ -3305,7 +3317,74 @@ class WebSocketSessionHandler:
                 )
             except Exception as exc:  # noqa: BLE001 — dashboard is best-effort; never crash a turn
                 logger.warning("watcher.turn_complete_publish_failed error=%s", exc)
-    
+
+            # --- TurnRecord assembly + validator submit ---
+            # Wrapped in try/except: the validator must NEVER crash the hot path.
+            if self._validator is not None:
+                try:
+                    _patch_summaries: list[PatchSummary] = []
+                    if result.location:
+                        _patch_summaries.append(
+                            PatchSummary(patch_type="location", fields_changed=["location"])
+                        )
+                    if result.quest_updates:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="quest", fields_changed=list(result.quest_updates)
+                            )
+                        )
+                    if result.lore_established:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="lore", fields_changed=["lore_established"]
+                            )
+                        )
+                    if result.npcs_present:
+                        _patch_summaries.append(
+                            PatchSummary(
+                                patch_type="npc_registry",
+                                fields_changed=[n.name for n in result.npcs_present],
+                            )
+                        )
+                    if result.items_gained or result.items_lost:
+                        _patch_summaries.append(
+                            PatchSummary(patch_type="inventory", fields_changed=[])
+                        )
+
+                    _beats_fired: list[tuple[str, float]] = []
+                    for beat in result.beat_selections or []:
+                        _beats_fired.append(
+                            (
+                                getattr(beat, "trope_id", None)
+                                or getattr(beat, "beat_id", None)
+                                or "unknown",
+                                float(getattr(beat, "threshold", 0.0) or 0.0),
+                            )
+                        )
+
+                    record = TurnRecord(
+                        turn_id=snapshot.turn_manager.interaction,
+                        timestamp=datetime.now(UTC),
+                        player_id=sd.player_id,
+                        player_input=action,
+                        classified_intent="unknown",  # TODO: tighten when LocalDM exposes intent
+                        agent_name=result.agent_name or "narrator",
+                        narration=result.narration or "",
+                        patches_applied=_patch_summaries,
+                        snapshot_before_hash=snapshot_before_hash,
+                        snapshot_after=snapshot,
+                        delta=None,  # TODO: tighten when StateDelta is wired
+                        beats_fired=_beats_fired,
+                        extraction_tier=1,  # TODO: map result.prompt_tier to int tier
+                        token_count_in=result.token_count_in or 0,
+                        token_count_out=result.token_count_out or 0,
+                        agent_duration_ms=result.agent_duration_ms or 0,
+                        is_degraded=result.is_degraded,
+                    )
+                    await self._validator.submit(record)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("turn_record.assemble_failed: %s", exc)
+
             return outbound
 
     async def _run_opening_turn_narration(
