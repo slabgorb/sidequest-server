@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from sidequest.agents.claude_client import ClaudeClient, LlmClient, ClaudeResponse
+from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse, LlmClient
 from sidequest.agents.narrator import NarratorAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import (
@@ -49,6 +49,7 @@ from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
 from sidequest.genre.models.pack import GenrePack
+from sidequest.protocol.dice import RollOutcome
 from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.spans import (
@@ -85,17 +86,62 @@ class NarratorPromptTier:
 class BeatSelection:
     """A single beat selection from the narrator's output (story 28-6).
 
+    ``outcome`` is the resolved tier the prose describes. On free-text
+    turns the narrator emits it; on dice-replay turns the engine
+    overwrites it with the dice resolver's tier.
+
     Port of orchestrator.rs::BeatSelection.
     """
     actor: str
     beat_id: str
+    outcome: RollOutcome = RollOutcome.Success  # default for legacy callers
     target: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> BeatSelection:
+        raw_outcome = d.get("outcome")
+        if raw_outcome is None or raw_outcome == "":
+            outcome = RollOutcome.Success
+        else:
+            try:
+                outcome = RollOutcome(str(raw_outcome))
+                # RollOutcome._missing_ returns Unknown instead of raising,
+                # so check if we got Unknown from an invalid literal
+                if outcome == RollOutcome.Unknown:
+                    from sidequest.telemetry.spans import (
+                        encounter_invalid_outcome_tier_span,
+                    )
+                    with encounter_invalid_outcome_tier_span(
+                        beat_id=str(d.get("beat_id", "")),
+                        actor=str(d.get("actor", "")),
+                        declared_tier=str(raw_outcome),
+                        valid_set="CritFail|Fail|Tie|Success|CritSuccess",
+                    ):
+                        pass
+                    raise ValueError(
+                        f"BeatSelection declared_tier={raw_outcome!r} not in RollOutcome"
+                    )
+            except ValueError as exc:
+                # Re-raise our custom ValueError, not RollOutcome's
+                if "declared_tier" in str(exc):
+                    raise
+                from sidequest.telemetry.spans import (
+                    encounter_invalid_outcome_tier_span,
+                )
+                with encounter_invalid_outcome_tier_span(
+                    beat_id=str(d.get("beat_id", "")),
+                    actor=str(d.get("actor", "")),
+                    declared_tier=str(raw_outcome),
+                    valid_set="CritFail|Fail|Tie|Success|CritSuccess",
+                ):
+                    pass
+                raise ValueError(
+                    f"BeatSelection declared_tier={raw_outcome!r} not in RollOutcome"
+                ) from exc
         return cls(
             actor=str(d.get("actor", "")),
             beat_id=str(d.get("beat_id", "")),
+            outcome=outcome,
             target=d.get("target"),
         )
 
@@ -134,22 +180,37 @@ class NpcMention:
     pronouns: str = ""
     role: str = ""
     appearance: str = ""
+    side: str = "neutral"
     is_new: bool = False
 
     @classmethod
     def from_value(cls, value: Any) -> NpcMention:
+        valid_sides = {"player", "opponent", "neutral"}
         if isinstance(value, str):
             logger.debug("npc_mention.bare_string_fallback npc_name=%s", value)
-            return cls(name=value)
+            return cls(name=value, side="neutral")
         if isinstance(value, dict):
+            side = str(value.get("side", "") or "neutral")
+            if side not in valid_sides:
+                from sidequest.telemetry.spans import encounter_invalid_side_span
+                with encounter_invalid_side_span(
+                    actor_name=str(value.get("name", "?")),
+                    declared_side=side,
+                    valid_set="player|opponent|neutral",
+                ):
+                    pass
+                raise ValueError(
+                    f"NpcMention declared_side={side!r} not in {valid_sides}"
+                )
             return cls(
                 name=str(value.get("name", "")),
                 pronouns=str(value.get("pronouns", "")),
                 role=str(value.get("role", "")),
                 appearance=str(value.get("appearance", "")),
+                side=side,
                 is_new=bool(value.get("is_new", False)),
             )
-        return cls(name=str(value))
+        return cls(name=str(value), side="neutral")
 
 
 @dataclass
@@ -202,6 +263,7 @@ class NarrationTurnResult:
     affinity_progress: list[tuple[str, int]] = field(default_factory=list)
     gold_change: int | None = None
     lore_established: list[str] | None = None
+    status_changes: list[dict[str, Any]] = field(default_factory=list)
 
     # OTEL / telemetry
     agent_name: str | None = None
