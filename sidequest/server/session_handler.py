@@ -2393,11 +2393,11 @@ class WebSocketSessionHandler:
                         },
                     )
         else:
-            # MP second commit. Reuse the peer's persisted snapshot
-            # (world / scenario / region / room already initialized) and
-            # append our PC. Skipping init prevents clobbering anything
-            # the peer accumulated since their commit.
-            sd.snapshot = existing_saved.snapshot
+            # MP second commit. ADR-037 Python port: sd.snapshot is the
+            # canonical room snapshot (already populated by the first
+            # committer's bind_world); just append our PC if not already
+            # present. No reload from store — the in-memory snapshot is
+            # authoritative.
             existing_names = {c.core.name for c in sd.snapshot.characters}
             if character.core.name not in existing_names:
                 sd.snapshot.characters.append(character)
@@ -2538,7 +2538,13 @@ class WebSocketSessionHandler:
         # next slug-resume hit has_character=True; failure must not
         # strand the player mid-commit (log loud, continue).
         try:
-            sd.store.save(sd.snapshot)
+            # ADR-037 Python port: route through the canonical room save
+            # so concurrent chargen-commits from peers are serialized by
+            # the room lock. Fallback for legacy non-slug paths.
+            if self._room is not None:
+                self._room.save()
+            else:
+                sd.store.save(sd.snapshot)
             span.add_event(
                 "session.persisted_at_chargen_complete",
                 {
