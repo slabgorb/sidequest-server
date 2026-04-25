@@ -7,9 +7,7 @@ from __future__ import annotations
 
 from sidequest.game.encounter import (
     EncounterActor,
-    EncounterMetric,
     EncounterPhase,
-    MetricDirection,
     StructuredEncounter,
 )
 from sidequest.game.lore_store import LoreStore
@@ -23,23 +21,15 @@ from sidequest.telemetry.spans import (
     encounter_resolved_span,
 )
 
-_DIRECTION_BY_NAME: dict[str, MetricDirection] = {
-    "ascending": MetricDirection.Ascending,
-    "descending": MetricDirection.Descending,
-    "bidirectional": MetricDirection.Bidirectional,
-}
+# TODO Task 11: _DIRECTION_BY_NAME and _metric_from_cdef removed — MetricDirection
+# is gone. instantiate_encounter_from_trigger must be rewritten for dual dials.
 
 
-def _metric_from_cdef(cdef: ConfrontationDef) -> EncounterMetric:
-    """Build an EncounterMetric from the pack's declared MetricDef."""
-    direction = _DIRECTION_BY_NAME[cdef.metric.direction]
-    return EncounterMetric(
-        name=cdef.metric.name,
-        current=cdef.metric.starting,
-        starting=cdef.metric.starting,
-        direction=direction,
-        threshold_high=cdef.metric.threshold_high,
-        threshold_low=cdef.metric.threshold_low,
+def _metric_from_cdef(cdef: ConfrontationDef) -> None:
+    """Stub — rewrite pending in Task 11 (dual-dial migration)."""
+    raise NotImplementedError(
+        "_metric_from_cdef: rewrite pending in Task 11 "
+        "(MetricDirection removed; use player_metric + opponent_metric)"
     )
 
 

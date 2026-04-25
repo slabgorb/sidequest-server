@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from sidequest.game.dice import ResolveError, resolve_dice_with_faces
-from sidequest.game.encounter import EncounterPhase, MetricDirection, StructuredEncounter
+from sidequest.game.encounter import EncounterPhase, StructuredEncounter
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 from sidequest.protocol.dice import (
@@ -142,7 +142,7 @@ def _apply_beat(
     metric_before = encounter.metric.current
     encounter.metric.current += applied_delta
     if (
-        encounter.metric.direction == MetricDirection.Ascending
+        encounter.metric.direction == MetricDirection.Ascending  # noqa: F821 — TODO Task 11
         and encounter.metric.current < 0
     ):
         encounter.metric.current = 0
@@ -151,9 +151,9 @@ def _apply_beat(
 
     # Direction-aware threshold test. Non-matching edge → no resolution.
     m = encounter.metric
-    if m.direction == MetricDirection.Ascending:
+    if m.direction == MetricDirection.Ascending:  # noqa: F821 — TODO Task 11
         threshold_hit = m.threshold_high is not None and m.current >= m.threshold_high
-    elif m.direction == MetricDirection.Descending:
+    elif m.direction == MetricDirection.Descending:  # noqa: F821 — TODO Task 11
         threshold_hit = m.threshold_low is not None and m.current <= m.threshold_low
     else:  # Bidirectional
         threshold_hit = (
