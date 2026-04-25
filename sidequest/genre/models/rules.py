@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from sidequest.game.beat_kinds import BeatKind
+
 
 class InitiativeRule(BaseModel):
     """Maps an encounter type to its primary stat for turn ordering."""
@@ -69,29 +71,32 @@ class SecondaryStatDef(BaseModel):
 
 
 class BeatDef(BaseModel):
-    """A single action available during a confrontation."""
+    """A single action available during a confrontation.
+
+    Schema (spec 2026-04-25-dual-track-momentum-design.md §Schema changes):
+
+    - ``kind``: closed enum driving per-tier delta defaults.
+    - ``base``: scalar magnitude; meaning depends on kind.
+    - ``deltas``: optional per-tier override map; keys ∈
+      {crit_fail, fail, tie, success, crit_success}; values are dicts of
+      {own, opponent, grants_tag, grants_fleeting_tag, resolution, ...}.
+    - ``target_tag``: required for kind=angle; text of the tag created.
+    - Legacy ``metric_delta``/``failure_metric_delta``/``failure_effect``
+      are deleted — pack migration is mandatory.
+    """
 
     model_config = {"extra": "forbid"}
 
     id: str
     label: str
-    metric_delta: int
+    kind: BeatKind
+    base: int = 1
+    deltas: dict[str, dict[str, Any]] | None = None
+    target_tag: str | None = None
     stat_check: str
-    # Legacy freeform documentation of the failure branch. Prefer the
-    # structured ``failure_metric_delta`` + ``failure_effect`` below when
-    # the beat has mechanical failure consequences — ``risk`` is for the
-    # narrator's prose cue only and does NOT drive the engine.
-    risk: str | None = None
-    # Failure branch (ADR-074 dice resolution integration). When a dice
-    # roll classifies the beat as Fail / CritFail, the encounter engine
-    # substitutes ``failure_metric_delta`` for ``metric_delta`` and passes
-    # ``failure_effect`` to the narrator as a structured cue. Both are
-    # optional — beats without a failure branch keep the legacy behavior
-    # (always apply ``metric_delta``).
-    failure_metric_delta: int | None = None
-    failure_effect: str | None = None
+    risk: str | None = None  # narrator prose cue only — does not drive engine
     reveals: str | None = None
-    resolution: bool | None = None
+    resolution: bool | None = None  # legacy "always-resolves" flag (still useful for declarative pushes)
     effect: str | None = None
     consequence: str | None = None
     requires: str | None = None
@@ -102,29 +107,44 @@ class BeatDef(BaseModel):
     resource_deltas: dict[str, float] | None = None
 
     @model_validator(mode="after")
-    def _validate_id(self) -> BeatDef:
+    def _validate(self) -> BeatDef:
         if not self.id:
             raise ValueError("beat id must not be empty")
+        if self.kind is BeatKind.angle and not self.target_tag:
+            raise ValueError(
+                f"beat '{self.id}' kind=angle requires target_tag"
+            )
+        if self.deltas is not None:
+            valid_tiers = {
+                "crit_fail", "fail", "tie", "success", "crit_success",
+            }
+            for tier in self.deltas:
+                if tier not in valid_tiers:
+                    raise ValueError(
+                        f"beat '{self.id}' deltas key {tier!r} not in {valid_tiers}"
+                    )
         return self
 
 
 class MetricDef(BaseModel):
-    """The primary tracking metric for a confrontation type."""
+    """Per-side ascending metric for a confrontation.
+
+    Spec change: bidirectional/descending metrics are gone — both sides have
+    independent ascending dials. ``threshold`` is the cross point.
+    """
 
     model_config = {"extra": "forbid"}
 
     name: str
-    direction: str
-    starting: int
-    threshold_high: int | None = None
-    threshold_low: int | None = None
+    starting: int = 0
+    threshold: int
 
     @model_validator(mode="after")
-    def _validate_direction(self) -> MetricDef:
-        valid = {"ascending", "descending", "bidirectional"}
-        if self.direction not in valid:
+    def _validate(self) -> MetricDef:
+        if self.threshold <= self.starting:
             raise ValueError(
-                f"invalid metric direction '{self.direction}': must be one of {valid}"
+                f"metric '{self.name}' threshold ({self.threshold}) must be "
+                f"> starting ({self.starting})"
             )
         return self
 
@@ -202,20 +222,30 @@ class InteractionTable(BaseModel):
 class ConfrontationDef(BaseModel):
     """A confrontation type declared by a genre pack in rules.yaml."""
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     confrontation_type: str = Field(alias="type", serialization_alias="type")
     label: str
     category: str
     resolution_mode: ResolutionMode = ResolutionMode.beat_selection
-    metric: MetricDef
+    player_metric: MetricDef
+    opponent_metric: MetricDef
     beats: list[BeatDef] = Field(default_factory=list)
     secondary_stats: list[SecondaryStatDef] = Field(default_factory=list)
     escalates_to: str | None = None
     mood: str | None = None
     interaction_table: InteractionTable | None = None
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_metric(cls, data: object) -> object:
+        if isinstance(data, dict) and "metric" in data:
+            raise ValueError(
+                "confrontation uses legacy single 'metric' shape; "
+                "migrate to player_metric + opponent_metric per "
+                "docs/superpowers/specs/2026-04-25-dual-track-momentum-design.md"
+            )
+        return data
 
     @model_validator(mode="after")
     def _validate(self) -> ConfrontationDef:

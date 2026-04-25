@@ -45,71 +45,78 @@ class TestResourceDeclaration:
 
 
 class TestMetricDef:
-    def test_valid_directions(self) -> None:
-        for direction in ("ascending", "descending", "bidirectional"):
-            m = MetricDef(name="hp", direction=direction, starting=0)
-            assert m.direction == direction
+    def test_valid_ascending(self) -> None:
+        # Two-dial schema: threshold must be > starting
+        m = MetricDef(name="momentum", starting=0, threshold=10)
+        assert m.name == "momentum"
+        assert m.threshold == 10
 
-    def test_rejects_invalid_direction(self) -> None:
-        with pytest.raises(Exception, match="invalid metric direction"):
-            MetricDef(name="hp", direction="sideways", starting=0)
+    def test_rejects_threshold_not_greater_than_starting(self) -> None:
+        with pytest.raises(Exception, match="threshold"):
+            MetricDef(name="hp", starting=10, threshold=5)
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(Exception):
-            MetricDef.model_validate({"name": "hp", "direction": "ascending", "starting": 0, "extra": True})
+            MetricDef.model_validate({"name": "hp", "starting": 0, "threshold": 10, "extra": True})
+
+
+def _beat(extra: dict | None = None) -> dict:
+    """Minimal valid BeatDef for the new two-dial schema."""
+    b = {"id": "attack", "label": "Attack", "kind": "strike", "base": 2, "stat_check": "STR"}
+    if extra:
+        b.update(extra)
+    return b
+
+
+def _confrontation(beats: list | None = None, **kwargs: object) -> dict:
+    """Minimal valid ConfrontationDef for the new two-dial schema."""
+    base = {
+        "type": "combat",
+        "label": "Combat",
+        "category": "combat",
+        "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+        "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+        "beats": beats if beats is not None else [_beat()],
+    }
+    base.update(kwargs)
+    return base
 
 
 class TestBeatDef:
     def test_valid(self) -> None:
-        b = BeatDef(id="attack", label="Attack", metric_delta=2, stat_check="STR")
+        b = BeatDef.model_validate(_beat())
         assert b.id == "attack"
+        assert b.kind.value == "strike"
 
     def test_rejects_empty_id(self) -> None:
         with pytest.raises(Exception):
-            BeatDef(id="", label="Attack", metric_delta=2, stat_check="STR")
+            BeatDef.model_validate(_beat({"id": ""}))
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(Exception):
-            BeatDef.model_validate({
-                "id": "attack", "label": "Attack", "metric_delta": 2,
-                "stat_check": "STR", "unknown_field": True,
-            })
+            BeatDef.model_validate({**_beat(), "unknown_field": True})
 
 
 class TestConfrontationDef:
-    def _make(self, **kwargs: object) -> dict:
-        base = {
-            "type": "combat",
-            "label": "Combat",
-            "category": "combat",
-            "metric": {"name": "hp", "direction": "ascending", "starting": 10},
-            "beats": [{"id": "attack", "label": "Attack", "metric_delta": 2, "stat_check": "STR"}],
-        }
-        base.update(kwargs)
-        return base
-
     def test_valid(self) -> None:
-        c = ConfrontationDef.model_validate(self._make())
+        c = ConfrontationDef.model_validate(_confrontation())
         assert c.confrontation_type == "combat"
 
     def test_rejects_invalid_category(self) -> None:
         with pytest.raises(Exception, match="invalid confrontation category"):
-            ConfrontationDef.model_validate(self._make(category="invalid"))
+            ConfrontationDef.model_validate(_confrontation(category="invalid"))
 
     def test_rejects_empty_beats(self) -> None:
         with pytest.raises(Exception, match="at least one beat"):
-            ConfrontationDef.model_validate(self._make(beats=[]))
+            ConfrontationDef.model_validate(_confrontation(beats=[]))
 
     def test_rejects_duplicate_beat_ids(self) -> None:
-        beats = [
-            {"id": "attack", "label": "Attack", "metric_delta": 2, "stat_check": "STR"},
-            {"id": "attack", "label": "Attack2", "metric_delta": 1, "stat_check": "STR"},
-        ]
+        beats = [_beat(), {**_beat(), "label": "Attack2"}]
         with pytest.raises(Exception, match="duplicate beat id"):
-            ConfrontationDef.model_validate(self._make(beats=beats))
+            ConfrontationDef.model_validate(_confrontation(beats=beats))
 
     def test_resolution_mode_default(self) -> None:
-        c = ConfrontationDef.model_validate(self._make())
+        c = ConfrontationDef.model_validate(_confrontation())
         assert c.resolution_mode == ResolutionMode.beat_selection
 
 
