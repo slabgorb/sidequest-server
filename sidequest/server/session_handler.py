@@ -110,6 +110,8 @@ from sidequest.protocol.messages import (
     SecretNotePayload,
     SessionEventMessage,
     SessionEventPayload,
+    TurnStatusMessage,
+    TurnStatusPayload,
 )
 from sidequest.protocol.models import (
     CharacterSheetDetails,
@@ -2733,6 +2735,46 @@ class WebSocketSessionHandler:
             self._state = _State.Playing
 
         sd = self._session_data
+        # MP turn-ownership signal (ADR-036 sealed-letter pacing). Broadcast
+        # TURN_STATUS{status="active"} to every socket in the room so peers
+        # can flip MultiplayerTurnBanner to tone="peer" while this player's
+        # narration runs. Without this signal, peer tabs stayed on tone="you"
+        # and gave no indication that another player was acting (playtest
+        # 2026-04-25 "No peer-turn signal"). exclude_socket_id=None — the
+        # actor receives it too; their banner already prefers "thinking" over
+        # "you" while ``thinking=true`` is local.
+        if self._room is not None and sd.player_name:
+            try:
+                acting_name = _resolve_acting_character_name(sd, self._room)
+                turn_active_msg = TurnStatusMessage(
+                    payload=TurnStatusPayload(
+                        player_name=NonBlankString(acting_name),
+                        status="active",
+                    ),
+                    player_id=sd.player_id or "",
+                )
+                self._room.broadcast(turn_active_msg, exclude_socket_id=None)
+                logger.info(
+                    "session.turn_status_active player=%s player_id=%s slug=%s",
+                    acting_name,
+                    sd.player_id,
+                    self._room.slug,
+                )
+                _watcher_publish(
+                    "turn_status",
+                    {
+                        "status": "active",
+                        "player_name": acting_name,
+                        "player_id": sd.player_id,
+                        "slug": self._room.slug,
+                    },
+                    component="session",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "session.turn_status_active_broadcast_failed error=%s", exc
+                )
+
         lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(
             sd, lore_context=lore_context, room=self._room
@@ -3065,6 +3107,44 @@ class WebSocketSessionHandler:
                 player_id=sd.player_id,
             ),
         )
+
+        # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
+        # the TURN_STATUS{active} broadcast at action receipt — peers' banner
+        # tone="peer" stays stuck without this clear. exclude_socket_id=None
+        # so every socket (including the actor) gets the resolved signal;
+        # the UI clears activePlayerName on status="resolved".
+        if self._room is not None and sd.player_name:
+            try:
+                acting_name = _resolve_acting_character_name(sd, self._room)
+                turn_resolved_msg = TurnStatusMessage(
+                    payload=TurnStatusPayload(
+                        player_name=NonBlankString(acting_name),
+                        status="resolved",
+                    ),
+                    player_id=sd.player_id or "",
+                )
+                self._room.broadcast(turn_resolved_msg, exclude_socket_id=None)
+                logger.info(
+                    "session.turn_status_resolved player=%s player_id=%s slug=%s",
+                    acting_name,
+                    sd.player_id,
+                    self._room.slug,
+                )
+                _watcher_publish(
+                    "turn_status",
+                    {
+                        "status": "resolved",
+                        "player_name": acting_name,
+                        "player_id": sd.player_id,
+                        "slug": self._room.slug,
+                    },
+                    component="session",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "session.turn_status_resolved_broadcast_failed error=%s",
+                    exc,
+                )
 
         # Refresh PARTY_STATUS so `current_location` and any HP/inventory
         # mutations landed by the narration apply propagate to the client
