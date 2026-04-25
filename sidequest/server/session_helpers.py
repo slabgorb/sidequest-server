@@ -169,10 +169,18 @@ def _build_turn_context(
     in_combat = False
     in_chase = False
     in_encounter = False
+    all_defs = sd.genre_pack.rules.confrontations if sd.genre_pack.rules else []
+    available_confrontations: list[tuple[str, str, str]] = [
+        (
+            cd.confrontation_type,
+            cd.label,
+            getattr(cd, "category", "") or "",
+        )
+        for cd in all_defs
+    ]
     if encounter is not None and not encounter.resolved:
         in_encounter = True
-        defs = sd.genre_pack.rules.confrontations if sd.genre_pack.rules else []
-        confrontation_def = find_confrontation_def(defs, encounter.encounter_type)
+        confrontation_def = find_confrontation_def(all_defs, encounter.encounter_type)
         if confrontation_def is not None:
             in_combat = confrontation_def.category == "combat"
             in_chase = confrontation_def.category == "movement"
@@ -208,6 +216,7 @@ def _build_turn_context(
         in_encounter=in_encounter,
         encounter=encounter if in_encounter else None,
         confrontation_def=confrontation_def,
+        available_confrontations=available_confrontations,
         encounter_summary=encounter_summary,
         state_summary=snapshot.model_dump_json(indent=2),
         narrator_verbosity="standard",

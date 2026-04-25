@@ -391,6 +391,18 @@ class TurnContext:
     # Early zone so the LLM can emit valid ``beat_selections``.
     confrontation_def: Any = None
 
+    # Genre pack's full menu of confrontation types — list of
+    # ``(type, label, category)`` triples drawn from
+    # ``pack.rules.confrontations``. Rendered into the narrator prompt
+    # (when no encounter is active) so the LLM picks the most specific
+    # type rather than defaulting to generic ``combat``. Playtest
+    # 2026-04-25 regression: in space_opera, the narrator picked
+    # ``combat`` (Firefight) for a starship dogfight even though the
+    # genre's ``rules.yaml`` declares ``ship_combat`` (vessel scale)
+    # and ``dogfight`` side-by-side. The menu was implicit; the LLM
+    # couldn't see what was on offer.
+    available_confrontations: list[tuple[str, str, str]] = field(default_factory=list)
+
     # Live encounter object (Story 3.4). Typed as ``Any`` to avoid a
     # circular import through sidequest.game. Runtime type:
     # ``sidequest.game.encounter.StructuredEncounter``.
@@ -1020,6 +1032,50 @@ class Orchestrator:
                     )
 
         # === STATE-DEPENDENT SECTIONS (every tier) ===
+
+        # Available confrontation menu — render when no encounter is
+        # active, so the narrator's ``confrontation`` field maps to the
+        # most specific type the genre offers (e.g., ``ship_combat`` /
+        # ``dogfight`` instead of generic ``combat``). The narrator
+        # prompt at ``narrator.py:135-148`` already references
+        # "AVAILABLE ENCOUNTER TYPES in game_state" — this section is
+        # what fulfills that contract. Suppressed when an encounter is
+        # already live (the encounter-live zone enumerates the active
+        # type's beats + actors; alternates aren't relevant per the
+        # narrator rule "Only include on the turn the encounter STARTS").
+        # Playtest 2026-04-25 regression: in space_opera the narrator
+        # picked ``combat`` (Firefight) for a starship dogfight even
+        # though the genre's rules.yaml declares ship_combat (vessel
+        # scale) and dogfight side-by-side.
+        if (
+            context.available_confrontations
+            and not context.in_combat
+            and not context.in_chase
+            and not context.in_encounter
+            and context.pending_resolution_signal is None
+        ):
+            menu_lines = "\n".join(
+                f"- {cdef_type}: {cdef_label}"
+                + (f" (category={cdef_cat})" if cdef_cat else "")
+                for cdef_type, cdef_label, cdef_cat in context.available_confrontations
+            )
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "narrator_available_confrontations",
+                    (
+                        "<available-encounter-types>\n"
+                        "AVAILABLE ENCOUNTER TYPES (for the ``confrontation`` "
+                        "field — pick the MOST SPECIFIC type that matches the "
+                        "fiction; never default to a generic ``combat`` if a "
+                        "more specific type is on the list):\n"
+                        f"{menu_lines}\n"
+                        "</available-encounter-types>"
+                    ),
+                    AttentionZone.Early,
+                    SectionCategory.State,
+                ),
+            )
 
         # Encounter rules for ANY active encounter type. The narrator's
         # build_encounter_context call renders live beats + actors + both dials
