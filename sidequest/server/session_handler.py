@@ -3510,6 +3510,18 @@ class WebSocketSessionHandler:
             "narration": result.narration,
             "genre": sd.genre_slug,
         }
+        # Portrait initials overlay (story 37-30 AC-4): the daemon's
+        # portrait composer needs the character's display name to draw
+        # the initials card. Other tiers ignore the field.
+        if tier == "portrait":
+            params["subject_name"] = sd.player_name
+
+        # Story 37-30 — record the (room_slug, player_id) mapping at
+        # dispatch so the completion handler can route the IMAGE through
+        # the live RoomRegistry queue instead of a closure-captured one
+        # that may have gone stale across a reconnect.
+        room_slug = self._room.slug if self._room is not None else None
+        player_id = sd.player_id
 
         logger.info(
             "render.dispatched render_id=%s tier=%s subject=%r",
@@ -3526,14 +3538,26 @@ class WebSocketSessionHandler:
                 "tier": tier,
                 "subject": visual.subject[:120],
                 "turn_number": sd.snapshot.turn_manager.interaction,
+                "player_id": player_id,
+                "room_slug": room_slug or "",
             },
             component="render",
         )
 
-        out_queue = self._out_queue
-        player_id = sd.player_id
+        # Capture the legacy out_queue only as a fallback for the
+        # pre-room-context test/legacy path. When `_room` is set (the
+        # production slug-connect path) the completion handler looks the
+        # queue up via the registry instead.
+        legacy_queue = self._out_queue if room_slug is None else None
         asyncio.create_task(
-            self._run_render(client, params, render_id, out_queue, player_id)
+            self._run_render(
+                client,
+                params,
+                render_id,
+                room_slug,
+                player_id,
+                legacy_queue,
+            )
         )
 
         return RenderQueuedMessage(
@@ -3780,12 +3804,20 @@ class WebSocketSessionHandler:
         client: DaemonClient,
         params: dict[str, object],
         render_id: str,
-        out_queue: asyncio.Queue[object],
+        room_slug: str | None,
         player_id: str,
+        legacy_queue: asyncio.Queue[object] | None,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
         enqueues an IMAGE message or logs a failure. Never raises; any
-        exception is caught and surfaced as an OTEL watcher event."""
+        exception is caught and surfaced as an OTEL watcher event.
+
+        Routing (story 37-30): when ``room_slug`` is set, the IMAGE is
+        delivered to the *current* outbound queue looked up via the
+        RoomRegistry — so a reconnect mid-render still gets its image.
+        ``legacy_queue`` is the pre-room-context fallback for
+        constructions that haven't joined a room (used by older tests
+        and the deprecated genre/world connect path)."""
         try:
             reply = await client.render(params)
         except DaemonUnavailableError as exc:
@@ -3859,8 +3891,71 @@ class WebSocketSessionHandler:
             ),
             player_id=player_id,
         )
+
+        # Story 37-30 — resolve the live outbound queue at completion
+        # time, not at dispatch. When the room is known, look up the
+        # current socket for this player via the RoomRegistry; this is
+        # the only path that survives a mid-render reconnect.
+        target_queue: asyncio.Queue[object] | None
+        if room_slug is not None:
+            target_queue = None
+            registry = self._room_registry
+            if registry is not None:
+                room = registry.get(room_slug)
+                if room is not None:
+                    socket_id = room.socket_for_player(player_id)
+                    if socket_id is not None:
+                        target_queue = room.queue_for_socket(socket_id)
+            if target_queue is None:
+                logger.warning(
+                    "render.session_not_found render_id=%s room=%s player=%s",
+                    render_id,
+                    room_slug,
+                    player_id,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "render",
+                        "op": "session_not_found",
+                        "render_id": render_id,
+                        "room_slug": room_slug,
+                        "player_id": player_id,
+                        "tier": str(params.get("tier") or ""),
+                        "url": served_url,
+                        "reason": "player_not_connected",
+                    },
+                    component="render",
+                    severity="warning",
+                )
+                return
+        else:
+            target_queue = legacy_queue
+
+        if target_queue is None:
+            # Pre-room-context dispatch with no fallback queue — the
+            # render had nowhere to land. Surface it loudly.
+            logger.warning(
+                "render.session_not_found render_id=%s reason=no_queue", render_id
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "session_not_found",
+                    "render_id": render_id,
+                    "player_id": player_id,
+                    "tier": str(params.get("tier") or ""),
+                    "url": served_url,
+                    "reason": "no_outbound_queue",
+                },
+                component="render",
+                severity="warning",
+            )
+            return
+
         try:
-            out_queue.put_nowait(msg)
+            target_queue.put_nowait(msg)
         except asyncio.QueueFull:
             logger.warning("render.outbound_queue_full render_id=%s", render_id)
             return
@@ -3878,6 +3973,8 @@ class WebSocketSessionHandler:
                 "render_id": render_id,
                 "url": served_url,
                 "elapsed_ms": elapsed,
+                "player_id": player_id,
+                "room_slug": room_slug or "",
             },
             component="render",
         )

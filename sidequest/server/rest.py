@@ -183,6 +183,12 @@ def create_rest_router() -> APIRouter:
             worlds: list[dict[str, Any]] = []
             if worlds_dir.exists():
                 for world_entry in sorted(worlds_dir.iterdir()):
+                    # Skip symlinks — they exist as backwards-compat aliases
+                    # for renamed world slugs (e.g. primetime → dungeon_survivor).
+                    # Slug-based resume still resolves through them, but the
+                    # lobby must not list the same world twice under both names.
+                    if world_entry.is_symlink():
+                        continue
                     if not world_entry.is_dir():
                         continue
                     world_slug = world_entry.name
@@ -620,7 +626,7 @@ def create_rest_router() -> APIRouter:
 
         save_dir: Path = request.app.state.save_dir
         today_fn = getattr(request.app.state, "today_fn", _date_cls.today)
-        slug = generate_slug(world_slug=req.world_slug, today=today_fn())
+        slug = generate_slug(world_slug=req.world_slug, today=today_fn(), mode=req.mode)
         db = db_path_for_slug(save_dir, slug)
         db.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteStore(db)
