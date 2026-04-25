@@ -15,12 +15,12 @@ created_in_encounter=None)`` so loaders can call it during
 """
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel
 
 
-class StatusSeverity(StrEnum):
+class StatusSeverity(str, Enum):  # noqa: UP042 — matches project convention (see protocol/enums.py)
     """Status severity tier — drives recovery cadence and (v2) absorption budget."""
 
     Scratch = "Scratch"
