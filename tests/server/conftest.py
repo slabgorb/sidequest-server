@@ -578,3 +578,22 @@ def snapshot_with_pack(synthetic_two_dial_pack):
         turn_manager=TurnManager(),
     )
     return snap, synthetic_two_dial_pack
+
+
+@pytest.fixture
+def character_named_sam():
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    core = CreatureCore(
+        name="Sam",
+        description="A scrappy survivor",
+        personality="gritty",
+        inventory=Inventory(),
+    )
+    return Character(
+        core=core,
+        char_class="Rogue",
+        race="Human",
+        backstory="A wandering survivor.",
+    )

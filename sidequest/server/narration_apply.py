@@ -309,6 +309,51 @@ def _apply_narration_result_to_snapshot(
                     snapshot.pending_resolution_signal = _build_resolution_signal(enc)
                     break
 
+    if result.status_changes:
+        from sidequest.game.status import Status, StatusSeverity
+        from sidequest.telemetry.spans import encounter_status_added_span
+        turn_num = snapshot.turn_manager.interaction
+        encounter_type = (
+            snapshot.encounter.encounter_type if snapshot.encounter else None
+        )
+        for entry in result.status_changes:
+            actor_name = str(entry.get("actor", "")).strip()
+            status_payload = entry.get("status") or {}
+            text = str(status_payload.get("text", "")).strip()
+            severity_raw = str(status_payload.get("severity", "Scratch"))
+            try:
+                severity = StatusSeverity(severity_raw)
+            except ValueError:
+                logger.warning(
+                    "status_change.invalid_severity actor=%s severity=%s",
+                    actor_name, severity_raw,
+                )
+                continue
+            if not actor_name or not text:
+                continue
+            target = next(
+                (c for c in snapshot.characters if c.core.name == actor_name),
+                None,
+            )
+            if target is None:
+                logger.warning(
+                    "status_change.unknown_actor actor=%s text=%s",
+                    actor_name, text,
+                )
+                continue
+            target.core.statuses.append(Status(
+                text=text,
+                severity=severity,
+                absorbed_shifts=0,
+                created_turn=turn_num,
+                created_in_encounter=encounter_type,
+            ))
+            with encounter_status_added_span(
+                actor=actor_name, text=text, severity=severity.value,
+                source="narrator_extraction",
+            ):
+                pass
+
 
 def _build_resolution_signal(enc: object) -> object:
     from sidequest.game.resolution_signal import ResolutionSignal
