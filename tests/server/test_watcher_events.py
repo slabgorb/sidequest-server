@@ -128,10 +128,27 @@ async def test_state_transition_fires_on_location_update(
 @pytest.mark.asyncio
 async def test_state_transition_fires_on_npc_auto_register(
     bound_hub: WatcherHub,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Auto-registered NPCs must emit `state_transition` so the
-    Subsystems tab's `npc_registry` component lights up."""
+    Subsystems tab's `npc_registry` component lights up.
+
+    Post-NPC-bundle (2026-04-25) the emission goes through
+    ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]`` instead of a direct
+    ``publish_event``, so the test installs a local TracerProvider with
+    the WatcherSpanProcessor and monkeypatches the helper's tracer."""
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry import spans as spans_module
+
     sock = await _capture(bound_hub)
+
+    provider = TracerProvider()
+    provider.add_span_processor(WatcherSpanProcessor(bound_hub))
+    local_tracer = provider.get_tracer("test-npc-auto-register-wiring")
+    monkeypatch.setattr(spans_module, "tracer", lambda: local_tracer)
+
     snapshot = GameSnapshot(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
@@ -399,6 +416,136 @@ async def test_on_end_emits_typed_event_for_quest_update_span() -> None:
     assert typed[0]["fields"]["player_name"] == "Rux"
     assert typed[0]["fields"]["turn_number"] == 7
     assert typed[0]["fields"]["updates"] == '{"find_crystal": "active"}'
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_npc_auto_registered_span() -> None:
+    """``SPAN_NPC_AUTO_REGISTERED`` is routed (NPC bundle) — translator
+    must emit a ``state_transition`` with ``component=npc_registry`` and
+    ``op=auto_registered`` carrying the same payload the prior direct
+    ``publish_event`` did."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_NPC_AUTO_REGISTERED,
+        {
+            "npc_name": "Vex",
+            "pronouns": "she/her",
+            "role": "scavenger",
+            "turn_number": 4,
+            "registry_len": 1,
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_NPC_AUTO_REGISTERED did not produce state_transition"
+    assert typed[0]["component"] == "npc_registry"
+    assert typed[0]["severity"] == "info"
+    assert typed[0]["fields"]["op"] == "auto_registered"
+    assert typed[0]["fields"]["name"] == "Vex"
+    assert typed[0]["fields"]["pronouns"] == "she/her"
+    assert typed[0]["fields"]["registry_len"] == 1
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_npc_reinvented_span_with_warning_severity() -> None:
+    """``SPAN_NPC_REINVENTED`` is routed AND the helper sets
+    ``severity=warning`` as a span attribute, so the translator's typed
+    event must surface ``severity=warning`` (not the default ``info``)
+    — that's the GM panel signal that an identity drift happened."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_NPC_REINVENTED
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    captured: list[dict] = []
+
+    class _Sub:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await hub.subscribe(_Sub())  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_NPC_REINVENTED,
+        {
+            "npc_name": "Vex",
+            "drift_field": "pronouns",
+            "expected": "she/her",
+            "narrator": "they/them",
+            "turn_number": 9,
+            "severity": "warning",
+        },
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in captured if e["event_type"] == "state_transition"]
+    assert typed, "SPAN_NPC_REINVENTED did not produce state_transition"
+    assert typed[0]["component"] == "npc_registry"
+    assert typed[0]["severity"] == "warning", (
+        "severity span-attribute escape hatch failed — "
+        "the translator must propagate the warning level"
+    )
+    assert typed[0]["fields"]["op"] == "reinvented"
+    assert typed[0]["fields"]["drift_field"] == "pronouns"
+    assert typed[0]["fields"]["expected"] == "she/her"
+    assert typed[0]["fields"]["narrator"] == "they/them"
 
 
 @pytest.mark.asyncio

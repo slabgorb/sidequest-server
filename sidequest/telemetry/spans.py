@@ -186,11 +186,46 @@ SPAN_CHARGEN_BACKSTORY_COMPOSED = "chargen.backstory_composed"
 
 # ---------------------------------------------------------------------------
 # NPC — sidequest-game/npc.rs, sidequest-server/dispatch/npc_registry.rs
+#
+# Python-port note (ADR-082): the Rust pipeline routed NPC mutations through
+# explicit ``register_npc`` / ``merge_npc_patch`` calls. The Python port did
+# not port those entry points; ``narration_apply.py`` mutates ``npc_registry``
+# directly and ``session_helpers._detect_npc_identity_drift`` warns inline.
+# ``SPAN_NPC_AUTO_REGISTERED`` and ``SPAN_NPC_REINVENTED`` are live (NPC
+# bundle, 2026-04-25); ``SPAN_NPC_REGISTRATION`` and ``SPAN_NPC_MERGE_PATCH``
+# remain in ``FLAT_ONLY_SPANS`` (below) until either the helpers are wired or
+# the constants are removed.
 # ---------------------------------------------------------------------------
 SPAN_NPC_MERGE_PATCH = "npc_merge_patch"
 SPAN_NPC_REGISTRATION = "npc.registration"
 SPAN_NPC_AUTO_REGISTERED = "npc.auto_registered"
+SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "auto_registered",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "pronouns": (span.attributes or {}).get("pronouns", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "registry_len": (span.attributes or {}).get("registry_len", 0),
+    },
+)
 SPAN_NPC_REINVENTED = "npc.reinvented"
+SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "reinvented",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "drift_field": (span.attributes or {}).get("drift_field", ""),
+        "expected": (span.attributes or {}).get("expected", ""),
+        "narrator": (span.attributes or {}).get("narrator", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
 
 # ---------------------------------------------------------------------------
 # Creature — sidequest-game/creature_core.rs
@@ -1311,6 +1346,75 @@ def projection_cache_lazy_fill_span(
 
 
 @contextmanager
+def npc_auto_registered_span(
+    *,
+    npc_name: str,
+    pronouns: str,
+    role: str,
+    turn_number: int,
+    registry_len: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap an NPC auto-registration. Replaces the direct
+    ``publish_event("state_transition", ..., component="npc_registry",
+    op="auto_registered")`` call from ``server/narration_apply.py``.
+
+    Attribute key ``npc_name`` (not ``name``) is used to avoid colliding
+    with the OTEL span ``name`` reserved attribute.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "pronouns": pronouns,
+        "role": role,
+        "turn_number": turn_number,
+        "registry_len": registry_len,
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_NPC_AUTO_REGISTERED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
+def npc_reinvented_span(
+    *,
+    npc_name: str,
+    drift_field: str,
+    expected: str,
+    narrator: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap an NPC identity-drift warning (narrator disagrees with the
+    canonical registry entry). Replaces the prior direct
+    ``publish_event(..., severity="warning")`` from
+    ``server/session_helpers._detect_npc_identity_drift``.
+
+    Sets ``severity="warning"`` as a span attribute — the
+    ``WatcherSpanProcessor`` propagates that into the typed event so the
+    GM panel renders this as a drift alert, not an info-level notice.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "drift_field": drift_field,
+        "expected": expected,
+        "narrator": narrator,
+        "turn_number": turn_number,
+        "severity": "warning",
+        **attrs,
+    }
+    with t.start_as_current_span(
+        SPAN_NPC_REINVENTED, attributes=attributes
+    ) as span:
+        yield span
+
+
+@contextmanager
 def quest_update_span(
     *,
     updates: dict[str, str],
@@ -1401,11 +1505,11 @@ FLAT_ONLY_SPANS.update(
         SPAN_CHARGEN_STATS_GENERATED,
         SPAN_CHARGEN_HP_FORMULA,
         SPAN_CHARGEN_BACKSTORY_COMPOSED,
-        # NPC
+        # NPC — port-artifact constants kept flat-only.
+        # SPAN_NPC_AUTO_REGISTERED and SPAN_NPC_REINVENTED moved to
+        # SPAN_ROUTES (NPC bundle, 2026-04-25).
         SPAN_NPC_MERGE_PATCH,
         SPAN_NPC_REGISTRATION,
-        SPAN_NPC_AUTO_REGISTERED,
-        SPAN_NPC_REINVENTED,
         # Creature
         SPAN_CREATURE_HP_DELTA,
         # Disposition

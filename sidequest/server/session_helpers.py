@@ -30,8 +30,7 @@ from sidequest.protocol.messages import (
     PlayerPresencePayload,
 )
 from sidequest.protocol.types import NonBlankString
-from sidequest.telemetry.spans import SPAN_NPC_REINVENTED
-from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+from sidequest.telemetry.spans import npc_reinvented_span
 
 if TYPE_CHECKING:
     from sidequest.server.session_handler import _SessionData
@@ -354,26 +353,22 @@ def _detect_npc_identity_drift(
         ("role", mention.role, existing.role),
     ):
         if m_val and e_val and m_val.strip().lower() != e_val.strip().lower():
-            logger.warning(
-                "%s name=%r field=%s expected=%r narrator=%r turn=%d",
-                SPAN_NPC_REINVENTED,
-                existing.name,
-                field,
-                e_val,
-                m_val,
-                turn_num,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "npc_registry",
-                    "op": "reinvented",
-                    "name": existing.name,
-                    "drift_field": field,
-                    "expected": e_val,
-                    "narrator": m_val,
-                    "turn_number": turn_num,
-                },
-                component="npc_registry",
-                severity="warning",
-            )
+            # Span emission replaces the prior direct ``_watcher_publish`` —
+            # ``WatcherSpanProcessor`` re-emits via
+            # ``SPAN_ROUTES[SPAN_NPC_REINVENTED]`` and propagates the
+            # ``severity="warning"`` attribute set by the helper.
+            with npc_reinvented_span(
+                npc_name=existing.name,
+                drift_field=field,
+                expected=e_val,
+                narrator=m_val,
+                turn_number=turn_num,
+            ):
+                logger.warning(
+                    "npc.reinvented name=%r field=%s expected=%r narrator=%r turn=%d",
+                    existing.name,
+                    field,
+                    e_val,
+                    m_val,
+                    turn_num,
+                )
