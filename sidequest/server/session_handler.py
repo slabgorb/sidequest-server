@@ -2934,10 +2934,8 @@ class WebSocketSessionHandler:
             prior_type = prior_encounter.encounter_type if prior_encounter else None
     
             # Unified dispatch — passes the pack so encounter instantiation /
-            # beat application / resolution happen in one place (the version
-            # that emits the Story-3.4 OTEL spans the GM panel reads). The
-            # develop-side ``apply_encounter_updates`` split was supplanted by
-            # this richer combined helper; see merge commit for details.
+            # beat application / resolution happen in one place (emits the
+            # Story-3.4 OTEL spans the GM panel reads).
             #
             # ADR-074 dice integration — read the most recent dice outcome
             # stashed by the DICE_THROW handler (if any) and classify it as

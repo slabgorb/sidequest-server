@@ -37,9 +37,9 @@ def _apply_narration_result_to_snapshot(
     inventory items_gained / items_lost.
     Story 3.4: encounter instantiation and beat application (when pack provided).
 
-    ``dice_failed=True`` + structured ``failure_metric_delta`` substitutes
-    the failure value for the beat's default ``metric_delta``. ``None``
-    = no dice this turn → default delta. ``False`` = success → default delta.
+    ``dice_failed=True`` signals a dice-replay turn where the narrator's
+    beat_selections should be filtered out — the dice roll is the mechanical
+    event. ``None`` = no dice this turn. ``False`` = success.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
