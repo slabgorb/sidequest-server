@@ -41,3 +41,19 @@ def test_resolution_writes_event_row_with_structured_outcome(
     assert kinds[-1] == "ENCOUNTER_RESOLVED"
     payload = json.loads(rows[-1][1])
     assert payload["outcome"] == "opponent_victory"
+
+
+def test_encounter_timeline_query_returns_ordered_rows(store_bound_to_hub, encounter_dispatch_helper):
+    store, snapshot, pack = store_bound_to_hub
+    encounter_dispatch_helper.run_to_resolution(snapshot, pack, winner="opponent")
+    from sidequest.game.persistence import query_encounter_events
+    rows = query_encounter_events(store)
+    kinds = [r["kind"] for r in rows]
+    assert len(kinds) > 0, "No encounter events were persisted"
+    assert kinds[-1] == "ENCOUNTER_RESOLVED"
+    # Verify structure: each row has seq, kind, payload, created_at
+    for r in rows:
+        assert "seq" in r
+        assert "kind" in r
+        assert "payload" in r
+        assert "created_at" in r
