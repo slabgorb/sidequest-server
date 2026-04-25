@@ -1,9 +1,14 @@
 """OpenTelemetry tracer setup for sidequest-server.
 
-Phase 0: console exporter only. Phase 1+ adds OTLP exporter via env config.
+The default destination for spans is the WatcherSpanProcessor (registered
+in server/app.py). Console export is debug-only and gated behind
+SIDEQUEST_OTEL_CONSOLE=1 so that normal runs don't pollute stdout with
+span dumps.
 """
 
 from __future__ import annotations
+
+import os
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -27,7 +32,12 @@ def init_tracer(service_name: str = "sidequest-server") -> None:
 
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
+    # Strict "1"-only gate (deliberate; not a permissive truthy check) so
+    # console exporter only fires when explicitly opted-in for debug.
+    if os.environ.get("SIDEQUEST_OTEL_CONSOLE") == "1":
+        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
     trace.set_tracer_provider(provider)
 
     _initialized = True
