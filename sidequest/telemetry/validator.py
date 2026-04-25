@@ -309,6 +309,8 @@ class Validator:
         # Health counters
         self.dropped_records: int = 0
         self._check_durations_ms: deque[tuple[str, float]] = deque(maxlen=200)
+        self._heartbeat_interval: float = 30.0
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self.register_check(entity_check)
         self.register_check(inventory_check)
         self.register_check(patch_legality_check)
@@ -355,10 +357,18 @@ class Validator:
         self._task = asyncio.create_task(
             self._run(), name="sidequest.validator"
         )
+        self._heartbeat_task = asyncio.create_task(
+            self._heartbeat(), name="sidequest.validator.heartbeat"
+        )
         logger.info("validator.started")
 
     async def shutdown(self, grace_seconds: float = 2.0) -> None:
         self._stopping.set()
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
         if self._task is None:
             return
         # Drain remaining records up to the grace window.
@@ -430,3 +440,34 @@ class Validator:
             self._check_durations_ms.append(
                 (check.__name__, elapsed_ms)
             )
+
+    async def _heartbeat(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                await asyncio.sleep(self._heartbeat_interval)
+            except asyncio.CancelledError:
+                return
+            durations = list(self._check_durations_ms)
+            p50 = _percentile([d for _, d in durations], 50)
+            p99 = _percentile([d for _, d in durations], 99)
+            publish_event(
+                "state_transition",
+                {
+                    "field": "validator.heartbeat",
+                    "queue_depth": self._queue.qsize(),
+                    "queue_max": self._queue.maxsize,
+                    "dropped_records": self.dropped_records,
+                    "check_p50_ms": p50,
+                    "check_p99_ms": p99,
+                },
+                component="validator",
+                severity="info",
+            )
+
+
+def _percentile(values: list[float], pct: int) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    idx = max(0, min(len(s) - 1, int(len(s) * pct / 100)))
+    return round(s[idx], 2)

@@ -266,3 +266,24 @@ async def test_trope_alignment_silent_when_keywords_present(
     await trope_alignment_check(record)
     warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
     assert not any("trope_alignment" in str(w["fields"]) for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_validator_emits_periodic_queue_depth(captured_events) -> None:
+    """Validator surfaces queue_depth as state_transition events."""
+    v = Validator()
+    v._heartbeat_interval = 0.1  # speed up for the test
+    await v.start()
+    try:
+        await v.submit(_make_record())
+        await asyncio.sleep(0.3)  # let heartbeat fire
+    finally:
+        await v.shutdown()
+
+    health = [
+        e for e in captured_events
+        if e["event_type"] == "state_transition"
+        and e["component"] == "validator"
+        and "queue_depth" in str(e["fields"])
+    ]
+    assert health, "expected validator queue_depth heartbeat"
