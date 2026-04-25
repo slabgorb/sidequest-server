@@ -14,7 +14,7 @@ from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
     _find_confrontation_def,
 )
-from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED
+from sidequest.telemetry.spans import SPAN_NPC_AUTO_REGISTERED, quest_update_span
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -71,23 +71,21 @@ def _apply_narration_result_to_snapshot(
         )
 
     if result.quest_updates:
-        for quest_id, status in result.quest_updates.items():
-            snapshot.quest_log[quest_id] = status
-        logger.info(
-            "state.quest_update count=%d player=%s",
-            len(result.quest_updates),
-            player_name,
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "quest_log",
-                "updates": dict(result.quest_updates),
-                "player_name": player_name,
-                "turn_number": snapshot.turn_manager.interaction,
-            },
-            component="quest_log",
-        )
+        # Span emission replaces the prior direct ``_watcher_publish`` —
+        # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
+        # event via ``SPAN_ROUTES[SPAN_QUEST_UPDATE]``.
+        with quest_update_span(
+            updates=result.quest_updates,
+            player_name=player_name,
+            turn_number=snapshot.turn_manager.interaction,
+        ):
+            for quest_id, status in result.quest_updates.items():
+                snapshot.quest_log[quest_id] = status
+            logger.info(
+                "state.quest_update count=%d player=%s",
+                len(result.quest_updates),
+                player_name,
+            )
 
     # Inventory — apply narrator items_gained/items_lost on the rolling
     # player's character. Playtest 2026-04-24 found a wiring gap: watcher

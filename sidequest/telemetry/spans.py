@@ -204,13 +204,37 @@ SPAN_DISPOSITION_SHIFT = "disposition.shift"
 
 # ---------------------------------------------------------------------------
 # State patches — sidequest-game/state.rs
+#
+# Python-port note (ADR-082): the Rust pipeline routed all narration-driven
+# state mutations through ``GameSnapshot::apply_world_patch`` (a single typed
+# WorldStatePatch carrying location/quest/inventory/etc). The Python port
+# inlined those mutations directly in ``server/narration_apply.py`` —
+# ``apply_world_patch`` and ``build_protocol_delta`` exist as ports of the
+# Rust functions but have no production caller. They stay in
+# ``FLAT_ONLY_SPANS`` (below) until either the helper is wired into the
+# Python pipeline OR the constants are removed. ``SPAN_QUEST_UPDATE`` IS
+# live — it fires from the quest_log block of ``narration_apply.py``.
 # ---------------------------------------------------------------------------
 SPAN_APPLY_WORLD_PATCH = "apply_world_patch"
 SPAN_QUEST_UPDATE = "quest_update"
+SPAN_ROUTES[SPAN_QUEST_UPDATE] = SpanRoute(
+    event_type="state_transition",
+    component="quest_log",
+    extract=lambda span: {
+        "field": "quest_log",
+        "updates": (span.attributes or {}).get("updates_json", "{}"),
+        "updates_count": (span.attributes or {}).get("updates_count", 0),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
 SPAN_BUILD_PROTOCOL_DELTA = "build_protocol_delta"
 
 # ---------------------------------------------------------------------------
 # Delta — sidequest-game/delta.rs
+# Python-port note: ``compute_delta`` exists in ``game/delta.py`` but has no
+# production caller (port artifact — see SPAN_APPLY_WORLD_PATCH note above).
+# Kept in ``FLAT_ONLY_SPANS`` until the function is either wired or removed.
 # ---------------------------------------------------------------------------
 SPAN_COMPUTE_DELTA = "compute_delta"
 
@@ -1286,6 +1310,37 @@ def projection_cache_lazy_fill_span(
         yield span
 
 
+@contextmanager
+def quest_update_span(
+    *,
+    updates: dict[str, str],
+    player_name: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wrap a quest_log mutation block. Replaces the direct
+    ``publish_event("state_transition", ..., component="quest_log")``
+    that ``server/narration_apply.py`` used pre-Phase-2 — the route
+    extracts the same fields, so the dashboard sees no payload change.
+
+    ``updates`` is serialized as a JSON string so it survives the OTEL
+    attribute primitive-types restriction (dict/list values silently drop).
+    """
+    import json as _json
+
+    t = _tracer if _tracer is not None else tracer()
+    attributes: dict[str, Any] = {
+        "updates_json": _json.dumps(dict(updates), sort_keys=True),
+        "updates_count": len(updates),
+        "player_name": player_name,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with t.start_as_current_span(SPAN_QUEST_UPDATE, attributes=attributes) as span:
+        yield span
+
+
 # ----------------------------------------------------------------------
 # Phase 2 deferred — currently-dead spans. Each Phase 2 family rollout
 # moves entries OUT of this baseline and into SPAN_ROUTES with proper
@@ -1355,11 +1410,11 @@ FLAT_ONLY_SPANS.update(
         SPAN_CREATURE_HP_DELTA,
         # Disposition
         SPAN_DISPOSITION_SHIFT,
-        # State patches
+        # State patches — port-artifact constants kept flat-only.
+        # SPAN_QUEST_UPDATE moved to SPAN_ROUTES (state-patch bundle, 2026-04-25).
         SPAN_APPLY_WORLD_PATCH,
-        SPAN_QUEST_UPDATE,
         SPAN_BUILD_PROTOCOL_DELTA,
-        # Delta
+        # Delta — port-artifact, no production caller (see comment near constant).
         SPAN_COMPUTE_DELTA,
         # Merchant
         SPAN_MERCHANT_CONTEXT_INJECTED,
