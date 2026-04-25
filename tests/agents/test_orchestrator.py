@@ -623,6 +623,24 @@ async def test_run_narration_turn_extracts_items_gained():
 
 
 @pytest.mark.asyncio
+async def test_run_narration_turn_extracts_status_changes():
+    """Wiring: status_changes from game_patch flows through to NarrationTurnResult."""
+    narration_text = (
+        "**The Arena**\n\nSam ducks the swing.\n\n"
+        "```game_patch\n"
+        '{"status_changes": [{"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}}]}\n'
+        "```"
+    )
+    client = make_canned_client(narration_text)
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Sam")
+    result = await orch.run_narration_turn("defend", context)
+    assert result.status_changes == [
+        {"actor": "Sam", "status": {"text": "Bruised Ribs", "severity": "Wound"}},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_run_narration_turn_genre_prompts_injected():
     """Genre prompts from prompts.yaml appear in the assembled prompt."""
     from sidequest.genre.models.narrative import Prompts
