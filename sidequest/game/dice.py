@@ -15,6 +15,7 @@ No I/O, no wall-clock time, no global state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 from sidequest.protocol.dice import (
     DieGroupResult,
@@ -22,6 +23,11 @@ from sidequest.protocol.dice import (
     DieSpec,
     RollOutcome,
 )
+
+# Decisive-margin threshold: total must exceed DC by at least this many to
+# crit without a nat-20. Tunable; keep aligned with BeatKind delta defaults
+# (Task 6 of dual-track momentum plan).
+DECISIVE_MARGIN: Final[int] = 3
 
 
 class ResolveError(ValueError):
@@ -144,7 +150,7 @@ def resolve_dice_with_faces(
         outcome = RollOutcome.CritSuccess
     elif has_d20 and has_d20_nat1:
         outcome = RollOutcome.CritFail
-    elif total >= difficulty + 3:
+    elif total >= difficulty + DECISIVE_MARGIN:
         # Decisive-margin success — equivalent to a tabletop "succeed-with-style".
         # Required for the angle-kind two-leverage tag grant on margin alone.
         outcome = RollOutcome.CritSuccess
