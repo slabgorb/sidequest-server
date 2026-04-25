@@ -34,10 +34,10 @@ class TestResolveDiceWithFaces:
         assert r.outcome is RollOutcome.Success
 
     def test_success_exactly_at_dc(self) -> None:
-        # total == difficulty → Success (>= comparison, not strict)
+        # total == difficulty → Tie (not Success, exclusive equality case)
         r = resolve_dice_with_faces([d20()], [12], 3, 15)
         assert r.total == 15
-        assert r.outcome is RollOutcome.Success
+        assert r.outcome is RollOutcome.Tie
 
     def test_fail_below_dc(self) -> None:
         r = resolve_dice_with_faces([d20()], [5], 3, 15)
@@ -66,7 +66,8 @@ class TestResolveDiceWithFaces:
 
     def test_mixed_pool_sums_correctly(self) -> None:
         # 1d20 + 3d6: faces [12, 4, 5, 6] + mod 2 → total 29
-        r = resolve_dice_with_faces([d20(), d6(3)], [12, 4, 5, 6], 2, 20)
+        # difficulty 27 means margin 2 (< 3 threshold) → Success
+        r = resolve_dice_with_faces([d20(), d6(3)], [12, 4, 5, 6], 2, 27)
         assert r.total == 29
         assert r.outcome is RollOutcome.Success
 

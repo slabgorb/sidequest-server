@@ -5,7 +5,7 @@ Port of the dice types from sidequest-protocol/src/message.rs:
 - DieSides — enum serialized as u32 face count (4, 6, 8, 10, 12, 20, 100; 0 = Unknown)
 - DieSpec — {sides, count} one group in a pool
 - ThrowParams — physics gesture params (animation only, not outcome)
-- RollOutcome — CritSuccess / Success / Fail / CritFail (+Unknown for forward-compat)
+- RollOutcome — CritSuccess / Success / Tie / Fail / CritFail (+Unknown for forward-compat)
 - DieGroupResult — per-group rolled faces paired with originating spec
 - DiceRequestPayload — server -> all clients: "roll for me"
 - DiceThrowPayload — rolling client -> server: physics-is-the-roll result

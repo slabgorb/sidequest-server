@@ -144,8 +144,14 @@ def resolve_dice_with_faces(
         outcome = RollOutcome.CritSuccess
     elif has_d20 and has_d20_nat1:
         outcome = RollOutcome.CritFail
-    elif total >= difficulty:
+    elif total >= difficulty + 3:
+        # Decisive-margin success — equivalent to a tabletop "succeed-with-style".
+        # Required for the angle-kind two-leverage tag grant on margin alone.
+        outcome = RollOutcome.CritSuccess
+    elif total > difficulty:
         outcome = RollOutcome.Success
+    elif total == difficulty:
+        outcome = RollOutcome.Tie
     else:
         outcome = RollOutcome.Fail
 
