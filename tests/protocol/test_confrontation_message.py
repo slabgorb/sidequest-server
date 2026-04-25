@@ -1,3 +1,8 @@
+"""Protocol tests for ConfrontationPayload / ConfrontationMessage.
+
+Task 12 (2026-04-25): Updated for dual-dial schema — ``metric`` replaced by
+``player_metric`` + ``opponent_metric``.
+"""
 from __future__ import annotations
 
 from sidequest.protocol.messages import ConfrontationMessage, ConfrontationPayload
@@ -9,10 +14,9 @@ def test_confrontation_message_roundtrip() -> None:
         label="Dungeon Combat",
         category="combat",
         actors=[{"name": "Rux", "role": "combatant", "per_actor_state": {}}],
-        metric={"name": "hp", "current": 10, "starting": 10,
-                "direction": "Descending", "threshold_low": 0,
-                "threshold_high": None},
-        beats=[{"id": "attack", "label": "Attack", "metric_delta": 2}],
+        player_metric={"name": "momentum", "current": 2, "starting": 0, "threshold": 10},
+        opponent_metric={"name": "momentum", "current": 0, "starting": 0, "threshold": 10},
+        beats=[{"id": "attack", "label": "Attack", "kind": "strike", "base": 2, "stat_check": "STR"}],
         secondary_stats=None,
         genre_slug="caverns_and_claudes",
         mood="combat",
@@ -29,16 +33,18 @@ def test_confrontation_message_roundtrip() -> None:
     assert serialized["payload"]["genre_slug"] == "caverns_and_claudes"
     assert serialized["payload"]["mood"] == "combat"
     assert serialized["payload"]["actors"][0]["name"] == "Rux"
-    assert serialized["payload"]["metric"]["current"] == 10
+    assert serialized["payload"]["player_metric"]["current"] == 2
+    assert serialized["payload"]["opponent_metric"]["current"] == 0
     # Verify every UI-contract key is present on the wire (secondary_stats None is omitted).
-    ui_keys = {"type", "label", "category", "actors", "metric", "beats",
-               "genre_slug", "mood", "active"}
+    ui_keys = {"type", "label", "category", "actors", "player_metric", "opponent_metric",
+               "beats", "genre_slug", "mood", "active"}
     assert set(serialized["payload"].keys()) == ui_keys
 
 
 def test_confrontation_message_supports_active_false_clear() -> None:
     payload = ConfrontationPayload(
-        type="combat", label="", category="", actors=[], metric={}, beats=[],
+        type="combat", label="", category="", actors=[],
+        player_metric={}, opponent_metric={}, beats=[],
         secondary_stats=None, genre_slug="caverns_and_claudes",
         mood=None, active=False,
     )
@@ -72,7 +78,8 @@ def test_game_message_roundtrips_confrontation_variant() -> None:
         "type": "CONFRONTATION",
         "payload": {
             "type": "combat", "label": "Dungeon", "category": "combat",
-            "actors": [], "metric": {}, "beats": [], "secondary_stats": None,
+            "actors": [], "player_metric": {}, "opponent_metric": {},
+            "beats": [], "secondary_stats": None,
             "genre_slug": "cac", "mood": "combat", "active": True,
         },
         "player_id": "",

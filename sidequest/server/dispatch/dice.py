@@ -26,6 +26,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from sidequest.game.beat_kinds import apply_beat
 from sidequest.game.dice import ResolveError, resolve_dice_with_faces
 from sidequest.game.encounter import EncounterPhase, StructuredEncounter
 from sidequest.genre.models.pack import GenrePack
@@ -49,7 +50,6 @@ from sidequest.telemetry.spans import (
     emit_dice_result_broadcast,
     emit_dice_throw_received,
     encounter_beat_applied_span,
-    encounter_beat_failure_branch_span,
     encounter_resolved_span,
 )
 
@@ -101,71 +101,13 @@ def _stat_modifier(stats: dict[str, int], stat_check: str) -> int:
 
 
 def _compute_dc(beat: BeatDef) -> int:
-    """Derive DC from beat ``metric_delta`` magnitude, clamped 10..=30.
+    """Derive DC from beat ``base`` magnitude, clamped 10..=30.
 
     Port of Rust ``(10u32 + beat_metric_delta.unsigned_abs() * 2).clamp(10, 30)``.
     Big metric swings need bigger checks — the clamp keeps any degenerate
     pack data from producing an unreachable or trivial DC.
     """
-    return max(10, min(30, 10 + abs(beat.metric_delta) * 2))
-
-
-def _resolve_applied_delta(beat: BeatDef, outcome: RollOutcome) -> tuple[int, bool]:
-    """Pick the metric delta to apply, honoring structured failure branches.
-
-    Returns ``(applied_delta, took_failure_branch)``. Mirrors the
-    ``failure_metric_delta`` logic in ``_apply_narration_result_to_snapshot``
-    so dice-dispatched beats and narrator-extracted beats behave the same
-    way on Fail/CritFail.
-    """
-    dice_failed = outcome in (RollOutcome.Fail, RollOutcome.CritFail)
-    if dice_failed and beat.failure_metric_delta is not None:
-        return beat.failure_metric_delta, True
-    return beat.metric_delta, False
-
-
-def _apply_beat(
-    encounter: StructuredEncounter,
-    beat: BeatDef,
-    applied_delta: int,
-) -> tuple[int, int, bool]:
-    """Apply a beat's metric delta + resolution check.
-
-    Returns ``(metric_before, metric_after, encounter_resolved)``. Logic
-    mirrors the existing narrator-beat path in session_handler.py:3700-3756
-    so both entry points end up with consistent encounter state.
-
-    ``applied_delta`` is the delta the caller decided to use for this
-    resolution (default ``beat.metric_delta`` or, on Fail/CritFail with a
-    structured failure branch, ``beat.failure_metric_delta``).
-    """
-    metric_before = encounter.metric.current
-    encounter.metric.current += applied_delta
-    if (
-        encounter.metric.direction == MetricDirection.Ascending  # noqa: F821 — TODO Task 11
-        and encounter.metric.current < 0
-    ):
-        encounter.metric.current = 0
-    metric_after = encounter.metric.current
-    encounter.beat += 1
-
-    # Direction-aware threshold test. Non-matching edge → no resolution.
-    m = encounter.metric
-    if m.direction == MetricDirection.Ascending:  # noqa: F821 — TODO Task 11
-        threshold_hit = m.threshold_high is not None and m.current >= m.threshold_high
-    elif m.direction == MetricDirection.Descending:  # noqa: F821 — TODO Task 11
-        threshold_hit = m.threshold_low is not None and m.current <= m.threshold_low
-    else:  # Bidirectional
-        threshold_hit = (
-            (m.threshold_high is not None and m.current >= m.threshold_high)
-            or (m.threshold_low is not None and m.current <= m.threshold_low)
-        )
-    resolved = threshold_hit or bool(beat.resolution)
-    if resolved:
-        encounter.resolved = True
-        encounter.structured_phase = EncounterPhase.Resolution
-        encounter.outcome = f"resolved at beat {encounter.beat}"
-    return metric_before, metric_after, resolved
+    return max(10, min(30, 10 + abs(beat.base) * 2))
 
 
 def _build_request_payload(
@@ -218,9 +160,9 @@ def _format_replay_action(
     *,
     beat_label: str,
     stat_check: str,
-    metric_name: str,
-    metric_before: int,
-    metric_after: int,
+    actor_side: str,
+    player_metric_after: int,
+    opponent_metric_after: int,
     total: int,
     outcome: RollOutcome,
 ) -> str:
@@ -231,8 +173,9 @@ def _format_replay_action(
     re-derive them from footnotes.
     """
     return (
-        f"[BEAT_RESOLVED] {beat_label} ({stat_check}): "
-        f"{metric_name} {metric_before} → {metric_after} | "
+        f"[BEAT_RESOLVED] {beat_label} ({stat_check}, side={actor_side}): "
+        f"player_momentum={player_metric_after} | "
+        f"opponent_momentum={opponent_metric_after} | "
         f"Roll: {total} ({outcome.value})"
     )
 
@@ -339,30 +282,43 @@ def dispatch_dice_throw(
     except ResolveError as exc:
         raise DiceDispatchError(f"dice resolution failed: {exc}") from exc
 
-    applied_delta, took_failure_branch = _resolve_applied_delta(beat, resolved.outcome)
+    actor = encounter.find_actor(character_name)
+    if actor is None:
+        # Fall back to first player-side actor when character_name doesn't
+        # appear in the encounter's actor list (e.g. encounter built without
+        # explicit actor registration).
+        actor = next(
+            (a for a in encounter.actors if a.side == "player"),
+            None,
+        )
+    if actor is None:
+        raise DiceDispatchError(
+            f"character {character_name!r} not found in encounter actors "
+            "and no player-side actor is present"
+        )
 
-    # Apply beat *after* stat + dice resolution. OTEL span matches the
-    # narrator-beat path so GM-panel queries don't need to differentiate
-    # the two entry points. ``metric_delta`` on the span is the delta that
-    # actually landed on the encounter (failure-branch-aware).
+    apply_result = apply_beat(
+        encounter, actor, beat, resolved.outcome,
+        turn=round_number,
+    )
+
+    if apply_result.skipped_reason:
+        raise DiceDispatchError(
+            f"beat {payload.beat_id!r} skipped: {apply_result.skipped_reason}"
+        )
+
+    own_delta = apply_result.deltas.own if apply_result.deltas else 0
+
     with encounter_beat_applied_span(
         encounter_type=encounter.encounter_type,
-        actor="player",
+        actor=character_name,
         beat_id=payload.beat_id,
-        metric_delta=applied_delta,
+        metric_delta=own_delta,
     ):
-        metric_before, metric_after, encounter_resolved = _apply_beat(
-            encounter, beat, applied_delta,
-        )
-    if took_failure_branch:
-        with encounter_beat_failure_branch_span(
-            encounter_type=encounter.encounter_type,
-            beat_id=payload.beat_id,
-            actor="player",
-            base_delta=beat.metric_delta,
-            failure_delta=beat.failure_metric_delta,  # type: ignore[arg-type]
-        ):
-            pass
+        pass
+
+    encounter_resolved = apply_result.resolved
+
     with combat_tick_span(
         encounter_type=encounter.encounter_type,
         beat=encounter.beat,
@@ -412,24 +368,23 @@ def dispatch_dice_throw(
     replay_text = _format_replay_action(
         beat_label=beat.label,
         stat_check=beat.stat_check,
-        metric_name=encounter.metric.name,
-        metric_before=metric_before,
-        metric_after=metric_after,
+        actor_side=actor.side,
+        player_metric_after=encounter.player_metric.current,
+        opponent_metric_after=encounter.opponent_metric.current,
         total=resolved.total,
         outcome=resolved.outcome,
     )
 
     logger.info(
         "dice.throw_resolved request_id=%s rolling_player=%s total=%d outcome=%s "
-        "beat_id=%s metric=%s(%d→%d) resolved_encounter=%s",
+        "beat_id=%s player_momentum=%d opponent_momentum=%d resolved_encounter=%s",
         request.request_id,
         rolling_player_id,
         resolved.total,
         resolved.outcome.value,
         payload.beat_id,
-        encounter.metric.name,
-        metric_before,
-        metric_after,
+        encounter.player_metric.current,
+        encounter.opponent_metric.current,
         encounter_resolved,
     )
 

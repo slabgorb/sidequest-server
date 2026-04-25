@@ -49,7 +49,8 @@ def build_confrontation_payload(
         "label": cdef.label,
         "category": cdef.category,
         "actors": [a.model_dump(mode="json") for a in encounter.actors],
-        "metric": encounter.metric.model_dump(mode="json"),
+        "player_metric": encounter.player_metric.model_dump(mode="json"),
+        "opponent_metric": encounter.opponent_metric.model_dump(mode="json"),
         "beats": [b.model_dump(mode="json") for b in cdef.beats],
         "secondary_stats": (
             encounter.secondary_stats.model_dump(mode="json")
@@ -75,7 +76,8 @@ def build_clear_confrontation_payload(
         "label": "",
         "category": "",
         "actors": [],
-        "metric": {},
+        "player_metric": {},
+        "opponent_metric": {},
         "beats": [],
         "secondary_stats": None,
         "genre_slug": genre_slug,

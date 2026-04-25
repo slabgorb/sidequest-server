@@ -452,13 +452,17 @@ class ConfrontationPayload(ProtocolBase):
     Shape mirrors sidequest-ui/src/components/ConfrontationOverlay.tsx
     ``ConfrontationData`` (L42-58). ``active=False`` signals the overlay
     to unmount. Story 3.4.
+
+    Task 12 (2026-04-25): dual-dial migration — ``metric`` replaced by
+    ``player_metric`` + ``opponent_metric``.
     """
 
     type: str
     label: str
     category: str
     actors: list[dict[str, Any]] = Field(default_factory=list)
-    metric: dict[str, Any] = Field(default_factory=dict)
+    player_metric: dict[str, Any] = Field(default_factory=dict)
+    opponent_metric: dict[str, Any] = Field(default_factory=dict)
     beats: list[dict[str, Any]] = Field(default_factory=list)
     secondary_stats: dict[str, Any] | None = None
     genre_slug: str

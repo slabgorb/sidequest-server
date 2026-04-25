@@ -5,9 +5,8 @@ TurnContext.encounter_summary. The narrator uses this + the
 confrontation_def beat listing (see narrator.build_encounter_context)
 to emit well-formed beat_selections. Story 3.4.
 
-TODO Task 11: rewrite render_encounter_summary for dual ascending dials.
-_DIRECTION_LABELS and the single-dial metric rendering have been removed
-as part of the MetricDirection → dual-dial migration. Full rewrite pending.
+Task 12 (2026-04-25): Implemented for dual ascending dials
+(player_metric + opponent_metric) per the dual-track momentum spec.
 """
 from __future__ import annotations
 
@@ -17,9 +16,31 @@ from sidequest.game.encounter import StructuredEncounter
 def render_encounter_summary(enc: StructuredEncounter) -> str:
     """Render an encounter's live state for the narrator's Valley zone.
 
-    TODO Task 11: rewrite for dual ascending dials (player_metric + opponent_metric).
+    Dual-dial format: both player and opponent ascending dials shown
+    with their current/threshold values and the active phase.
     """
-    raise NotImplementedError(
-        "render_encounter_summary: rewrite pending in Task 11 "
-        "(dual-dial migration — MetricDirection removed)"
-    )
+    phase = enc.structured_phase.value if enc.structured_phase else "Setup"
+    pm = enc.player_metric
+    om = enc.opponent_metric
+
+    lines = [
+        f"[ENCOUNTER: {enc.encounter_type}]",
+        f"Phase: {phase}  Beat: {enc.beat}",
+        f"Player {pm.name}: {pm.current}/{pm.threshold}",
+        f"Opponent {om.name}: {om.current}/{om.threshold}",
+    ]
+
+    if enc.tags:
+        tag_strs = [
+            f"{t.text}({'fleeting' if t.fleeting else 'persistent'}, leverage={t.leverage})"
+            for t in enc.tags
+        ]
+        lines.append(f"Tags: {', '.join(tag_strs)}")
+
+    if enc.mood_override:
+        lines.append(f"Mood: {enc.mood_override}")
+
+    if enc.narrator_hints:
+        lines.append(f"Hints: {'; '.join(enc.narrator_hints)}")
+
+    return "\n".join(lines)

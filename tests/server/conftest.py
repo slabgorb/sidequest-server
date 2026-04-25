@@ -521,6 +521,53 @@ def synthetic_two_dial_pack():
 
 
 @pytest.fixture
+def dual_dial_test_setup(synthetic_two_dial_pack):
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
+    )
+    from sidequest.protocol.dice import DiceThrowPayload, ThrowParams
+    from sidequest.server.dispatch.dice import dispatch_dice_throw
+
+    class _Setup:
+        def __init__(self, encounter, pack):
+            self.encounter = encounter
+            self.pack = pack
+
+        def run_dice_throw(self, *, beat_id, faces, modifier):
+            payload = DiceThrowPayload(
+                request_id="r1",
+                throw_params=ThrowParams(
+                    velocity=(0, 0, 0),
+                    angular=(0, 0, 0),
+                    position=(0, 0),
+                ),
+                face=faces,
+                beat_id=beat_id,
+            )
+            return dispatch_dice_throw(
+                payload=payload,
+                rolling_player_id="p1",
+                character_name="Sam",
+                character_stats={"STR": 10, "DEX": 10, "CON": 10, "INT": 10, "WIS": 10, "CHA": 10},
+                encounter=self.encounter,
+                pack=self.pack,
+                session_id="s1",
+                round_number=1,
+                room_broadcast=None,
+            )
+
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[EncounterActor(name="Sam", role="combatant", side="player")],
+    )
+    return _Setup(encounter=enc, pack=synthetic_two_dial_pack)
+
+
+@pytest.fixture
 def snapshot_with_pack(synthetic_two_dial_pack):
     from sidequest.game.session import GameSnapshot
     from sidequest.game.turn import TurnManager
