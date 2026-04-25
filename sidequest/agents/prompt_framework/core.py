@@ -133,6 +133,14 @@ class PromptRegistry:
         """Clear all sections for an agent."""
         self._sections.pop(agent_name, None)
 
+    def render_for(self, agent_name: str) -> str:
+        """Alias for compose — returns the composed prompt for the named agent.
+
+        Task 18 (dual-track momentum): test helpers use this name to keep
+        the assertion side readable ("what the narrator sees").
+        """
+        return self.compose(agent_name)
+
     # ------------------------------------------------------------------
     # High-level registration helpers (port of PromptRegistry impl block)
     # ------------------------------------------------------------------
