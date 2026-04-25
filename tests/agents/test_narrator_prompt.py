@@ -130,3 +130,63 @@ def test_resolved_encounter_short_circuits_to_resolution_zone(build_registry):
     assert "final_opponent_metric: 11" in rendered
     # The active-encounter live zone is NOT rendered.
     assert "Available beats" not in rendered
+
+
+def test_resolved_encounter_yielded_branch_renders_actors_and_edge(build_registry):
+    """Yielded-branch prose includes yielded_actors and edge_refreshed.
+
+    Phase 2 reviewer flagged this as deferred coverage; now asserted here.
+    """
+    from sidequest.agents.narrator import NarratorAgent
+    from sidequest.game.encounter import (
+        EncounterActor,
+        EncounterMetric,
+        StructuredEncounter,
+    )
+    from sidequest.game.resolution_signal import ResolutionSignal
+    from sidequest.genre.models.rules import (
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
+    )
+
+    enc = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=4, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=7, starting=0, threshold=10),
+        actors=[EncounterActor(name="Sam", role="combatant", side="player")],
+        resolved=True,
+        outcome="yielded",
+    )
+    cdef = ConfrontationDef(
+        type="combat", label="Combat", category="combat",
+        player_metric=MetricDef(name="momentum", threshold=10),
+        opponent_metric=MetricDef(name="momentum", threshold=10),
+        beats=[BeatDef.model_validate({
+            "id": "attack", "label": "Attack", "kind": "strike",
+            "base": 2, "stat_check": "STR",
+        })],
+    )
+    signal = ResolutionSignal(
+        encounter_type="combat",
+        outcome="yielded",
+        final_player_metric=4,
+        final_opponent_metric=7,
+        yielded_actors=("Sam",),
+        edge_refreshed=3,
+    )
+
+    registry = build_registry()
+    NarratorAgent().build_encounter_context(
+        registry, encounter=enc, cdef=cdef,
+        statuses_by_actor={},
+        resolution_signal=signal,
+    )
+
+    rendered = registry.render_for("narrator")
+    assert "[ENCOUNTER RESOLVED]" in rendered
+    assert "outcome: yielded" in rendered
+    assert "yielded_actors: [Sam]" in rendered
+    assert "edge_refreshed: 3" in rendered
+    # The active-encounter live zone is NOT rendered for a resolved encounter.
+    assert "Available beats" not in rendered
