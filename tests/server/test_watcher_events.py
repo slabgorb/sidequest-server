@@ -237,6 +237,107 @@ async def test_span_processor_broadcasts_to_subscriber(
 
 
 @pytest.mark.asyncio
+async def test_on_end_emits_agent_span_close_for_every_span() -> None:
+    """Backward-compat: every closed span still produces agent_span_close."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    class _CapturingSubscriber:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    sub = _CapturingSubscriber()
+    await hub.subscribe(sub)  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span("some.untracked.span", {"a": 1}))
+
+    # Allow the cross-thread coroutine hop to flush.
+    await asyncio.sleep(0.05)
+
+    assert any(e["event_type"] == "agent_span_close" for e in sub.events)
+
+
+@pytest.mark.asyncio
+async def test_on_end_emits_typed_event_for_routed_span() -> None:
+    """When a span name is in SPAN_ROUTES, on_end ALSO emits the typed event."""
+    from unittest.mock import MagicMock
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import StatusCode
+
+    from sidequest.server.watcher import WatcherSpanProcessor
+    from sidequest.telemetry.spans import SPAN_PROJECTION_DECIDE
+
+    def _fake_span(
+        name: str,
+        attributes: dict | None = None,
+        status_code: StatusCode = StatusCode.OK,
+    ) -> ReadableSpan:
+        span = MagicMock(spec=ReadableSpan)
+        span.name = name
+        span.attributes = attributes or {}
+        span.start_time = 1_000_000_000
+        span.end_time = 2_000_000_000
+        span.status = MagicMock()
+        span.status.status_code = MagicMock()
+        span.status.status_code.name = "OK" if status_code == StatusCode.OK else "ERROR"
+        return span
+
+    hub = WatcherHub()
+    hub.bind_loop(asyncio.get_running_loop())
+
+    class _CapturingSubscriber:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    sub = _CapturingSubscriber()
+    await hub.subscribe(sub)  # type: ignore[arg-type]
+
+    processor = WatcherSpanProcessor(hub)
+    processor.on_end(_fake_span(
+        SPAN_PROJECTION_DECIDE,
+        {"event.kind": "narration", "decision.include": True},
+    ))
+    await asyncio.sleep(0.05)
+
+    typed = [e for e in sub.events if e["event_type"] == "state_transition"]
+    flat = [e for e in sub.events if e["event_type"] == "agent_span_close"]
+    assert typed, "Routed span did not produce a typed state_transition event"
+    assert flat, "Routed span must STILL produce agent_span_close (augment, not replace)"
+    assert typed[0]["component"] == "projection"
+    assert typed[0]["fields"]["event_kind"] == "narration"
+
+
+@pytest.mark.asyncio
 async def test_dead_subscribers_are_pruned(bound_hub: WatcherHub) -> None:
     """A broken WebSocket must not prevent other subscribers from
     receiving events. The hub drops failing sockets on next broadcast."""
