@@ -1408,8 +1408,12 @@ class WebSocketSessionHandler:
                 world_slug=row.world_slug,
                 player_name=display_name,
                 player_id=player_id,
-                snapshot=snapshot,
-                store=store,
+                # ADR-037 Python port: take snapshot/store directly from the
+                # canonical room binding so future readers see the contract
+                # explicitly. Equivalent to the local ``snapshot``/``store``
+                # references after the idempotent ``bind_world`` above.
+                snapshot=room.snapshot,
+                store=room.store,
                 genre_pack=genre_pack,
                 orchestrator=Orchestrator(client=self._client_factory()),
                 local_dm=LocalDM(client=self._client_factory()),
