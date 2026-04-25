@@ -266,7 +266,7 @@ def test_turn_span_helper_emits_span() -> None:
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
 
-    with turn_span("player-1", "I look around", _tracer=t) as span:
+    with turn_span(turn_id=1, player_id="player-1", agent_name="narrator", _tracer=t) as span:
         assert span.is_recording()
 
     spans = exporter.get_finished_spans()
@@ -281,30 +281,12 @@ def test_turn_span_helper_records_player_id_attribute() -> None:
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
 
-    with turn_span("player-42", "I attack", _tracer=t) as _span:
+    with turn_span(turn_id=42, player_id="player-42", agent_name="narrator", _tracer=t) as _span:
         pass
 
     spans = exporter.get_finished_spans()
     assert spans[0].attributes is not None
     assert spans[0].attributes.get("player_id") == "player-42"
-
-
-def test_turn_span_helper_truncates_action_to_80_chars() -> None:
-    """turn_span() truncates the action attribute to 80 chars."""
-    from sidequest.telemetry.spans import turn_span
-
-    provider, exporter = _fresh_provider()
-    t = _local_tracer(provider)
-
-    long_action = "a" * 120
-    with turn_span("p", long_action, _tracer=t) as _span:
-        pass
-
-    spans = exporter.get_finished_spans()
-    assert spans[0].attributes is not None
-    action_attr = spans[0].attributes.get("action")
-    assert action_attr is not None
-    assert len(str(action_attr)) == 80
 
 
 def test_orchestrator_process_action_span_helper() -> None:
@@ -492,7 +474,7 @@ def test_multiple_spans_exported_in_order() -> None:
     provider, exporter = _fresh_provider()
     t = _local_tracer(provider)
 
-    with turn_span("p1", "go north", _tracer=t):
+    with turn_span(turn_id=1, player_id="p1", agent_name="narrator", _tracer=t):
         pass
     with agent_call_span("claude-opus-4-5", 100, _tracer=t):
         pass
@@ -713,3 +695,112 @@ def test_mp_player_action_paused_span_emits_absent_list() -> None:
     assert span.name == "mp.player_action_paused"
     assert span.attributes["absent_count"] == 2
     assert span.attributes["absent_player_ids"] == "bob,carol"
+
+
+def test_span_route_dataclass_shape() -> None:
+    """SpanRoute carries event_type, component, and an attribute extractor."""
+    from sidequest.telemetry.spans import SpanRoute
+
+    route = SpanRoute(
+        event_type="state_transition",
+        component="disposition",
+        extract=lambda span: {"npc": "alice"},
+    )
+    assert route.event_type == "state_transition"
+    assert route.component == "disposition"
+    # The extractor takes a span-like object and returns a dict.
+    fake = type("FakeSpan", (), {"attributes": {}, "name": "x"})()
+    assert route.extract(fake) == {"npc": "alice"}
+
+
+def test_flat_only_spans_is_a_set_of_strings() -> None:
+    """FLAT_ONLY_SPANS contains span name strings, not SpanRoute objects."""
+    from sidequest.telemetry.spans import FLAT_ONLY_SPANS
+
+    assert isinstance(FLAT_ONLY_SPANS, set)
+    for name in FLAT_ONLY_SPANS:
+        assert isinstance(name, str)
+
+
+# ---------------------------------------------------------------------------
+# turn_span() root context manager — keyword-only ADR-031 §"Layer 2" contract
+# ---------------------------------------------------------------------------
+
+
+def _reset_otel_provider() -> None:
+    """Reset the OTEL global provider so set_tracer_provider() is not a no-op.
+
+    OTEL 1.x gates set_tracer_provider behind a Once guard
+    (_TRACER_PROVIDER_SET_ONCE). In a test session the first call wins and
+    all subsequent calls are silently dropped. We reset both the stored
+    provider reference and the Once._done flag before each test that calls
+    set_tracer_provider directly. This is a private-API access — update if
+    the OTEL SDK moves the guard.
+    """
+    trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
+    once = getattr(trace, "_TRACER_PROVIDER_SET_ONCE", None)
+    if once is not None:
+        once._done = False
+
+
+def test_turn_span_opens_named_span_with_required_attrs() -> None:
+    """turn_span() yields a span named 'turn' with required attributes set."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.spans import SPAN_TURN, turn_span
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _reset_otel_provider()
+    trace.set_tracer_provider(provider)
+
+    with turn_span(
+        turn_id=42,
+        player_id="alice",
+        agent_name="narrator",
+    ):
+        pass
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == SPAN_TURN
+    attrs = dict(spans[0].attributes or {})
+    assert attrs["turn_id"] == 42
+    assert attrs["player_id"] == "alice"
+    assert attrs["agent_name"] == "narrator"
+
+
+def test_turn_span_accepts_extra_attrs() -> None:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.spans import turn_span
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _reset_otel_provider()
+    trace.set_tracer_provider(provider)
+
+    with turn_span(
+        turn_id=1,
+        player_id="bob",
+        agent_name="narrator",
+        room_id="room-7",
+        extraction_tier=1,
+    ):
+        pass
+
+    attrs = dict(exporter.get_finished_spans()[0].attributes or {})
+    assert attrs["room_id"] == "room-7"
+    assert attrs["extraction_tier"] == 1

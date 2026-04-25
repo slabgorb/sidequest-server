@@ -69,21 +69,79 @@ class WatcherSpanProcessor(SpanProcessor):
         if span.attributes:
             for k, v in span.attributes.items():
                 attrs[str(k)] = v
-        severity: str = "info"
+
+        severity = "info"
         if span.status is not None and span.status.status_code.name == "ERROR":
             severity = "error"
-        event: dict[str, Any] = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "component": "sidequest-server",
-            "event_type": "agent_span_close",
-            "severity": severity,
-            "fields": {
-                "name": span.name,
-                "duration_ms": duration_ms,
-                **attrs,
-            },
-        }
-        self._hub.publish(event)
+
+        # Always emit the flat firehose event — Timeline / Timing tabs depend on it.
+        self._hub.publish(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "component": "sidequest-server",
+                "event_type": "agent_span_close",
+                "severity": severity,
+                "fields": {
+                    "name": span.name,
+                    "duration_ms": duration_ms,
+                    **attrs,
+                },
+            }
+        )
+
+        # Then, if the span has a routing decision, emit the typed event too.
+        from sidequest.telemetry.spans import SPAN_ROUTES
+
+        route = SPAN_ROUTES.get(span.name)
+        if route is None:
+            return
+
+        try:
+            fields = route.extract(span)
+        except Exception as exc:  # noqa: BLE001
+            # Per CLAUDE.md: no silent fallbacks. Surface the failure on the bus
+            # so the operator sees that the translator is broken, not silently
+            # missing typed events.
+            logger.exception("watcher.route_extract_failed span=%s", span.name)
+            self._hub.publish(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "component": "watcher",
+                    "event_type": "validation_warning",
+                    "severity": "error",
+                    "fields": {
+                        "check": "route_extract",
+                        "span": span.name,
+                        "error": str(exc),
+                    },
+                }
+            )
+            return
+
+        # Inferred severity per spec §6.5.
+        typed_severity = severity
+        if route.event_type == "json_extraction_result":
+            tier = fields.get("tier")
+            if isinstance(tier, int) and tier > 1:
+                typed_severity = "warning"
+        # Span-attribute escape hatch for routes that need warning-grade
+        # state_transition (e.g. NPC identity drift). The translator
+        # otherwise can't express "warning" because OK/ERROR are the
+        # only two OTEL Status states. Set ``severity`` as a span
+        # attribute in the helper to opt in.
+        attr_severity = attrs.get("severity")
+        if isinstance(attr_severity, str) and attr_severity in {"info", "warning", "error"}:
+            typed_severity = attr_severity
+
+        self._hub.publish(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "component": route.component,
+                "event_type": route.event_type,
+                "severity": typed_severity,
+                "fields": fields,
+            }
+        )
 
     def shutdown(self) -> None:
         return

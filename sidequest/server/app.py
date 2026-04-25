@@ -28,6 +28,7 @@ from sidequest.server.watcher import (
     watcher_hub,
 )
 from sidequest.server.websocket import ws_endpoint
+from sidequest.telemetry.validator import Validator
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,19 @@ def create_app(
     # subsystem code (session_handler, orchestrator) can publish semantic
     # events without threading a reference through every constructor.
     app.state.watcher_hub = watcher_hub
+    app.state.validator = Validator()
+
+    @app.on_event("startup")
+    async def _start_validator() -> None:
+        await app.state.validator.start()
+        logger.info("validator.startup_wired")
+
+    @app.on_event("shutdown")
+    async def _stop_validator() -> None:
+        v = getattr(app.state, "validator", None)
+        if v is not None:
+            await v.shutdown(grace_seconds=2.0)
+            logger.info("validator.shutdown_wired")
 
     @app.on_event("startup")
     async def _wire_watcher() -> None:
@@ -182,6 +196,7 @@ def create_app(
             claude_client_factory=app.state.claude_client_factory,
             genre_pack_search_paths=app.state.genre_pack_search_paths,
             save_dir=app.state.save_dir,
+            validator=app.state.validator,
         )
         await ws_endpoint(websocket, handler)
 
