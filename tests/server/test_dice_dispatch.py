@@ -132,7 +132,7 @@ class TestDispatchDiceThrow:
         pack = _pack_with_combat()
         enc = _make_encounter()
         outcome = dispatch_dice_throw(
-            payload=_throw(face=17),
+            payload=_throw(face=13),
             rolling_player_id="p1",
             character_name="Bob",
             character_stats={"STRENGTH": 16},  # +3 modifier
@@ -142,16 +142,16 @@ class TestDispatchDiceThrow:
             round_number=1,
             room_broadcast=None,
         )
-        # 17 + 3 = 20 >= DC(10 + |2|*2 = 14) → Success
+        # 13 + 3 = 16 >= DC(10 + |2|*2 = 14) → Success (margin 2 < DECISIVE_MARGIN)
         assert outcome.outcome is RollOutcome.Success
-        assert outcome.result.total == 20
+        assert outcome.result.total == 16
         assert outcome.result.difficulty == 14
         assert outcome.request.modifier == 3
         assert outcome.request.rolling_player_id == "p1"
         # Beat applied: metric +2 (before 0, after 2)
         assert enc.metric.current == 2
         assert "[BEAT_RESOLVED] Kick Door" in outcome.replay_action_text
-        assert "Roll: 20 (Success)" in outcome.replay_action_text
+        assert "Roll: 16 (Success)" in outcome.replay_action_text
 
     def test_crit_success_bypasses_dc(self) -> None:
         pack = _pack_with_combat()

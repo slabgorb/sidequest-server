@@ -222,7 +222,7 @@ async def test_dice_throw_stashes_pending_roll_outcome(session_handler_factory):
 
     handler._execute_narration_turn = _capture_and_skip  # type: ignore[method-assign]
 
-    await handler.handle_message(_throw(face=18))
+    await handler.handle_message(_throw(face=14))
 
     assert stashed == [RollOutcome.Success], (
         f"DICE_THROW must stash the RollOutcome on sd.pending_roll_outcome "
