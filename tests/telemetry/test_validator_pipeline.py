@@ -287,3 +287,55 @@ async def test_validator_emits_periodic_queue_depth(captured_events) -> None:
         and "queue_depth" in str(e["fields"])
     ]
     assert health, "expected validator queue_depth heartbeat"
+
+
+@pytest.mark.asyncio
+async def test_validator_survives_crashing_check(captured_events) -> None:
+    """A check that raises must not kill the task; other checks still run."""
+    v = Validator()
+
+    async def boom(_record: TurnRecord) -> None:
+        raise RuntimeError("intentional")
+
+    async def benign(_record: TurnRecord) -> None:
+        from sidequest.telemetry.validator import publish_event as pe
+
+        pe(
+            "validation_warning",
+            {"check": "benign", "noted": True},
+            component="validator",
+        )
+
+    v._checks = [boom, benign]
+    await v.start()
+    try:
+        await v.submit(_make_record())
+        await asyncio.sleep(0.2)
+    finally:
+        await v.shutdown()
+
+    crash_events = [
+        e for e in captured_events
+        if e["event_type"] == "validation_warning" and "intentional" in str(e["fields"])
+    ]
+    benign_events = [
+        e for e in captured_events
+        if e["event_type"] == "validation_warning" and e["fields"].get("check") == "benign"
+    ]
+    assert crash_events, "crash should be reported as validation_warning"
+    assert benign_events, "benign check must still run after the crashing one"
+
+
+@pytest.mark.asyncio
+async def test_backpressure_drops_oldest_and_emits_warning(captured_events) -> None:
+    v = Validator(queue_maxsize=2)
+    for i in range(5):
+        await v.submit(_make_record(turn_id=i))
+
+    drops = [
+        e for e in captured_events
+        if e["event_type"] == "validation_warning"
+        and e["fields"].get("reason") == "queue_full"
+    ]
+    assert drops, "queue-full should publish a warning"
+    assert v.dropped_records >= 3
