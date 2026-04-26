@@ -6,9 +6,15 @@ Re-exported by session_handler for back-compat.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.rules import ResolutionMode
+from sidequest.server.dispatch.sealed_letter import (
+    SealedLetterOutcome,
+    resolve_sealed_letter_lookup,
+)
 from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
 )
@@ -23,6 +29,25 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class NarrationApplyOutcome:
+    """Aggregate result of applying a NarrationTurnResult to a snapshot.
+
+    Carries the per-dispatch-branch outcome objects so callers can read
+    them without re-implementing the dispatch logic. Currently only the
+    sealed-letter (dogfight) branch surfaces an outcome — extend with
+    additional fields as other branches grow structured returns.
+
+    All fields are ``None`` when the corresponding branch did not fire
+    this turn (no encounter, wrong resolution_mode, no beat_selections,
+    early-return on non-NarrationTurnResult input, etc.). Callers that
+    don't care can ignore the return value entirely — it is purely
+    additive over the prior ``None`` return.
+    """
+
+    sealed_letter: SealedLetterOutcome | None = None
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -31,7 +56,7 @@ def _apply_narration_result_to_snapshot(
     pack: GenrePack | None = None,
     dice_failed: bool | None = None,
     dice_actor: str | None = None,
-) -> None:
+) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
     Phase 1: location, quest_updates, lore_established, npc_registry,
@@ -53,8 +78,10 @@ def _apply_narration_result_to_snapshot(
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
+    outcome = NarrationApplyOutcome()
+
     if not isinstance(result, NarrationTurnResult):
-        return
+        return outcome
 
     if result.location:
         old_loc = snapshot.location
@@ -294,8 +321,69 @@ def _apply_narration_result_to_snapshot(
                 raise ValueError(
                     f"active encounter type {enc.encounter_type!r} not in pack"
                 )
-            beat_by_id = {b.id: b for b in cdef.beats}
 
+            # ---- Sealed-letter lookup branch (T5, dogfight port) ----
+            # When the confrontation declares ResolutionMode.sealed_letter_lookup
+            # we resolve via cross-product cell lookup instead of the legacy
+            # apply_beat path. Maneuver IDs and beat IDs share a namespace by
+            # content convention (the dogfight beats ARE the maneuvers — see
+            # tests/genre/test_dogfight_content_loading.py::
+            # test_dogfight_beats_cover_every_consumed_maneuver), so we
+            # repurpose ``beat_selections[].beat_id`` as the maneuver commit
+            # for that actor. The resolver raises ValueError when commits are
+            # missing a role or when a maneuver isn't in maneuvers_consumed.
+            #
+            # Sealed-letter resolution is EXCLUSIVE of the legacy beat loop —
+            # because maneuver IDs collide with beat IDs by content design,
+            # falling through to apply_beat would double-apply mechanics.
+            if cdef.resolution_mode == ResolutionMode.sealed_letter_lookup:
+                if cdef.interaction_table is None:
+                    raise ValueError(
+                        f"confrontation {enc.encounter_type!r} declares "
+                        f"resolution_mode=sealed_letter_lookup but has no "
+                        f"interaction_table — cannot dispatch sealed-letter "
+                        f"resolution"
+                    )
+
+                commits: dict[str, str] = {}
+                for sel in result.beat_selections:
+                    actor = enc.find_actor(sel.actor)
+                    if actor is None:
+                        raise ValueError(
+                            f"beat_selection actor {sel.actor!r} not found "
+                            f"on sealed-letter encounter "
+                            f"{enc.encounter_type!r}"
+                        )
+                    commits[actor.role] = sel.beat_id
+
+                sl_outcome = resolve_sealed_letter_lookup(
+                    enc, commits, cdef.interaction_table,
+                )
+                outcome.sealed_letter = sl_outcome
+                # Replace, do not append: only the most recent cell's hint
+                # is relevant context for the next narrator turn.
+                # ``narrator_hints`` is consumed by
+                # ``sidequest.agents.encounter_render`` which "; "-joins
+                # the list into the prompt — appending across turns would
+                # bloat the prompt with stale hints (turn 1's "merge"
+                # hint is misleading once turn 5 is a knife fight).
+                if sl_outcome.narration_hint:
+                    enc.narrator_hints = [sl_outcome.narration_hint]
+                else:
+                    enc.narrator_hints = []
+                # Status-change processing further down still runs because
+                # we only short-circuit the beat-selection block, not the
+                # whole snapshot mutation phase.
+                # Fall-through: skip beat loop by NOT defining beat_by_id
+                # and gating the loop below.
+                _legacy_beat_path = False
+            else:
+                _legacy_beat_path = True
+                beat_by_id = {b.id: b for b in cdef.beats}
+        else:
+            _legacy_beat_path = False
+
+        if _legacy_beat_path:
             selections = result.beat_selections
             if dice_failed is not None and selections:
                 # Dice-replay turns: dispatch/dice.py already applied the
@@ -350,8 +438,12 @@ def _apply_narration_result_to_snapshot(
                     raise ValueError(
                         f"unknown beat_id {sel.beat_id!r} for encounter {enc.encounter_type!r}"
                     )
-                outcome = sel.outcome  # narrator-declared tier
-                result_apply = apply_beat(enc, actor, beat, outcome, turn=turn_num)
+                # Renamed from `outcome` to `tier` to avoid shadowing the
+                # function-scoped `outcome = NarrationApplyOutcome()`. The
+                # legacy beat path was silently returning RollOutcome from
+                # the last selection instead of the apply-outcome dataclass.
+                tier = sel.outcome  # narrator-declared tier
+                result_apply = apply_beat(enc, actor, beat, tier, turn=turn_num)
                 if result_apply.skipped_reason is not None:
                     with encounter_beat_skipped_span(
                         reason=result_apply.skipped_reason,
@@ -473,6 +565,8 @@ def _apply_narration_result_to_snapshot(
                 },
                 component="encounter",
             )
+
+    return outcome
 
 
 def _build_resolution_signal(enc: object) -> object:
