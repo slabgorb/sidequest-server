@@ -14,10 +14,13 @@ class Prompts(BaseModel):
     """LLM prompt templates for different agent roles.
 
     Genre-specific prompts (``ritual``, ``debt_collection``,
-    ``session_opener_template``) are authored in heavy_metal and
-    spaghetti_western. Rust silently dropped them; accepted here as
-    pass-through. Consumers should look them up by key when a genre
-    context triggers the corresponding scene.
+    ``session_opener_template``, ``scene_description``) are authored
+    per-pack and accepted here as pass-through. Consumers should look
+    them up by key when a genre context triggers the corresponding
+    scene. ``scene_description`` is the victoria pack's gothic
+    establishing-shot prompt ("Describe locations through... before
+    anyone speaks") — added when its absence blocked the entire
+    Brontë pack from loading (playtest 2026-04-26, Sonia's session).
     """
 
     model_config = {"extra": "forbid"}
@@ -35,6 +38,7 @@ class Prompts(BaseModel):
     ritual: str | None = None
     debt_collection: str | None = None
     session_opener_template: str | None = None
+    scene_description: str | None = None
 
 
 class OpeningHook(BaseModel):
