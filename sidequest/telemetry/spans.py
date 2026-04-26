@@ -454,6 +454,14 @@ SPAN_MP_SLUG_CONNECT = "mp.slug_connect"
 SPAN_MP_SEAT = "mp.seat"
 SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 
+# ---------------------------------------------------------------------------
+# Lobby — sidequest-server/rest.py
+# Emitted when the lobby's force_new flag triggers slug disambiguation,
+# so the GM panel can see the rename rather than wonder why the typed
+# name suddenly maps to "<slug>-2".
+# ---------------------------------------------------------------------------
+SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED = "lobby.force_new_disambiguated"
+
 # Local DM (Group B) — decomposer + subsystem bank
 # Emitted by sidequest/agents/local_dm.py and sidequest/agents/subsystems/__init__.py
 # so the GM panel can verify the decomposer actually ran and which subsystems
@@ -819,6 +827,35 @@ def mp_player_action_paused_span(
     ) as span:
         yield span
 
+
+@contextmanager
+def lobby_force_new_disambiguated_span(
+    requested_slug: str,
+    final_slug: str,
+    attempts: int,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED.
+
+    Emitted when POST /api/games receives ``force_new=True`` and the
+    naturally-derived slug already exists, so the server appends a numeric
+    counter to mint a fresh slug. Surfacing the rename keeps the GM panel
+    honest — without it the lobby would silently route a "new" journey to
+    a slug the user never asked for.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED,
+        attributes={
+            "requested_slug": requested_slug,
+            "final_slug": final_slug,
+            "attempts": attempts,
+            **attrs,
+        },
+    ) as span:
+        yield span
 
 
 # ---------------------------------------------------------------------------
@@ -2126,6 +2163,8 @@ FLAT_ONLY_SPANS.update(
         SPAN_MP_SLUG_CONNECT,
         SPAN_MP_SEAT,
         SPAN_MP_PLAYER_ACTION_PAUSED,
+        # Lobby
+        SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED,
         # Encounter (dual-track momentum, spec 2026-04-25) — flat-only baseline.
         # Routing decisions land with the GM panel encounter timeline rollout.
         SPAN_ENCOUNTER_BEAT_SKIPPED,

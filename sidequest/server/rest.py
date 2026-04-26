@@ -101,6 +101,10 @@ class CreateGameRequest(BaseModel):
     genre_slug: str
     world_slug: str
     mode: GameMode  # pydantic rejects unknown enum values with 422
+    # Lobby companions to sidequest-ui develop 1436ebd. Both optional so older
+    # clients (and curl-based smoke tests) keep working without a body change.
+    player_name: str | None = None
+    force_new: bool = False
 
 
 class GameResponse(BaseModel):
@@ -109,6 +113,9 @@ class GameResponse(BaseModel):
     genre_slug: str
     world_slug: str
     resumed: bool
+    # Echoed back so the lobby can display the typed name without a second
+    # round-trip; ``None`` when the request did not send one.
+    player_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -621,12 +628,58 @@ def create_rest_router() -> APIRouter:
         exists for that slug, it is returned in frozen mode — the original mode,
         genre_slug, and world_slug are preserved and the new request's mode is
         ignored.
+
+        Lobby contract (companions to sidequest-ui develop 1436ebd):
+          - ``player_name``: typed name from the lobby; threaded onto the
+            response so the UI can confirm the server received it.
+          - ``force_new``: when True, a colliding base slug is *not* returned
+            as a resume — instead the server appends a numeric disambiguator
+            (``-2``, ``-3``, ...) and emits ``lobby.force_new_disambiguated``.
         """
-        from sidequest.telemetry.spans import mp_game_created_span
+        from sidequest.telemetry.spans import (
+            lobby_force_new_disambiguated_span,
+            mp_game_created_span,
+        )
 
         save_dir: Path = request.app.state.save_dir
         today_fn = getattr(request.app.state, "today_fn", _date_cls.today)
-        slug = generate_slug(world_slug=req.world_slug, today=today_fn(), mode=req.mode)
+        base_slug = generate_slug(world_slug=req.world_slug, today=today_fn(), mode=req.mode)
+
+        # ----- force_new: disambiguate before touching the store ---------
+        # When the lobby insists this is a fresh journey, a same-day same-mode
+        # collision must not silently resume the prior session. Walk -2, -3,
+        # ... until we find an unclaimed slug.
+        slug = base_slug
+        attempts = 1
+        if req.force_new:
+            probe_db = db_path_for_slug(save_dir, slug)
+            if probe_db.exists():
+                probe_store = SqliteStore(probe_db)
+                probe_store.initialize()
+                if get_game(probe_store, slug) is not None:
+                    while True:
+                        attempts += 1
+                        candidate = f"{base_slug}-{attempts}"
+                        cand_db = db_path_for_slug(save_dir, candidate)
+                        if not cand_db.exists():
+                            slug = candidate
+                            break
+                        cand_store = SqliteStore(cand_db)
+                        cand_store.initialize()
+                        if get_game(cand_store, candidate) is None:
+                            slug = candidate
+                            break
+                    with lobby_force_new_disambiguated_span(
+                        requested_slug=base_slug,
+                        final_slug=slug,
+                        attempts=attempts,
+                        player_name=req.player_name or "",
+                        mode=str(req.mode.value) if hasattr(req.mode, "value") else str(req.mode),
+                        genre_slug=req.genre_slug,
+                        world_slug=req.world_slug,
+                    ):
+                        pass
+
         db = db_path_for_slug(save_dir, slug)
         db.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteStore(db)
@@ -636,7 +689,8 @@ def create_rest_router() -> APIRouter:
         if existing is not None:
             # Existing row "wins" — emit span with the frozen metadata so GM
             # panel sees which mode/genre/world are actually in effect, not
-            # what the client requested.
+            # what the client requested. (force_new path can't land here:
+            # we picked an unused slug above.)
             with mp_game_created_span(
                 slug=slug,
                 mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
@@ -648,6 +702,7 @@ def create_rest_router() -> APIRouter:
                     slug=slug, mode=existing.mode,
                     genre_slug=existing.genre_slug, world_slug=existing.world_slug,
                     resumed=True,
+                    player_name=req.player_name,
                 )
                 return JSONResponse(status_code=200, content=payload.model_dump())
 
@@ -657,6 +712,8 @@ def create_rest_router() -> APIRouter:
             genre_slug=req.genre_slug,
             world_slug=req.world_slug,
             resumed=False,
+            player_name=req.player_name or "",
+            force_new=req.force_new,
         ):
             upsert_game(store, slug=slug, mode=req.mode,
                         genre_slug=req.genre_slug, world_slug=req.world_slug)
@@ -664,6 +721,7 @@ def create_rest_router() -> APIRouter:
                 slug=slug, mode=req.mode,
                 genre_slug=req.genre_slug, world_slug=req.world_slug,
                 resumed=False,
+                player_name=req.player_name,
             )
 
     @router.get("/api/sessions/{slug}/encounter_events")
