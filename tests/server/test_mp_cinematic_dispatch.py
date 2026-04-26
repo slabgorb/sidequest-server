@@ -76,3 +76,49 @@ def test_seated_player_count_after_seat() -> None:
     room.connect("p2", socket_id="s2")
     room.seat("p2", character_slot="Zanzibar Jones")
     assert room.seated_player_count() == 2
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 3 — buffer+barrier wiring
+# ---------------------------------------------------------------------------
+
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+
+from sidequest.protocol.messages import PlayerActionMessage, PlayerActionPayload  # noqa: E402
+from sidequest.protocol.types import NonBlankString  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_first_of_two_players_buffers_and_returns_empty(
+    session_handler_factory,
+) -> None:
+    """When player 1 submits in a 2-seat room, the action is buffered and
+    the handler returns [] (still waiting on player 2). The narrator must
+    NOT run yet."""
+    handler, sd, room = session_handler_factory(
+        slug="test-mp-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p1", "Gladstone"),
+    )
+    # Spy on _execute_narration_turn — it must NOT be called this turn.
+    handler._execute_narration_turn = AsyncMock(  # type: ignore[method-assign]
+        return_value=[],
+    )
+
+    msg = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I prepare for the dungeon"),
+        ),
+        player_id="p1",
+    )
+    result = await handler._handle_player_action(msg)
+
+    assert result == []
+    handler._execute_narration_turn.assert_not_called()
+    # Buffer holds Gladstone's action.
+    drained = room.drain_pending_actions()
+    assert len(drained) == 1
+    assert drained[0][0] == "p1"
+    assert drained[0][1].character_name == "Gladstone"
+    assert drained[0][1].action == "I prepare for the dungeon"

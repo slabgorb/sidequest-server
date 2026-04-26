@@ -75,6 +75,7 @@ from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
 )
+from sidequest.game.turn import TurnPhase
 from sidequest.game.status import Status
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -3426,9 +3427,15 @@ class WebSocketSessionHandler:
         # 2026-04-25 "No peer-turn signal"). exclude_socket_id=None — the
         # actor receives it too; their banner already prefers "thinking" over
         # "you" while ``thinking=true`` is local.
+        # Hoist acting_name so the buffer write below can reference it even
+        # when _resolve_acting_character_name raises (falls back to player_name).
+        acting_name = (
+            _resolve_acting_character_name(sd, self._room)
+            if self._room is not None and sd.player_name
+            else sd.player_name
+        )
         if self._room is not None and sd.player_name:
             try:
-                acting_name = _resolve_acting_character_name(sd, self._room)
                 turn_active_msg = TurnStatusMessage(
                     payload=TurnStatusPayload(
                         player_name=NonBlankString(acting_name),
@@ -3458,6 +3465,31 @@ class WebSocketSessionHandler:
 
         lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(sd, lore_context=lore_context, room=self._room)
+
+        # ADR-036 Cinematic mode wiring. In multiplayer, every player's
+        # submission goes into the per-room buffer and calls submit_input()
+        # on the TurnManager barrier. If the barrier hasn't fired yet
+        # (still in InputCollection), this handler returns []; another
+        # player's later submission will fire the barrier and dispatch the
+        # narrator with the combined action. Solo rooms (seated_player_count
+        # == 1) flip the barrier on the first call and continue into the
+        # elected branch immediately — zero overhead.
+        if self._room is not None:
+            snapshot = sd.snapshot
+            self._room.record_pending_action(
+                sd.player_id, acting_name, action,
+            )
+            snapshot.turn_manager.set_player_count(self._room.seated_player_count())
+            snapshot.turn_manager.submit_input(sd.player_id)
+            if snapshot.turn_manager.get_phase() == TurnPhase.InputCollection:
+                # Still waiting on other seated players. Broadcasts already
+                # delivered turn_status_active above; the dispatcher will
+                # handle the actual narration when the last submission arrives.
+                return []
+            # Barrier fired — fall through to the existing dispatch below.
+            # NOTE: Task 4 will replace this fall-through with the elected
+            # dispatch branch (drain buffer, build combined action, etc.).
+
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
