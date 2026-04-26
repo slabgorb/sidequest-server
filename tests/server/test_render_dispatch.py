@@ -198,7 +198,7 @@ async def test_render_dispatch_otel_includes_genre_and_world(
     """
     import asyncio as _asyncio
 
-    from sidequest.telemetry.watcher_hub import WatcherHub, watcher_hub
+    from sidequest.telemetry.watcher_hub import watcher_hub
 
     sock = short_sock
     daemon = _FakeDaemon(
