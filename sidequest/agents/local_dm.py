@@ -3,7 +3,19 @@
 Spec: docs/superpowers/specs/2026-04-23-local-dm-decomposer-design.md §3-§7
 
 Reads player action + game state. Emits DispatchPackage (spec §5).
-Never writes prose. Runs on a persistent Haiku session (ADR-066 pattern).
+Never writes prose.
+
+**Session model: stateless per turn.** Spec §461 says "Start stateful;
+fall back to stateless if drift bugs surface." Drift surfaced in playtest
+2026-04-26 — turn 1 produced clean DispatchPackages, but turns 2+
+accumulated schema violations every turn (literal_error on
+``narrator_instructions.kind``, fabricated ``lethality`` shape with
+``threat_vector``/``severity``/``combatant_primary`` fields the
+``LethalityVerdict`` model rejects). The persistent Haiku session was
+de-prioritizing the system prompt's RULES block as state_summary filled
+the resumed-session context. Falling back to stateless restates the
+system prompt every turn and removes drift accumulation; we pay one
+extra establishment per turn for reliable schema adherence.
 
 Group B scope: single-player decompose. Multiplayer batching lands in
 Group G alongside the multiplayer session model wiring.
@@ -11,11 +23,11 @@ Group G alongside the multiplayer session model wiring.
 On any parse failure, LLM timeout, or unexpected exception, emits a
 degraded=True package (spec §6.6) — the table never blocks.
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from threading import Lock
 
 from pydantic import ValidationError
 
@@ -108,6 +120,18 @@ RULES:
 - "cross_player" stays empty in Phase A single-player decompose.
 - Every dispatch REQUIRES a unique idempotency_key (string).
 - Every dispatch and directive REQUIRES a full visibility tag.
+- "dispatch[].subsystem" is a CLOSED ENUM. The only three legal values
+  in Phase A are:
+    reflect_absence / distinctive_detail_hint / npc_agency
+  Do NOT invent subsystems like `character_action`, `examination`,
+  `inventory_action`, `movement`, `perception`, `combat_action`, or any
+  other semantic bucket. **The narrator handles every player action as
+  prose** — drawing a sword, examining tally marks, lighting a torch,
+  descending a rope, scouting a passage are NOT subsystem dispatches.
+  Emit `dispatch: []` for any turn whose action does not specifically
+  require one of the three legal subsystems above. Over-decomposing
+  silently absorbs intent: the runtime logs `subsystems.unknown` and the
+  mechanic never engages.
 - "narrator_instructions[].kind" is a CLOSED ENUM. The only legal values
   are the four listed above:
     must_narrate / must_not_narrate /
@@ -171,9 +195,13 @@ def _apply_baseline_to_package_dict(
         actor = pd.get("player_id", "")
         new_dispatches = []
         for d in pd.get("dispatch", []):
-            new_dispatches.append(apply_visibility_baseline(
-                d, baseline=baseline, actor_player_id=actor,
-            ))
+            new_dispatches.append(
+                apply_visibility_baseline(
+                    d,
+                    baseline=baseline,
+                    actor_player_id=actor,
+                )
+            )
         pd["dispatch"] = new_dispatches
 
 
@@ -272,17 +300,25 @@ class LocalDM:
 
     Haiku-backed in Group B; swap for local fine-tune in Group E by
     replacing the `LlmClient` client injection.
+
+    Stateless per turn — every call sends the full system prompt with a
+    fresh session id, so the closed-enum and ``lethality=[]`` constraints
+    are restated every turn instead of relying on resumed-session memory.
+    See module docstring for the playtest evidence behind the stateless
+    fallback (spec §461).
     """
 
     def __init__(self, client: LlmClient | None = None) -> None:
         self._client: LlmClient = client if client is not None else ClaudeClient()
-        self._session_id: str | None = None
-        self._session_lock: Lock = Lock()
 
     def reset_session(self) -> None:
-        """Clear the persistent session id (ADR-066 reset semantics)."""
-        with self._session_lock:
-            self._session_id = None
+        """No-op kept for callers that haven't migrated off the stateful API.
+
+        LocalDM is stateless per turn — there is no cached session id to
+        reset. Method retained so external resets (e.g., on snapshot
+        rollback) don't fail with AttributeError.
+        """
+        return None
 
     async def decompose(
         self,
@@ -311,33 +347,24 @@ class LocalDM:
         ) as span:
             user_prompt = _build_user_prompt(turn_id, player_id, raw_action, state_summary)
 
-            with self._session_lock:
-                current_session = self._session_id
-
             try:
+                # Stateless per turn — always pass system_prompt and let
+                # send_with_session allocate a fresh session id. Spec §461
+                # fallback after drift surfaced in playtest 2026-04-26.
                 response = await self._client.send_with_session(
                     prompt=user_prompt,
                     model=DECOMPOSER_MODEL,
-                    session_id=current_session,
-                    system_prompt=_DECOMPOSER_SYSTEM_PROMPT if current_session is None else None,
+                    session_id=None,
+                    system_prompt=_DECOMPOSER_SYSTEM_PROMPT,
                     allowed_tools=[],
                     env_vars={},
                 )
             except Exception as exc:  # TimeoutError, subprocess failure, whatever.
                 logger.warning("local_dm.client_exception turn_id=%s exc=%s", turn_id, exc)
-                # Stale session id after transport/auth failure would produce an
-                # infinite degraded loop next turn. Reset so the next call establishes.
-                with self._session_lock:
-                    self._session_id = None
                 reason = f"client_exception: {exc}"
                 span.set_attribute("degraded", True)
                 span.set_attribute("degraded_reason", reason)
                 return _degraded_package(turn_id, reason=reason)
-
-            # Cache session id after first successful call.
-            if response.session_id:
-                with self._session_lock:
-                    self._session_id = response.session_id
 
             raw_text = (response.text or "").strip()
             if not raw_text:
@@ -354,7 +381,8 @@ class LocalDM:
             cleaned_text, cleanup_steps = _extract_json_object(raw_text)
             if cleanup_steps:
                 span.set_attribute(
-                    "json_cleanup_steps", ",".join(cleanup_steps),
+                    "json_cleanup_steps",
+                    ",".join(cleanup_steps),
                 )
                 logger.info(
                     "local_dm.json_cleanup turn_id=%s steps=%s",
@@ -366,6 +394,7 @@ class LocalDM:
                 # Parse to dict first so we can apply baseline defaults to
                 # VisibilityTags before Pydantic validation locks them in.
                 import json as _json
+
                 raw_dict = _json.loads(cleaned_text)
                 if visibility_baseline is not None:
                     _apply_baseline_to_package_dict(raw_dict, visibility_baseline)
@@ -379,7 +408,9 @@ class LocalDM:
             except (ValueError, TypeError) as exc:  # json.JSONDecodeError is ValueError
                 logger.warning(
                     "local_dm.parse_failure turn_id=%s exc=%s preview=%r",
-                    turn_id, exc, cleaned_text[:160],
+                    turn_id,
+                    exc,
+                    cleaned_text[:160],
                 )
                 reason = f"parse_failure: {type(exc).__name__}"
                 span.set_attribute("degraded", True)
