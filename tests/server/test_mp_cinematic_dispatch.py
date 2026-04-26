@@ -245,3 +245,45 @@ async def test_mp_round_advances_interaction_exactly_once(
         f"interaction advanced by {final_interaction - initial_interaction}, "
         f"expected exactly 1 per multiplayer round"
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 5 — solo immediate dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_solo_room_dispatches_immediately_no_buffering_observable(
+    session_handler_factory,
+) -> None:
+    """A single seated player triggers the barrier on their first submission.
+    The narrator runs exactly once on that submission with the player's
+    action wrapped as labeled prose."""
+    handler, sd, room = session_handler_factory(
+        slug="test-solo-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone")],
+        active_player=("p1", "Gladstone"),
+    )
+    captured: list[str] = []
+
+    async def fake_execute(sd, action, turn_context):
+        captured.append(action)
+        return []
+
+    handler._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    msg = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I look around"),
+        ),
+        player_id="p1",
+    )
+    result = await handler._handle_player_action(msg)
+
+    assert result == []
+    assert len(captured) == 1
+    # With one seated player, the combined-prose builder still runs but the
+    # output is just one line.
+    assert "Gladstone: I look around" in captured[0]
+    assert room.last_dispatched_round == 1
