@@ -232,10 +232,7 @@ class _FakeClaudeClient:
     def _respond_for_model(
         self, model: str, session_id: str | None = None,
     ) -> ClaudeResponse:
-        if model == "haiku":
-            text = _fake_dispatch_package_json()
-        else:
-            text = _FAKE_NARRATION_TEXT
+        text = _fake_dispatch_package_json() if model == "haiku" else _FAKE_NARRATION_TEXT
         return ClaudeResponse(
             text=text,
             session_id=session_id or self._session_id,
@@ -331,31 +328,49 @@ def mock_claude_client_factory(
 
 @pytest.fixture
 def session_handler_factory(tmp_path):
-    """Return a factory callable ``(genre: str) -> (sd, handler)``.
+    """Return a factory callable with two calling conventions.
 
-    Builds a minimal ``_SessionData`` + ``WebSocketSessionHandler`` suitable
-    for unit-testing ``_execute_narration_turn`` without a real WebSocket or
-    LLM call. The test is responsible for overriding
+    **Single-player (legacy):** ``factory(genre="caverns_and_claudes")``
+    Returns ``(sd, handler)`` — a minimal ``_SessionData`` +
+    ``WebSocketSessionHandler`` suitable for unit-testing
+    ``_execute_narration_turn`` without a real WebSocket or LLM call. The
+    test is responsible for overriding
     ``sd.orchestrator.run_narration_turn`` with an ``AsyncMock``.
+
+    **Multiplayer (ADR-036):**
+    ``factory(slug=..., mode=GameMode.MULTIPLAYER, seat_players=[...], active_player=(...))``
+    Returns ``(handler, sd, room)`` — a fully wired multi-player setup where
+    ``handler._room`` is a ``SessionRoom`` with the given players seated.
 
     Task 11 (story 3.4): used by test_confrontation_dispatch_wiring.py.
     Task 16 (story 3.4): snapshot now includes a Character named "Rux" so
     XP-award tests can inspect ``sd.snapshot.characters[0].core.xp``.
+    Task 3 (ADR-036): extended with multiplayer calling convention.
     """
 
     import sidequest.genre.loader as _genre_loader_mod
     from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
-    from sidequest.game.persistence import SqliteStore
+    from sidequest.game.persistence import GameMode, SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import GenreLoader
     from sidequest.server.session_handler import (
         WebSocketSessionHandler,
         _SessionData,
+        _State,
     )
+    from sidequest.server.session_room import SessionRoom
 
-    def _make(genre: str):
+    def _make(
+        genre: str = "caverns_and_claudes",
+        *,
+        slug: str | None = None,
+        mode: GameMode | None = None,
+        seat_players: list[tuple[str, str]] | None = None,
+        active_player: tuple[str, str] | None = None,
+        existing_room: SessionRoom | None = None,
+    ):
         # Read DEFAULT_GENRE_PACK_SEARCH_PATHS from the module at call-time so
         # that the _fixture_pack_search_paths monkeypatch is visible here.
         pack = GenreLoader(_genre_loader_mod.DEFAULT_GENRE_PACK_SEARCH_PATHS).load(genre)
@@ -375,11 +390,18 @@ def session_handler_factory(tmp_path):
         snap.characters.append(char)
         store = SqliteStore.open_in_memory()
         orch = MagicMock(spec=Orchestrator)
+
+        # Determine player identity — defaults to legacy single-player "Rux".
+        if active_player is not None:
+            active_pid, active_name = active_player
+        else:
+            active_pid, active_name = "player-1", "Rux"
+
         sd = _SessionData(
             genre_slug=genre,
             world_slug="",
-            player_name="Rux",
-            player_id="player-1",
+            player_name=active_name,
+            player_id=active_pid,
             snapshot=snap,
             store=store,
             genre_pack=pack,
@@ -387,6 +409,81 @@ def session_handler_factory(tmp_path):
         )
         handler = WebSocketSessionHandler(save_dir=tmp_path)
         handler._session_data = sd
+
+        # ---- Multiplayer room wiring (ADR-036 Task 3) ----
+        if slug is not None and mode is not None and seat_players is not None:
+            # Force handler into Playing state so _handle_player_action reaches
+            # the barrier logic (MP tests start post-chargen). Only done here —
+            # not for the legacy single-player path — so tests that probe
+            # pre-connect guard behaviour (e.g. test_dice_throw_returns_error_when_not_playing)
+            # still see AwaitingConnect.
+            handler._state = _State.Playing
+
+            if existing_room is not None:
+                # Share the existing room — reuse its snapshot + store so the
+                # TurnManager barrier state is shared across handlers.
+                room = existing_room
+                snap = room.snapshot
+                store = room.store
+                # Rebuild _SessionData against the shared snapshot/store.
+                if active_player is not None:
+                    active_pid, active_name = active_player
+                else:
+                    active_pid, active_name = "player-1", "Rux"
+                sd = _SessionData(
+                    genre_slug=genre,
+                    world_slug="",
+                    player_name=active_name,
+                    player_id=active_pid,
+                    snapshot=snap,
+                    store=store,
+                    genre_pack=sd.genre_pack,
+                    orchestrator=sd.orchestrator,
+                )
+                sd.store.save = MagicMock()
+                sd.store.append_narrative = MagicMock()
+                handler._session_data = sd
+                handler._room = room
+                return handler, sd, room
+
+            # In MP mode, add a Character to the snapshot for each seat so
+            # that _resolve_acting_character_name can match by slot name.
+            # The legacy "Rux" character added above stays for compatibility
+            # but we also add one per seated player.
+            existing_names = {c.core.name for c in snap.characters}
+            for _pid, character_slot in seat_players:
+                if character_slot not in existing_names:
+                    mp_core = CreatureCore(
+                        name=character_slot,
+                        description=f"{character_slot} the adventurer",
+                        personality="bold",
+                        inventory=Inventory(),
+                    )
+                    mp_char = Character(
+                        core=mp_core,
+                        char_class="Fighter",
+                        race="Human",
+                        backstory="A wandering adventurer",
+                    )
+                    snap.characters.append(mp_char)
+                    existing_names.add(character_slot)
+
+            room = SessionRoom(slug=slug, mode=mode)
+            # Bind a snapshot + store so the room is fully initialised.
+            room.bind_world(snapshot=snap, store=store)
+            # Connect and seat every player.
+            for i, (pid, character_slot) in enumerate(seat_players):
+                room.connect(pid, socket_id=f"sock-{i}")
+                room.seat(pid, character_slot=character_slot)
+            handler._room = room
+            # Silence broadcast so tests don't need a real WebSocket.
+            room.broadcast = MagicMock()  # type: ignore[method-assign]
+            # Silence store side-effects.
+            sd.store.save = MagicMock()
+            sd.store.append_narrative = MagicMock()
+            return handler, sd, room
+
+        # Legacy return: (sd, handler).
         return sd, handler
 
     return _make
@@ -700,12 +797,7 @@ def encounter_dispatch_helper():
             for _ in range(20):
                 if snapshot.encounter is None or snapshot.encounter.resolved:
                     break
-                if winner == "opponent":
-                    actor_name = "Promo"
-                    npc_side = "opponent"
-                else:
-                    actor_name = "Sam"
-                    npc_side = "player"
+                actor_name = "Promo" if winner == "opponent" else "Sam"
                 result = NarrationTurnResult(
                     narration=f"{actor_name} strikes.",
                     beat_selections=[BeatSelection(

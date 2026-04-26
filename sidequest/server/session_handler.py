@@ -76,6 +76,7 @@ from sidequest.game.session import (
     NarrativeEntry,
 )
 from sidequest.game.status import Status
+from sidequest.game.turn import TurnPhase
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -3426,9 +3427,22 @@ class WebSocketSessionHandler:
         # 2026-04-25 "No peer-turn signal"). exclude_socket_id=None — the
         # actor receives it too; their banner already prefers "thinking" over
         # "you" while ``thinking=true`` is local.
+        # Hoist acting_name so the buffer write below can reference it even
+        # when _resolve_acting_character_name raises (falls back to player_name).
+        try:
+            acting_name = (
+                _resolve_acting_character_name(sd, self._room)
+                if self._room is not None and sd.player_name
+                else sd.player_name
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "session.acting_name_resolve_failed error=%s falling_back_to=%s",
+                exc, sd.player_name,
+            )
+            acting_name = sd.player_name
         if self._room is not None and sd.player_name:
             try:
-                acting_name = _resolve_acting_character_name(sd, self._room)
                 turn_active_msg = TurnStatusMessage(
                     payload=TurnStatusPayload(
                         player_name=NonBlankString(acting_name),
@@ -3458,6 +3472,80 @@ class WebSocketSessionHandler:
 
         lore_context = await self._retrieve_lore_for_turn(sd, action)
         turn_context = _build_turn_context(sd, lore_context=lore_context, room=self._room)
+
+        # ADR-036 Cinematic mode wiring. In multiplayer, every player's
+        # submission goes into the per-room buffer and calls submit_input()
+        # on the TurnManager barrier. If the barrier hasn't fired yet
+        # (still in InputCollection), this handler returns []; another
+        # player's later submission will fire the barrier and dispatch the
+        # narrator with the combined action. Solo rooms (seated_player_count
+        # == 1) flip the barrier on the first call and continue into the
+        # elected branch immediately — zero overhead.
+        if self._room is not None:
+            snapshot = sd.snapshot
+            self._room.record_pending_action(
+                sd.player_id, acting_name, action,
+            )
+            snapshot.turn_manager.set_player_count(self._room.seated_player_count())
+            snapshot.turn_manager.submit_input(sd.player_id)
+            if snapshot.turn_manager.get_phase() != TurnPhase.InputCollection:
+                # Barrier just fired on this submission — emit before the
+                # dispatch CAS so a failed dispatch still leaves the
+                # barrier-fired event visible.
+                _watcher_publish(
+                    "mp.barrier_fired",
+                    {
+                        "slug": self._room.slug,
+                        "round": snapshot.turn_manager.round,
+                        "player_count": self._room.seated_player_count(),
+                        "submitter_player_id": sd.player_id,
+                    },
+                    component="multiplayer",
+                )
+            if snapshot.turn_manager.get_phase() == TurnPhase.InputCollection:
+                # Still waiting on other seated players. Broadcasts already
+                # delivered turn_status_active above; the dispatcher will
+                # handle the actual narration when the last submission arrives.
+                return []
+
+            # Barrier fired — elect a single dispatcher per round via
+            # asyncio.Lock + last_dispatched_round CAS guard.
+            async with self._room.dispatch_lock:
+                # CAS guard uses interaction (monotonic per-narration counter)
+                # not round (which advances on narrative beats, not every turn).
+                current_interaction = snapshot.turn_manager.interaction
+                if self._room.last_dispatched_round >= current_interaction:
+                    # Lost the race; another handler already dispatched.
+                    return []
+                self._room.last_dispatched_round = current_interaction
+                pending = self._room.drain_pending_actions()
+
+            _watcher_publish(
+                "mp.round_dispatched",
+                {
+                    "slug": self._room.slug,
+                    "round": snapshot.turn_manager.round,
+                    "player_count": self._room.seated_player_count(),
+                    "action_lengths": {
+                        pid: len(p.action) for pid, p in pending
+                    },
+                    "combined_action_len": (
+                        sum(len(p.action) for _, p in pending)
+                        + sum(len(p.character_name) + 2 for _, p in pending)
+                    ),
+                },
+                component="multiplayer",
+            )
+
+            combined_action = "\n".join(
+                f"{p.character_name}: {p.action}" for _, p in pending
+            )
+            result = await self._execute_narration_turn(
+                sd, combined_action, turn_context,
+            )
+            return result
+
+        # Single-player path (room is None) — preserve original behavior.
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
@@ -4393,6 +4481,11 @@ class WebSocketSessionHandler:
             "location": sd.snapshot.location or "",
             "narration": result.narration,
             "genre": sd.genre_slug,
+            # Catalog-injected compose wiring (slice 1): the daemon scopes
+            # CharacterCatalog / PlaceCatalog / StyleCatalog by (genre, world).
+            # Without this field the daemon's compose conditional is dead and
+            # every render falls through to the prose-subject prompt path.
+            "world": sd.world_slug,
         }
         # Portrait initials overlay (story 37-30 AC-4): the daemon's
         # portrait composer needs the character's display name to draw

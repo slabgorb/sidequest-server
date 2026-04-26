@@ -7,9 +7,10 @@ and re-seat).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
@@ -17,8 +18,6 @@ from sidequest.game.session import GameSnapshot
 # Imported lazily inside the typing block to avoid an import cycle —
 # Orchestrator's module imports from sidequest.game (transitively),
 # and sidequest.server.session_room is imported very early.
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from sidequest.agents.orchestrator import Orchestrator
 
@@ -31,6 +30,19 @@ class SoloSlotConflict(Exception):
 class _Seat:
     player_id: str
     character_slot: str | None = None
+
+
+@dataclass
+class PendingAction:
+    """A buffered player action awaiting the round barrier (ADR-036).
+
+    Resolved at submit time so the elected dispatcher reads the labeled
+    prose back without re-resolving foreign player_ids without their
+    session data. See spec
+    docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
+    """
+    character_name: str
+    action: str
 
 
 @dataclass
@@ -57,7 +69,20 @@ class SessionRoom:
     # each player constructs their own Orchestrator at connect time and
     # the system collapses into parallel solo games — see playtest
     # 2026-04-26 "MP — players run as parallel solo games".
-    _orchestrator: "Orchestrator | None" = field(default=None, repr=False)
+    _orchestrator: Orchestrator | None = field(default=None, repr=False)
+    # ADR-036 Cinematic mode — round-level action buffer keyed by player_id.
+    # Drained by the elected dispatcher when TurnManager.submit_input flips
+    # the barrier from InputCollection to IntentRouting. See spec
+    # docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
+    _pending_actions: dict[str, PendingAction] = field(default_factory=dict)
+    # Election primitives for one-dispatch-per-round (ADR-036). The lock
+    # serializes elected handlers; the counter is the CAS guard so a
+    # second handler that wakes after the first commits the dispatch
+    # short-circuits instead of re-running the narrator. Counter source
+    # is TurnManager.interaction (monotonic per-exchange), not .round
+    # (advances on narrative beats only).
+    _dispatch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _last_dispatched_round: int = 0
 
     # ------------------------------------------------------------------
     # Canonical world state (ADR-037 Python port). The room owns the
@@ -114,8 +139,8 @@ class SessionRoom:
 
     def get_or_create_orchestrator(
         self,
-        factory: Callable[[], "Orchestrator"],
-    ) -> "Orchestrator":
+        factory: Callable[[], Orchestrator],
+    ) -> Orchestrator:
         """Return the room's orchestrator, creating it via ``factory`` on
         first call. Atomic under ``_lock``: a peer connecting on the
         same slug at the same instant cannot construct a second
@@ -144,7 +169,7 @@ class SessionRoom:
             return self._orchestrator
 
     @property
-    def orchestrator(self) -> "Orchestrator | None":
+    def orchestrator(self) -> Orchestrator | None:
         """Canonical orchestrator for the slug, or None before first bind."""
         return self._orchestrator
 
@@ -207,6 +232,54 @@ class SessionRoom:
     def absent_seated_player_ids(self) -> list[str]:
         with self._lock:
             return [p for p in self._seated if p not in self._connected]
+
+    def record_pending_action(
+        self, player_id: str, character_name: str, action: str,
+    ) -> None:
+        """Buffer one player's action for the current round (ADR-036).
+
+        Last-write-wins on duplicate submissions for the same player_id.
+        """
+        with self._lock:
+            self._pending_actions[player_id] = PendingAction(
+                character_name=character_name, action=action,
+            )
+
+    def drain_pending_actions(self) -> list[tuple[str, PendingAction]]:
+        """Return buffered actions in submission order and clear the buffer.
+
+        Returns ``[(player_id, PendingAction), ...]``. Order matters because
+        the combined-prose builder labels speakers in this order.
+        """
+        with self._lock:
+            drained = list(self._pending_actions.items())
+            self._pending_actions.clear()
+        return drained
+
+    @property
+    def dispatch_lock(self) -> asyncio.Lock:
+        """The per-room dispatch election lock (ADR-036)."""
+        return self._dispatch_lock
+
+    @property
+    def last_dispatched_round(self) -> int:
+        """Highest interaction counter for which a narrator dispatch has fired.
+
+        Named ``round`` for ADR-036 nomenclature, but the counter source is
+        ``TurnManager.interaction`` (which advances on every player-narrator
+        exchange) rather than ``TurnManager.round`` (which advances only on
+        meaningful narrative beats). This guarantees CAS uniqueness across
+        sequential dispatches.
+        """
+        return self._last_dispatched_round
+
+    @last_dispatched_round.setter
+    def last_dispatched_round(self, value: int) -> None:
+        self._last_dispatched_round = value
+
+    def seated_player_count(self) -> int:
+        """Number of seated players, regardless of connection state."""
+        return len(self.seated_player_ids())
 
     def slot_to_player_id(self) -> dict[str, str]:
         """Return a snapshot of {character_slot: player_id} for seated players.
