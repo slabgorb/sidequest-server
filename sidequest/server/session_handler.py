@@ -3503,7 +3503,6 @@ class WebSocketSessionHandler:
             result = await self._execute_narration_turn(
                 sd, combined_action, turn_context,
             )
-            snapshot.turn_manager.record_interaction()
             return result
 
         # Single-player path (room is None) — preserve original behavior.
