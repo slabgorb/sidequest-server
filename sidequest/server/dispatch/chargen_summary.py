@@ -29,10 +29,55 @@ from opentelemetry import trace
 
 from sidequest.game.builder import CharacterBuilder, humanize_snake_case
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.rules import RulesConfig
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
 )
+
+# Canonical chargen field keys used by ``chargen_field_labels`` lookups in
+# rules.yaml. Genre packs can override any subset; unspecified keys fall
+# through to the default labels below (which preserve the pre-existing
+# fantasy-pack vocabulary). Documented here, not duplicated in every
+# pack — packs opt in to renaming.
+DEFAULT_CHARGEN_FIELD_LABELS: dict[str, str] = {
+    "name": "Name",
+    "race": "Race",
+    "class": "Class",
+    "personality": "Personality",
+    "pronouns": "Pronouns",
+    "stats": "Stats",
+    "mutation": "Mutation",
+    "affinity": "Affinity",
+    "rig": "Rig",
+    "rig_trait": "Rig Trait",
+    "equipment": "Equipment",
+    "backstory": "Backstory",
+}
+
+
+def field_label(rules: RulesConfig, key: str) -> str:
+    """Return the display label for a chargen field.
+
+    Lookup precedence:
+
+    1. ``rules.chargen_field_labels[key]`` — per-pack override.
+    2. Legacy ``rules.race_label`` / ``rules.class_label`` for ``race``
+       and ``class`` — preserves the older one-off fields without
+       forcing packs to migrate.
+    3. ``DEFAULT_CHARGEN_FIELD_LABELS[key]`` — canonical fantasy label.
+
+    Unknown keys (i.e. keys not in the default map) return the key
+    as-is, preserving the title-cased convention used elsewhere.
+    """
+    override = rules.chargen_field_labels.get(key)
+    if override:
+        return override
+    if key == "race" and rules.race_label:
+        return rules.race_label
+    if key == "class" and rules.class_label:
+        return rules.class_label
+    return DEFAULT_CHARGEN_FIELD_LABELS.get(key, key)
 
 
 class _NameSource(str, Enum):
@@ -91,7 +136,19 @@ def render_confirmation_summary(
     )
 
     acc = builder.accumulated()
+    rules = builder.rules
     parts: list[str] = []
+    # Ordered preview dict — mirror of ``parts`` so the UI can render a
+    # structured character-sheet preview without parsing the joined
+    # summary string. Keys are the *resolved display labels* (already
+    # routed through ``field_label`` / ``chargen_field_labels``); the UI
+    # renders them verbatim.
+    preview: dict[str, str] = {}
+
+    def _add(key: str, value: str) -> None:
+        label = field_label(rules, key)
+        parts.append(f"{label}: {value}")
+        preview[label] = value
 
     # --- Name (scene > lobby > omit) --------------------------------------
     scene_name = builder.character_name()
@@ -107,43 +164,43 @@ def render_confirmation_summary(
             name_source = _NameSource.NONE
             resolved_name = None
     if resolved_name is not None:
-        parts.append(f"Name: {resolved_name}")
+        _add("name", resolved_name)
 
     # --- Race / Class / Personality ---------------------------------------
     # Only show fields the chargen actually accumulated. Genres like
     # caverns_and_claudes deliberately omit race/class scenes — we don't lie
     # with "Unknown" for fields the genre doesn't define.
     if acc.race_hint is not None:
-        parts.append(f"{builder.race_label()}: {acc.race_hint}")
+        _add("race", acc.race_hint)
 
     if acc.class_hint is not None:
-        parts.append(f"{builder.class_label()}: {acc.class_hint}")
+        _add("class", acc.class_hint)
     elif (default_class := builder.default_class()) is not None:
         # If the genre has a default_class in rules.yaml (e.g. caverns
         # default_class: Delver), show it on the summary so the player sees
         # what class their equipment will be loaded for.
-        parts.append(f"{builder.class_label()}: {default_class}")
+        _add("class", default_class)
 
     if acc.personality_trait is not None:
-        parts.append(f"Personality: {acc.personality_trait}")
+        _add("personality", acc.personality_trait)
 
     if acc.pronoun_hint is not None:
-        parts.append(f"Pronouns: {acc.pronoun_hint}")
+        _add("pronouns", acc.pronoun_hint)
 
     # --- Stats ------------------------------------------------------------
     rolled = builder.rolled_stats()
     if rolled is not None:
         stat_line = "  ".join(f"{name} {val}" for name, val in rolled)
-        parts.append(f"Stats: {stat_line}")
+        _add("stats", stat_line)
 
     if acc.mutation_hint is not None:
-        parts.append(f"Mutation: {humanize_snake_case(acc.mutation_hint)}")
+        _add("mutation", humanize_snake_case(acc.mutation_hint))
     if acc.affinity_hint is not None:
-        parts.append(f"Affinity: {acc.affinity_hint}")
+        _add("affinity", acc.affinity_hint)
     if acc.rig_type_hint is not None:
-        parts.append(f"Rig: {acc.rig_type_hint}")
+        _add("rig", acc.rig_type_hint)
     if acc.rig_trait is not None:
-        parts.append(f"Rig Trait: {acc.rig_trait}")
+        _add("rig_trait", acc.rig_trait)
 
     # --- Equipment (merge scene hints with pack starting equipment) -------
     # Resolve the class used for the starting_equipment lookup the same way
@@ -182,10 +239,15 @@ def render_confirmation_summary(
 
     if equipment_ids:
         display_items = [_resolve_item_display_name(pack, item_id) for item_id in equipment_ids]
-        parts.append(f"Equipment: {', '.join(display_items)}")
+        _add("equipment", ", ".join(display_items))
 
     if acc.background is not None:
-        parts.append(f"\nBackstory: {acc.background}")
+        # Backstory keeps its leading blank line in the joined summary
+        # (visual separation from the stat block) but is added to the
+        # preview dict normally.
+        backstory_label = field_label(rules, "backstory")
+        parts.append(f"\n{backstory_label}: {acc.background}")
+        preview[backstory_label] = acc.background
 
     summary = "\n".join(parts)
 
@@ -213,6 +275,14 @@ def render_confirmation_summary(
         scene_index=None,
         total_scenes=builder.total_scenes(),
         summary=summary,
+        # Structured mirror of the joined ``summary`` for the React
+        # client. Keys are the genre-resolved display labels (e.g.
+        # "Origin" instead of "Race" for the Victoria pack), values
+        # are the raw field strings. UI iterates this dict to render
+        # the "Your Character" preview without parsing the summary
+        # blob; the legacy ``summary`` is still emitted as a fallback
+        # for any client that pre-dates this field.
+        character_preview=preview if preview else None,
     )
     return CharacterCreationMessage(payload=payload, player_id=player_id)
 

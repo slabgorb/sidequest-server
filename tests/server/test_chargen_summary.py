@@ -545,3 +545,171 @@ class TestTelemetry:
         assert attrs["has_name"] is False
         assert attrs["equipment_source"] == "none"
         assert attrs["equipment_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# chargen_field_labels — per-pack character-sheet vocabulary
+# ---------------------------------------------------------------------------
+
+
+class TestChargenFieldLabels:
+    """Verifies that ``rules.chargen_field_labels`` re-labels the
+    confirmation summary lines and the structured ``character_preview``
+    dict that's emitted alongside the joined summary text.
+
+    Bug context: the Victoria pack rendered "Race: Colonial" because
+    the chargen summary hard-coded English fantasy labels regardless
+    of the genre pack. The fix routes every label through
+    ``field_label(rules, key)``, which prefers the per-pack override
+    when present and falls back to the canonical default otherwise.
+    """
+
+    def _victoria_rules(self) -> RulesConfig:
+        return RulesConfig(
+            stat_generation="point_buy",
+            point_buy_budget=27,
+            ability_score_names=["STR", "DEX", "CON", "INT", "WIS", "CHA"],
+            chargen_field_labels={
+                "race": "Origin",
+                "class": "Calling",
+                "personality": "Bearing",
+                "backstory": "Past",
+            },
+        )
+
+    def test_pydantic_round_trip_preserves_labels(self) -> None:
+        # Schema test — round-trip a YAML-style dict through pydantic
+        # and confirm the override map survives validation + dump.
+        raw = {
+            "stat_generation": "point_buy",
+            "point_buy_budget": 27,
+            "chargen_field_labels": {
+                "race": "Origin",
+                "class": "Calling",
+            },
+        }
+        rules = RulesConfig.model_validate(raw)
+        assert rules.chargen_field_labels == {"race": "Origin", "class": "Calling"}
+        dumped = rules.model_dump(exclude_defaults=True)
+        assert dumped["chargen_field_labels"] == {"race": "Origin", "class": "Calling"}
+
+    def test_field_label_helper_precedence(self) -> None:
+        from sidequest.server.dispatch.chargen_summary import (
+            DEFAULT_CHARGEN_FIELD_LABELS,
+            field_label,
+        )
+
+        # 1. chargen_field_labels override wins.
+        rules = RulesConfig(
+            stat_generation="point_buy",
+            chargen_field_labels={"race": "Origin"},
+            race_label="Species",
+        )
+        assert field_label(rules, "race") == "Origin"
+
+        # 2. Legacy race_label/class_label honored when the new map omits.
+        rules = RulesConfig(stat_generation="point_buy", race_label="Species")
+        assert field_label(rules, "race") == "Species"
+
+        # 3. Default fallback when nothing is set.
+        rules = RulesConfig(stat_generation="point_buy")
+        assert field_label(rules, "race") == DEFAULT_CHARGEN_FIELD_LABELS["race"]
+        assert field_label(rules, "personality") == "Personality"
+        assert field_label(rules, "backstory") == "Backstory"
+
+    def test_summary_uses_overridden_labels(self, caverns_pack: GenrePack) -> None:
+        rules = self._victoria_rules()
+        scenes = [
+            make_scene(
+                "origin",
+                choices=[
+                    make_choice(
+                        "Colonial",
+                        race_hint="Colonial",
+                        personality_trait="guarded",
+                    )
+                ],
+            ),
+            make_scene("class", choices=[make_choice("Detective", class_hint="Detective")]),
+            make_scene(
+                "past",
+                choices=[make_choice("Returned", background="Returned")],
+            ),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=rules)
+        b.apply_choice(0)
+        b.apply_choice(0)
+        b.apply_choice(0)
+
+        msg = render_confirmation_summary(b, caverns_pack, "Lady Victoria", "p1")
+        summary = msg.payload.summary or ""
+
+        # Pre-fix breakage was "Race: Colonial" — assert the new label.
+        assert "Origin: Colonial" in summary
+        assert "Calling: Detective" in summary
+        assert "Bearing: guarded" in summary
+        assert "Past: Returned" in summary
+        # And the broken labels are gone.
+        assert "Race:" not in summary
+        assert "Class:" not in summary
+        assert "Personality:" not in summary
+        assert "Backstory:" not in summary
+
+    def test_character_preview_dict_uses_resolved_labels(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        rules = self._victoria_rules()
+        scenes = [
+            make_scene(
+                "origin",
+                choices=[
+                    make_choice(
+                        "Colonial",
+                        race_hint="Colonial",
+                        personality_trait="guarded",
+                    )
+                ],
+            ),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=rules)
+        b.apply_choice(0)
+
+        msg = render_confirmation_summary(b, caverns_pack, "Lady Victoria", "p1")
+        preview = msg.payload.character_preview
+        assert isinstance(preview, dict)
+        # Keys are the genre-resolved display labels — UI renders them
+        # verbatim. Values are the raw field strings.
+        assert preview["Name"] == "Lady Victoria"
+        assert preview["Origin"] == "Colonial"
+        assert preview["Bearing"] == "guarded"
+        assert "Race" not in preview
+        assert "Personality" not in preview
+
+    def test_character_preview_falls_back_to_defaults(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        # No chargen_field_labels set → defaults preserved (existing
+        # packs unaffected, per the No-Silent-Fallbacks principle:
+        # this is an intentional default, not a hidden alternative).
+        rules = simple_rules()
+        scenes = [
+            make_scene(
+                "origin",
+                choices=[
+                    make_choice(
+                        "Human",
+                        race_hint="Human",
+                        personality_trait="brooding",
+                    )
+                ],
+            ),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=rules)
+        b.apply_choice(0)
+
+        msg = render_confirmation_summary(b, caverns_pack, "Rux", "p1")
+        preview = msg.payload.character_preview
+        assert isinstance(preview, dict)
+        assert preview["Name"] == "Rux"
+        assert preview["Race"] == "Human"
+        assert preview["Personality"] == "brooding"

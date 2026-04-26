@@ -336,6 +336,17 @@ class RulesConfig(BaseModel):
     default_ac: int | None = None
     race_label: str | None = None
     class_label: str | None = None
+    # Per-pack character-sheet vocabulary. Keys are the canonical chargen
+    # field names (``name``, ``race``, ``class``, ``personality``,
+    # ``pronouns``, ``stats``, ``mutation``, ``affinity``, ``rig``,
+    # ``rig_trait``, ``equipment``, ``backstory``); values are the
+    # display labels used by the confirmation summary and the
+    # client-side character-sheet preview. Empty by default — packs
+    # opt in. Defaults preserve the legacy fantasy labels (``Race``,
+    # ``Class``, etc.) so existing packs are unaffected. The legacy
+    # ``race_label`` / ``class_label`` fields above are honored as
+    # secondary defaults for those two keys when this map omits them.
+    chargen_field_labels: dict[str, str] = Field(default_factory=dict)
     default_location: str | None = None
     default_time_of_day: str | None = None
     hp_formula: str | None = None

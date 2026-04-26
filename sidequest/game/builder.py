@@ -621,6 +621,13 @@ class CharacterBuilder:
         self._results: list[SceneResult] = []
         self._phase: BuilderPhase = InProgress(scene_index=0)
         self._rng: random.Random = rng if rng is not None else random.Random()
+        # Stash the full rules ref so summary rendering can pull
+        # vocabulary fields (``chargen_field_labels``) without having
+        # to thread the GenrePack rules separately. Existing per-attr
+        # snapshots below preserve the original behavior of allowing
+        # scene directives to override stat_generation at apply time
+        # without mutating the pack-shared rules object.
+        self._rules: RulesConfig = rules
 
         # Configuration sourced from RulesConfig. Keep these as attributes
         # (not a stored reference) so scene directives can override
@@ -751,6 +758,16 @@ class CharacterBuilder:
         in Slice 2.
         """
         return list(self._rolled_stats) if self._rolled_stats is not None else None
+
+    @property
+    def rules(self) -> RulesConfig:
+        """The full RulesConfig the builder was constructed with.
+
+        Exposed so external renderers (chargen_summary) can read pack-
+        wide vocabulary fields (``chargen_field_labels``) without
+        having to thread the GenrePack rules separately.
+        """
+        return self._rules
 
     def race_label(self) -> str:
         """Genre-specific label for the "race" field (e.g., "Species", "Origin")."""
