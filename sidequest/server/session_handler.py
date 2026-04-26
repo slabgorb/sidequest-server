@@ -4811,23 +4811,30 @@ class WebSocketSessionHandler:
             player_id=player_id,
         )
 
-        # Story 37-30 — resolve the live outbound queue at completion
-        # time, not at dispatch. When the room is known, look up the
-        # current socket for this player via the RoomRegistry; this is
-        # the only path that survives a mid-render reconnect.
-        target_queue: asyncio.Queue[object] | None
+        # Story 37-30 — resolve the live room at completion time, not at
+        # dispatch. When the room is known, look up the *current*
+        # SessionRoom via the RoomRegistry so reconnects mid-render still
+        # land on live sockets.
+        #
+        # Bug #2b (playtest 2026-04-26): IMAGE used to land on a single
+        # per-player queue (the originating actor's socket). Shared-world
+        # scene imagery (POI/encounter/location/illustration) should be
+        # shared across all connected players in the room — so peers see
+        # the same image event. Switch to ``room.broadcast(msg)`` so
+        # every attached outbound queue receives the IMAGE. The legacy
+        # single-queue path remains for non-room-context tests and the
+        # deprecated genre/world connect path.
+        recipients_count = 0
+        broadcast_used = False
         if room_slug is not None:
-            target_queue = None
             registry = self._room_registry
-            if registry is not None:
-                room = registry.get(room_slug)
-                if room is not None:
-                    socket_id = room.socket_for_player(player_id)
-                    if socket_id is not None:
-                        target_queue = room.queue_for_socket(socket_id)
-            if target_queue is None:
+            room = registry.get(room_slug) if registry is not None else None
+            if room is None:
+                # No live room — surface as session_not_found so the GM
+                # panel sees the drop instead of it being silent.
                 logger.warning(
-                    "render.session_not_found render_id=%s room=%s player=%s",
+                    "render.session_not_found render_id=%s room=%s player=%s "
+                    "reason=room_missing",
                     render_id,
                     room_slug,
                     player_id,
@@ -4842,45 +4849,106 @@ class WebSocketSessionHandler:
                         "player_id": player_id,
                         "tier": str(params.get("tier") or ""),
                         "url": served_url,
-                        "reason": "player_not_connected",
+                        "reason": "room_missing",
+                    },
+                    component="render",
+                    severity="warning",
+                )
+                return
+            # Broadcast to every connected socket in the room. We do NOT
+            # exclude the originating player — they need the IMAGE too,
+            # mirroring the SCRAPBOOK_ENTRY/_emit_event fan-out pattern.
+            try:
+                room.broadcast(msg, exclude_socket_id=None)
+            except Exception as exc:  # noqa: BLE001 — broadcast failure must surface
+                logger.warning(
+                    "render.broadcast_failed render_id=%s error=%s",
+                    render_id,
+                    exc,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "render",
+                        "op": "broadcast_failed",
+                        "render_id": render_id,
+                        "room_slug": room_slug,
+                        "player_id": player_id,
+                        "url": served_url,
+                        "error": type(exc).__name__,
+                    },
+                    component="render",
+                    severity="error",
+                )
+                return
+            broadcast_used = True
+            # Approximate recipient count for OTEL (lie-detector) — this
+            # is the set of sockets that had a live outbound queue at
+            # broadcast time.
+            recipients_count = len(room.connected_player_ids())
+            if recipients_count == 0:
+                logger.warning(
+                    "render.broadcast_no_recipients render_id=%s room=%s",
+                    render_id,
+                    room_slug,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "render",
+                        "op": "session_not_found",
+                        "render_id": render_id,
+                        "room_slug": room_slug,
+                        "player_id": player_id,
+                        "tier": str(params.get("tier") or ""),
+                        "url": served_url,
+                        "reason": "no_connected_players",
                     },
                     component="render",
                     severity="warning",
                 )
                 return
         else:
+            # Legacy / test path: no room context, fall back to the
+            # single per-connection queue captured at dispatch.
             target_queue = legacy_queue
+            if target_queue is None:
+                logger.warning(
+                    "render.session_not_found render_id=%s reason=no_queue",
+                    render_id,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "render",
+                        "op": "session_not_found",
+                        "render_id": render_id,
+                        "player_id": player_id,
+                        "tier": str(params.get("tier") or ""),
+                        "url": served_url,
+                        "reason": "no_outbound_queue",
+                    },
+                    component="render",
+                    severity="warning",
+                )
+                return
+            try:
+                target_queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "render.outbound_queue_full render_id=%s", render_id
+                )
+                return
+            recipients_count = 1
 
-        if target_queue is None:
-            # Pre-room-context dispatch with no fallback queue — the
-            # render had nowhere to land. Surface it loudly.
-            logger.warning("render.session_not_found render_id=%s reason=no_queue", render_id)
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "render",
-                    "op": "session_not_found",
-                    "render_id": render_id,
-                    "player_id": player_id,
-                    "tier": str(params.get("tier") or ""),
-                    "url": served_url,
-                    "reason": "no_outbound_queue",
-                },
-                component="render",
-                severity="warning",
-            )
-            return
-
-        try:
-            target_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            logger.warning("render.outbound_queue_full render_id=%s", render_id)
-            return
         logger.info(
-            "render.completed render_id=%s url=%s elapsed_ms=%d",
+            "render.completed render_id=%s url=%s elapsed_ms=%d "
+            "recipients=%d broadcast=%s",
             render_id,
             served_url,
             elapsed,
+            recipients_count,
+            broadcast_used,
         )
         _watcher_publish(
             "state_transition",
@@ -4892,6 +4960,13 @@ class WebSocketSessionHandler:
                 "elapsed_ms": elapsed,
                 "player_id": player_id,
                 "room_slug": room_slug or "",
+                # Bug #2b lie-detector: surface whether the IMAGE was
+                # delivered as a shared-world broadcast or via the
+                # legacy single-queue path, plus the recipient count.
+                # Without this, "image only reached one player" was an
+                # invisible regression (playtest 2026-04-26).
+                "broadcast": broadcast_used,
+                "recipients": recipients_count,
             },
             component="render",
         )
