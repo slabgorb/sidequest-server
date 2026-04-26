@@ -91,6 +91,35 @@ class SessionRoom:
                 return
             self._store.save(self._snapshot)
 
+    def replace_snapshot(self, snapshot: GameSnapshot) -> None:
+        """Swap the canonical snapshot reference for the room.
+
+        Used by chargen-commit when ``materialize_from_genre_pack``
+        produces a brand-new ``GameSnapshot`` that must become the
+        room's authoritative state. Without this, the per-session
+        ``sd.snapshot`` ref diverges from ``room._snapshot`` — the
+        room keeps saving the pre-materialization (empty) snapshot
+        and any peer that connects after sees no characters / no
+        ``player_seats``, which evicts P1 on P2's chargen-commit.
+
+        Regression: playtest 2026-04-26 mawdeep-mp [BUG] MP chargen —
+        second player joining replaces first player's character/party
+        state on Player 1's client. Lock-protected so concurrent peers
+        observe a consistent reference.
+
+        Requires the room to have been bound first; raises if called
+        pre-bind (no silent fallback — paths that hit this contract
+        violation must fail loudly so the bug surfaces in OTEL).
+        """
+        with self._lock:
+            if self._snapshot is None:
+                raise RuntimeError(
+                    "SessionRoom.replace_snapshot called before bind_world — "
+                    "the room must be bound to a snapshot/store before its "
+                    "snapshot reference can be swapped."
+                )
+            self._snapshot = snapshot
+
     def close_store(self) -> None:
         """Close the canonical store exactly once. Idempotent.
 

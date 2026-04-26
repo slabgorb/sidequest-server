@@ -2449,15 +2449,27 @@ class WebSocketSessionHandler:
         # is wired in here. Rust parity: connect.rs:1745-1864.
         apply_starting_loadout(character, sd.genre_pack.inventory)
 
-        # MP: peer may have already committed and persisted a fully-
-        # materialized snapshot. Reload-before-rebuild so we can append
-        # this PC to the shared snapshot instead of clobbering the peer's
-        # state. Each socket's ``sd.snapshot`` was loaded at slug-connect
-        # time, before the peer's commit; SQLite is the only shared truth.
-        existing_saved = sd.store.load()
+        # MP: peer may have already committed and materialized the
+        # shared snapshot. Prefer the canonical room snapshot (ADR-037
+        # Python port) over a disk reload — every WS session bound to
+        # the slug holds the same reference, so a peer's in-memory
+        # changes are visible immediately without a SQLite round-trip.
+        # Disk reload is used only on the legacy non-room path where
+        # there is no canonical owner.
+        #
+        # Regression for playtest 2026-04-26 mawdeep-mp [BUG] MP chargen:
+        # the prior reload-from-disk path missed P1's in-memory commit
+        # when P1's room snapshot diverged from sd.snapshot during
+        # materialization (see room.replace_snapshot below), so P2's
+        # chargen took the first-commit branch, materialized a fresh
+        # snapshot, and evicted P1 from player_seats.
         existing_chars: list = []
-        if existing_saved is not None and existing_saved.snapshot.characters:
-            existing_chars = list(existing_saved.snapshot.characters)
+        if self._room is not None and self._room.snapshot is not None:
+            existing_chars = list(self._room.snapshot.characters)
+        else:
+            existing_saved = sd.store.load()
+            if existing_saved is not None and existing_saved.snapshot.characters:
+                existing_chars = list(existing_saved.snapshot.characters)
         is_first_commit = not existing_chars
 
         if is_first_commit:
@@ -2485,6 +2497,15 @@ class WebSocketSessionHandler:
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
             sd.snapshot = materialized
+            # ADR-037 Python port: also swap the canonical room snapshot
+            # so peers / room.save() / disk-resume see the materialized
+            # world. Without this, room._snapshot still points at the
+            # pre-bind empty GameSnapshot and room.save() persists an
+            # empty save — the next-joiner's chargen would then take the
+            # first-commit branch and evict P1's seat. Regression for
+            # playtest 2026-04-26 mawdeep-mp [BUG] MP chargen.
+            if self._room is not None:
+                self._room.replace_snapshot(materialized)
             span.add_event(
                 "character_creation.world_materialized",
                 {
@@ -2683,7 +2704,9 @@ class WebSocketSessionHandler:
         # tier name extractions (player's own name, lobby filler) so the
         # narrator starts clean. Lore / tropes / regions / history persist.
         # MP: only the first commit clears — second-commit preservation
-        # avoids stranding peer-narrated NPCs mid-arc.
+        # avoids stranding peer-narrated NPCs mid-arc and dropping NPCs
+        # P1 had already encountered (regression playtest 2026-04-26
+        # mawdeep-mp [BUG] MP chargen).
         if is_first_commit:
             prev_registry_len = len(sd.snapshot.npc_registry)
             sd.snapshot.npc_registry.clear()
@@ -2705,11 +2728,55 @@ class WebSocketSessionHandler:
                 sd.player_name,
                 prev_registry_len,
             )
+        else:
+            # MP second-(or-later) commit. Surface the preservation as
+            # an explicit watcher event so the GM panel can confirm the
+            # registry survived the new joiner's chargen — the lie
+            # detector for "did this fix actually engage?".
+            preserved_len = len(sd.snapshot.npc_registry)
+            span.add_event(
+                "mp.npc_registry_preserved",
+                {
+                    "event": "mp.npc_registry_preserved",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player_id": sd.player_id,
+                    "registry_len": preserved_len,
+                    "reason": "second_player_chargen_commit",
+                },
+            )
+            logger.info(
+                "mp.npc_registry_preserved genre=%s world=%s player_id=%s "
+                "registry_len=%d",
+                sd.genre_slug,
+                sd.world_slug,
+                sd.player_id,
+                preserved_len,
+            )
+            _watcher_publish(
+                "mp_npc_registry_preserved",
+                {
+                    "genre_slug": sd.genre_slug,
+                    "world_slug": sd.world_slug,
+                    "player_id": sd.player_id,
+                    "registry_len": preserved_len,
+                    "reason": "second_player_chargen_commit",
+                },
+                component="session",
+            )
 
         # MP per-player chargen binding (playtest 2026-04-25). Maps
         # player_id → character_name so slug-resume routes new players
-        # to chargen instead of auto-claiming an existing PC.
+        # to chargen instead of auto-claiming an existing PC. Upsert by
+        # player_id is intrinsically additive — the regression on
+        # 2026-04-26 was that ``sd.snapshot`` had been replaced by a
+        # fresh materialized snapshot whose ``player_seats`` was empty,
+        # so the upsert ran on a dict that had already lost P1's seat.
+        # The ``room.replace_snapshot`` swap above + the canonical-snapshot
+        # gate on ``is_first_commit`` keep ``sd.snapshot`` aligned with
+        # the room reference so this dict-assign actually appends.
         if sd.player_id and character.core.name:
+            seat_existed_before = sd.player_id in sd.snapshot.player_seats
             sd.snapshot.player_seats[sd.player_id] = character.core.name
             span.add_event(
                 "session.player_seat_bound",
@@ -2740,6 +2807,46 @@ class WebSocketSessionHandler:
                 },
                 component="session",
             )
+            # New-seat append: the lie detector for "is this MP join
+            # actually appending instead of replacing P1?". Only fires
+            # when this player_id wasn't already seated — distinguishes
+            # genuine joins from re-binds on chargen-resume.
+            if not seat_existed_before:
+                span.add_event(
+                    "mp.seat_appended",
+                    {
+                        "event": "mp.seat_appended",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "player_id": sd.player_id,
+                        "character_name": character.core.name,
+                        "new_seat_count": len(sd.snapshot.player_seats),
+                        "seated_player_ids": list(
+                            sd.snapshot.player_seats.keys()
+                        ),
+                    },
+                )
+                logger.info(
+                    "mp.seat_appended player_id=%s character=%s "
+                    "new_seat_count=%d",
+                    sd.player_id,
+                    character.core.name,
+                    len(sd.snapshot.player_seats),
+                )
+                _watcher_publish(
+                    "mp_seat_appended",
+                    {
+                        "genre_slug": sd.genre_slug,
+                        "world_slug": sd.world_slug,
+                        "player_id": sd.player_id,
+                        "character_name": character.core.name,
+                        "new_seat_count": len(sd.snapshot.player_seats),
+                        "seated_player_ids": list(
+                            sd.snapshot.player_seats.keys()
+                        ),
+                    },
+                    component="session",
+                )
 
         # Persist (Slice G / connect.rs:2174). Snapshot save makes the
         # next slug-resume hit has_character=True; failure must not
