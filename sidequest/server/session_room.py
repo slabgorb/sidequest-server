@@ -76,6 +76,12 @@ class SessionRoom:
     # the barrier from InputCollection to IntentRouting. See spec
     # docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
     _pending_actions: dict[str, PendingAction] = field(default_factory=dict)
+    # Election primitives for one-dispatch-per-round (ADR-036). The lock
+    # serializes the elected handlers; the round counter is the CAS guard
+    # so a second handler that wakes after the first commits the round
+    # short-circuits its dispatch instead of re-running the narrator.
+    _dispatch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _last_dispatched_round: int = 0
 
     # ------------------------------------------------------------------
     # Canonical world state (ADR-037 Python port). The room owns the
@@ -248,6 +254,24 @@ class SessionRoom:
             drained = list(self._pending_actions.items())
             self._pending_actions.clear()
         return drained
+
+    @property
+    def dispatch_lock(self) -> asyncio.Lock:
+        """The per-room dispatch election lock (ADR-036)."""
+        return self._dispatch_lock
+
+    @property
+    def last_dispatched_round(self) -> int:
+        """Highest round number for which a narrator dispatch has fired."""
+        return self._last_dispatched_round
+
+    @last_dispatched_round.setter
+    def last_dispatched_round(self, value: int) -> None:
+        self._last_dispatched_round = value
+
+    def seated_player_count(self) -> int:
+        """Number of seated players, regardless of connection state."""
+        return len(self.seated_player_ids())
 
     def slot_to_player_id(self) -> dict[str, str]:
         """Return a snapshot of {character_slot: player_id} for seated players.

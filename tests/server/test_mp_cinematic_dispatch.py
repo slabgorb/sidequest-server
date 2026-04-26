@@ -46,3 +46,33 @@ def test_record_same_player_twice_is_last_write_wins() -> None:
     drained = room.drain_pending_actions()
     assert len(drained) == 1
     assert drained[0][1].action == "I really changed my mind"
+
+
+def test_dispatch_lock_is_an_asyncio_lock() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    assert isinstance(room.dispatch_lock, asyncio.Lock)
+
+
+def test_last_dispatched_round_starts_at_zero() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    assert room.last_dispatched_round == 0
+
+
+def test_last_dispatched_round_is_writable() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    room.last_dispatched_round = 5
+    assert room.last_dispatched_round == 5
+
+
+def test_seated_player_count_returns_zero_when_no_seats() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    assert room.seated_player_count() == 0
+
+
+def test_seated_player_count_after_seat() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    room.connect("p1", socket_id="s1")
+    room.seat("p1", character_slot="Gladstone")
+    room.connect("p2", socket_id="s2")
+    room.seat("p2", character_slot="Zanzibar Jones")
+    assert room.seated_player_count() == 2
