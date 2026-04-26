@@ -137,6 +137,7 @@ from sidequest.server.dispatch.chargen_summary import render_confirmation_summar
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
+from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
     audio_backend_disabled_span,
@@ -156,6 +157,7 @@ logger = logging.getLogger(__name__)
 def _hash_snapshot(snap: object) -> str:
     """BLAKE2b-16 fingerprint of a snapshot's repr. Used for before/after change detection."""
     return blake2b(repr(snap).encode(), digest_size=16).hexdigest()
+
 
 tracer = trace.get_tracer("sidequest.server.session_handler")
 
@@ -181,17 +183,19 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
 # but never fanned out to clients via ``_emit_event``. Replay must skip these
 # rather than crash — pingpong 2026-04-26 [S3-BUG] Reconnect crash on
 # ENCOUNTER_STARTED. Add new internal kinds here when their producers land.
-_REPLAY_SKIP_KINDS: frozenset[str] = frozenset({
-    "ENCOUNTER_STARTED",
-    "ENCOUNTER_BEAT_APPLIED",
-    "ENCOUNTER_METRIC_ADVANCE",
-    "ENCOUNTER_BEAT_SKIPPED",
-    "ENCOUNTER_TAG_CREATED",
-    "ENCOUNTER_STATUS_ADDED",
-    "ENCOUNTER_YIELD",
-    "ENCOUNTER_RESOLVED",
-    "ENCOUNTER_RESOLUTION_SIGNAL",
-})
+_REPLAY_SKIP_KINDS: frozenset[str] = frozenset(
+    {
+        "ENCOUNTER_STARTED",
+        "ENCOUNTER_BEAT_APPLIED",
+        "ENCOUNTER_METRIC_ADVANCE",
+        "ENCOUNTER_BEAT_SKIPPED",
+        "ENCOUNTER_TAG_CREATED",
+        "ENCOUNTER_STATUS_ADDED",
+        "ENCOUNTER_YIELD",
+        "ENCOUNTER_RESOLVED",
+        "ENCOUNTER_RESOLUTION_SIGNAL",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +291,7 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
 
     if kind == "NARRATION":
         from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
+
         return message_cls(payload=_NarrationPayload(**data))
 
     if kind == "CONFRONTATION":
@@ -346,9 +351,7 @@ def _project_frames(
     """
     decisions: list[tuple[str, FilterDecision]] = []
     for pid in connected_players:
-        decision = projection_filter.project(
-            envelope=envelope, view=view, player_id=pid
-        )
+        decision = projection_filter.project(envelope=envelope, view=view, player_id=pid)
         if on_decision is not None:
             on_decision(pid, decision)
         decisions.append((pid, decision))
@@ -410,6 +413,7 @@ class _State(Enum):
 @dataclass
 class _SessionData:
     """Mutable session state once genre/world are bound."""
+
     genre_slug: str
     world_slug: str
     player_name: str
@@ -492,6 +496,15 @@ class _SessionData:
     # selections wholesale left the opponent dial inert and made combat
     # one-sided. Cleared together with ``pending_roll_outcome``.
     pending_roll_actor: str | None = None
+    # ADR-050 — image pacing throttle. Per-session, time-based cooldown that
+    # suppresses render dispatches faster than human absorption speed.
+    # Default 30s solo / 60s MP; created at chargen confirmation once the
+    # session ``mode`` is known. Defaults to a solo throttle so the field
+    # is always non-None for legacy/test session-data construction sites
+    # that don't set ``mode`` explicitly.
+    # NOTE: per-process state. Multi-worker uvicorn would split the throttle
+    # across workers; revisit with a shared backing store if we go there.
+    image_pacing_throttle: ImagePacingThrottle = field(default_factory=ImagePacingThrottle.for_solo)
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +528,7 @@ class WebSocketSessionHandler:
         validator: Validator | None = None,
     ) -> None:
         self._client_factory: Callable[[], LlmClient] = (
-            claude_client_factory if claude_client_factory is not None
-            else ClaudeClient
+            claude_client_factory if claude_client_factory is not None else ClaudeClient
         )
         self._search_paths: list[Path] = (
             genre_pack_search_paths
@@ -581,12 +593,14 @@ class WebSocketSessionHandler:
     # exactly one of these tokens (case-insensitive) for the projection
     # filter's ``visible_to()`` to mask the creature. Kept conservative:
     # a missing/unknown marker must never unmask a target.
-    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset({
-        "hidden",
-        "invisible",
-        "stealth",
-        "concealed",
-    })
+    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset(
+        {
+            "hidden",
+            "invisible",
+            "stealth",
+            "concealed",
+        }
+    )
 
     @classmethod
     def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
@@ -867,9 +881,7 @@ class WebSocketSessionHandler:
 
         if event_log is not None:
             room = self._room
-            emitter_player_id = (
-                self._session_data.player_id if self._session_data else None
-            )
+            emitter_player_id = self._session_data.player_id if self._session_data else None
 
             # C2: event append + all cache writes share a single transaction.
             # Projections are computed inside the block so the cache row's
@@ -902,9 +914,7 @@ class WebSocketSessionHandler:
                     # per-peer filter loop is a single code path (test and
                     # production exercise `_project_frames`).
                     recipients = [
-                        pid
-                        for pid in room.connected_player_ids()
-                        if pid != emitter_player_id
+                        pid for pid in room.connected_player_ids() if pid != emitter_player_id
                     ]
 
                     def _cache_decision(pid: str, decision: FilterDecision) -> None:
@@ -955,9 +965,7 @@ class WebSocketSessionHandler:
             # reconnect; sending before commit would risk a client observing
             # an event that never hit disk.
             if room is not None:
-                payload_cls = (
-                    type(payload_model) if isinstance(payload_model, BaseModel) else None
-                )
+                payload_cls = type(payload_model) if isinstance(payload_model, BaseModel) else None
                 for other_pid, decision, filtered_data in fanout:
                     if not decision.include:
                         continue
@@ -980,9 +988,7 @@ class WebSocketSessionHandler:
                             )
                             recipient_msg = message_cls(payload=recipient_payload)
                         else:
-                            recipient_msg = message_cls(
-                                payload={**filtered_data, "seq": seq}
-                            )
+                            recipient_msg = message_cls(payload={**filtered_data, "seq": seq})
                     except Exception:
                         # Never silently fail fan-out; log and skip this recipient.
                         logger.error(
@@ -1049,7 +1055,7 @@ class WebSocketSessionHandler:
         # ``disposition`` falls back to role when no behavioral string was
         # extracted.
         npc_refs: list[ScrapbookEntryNpcRef] = []
-        for mention in (result.npcs_present or []):
+        for mention in result.npcs_present or []:
             name = (getattr(mention, "name", "") or "").strip()
             if not name:
                 continue
@@ -1065,7 +1071,7 @@ class WebSocketSessionHandler:
 
         # World facts: lift the narrator's footnote summaries when present.
         world_facts: list[str] = []
-        for fn in (result.footnotes or []):
+        for fn in result.footnotes or []:
             if not isinstance(fn, dict):
                 continue
             summary = fn.get("summary") or fn.get("text") or ""
@@ -1100,9 +1106,7 @@ class WebSocketSessionHandler:
         try:
             self._persist_scrapbook_entry(payload)
         except Exception as exc:  # noqa: BLE001 — persistence failure must not block emit
-            logger.warning(
-                "scrapbook.persist_failed turn=%d error=%s", turn_id, exc
-            )
+            logger.warning("scrapbook.persist_failed turn=%d error=%s", turn_id, exc)
 
         # Route through _emit_event so the journal gets a row + reconnect
         # replay surfaces prior entries to fresh sockets.
@@ -1392,11 +1396,11 @@ class WebSocketSessionHandler:
         # a single server tick since Python's handler is sync w.r.t. the
         # read loop.
         lore_context = await self._retrieve_lore_for_turn(sd, outcome.replay_action_text)
-        turn_context = _build_turn_context(
-            sd, lore_context=lore_context, room=self._room
-        )
+        turn_context = _build_turn_context(sd, lore_context=lore_context, room=self._room)
         return await self._execute_narration_turn(
-            sd, outcome.replay_action_text, turn_context,
+            sd,
+            outcome.replay_action_text,
+            turn_context,
         )
 
     # ------------------------------------------------------------------
@@ -1455,6 +1459,7 @@ class WebSocketSessionHandler:
                 db_path_for_slug,
                 get_game,
             )
+
             slug = payload.game_slug
             db = db_path_for_slug(self._save_dir, slug)
             if not db.exists():
@@ -1462,6 +1467,7 @@ class WebSocketSessionHandler:
             store = SqliteStore(db)
             store.initialize()
             from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
+
             _bind_event_store(store)
             row = get_game(store, slug)
             if row is None:
@@ -1497,11 +1503,7 @@ class WebSocketSessionHandler:
             # have been called — slug-connect cannot proceed without a room
             # registry, socket id, and outbound queue. Fail loudly if the
             # WebSocket lifecycle was bypassed (no silent test-only path).
-            if (
-                self._room_registry is None
-                or self._socket_id is None
-                or self._out_queue is None
-            ):
+            if self._room_registry is None or self._socket_id is None or self._out_queue is None:
                 raise RuntimeError(
                     "slug-connect requires attach_room_context() to have been "
                     "called first — WebSocket lifecycle wiring is missing. "
@@ -1530,9 +1532,7 @@ class WebSocketSessionHandler:
                 # in a 4-player game: P1 sees all 4, P2 sees 3, P3 sees 2,
                 # P4 sees only self. Excludes the connecting player_id in
                 # case this is a same-player reconnect on a new socket.
-                peers_to_backfill = [
-                    pid for pid in room.connected_player_ids() if pid != player_id
-                ]
+                peers_to_backfill = [pid for pid in room.connected_player_ids() if pid != player_id]
                 try:
                     room.connect(player_id, socket_id=self._socket_id)
                 except SoloSlotConflict as exc:
@@ -1574,9 +1574,7 @@ class WebSocketSessionHandler:
                         len(peers_to_backfill),
                         peers_to_backfill,
                     )
-                _mp_span.set_attribute(
-                    "presence_backfill_count", len(peers_to_backfill)
-                )
+                _mp_span.set_attribute("presence_backfill_count", len(peers_to_backfill))
                 # If this connect resolved the pause (was paused before, not
                 # paused now), broadcast GAME_RESUMED to all players
                 # including the reconnecting socket (MP-02 Task 6).
@@ -1597,7 +1595,9 @@ class WebSocketSessionHandler:
             except Exception as exc:
                 logger.error(
                     "session.genre_load_failed genre=%s slug=%s error=%s",
-                    row.genre_slug, slug, exc,
+                    row.genre_slug,
+                    slug,
+                    exc,
                 )
                 return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
 
@@ -1613,7 +1613,9 @@ class WebSocketSessionHandler:
                 # render an actual error panel with escape actions.
                 logger.warning(
                     "session.save_schema_invalid slug=%s path=%s error=%s",
-                    slug, exc.save_path, exc.underlying,
+                    slug,
+                    exc.save_path,
+                    exc.underlying,
                 )
                 _watcher_publish(
                     "save_schema_invalid",
@@ -1625,13 +1627,15 @@ class WebSocketSessionHandler:
                     component="session",
                     severity="error",
                 )
-                return [_error_msg(
-                    f"This save predates the current schema and cannot be "
-                    f"loaded. Start a new adventure or move the save aside: "
-                    f"{exc.save_path}",
-                    reconnect_required=False,
-                    code="save_schema_invalid",
-                )]
+                return [
+                    _error_msg(
+                        f"This save predates the current schema and cannot be "
+                        f"loaded. Start a new adventure or move the save aside: "
+                        f"{exc.save_path}",
+                        reconnect_required=False,
+                        code="save_schema_invalid",
+                    )
+                ]
             if saved is not None:
                 snapshot = saved.snapshot
                 # Per-player chargen gate (playtest 2026-04-25). MP: a new
@@ -1654,9 +1658,7 @@ class WebSocketSessionHandler:
                 #      player resuming — back-fill the seat. Otherwise it's
                 #      a new joiner — route to chargen and emit a watcher
                 #      event so the GM panel can see the joiner.
-                _existing_char_names = {
-                    c.core.name for c in snapshot.characters if c.core.name
-                }
+                _existing_char_names = {c.core.name for c in snapshot.characters if c.core.name}
                 _is_mp = GameMode(row.mode) == GameMode.MULTIPLAYER
                 if snapshot.player_seats:
                     has_character = player_id in snapshot.player_seats
@@ -1674,7 +1676,9 @@ class WebSocketSessionHandler:
                     logger.info(
                         "session.player_seat_backfilled_on_resume "
                         "slug=%s player_id=%s character=%s",
-                        slug, player_id, display_name,
+                        slug,
+                        player_id,
+                        display_name,
                     )
                     _watcher_publish(
                         "session_player_seat_backfilled",
@@ -1696,7 +1700,9 @@ class WebSocketSessionHandler:
                         "session.mp_new_joiner_chargen_required "
                         "slug=%s player_id=%s display_name=%s "
                         "existing_characters=%s",
-                        slug, player_id, display_name,
+                        slug,
+                        player_id,
+                        display_name,
                         sorted(_existing_char_names),
                     )
                     _watcher_publish(
@@ -1705,9 +1711,7 @@ class WebSocketSessionHandler:
                             "slug": slug,
                             "player_id": player_id,
                             "player_name": display_name,
-                            "existing_character_names": sorted(
-                                _existing_char_names
-                            ),
+                            "existing_character_names": sorted(_existing_char_names),
                             "character_count": len(snapshot.characters),
                         },
                         component="session",
@@ -1759,8 +1763,7 @@ class WebSocketSessionHandler:
                 if renamed:
                     room.save()
                     logger.info(
-                        "session.slug_resumed.renamed_uuid player_id=%s "
-                        "old=%s new=%s",
+                        "session.slug_resumed.renamed_uuid player_id=%s old=%s new=%s",
                         player_id,
                         player_id,  # equal to the pre-rename value
                         display_name,
@@ -1837,10 +1840,7 @@ class WebSocketSessionHandler:
             # narration falls back to the generic "I look around and take in
             # my surroundings." which the persistent narrator handles as a
             # continuation of the existing scene.
-            is_mp_joiner = (
-                not has_character
-                and len(snapshot.characters) > 0
-            )
+            is_mp_joiner = not has_character and len(snapshot.characters) > 0
             if is_mp_joiner:
                 _watcher_publish(
                     "mp_joiner_opening_suppressed",
@@ -1858,7 +1858,9 @@ class WebSocketSessionHandler:
                 logger.info(
                     "session.mp_joiner_opening_suppressed slug=%s "
                     "player_id=%s display_name=%s existing_chars=%d",
-                    slug, player_id, display_name,
+                    slug,
+                    player_id,
+                    display_name,
                     len(snapshot.characters),
                 )
                 opening_seed = None
@@ -1897,6 +1899,14 @@ class WebSocketSessionHandler:
                 audio_backend=audio_backend,
                 game_slug=slug,
                 mode=GameMode(row.mode),
+                # ADR-050: pick the cooldown that matches the session mode.
+                # MP defaults to 60s because turns resolve faster in group
+                # play; solo gets the more responsive 30s window.
+                image_pacing_throttle=(
+                    ImagePacingThrottle.for_multiplayer()
+                    if GameMode(row.mode) == GameMode.MULTIPLAYER
+                    else ImagePacingThrottle.for_solo()
+                ),
             )
             # MP-03 Task 3 + Task-17 + Task-22 ProjectionFilter Rules integration.
             self._event_log = EventLog(store)
@@ -1929,6 +1939,7 @@ class WebSocketSessionHandler:
             # read from cache (Task 18) — no re-filter.
             if self._projection_cache is not None:
                 from sidequest.game.projection.cache_fill import lazy_fill
+
                 lazy_fill(
                     event_log=self._event_log,
                     cache=self._projection_cache,
@@ -2010,9 +2021,7 @@ class WebSocketSessionHandler:
                     if _built is None:
                         _replay_skipped_internal += 1
                         continue
-                    _replay_kinds[event_row.kind] = (
-                        _replay_kinds.get(event_row.kind, 0) + 1
-                    )
+                    _replay_kinds[event_row.kind] = _replay_kinds.get(event_row.kind, 0) + 1
                     replay_msgs.append(_built)
 
             # Pingpong 2026-04-24 "Slug-resume shows empty Narrative pane on
@@ -2027,10 +2036,7 @@ class WebSocketSessionHandler:
             # ``last_seen_seq``, so the pane has at least the last chapter to
             # render. Bounded to 2 messages to avoid dumping a long replay.
             tail_backfill_count = 0
-            if (
-                _replay_kinds.get("NARRATION", 0) == 0
-                and self._projection_cache is not None
-            ):
+            if _replay_kinds.get("NARRATION", 0) == 0 and self._projection_cache is not None:
                 tail_msgs = self._backfill_last_narration_block(
                     player_id=self._current_player_id,
                 )
@@ -2039,9 +2045,7 @@ class WebSocketSessionHandler:
                     tail_backfill_count = len(tail_msgs)
                     for msg in tail_msgs:
                         kind_name = getattr(msg, "type", "")
-                        _replay_kinds[kind_name] = (
-                            _replay_kinds.get(kind_name, 0) + 1
-                        )
+                        _replay_kinds[kind_name] = _replay_kinds.get(kind_name, 0) + 1
 
             # Always record the replay outcome — zero-replay is a bug signal
             # the GM panel needs to see (pingpong 2026-04-24 "empty narrative
@@ -2063,9 +2067,7 @@ class WebSocketSessionHandler:
             _replay_span.set_attribute(
                 "slug_connect.replay.tail_backfill_count", tail_backfill_count
             )
-            _replay_span.set_attribute(
-                "slug_connect.replay.last_seen_seq", self._last_seen_seq
-            )
+            _replay_span.set_attribute("slug_connect.replay.last_seen_seq", self._last_seen_seq)
             logger.info(
                 "slug_connect.replay cache_rows=%d excluded=%d skipped_internal=%d "
                 "emitted=%d narration=%d tail_backfill=%d last_seen_seq=%d "
@@ -2093,17 +2095,13 @@ class WebSocketSessionHandler:
                 # lie detector for "did this subsystem actually engage?".
                 # Emitted as a child of mp.slug_connect via a fresh span
                 # (the mp span has already closed by this point).
-                _bootstrap_tracer = trace.get_tracer(
-                    "sidequest.server.session_handler"
-                )
+                _bootstrap_tracer = trace.get_tracer("sidequest.server.session_handler")
                 with _bootstrap_tracer.start_as_current_span(
                     "slug_connect.chargen_bootstrap"
                 ) as _bootstrap_span:
                     _bootstrap_span.set_attribute("player_id", player_id)
                     _bootstrap_span.set_attribute("slug", slug)
-                    _bootstrap_span.set_attribute(
-                        "scene_index", builder.current_scene_index()
-                    )
+                    _bootstrap_span.set_attribute("scene_index", builder.current_scene_index())
             elif self._state is _State.Playing:
                 ready_msg = SessionEventMessage(
                     type="SESSION_EVENT",  # type: ignore[arg-type]
@@ -2165,9 +2163,7 @@ class WebSocketSessionHandler:
                             )
                         )
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "session.resume_party_status_failed error=%s", exc
-                        )
+                        logger.warning("session.resume_party_status_failed error=%s", exc)
                 # CHAPTER_MARKER — restore the running-header chapter title
                 # on resume so the saved location shows up immediately
                 # (not only after the next narration turn). Pingpong
@@ -2229,6 +2225,7 @@ class WebSocketSessionHandler:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteStore.open(str(db_path))
         from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
+
         _bind_event_store(store)
 
         # Load existing session or start fresh. Schema-incompatible saves
@@ -2239,9 +2236,12 @@ class WebSocketSessionHandler:
             saved = store.load()
         except SaveSchemaIncompatibleError as exc:
             logger.warning(
-                "session.save_schema_invalid genre=%s world=%s player=%s "
-                "path=%s error=%s",
-                genre_slug, world_slug, player_name, exc.save_path, exc.underlying,
+                "session.save_schema_invalid genre=%s world=%s player=%s path=%s error=%s",
+                genre_slug,
+                world_slug,
+                player_name,
+                exc.save_path,
+                exc.underlying,
             )
             _watcher_publish(
                 "save_schema_invalid",
@@ -2255,13 +2255,15 @@ class WebSocketSessionHandler:
                 component="session",
                 severity="error",
             )
-            return [_error_msg(
-                f"This save predates the current schema and cannot be "
-                f"loaded. Start a new adventure or move the save aside: "
-                f"{exc.save_path}",
-                reconnect_required=False,
-                code="save_schema_invalid",
-            )]
+            return [
+                _error_msg(
+                    f"This save predates the current schema and cannot be "
+                    f"loaded. Start a new adventure or move the save aside: "
+                    f"{exc.save_path}",
+                    reconnect_required=False,
+                    code="save_schema_invalid",
+                )
+            ]
         has_character: bool
         if saved is not None:
             snapshot = saved.snapshot
@@ -2313,9 +2315,7 @@ class WebSocketSessionHandler:
         # character=True) skip chargen, so the directive/seed are dead
         # weight for them, but resolving here anyway keeps the seat
         # uniform and costs nothing.
-        opening: tuple[str, str] | None = resolve_opening(
-            genre_pack, world_slug, genre_slug
-        )
+        opening: tuple[str, str] | None = resolve_opening(genre_pack, world_slug, genre_slug)
         opening_seed: str | None = None
         opening_directive: str | None = None
         if opening is not None:
@@ -2431,8 +2431,7 @@ class WebSocketSessionHandler:
             if snapshot.characters:
                 try:
                     self_char = (
-                        self._resolve_self_character(self._session_data)
-                        or snapshot.characters[0]
+                        self._resolve_self_character(self._session_data) or snapshot.characters[0]
                     )
                     outbound.append(
                         self._build_session_start_party_status(
@@ -2440,9 +2439,7 @@ class WebSocketSessionHandler:
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "session.resume_party_status_failed error=%s", exc
-                    )
+                    logger.warning("session.resume_party_status_failed error=%s", exc)
 
         return outbound
 
@@ -2795,9 +2792,7 @@ class WebSocketSessionHandler:
                     sd.world_slug,
                     exc,
                 )
-                materialized = GameSnapshot(
-                    genre_slug=sd.genre_slug, world_slug=sd.world_slug
-                )
+                materialized = GameSnapshot(genre_slug=sd.genre_slug, world_slug=sd.world_slug)
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
@@ -2973,9 +2968,7 @@ class WebSocketSessionHandler:
         # Lore seeding (Slice F / connect.rs:2196). Must run BEFORE
         # clearing the builder — the seeder reads scene choices to
         # build Character-category lore fragments for narrator RAG.
-        lore_added = seed_lore_from_char_creation(
-            sd.lore_store, list(builder.scenes())
-        )
+        lore_added = seed_lore_from_char_creation(sd.lore_store, list(builder.scenes()))
         span.add_event(
             "lore.char_creation_seeded",
             {
@@ -3141,30 +3134,25 @@ class WebSocketSessionHandler:
             total_scenes=builder.total_scenes(),
             character=character.model_dump(mode="json"),
         )
-        out: list[object] = [
-            CharacterCreationMessage(payload=payload, player_id=player_id)
-        ]
+        out: list[object] = [CharacterCreationMessage(payload=payload, player_id=player_id)]
 
         # PARTY_STATUS snapshot (Slice H / connect.rs:2533). Lands the
         # Character tab populated at session-start. MP: also broadcast
         # to peers so they see the new arrival without waiting for their
         # own turn-end refresh.
         try:
-            party_status_msg = self._build_session_start_party_status(
-                sd, character, player_id
-            )
+            party_status_msg = self._build_session_start_party_status(sd, character, player_id)
             out.append(party_status_msg)
             from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
                 GameMode as _GameMode,
             )
+
             if (
                 self._room is not None
                 and sd.mode == _GameMode.MULTIPLAYER
                 and self._socket_id is not None
             ):
-                self._room.broadcast(
-                    party_status_msg, exclude_socket_id=self._socket_id
-                )
+                self._room.broadcast(party_status_msg, exclude_socket_id=self._socket_id)
             span.add_event(
                 "session.start.character_snapshot_emitted",
                 {
@@ -3176,7 +3164,8 @@ class WebSocketSessionHandler:
                     "sheet_class": character.char_class,
                     "inventory_count": len(
                         [
-                            i for i in character.core.inventory.items
+                            i
+                            for i in character.core.inventory.items
                             if str(i.get("state", "Carried")) == "Carried"
                         ]
                     ),
@@ -3201,9 +3190,7 @@ class WebSocketSessionHandler:
         # Opening-turn bootstrap (Slice H / connect.rs:2270). Fires
         # narrator with opening_seed + opening_directive (Early zone),
         # consumed once so subsequent turns run directive-free.
-        opening_messages = await self._run_opening_turn_narration(
-            sd, player_id, span
-        )
+        opening_messages = await self._run_opening_turn_narration(sd, player_id, span)
         out.extend(opening_messages)
         return out
 
@@ -3223,11 +3210,7 @@ class WebSocketSessionHandler:
         own them.
         """
         if builder.is_confirmation():
-            return [
-                render_confirmation_summary(
-                    builder, sd.genre_pack, sd.player_name, player_id
-                )
-            ]
+            return [render_confirmation_summary(builder, sd.genre_pack, sd.player_name, player_id)]
         return [builder.to_scene_message(player_id)]
 
     # ------------------------------------------------------------------
@@ -3255,11 +3238,10 @@ class WebSocketSessionHandler:
             from sidequest.server.dispatch.combat_brackets import (
                 strip_combat_brackets,
             )
+
             action = strip_combat_brackets(action)
             if not action:
-                return [_error_msg(
-                    "Player aside is empty after combat-bracket strip"
-                )]
+                return [_error_msg("Player aside is empty after combat-bracket strip")]
 
         logger.info(
             "session.player_action genre=%s world=%s player=%s action_len=%d",
@@ -3279,9 +3261,7 @@ class WebSocketSessionHandler:
             from sidequest.telemetry.spans import mp_player_action_paused_span
 
             absent = self._room.absent_seated_player_ids()
-            player_id_attr = (
-                self._session_data.player_id if self._session_data else ""
-            )
+            player_id_attr = self._session_data.player_id if self._session_data else ""
             with mp_player_action_paused_span(
                 slug=self._room.slug,
                 player_id=player_id_attr,
@@ -3335,14 +3315,10 @@ class WebSocketSessionHandler:
                     component="session",
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "session.turn_status_active_broadcast_failed error=%s", exc
-                )
+                logger.warning("session.turn_status_active_broadcast_failed error=%s", exc)
 
         lore_context = await self._retrieve_lore_for_turn(sd, action)
-        turn_context = _build_turn_context(
-            sd, lore_context=lore_context, room=self._room
-        )
+        turn_context = _build_turn_context(sd, lore_context=lore_context, room=self._room)
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
@@ -3374,7 +3350,6 @@ class WebSocketSessionHandler:
             world=sd.world_slug,
             action_len=len(action),
         ):
-
             # Group B — Local DM decomposer runs between sealed-letter and narrator.
             # LocalDM.decompose catches expected client failures internally and
             # returns a degraded DispatchPackage. Any exception escaping here is a
@@ -3397,7 +3372,8 @@ class WebSocketSessionHandler:
             if dispatch_package.degraded:
                 logger.info(
                     "session.decomposer_degraded reason=%s turn_id=%s",
-                    dispatch_package.degraded_reason, turn_id,
+                    dispatch_package.degraded_reason,
+                    turn_id,
                 )
                 # Surface to GM panel — per CLAUDE.md OTEL principle, every
                 # subsystem decision must be visible. Decomposer degradation
@@ -3416,10 +3392,10 @@ class WebSocketSessionHandler:
                     severity="warning",
                 )
             turn_context.dispatch_package = dispatch_package
-    
+
             with orchestrator_process_action_span(action_len=len(action)):
                 result = await sd.orchestrator.run_narration_turn(action, turn_context)
-    
+
             logger.info(
                 "session.narration_complete genre=%s world=%s degraded=%s duration_ms=%s",
                 sd.genre_slug,
@@ -3427,14 +3403,14 @@ class WebSocketSessionHandler:
                 result.is_degraded,
                 result.agent_duration_ms,
             )
-    
+
             # Capture encounter state BEFORE applying the narration result so we
             # can detect transitions (live→resolved) after the dispatch below and
             # emit the corresponding state_transition / resolve events.
             prior_encounter = snapshot.encounter
             prior_live = prior_encounter is not None and not prior_encounter.resolved
             prior_type = prior_encounter.encounter_type if prior_encounter else None
-    
+
             # Unified dispatch — passes the pack so encounter instantiation /
             # beat application / resolution happen in one place (emits the
             # Story-3.4 OTEL spans the GM panel reads).
@@ -3452,8 +3428,11 @@ class WebSocketSessionHandler:
                 dice_failed = outcome_name in ("Fail", "CritFail")
             dice_actor: str | None = getattr(sd, "pending_roll_actor", None)
             _apply_narration_result_to_snapshot(
-                snapshot, result, sd.player_name,
-                pack=sd.genre_pack, dice_failed=dice_failed,
+                snapshot,
+                result,
+                sd.player_name,
+                pack=sd.genre_pack,
+                dice_failed=dice_failed,
                 dice_actor=dice_actor,
             )
             # Consume the pending outcome — one turn per roll.
@@ -3462,24 +3441,23 @@ class WebSocketSessionHandler:
             if hasattr(sd, "pending_roll_actor"):
                 sd.pending_roll_actor = None
             snapshot.turn_manager.record_interaction()
-    
+
             now_encounter = snapshot.encounter
             now_live = now_encounter is not None and not now_encounter.resolved
-    
+
             from sidequest.server.dispatch.encounter_lifecycle import (
                 _is_combat_category,
                 apply_resource_patches,
                 award_turn_xp,
             )
+
             in_combat_now = (
                 snapshot.encounter is not None
                 and not snapshot.encounter.resolved
-                and _is_combat_category(
-                    sd.genre_pack, snapshot.encounter.encounter_type
-                )
+                and _is_combat_category(sd.genre_pack, snapshot.encounter.encounter_type)
             )
             award_turn_xp(snapshot, in_combat=in_combat_now)
-    
+
             try:
                 crossed_thresholds = apply_resource_patches(
                     snapshot,
@@ -3496,9 +3474,10 @@ class WebSocketSessionHandler:
             for t in crossed_thresholds:
                 logger.info(
                     "resource.threshold_crossed event_id=%s at=%s",
-                    t.event_id, t.at,
+                    t.event_id,
+                    t.at,
                 )
-    
+
             try:
                 # ADR-037 Python port: room owns the canonical snapshot, so a
                 # plain room.save() is sufficient — there is no per-session
@@ -3525,20 +3504,20 @@ class WebSocketSessionHandler:
                 )
             except Exception as exc:
                 logger.error("session.persist_failed error=%s", exc)
-    
+
             # Story 37-33: embed newly-seeded / pending lore fragments in the
             # background so the *next* turn's RAG retrieval can find them.
             # Spawns a fire-and-forget task — the narration turn returns to
             # the player immediately; embeds populate during the human's
             # reading time.
             self._dispatch_embed_worker(sd)
-    
+
             narration_text = result.narration or "(The world holds its breath...)"
             try:
                 narration_nbs = NonBlankString(narration_text)
             except Exception:
                 narration_nbs = NonBlankString("The world holds its breath...")
-    
+
             # Forward extracted footnotes into the NarrationPayload so the UI
             # Knowledge journal fills. Narrator produces them every turn
             # (see `game_patch.extracted footnotes=N` in the server log) and
@@ -3609,9 +3588,11 @@ class WebSocketSessionHandler:
             # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
             # see ``build_secret_note_events`` for the skip rules.
             for _envelope in build_secret_note_events(
-                result.secret_routes, turn_id=dispatch_package.turn_id,
+                result.secret_routes,
+                turn_id=dispatch_package.turn_id,
             ):
                 import json as _json
+
                 _payload_data = _json.loads(_envelope.payload_json)
                 self._emit_event(
                     "SECRET_NOTE",
@@ -3623,7 +3604,7 @@ class WebSocketSessionHandler:
                         visibility_sidecar=_payload_data["_visibility"],
                     ),
                 )
-    
+
             # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
             # OTEL visibility: add event to current span so the GM panel (Sebastien-
             # tier mechanical visibility) can see the dispatch decision end-to-end.
@@ -3648,6 +3629,7 @@ class WebSocketSessionHandler:
                     build_confrontation_payload,
                     find_confrontation_def,
                 )
+
                 cdef = find_confrontation_def(
                     sd.genre_pack.rules.confrontations if sd.genre_pack.rules else [],
                     now_encounter.encounter_type,
@@ -3675,6 +3657,7 @@ class WebSocketSessionHandler:
                 from sidequest.server.dispatch.confrontation import (
                     build_clear_confrontation_payload,
                 )
+
                 assert prior_type is not None  # guaranteed by prior_live=True
                 payload_dict = build_clear_confrontation_payload(
                     encounter_type=prior_type,
@@ -3689,7 +3672,8 @@ class WebSocketSessionHandler:
 
             if confrontation_payload is not None:
                 confrontation_msg = self._emit_event(
-                    "CONFRONTATION", confrontation_payload,
+                    "CONFRONTATION",
+                    confrontation_payload,
                 )
                 assert confrontation_event_attrs is not None
                 trace.get_current_span().add_event(
@@ -3711,11 +3695,10 @@ class WebSocketSessionHandler:
                     # OTEL hook is best-effort logging — never crash the
                     # turn for missing observability metadata.
                     import contextlib  # noqa: PLC0415 — local import keeps hot path lean
+
                     with contextlib.suppress(AttributeError):
                         peer_player_ids = [
-                            pid
-                            for pid in self._room.connected_player_ids()
-                            if pid != sd.player_id
+                            pid for pid in self._room.connected_player_ids() if pid != sd.player_id
                         ]
                     room_slug = getattr(self._room, "slug", "") or ""
                 logger.info(
@@ -3738,7 +3721,7 @@ class WebSocketSessionHandler:
                     },
                     component="confrontation",
                 )
-    
+
             outbound: list[object] = [narration_msg]
             if confrontation_msg is not None:
                 outbound.append(confrontation_msg)
@@ -3772,7 +3755,7 @@ class WebSocketSessionHandler:
                     player_id=sd.player_id,
                 ),
             )
-    
+
             # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
             # the TURN_STATUS{active} broadcast at action receipt — peers' banner
             # tone="peer" stays stuck without this clear. exclude_socket_id=None
@@ -3810,7 +3793,7 @@ class WebSocketSessionHandler:
                         "session.turn_status_resolved_broadcast_failed error=%s",
                         exc,
                     )
-    
+
             # Refresh PARTY_STATUS so `current_location` and any HP/inventory
             # mutations landed by the narration apply propagate to the client
             # header / CharacterSheet / MapOverlay. Previously PARTY_STATUS
@@ -3826,10 +3809,7 @@ class WebSocketSessionHandler:
                     # data with the requesting socket's player_id and the UI
                     # renders the wrong PC as "(YOU)" — playtest 2026-04-25
                     # "Tab 2 sees Laverne (YOU)".
-                    self_char = (
-                        self._resolve_self_character(sd)
-                        or snapshot.characters[0]
-                    )
+                    self_char = self._resolve_self_character(sd) or snapshot.characters[0]
                     party_status = self._build_session_start_party_status(
                         sd, self_char, sd.player_id
                     )
@@ -3853,10 +3833,8 @@ class WebSocketSessionHandler:
                         component="party_status",
                     )
                 except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
-                    logger.warning(
-                        "state.party_status_refresh_failed error=%s", exc
-                    )
-    
+                    logger.warning("state.party_status_refresh_failed error=%s", exc)
+
             # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
             # message ships with the NARRATION payload; the async render task
             # posts an IMAGE message onto the per-connection outbound queue
@@ -3867,14 +3845,14 @@ class WebSocketSessionHandler:
             render_queued = self._maybe_dispatch_render(sd, result)
             if render_queued is not None:
                 outbound.append(render_queued)
-    
+
             # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
             # with this turn's outbound frames. No placeholder + later message
             # dance — the DJ is a local filesystem lookup.
             audio_cue = self._maybe_dispatch_audio(sd, result)
             if audio_cue is not None:
                 outbound.append(audio_cue)
-    
+
             # turn_complete is now emitted by the validator (per ADR-089 §6.7).
             # The TurnRecord assembled below is the single source of truth.
 
@@ -3895,9 +3873,7 @@ class WebSocketSessionHandler:
                         )
                     if result.lore_established:
                         _patch_summaries.append(
-                            PatchSummary(
-                                patch_type="lore", fields_changed=["lore_established"]
-                            )
+                            PatchSummary(patch_type="lore", fields_changed=["lore_established"])
                         )
                     if result.npcs_present:
                         _patch_summaries.append(
@@ -3986,10 +3962,7 @@ class WebSocketSessionHandler:
         # suppress the cold-open and fall back to the generic continuation
         # action so the persistent narrator (ADR-067) treats this as
         # scene continuation, not a fresh in-medias-res open.
-        if (
-            sd.opening_seed is not None
-            and len(sd.snapshot.characters) > 1
-        ):
+        if sd.opening_seed is not None and len(sd.snapshot.characters) > 1:
             _watcher_publish(
                 "mp_joiner_opening_suppressed_at_consume",
                 {
@@ -4007,7 +3980,9 @@ class WebSocketSessionHandler:
             logger.info(
                 "session.mp_joiner_opening_suppressed_at_consume "
                 "genre=%s world=%s player=%s character_count=%d",
-                sd.genre_slug, sd.world_slug, sd.player_name,
+                sd.genre_slug,
+                sd.world_slug,
+                sd.player_name,
                 len(sd.snapshot.characters),
             )
             span.add_event(
@@ -4044,9 +4019,11 @@ class WebSocketSessionHandler:
         # not authored cold-open prose).
         cold_open_messages: list[object] = []
         if sd.opening_seed:
-            cold_open_messages.append(NarrationMessage(
-                payload=NarrationPayload(text=NonBlankString(sd.opening_seed)),
-            ))
+            cold_open_messages.append(
+                NarrationMessage(
+                    payload=NarrationPayload(text=NonBlankString(sd.opening_seed)),
+                )
+            )
             _watcher_publish(
                 "cold_open_emitted",
                 {
@@ -4117,7 +4094,8 @@ class WebSocketSessionHandler:
             ):
                 logger.warning(
                     "audio.backend_skipped reason=pack_dir_missing genre=%s error=%s",
-                    genre_slug, exc,
+                    genre_slug,
+                    exc,
                 )
             return None
 
@@ -4128,7 +4106,8 @@ class WebSocketSessionHandler:
                 genre=genre_slug,
             ):
                 logger.info(
-                    "audio.backend_skipped reason=empty_config genre=%s", genre_slug,
+                    "audio.backend_skipped reason=empty_config genre=%s",
+                    genre_slug,
                 )
             return None
 
@@ -4139,7 +4118,8 @@ class WebSocketSessionHandler:
         ):
             logger.info(
                 "audio.backend_ready genre=%s pack_dir=%s",
-                genre_slug, pack_dir,
+                genre_slug,
+                pack_dir,
             )
         return LibraryBackend(audio_cfg, base_path=pack_dir)
 
@@ -4220,7 +4200,51 @@ class WebSocketSessionHandler:
             logger.warning("render.skipped reason=no_outbound_queue")
             return None
 
-        render_id = uuid.uuid4().hex[:12]
+        # ADR-050 image pacing throttle. Consult BEFORE allocating a
+        # render_id or touching the daemon — suppressed renders should
+        # leave no trace beyond the OTEL decision event.
+        throttle_decision = sd.image_pacing_throttle.should_render()
+        provisional_render_id = uuid.uuid4().hex[:12]
+        if not throttle_decision.allowed:
+            logger.info(
+                "render.throttled render_id=%s reason=%s remaining=%ds",
+                provisional_render_id,
+                throttle_decision.reason,
+                throttle_decision.cooldown_remaining_seconds,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "throttle_decision",
+                    "decision": "suppress",
+                    "reason": throttle_decision.reason,
+                    "render_id": provisional_render_id,
+                    "cooldown_remaining_seconds": (throttle_decision.cooldown_remaining_seconds),
+                    "cooldown_seconds": sd.image_pacing_throttle.cooldown_seconds,
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+            )
+            return None
+        # Allowed — emit the allow decision so the GM panel can see both
+        # branches in the OTEL stream (lie-detector requirement per
+        # CLAUDE.md OTEL Observability Principle).
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "throttle_decision",
+                "decision": "allow",
+                "reason": throttle_decision.reason,
+                "render_id": provisional_render_id,
+                "cooldown_seconds": sd.image_pacing_throttle.cooldown_seconds,
+                "turn_number": sd.snapshot.turn_manager.interaction,
+            },
+            component="render",
+        )
+
+        render_id = provisional_render_id
         tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
         params: dict[str, object] = {
             "tier": tier,
@@ -4280,6 +4304,11 @@ class WebSocketSessionHandler:
                 legacy_queue,
             )
         )
+        # ADR-050 — record the dispatch *after* the task is created so the
+        # cooldown only starts ticking on actually-dispatched renders.
+        # ``force_render`` callers intentionally skip this call to leave the
+        # cadence untouched; this code path is the organic dispatch only.
+        sd.image_pacing_throttle.record_render()
 
         return RenderQueuedMessage(
             type=MessageType.RENDER_QUEUED,  # type: ignore[arg-type]
@@ -4324,7 +4353,8 @@ class WebSocketSessionHandler:
                 span.set_attribute("genre", sd.genre_slug)
                 span.set_attribute("turn_number", sd.snapshot.turn_manager.interaction)
                 cues = _AUDIO_INTERPRETER.interpret(
-                    narration, sd.audio_backend._config,  # type: ignore[attr-defined]
+                    narration,
+                    sd.audio_backend._config,  # type: ignore[attr-defined]
                 )
                 payload = build_audio_cue_payload(
                     cues,
@@ -4340,7 +4370,8 @@ class WebSocketSessionHandler:
                     # Spans accept list attributes; truncate to keep the
                     # trace payload bounded even with long SFX batches.
                     span.set_attribute(
-                        "sfx_triggers", list(payload.sfx_triggers[:16]),
+                        "sfx_triggers",
+                        list(payload.sfx_triggers[:16]),
                     )
                 span.set_attribute(
                     "reason",
@@ -4402,9 +4433,7 @@ class WebSocketSessionHandler:
     # Lore embedding — RAG retrieval (pre-turn) + worker dispatch (post-turn)
     # ------------------------------------------------------------------
 
-    async def _retrieve_lore_for_turn(
-        self, sd: _SessionData, action: str
-    ) -> str | None:
+    async def _retrieve_lore_for_turn(self, sd: _SessionData, action: str) -> str | None:
         """Fetch the pre-turn lore block via semantic search.
 
         Always returns ``None`` on empty stores, missing daemons, or
@@ -4461,13 +4490,9 @@ class WebSocketSessionHandler:
             # shows it alongside the worker's own ``lore_embedding.worker``
             # span. Watcher event stays as well for the live state_transition
             # stream.
-            with tracer.start_as_current_span(
-                "lore_embedding.dispatch_skipped"
-            ) as skip_span:
+            with tracer.start_as_current_span("lore_embedding.dispatch_skipped") as skip_span:
                 skip_span.set_attribute("lore.skip_reason", "worker_still_running")
-                skip_span.set_attribute(
-                    "lore.turn_number", sd.snapshot.turn_manager.interaction
-                )
+                skip_span.set_attribute("lore.turn_number", sd.snapshot.turn_manager.interaction)
             _watcher_publish(
                 "state_transition",
                 {
@@ -4483,9 +4508,7 @@ class WebSocketSessionHandler:
         if not pending:
             return
         turn_number = sd.snapshot.turn_manager.interaction
-        sd.embed_task = asyncio.create_task(
-            self._run_embed_worker(sd, len(pending), turn_number)
-        )
+        sd.embed_task = asyncio.create_task(self._run_embed_worker(sd, len(pending), turn_number))
 
     async def _run_embed_worker(
         self, sd: _SessionData, pending_count: int, turn_number: int
@@ -4542,9 +4565,7 @@ class WebSocketSessionHandler:
         try:
             reply = await client.render(params)
         except DaemonUnavailableError as exc:
-            logger.warning(
-                "render.reply_unavailable render_id=%s error=%s", render_id, exc
-            )
+            logger.warning("render.reply_unavailable render_id=%s error=%s", render_id, exc)
             _watcher_publish(
                 "state_transition",
                 {
@@ -4613,9 +4634,7 @@ class WebSocketSessionHandler:
             if active_app is not None and image_url
             else None
         )
-        served_url = (
-            healed if healed is not None else _render_url_from_path(image_url)
-        )
+        served_url = healed if healed is not None else _render_url_from_path(image_url)
         width = int(reply.get("width") or 0) or None
         height = int(reply.get("height") or 0) or None
         elapsed = int(reply.get("elapsed_ms") or 0)
@@ -4675,9 +4694,7 @@ class WebSocketSessionHandler:
         if target_queue is None:
             # Pre-room-context dispatch with no fallback queue — the
             # render had nowhere to land. Surface it loudly.
-            logger.warning(
-                "render.session_not_found render_id=%s reason=no_queue", render_id
-            )
+            logger.warning("render.session_not_found render_id=%s reason=no_queue", render_id)
             _watcher_publish(
                 "state_transition",
                 {
@@ -4736,7 +4753,8 @@ class WebSocketSessionHandler:
         # Filter to Carried items — identical to Rust's inventory.carried()
         # iterator, which skips Stored/Dropped.
         carried = [
-            item for item in character.core.inventory.items
+            item
+            for item in character.core.inventory.items
             if str(item.get("state", "Carried")) == "Carried"
         ]
 
@@ -4773,9 +4791,7 @@ class WebSocketSessionHandler:
                     **{"type": str(item.get("category", "equipment") or "equipment")},  # type: ignore[arg-type]
                     equipped=bool(item.get("equipped", False)),
                     quantity=int(item.get("quantity", 1)),
-                    description=NonBlankString(
-                        str(item.get("description") or item["name"])
-                    ),
+                    description=NonBlankString(str(item.get("description") or item["name"])),
                 )
                 for item in carried
             ],
@@ -4784,9 +4800,7 @@ class WebSocketSessionHandler:
         )
 
         location_nbs: NonBlankString | None = None
-        loc_display = _resolve_location_display(
-            sd.genre_pack, sd.world_slug, sd.snapshot.location
-        )
+        loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, sd.snapshot.location)
         if loc_display:
             try:
                 location_nbs = NonBlankString(loc_display)
@@ -4811,9 +4825,7 @@ class WebSocketSessionHandler:
             inventory=inventory_payload,
         )
 
-    def _resolve_self_character(
-        self, sd: _SessionData
-    ) -> Character | None:
+    def _resolve_self_character(self, sd: _SessionData) -> Character | None:
         """Find the Character belonging to ``sd.player_id`` in the snapshot.
 
         Used to disambiguate "which PC is *me*" when the snapshot carries
@@ -4880,9 +4892,7 @@ class WebSocketSessionHandler:
             else:
                 pid = seat_map.get(char.core.name) or f"peer:{char.core.name}"
                 pname = char.core.name
-            members.append(
-                self._party_member_from_character(sd, char, pid, pname)
-            )
+            members.append(self._party_member_from_character(sd, char, pid, pname))
 
         return PartyStatusMessage(
             type="PARTY_STATUS",  # type: ignore[arg-type]
