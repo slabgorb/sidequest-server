@@ -1448,6 +1448,20 @@ SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consume
 # so the GM panel's Subsystems tab gets a per-encounter timeline (T4).
 # The flat ``agent_span_close`` firehose still carries the same data for
 # the Console / Timing tabs — the typed event is additive.
+#
+# Dogfight subsystem — port-MVP scope.
+#
+# ADR-077 prescribes 7 spans total. This port ships the 3 below;
+# the remaining 4 are deferred along with their gating subsystems:
+#
+#   - SPAN_DOGFIGHT_GUN_SOLUTION_FIRED — needs explicit fire-event lifecycle
+#   - SPAN_DOGFIGHT_ENERGY_DEPLETED — needs energy pool subsystem
+#   - SPAN_DOGFIGHT_SKILL_TIER_RESOLVED — needs pilot skill tier loading
+#   - SPAN_DOGFIGHT_ACE_INSTINCT_USED — needs tier-3 ace instinct mechanic
+#
+# All four are tracked as post-MVP work; the 3 below give the GM panel
+# enough signal to verify the engine engaged without claiming features
+# that don't exist yet.
 # ---------------------------------------------------------------------------
 SPAN_DOGFIGHT_CONFRONTATION_STARTED = "dogfight.confrontation_started"
 SPAN_ROUTES[SPAN_DOGFIGHT_CONFRONTATION_STARTED] = SpanRoute(

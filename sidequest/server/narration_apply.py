@@ -438,8 +438,12 @@ def _apply_narration_result_to_snapshot(
                     raise ValueError(
                         f"unknown beat_id {sel.beat_id!r} for encounter {enc.encounter_type!r}"
                     )
-                outcome = sel.outcome  # narrator-declared tier
-                result_apply = apply_beat(enc, actor, beat, outcome, turn=turn_num)
+                # Renamed from `outcome` to `tier` to avoid shadowing the
+                # function-scoped `outcome = NarrationApplyOutcome()`. The
+                # legacy beat path was silently returning RollOutcome from
+                # the last selection instead of the apply-outcome dataclass.
+                tier = sel.outcome  # narrator-declared tier
+                result_apply = apply_beat(enc, actor, beat, tier, turn=turn_num)
                 if result_apply.skipped_reason is not None:
                     with encounter_beat_skipped_span(
                         reason=result_apply.skipped_reason,

@@ -50,6 +50,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
 from sidequest.protocol.dice import RollOutcome
 from sidequest.server.narration_apply import (
+    NarrationApplyOutcome,
     _apply_narration_result_to_snapshot,
 )
 
@@ -471,6 +472,72 @@ def test_legacy_beat_selection_path_still_works(
     assert enc.opponent_metric.current >= starting_opp, (
         "apply_beat path no longer fires for legacy combat — sealed-letter "
         "branch is destructive, not additive"
+    )
+
+
+def test_legacy_beat_path_returns_narration_apply_outcome(
+    cac_snap: tuple[GameSnapshot, GenrePack],
+) -> None:
+    """The legacy beat path must return ``NarrationApplyOutcome``, not the
+    inner ``RollOutcome`` from a beat selection.
+
+    Regression: T7 follow-up introduced a shadowing bug where the legacy
+    beat-loop body bound a local ``outcome = sel.outcome`` that shadowed
+    the function-scoped ``outcome = NarrationApplyOutcome()``. The
+    function then returned a RollOutcome enum from the last selection,
+    silently breaking the contract. Production callers ignored the
+    return value so it surfaced nowhere — but the playtest fixture and
+    any future field on NarrationApplyOutcome would AttributeError.
+    """
+    snap, pack = cac_snap
+
+    # Turn 1: instantiate combat. Even with no beat_selections, the
+    # function must return the dataclass (not None, not RollOutcome).
+    inst_outcome = _apply_narration_result_to_snapshot(
+        snap,
+        NarrationTurnResult(
+            narration="Goblins leap from the shadows.",
+            confrontation="combat",
+            npcs_present=[
+                NpcMention(name="Goblin", role="hostile", side="opponent"),
+            ],
+        ),
+        player_name="Rux",
+        pack=pack,
+    )
+    assert isinstance(inst_outcome, NarrationApplyOutcome), (
+        f"instantiation turn must return NarrationApplyOutcome, "
+        f"got {type(inst_outcome).__name__}"
+    )
+    assert inst_outcome.sealed_letter is None, (
+        "legacy combat instantiation must not produce a sealed_letter outcome"
+    )
+
+    # Turn 2: drive a beat selection through the legacy apply_beat path.
+    # The shadowing bug surfaced HERE — `outcome = sel.outcome` rebinds
+    # the function local, so the return type was the RollOutcome enum.
+    apply_outcome = _apply_narration_result_to_snapshot(
+        snap,
+        NarrationTurnResult(
+            narration="Rux strikes the goblin clean.",
+            beat_selections=[
+                BeatSelection(
+                    actor="Rux", beat_id="attack",
+                    outcome=RollOutcome.Success,
+                ),
+            ],
+        ),
+        player_name="Rux",
+        pack=pack,
+    )
+    assert isinstance(apply_outcome, NarrationApplyOutcome), (
+        f"legacy beat path must return NarrationApplyOutcome, "
+        f"got {type(apply_outcome).__name__} — likely the inner "
+        f"`outcome = sel.outcome` is shadowing the function-scoped "
+        f"outcome dataclass again"
+    )
+    assert apply_outcome.sealed_letter is None, (
+        "legacy beat path must not populate the sealed_letter outcome field"
     )
 
 

@@ -172,7 +172,7 @@ def test_no_orphan_maneuvers_in_cell_pairs(
     """Every cell pair references only maneuvers in maneuvers_consumed."""
     legal = set(dogfight_table.maneuvers_consumed)
     for cell in dogfight_table.cells:
-        for slot, maneuver in zip(("red", "blue"), cell.pair):
+        for slot, maneuver in zip(("red", "blue"), cell.pair, strict=True):
             assert maneuver in legal, (
                 f"cell {cell.pair!r} {slot}={maneuver!r} not in "
                 f"maneuvers_consumed {sorted(legal)}"
