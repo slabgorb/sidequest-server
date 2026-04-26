@@ -172,12 +172,94 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
     assert req["params"]["tags"] == ["desert", "ruin"]
     assert req["params"]["location"] == "Tood's Dome — Nest Crack"
     assert req["params"]["genre"] == "mutant_wasteland"
-    # Slice 1 of catalog-injected compose wiring: server must send `world`
-    # so the daemon's compose path can scope catalogs (CharacterCatalog,
-    # PlaceCatalog, StyleCatalog) per (genre, world). Without `world` the
-    # daemon's compose conditional skips, leaving the legacy prose-subject
-    # prompt as the input to Z-Image.
-    assert req["params"]["world"] == "flickering_reach"
+    # Slice 1 of catalog-injected compose wiring + Bug #2a (playtest
+    # 2026-04-26): server must send ``world`` so the daemon's compose path
+    # can scope catalogs (CharacterCatalog, PlaceCatalog, StyleCatalog) per
+    # (genre, world) AND engage the world-scoped visual_style. Without it,
+    # the compose gate short-circuits and falls back to the legacy
+    # prose-subject prompt — a silent styleless fallback.
+    assert req["params"]["world"] == "flickering_reach", (
+        "render request missing ``world`` — daemon's PromptComposer gate "
+        "in sidequest_daemon/media/daemon.py will short-circuit and fall "
+        "back to a styleless raw prompt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_render_dispatch_otel_includes_genre_and_world(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug #2a lie-detector (CLAUDE.md OTEL Observability Principle).
+
+    The GM panel needs to verify that the daemon's PromptComposer will
+    actually engage. The dispatched watcher event must carry both
+    ``genre`` and ``world`` so the panel can spot a styleless fallback
+    before the rendered image arrives.
+    """
+    import asyncio as _asyncio
+
+    from sidequest.telemetry.watcher_hub import WatcherHub, watcher_hub
+
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "render_x.png"),
+            "width": 1024, "height": 768, "elapsed_ms": 50,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    # Bind the watcher hub to this loop and capture events.
+    watcher_hub.bind_loop(_asyncio.get_running_loop())
+    async with watcher_hub._lock:  # noqa: SLF001
+        watcher_hub._subscribers.clear()  # noqa: SLF001
+
+    class _Cap:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    cap = _Cap()
+    await watcher_hub.subscribe(cap)  # type: ignore[arg-type]
+
+    handler, _queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    result = NarrationTurnResult(
+        narration="...",
+        visual_scene=VisualScene(subject="x", tier="scene_illustration"),
+    )
+    handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+
+    await _asyncio.sleep(0.1)
+    await daemon.stop()
+
+    dispatched = [
+        e for e in cap.events
+        if e.get("event_type") == "state_transition"
+        and e.get("fields", {}).get("field") == "render"
+        and e.get("fields", {}).get("op") == "dispatched"
+    ]
+    assert len(dispatched) == 1, (
+        f"expected exactly 1 render.dispatched event, got {len(dispatched)}"
+    )
+    fields = dispatched[0]["fields"]
+    assert fields.get("genre") == "mutant_wasteland", (
+        "render.dispatched event missing ``genre`` — GM panel can't "
+        "verify the daemon's PromptComposer will engage genre style"
+    )
+    assert fields.get("world") == "flickering_reach", (
+        "render.dispatched event missing ``world`` — GM panel can't "
+        "spot a styleless silent fallback before the image arrives"
+    )
 
 
 @pytest.mark.asyncio
