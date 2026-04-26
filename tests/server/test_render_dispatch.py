@@ -227,3 +227,105 @@ def _client_bound_to(path: Path):
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_render_dispatch_self_heals_after_daemon_restart(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4-BUG wiring test (CLAUDE.md mandate).
+
+    Simulates the playtest 2026-04-26 failure: server boots with the OLD
+    daemon's tmp dir mounted. Daemon restarts; its NEW tmp dir is
+    different. A render-completed reply now lands with image_url under
+    the new dir.
+
+    Without the fix: ``_render_url_from_path`` falls through (path not
+    under SIDEQUEST_OUTPUT_DIR), the IMAGE message ships an absolute
+    filesystem path, the UI 404s on it.
+
+    With the fix: ``ensure_render_mount`` registers the new dir on the
+    live mount and the IMAGE message ships a clean ``/renders/...`` URL
+    that an HTTP GET against the live app actually serves.
+    """
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.testclient import TestClient
+
+    from sidequest.server import render_mounts
+
+    # OLD daemon dir (env points here at startup; it's empty/stale).
+    old_dir = tmp_path / "sq-daemon-OLD"
+    old_dir.mkdir()
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(old_dir))
+
+    # NEW daemon dir (post-restart) with a real image file.
+    new_dir = tmp_path / "sq-daemon-NEW" / "zimage"
+    new_dir.mkdir(parents=True)
+    image_file = new_dir / "render_post_restart.png"
+    image_file.write_bytes(b"\x89PNG\r\n\x1a\nactual-bytes")
+
+    # Daemon reply uses the NEW path.
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(image_file),
+            "width": 512,
+            "height": 512,
+            "elapsed_ms": 1234,
+        }
+    )
+    await daemon.start(short_sock)
+
+    # Build a minimal app that mirrors create_app's mount + active-app
+    # registration so the heal code path can find the live mount.
+    app = FastAPI()
+    app.mount(
+        "/renders",
+        StaticFiles(directory=str(old_dir)),
+        name="render_assets",
+    )
+    render_mounts.set_active_app(app)
+    try:
+        monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+        monkeypatch.setattr(
+            "sidequest.server.session_handler.DaemonClient",
+            lambda: _client_bound_to(short_sock),
+        )
+
+        handler, queue = _make_handler_with_queue()
+        sd = _make_session_data()
+        result = NarrationTurnResult(
+            narration="The new tmpdir's pixels.",
+            visual_scene=VisualScene(
+                subject="post-restart scene",
+                tier="scene_illustration",
+            ),
+        )
+
+        queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+        assert queued is not None
+        image_msg = await asyncio.wait_for(queue.get(), timeout=2.0)
+        await daemon.stop()
+
+        assert image_msg.type == MessageType.IMAGE
+        # The URL must be a clean /renders/* path (NOT an absolute
+        # filesystem path with the leading slash of /var or /private).
+        url = image_msg.payload.url
+        assert url.startswith("/renders/"), (
+            f"expected /renders/* URL, got absolute path: {url!r} — "
+            f"the self-healing mount didn't fire"
+        )
+        assert url.endswith("render_post_restart.png")
+
+        # Wiring proof: an HTTP GET against the live app actually serves
+        # the file from the NEW dir.
+        client = TestClient(app)
+        resp = client.get(url)
+        assert resp.status_code == 200, (
+            f"GET {url} returned {resp.status_code}: "
+            f"healed mount didn't make the file reachable"
+        )
+        assert resp.content == b"\x89PNG\r\n\x1a\nactual-bytes"
+    finally:
+        render_mounts.reset_for_app(app)
+        render_mounts.set_active_app(None)

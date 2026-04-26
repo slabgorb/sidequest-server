@@ -272,6 +272,25 @@ def create_app(
             "every render will fall through unrewritten and the UI will 404"
         )
 
+    # --- Self-healing render-mount middleware (S4-BUG fix). ---
+    # Forensic 404 publisher — when a /renders/* URL still 404s after
+    # the on-render mount logic ran, surface it in the GM panel so the
+    # next regression isn't silent. De-duplicated per URL inside the
+    # registry to keep the dashboard quiet.
+    from sidequest.server import render_mounts as _render_mounts
+
+    _render_mounts.set_active_app(app)
+
+    @app.middleware("http")
+    async def _render_404_watcher(request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        if (
+            response.status_code == 404
+            and request.url.path.startswith("/renders/")
+        ):
+            _render_mounts.publish_url_404(request.url.path)
+        return response
+
     return app
 
 
