@@ -6,11 +6,15 @@ Re-exported by session_handler for back-compat.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
-from sidequest.server.dispatch.sealed_letter import resolve_sealed_letter_lookup
+from sidequest.server.dispatch.sealed_letter import (
+    SealedLetterOutcome,
+    resolve_sealed_letter_lookup,
+)
 from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
 )
@@ -25,6 +29,25 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class NarrationApplyOutcome:
+    """Aggregate result of applying a NarrationTurnResult to a snapshot.
+
+    Carries the per-dispatch-branch outcome objects so callers can read
+    them without re-implementing the dispatch logic. Currently only the
+    sealed-letter (dogfight) branch surfaces an outcome — extend with
+    additional fields as other branches grow structured returns.
+
+    All fields are ``None`` when the corresponding branch did not fire
+    this turn (no encounter, wrong resolution_mode, no beat_selections,
+    early-return on non-NarrationTurnResult input, etc.). Callers that
+    don't care can ignore the return value entirely — it is purely
+    additive over the prior ``None`` return.
+    """
+
+    sealed_letter: SealedLetterOutcome | None = None
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -33,7 +56,7 @@ def _apply_narration_result_to_snapshot(
     pack: GenrePack | None = None,
     dice_failed: bool | None = None,
     dice_actor: str | None = None,
-) -> None:
+) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
     Phase 1: location, quest_updates, lore_established, npc_registry,
@@ -55,8 +78,10 @@ def _apply_narration_result_to_snapshot(
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
+    outcome = NarrationApplyOutcome()
+
     if not isinstance(result, NarrationTurnResult):
-        return
+        return outcome
 
     if result.location:
         old_loc = snapshot.location
@@ -334,6 +359,7 @@ def _apply_narration_result_to_snapshot(
                 sl_outcome = resolve_sealed_letter_lookup(
                     enc, commits, cdef.interaction_table,
                 )
+                outcome.sealed_letter = sl_outcome
                 # Replace, do not append: only the most recent cell's hint
                 # is relevant context for the next narrator turn.
                 # ``narrator_hints`` is consumed by
@@ -535,6 +561,8 @@ def _apply_narration_result_to_snapshot(
                 },
                 component="encounter",
             )
+
+    return outcome
 
 
 def _build_resolution_signal(enc: object) -> object:

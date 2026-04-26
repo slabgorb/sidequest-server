@@ -183,15 +183,19 @@ def drive_dogfight_turn(
             callers driving descriptive playtests can pass real prose.
 
     Returns:
-        The ``SealedLetterOutcome`` recovered from the encounter — this
-        carries the resolved cell name, narration hint, and
-        extend-and-return flag. The same hint is also pushed onto
+        The ``SealedLetterOutcome`` produced by the dispatch path — this
+        carries the resolved cell name, narration hint, and the real
+        ``extend_and_return_triggered`` flag (read straight from the
+        resolver, not reconstructed). The same hint is also pushed onto
         ``encounter.narrator_hints`` (replacing prior, per T5 fix).
 
     Raises:
         ValueError: maneuver not in the legal ``maneuvers_consumed`` set
             for the encounter, or the snapshot has no active dogfight
             encounter, or the production resolver rejects the commits.
+        RuntimeError: dispatch did not invoke the sealed-letter resolver
+            (e.g., encounter resolution_mode drifted) — this is a wiring
+            failure for the playtest fixture and surfaces loudly.
         KeyError: legal maneuvers but no interaction cell matches the
             (red, blue) pair (content gap — surface loudly).
     """
@@ -232,26 +236,7 @@ def drive_dogfight_turn(
     red_actor = next(a for a in enc.actors if a.role == "red")
     blue_actor = next(a for a in enc.actors if a.role == "blue")
 
-    # Look up the cell ahead of time so we can return a fully-populated
-    # SealedLetterOutcome (the production dispatch path mutates state but
-    # doesn't return the outcome). Doing the lookup here is a duplicate of
-    # the resolver's lookup, but acceptable: this is test-side scaffolding,
-    # not a hot path, and it lets callers assert on cell_name without
-    # peeking at OTEL spans for every turn.
-    cell = next(
-        (
-            c for c in cdef.interaction_table.cells
-            if c.pair[0] == red_maneuver and c.pair[1] == blue_maneuver
-        ),
-        None,
-    )
-    if cell is None:
-        raise KeyError(
-            f"no interaction cell for ({red_maneuver!r}, {blue_maneuver!r}) "
-            f"in space_opera dogfight table — content gap"
-        )
-
-    _apply_narration_result_to_snapshot(
+    apply_outcome = _apply_narration_result_to_snapshot(
         snapshot,
         NarrationTurnResult(
             narration=narration,
@@ -264,15 +249,16 @@ def drive_dogfight_turn(
         pack=pack,
     )
 
-    # extend_and_return_triggered is best recovered from the OTEL span;
-    # we can't tell from state alone whether the geometry reset fired
-    # without re-running the rule. Default False — callers who care
-    # should attach an InMemorySpanExporter and read the cell_resolved
-    # span attribute.
-    return SealedLetterOutcome(
-        cell_name=cell.name,
-        red_maneuver=red_maneuver,
-        blue_maneuver=blue_maneuver,
-        narration_hint=cell.narration_hint,
-        extend_and_return_triggered=False,
-    )
+    # The dispatch path now returns the SealedLetterOutcome it built
+    # internally — no need to re-implement cell lookup here. If the
+    # outcome is None, the dispatch silently took a different branch
+    # (no encounter, wrong resolution_mode, etc.) which is a wiring
+    # bug for the playtest fixture: surface it loudly per CLAUDE.md.
+    sl_outcome = apply_outcome.sealed_letter
+    if sl_outcome is None:
+        raise RuntimeError(
+            "dispatch did not invoke the sealed-letter resolver — encounter "
+            f"resolution_mode is not sealed_letter_lookup, or the encounter "
+            f"was not active. Encounter type: {enc.encounter_type!r}"
+        )
+    return sl_outcome

@@ -48,9 +48,11 @@ ROLE_BLUE = "blue"
 # extend-and-return rule to reset geometric fields after the engagement
 # breaks apart. Energy fields are intentionally NOT in this dict so they
 # survive the reset.
-# TODO(T5): drive from descriptor_schema.starting_states (where id == "merge")
-# instead of hardcoding — until then, test_merge_starting_geometry_matches_descriptor_schema
-# guards against content/code drift.
+# TODO(post-port): drive from descriptor_schema.starting_states
+# (where id == "merge") instead of hardcoding. The dogfight port (T1-T7)
+# left this hardcoded; the cleanup is mechanical but out of scope for the
+# port itself. Until then, test_merge_starting_geometry_matches_descriptor_schema
+# is the safety net that fails loudly if content and this constant drift apart.
 _MERGE_STARTING_GEOMETRY: dict[str, object] = {
     "target_bearing": "12",
     "target_range": "close",

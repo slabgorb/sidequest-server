@@ -169,6 +169,14 @@ def test_three_turn_dogfight_resolves_through_production_path(
         narration="Both pilots roll into mirrored banks; the gun line breaks.",
     )
     _assert_dogfight_otel_spans_fired(otel_capture, expected_turns=1)
+    # Symmetric with turns 1 and 2: per_actor_state should still hold
+    # the latest cell's deltas — never empty after a resolved turn.
+    assert red.per_actor_state, (
+        "turn 3 should have left red with non-empty per_actor_state"
+    )
+    assert blue.per_actor_state, (
+        "turn 3 should have left blue with non-empty per_actor_state"
+    )
     # Still exactly one hint — never accumulating across three turns
     assert len(enc.narrator_hints) == 1, (
         f"narrator_hints should still have exactly 1 entry after turn 3, "
