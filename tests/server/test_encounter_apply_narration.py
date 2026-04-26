@@ -315,6 +315,37 @@ def _two_dial_enc():
 
 
 def test_narrator_player_strike_advances_player_metric(snapshot_with_pack):
+    """Player-side strike applies through the explicit-action path.
+
+    Post Playtest 2026-04-26 [S2-BUG] (SOUL "The Test" gate), PC beats
+    must come from a DICE_THROW frame. ``from_explicit_action=True``
+    here simulates the dispatch_dice_throw call site that has already
+    validated the player's explicit consent on their own socket. The
+    test still proves player-side beat application math (strike base=2
+    routes to own metric).
+    """
+    snap, pack = snapshot_with_pack
+    snap.encounter = _two_dial_enc()
+    result = NarrationTurnResult(
+        narration="Sam swings.",
+        beat_selections=[BeatSelection(actor="Sam", beat_id="attack", outcome=RollOutcome.Success)],
+        npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, "Sam", pack=pack, from_explicit_action=True,
+    )
+    assert snap.encounter.player_metric.current == 2
+    assert snap.encounter.opponent_metric.current == 0
+
+
+def test_narrator_player_strike_blocked_without_explicit_action(snapshot_with_pack):
+    """Wiring lock for SOUL "The Test" gate (Playtest 2026-04-26 [S2-BUG]).
+
+    Without ``from_explicit_action=True``, the same player-side beat is
+    rejected — the production session_handler path NEVER sets that flag,
+    so PC beats inferred from narrator extraction can't move the dial.
+    Without this assertion the gate could regress silently.
+    """
     snap, pack = snapshot_with_pack
     snap.encounter = _two_dial_enc()
     result = NarrationTurnResult(
@@ -323,7 +354,7 @@ def test_narrator_player_strike_advances_player_metric(snapshot_with_pack):
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
-    assert snap.encounter.player_metric.current == 2
+    assert snap.encounter.player_metric.current == 0
     assert snap.encounter.opponent_metric.current == 0
 
 

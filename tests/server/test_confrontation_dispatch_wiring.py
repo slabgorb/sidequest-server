@@ -54,17 +54,31 @@ async def test_confrontation_message_active_false_when_resolved(
         EncounterMetric,
         StructuredEncounter,
     )
+    from sidequest.protocol.dice import RollOutcome
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    # Drive the encounter to resolution via an OPPONENT-side beat so the
+    # SOUL-gate (Playtest 2026-04-26 [S2-BUG]) doesn't reject it. PC-side
+    # beats can no longer fire from narrator extraction; only the legitimate
+    # dice-dispatch path (or NPC turns) advance the player_metric. The unit
+    # under test here is the CONFRONTATION-message dispatch on resolution,
+    # not which side wins — opponent victory still triggers the same code
+    # path.
     enc = StructuredEncounter(
         encounter_type="combat",
-        player_metric=EncounterMetric(name="momentum", current=9, starting=0, threshold=10),
-        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
-        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=9, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Rux", role="combatant", side="player"),
+            EncounterActor(name="Goblin", role="hostile", side="opponent"),
+        ],
     )
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
-            beat_selections=[BeatSelection(actor="Rux", beat_id="attack", target=None)],
+            beat_selections=[BeatSelection(
+                actor="Goblin", beat_id="attack",
+                outcome=RollOutcome.Success, target=None,
+            )],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
@@ -104,18 +118,27 @@ async def test_confrontation_message_refreshed_on_live_to_live(
         EncounterMetric,
         StructuredEncounter,
     )
-
+    from sidequest.protocol.dice import RollOutcome
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    # Use an opponent-side actor so the beat advances the dial through
+    # the legitimate (NPC) narrator-extraction path. PC-side beats from
+    # narration are gated out post Playtest 2026-04-26 [S2-BUG].
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
         opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
-        actors=[EncounterActor(name="Rux", role="combatant", side="player")],
+        actors=[
+            EncounterActor(name="Rux", role="combatant", side="player"),
+            EncounterActor(name="Goblin", role="hostile", side="opponent"),
+        ],
     )
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
-            beat_selections=[BeatSelection(actor="Rux", beat_id="attack", target=None)],
+            beat_selections=[BeatSelection(
+                actor="Goblin", beat_id="attack",
+                outcome=RollOutcome.Success, target=None,
+            )],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
@@ -125,8 +148,9 @@ async def test_confrontation_message_refreshed_on_live_to_live(
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
     assert conf[0].payload.active is True
-    # attack beat: kind=strike, base=2 → player_metric advances 0+2=2, within threshold=10.
-    assert conf[0].payload.player_metric["current"] == 2
+    # attack beat: kind=strike, base=2 → opponent's own (=opponent_metric)
+    # advances 0+2=2, within threshold=10.
+    assert conf[0].payload.opponent_metric["current"] == 2
 
 
 # ---------------------------------------------------------------------------
