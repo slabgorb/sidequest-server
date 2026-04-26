@@ -461,6 +461,12 @@ SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 # name suddenly maps to "<slug>-2".
 # ---------------------------------------------------------------------------
 SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED = "lobby.force_new_disambiguated"
+# Emitted when MP-mode POST /api/games returns an existing same-slug MP
+# game instead of allocating ``-N`` (playtest 2026-04-26 S4-UX). The
+# UI's ``force_new`` flag is meaningful for solo (per-player journeys)
+# but actively wrong for MP: cross-host lobbies have no shared local
+# history, so without this short-circuit P2 always splits the table.
+SPAN_LOBBY_SESSION_JOIN_EXISTING = "lobby.session_join_existing"
 
 # Local DM (Group B) — decomposer + subsystem bank
 # Emitted by sidequest/agents/local_dm.py and sidequest/agents/subsystems/__init__.py
@@ -852,6 +858,36 @@ def lobby_force_new_disambiguated_span(
             "requested_slug": requested_slug,
             "final_slug": final_slug,
             "attempts": attempts,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def lobby_session_join_existing_span(
+    slug: str,
+    mode: str,
+    *,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_LOBBY_SESSION_JOIN_EXISTING.
+
+    Emitted when POST /api/games short-circuits the ``force_new`` path in
+    MP mode because an existing same-slug MP game is already on disk —
+    the lobby's per-browser ``force_new`` heuristic cannot see other
+    players' sessions, so P2 always sends ``force_new=True`` and would
+    otherwise be routed to ``<slug>-2`` (playtest 2026-04-26 S4-UX).
+    Surfacing the join lets the GM panel verify P2 actually landed in
+    P1's table rather than divining from log silence.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_LOBBY_SESSION_JOIN_EXISTING,
+        attributes={
+            "slug": slug,
+            "mode": mode,
             **attrs,
         },
     ) as span:
@@ -2165,6 +2201,7 @@ FLAT_ONLY_SPANS.update(
         SPAN_MP_PLAYER_ACTION_PAUSED,
         # Lobby
         SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED,
+        SPAN_LOBBY_SESSION_JOIN_EXISTING,
         # Encounter (dual-track momentum, spec 2026-04-25) — flat-only baseline.
         # Routing decisions land with the GM panel encounter timeline rollout.
         SPAN_ENCOUNTER_BEAT_SKIPPED,
