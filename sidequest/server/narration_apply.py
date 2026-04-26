@@ -29,6 +29,98 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+def _gate_applies_to_encounter(encounter, pack) -> bool:
+    """The SOUL gate fires for legacy apply_beat encounters only.
+
+    Sealed-letter dispatch (dogfight) is itself an explicit secret-commit
+    UI — both pilots' commits arrive via that flow, not via prose
+    extraction. Excluding sealed-letter from the gate avoids breaking the
+    dogfight production path while still locking the legacy beat-loop
+    against the [S2-BUG] failure mode.
+    """
+    if encounter is None or pack is None:
+        return False
+    from sidequest.server.dispatch.confrontation import find_confrontation_def
+    cdef = find_confrontation_def(
+        pack.rules.confrontations if pack.rules else [],
+        encounter.encounter_type,
+    )
+    if cdef is None:
+        # Pack-data inconsistency — let the downstream code raise its own
+        # ValueError so the caller sees the real bug. The gate stays off.
+        return False
+    return cdef.resolution_mode != ResolutionMode.sealed_letter_lookup
+
+
+def _filter_inferred_pc_beats(
+    selections: list,
+    encounter,
+    *,
+    narrating_player: str,
+) -> list:
+    """SOUL "The Test" gate (Playtest 2026-04-26 [S2-BUG]).
+
+    Drop every beat selection whose actor is on the player side. Those
+    selections are extracted from the narrator's prose — they did NOT
+    originate from a ``DICE_THROW`` frame on a player's socket, so they
+    fail the explicit-consent contract. NPC (opponent / neutral) beats
+    are passed through unchanged: NPCs don't have a player-agency
+    contract; the narrator legitimately drives them.
+
+    Each rejected PC beat emits a span + watcher event so the GM panel
+    can see the gate firing. Without OTEL the gate is invisible — and
+    "is this fix actually working?" is unanswerable.
+
+    ``narrating_player`` is the player whose narration produced these
+    selections (used to label ``source`` as ``narrator_self`` when the
+    rejected actor IS the narrating PC, ``peer_narration`` otherwise).
+    """
+    from sidequest.telemetry.spans import encounter_beat_skipped_span
+
+    kept: list = []
+    for sel in selections:
+        actor = encounter.find_actor(sel.actor) if encounter is not None else None
+        side = actor.side if actor is not None else "unknown"
+        if side != "player":
+            kept.append(sel)
+            continue
+        # PC-side beat from narrator extraction — REJECT.
+        source = (
+            "narrator_self" if sel.actor == narrating_player else "peer_narration"
+        )
+        reason = "inferred_pc_beat_no_explicit_action"
+        with encounter_beat_skipped_span(
+            reason=reason,
+            actor=sel.actor,
+            actor_side=side,
+            beat_id=sel.beat_id,
+            source=source,
+            narrating_player=narrating_player,
+        ):
+            pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "inferred_pc_beat_rejected",
+                "actor": sel.actor,
+                "actor_side": side,
+                "beat_id": sel.beat_id,
+                "source": source,
+                "narrating_player": narrating_player,
+                "reason": reason,
+            },
+            component="confrontation",
+            severity="warning",
+        )
+        logger.warning(
+            "confrontation.inferred_pc_beat_rejected actor=%s source=%s "
+            "narrating_player=%s beat_id=%s reason=%s",
+            sel.actor, source, narrating_player, sel.beat_id, reason,
+        )
+    return kept
+
+
 @dataclass
 class NarrationApplyOutcome:
     """Aggregate result of applying a NarrationTurnResult to a snapshot.
@@ -56,6 +148,7 @@ def _apply_narration_result_to_snapshot(
     pack: GenrePack | None = None,
     dice_failed: bool | None = None,
     dice_actor: str | None = None,
+    from_explicit_action: bool = False,
 ) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
@@ -75,6 +168,15 @@ def _apply_narration_result_to_snapshot(
     still apply so the opponent dial can advance and combat is two-sided.
     Playtest 2026-04-25 [P0]: prior behavior dropped *all* selections,
     leaving the opponent dial inert and combat structurally unresolvable.
+
+    ``from_explicit_action`` is False on the production session-handler
+    path (the only real call site routes narrator-extracted prose). The
+    SOUL-gate (Playtest 2026-04-26 [S2-BUG]) drops every PC-side beat
+    selection in that mode and emits ``confrontation
+    .inferred_pc_beat_rejected`` watcher events — PC mechanical actions
+    MUST trace back to an explicit DICE_THROW frame, never to a peer or
+    self narration. Test helpers that simulate the dispatch path may set
+    ``from_explicit_action=True`` to bypass the gate.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
 
@@ -312,7 +414,32 @@ def _apply_narration_result_to_snapshot(
 
         # (b) Apply beat selections (dice-replay turns short-circuit)
         enc = snapshot.encounter
-        if enc is not None and not enc.resolved and result.beat_selections:
+        # SOUL "The Test" gate — drop PC-side beats inferred from prose.
+        # Production callers leave from_explicit_action=False so every
+        # narrator-driven turn passes through this filter; explicit
+        # DICE_THROW commits arrive via dispatch_dice_throw, which never
+        # reaches this branch. See _filter_inferred_pc_beats docstring.
+        #
+        # Sealed-letter encounters (dogfight) bypass the gate: that
+        # confrontation type's UI is itself a private secret-commit form,
+        # so the narrator-extracted commits ARE the explicit-consent
+        # frame for both pilots. The gate is scoped to legacy apply_beat
+        # PC selections — the path that the playtest [S2-BUG] exposed.
+        gated_selections = result.beat_selections
+        gate_active = (
+            enc is not None
+            and not from_explicit_action
+            and result.beat_selections
+            and _gate_applies_to_encounter(enc, pack)
+        )
+        if gate_active:
+            gated_selections = _filter_inferred_pc_beats(
+                result.beat_selections,
+                enc,
+                narrating_player=player_name,
+            )
+
+        if enc is not None and not enc.resolved and gated_selections:
             cdef = find_confrontation_def(
                 pack.rules.confrontations if pack.rules else [],
                 enc.encounter_type,
@@ -346,7 +473,7 @@ def _apply_narration_result_to_snapshot(
                     )
 
                 commits: dict[str, str] = {}
-                for sel in result.beat_selections:
+                for sel in gated_selections:
                     actor = enc.find_actor(sel.actor)
                     if actor is None:
                         raise ValueError(
@@ -384,7 +511,7 @@ def _apply_narration_result_to_snapshot(
             _legacy_beat_path = False
 
         if _legacy_beat_path:
-            selections = result.beat_selections
+            selections = gated_selections
             if dice_failed is not None and selections:
                 # Dice-replay turns: dispatch/dice.py already applied the
                 # rolling actor's beat. Drop just THAT actor's selection

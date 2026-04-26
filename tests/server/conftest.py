@@ -680,7 +680,15 @@ def encounter_dispatch_helper():
                 )],
                 npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
             )
-            _apply_narration_result_to_snapshot(snapshot, result, "Sam", pack=pack)
+            # ``from_explicit_action=True`` simulates the dice-dispatch
+            # path (the only legitimate route for PC beats post Playtest
+            # 2026-04-26 [S2-BUG] SOUL-gate). Production session_handler
+            # never sets this flag — it always treats narrator-extracted
+            # beats as inferred and rejects PC-side selections.
+            _apply_narration_result_to_snapshot(
+                snapshot, result, "Sam", pack=pack,
+                from_explicit_action=True,
+            )
 
         def run_to_resolution(self, snapshot, pack, *, winner="opponent"):
             """Drive opponent beats until a threshold is crossed.
