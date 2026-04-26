@@ -343,3 +343,36 @@ async def test_concurrent_submissions_dispatch_exactly_once(
     )
     assert r1 == [] and r2 == []
     assert len(captured) == 1, f"expected exactly one dispatch, got {len(captured)}"
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 7 — disconnect-buffer-survival
+# ---------------------------------------------------------------------------
+
+
+def test_buffered_action_survives_buffer_owner_disconnect() -> None:
+    """If a player submits, then disconnects before the barrier fires, the
+    buffered PendingAction stays in the room buffer. (Pause-gate semantics
+    happen at the handler entry point — this test covers the buffer-state
+    invariant.)"""
+    room = SessionRoom(slug="test-disc", mode=GameMode.MULTIPLAYER)
+    room.connect("p1", socket_id="s1")
+    room.seat("p1", character_slot="Gladstone")
+    room.connect("p2", socket_id="s2")
+    room.seat("p2", character_slot="Zanzibar Jones")
+
+    # p1 submits.
+    room.record_pending_action("p1", "Gladstone", "I prepare for the dungeon")
+
+    # p1 disconnects (simulating WS drop).
+    room.disconnect(socket_id="s1")
+    # Still seated despite disconnect (seat survives socket drop).
+    assert "p1" in room.seated_player_ids()
+    assert "p1" in room.absent_seated_player_ids()
+    assert room.is_paused()
+
+    # Buffered action survives.
+    drained = room.drain_pending_actions()
+    assert len(drained) == 1
+    assert drained[0][0] == "p1"
+    assert drained[0][1].action == "I prepare for the dungeon"
