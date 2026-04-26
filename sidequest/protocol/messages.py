@@ -121,6 +121,33 @@ class SecretNotePayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# ScrapbookEntryPayload (pingpong 2026-04-26 [S3-REGRESSION])
+# ---------------------------------------------------------------------------
+
+
+class ScrapbookEntryNpcRef(ProtocolBase):
+    """Light-weight NPC reference embedded in a scrapbook entry."""
+
+    name: str
+    role: str = "neutral"
+    disposition: str = ""
+
+
+class ScrapbookEntryPayload(ProtocolBase):
+    """Server-authored scrapbook entry — emitted once per narration turn."""
+
+    turn_id: int
+    location: str
+    narrative_excerpt: str
+    scene_title: str | None = None
+    scene_type: str | None = None
+    image_url: str | None = None
+    world_facts: list[str] = Field(default_factory=list)
+    npcs_present: list[ScrapbookEntryNpcRef] = Field(default_factory=list)
+    seq: int = 0
+
+
+# ---------------------------------------------------------------------------
 # NarrationEndPayload
 # ---------------------------------------------------------------------------
 
@@ -552,6 +579,18 @@ class SecretNoteMessage(ProtocolBase):
     player_id: str = ""
 
 
+class ScrapbookEntryMessage(ProtocolBase):
+    """GameMessage::ScrapbookEntry wire representation.
+
+    Pingpong 2026-04-26 [S3-REGRESSION]: the UI gallery merges these with
+    IMAGE frames by ``turn_id``. See ``ImageBusProvider.tsx`` for the contract.
+    """
+
+    type: Literal[MessageType.SCRAPBOOK_ENTRY] = MessageType.SCRAPBOOK_ENTRY
+    payload: ScrapbookEntryPayload
+    player_id: str = ""
+
+
 class ThinkingMessage(ProtocolBase):
     """GameMessage::Thinking wire representation."""
 
@@ -747,6 +786,7 @@ _Phase1Variant = Annotated[
     | NarrationMessage
     | NarrationEndMessage
     | SecretNoteMessage
+    | ScrapbookEntryMessage
     | ThinkingMessage
     | SessionEventMessage
     | CharacterCreationMessage
