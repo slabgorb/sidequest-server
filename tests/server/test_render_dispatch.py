@@ -172,6 +172,12 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
     assert req["params"]["tags"] == ["desert", "ruin"]
     assert req["params"]["location"] == "Tood's Dome — Nest Crack"
     assert req["params"]["genre"] == "mutant_wasteland"
+    # Slice 1 of catalog-injected compose wiring: server must send `world`
+    # so the daemon's compose path can scope catalogs (CharacterCatalog,
+    # PlaceCatalog, StyleCatalog) per (genre, world). Without `world` the
+    # daemon's compose conditional skips, leaving the legacy prose-subject
+    # prompt as the input to Z-Image.
+    assert req["params"]["world"] == "flickering_reach"
 
 
 @pytest.mark.asyncio

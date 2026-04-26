@@ -4481,6 +4481,11 @@ class WebSocketSessionHandler:
             "location": sd.snapshot.location or "",
             "narration": result.narration,
             "genre": sd.genre_slug,
+            # Catalog-injected compose wiring (slice 1): the daemon scopes
+            # CharacterCatalog / PlaceCatalog / StyleCatalog by (genre, world).
+            # Without this field the daemon's compose conditional is dead and
+            # every render falls through to the prose-subject prompt path.
+            "world": sd.world_slug,
         }
         # Portrait initials overlay (story 37-30 AC-4): the daemon's
         # portrait composer needs the character's display name to draw
