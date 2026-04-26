@@ -326,6 +326,112 @@ class TestOpeningDirectiveInjection:
         asyncio.run(body())
 
 
+class TestMPJoinerRaceSuppression:
+    """Playtest 2026-04-26 [S2-BUG] coyote_reach regression.
+
+    The connect-time MP-joiner suppression in ``_handle_connect``
+    (commit afc850a) only fires when the joiner connects AFTER the
+    host has completed chargen. In the more common case where both
+    players land in the lobby and start chargen together, the joiner
+    connects with ``snapshot.characters=[]`` — connect-time
+    suppression is a no-op — and at chargen-completion the joiner's
+    ``_run_opening_turn_narration`` runs the genre pack's cold-open
+    against an already-populated scene.
+
+    Symptom: George (the second player) joining a fresh
+    ``space_opera/coyote_reach`` MP slug got the ``arena_trial``
+    cold-open ("crowd noise hits you like a wall") even though John
+    was already at the Trail Junction. The fix must suppress the
+    cold-open at consume-time (in ``_run_opening_turn_narration``)
+    when the snapshot already has more than this player's PC.
+    """
+
+    def test_second_committer_skips_cold_open_seed(
+        self, handler: WebSocketSessionHandler, otel_capture: InMemorySpanExporter,
+    ) -> None:
+        """Second player to complete chargen on a shared snapshot must
+        NOT receive a fresh cold-open NARRATION frame, even when their
+        ``sd.opening_seed`` was populated at connect time (race: joiner
+        connected before host seated)."""
+        async def body() -> None:
+            from sidequest.game.character import Character
+            from sidequest.game.creature_core import CreatureCore, Inventory
+
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd is not None
+            # Pretend a peer (host) committed first by directly mutating
+            # the canonical snapshot — the second-commit branch keys off
+            # ``sd.snapshot.characters`` being non-empty before this
+            # player's PC is appended. This mirrors the room-shared-
+            # snapshot reality at consume-time on the joiner's socket.
+            host_core = CreatureCore(
+                name="HostPC", description="d", personality="p",
+                inventory=Inventory(),
+            )
+            host = Character(
+                core=host_core, char_class="Fighter", race="Human",
+                backstory="b",
+            )
+            sd.snapshot.characters.append(host)
+            sd.snapshot.player_seats["host-id"] = "HostPC"
+            # Sanity: connect-time suppression did NOT fire (this is the
+            # race we're proving the consume-time guard catches).
+            assert sd.opening_seed is not None, (
+                "Test premise: at connect time the snapshot had no "
+                "characters, so connect-time suppression was a no-op"
+            )
+
+            out = await _walk_and_confirm(handler)
+
+            # The cold-open NARRATION must be absent — only the narrator
+            # response (framed as a continuation via the fallback action)
+            # should appear.
+            narrations = [m for m in out if isinstance(m, NarrationMessage)]
+            seed_texts = [str(m.payload.text) for m in narrations]
+            # The seed prose ("vault's threshold yawns open") would be
+            # the cold-open frame — the canned narrator response also
+            # contains that phrase, so we discriminate by COUNT:
+            # pre-fix: 2 narrations (cold-open + narrator).
+            # post-fix: 1 narration (narrator only).
+            assert len(narrations) == 1, (
+                "MP joiner (snapshot already had a peer character) must "
+                "NOT receive a cold-open NARRATION frame; got "
+                f"{len(narrations)} narrations: "
+                f"{[t[:60] for t in seed_texts]}"
+            )
+
+            # OTEL: opening_turn.dispatched must report cold_open_emitted=False
+            events = [
+                e for span in otel_capture.get_finished_spans()
+                for e in span.events
+            ]
+            dispatched = [
+                e for e in events if e.name == "opening_turn.dispatched"
+            ]
+            assert dispatched, "opening_turn.dispatched span event must fire"
+            attrs = dict(dispatched[-1].attributes or {})
+            assert attrs["cold_open_emitted"] is False, (
+                "Suppressed opening must report cold_open_emitted=False so "
+                "the GM panel can see the suppression decision"
+            )
+            # New OTEL: dedicated suppression event must name pack/world
+            # so the GM panel can confirm the fix reaches each pack.
+            suppressed = [
+                e for e in events
+                if e.name == "mp_joiner_opening_suppressed_at_consume"
+            ]
+            assert suppressed, (
+                "Consume-time suppression must emit "
+                "mp_joiner_opening_suppressed_at_consume span event"
+            )
+            sup_attrs = dict(suppressed[0].attributes or {})
+            assert sup_attrs.get("genre") == "caverns_and_claudes"
+            assert sup_attrs.get("world") == "grimvault"
+
+        asyncio.run(body())
+
+
 class TestOtelEvents:
     def test_opening_turn_otel_events_emitted(
         self, handler: WebSocketSessionHandler, otel_capture: InMemorySpanExporter

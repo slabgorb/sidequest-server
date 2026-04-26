@@ -557,8 +557,23 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
     assert "branch=mp_legacy_backfill" in gate_records[0].getMessage()
 
 
+@pytest.mark.parametrize(
+    "genre_slug,world_slug,location",
+    [
+        # Original Mawdeep regression (caverns_and_claudes/grimvault has
+        # opening hooks, used as proxy for the same shape Mawdeep had).
+        ("caverns_and_claudes", "grimvault", "Sinkhole Inn Room"),
+        # Playtest 2026-04-26 [S2-BUG] coyote_reach regression: George
+        # got a fresh ``arena_trial`` cold-open even though John was
+        # already in the world. Same suppression must reach this pack
+        # (and any future pack with opening hooks).
+        ("space_opera", "coyote_reach", "Trail Junction"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
+async def test_mp_joiner_suppresses_opening_seed(
+    tmp_path: Path, caplog, genre_slug: str, world_slug: str, location: str,
+):
     """Wiring test: MP joiner does NOT inherit the cold-open hook.
 
     Playtest 2026-04-26 "Multiplayer parallel-solo desynchronizes scene
@@ -577,41 +592,45 @@ async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
     confirm the suppression. The post-chargen narration falls back to
     the generic "I look around…" action which the shared narrator
     (ADR-067) handles as a continuation of the existing scene.
+
+    Parametrized over packs so a future genre with opening hooks
+    (space_opera/coyote_reach being the prompt for parametrization)
+    can't silently regress.
     """
     import logging
 
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
 
-    slug = "2026-04-26-mp-joiner-opening-suppressed"
+    slug = f"2026-04-26-mp-joiner-opening-suppressed-{world_slug}"
     db = db_path_for_slug(tmp_path, slug)
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
     upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+                genre_slug=genre_slug, world_slug=world_slug)
 
-    # Seat Ralph as the existing character so Potsie joins an in-progress
-    # world. player_seats populated → the gate's ``player_seats`` branch
-    # fires (Potsie absent → has_character=False), which is the canonical
-    # MP-joiner path post-MP-02.
+    # Seat the host so the joiner sees a populated snapshot. player_seats
+    # populated → the gate's ``player_seats`` branch fires (joiner absent
+    # → has_character=False), which is the canonical MP-joiner path
+    # post-MP-02.
     core = CreatureCore(
-        name="Ralph", description="d", personality="p", inventory=Inventory(),
+        name="Host", description="d", personality="p", inventory=Inventory(),
     )
     char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
-    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Sinkhole Inn Room")
+    snap = GameSnapshot(genre_slug=genre_slug, world_slug=world_slug, location=location)
     snap.characters = [char]
-    snap.player_seats = {"ralph-id": "Ralph"}
-    store.init_session(_GENRE, _WORLD)
+    snap.player_seats = {"host-id": "Host"}
+    store.init_session(genre_slug, world_slug)
     store.save(snap)
     store.close()
 
     handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
         type="SESSION_EVENT",
-        player_id="potsie-id",
+        player_id="joiner-id",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Potsie",
+            event="connect", game_slug=slug, player_name="Joiner",
         ),
     )
     with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
@@ -623,11 +642,11 @@ async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
     assert sd is not None, "Handler must have built _session_data on connect"
     assert sd.opening_seed is None, (
         "MP joiner must NOT inherit the genre pack's opening_seed; got: "
-        f"{sd.opening_seed!r}"
+        f"{sd.opening_seed!r} (pack={genre_slug}/{world_slug})"
     )
     assert sd.opening_directive is None, (
         "MP joiner must NOT inherit the genre pack's opening_directive; got: "
-        f"{sd.opening_directive!r}"
+        f"{sd.opening_directive!r} (pack={genre_slug}/{world_slug})"
     )
     # Suppression decision must be logged so a future drift can be diagnosed
     # from logs alone (not just from missing scenes).
@@ -637,7 +656,7 @@ async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
     ]
     assert suppress_records, (
         "Suppression must log session.mp_joiner_opening_suppressed for "
-        "GM-panel observability"
+        f"GM-panel observability (pack={genre_slug}/{world_slug})"
     )
 
 

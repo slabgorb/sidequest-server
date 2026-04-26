@@ -3677,6 +3677,60 @@ class WebSocketSessionHandler:
 
         Rust parity: connect.rs:2270-2529.
         """
+        # Consume-time MP-joiner suppression (playtest 2026-04-26
+        # [S2-BUG] coyote_reach regression). The connect-time guard in
+        # ``_handle_connect`` only fires when the joiner connects AFTER
+        # the host has completed chargen — checking
+        # ``len(snapshot.characters) > 0`` at connect-time. In the more
+        # common race scenario (both players in lobby together, both
+        # walking chargen at the same time) the joiner's ``sd.opening_
+        # seed/directive`` get populated at connect because the snapshot
+        # was empty, and only the timing of chargen-completion decides
+        # who's first vs. second. This guard catches the second
+        # committer at consume-time: by the time we get here, the joiner's
+        # PC is already in ``sd.snapshot.characters`` (appended in the
+        # second-commit branch around line 2725), so the test is "more
+        # than just me" → at least one peer character is present →
+        # suppress the cold-open and fall back to the generic continuation
+        # action so the persistent narrator (ADR-067) treats this as
+        # scene continuation, not a fresh in-medias-res open.
+        if (
+            sd.opening_seed is not None
+            and len(sd.snapshot.characters) > 1
+        ):
+            _watcher_publish(
+                "mp_joiner_opening_suppressed_at_consume",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player_id": player_id,
+                    "player_name": sd.player_name,
+                    "character_count": len(sd.snapshot.characters),
+                    "had_seed": True,
+                    "had_directive": sd.opening_directive is not None,
+                },
+                component="opening_hook",
+                severity="info",
+            )
+            logger.info(
+                "session.mp_joiner_opening_suppressed_at_consume "
+                "genre=%s world=%s player=%s character_count=%d",
+                sd.genre_slug, sd.world_slug, sd.player_name,
+                len(sd.snapshot.characters),
+            )
+            span.add_event(
+                "mp_joiner_opening_suppressed_at_consume",
+                {
+                    "event": "mp_joiner_opening_suppressed_at_consume",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player_id": player_id,
+                    "character_count": len(sd.snapshot.characters),
+                },
+            )
+            sd.opening_seed = None
+            sd.opening_directive = None
+
         action = sd.opening_seed or "I look around and take in my surroundings."
         source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
 
