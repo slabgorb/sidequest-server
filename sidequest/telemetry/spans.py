@@ -1444,20 +1444,50 @@ SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consume
 #   2. maneuver_committed    — fires once per actor with the chosen maneuver
 #   3. cell_resolved         — fires after lookup with cell name + shape
 #
-# Routing decisions are deferred to the dashboard rollout for the
-# dogfight timeline (T4); kept flat-only here so the routing-completeness
-# lint passes without speculatively shipping a SpanRoute payload that
-# would change.
+# Routed to typed ``state_transition`` events with ``component="dogfight"``
+# so the GM panel's Subsystems tab gets a per-encounter timeline (T4).
+# The flat ``agent_span_close`` firehose still carries the same data for
+# the Console / Timing tabs — the typed event is additive.
 # ---------------------------------------------------------------------------
 SPAN_DOGFIGHT_CONFRONTATION_STARTED = "dogfight.confrontation_started"
+SPAN_ROUTES[SPAN_DOGFIGHT_CONFRONTATION_STARTED] = SpanRoute(
+    event_type="state_transition",
+    component="dogfight",
+    extract=lambda span: {
+        "field": "dogfight",
+        "op": "confrontation_started",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "red_actor": (span.attributes or {}).get("red_actor", ""),
+        "blue_actor": (span.attributes or {}).get("blue_actor", ""),
+    },
+)
 SPAN_DOGFIGHT_MANEUVER_COMMITTED = "dogfight.maneuver_committed"
+SPAN_ROUTES[SPAN_DOGFIGHT_MANEUVER_COMMITTED] = SpanRoute(
+    event_type="state_transition",
+    component="dogfight",
+    extract=lambda span: {
+        "field": "dogfight",
+        "op": "maneuver_committed",
+        "actor": (span.attributes or {}).get("actor", ""),
+        "maneuver": (span.attributes or {}).get("maneuver", ""),
+        "role": (span.attributes or {}).get("role", ""),
+    },
+)
 SPAN_DOGFIGHT_CELL_RESOLVED = "dogfight.cell_resolved"
-FLAT_ONLY_SPANS.update(
-    {
-        SPAN_DOGFIGHT_CONFRONTATION_STARTED,
-        SPAN_DOGFIGHT_MANEUVER_COMMITTED,
-        SPAN_DOGFIGHT_CELL_RESOLVED,
-    }
+SPAN_ROUTES[SPAN_DOGFIGHT_CELL_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="dogfight",
+    extract=lambda span: {
+        "field": "dogfight",
+        "op": "cell_resolved",
+        "cell_name": (span.attributes or {}).get("cell_name", ""),
+        "shape": (span.attributes or {}).get("shape", ""),
+        "red_maneuver": (span.attributes or {}).get("red_maneuver", ""),
+        "blue_maneuver": (span.attributes or {}).get("blue_maneuver", ""),
+        "extend_and_return_triggered": (span.attributes or {}).get(
+            "extend_and_return_triggered", False,
+        ),
+    },
 )
 
 
