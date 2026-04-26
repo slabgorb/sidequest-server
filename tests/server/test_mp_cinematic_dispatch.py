@@ -82,7 +82,7 @@ def test_seated_player_count_after_seat() -> None:
 # ADR-036 Task 3 — buffer+barrier wiring
 # ---------------------------------------------------------------------------
 
-from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+from unittest.mock import AsyncMock  # noqa: E402
 
 from sidequest.protocol.messages import PlayerActionMessage, PlayerActionPayload  # noqa: E402
 from sidequest.protocol.types import NonBlankString  # noqa: E402
@@ -122,3 +122,67 @@ async def test_first_of_two_players_buffers_and_returns_empty(
     assert drained[0][0] == "p1"
     assert drained[0][1].character_name == "Gladstone"
     assert drained[0][1].action == "I prepare for the dungeon"
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 4 — elected-dispatch branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_players_combine_into_one_narrator_dispatch(
+    session_handler_factory,
+) -> None:
+    """When player 2 submits in a 2-seat room (player 1 already submitted),
+    the barrier fires and exactly one narrator dispatch happens with both
+    actions concatenated as labeled prose."""
+    handler1, sd1, room = session_handler_factory(
+        slug="test-mp-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p1", "Gladstone"),
+    )
+    handler2, sd2, _ = session_handler_factory(
+        slug="test-mp-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p2", "Zanzibar Jones"),
+        existing_room=room,
+    )
+    # Spy on _execute_narration_turn for both handlers — same room, both
+    # methods bound to the room's snapshot.
+    captured: list[str] = []
+
+    async def fake_execute(sd, action, turn_context):
+        captured.append(action)
+        return []
+
+    handler1._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+    handler2._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    # Player 1 submits — buffers and returns [].
+    msg1 = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I prepare for the dungeon"),
+        ),
+        player_id="p1",
+    )
+    r1 = await handler1._handle_player_action(msg1)
+    assert r1 == []
+    assert captured == []  # narrator NOT called yet
+
+    # Player 2 submits — barrier fires, elected branch combines and dispatches.
+    msg2 = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I get my pole"),
+        ),
+        player_id="p2",
+    )
+    r2 = await handler2._handle_player_action(msg2)
+    # Exactly one narrator call with both actions.
+    assert len(captured) == 1
+    combined = captured[0]
+    assert "Gladstone: I prepare for the dungeon" in combined
+    assert "Zanzibar Jones: I get my pole" in combined
+    # round counter advanced
+    assert room.last_dispatched_round == room.snapshot.turn_manager.round

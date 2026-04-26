@@ -372,6 +372,7 @@ def session_handler_factory(tmp_path):
         mode: "GameMode | None" = None,
         seat_players: list[tuple[str, str]] | None = None,
         active_player: tuple[str, str] | None = None,
+        existing_room: "SessionRoom | None" = None,
     ):
         # Read DEFAULT_GENRE_PACK_SEARCH_PATHS from the module at call-time so
         # that the _fixture_pack_search_paths monkeypatch is visible here.
@@ -420,6 +421,34 @@ def session_handler_factory(tmp_path):
             # pre-connect guard behaviour (e.g. test_dice_throw_returns_error_when_not_playing)
             # still see AwaitingConnect.
             handler._state = _State.Playing
+
+            if existing_room is not None:
+                # Share the existing room — reuse its snapshot + store so the
+                # TurnManager barrier state is shared across handlers.
+                room = existing_room
+                snap = room.snapshot
+                store = room.store
+                # Rebuild _SessionData against the shared snapshot/store.
+                if active_player is not None:
+                    active_pid, active_name = active_player
+                else:
+                    active_pid, active_name = "player-1", "Rux"
+                sd = _SessionData(
+                    genre_slug=genre,
+                    world_slug="",
+                    player_name=active_name,
+                    player_id=active_pid,
+                    snapshot=snap,
+                    store=store,
+                    genre_pack=sd.genre_pack,
+                    orchestrator=sd.orchestrator,
+                )
+                sd.store.save = MagicMock()
+                sd.store.append_narrative = MagicMock()
+                handler._session_data = sd
+                handler._room = room
+                return handler, sd, room
+
             # In MP mode, add a Character to the snapshot for each seat so
             # that _resolve_acting_character_name can match by slot name.
             # The legacy "Rux" character added above stays for compatibility

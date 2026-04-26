@@ -3486,10 +3486,27 @@ class WebSocketSessionHandler:
                 # delivered turn_status_active above; the dispatcher will
                 # handle the actual narration when the last submission arrives.
                 return []
-            # Barrier fired — fall through to the existing dispatch below.
-            # NOTE: Task 4 will replace this fall-through with the elected
-            # dispatch branch (drain buffer, build combined action, etc.).
 
+            # Barrier fired — elect a single dispatcher per round via
+            # asyncio.Lock + last_dispatched_round CAS guard.
+            async with self._room.dispatch_lock:
+                current_round = snapshot.turn_manager.round
+                if self._room.last_dispatched_round >= current_round:
+                    # Lost the race; another handler already dispatched.
+                    return []
+                self._room.last_dispatched_round = current_round
+                pending = self._room.drain_pending_actions()
+
+            combined_action = "\n".join(
+                f"{p.character_name}: {p.action}" for _, p in pending
+            )
+            result = await self._execute_narration_turn(
+                sd, combined_action, turn_context,
+            )
+            snapshot.turn_manager.record_interaction()
+            return result
+
+        # Single-player path (room is None) — preserve original behavior.
         return await self._execute_narration_turn(sd, action, turn_context)
 
     # ------------------------------------------------------------------
