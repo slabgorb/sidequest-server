@@ -294,8 +294,63 @@ def _apply_narration_result_to_snapshot(
                 raise ValueError(
                     f"active encounter type {enc.encounter_type!r} not in pack"
                 )
-            beat_by_id = {b.id: b for b in cdef.beats}
 
+            # ---- Sealed-letter lookup branch (T5, dogfight port) ----
+            # When the confrontation declares ResolutionMode.sealed_letter_lookup
+            # we resolve via cross-product cell lookup instead of the legacy
+            # apply_beat path. Maneuver IDs and beat IDs share a namespace by
+            # content convention (the dogfight beats ARE the maneuvers — see
+            # tests/genre/test_dogfight_content_loading.py::
+            # test_dogfight_beats_cover_every_consumed_maneuver), so we
+            # repurpose ``beat_selections[].beat_id`` as the maneuver commit
+            # for that actor. The resolver raises ValueError when commits are
+            # missing a role or when a maneuver isn't in maneuvers_consumed.
+            #
+            # Sealed-letter resolution is EXCLUSIVE of the legacy beat loop —
+            # because maneuver IDs collide with beat IDs by content design,
+            # falling through to apply_beat would double-apply mechanics.
+            from sidequest.genre.models.rules import ResolutionMode
+            if cdef.resolution_mode == ResolutionMode.sealed_letter_lookup:
+                from sidequest.server.dispatch.sealed_letter import (
+                    resolve_sealed_letter_lookup,
+                )
+                if cdef.interaction_table is None:
+                    raise ValueError(
+                        f"confrontation {enc.encounter_type!r} declares "
+                        f"resolution_mode=sealed_letter_lookup but has no "
+                        f"interaction_table — cannot dispatch sealed-letter "
+                        f"resolution"
+                    )
+
+                commits: dict[str, str] = {}
+                for sel in result.beat_selections:
+                    actor = enc.find_actor(sel.actor)
+                    if actor is None:
+                        raise ValueError(
+                            f"beat_selection actor {sel.actor!r} not found "
+                            f"on sealed-letter encounter "
+                            f"{enc.encounter_type!r}"
+                        )
+                    commits[actor.role] = sel.beat_id
+
+                sl_outcome = resolve_sealed_letter_lookup(
+                    enc, commits, cdef.interaction_table,
+                )
+                if sl_outcome.narration_hint:
+                    enc.narrator_hints.append(sl_outcome.narration_hint)
+                # Status-change processing further down still runs because
+                # we only short-circuit the beat-selection block, not the
+                # whole snapshot mutation phase.
+                # Fall-through: skip beat loop by NOT defining beat_by_id
+                # and gating the loop below.
+                _legacy_beat_path = False
+            else:
+                _legacy_beat_path = True
+                beat_by_id = {b.id: b for b in cdef.beats}
+        else:
+            _legacy_beat_path = False
+
+        if _legacy_beat_path:
             selections = result.beat_selections
             if dice_failed is not None and selections:
                 # Dice-replay turns: dispatch/dice.py already applied the

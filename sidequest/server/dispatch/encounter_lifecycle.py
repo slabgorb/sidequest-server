@@ -14,7 +14,9 @@ from sidequest.game.lore_store import LoreStore
 from sidequest.game.resource_pool import ResourceThreshold
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.rules import ResolutionMode
 from sidequest.server.dispatch.confrontation import find_confrontation_def
+from sidequest.server.dispatch.sealed_letter import ROLE_BLUE, ROLE_RED
 from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_resolved_span,
@@ -93,15 +95,52 @@ def instantiate_encounter_from_trigger(
         encounter_type=encounter_type,
         genre_slug=genre_slug or "",
     ):
-        role = "combatant" if cdef.category == "combat" else "participant"
-        actors = [
-            EncounterActor(name=player_name, role=role, side="player"),
-        ]
-        for npc in npcs_present:
-            npc_name = getattr(npc, "name", None) or str(npc)
-            side_raw = getattr(npc, "side", None) or "neutral"
-            side = _validate_side(npc_name, side_raw)
-            actors.append(EncounterActor(name=npc_name, role=role, side=side))
+        if cdef.resolution_mode == ResolutionMode.sealed_letter_lookup:
+            # Sealed-letter encounters are commit-reveal duels addressed by
+            # role tag ("red" / "blue") rather than the generic
+            # "combatant" / "participant" labels. The handler at
+            # ``server.dispatch.sealed_letter`` looks up actors by role —
+            # if these tags drift, the handler raises a "missing role" error
+            # that the GM panel can't trace back to the constructor.
+            #
+            # Validation (CLAUDE.md no-silent-fallbacks):
+            #   - the def must carry an interaction_table — without it the
+            #     downstream resolver has no cells to look up
+            #   - exactly one opponent NPC must be supplied — the player is
+            #     red, the opponent is blue, and there is no third role
+            if cdef.interaction_table is None:
+                raise ValueError(
+                    f"confrontation {encounter_type!r} declares "
+                    f"resolution_mode=sealed_letter_lookup but has no "
+                    f"interaction_table — sealed-letter resolution requires a "
+                    f"populated table (loaded via the `_from:` pointer)"
+                )
+            if len(npcs_present) != 1:
+                raise ValueError(
+                    f"sealed-letter encounter {encounter_type!r} requires "
+                    f"exactly one opponent NPC (player=red, npc=blue); got "
+                    f"{len(npcs_present)} npcs_present"
+                )
+            opponent = npcs_present[0]
+            opponent_name = getattr(opponent, "name", None) or str(opponent)
+            opponent_side_raw = getattr(opponent, "side", None) or "opponent"
+            opponent_side = _validate_side(opponent_name, opponent_side_raw)
+            actors = [
+                EncounterActor(name=player_name, role=ROLE_RED, side="player"),
+                EncounterActor(
+                    name=opponent_name, role=ROLE_BLUE, side=opponent_side,
+                ),
+            ]
+        else:
+            role = "combatant" if cdef.category == "combat" else "participant"
+            actors = [
+                EncounterActor(name=player_name, role=role, side="player"),
+            ]
+            for npc in npcs_present:
+                npc_name = getattr(npc, "name", None) or str(npc)
+                side_raw = getattr(npc, "side", None) or "neutral"
+                side = _validate_side(npc_name, side_raw)
+                actors.append(EncounterActor(name=npc_name, role=role, side=side))
 
         pm = cdef.player_metric
         om = cdef.opponent_metric
