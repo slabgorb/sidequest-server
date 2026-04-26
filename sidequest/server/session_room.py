@@ -76,9 +76,11 @@ class SessionRoom:
     # docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
     _pending_actions: dict[str, PendingAction] = field(default_factory=dict)
     # Election primitives for one-dispatch-per-round (ADR-036). The lock
-    # serializes the elected handlers; the round counter is the CAS guard
-    # so a second handler that wakes after the first commits the round
-    # short-circuits its dispatch instead of re-running the narrator.
+    # serializes elected handlers; the counter is the CAS guard so a
+    # second handler that wakes after the first commits the dispatch
+    # short-circuits instead of re-running the narrator. Counter source
+    # is TurnManager.interaction (monotonic per-exchange), not .round
+    # (advances on narrative beats only).
     _dispatch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _last_dispatched_round: int = 0
 
@@ -261,7 +263,14 @@ class SessionRoom:
 
     @property
     def last_dispatched_round(self) -> int:
-        """Highest round number for which a narrator dispatch has fired."""
+        """Highest interaction counter for which a narrator dispatch has fired.
+
+        Named ``round`` for ADR-036 nomenclature, but the counter source is
+        ``TurnManager.interaction`` (which advances on every player-narrator
+        exchange) rather than ``TurnManager.round`` (which advances only on
+        meaningful narrative beats). This guarantees CAS uniqueness across
+        sequential dispatches.
+        """
         return self._last_dispatched_round
 
     @last_dispatched_round.setter

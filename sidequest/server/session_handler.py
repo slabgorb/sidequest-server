@@ -3429,11 +3429,18 @@ class WebSocketSessionHandler:
         # "you" while ``thinking=true`` is local.
         # Hoist acting_name so the buffer write below can reference it even
         # when _resolve_acting_character_name raises (falls back to player_name).
-        acting_name = (
-            _resolve_acting_character_name(sd, self._room)
-            if self._room is not None and sd.player_name
-            else sd.player_name
-        )
+        try:
+            acting_name = (
+                _resolve_acting_character_name(sd, self._room)
+                if self._room is not None and sd.player_name
+                else sd.player_name
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "session.acting_name_resolve_failed error=%s falling_back_to=%s",
+                exc, sd.player_name,
+            )
+            acting_name = sd.player_name
         if self._room is not None and sd.player_name:
             try:
                 turn_active_msg = TurnStatusMessage(
@@ -3504,18 +3511,20 @@ class WebSocketSessionHandler:
             # Barrier fired — elect a single dispatcher per round via
             # asyncio.Lock + last_dispatched_round CAS guard.
             async with self._room.dispatch_lock:
-                current_round = snapshot.turn_manager.round
-                if self._room.last_dispatched_round >= current_round:
+                # CAS guard uses interaction (monotonic per-narration counter)
+                # not round (which advances on narrative beats, not every turn).
+                current_interaction = snapshot.turn_manager.interaction
+                if self._room.last_dispatched_round >= current_interaction:
                     # Lost the race; another handler already dispatched.
                     return []
-                self._room.last_dispatched_round = current_round
+                self._room.last_dispatched_round = current_interaction
                 pending = self._room.drain_pending_actions()
 
             _watcher_publish(
                 "mp.round_dispatched",
                 {
                     "slug": self._room.slug,
-                    "round": current_round,
+                    "round": snapshot.turn_manager.round,
                     "player_count": self._room.seated_player_count(),
                     "action_lengths": {
                         pid: len(p.action) for pid, p in pending

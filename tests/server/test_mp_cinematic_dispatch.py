@@ -185,8 +185,8 @@ async def test_two_players_combine_into_one_narrator_dispatch(
     combined = captured[0]
     assert "Gladstone: I prepare for the dungeon" in combined
     assert "Zanzibar Jones: I get my pole" in combined
-    # round counter advanced
-    assert room.last_dispatched_round == room.snapshot.turn_manager.round
+    # interaction counter advanced (CAS now uses interaction, not round)
+    assert room.last_dispatched_round == room.snapshot.turn_manager.interaction
 
 
 @pytest.mark.asyncio
@@ -438,3 +438,82 @@ async def test_otel_events_emitted_on_barrier_fire_and_dispatch(
     # Each fires exactly once for this round.
     assert event_names.count("mp.barrier_fired") == 1
     assert event_names.count("mp.round_dispatched") == 1
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Fix 1 regression — multi-round CAS must use interaction not round
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_fires_in_round_two_after_round_one_completes(
+    session_handler_factory,
+) -> None:
+    """The CAS guard must allow the second round's dispatch to fire after
+    the first round completed. Catches the dead-counter bug where
+    last_dispatched_round was checked against turn_manager.round (which
+    never advances) instead of turn_manager.interaction."""
+    handler1, sd1, room = session_handler_factory(
+        slug="test-mp-twoturn",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p1", "Gladstone"),
+    )
+    handler2, sd2, _ = session_handler_factory(
+        slug="test-mp-twoturn",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p2", "Zanzibar Jones"),
+        existing_room=room,
+    )
+    captured: list[str] = []
+
+    async def fake_execute(sd, action, turn_context):
+        captured.append(action)
+        # Match the real method's behavior: advance interaction.
+        sd.snapshot.turn_manager.record_interaction()
+        return []
+
+    handler1._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+    handler2._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    # Round 1
+    msg1a = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("Round 1 — Gladstone"),
+        ),
+        player_id="p1",
+    )
+    msg1b = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("Round 1 — Zanzibar"),
+        ),
+        player_id="p2",
+    )
+    await handler1._handle_player_action(msg1a)
+    await handler2._handle_player_action(msg1b)
+    assert len(captured) == 1, f"round 1 dispatch failed: {captured}"
+    assert "Gladstone: Round 1 — Gladstone" in captured[0]
+    assert "Zanzibar Jones: Round 1 — Zanzibar" in captured[0]
+
+    # Round 2 — different actions, must dispatch a SECOND time.
+    msg2a = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("Round 2 — Gladstone"),
+        ),
+        player_id="p1",
+    )
+    msg2b = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("Round 2 — Zanzibar"),
+        ),
+        player_id="p2",
+    )
+    await handler1._handle_player_action(msg2a)
+    await handler2._handle_player_action(msg2b)
+    assert len(captured) == 2, (
+        f"round 2 dispatch silently skipped — CAS guard regression. "
+        f"captured: {captured}"
+    )
+    assert "Gladstone: Round 2 — Gladstone" in captured[1]
+    assert "Zanzibar Jones: Round 2 — Zanzibar" in captured[1]
