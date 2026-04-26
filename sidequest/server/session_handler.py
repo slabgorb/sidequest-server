@@ -1394,16 +1394,82 @@ class WebSocketSessionHandler:
                 snapshot = saved.snapshot
                 # Per-player chargen gate (playtest 2026-04-25). MP: a new
                 # player_id joining a slug that already has a character must
-                # route to chargen, not auto-claim the existing PC. Use the
-                # snapshot.player_seats binding when present; fall back to
-                # legacy "any character" gate for solo / pre-MP saves where
-                # player_seats is empty.
+                # route to chargen, not auto-claim the existing PC.
+                #
+                # Three branches:
+                #   1. ``player_seats`` populated  → authoritative per-player
+                #      binding; resume only if our player_id is seated.
+                #   2. ``player_seats`` empty + SOLO → legacy single-PC resume;
+                #      SoloSlotConflict already guarded the second connect, so
+                #      ``has_character = bool(characters)`` is safe.
+                #   3. ``player_seats`` empty + MP → playtest 2026-04-25 bug:
+                #      Laverne's chargen completed on a pre-binding server,
+                #      so the save has characters=[Laverne] but seats={}. The
+                #      old fallback auto-claimed Laverne for ANY connecting
+                #      player (Squiggy lands on Laverne's sheet labeled
+                #      "(YOU)"). Fix: match by display_name. If display_name
+                #      matches an existing character, this is the original
+                #      player resuming — back-fill the seat. Otherwise it's
+                #      a new joiner — route to chargen and emit a watcher
+                #      event so the GM panel can see the joiner.
+                _existing_char_names = {
+                    c.core.name for c in snapshot.characters if c.core.name
+                }
+                _is_mp = GameMode(row.mode) == GameMode.MULTIPLAYER
                 if snapshot.player_seats:
                     has_character = player_id in snapshot.player_seats
                     gate_branch = "player_seats"
-                else:
+                elif not _is_mp:
                     has_character = bool(snapshot.characters)
-                    gate_branch = "legacy_any_character"
+                    gate_branch = "legacy_solo_any_character"
+                elif display_name in _existing_char_names:
+                    # MP back-fill: original player resuming a pre-binding
+                    # save. Seat them now so subsequent joiners see the
+                    # populated player_seats branch.
+                    has_character = True
+                    gate_branch = "mp_legacy_backfill"
+                    snapshot.player_seats[player_id] = display_name
+                    logger.info(
+                        "session.player_seat_backfilled_on_resume "
+                        "slug=%s player_id=%s character=%s",
+                        slug, player_id, display_name,
+                    )
+                    _watcher_publish(
+                        "session_player_seat_backfilled",
+                        {
+                            "slug": slug,
+                            "player_id": player_id,
+                            "character_name": display_name,
+                            "reason": "mp_legacy_save_resume",
+                        },
+                        component="session",
+                    )
+                else:
+                    # MP new joiner — route to chargen, do NOT auto-claim
+                    # the existing PC. Emit a watcher event so the GM panel
+                    # can see new joiners arriving.
+                    has_character = False
+                    gate_branch = "mp_new_joiner_chargen_required"
+                    logger.info(
+                        "session.mp_new_joiner_chargen_required "
+                        "slug=%s player_id=%s display_name=%s "
+                        "existing_characters=%s",
+                        slug, player_id, display_name,
+                        sorted(_existing_char_names),
+                    )
+                    _watcher_publish(
+                        "mp_new_joiner_chargen_required",
+                        {
+                            "slug": slug,
+                            "player_id": player_id,
+                            "player_name": display_name,
+                            "existing_character_names": sorted(
+                                _existing_char_names
+                            ),
+                            "character_count": len(snapshot.characters),
+                        },
+                        component="session",
+                    )
                 logger.info(
                     "session.chargen_gate slug=%s player_id=%s branch=%s "
                     "has_character=%s seat_count=%d character_count=%d",

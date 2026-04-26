@@ -155,8 +155,16 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
     handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
         type="SESSION_EVENT",
-        player_id="rux-player",
-        payload=SessionEventPayload(event="connect", game_slug=slug),
+        # Original player resuming: UI sends display_name as both player_id
+        # and player_name. The MP-legacy-backfill branch will match
+        # display_name "Rux" against the existing character "Rux" and
+        # back-fill player_seats so subsequent joiners see the populated
+        # seat map. See test_mp_legacy_save_resumes_original_player_by_name
+        # for the explicit branch assertion.
+        player_id="Rux",
+        payload=SessionEventPayload(
+            event="connect", game_slug=slug, player_name="Rux",
+        ),
     )
     outbound = await handler.handle_message(msg)
 
@@ -397,6 +405,156 @@ async def test_slug_connect_chargen_gate_logs_branch_decision(
     assert "has_character=False" in msg_text, (
         f"P2 connecting to a slug seated by P1 must log has_character=False; got: {msg_text}"
     )
+
+
+@pytest.mark.asyncio
+async def test_mp_legacy_save_routes_new_joiner_to_chargen(tmp_path: Path, caplog):
+    """Playtest 2026-04-25 P0: MP slug with characters but empty player_seats.
+
+    Pre-fix: when Laverne's chargen completed on a server BEFORE the
+    chargen-confirmation seat-binding landed, her save has
+    ``characters=[Laverne]`` but ``player_seats={}``. The legacy fallback
+    branch read ``has_character = bool(snapshot.characters)`` and routed
+    ANY connecting player straight to slug_resume — Player 2 connected
+    with name "Squiggy" and landed on Laverne's character sheet labeled
+    "(YOU)".
+
+    Post-fix: in MP mode with empty player_seats, the gate matches
+    ``display_name`` against existing character names. Squiggy doesn't
+    match → has_character=False → routed to chargen, plus a watcher
+    event ``mp_new_joiner_chargen_required`` for the GM panel.
+    """
+    import logging
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-25-mp-legacy-no-seats"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    core = CreatureCore(
+        name="Laverne", description="d", personality="p", inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    # Crucial: empty player_seats simulates pre-binding chargen save.
+    snap.player_seats = {}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    # Squiggy connects with their own display name (UI sends displayName as
+    # both player_id and player_name on slug-connect).
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="Squiggy",
+        payload=SessionEventPayload(
+            event="connect", game_slug=slug, player_name="Squiggy",
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+        outbound = await handler.handle_message(msg)
+
+    connected_msgs = [
+        m for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "connected"
+    ]
+    assert connected_msgs, f"Expected SESSION_EVENT(connected), got: {outbound}"
+    payload = connected_msgs[0].payload
+    assert payload.has_character is False, (
+        "Squiggy (new joiner, MP, empty seats) must NOT inherit Laverne's "
+        "character — gate must report has_character=False so the UI routes "
+        "to chargen"
+    )
+    # ``ready`` events mean slug_resume fired — the bug. There must be NO
+    # SESSION_EVENT(ready) on this connect.
+    ready_msgs = [
+        m for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "ready"
+    ]
+    assert not ready_msgs, (
+        f"Squiggy must NOT receive SESSION_EVENT(ready) (slug_resume) — "
+        f"chargen fork required. Got: {ready_msgs}"
+    )
+    # Gate-decision log must show the new MP-aware branch fired.
+    gate_records = [
+        r for r in caplog.records
+        if "session.chargen_gate" in r.getMessage()
+    ]
+    assert gate_records, "Chargen-gate must log its decision"
+    msg_text = gate_records[0].getMessage()
+    assert "branch=mp_new_joiner_chargen_required" in msg_text, (
+        f"Expected MP-new-joiner branch; got: {msg_text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, caplog):
+    """Companion to the new-joiner test: original player CAN resume.
+
+    Laverne reconnects to her own pre-binding save. ``display_name=Laverne``
+    matches the existing character → has_character=True → resume, AND the
+    seat is back-filled so subsequent joiners hit the authoritative
+    ``player_seats`` branch.
+    """
+    import logging
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-25-mp-legacy-backfill"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    core = CreatureCore(
+        name="Laverne", description="d", personality="p", inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [char]
+    snap.player_seats = {}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="Laverne",
+        payload=SessionEventPayload(
+            event="connect", game_slug=slug, player_name="Laverne",
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+        outbound = await handler.handle_message(msg)
+
+    connected_msgs = [
+        m for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "connected"
+    ]
+    assert connected_msgs
+    assert connected_msgs[0].payload.has_character is True
+    # Branch log must show backfill.
+    gate_records = [
+        r for r in caplog.records
+        if "session.chargen_gate" in r.getMessage()
+    ]
+    assert gate_records
+    assert "branch=mp_legacy_backfill" in gate_records[0].getMessage()
 
 
 @pytest.mark.asyncio
