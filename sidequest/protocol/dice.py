@@ -199,3 +199,26 @@ class DiceResultPayload(ProtocolBase):
                     f"match spec.count={group.spec.count}"
                 )
         return self
+
+
+class OpposedRollResult(ProtocolBase):
+    """Engine-derived outcome of an opposed-check resolution.
+
+    Surfaced in turn results so the UI can render both rolls — the dice
+    tray shows the player's d20, the result pane shows the opponent's
+    roll, and the shift drives tier display. Visible to all participants
+    (no fog-of-war for now).
+
+    ``tier`` is the ``RollOutcome`` derived from ``shift`` via the bands
+    in ``sidequest.game.opposed_check`` and is the same value fed to
+    ``apply_beat`` for both sides. See ``OpposedRollResult`` in
+    ``sidequest.game.opposed_check`` for the engine-side dataclass; this
+    class is the wire-shape mirror.
+    """
+
+    player_roll: int = Field(ge=1, le=20)
+    player_mod: int
+    opponent_roll: int = Field(ge=1, le=20)
+    opponent_mod: int
+    shift: int
+    tier: RollOutcome

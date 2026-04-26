@@ -497,6 +497,16 @@ class _SessionData:
     # selections wholesale left the opponent dial inert and made combat
     # one-sided. Cleared together with ``pending_roll_outcome``.
     pending_roll_actor: str | None = None
+    # Opposed-check pending state (combat fairness, 2026-04-26). Set by
+    # ``dispatch_dice_throw`` when the active confrontation declares
+    # ``resolution_mode: opposed_check`` — the player's beat is NOT yet
+    # applied (waiting for the narrator to pick the opponent's beat so
+    # the resolver can derive the tier). Read by
+    # ``_apply_narration_result_to_snapshot`` which rolls the opponent's
+    # d20, runs ``resolve_opposed_check``, emits the lie-detector OTEL
+    # span, and applies both beats. Cleared by the consuming turn.
+    pending_opposed_player_d20: int | None = None
+    pending_opposed_player_beat_id: str | None = None
     # ADR-050 — image pacing throttle. Per-session, time-based cooldown that
     # suppresses render dispatches faster than human absorption speed.
     # Default 30s solo / 60s MP; created at chargen confirmation once the
@@ -1528,6 +1538,14 @@ class WebSocketSessionHandler:
         # the next turn's TurnContext to pick up if needed.
         sd.pending_roll_outcome = outcome.outcome
         sd.pending_roll_actor = character_name
+        # Opposed-check deferral (combat fairness, 2026-04-26). When the
+        # dispatcher reports the beat was deferred, stash the player roll
+        # + beat_id so ``_apply_narration_result_to_snapshot`` can pick
+        # them up and run the resolver inline once the narrator emits the
+        # opponent's beat.
+        if outcome.opposed_pending:
+            sd.pending_opposed_player_d20 = outcome.opposed_player_d20
+            sd.pending_opposed_player_beat_id = outcome.opposed_player_beat_id
 
         # Run the narrator inline with the synthesized beat-resolved action
         # so the rolling player sees prose in the same WebSocket round-trip.
@@ -3566,6 +3584,12 @@ class WebSocketSessionHandler:
                 outcome_name = getattr(dice_outcome, "name", None) or str(dice_outcome)
                 dice_failed = outcome_name in ("Fail", "CritFail")
             dice_actor: str | None = getattr(sd, "pending_roll_actor", None)
+            opposed_player_d20: int | None = getattr(
+                sd, "pending_opposed_player_d20", None,
+            )
+            opposed_player_beat_id: str | None = getattr(
+                sd, "pending_opposed_player_beat_id", None,
+            )
             _apply_narration_result_to_snapshot(
                 snapshot,
                 result,
@@ -3573,12 +3597,19 @@ class WebSocketSessionHandler:
                 pack=sd.genre_pack,
                 dice_failed=dice_failed,
                 dice_actor=dice_actor,
+                opposed_player_d20=opposed_player_d20,
+                opposed_player_beat_id=opposed_player_beat_id,
+                opposed_player_actor=dice_actor,
             )
             # Consume the pending outcome — one turn per roll.
             if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
                 sd.pending_roll_outcome = None
             if hasattr(sd, "pending_roll_actor"):
                 sd.pending_roll_actor = None
+            if hasattr(sd, "pending_opposed_player_d20"):
+                sd.pending_opposed_player_d20 = None
+            if hasattr(sd, "pending_opposed_player_beat_id"):
+                sd.pending_opposed_player_beat_id = None
             snapshot.turn_manager.record_interaction()
 
             now_encounter = snapshot.encounter

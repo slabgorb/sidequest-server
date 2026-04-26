@@ -1112,6 +1112,27 @@ SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH] = SpanRoute(
         "failure_delta": (span.attributes or {}).get("failure_delta", 0),
     },
 )
+# Opposed-check resolution (combat fairness, 2026-04-26).
+# Lie-detector for "did the engine actually run the opposed check or did
+# the narrator backslide into picking the tier from prose." Emitted in the
+# resolver call site BEFORE apply_beat so the GM panel can audit the roll
+# against the resulting metric advance. See:
+# ``.archive/handoffs/opposed-checks-design.md``.
+SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED = "encounter.opposed_roll_resolved"
+SPAN_ROUTES[SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.opposed_roll_resolved",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "player_roll": (span.attributes or {}).get("player_roll", 0),
+        "player_mod": (span.attributes or {}).get("player_mod", 0),
+        "opponent_roll": (span.attributes or {}).get("opponent_roll", 0),
+        "opponent_mod": (span.attributes or {}).get("opponent_mod", 0),
+        "shift": (span.attributes or {}).get("shift", 0),
+        "tier": (span.attributes or {}).get("tier", ""),
+    },
+)
 
 # Dice dispatch (story 34-11) — names byte-identical to Rust
 # ``emit_dice_request_sent`` / ``emit_dice_throw_received`` /
@@ -1253,6 +1274,44 @@ def encounter_confrontation_initiated_span(
         attributes={
             "encounter_type": encounter_type,
             "genre_slug": genre_slug,
+            **attrs,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_opposed_roll_resolved_span(
+    *,
+    encounter_type: str,
+    player_roll: int,
+    player_mod: int,
+    opponent_roll: int,
+    opponent_mod: int,
+    shift: int,
+    tier: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Context manager wrapping SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED.
+
+    Lie-detector for the opposed-check path. Emit BEFORE apply_beat in
+    the dispatch branch so the GM panel can correlate the engine-derived
+    tier with the subsequent metric_advance span. The span attributes
+    carry every input the resolver consumed (both rolls + both mods) so a
+    reviewer can recompute the shift independently.
+    """
+    t = _tracer if _tracer is not None else tracer()
+    with t.start_as_current_span(
+        SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED,
+        attributes={
+            "encounter_type": encounter_type,
+            "player_roll": int(player_roll),
+            "player_mod": int(player_mod),
+            "opponent_roll": int(opponent_roll),
+            "opponent_mod": int(opponent_mod),
+            "shift": int(shift),
+            "tier": tier,
             **attrs,
         },
     ) as span:

@@ -30,7 +30,7 @@ from sidequest.game.beat_kinds import apply_beat
 from sidequest.game.dice import ResolveError, resolve_dice_with_faces
 from sidequest.game.encounter import EncounterPhase, StructuredEncounter
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import BeatDef, ConfrontationDef
+from sidequest.genre.models.rules import BeatDef, ConfrontationDef, ResolutionMode
 from sidequest.protocol.dice import (
     DiceRequestPayload,
     DiceResultPayload,
@@ -73,6 +73,24 @@ class DiceThrowOutcome:
     Carries everything the session handler needs to: broadcast the dice
     messages, stash the outcome on session state, and synthesize a narrator
     replay action.
+
+    Opposed-check fields (combat fairness, 2026-04-26):
+
+    - ``opposed_pending``: True when this dispatch deferred beat
+      application because the active confrontation declares
+      ``resolution_mode: opposed_check``. The player rolled, but the
+      engine has NOT yet applied the beat — it will run via
+      ``narration_apply`` once the narrator picks the opponent's beat
+      and the resolver derives the tier from the shift between rolls.
+    - ``opposed_player_d20``: The raw d20 face value (1..=20) the player
+      rolled. Stashed on ``_SessionData`` so ``narration_apply`` can feed
+      it into ``resolve_opposed_check``.
+    - ``opposed_player_beat_id``: The beat the player committed. Stashed
+      so the dispatch branch can reconstruct which BeatDef to apply
+      after the tier is derived.
+
+    All three fields are ``None`` / ``False`` when the confrontation is
+    NOT opposed_check — the legacy single-roll-vs-DC path is unchanged.
     """
 
     request: DiceRequestPayload
@@ -80,6 +98,9 @@ class DiceThrowOutcome:
     replay_action_text: str
     outcome: RollOutcome
     encounter_resolved: bool
+    opposed_pending: bool = False
+    opposed_player_d20: int | None = None
+    opposed_player_beat_id: str | None = None
 
 
 def _stat_modifier(stats: dict[str, int], stat_check: str) -> int:
@@ -298,44 +319,83 @@ def dispatch_dice_throw(
             "and no player-side actor is present"
         )
 
-    apply_result = apply_beat(
-        encounter, actor, beat, resolved.outcome,
-        turn=round_number,
+    # Opposed-check fork (combat fairness, 2026-04-26).
+    # When the active confrontation declares ``resolution_mode:
+    # opposed_check`` we DEFER beat application: the player has rolled
+    # but the engine cannot derive the outcome tier yet — that requires
+    # the opponent's roll AND the opponent's beat (narrator-picked).
+    # ``narration_apply`` consumes the stashed player d20 face below,
+    # rolls the opponent's d20 server-side, runs ``resolve_opposed_check``
+    # to derive the tier, and then calls ``apply_beat`` for both sides.
+    #
+    # Skipping apply_beat here is intentional and load-bearing: the
+    # player tier on opposed_check encounters is NEVER the legacy
+    # roll-vs-DC tier (``resolved.outcome``). Letting the legacy path
+    # run would double-apply with the wrong tier and re-introduce the
+    # exact unfair-combat bug this branch is fixing.
+    opposed_pending = (
+        cdef.resolution_mode == ResolutionMode.opposed_check
     )
+    opposed_player_d20: int | None = None
 
-    if apply_result.skipped_reason:
-        raise DiceDispatchError(
-            f"beat {payload.beat_id!r} skipped: {apply_result.skipped_reason}"
+    if opposed_pending:
+        # Pull the raw d20 face for the resolver. The dice pool is
+        # validated to be a single d20 group earlier; ``payload.face``
+        # carries one face per die in pool order. We assert the
+        # invariant explicitly so any future pool change surfaces here.
+        if not payload.face:
+            raise DiceDispatchError(
+                "opposed_check dispatch missing dice face values — "
+                "DICE_THROW payload must carry the player's d20 result"
+            )
+        opposed_player_d20 = int(payload.face[0])
+        if not (1 <= opposed_player_d20 <= 20):
+            raise DiceDispatchError(
+                f"opposed_check: player d20 face {opposed_player_d20} not "
+                f"in 1..20"
+            )
+        # No beat application here; ``apply_result`` is None-equivalent.
+        own_delta = 0
+        encounter_resolved = False
+    else:
+        apply_result = apply_beat(
+            encounter, actor, beat, resolved.outcome,
+            turn=round_number,
         )
 
-    own_delta = apply_result.deltas.own if apply_result.deltas else 0
+        if apply_result.skipped_reason:
+            raise DiceDispatchError(
+                f"beat {payload.beat_id!r} skipped: {apply_result.skipped_reason}"
+            )
 
-    with encounter_beat_applied_span(
-        encounter_type=encounter.encounter_type,
-        actor=character_name,
-        beat_id=payload.beat_id,
-        metric_delta=own_delta,
-    ):
-        pass
-    _watcher_publish(
-        "state_transition",
-        {
-            "field": "encounter",
-            "op": "beat_applied",
-            "actor": character_name,
-            "actor_side": actor.side,
-            "beat_id": payload.beat_id,
-            "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
-            "outcome_tier": resolved.outcome.value if hasattr(resolved.outcome, "value") else str(resolved.outcome),
-            "own_delta": own_delta,
-            "opponent_delta": apply_result.deltas.opponent if apply_result.deltas else 0,
-            "metric_target": encounter.encounter_type,
-            "source": "dice_throw",
-        },
-        component="encounter",
-    )
+        own_delta = apply_result.deltas.own if apply_result.deltas else 0
 
-    encounter_resolved = apply_result.resolved
+        with encounter_beat_applied_span(
+            encounter_type=encounter.encounter_type,
+            actor=character_name,
+            beat_id=payload.beat_id,
+            metric_delta=own_delta,
+        ):
+            pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "beat_applied",
+                "actor": character_name,
+                "actor_side": actor.side,
+                "beat_id": payload.beat_id,
+                "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
+                "outcome_tier": resolved.outcome.value if hasattr(resolved.outcome, "value") else str(resolved.outcome),
+                "own_delta": own_delta,
+                "opponent_delta": apply_result.deltas.opponent if apply_result.deltas else 0,
+                "metric_target": encounter.encounter_type,
+                "source": "dice_throw",
+            },
+            component="encounter",
+        )
+
+        encounter_resolved = apply_result.resolved
 
     with combat_tick_span(
         encounter_type=encounter.encounter_type,
@@ -419,12 +479,35 @@ def dispatch_dice_throw(
         encounter_resolved,
     )
 
+    if opposed_pending:
+        # GM-panel visibility for the deferral. Without this watcher
+        # event the deferred-beat window is invisible — between
+        # DICE_THROW and the narrator's beat_selections the encounter
+        # state looks frozen, and a hung narrator would silently leave
+        # the player's roll unconsumed.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "opposed_check_pending",
+                "encounter_type": encounter.encounter_type,
+                "player_actor": character_name,
+                "player_beat_id": payload.beat_id,
+                "player_d20": opposed_player_d20,
+                "source": "dice_throw",
+            },
+            component="encounter",
+        )
+
     return DiceThrowOutcome(
         request=request,
         result=result,
         replay_action_text=replay_text,
         outcome=resolved.outcome,
         encounter_resolved=encounter_resolved,
+        opposed_pending=opposed_pending,
+        opposed_player_d20=opposed_player_d20 if opposed_pending else None,
+        opposed_player_beat_id=payload.beat_id if opposed_pending else None,
     )
 
 
