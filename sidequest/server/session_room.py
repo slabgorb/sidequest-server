@@ -34,6 +34,19 @@ class _Seat:
 
 
 @dataclass
+class PendingAction:
+    """A buffered player action awaiting the round barrier (ADR-036).
+
+    Resolved at submit time so the elected dispatcher reads the labeled
+    prose back without re-resolving foreign player_ids without their
+    session data. See spec
+    docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
+    """
+    character_name: str
+    action: str
+
+
+@dataclass
 class SessionRoom:
     slug: str
     mode: GameMode
@@ -58,6 +71,11 @@ class SessionRoom:
     # the system collapses into parallel solo games — see playtest
     # 2026-04-26 "MP — players run as parallel solo games".
     _orchestrator: "Orchestrator | None" = field(default=None, repr=False)
+    # ADR-036 Cinematic mode — round-level action buffer keyed by player_id.
+    # Drained by the elected dispatcher when TurnManager.submit_input flips
+    # the barrier from InputCollection to IntentRouting. See spec
+    # docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
+    _pending_actions: dict[str, PendingAction] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Canonical world state (ADR-037 Python port). The room owns the
@@ -207,6 +225,29 @@ class SessionRoom:
     def absent_seated_player_ids(self) -> list[str]:
         with self._lock:
             return [p for p in self._seated if p not in self._connected]
+
+    def record_pending_action(
+        self, player_id: str, character_name: str, action: str,
+    ) -> None:
+        """Buffer one player's action for the current round (ADR-036).
+
+        Last-write-wins on duplicate submissions for the same player_id.
+        """
+        with self._lock:
+            self._pending_actions[player_id] = PendingAction(
+                character_name=character_name, action=action,
+            )
+
+    def drain_pending_actions(self) -> list[tuple[str, PendingAction]]:
+        """Return buffered actions in submission order and clear the buffer.
+
+        Returns ``[(player_id, PendingAction), ...]``. Order matters because
+        the combined-prose builder labels speakers in this order.
+        """
+        with self._lock:
+            drained = list(self._pending_actions.items())
+            self._pending_actions.clear()
+        return drained
 
     def slot_to_player_id(self) -> dict[str, str]:
         """Return a snapshot of {character_slot: player_id} for seated players.
