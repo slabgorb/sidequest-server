@@ -9,10 +9,18 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
+
+# Imported lazily inside the typing block to avoid an import cycle —
+# Orchestrator's module imports from sidequest.game (transitively),
+# and sidequest.server.session_room is imported very early.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sidequest.agents.orchestrator import Orchestrator
 
 
 class SoloSlotConflict(Exception):
@@ -41,6 +49,15 @@ class SessionRoom:
     # to the room reads/writes the same in-memory snapshot reference.
     _snapshot: GameSnapshot | None = field(default=None, repr=False)
     _store: SqliteStore | None = field(default=None, repr=False)
+    # Canonical narrator orchestrator (ADR-067 — single persistent narrator
+    # session per slug). Each WS session bound to this room uses the
+    # same Orchestrator so that two players acting on the same slug
+    # share one Claude --resume session, one ``_narrator_session_id``,
+    # and one consistent narration of the shared world. Without this,
+    # each player constructs their own Orchestrator at connect time and
+    # the system collapses into parallel solo games — see playtest
+    # 2026-04-26 "MP — players run as parallel solo games".
+    _orchestrator: "Orchestrator | None" = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Canonical world state (ADR-037 Python port). The room owns the
@@ -90,6 +107,46 @@ class SessionRoom:
             if self._snapshot is None or self._store is None:
                 return
             self._store.save(self._snapshot)
+
+    # ------------------------------------------------------------------
+    # Canonical narrator orchestrator (ADR-067)
+    # ------------------------------------------------------------------
+
+    def get_or_create_orchestrator(
+        self,
+        factory: Callable[[], "Orchestrator"],
+    ) -> "Orchestrator":
+        """Return the room's orchestrator, creating it via ``factory`` on
+        first call. Atomic under ``_lock``: a peer connecting on the
+        same slug at the same instant cannot construct a second
+        Orchestrator (which would mean a second narrator session and a
+        second Claude --resume id, breaking ADR-067's single-session
+        guarantee). The factory is invoked only on the first call —
+        subsequent callers receive the existing instance and the
+        factory is never called, avoiding wasted Claude-client setup.
+        """
+        import logging as _logging
+        _log = _logging.getLogger("sidequest.server.session_room")
+        with self._lock:
+            if self._orchestrator is None:
+                self._orchestrator = factory()
+                _log.info(
+                    "room.orchestrator_created slug=%s orch_id=%s",
+                    self.slug,
+                    id(self._orchestrator),
+                )
+            else:
+                _log.info(
+                    "room.orchestrator_reused slug=%s orch_id=%s",
+                    self.slug,
+                    id(self._orchestrator),
+                )
+            return self._orchestrator
+
+    @property
+    def orchestrator(self) -> "Orchestrator | None":
+        """Canonical orchestrator for the slug, or None before first bind."""
+        return self._orchestrator
 
     def close_store(self) -> None:
         """Close the canonical store exactly once. Idempotent.

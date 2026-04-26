@@ -1579,6 +1579,15 @@ class WebSocketSessionHandler:
             world_context: str | None = culture_ref if culture_ref else None
             audio_backend = self._build_audio_backend(row.genre_slug, genre_pack)
 
+            # ADR-067 single-narrator-per-slug: get the canonical
+            # orchestrator from the room (constructing it lazily on
+            # first connect). A per-session Orchestrator would create a
+            # second Claude --resume id and produce divergent narration
+            # for each player on the slug — playtest 2026-04-26 "MP —
+            # parallel solo games" root cause.
+            shared_orchestrator = room.get_or_create_orchestrator(
+                lambda: Orchestrator(client=self._client_factory())
+            )
             self._session_data = _SessionData(
                 genre_slug=row.genre_slug,
                 world_slug=row.world_slug,
@@ -1591,7 +1600,7 @@ class WebSocketSessionHandler:
                 snapshot=room.snapshot,
                 store=room.store,
                 genre_pack=genre_pack,
-                orchestrator=Orchestrator(client=self._client_factory()),
+                orchestrator=shared_orchestrator,
                 local_dm=LocalDM(client=self._client_factory()),
                 builder=builder,
                 opening_seed=opening_seed,
@@ -2449,15 +2458,18 @@ class WebSocketSessionHandler:
         # is wired in here. Rust parity: connect.rs:1745-1864.
         apply_starting_loadout(character, sd.genre_pack.inventory)
 
-        # MP: peer may have already committed and persisted a fully-
-        # materialized snapshot. Reload-before-rebuild so we can append
-        # this PC to the shared snapshot instead of clobbering the peer's
-        # state. Each socket's ``sd.snapshot`` was loaded at slug-connect
-        # time, before the peer's commit; SQLite is the only shared truth.
-        existing_saved = sd.store.load()
-        existing_chars: list = []
-        if existing_saved is not None and existing_saved.snapshot.characters:
-            existing_chars = list(existing_saved.snapshot.characters)
+        # MP: peer may have already committed on the same slug. The
+        # ADR-037 Python port has every WS session on a slug share the
+        # room's canonical ``GameSnapshot`` reference, so an in-memory
+        # check is the authoritative one. Disk reload here used to
+        # paper over the snapshot-orphaning bug (sd.snapshot reassignment
+        # below) by re-fetching the peer's persisted state, but the
+        # peer's ``room.save()`` could only write the stale (empty)
+        # bound snapshot — so the disk-read returned no characters and
+        # the second player wrongly took the first-commit branch. With
+        # the canonical snapshot mutated in place (``replace_with``
+        # below), in-memory ``sd.snapshot.characters`` is always live.
+        existing_chars: list = list(sd.snapshot.characters)
         is_first_commit = not existing_chars
 
         if is_first_commit:
@@ -2484,7 +2496,18 @@ class WebSocketSessionHandler:
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
-            sd.snapshot = materialized
+            # Mutate the canonical room snapshot in place rather than
+            # reassigning ``sd.snapshot``. Reassignment orphans the
+            # ``room._snapshot`` reference: ``room.save()`` then
+            # persists the stale pre-chargen snapshot, the next
+            # connecting peer loads an empty save, treats themselves
+            # as first-commit, materializes their own world, and the
+            # slug ends up running two parallel solo games. Mutating
+            # in place keeps every existing ``sd.snapshot`` /
+            # ``room.snapshot`` reference live and pointing at the
+            # same authoritative object — including any peer session
+            # already bound to this slug.
+            sd.snapshot.replace_with(materialized)
             span.add_event(
                 "character_creation.world_materialized",
                 {

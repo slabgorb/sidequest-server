@@ -562,6 +562,28 @@ class GameSnapshot(BaseModel):
     # State mutation methods
     # ------------------------------------------------------------------
 
+    def replace_with(self, other: "GameSnapshot") -> None:
+        """Copy every field of ``other`` onto this snapshot in place.
+
+        Used when the chargen-complete pipeline materializes a fresh
+        world from the genre pack and needs to install it into the
+        canonical room snapshot without orphaning the room's reference.
+
+        ADR-037 (Python port) requires that the room owns the canonical
+        ``GameSnapshot`` and every WS session bound to the slug holds
+        the same object. Reassigning ``sd.snapshot = materialized``
+        violates that invariant: the session's pointer moves, the
+        room's pointer doesn't, and ``room.save()`` then persists the
+        stale (empty) original. Symptom: a second player joining the
+        slug loads from disk, sees no characters, and treats themselves
+        as the first commit — two parallel solo games on one slug.
+
+        Mutating in place keeps ``id(self)`` stable, so all existing
+        references stay live.
+        """
+        for name in type(other).model_fields:
+            setattr(self, name, getattr(other, name))
+
     def apply_world_patch(self, patch: WorldStatePatch) -> None:
         """Apply a world state patch. Only Some fields are updated.
 
