@@ -75,8 +75,8 @@ from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
 )
-from sidequest.game.turn import TurnPhase
 from sidequest.game.status import Status
+from sidequest.game.turn import TurnPhase
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,

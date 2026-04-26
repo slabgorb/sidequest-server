@@ -232,10 +232,7 @@ class _FakeClaudeClient:
     def _respond_for_model(
         self, model: str, session_id: str | None = None,
     ) -> ClaudeResponse:
-        if model == "haiku":
-            text = _fake_dispatch_package_json()
-        else:
-            text = _FAKE_NARRATION_TEXT
+        text = _fake_dispatch_package_json() if model == "haiku" else _FAKE_NARRATION_TEXT
         return ClaudeResponse(
             text=text,
             session_id=session_id or self._session_id,
@@ -369,10 +366,10 @@ def session_handler_factory(tmp_path):
         genre: str = "caverns_and_claudes",
         *,
         slug: str | None = None,
-        mode: "GameMode | None" = None,
+        mode: GameMode | None = None,
         seat_players: list[tuple[str, str]] | None = None,
         active_player: tuple[str, str] | None = None,
-        existing_room: "SessionRoom | None" = None,
+        existing_room: SessionRoom | None = None,
     ):
         # Read DEFAULT_GENRE_PACK_SEARCH_PATHS from the module at call-time so
         # that the _fixture_pack_search_paths monkeypatch is visible here.
@@ -800,12 +797,7 @@ def encounter_dispatch_helper():
             for _ in range(20):
                 if snapshot.encounter is None or snapshot.encounter.resolved:
                     break
-                if winner == "opponent":
-                    actor_name = "Promo"
-                    npc_side = "opponent"
-                else:
-                    actor_name = "Sam"
-                    npc_side = "player"
+                actor_name = "Promo" if winner == "opponent" else "Sam"
                 result = NarrationTurnResult(
                     narration=f"{actor_name} strikes.",
                     beat_selections=[BeatSelection(

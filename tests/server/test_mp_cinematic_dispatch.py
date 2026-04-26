@@ -8,6 +8,7 @@ either calls SessionRoom helpers directly (unit) or drives
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from sidequest.game.persistence import GameMode
@@ -178,7 +179,7 @@ async def test_two_players_combine_into_one_narrator_dispatch(
         ),
         player_id="p2",
     )
-    r2 = await handler2._handle_player_action(msg2)
+    await handler2._handle_player_action(msg2)
     # Exactly one narrator call with both actions.
     assert len(captured) == 1
     combined = captured[0]

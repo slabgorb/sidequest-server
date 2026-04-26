@@ -7,9 +7,10 @@ and re-seat).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
@@ -17,8 +18,6 @@ from sidequest.game.session import GameSnapshot
 # Imported lazily inside the typing block to avoid an import cycle —
 # Orchestrator's module imports from sidequest.game (transitively),
 # and sidequest.server.session_room is imported very early.
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from sidequest.agents.orchestrator import Orchestrator
 
@@ -70,7 +69,7 @@ class SessionRoom:
     # each player constructs their own Orchestrator at connect time and
     # the system collapses into parallel solo games — see playtest
     # 2026-04-26 "MP — players run as parallel solo games".
-    _orchestrator: "Orchestrator | None" = field(default=None, repr=False)
+    _orchestrator: Orchestrator | None = field(default=None, repr=False)
     # ADR-036 Cinematic mode — round-level action buffer keyed by player_id.
     # Drained by the elected dispatcher when TurnManager.submit_input flips
     # the barrier from InputCollection to IntentRouting. See spec
@@ -138,8 +137,8 @@ class SessionRoom:
 
     def get_or_create_orchestrator(
         self,
-        factory: Callable[[], "Orchestrator"],
-    ) -> "Orchestrator":
+        factory: Callable[[], Orchestrator],
+    ) -> Orchestrator:
         """Return the room's orchestrator, creating it via ``factory`` on
         first call. Atomic under ``_lock``: a peer connecting on the
         same slug at the same instant cannot construct a second
@@ -168,7 +167,7 @@ class SessionRoom:
             return self._orchestrator
 
     @property
-    def orchestrator(self) -> "Orchestrator | None":
+    def orchestrator(self) -> Orchestrator | None:
         """Canonical orchestrator for the slug, or None before first bind."""
         return self._orchestrator
 
