@@ -411,12 +411,15 @@ def session_handler_factory(tmp_path):
         )
         handler = WebSocketSessionHandler(save_dir=tmp_path)
         handler._session_data = sd
-        # Force handler into Playing state so _handle_player_action doesn't
-        # reject before reaching the barrier logic.
-        handler._state = _State.Playing
 
         # ---- Multiplayer room wiring (ADR-036 Task 3) ----
         if slug is not None and mode is not None and seat_players is not None:
+            # Force handler into Playing state so _handle_player_action reaches
+            # the barrier logic (MP tests start post-chargen). Only done here —
+            # not for the legacy single-player path — so tests that probe
+            # pre-connect guard behaviour (e.g. test_dice_throw_returns_error_when_not_playing)
+            # still see AwaitingConnect.
+            handler._state = _State.Playing
             # In MP mode, add a Character to the snapshot for each seat so
             # that _resolve_acting_character_name can match by slot name.
             # The legacy "Rux" character added above stays for compatibility
