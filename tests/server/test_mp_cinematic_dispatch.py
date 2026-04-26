@@ -287,3 +287,59 @@ async def test_solo_room_dispatches_immediately_no_buffering_observable(
     # output is just one line.
     assert "Gladstone: I look around" in captured[0]
     assert room.last_dispatched_round == 1
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 6 — concurrent-dispatch race test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_submissions_dispatch_exactly_once(
+    session_handler_factory,
+) -> None:
+    """Two _handle_player_action calls awaited concurrently via asyncio.gather.
+    The dispatch_lock + last_dispatched_round CAS must guarantee exactly one
+    narrator call."""
+    handler1, sd1, room = session_handler_factory(
+        slug="test-mp-grimvault-race",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p1", "Gladstone"),
+    )
+    handler2, sd2, _ = session_handler_factory(
+        slug="test-mp-grimvault-race",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p2", "Zanzibar Jones"),
+        existing_room=room,
+    )
+    captured: list[str] = []
+
+    async def fake_execute(sd, action, turn_context):
+        # Yield to the event loop so the two handlers can interleave.
+        await asyncio.sleep(0)
+        captured.append(action)
+        return []
+
+    handler1._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+    handler2._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    msg1 = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I prepare for the dungeon"),
+        ),
+        player_id="p1",
+    )
+    msg2 = PlayerActionMessage(
+        payload=PlayerActionPayload(
+            action=NonBlankString.model_validate("I get my pole"),
+        ),
+        player_id="p2",
+    )
+    r1, r2 = await asyncio.gather(
+        handler1._handle_player_action(msg1),
+        handler2._handle_player_action(msg2),
+    )
+    assert r1 == [] and r2 == []
+    assert len(captured) == 1, f"expected exactly one dispatch, got {len(captured)}"
