@@ -195,15 +195,31 @@ and the actor is now in a worse position than before. Match the tier to \
 the prose. On dice-replay turns the engine will overwrite this from the \
 actual roll.
 
-status_changes: Array. Emit when prose describes a new lingering injury, \
-shaken nerve, social mark, or other actor-level cost. Format:
+status_changes: Array. Two entry shapes — ADD a status, or CLEAR one.
+
+ADD shape (new lingering injury, shaken nerve, social mark, or other \
+actor-level cost):
   {"actor": "<actor name>", "status": {"text": "<short prose label>", "severity": "Scratch|Wound|Scar"}}
 - Scratch: clears at scene end (a graze, a lost composure beat).
 - Wound: clears at session end or with rest (a real injury, a notable shake).
 - Scar: persists until a milestone or healing event (a permanent mark — \
   reputation, broken bone, lost trust).
-Use sparingly — every status is narrative gravity. Align severity with \
-how seriously the prose treats the cost.
+
+CLEAR shape (resolve / heal / escape from an existing status — emit when \
+the prose explicitly describes a lingering condition lifting):
+  {"actor": "<actor name>", "clear": "<status text or substring>"}
+Use this when the prose says the character escapes a hold ("she wriggles \
+free of the Captured grip"), recovers ("the bandage stops the Twisted \
+wrist throbbing"), or shrugs off a Scratch/Wound/Scar narratively. \
+Match by status text or a unique substring of it. Wound and Scar will \
+NEVER auto-expire — emit a clear if the prose resolves them, or they \
+persist forever and pile up on the party panel. Scratch auto-clears at \
+scene end so explicit clears are optional but allowed.
+
+Use ADDs sparingly — every status is narrative gravity. Align severity \
+with how seriously the prose treats the cost. CLEAR aggressively when \
+the prose resolves a condition: a status the narrator stops mentioning \
+is NOT cleared by silence.
 
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch

@@ -208,6 +208,19 @@ def _apply_narration_result_to_snapshot(
             },
             component="state.location",
         )
+        # Scratch sweep on scene change. A location change is a scene
+        # boundary by every TTRPG convention — the cough you took in the
+        # previous room shouldn't pile onto the cough you take in the
+        # next one (Playtest 2026-04-26 Bug #1). Wound and Scar persist;
+        # only Scratch clears. ``old_loc`` is None at session start —
+        # don't sweep on the first location set (no scene to leave).
+        if old_loc and old_loc != result.location:
+            from sidequest.server.status_clear import clear_scratch_on_scene_end
+            clear_scratch_on_scene_end(
+                snapshot,
+                reason="location_change",
+                turn=snapshot.turn_manager.interaction,
+            )
 
     if result.quest_updates:
         # Span emission replaces the prior direct ``_watcher_publish`` —
@@ -632,16 +645,43 @@ def _apply_narration_result_to_snapshot(
                         },
                         component="encounter",
                     )
+                    # Scratch sweep at encounter resolution. Encounter end
+                    # is the canonical "scene end" trigger that the Scratch
+                    # severity tier promises in game/status.py — without
+                    # this sweep, Scratches accumulate forever (Bug #1).
+                    from sidequest.server.status_clear import (
+                        clear_scratch_on_scene_end,
+                    )
+                    clear_scratch_on_scene_end(
+                        snapshot,
+                        reason="scene_end",
+                        turn=turn_num,
+                    )
                     break
 
     if result.status_changes:
         from sidequest.game.status import Status, StatusSeverity
+        from sidequest.server.status_clear import apply_explicit_status_clears
         from sidequest.telemetry.spans import encounter_status_added_span
         turn_num = snapshot.turn_manager.interaction
         encounter_type = (
             snapshot.encounter.encounter_type if snapshot.encounter else None
         )
+        # Explicit clears first — process every {"actor": ..., "clear": "<text>"}
+        # entry so a single turn can clear an old status and add a new one
+        # without the new ADD getting steamrolled. The clear path is the
+        # narrator's tool for ending Wound/Scar conditions narratively
+        # ("she wriggles free", "the medic binds the gash").
+        apply_explicit_status_clears(
+            snapshot,
+            status_changes=result.status_changes,
+            turn=turn_num,
+        )
         for entry in result.status_changes:
+            # An entry is EITHER a clear OR an add — never both. Clears
+            # were handled above; skip them here.
+            if entry.get("clear"):
+                continue
             actor_name = str(entry.get("actor", "")).strip()
             status_payload = entry.get("status") or {}
             text = str(status_payload.get("text", "")).strip()
