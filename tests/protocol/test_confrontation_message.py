@@ -36,8 +36,12 @@ def test_confrontation_message_roundtrip() -> None:
     assert serialized["payload"]["player_metric"]["current"] == 2
     assert serialized["payload"]["opponent_metric"]["current"] == 0
     # Verify every UI-contract key is present on the wire (secondary_stats None is omitted).
+    # ``seq`` (default 0) was added pingpong 2026-04-26 S2-BUG so the
+    # _emit_event fan-out path can rebuild peer payloads via
+    # ``model_validate({**filtered_data, "seq": seq})`` without tripping
+    # ``extra="forbid"``. Mirrors NarrationPayload.seq / SecretNotePayload.seq.
     ui_keys = {"type", "label", "category", "actors", "player_metric", "opponent_metric",
-               "beats", "genre_slug", "mood", "active"}
+               "beats", "genre_slug", "mood", "active", "seq"}
     assert set(serialized["payload"].keys()) == ui_keys
 
 

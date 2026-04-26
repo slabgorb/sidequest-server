@@ -539,3 +539,233 @@ async def test_local_dm_parse_failure_records_preview_on_span(otel_capture):
     attrs = dict(spans[0].attributes or {})
     assert attrs["degraded"] is True
     assert attrs.get("parse_preview", "").startswith("not json")
+
+
+# ---------------------------------------------------------------------------
+# Multi-target resolved_to (pingpong 2026-04-26 S2-OBS)
+#
+# Bug: the decomposer occasionally emits ``resolved_to`` as a list of player
+# IDs when a token like "the party" plausibly resolves to multiple PCs
+# (observed: ``per_player.0.resolved.4.resolved_to=['Paul','John','George','Ringo']``).
+# Pre-fix the schema only accepted ``str | None``, so the entire
+# DispatchPackage was rejected via ValidationError and the turn collapsed
+# into a degraded empty package — losing all per-player narrator
+# instructions for the rest of the turn.
+#
+# Fix: schema now accepts ``str | list[str] | None`` and the parse path
+# records a ``resolved_to_multi_target_count`` span attribute via
+# ``_normalize_multi_target_resolved_to`` so the GM panel sees when the
+# branch fires.
+# ---------------------------------------------------------------------------
+
+
+def _multi_target_dispatch_json() -> str:
+    """Real-shape DispatchPackage with a list-valued ``resolved_to`` for
+    the token "the party" — repro from playtest 2026-04-26."""
+    return json.dumps(
+        {
+            "turn_id": "turn-multi",
+            "per_player": [
+                {
+                    "player_id": "player:Paul",
+                    "raw_action": "Tell the party to stand down.",
+                    "resolved": [
+                        {
+                            "token": "the party",
+                            "resolved_to": [
+                                "player:Paul",
+                                "player:John",
+                                "player:George",
+                                "player:Ringo",
+                            ],
+                            "confidence": 0.9,
+                            "alternatives": [],
+                            "resolution_note": "all four PCs",
+                        }
+                    ],
+                    "dispatch": [],
+                    "lethality": [],
+                    "narrator_instructions": [],
+                }
+            ],
+            "cross_player": [],
+            "confidence_global": 1.0,
+            "degraded": False,
+            "degraded_reason": None,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_dm_accepts_list_valued_resolved_to() -> None:
+    """Pingpong 2026-04-26 S2-OBS: list-valued ``resolved_to`` no longer
+    crashes validation. Pre-fix this returned a degraded package; post-fix
+    it parses cleanly with the list preserved on the Referent.
+    """
+    client = _make_mock_client(_multi_target_dispatch_json())
+    dm = LocalDM(client=client)
+
+    pkg = await dm.decompose(
+        turn_id="turn-multi",
+        player_id="player:Paul",
+        raw_action="Tell the party to stand down.",
+        state_summary="Beatles 4-player tavern scene.",
+    )
+
+    # Crucially: NOT degraded. Pre-fix this would be degraded=True with
+    # reason="parse_failure: ValidationError" because Pydantic rejected
+    # the list-valued resolved_to.
+    assert pkg.degraded is False, (
+        f"multi-target resolved_to must parse cleanly; got degraded "
+        f"package with reason={pkg.degraded_reason!r}"
+    )
+    assert len(pkg.per_player) == 1
+    referent = pkg.per_player[0].resolved[0]
+    # Schema preserves shape — the list is intact for downstream
+    # consumers that want to branch on type.
+    assert referent.resolved_to == [
+        "player:Paul", "player:John", "player:George", "player:Ringo",
+    ]
+    assert referent.token == "the party"
+
+
+@pytest.mark.asyncio
+async def test_local_dm_records_multi_target_count_on_span(otel_capture) -> None:
+    """The decomposer span carries a ``resolved_to_multi_target_count``
+    attribute when list-valued resolved_to entries are observed, so the
+    GM panel sees how often this branch fires (the lie-detector for
+    'is multi-target resolution actually engaging?')."""
+    client = _make_mock_client(_multi_target_dispatch_json())
+    dm = LocalDM(client=client)
+
+    await dm.decompose(
+        turn_id="turn-multi",
+        player_id="player:Paul",
+        raw_action="Tell the party to stand down.",
+        state_summary="...",
+    )
+
+    spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "local_dm.decompose"
+    ]
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes or {})
+    assert attrs.get("resolved_to_multi_target_count") == 1, (
+        f"expected resolved_to_multi_target_count=1; got attrs={attrs}"
+    )
+    # And the package is NOT degraded.
+    assert attrs.get("degraded") is False
+
+
+@pytest.mark.asyncio
+async def test_local_dm_omits_multi_target_attr_when_all_str() -> None:
+    """When every ``resolved_to`` is a plain string (or None), the span
+    must NOT carry a multi-target count attribute — keeping the GM
+    panel's signal clean (zero is the absence of the event, not a
+    countable value)."""
+    # Reuse the absence fixture which has resolved_to=None.
+    client = _make_mock_client(
+        json.dumps(
+            {
+                "turn_id": "turn-no-multi",
+                "per_player": [
+                    {
+                        "player_id": "player:Alice",
+                        "raw_action": "Wave at the bartender.",
+                        "resolved": [
+                            {
+                                "token": "the bartender",
+                                "resolved_to": "npc:bart_01",
+                                "confidence": 0.9,
+                                "alternatives": [],
+                                "resolution_note": None,
+                            }
+                        ],
+                        "dispatch": [],
+                        "lethality": [],
+                        "narrator_instructions": [],
+                    }
+                ],
+                "cross_player": [],
+                "confidence_global": 1.0,
+                "degraded": False,
+                "degraded_reason": None,
+            }
+        )
+    )
+    dm = LocalDM(client=client)
+    pkg = await dm.decompose(
+        turn_id="turn-no-multi",
+        player_id="player:Alice",
+        raw_action="Wave at the bartender.",
+        state_summary="...",
+    )
+    assert pkg.degraded is False
+    # Single-string resolved_to still works as before.
+    assert pkg.per_player[0].resolved[0].resolved_to == "npc:bart_01"
+
+
+def test_normalize_multi_target_resolved_to_counts_lists() -> None:
+    """Unit test for the helper itself — counts list-valued entries
+    without mutating values."""
+    from sidequest.agents.local_dm import _normalize_multi_target_resolved_to
+
+    raw = {
+        "per_player": [
+            {
+                "resolved": [
+                    {"resolved_to": "x"},
+                    {"resolved_to": ["a", "b"]},
+                    {"resolved_to": None},
+                    {"resolved_to": ["c"]},
+                ]
+            },
+            {
+                "resolved": [
+                    {"resolved_to": ["d", "e", "f"]},
+                ]
+            },
+        ]
+    }
+    assert _normalize_multi_target_resolved_to(raw) == 3
+    # Mutation-free: list values still intact.
+    assert raw["per_player"][0]["resolved"][1]["resolved_to"] == ["a", "b"]
+
+
+def test_normalize_multi_target_resolved_to_handles_empty() -> None:
+    """Helper handles missing ``per_player`` and ``resolved`` keys without
+    raising (degraded packages may have both empty)."""
+    from sidequest.agents.local_dm import _normalize_multi_target_resolved_to
+
+    assert _normalize_multi_target_resolved_to({}) == 0
+    assert _normalize_multi_target_resolved_to({"per_player": []}) == 0
+    assert _normalize_multi_target_resolved_to(
+        {"per_player": [{"resolved": []}]},
+    ) == 0
+
+
+def test_referent_schema_accepts_list_valued_resolved_to() -> None:
+    """Schema-level guard: the Referent model accepts both ``str`` and
+    ``list[str]`` for ``resolved_to``. Documents the contract change so
+    a future revert to ``str | None`` would fail this test loudly.
+    """
+    from sidequest.protocol.dispatch import Referent
+
+    # Plain string (single PC / NPC) — original contract.
+    r1 = Referent(token="him", resolved_to="npc:goblin_2", confidence=0.9)
+    assert r1.resolved_to == "npc:goblin_2"
+
+    # None (absence) — original contract.
+    r2 = Referent(token="them", resolved_to=None, confidence=0.0)
+    assert r2.resolved_to is None
+
+    # List of PC IDs (multi-target) — pingpong 2026-04-26 fix.
+    r3 = Referent(
+        token="the party",
+        resolved_to=["player:Paul", "player:John", "player:George", "player:Ringo"],
+        confidence=0.9,
+    )
+    assert r3.resolved_to == [
+        "player:Paul", "player:John", "player:George", "player:Ringo",
+    ]
