@@ -376,3 +376,64 @@ def test_buffered_action_survives_buffer_owner_disconnect() -> None:
     assert len(drained) == 1
     assert drained[0][0] == "p1"
     assert drained[0][1].action == "I prepare for the dungeon"
+
+
+# ---------------------------------------------------------------------------
+# ADR-036 Task 8 — OTEL watcher events
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_otel_events_emitted_on_barrier_fire_and_dispatch(
+    session_handler_factory,
+) -> None:
+    """The GM panel needs to see when the barrier fires and when the
+    elected dispatcher runs the narrator (CLAUDE.md OTEL principle)."""
+    handler1, sd1, room = session_handler_factory(
+        slug="test-otel-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p1", "Gladstone"),
+    )
+    handler2, sd2, _ = session_handler_factory(
+        slug="test-otel-grimvault",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Gladstone"), ("p2", "Zanzibar Jones")],
+        active_player=("p2", "Zanzibar Jones"),
+        existing_room=room,
+    )
+
+    async def fake_execute(sd, action, turn_context):
+        return []
+
+    handler1._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+    handler2._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    # Patch the _watcher_publish symbol used inside session_handler.
+    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+        msg1 = PlayerActionMessage(
+            payload=PlayerActionPayload(
+                action=NonBlankString.model_validate("I prepare for the dungeon"),
+            ),
+            player_id="p1",
+        )
+        await handler1._handle_player_action(msg1)
+
+        msg2 = PlayerActionMessage(
+            payload=PlayerActionPayload(
+                action=NonBlankString.model_validate("I get my pole"),
+            ),
+            player_id="p2",
+        )
+        await handler2._handle_player_action(msg2)
+
+    event_names = [call.args[0] for call in wp.call_args_list]
+    # turn_status broadcasts (per-submission) + mp.barrier_fired (once on
+    # last submission) + mp.round_dispatched (once on dispatch entry).
+    assert "mp.barrier_fired" in event_names
+    assert "mp.round_dispatched" in event_names
+    # Each fires exactly once for this round.
+    assert event_names.count("mp.barrier_fired") == 1
+    assert event_names.count("mp.round_dispatched") == 1

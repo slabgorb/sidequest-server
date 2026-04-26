@@ -3481,6 +3481,20 @@ class WebSocketSessionHandler:
             )
             snapshot.turn_manager.set_player_count(self._room.seated_player_count())
             snapshot.turn_manager.submit_input(sd.player_id)
+            if snapshot.turn_manager.get_phase() != TurnPhase.InputCollection:
+                # Barrier just fired on this submission — emit before the
+                # dispatch CAS so a failed dispatch still leaves the
+                # barrier-fired event visible.
+                _watcher_publish(
+                    "mp.barrier_fired",
+                    {
+                        "slug": self._room.slug,
+                        "round": snapshot.turn_manager.round,
+                        "player_count": self._room.seated_player_count(),
+                        "submitter_player_id": sd.player_id,
+                    },
+                    component="multiplayer",
+                )
             if snapshot.turn_manager.get_phase() == TurnPhase.InputCollection:
                 # Still waiting on other seated players. Broadcasts already
                 # delivered turn_status_active above; the dispatcher will
@@ -3496,6 +3510,23 @@ class WebSocketSessionHandler:
                     return []
                 self._room.last_dispatched_round = current_round
                 pending = self._room.drain_pending_actions()
+
+            _watcher_publish(
+                "mp.round_dispatched",
+                {
+                    "slug": self._room.slug,
+                    "round": current_round,
+                    "player_count": self._room.seated_player_count(),
+                    "action_lengths": {
+                        pid: len(p.action) for pid, p in pending
+                    },
+                    "combined_action_len": (
+                        sum(len(p.action) for _, p in pending)
+                        + sum(len(p.character_name) + 2 for _, p in pending)
+                    ),
+                },
+                component="multiplayer",
+            )
 
             combined_action = "\n".join(
                 f"{p.character_name}: {p.action}" for _, p in pending
