@@ -2,6 +2,7 @@
 
 Task 3: Haiku-backed LocalDM.decompose with structured output parsing.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,124 +12,147 @@ import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.agents.local_dm import LocalDM
-from sidequest.protocol.dispatch import DispatchPackage
 
 
 def test_local_dm_importable_from_package_root():
     """Wiring check — LocalDM is re-exported from sidequest.agents so other
     layers can use the package-root import style."""
     from sidequest.agents import LocalDM as LocalDMFromRoot
+
     assert LocalDMFromRoot is LocalDM  # same class, not a re-wrapped stub
 
 
 @pytest.fixture
 def dispatch_json_pronoun_resolved():
     """Haiku returns a DispatchPackage resolving 'him' to goblin_2."""
-    return json.dumps({
-        "turn_id": "turn-010",
-        "per_player": [{
-            "player_id": "player:Alice",
-            "raw_action": "Attack him!",
-            "resolved": [{
-                "token": "him",
-                "resolved_to": "npc:goblin_2",
-                "confidence": 0.55,
-                "alternatives": ["npc:goblin_1", "npc:bandit_1"],
-                "resolution_note": "most recent direct combatant",
-            }],
-            "dispatch": [{
-                "subsystem": "distinctive_detail_hint",
-                "params": {"target": "npc:goblin_2", "hint": "broken tooth"},
-                "depends_on": [],
-                "idempotency_key": "idem:turn-010:alice:0",
-                "visibility": {
-                    "visible_to": "all",
-                    "perception_fidelity": {},
-                    "secrets_for": [],
-                    "redact_from_narrator_canonical": False,
-                },
-            }],
-            "lethality": [],
-            "narrator_instructions": [{
-                "kind": "distinctive_detail_for_referent",
-                "payload": "describe the goblin by its broken tooth",
-                "visibility": {
-                    "visible_to": "all",
-                    "perception_fidelity": {},
-                    "secrets_for": [],
-                    "redact_from_narrator_canonical": False,
-                },
-            }],
-        }],
-        "cross_player": [],
-        "confidence_global": 0.55,
-        "degraded": False,
-        "degraded_reason": None,
-    })
+    return json.dumps(
+        {
+            "turn_id": "turn-010",
+            "per_player": [
+                {
+                    "player_id": "player:Alice",
+                    "raw_action": "Attack him!",
+                    "resolved": [
+                        {
+                            "token": "him",
+                            "resolved_to": "npc:goblin_2",
+                            "confidence": 0.55,
+                            "alternatives": ["npc:goblin_1", "npc:bandit_1"],
+                            "resolution_note": "most recent direct combatant",
+                        }
+                    ],
+                    "dispatch": [
+                        {
+                            "subsystem": "distinctive_detail_hint",
+                            "params": {"target": "npc:goblin_2", "hint": "broken tooth"},
+                            "depends_on": [],
+                            "idempotency_key": "idem:turn-010:alice:0",
+                            "visibility": {
+                                "visible_to": "all",
+                                "perception_fidelity": {},
+                                "secrets_for": [],
+                                "redact_from_narrator_canonical": False,
+                            },
+                        }
+                    ],
+                    "lethality": [],
+                    "narrator_instructions": [
+                        {
+                            "kind": "distinctive_detail_for_referent",
+                            "payload": "describe the goblin by its broken tooth",
+                            "visibility": {
+                                "visible_to": "all",
+                                "perception_fidelity": {},
+                                "secrets_for": [],
+                                "redact_from_narrator_canonical": False,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "cross_player": [],
+            "confidence_global": 0.55,
+            "degraded": False,
+            "degraded_reason": None,
+        }
+    )
 
 
 @pytest.fixture
 def dispatch_json_absence():
     """Haiku returns a DispatchPackage resolving 'let's' to absence."""
-    return json.dumps({
-        "turn_id": "turn-011",
-        "per_player": [{
-            "player_id": "player:Alice",
-            "raw_action": "Let's go!",
-            "resolved": [{
-                "token": "let's",
-                "resolved_to": None,
-                "confidence": 0.0,
-                "alternatives": [],
-                "resolution_note": "no party present in scene",
-            }],
-            "dispatch": [{
-                "subsystem": "reflect_absence",
-                "params": {"addressee_hint": "no party"},
-                "depends_on": [],
-                "idempotency_key": "idem:turn-011:alice:0",
-                "visibility": {
-                    "visible_to": "all",
-                    "perception_fidelity": {},
-                    "secrets_for": [],
-                    "redact_from_narrator_canonical": False,
-                },
-            }],
-            "lethality": [],
-            "narrator_instructions": [{
-                "kind": "must_not_narrate",
-                "payload": "inventing an NPC follower",
-                "visibility": {
-                    "visible_to": "all",
-                    "perception_fidelity": {},
-                    "secrets_for": [],
-                    "redact_from_narrator_canonical": False,
-                },
-            }, {
-                "kind": "must_narrate",
-                "payload": "the empty room answering back",
-                "visibility": {
-                    "visible_to": "all",
-                    "perception_fidelity": {},
-                    "secrets_for": [],
-                    "redact_from_narrator_canonical": False,
-                },
-            }],
-        }],
-        "cross_player": [],
-        "confidence_global": 1.0,
-        "degraded": False,
-        "degraded_reason": None,
-    })
+    return json.dumps(
+        {
+            "turn_id": "turn-011",
+            "per_player": [
+                {
+                    "player_id": "player:Alice",
+                    "raw_action": "Let's go!",
+                    "resolved": [
+                        {
+                            "token": "let's",
+                            "resolved_to": None,
+                            "confidence": 0.0,
+                            "alternatives": [],
+                            "resolution_note": "no party present in scene",
+                        }
+                    ],
+                    "dispatch": [
+                        {
+                            "subsystem": "reflect_absence",
+                            "params": {"addressee_hint": "no party"},
+                            "depends_on": [],
+                            "idempotency_key": "idem:turn-011:alice:0",
+                            "visibility": {
+                                "visible_to": "all",
+                                "perception_fidelity": {},
+                                "secrets_for": [],
+                                "redact_from_narrator_canonical": False,
+                            },
+                        }
+                    ],
+                    "lethality": [],
+                    "narrator_instructions": [
+                        {
+                            "kind": "must_not_narrate",
+                            "payload": "inventing an NPC follower",
+                            "visibility": {
+                                "visible_to": "all",
+                                "perception_fidelity": {},
+                                "secrets_for": [],
+                                "redact_from_narrator_canonical": False,
+                            },
+                        },
+                        {
+                            "kind": "must_narrate",
+                            "payload": "the empty room answering back",
+                            "visibility": {
+                                "visible_to": "all",
+                                "perception_fidelity": {},
+                                "secrets_for": [],
+                                "redact_from_narrator_canonical": False,
+                            },
+                        },
+                    ],
+                }
+            ],
+            "cross_player": [],
+            "confidence_global": 1.0,
+            "degraded": False,
+            "degraded_reason": None,
+        }
+    )
 
 
 def _make_mock_client(response_text: str) -> AsyncMock:
     """Build a mocked LlmClient client returning the given structured response."""
     client = AsyncMock()
-    client.send_with_session = AsyncMock(return_value=ClaudeResponse(
-        text=response_text,
-        session_id="decomposer-session-abc",
-    ))
+    client.send_with_session = AsyncMock(
+        return_value=ClaudeResponse(
+            text=response_text,
+            session_id="decomposer-session-abc",
+        )
+    )
     return client
 
 
@@ -208,63 +232,82 @@ async def test_local_dm_degraded_on_client_exception():
 
 
 @pytest.mark.asyncio
-async def test_local_dm_persistent_session_resumes_on_second_call(dispatch_json_absence):
-    """ADR-066 — first call establishes session; second call resumes."""
+async def test_local_dm_is_stateless_per_turn(dispatch_json_absence):
+    """Spec §461 fallback: every turn sends a fresh system prompt and
+    session_id=None.
+
+    Drift evidence (playtest 2026-04-26): on the persistent-session
+    pattern, turns 2+ accumulated literal_error parse failures on
+    ``narrator_instructions.kind`` and a fabricated ``lethality`` shape.
+    Falling back to stateless restates the closed-enum and ``lethality=[]``
+    constraints every turn."""
     client = _make_mock_client(dispatch_json_absence)
     dm = LocalDM(client=client)
 
     await dm.decompose(
-        turn_id="turn-100", player_id="player:Alice",
-        raw_action="x", state_summary="y",
+        turn_id="turn-100",
+        player_id="player:Alice",
+        raw_action="x",
+        state_summary="y",
     )
     await dm.decompose(
-        turn_id="turn-101", player_id="player:Alice",
-        raw_action="x", state_summary="y",
+        turn_id="turn-101",
+        player_id="player:Alice",
+        raw_action="x",
+        state_summary="y",
     )
 
     first_call_kwargs = client.send_with_session.await_args_list[0].kwargs
     second_call_kwargs = client.send_with_session.await_args_list[1].kwargs
     assert first_call_kwargs["session_id"] is None
-    assert second_call_kwargs["session_id"] == "decomposer-session-abc"
+    assert second_call_kwargs["session_id"] is None
+    assert first_call_kwargs["system_prompt"] is not None
+    assert second_call_kwargs["system_prompt"] is not None
+    # Same canonical prompt every turn — no drift accumulation.
+    assert first_call_kwargs["system_prompt"] == second_call_kwargs["system_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_local_dm_reset_session_clears_id(dispatch_json_absence):
-    """Reset returns subsequent calls to first-turn (session_id=None)."""
+async def test_local_dm_reset_session_is_noop(dispatch_json_absence):
+    """LocalDM is stateless; reset_session() is a no-op kept for callers
+    that haven't migrated off the stateful API."""
     client = _make_mock_client(dispatch_json_absence)
     dm = LocalDM(client=client)
 
     await dm.decompose(turn_id="t1", player_id="p", raw_action="x", state_summary="y")
-    dm.reset_session()
+    dm.reset_session()  # must not raise
     await dm.decompose(turn_id="t2", player_id="p", raw_action="x", state_summary="y")
 
+    # Both calls go out stateless regardless of the reset.
+    assert client.send_with_session.await_args_list[0].kwargs["session_id"] is None
     assert client.send_with_session.await_args_list[1].kwargs["session_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_local_dm_resets_session_on_client_exception():
-    """Stale-session guard: after a client exception, the next call must
-    establish a fresh session (session_id=None) rather than retrying the
-    possibly-stale cached id."""
+async def test_local_dm_recovers_after_client_exception():
+    """Stateless model: a transient failure on one turn doesn't poison
+    later turns. Each call independently establishes via system_prompt."""
     client = AsyncMock()
-    # First call raises.
-    client.send_with_session = AsyncMock(side_effect=[
-        TimeoutError("transient failure"),
-        ClaudeResponse(
-            text='{"turn_id":"t2","per_player":[],"cross_player":[],"confidence_global":1.0,"degraded":false,"degraded_reason":null}',
-            input_tokens=0,
-            output_tokens=0,
-            session_id="fresh-session-xyz",
-        ),
-    ])
+    # First call raises, second succeeds.
+    client.send_with_session = AsyncMock(
+        side_effect=[
+            TimeoutError("transient failure"),
+            ClaudeResponse(
+                text='{"turn_id":"t2","per_player":[],"cross_player":[],"confidence_global":1.0,"degraded":false,"degraded_reason":null}',
+                input_tokens=0,
+                output_tokens=0,
+                session_id="fresh-session-xyz",
+            ),
+        ]
+    )
     dm = LocalDM(client=client)
 
     pkg1 = await dm.decompose(turn_id="t1", player_id="p", raw_action="x", state_summary="y")
     assert pkg1.degraded is True
 
-    # Second call must go out with session_id=None (fresh start).
     pkg2 = await dm.decompose(turn_id="t2", player_id="p", raw_action="x", state_summary="y")
     assert client.send_with_session.await_args_list[1].kwargs["session_id"] is None
+    assert client.send_with_session.await_args_list[1].kwargs["system_prompt"] is not None
     assert pkg2.degraded is False
 
 
@@ -319,6 +362,7 @@ async def test_local_dm_decompose_span_records_degraded_reason(otel_capture):
 def test_decomposer_system_prompt_includes_schema_shape():
     """Haiku needs the DispatchPackage field names to produce parseable output."""
     from sidequest.agents.local_dm import _DECOMPOSER_SYSTEM_PROMPT
+
     # Top-level fields
     for name in ("turn_id", "per_player", "cross_player", "confidence_global", "degraded"):
         assert name in _DECOMPOSER_SYSTEM_PROMPT
@@ -328,6 +372,31 @@ def test_decomposer_system_prompt_includes_schema_shape():
     # Directive kinds
     for kind in ("must_narrate", "must_not_narrate", "distinctive_detail_for_referent"):
         assert kind in _DECOMPOSER_SYSTEM_PROMPT
+
+
+def test_decomposer_system_prompt_closes_subsystem_enum():
+    """Playtest 2026-04-26: Haiku invented `character_action`, `examination`,
+    `inventory_action`, `movement`, `perception` subsystems on a per-turn
+    basis, all silently absorbed by the dispatcher (`subsystems.unknown`
+    warning swarm). The prompt must close the enum and call out the
+    inventions explicitly so future-Haiku has the anti-examples in
+    context."""
+    from sidequest.agents.local_dm import _DECOMPOSER_SYSTEM_PROMPT
+
+    # Closure language present
+    assert "CLOSED ENUM" in _DECOMPOSER_SYSTEM_PROMPT
+    assert "dispatch[].subsystem" in _DECOMPOSER_SYSTEM_PROMPT
+    # Anti-examples observed in playtest 2026-04-26
+    for invented in (
+        "character_action",
+        "examination",
+        "inventory_action",
+        "movement",
+        "perception",
+    ):
+        assert invented in _DECOMPOSER_SYSTEM_PROMPT, (
+            f"prompt must call out the {invented!r} invention explicitly"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -383,19 +452,22 @@ def test_extract_json_object_honors_braces_inside_strings():
 @pytest.fixture
 def dispatch_json_minimal():
     """Smallest valid DispatchPackage — used as the body inside wrappers."""
-    return json.dumps({
-        "turn_id": "turn-parse",
-        "per_player": [],
-        "cross_player": [],
-        "confidence_global": 1.0,
-        "degraded": False,
-        "degraded_reason": None,
-    })
+    return json.dumps(
+        {
+            "turn_id": "turn-parse",
+            "per_player": [],
+            "cross_player": [],
+            "confidence_global": 1.0,
+            "degraded": False,
+            "degraded_reason": None,
+        }
+    )
 
 
 @pytest.mark.asyncio
 async def test_local_dm_parses_response_wrapped_in_code_fence(
-    dispatch_json_minimal, otel_capture,
+    dispatch_json_minimal,
+    otel_capture,
 ):
     """Regression wiring test — production Haiku output (Playtest 2026-04-24
     Bug 3) arrived wrapped in a ```json ... ``` fence, which `json.loads`
@@ -423,8 +495,7 @@ async def test_local_dm_parses_response_wrapped_in_code_fence(
 
     # OTEL contract: cleanup was recorded so the GM panel sees it.
     decompose_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "local_dm.decompose"
+        s for s in otel_capture.get_finished_spans() if s.name == "local_dm.decompose"
     ]
     assert len(decompose_spans) == 1
     attrs = dict(decompose_spans[0].attributes or {})
@@ -463,10 +534,7 @@ async def test_local_dm_parse_failure_records_preview_on_span(otel_capture):
         raw_action="x",
         state_summary="y",
     )
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "local_dm.decompose"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "local_dm.decompose"]
     assert len(spans) == 1
     attrs = dict(spans[0].attributes or {})
     assert attrs["degraded"] is True
