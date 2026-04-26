@@ -478,6 +478,12 @@ class ConfrontationPayload(ProtocolBase):
     genre_slug: str
     mood: str | None = None
     active: bool = True
+    # Pingpong 2026-04-26 S2-BUG: required so ``_emit_event`` can fan out
+    # CONFRONTATION frames to peer sockets (its recipient-rebuild path
+    # injects the EventLog seq alongside the filtered payload). Mirrors
+    # NarrationPayload.seq / SecretNotePayload.seq. Default 0 keeps
+    # legacy actor-only construction sites working.
+    seq: int = 0
 
 
 # ---------------------------------------------------------------------------

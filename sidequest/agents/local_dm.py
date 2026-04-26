@@ -178,6 +178,31 @@ def apply_visibility_baseline(
     return {**dispatch, "visibility": viz}
 
 
+def _normalize_multi_target_resolved_to(raw_dict: dict) -> int:
+    """Count list-valued ``resolved_to`` entries in a pre-validation dict.
+
+    Pingpong 2026-04-26 S2-OBS: the decomposer occasionally emits a
+    ``list[str]`` for tokens that resolve to multiple PCs (e.g.
+    ``resolved_to=['Paul','John','George','Ringo']`` for "the party").
+    The schema now accepts either form (``str | list[str] | None``) so
+    validation no longer fails, but we still walk the dict before
+    validation so the GM panel sees how often multi-target resolution
+    fires (recorded as the ``resolved_to_multi_target_count`` span
+    attribute by the caller).
+
+    Mutation-free for the value itself; counts only.
+
+    Returns the number of list-valued ``resolved_to`` entries observed.
+    """
+    count = 0
+    for pd in raw_dict.get("per_player", []) or []:
+        for ref in pd.get("resolved", []) or []:
+            value = ref.get("resolved_to") if isinstance(ref, dict) else None
+            if isinstance(value, list):
+                count += 1
+    return count
+
+
 def _apply_baseline_to_package_dict(
     raw_dict: dict,
     baseline: VisibilityBaseline,
@@ -396,6 +421,20 @@ class LocalDM:
                 import json as _json
 
                 raw_dict = _json.loads(cleaned_text)
+                # Pingpong 2026-04-26 S2-OBS: count list-valued
+                # ``resolved_to`` entries so the GM panel sees when
+                # multi-target resolution fires (previously these crashed
+                # validation and silently degraded the package). The
+                # schema now accepts ``str | list[str] | None``.
+                multi_target_count = _normalize_multi_target_resolved_to(raw_dict)
+                if multi_target_count:
+                    span.set_attribute(
+                        "resolved_to_multi_target_count", multi_target_count,
+                    )
+                    logger.info(
+                        "local_dm.multi_target_resolved_to turn_id=%s count=%d",
+                        turn_id, multi_target_count,
+                    )
                 if visibility_baseline is not None:
                     _apply_baseline_to_package_dict(raw_dict, visibility_baseline)
                 pkg = DispatchPackage.model_validate(raw_dict)

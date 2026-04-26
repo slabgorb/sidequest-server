@@ -3390,7 +3390,22 @@ class WebSocketSessionHandler:
             # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
             # OTEL visibility: add event to current span so the GM panel (Sebastien-
             # tier mechanical visibility) can see the dispatch decision end-to-end.
-            confrontation_msg: ConfrontationMessage | None = None
+            # Pingpong 2026-04-26 S2-BUG: confrontations were PRIVATE to the
+            # acting player — peers froze on the prior shared beat (no NPC
+            # card, no narration, no buttons). Root cause: the message was
+            # built directly via ``ConfrontationMessage(...)`` and only
+            # appended to the actor's ``outbound`` list, never broadcast.
+            # Fix: route through ``self._emit_event("CONFRONTATION", ...)``
+            # so the canonical EventLog + ProjectionFilter fan-out path
+            # delivers the same per-player frame to every connected peer
+            # (mirrors how NARRATION is emitted at the line above). The
+            # kind is already registered in ``_KIND_TO_MESSAGE_CLS``.
+            # Independent of the multi-target parse-failure (#5) — that
+            # lives in local_dm and degrades the dispatch package, but
+            # the missing broadcast here is the sole cause of peer freeze.
+            confrontation_msg: object | None = None
+            confrontation_payload: ConfrontationPayload | None = None
+            confrontation_event_attrs: dict[str, object] | None = None
             if now_live and now_encounter is not None:
                 from sidequest.server.dispatch.confrontation import (
                     build_confrontation_payload,
@@ -3413,18 +3428,12 @@ class WebSocketSessionHandler:
                     cdef=cdef,
                     genre_slug=sd.genre_slug,
                 )
-                confrontation_msg = ConfrontationMessage(
-                    payload=ConfrontationPayload(**payload_dict),
-                    player_id=sd.player_id,
-                )
-                trace.get_current_span().add_event(
-                    "confrontation.dispatched",
-                    {
-                        "active": True,
-                        "encounter_type": now_encounter.encounter_type,
-                        "genre_slug": sd.genre_slug,
-                    },
-                )
+                confrontation_payload = ConfrontationPayload(**payload_dict)
+                confrontation_event_attrs = {
+                    "active": True,
+                    "encounter_type": now_encounter.encounter_type,
+                    "genre_slug": sd.genre_slug,
+                }
             elif prior_live and not now_live:
                 from sidequest.server.dispatch.confrontation import (
                     build_clear_confrontation_payload,
@@ -3434,17 +3443,63 @@ class WebSocketSessionHandler:
                     encounter_type=prior_type,
                     genre_slug=sd.genre_slug,
                 )
-                confrontation_msg = ConfrontationMessage(
-                    payload=ConfrontationPayload(**payload_dict),
-                    player_id=sd.player_id,
+                confrontation_payload = ConfrontationPayload(**payload_dict)
+                confrontation_event_attrs = {
+                    "active": False,
+                    "encounter_type": prior_type,
+                    "genre_slug": sd.genre_slug,
+                }
+
+            if confrontation_payload is not None:
+                confrontation_msg = self._emit_event(
+                    "CONFRONTATION", confrontation_payload,
                 )
+                assert confrontation_event_attrs is not None
                 trace.get_current_span().add_event(
                     "confrontation.dispatched",
+                    confrontation_event_attrs,
+                )
+                # OTEL lie-detector hook (per CLAUDE.md OTEL principle): the
+                # GM panel needs evidence the broadcast actually reached
+                # peers — not just that the actor saw a confrontation card.
+                # Without this, a regression to the pre-fix behavior (frame
+                # appended only to actor's outbound) is invisible to the
+                # watcher dashboard.
+                peer_player_ids: list[str] = []
+                room_slug: str = ""
+                if self._room is not None:
+                    # Some unit-test fixtures (e.g. _StubRoom in
+                    # test_dice_throw_wiring) provide a minimal Room shim
+                    # that lacks ``connected_player_ids`` / ``slug``. The
+                    # OTEL hook is best-effort logging — never crash the
+                    # turn for missing observability metadata.
+                    import contextlib  # noqa: PLC0415 — local import keeps hot path lean
+                    with contextlib.suppress(AttributeError):
+                        peer_player_ids = [
+                            pid
+                            for pid in self._room.connected_player_ids()
+                            if pid != sd.player_id
+                        ]
+                    room_slug = getattr(self._room, "slug", "") or ""
+                logger.info(
+                    "confrontation.peer_projection_broadcast slug=%s acting=%s "
+                    "encounter_type=%s active=%s peers=%s",
+                    room_slug,
+                    sd.player_id,
+                    confrontation_event_attrs["encounter_type"],
+                    confrontation_event_attrs["active"],
+                    peer_player_ids,
+                )
+                _watcher_publish(
+                    "confrontation_peer_projection_broadcast",
                     {
-                        "active": False,
-                        "encounter_type": prior_type,
-                        "genre_slug": sd.genre_slug,
+                        "slug": room_slug,
+                        "acting_player_id": sd.player_id,
+                        "encounter_type": confrontation_event_attrs["encounter_type"],
+                        "active": confrontation_event_attrs["active"],
+                        "peers": peer_player_ids,
                     },
+                    component="confrontation",
                 )
     
             outbound: list[object] = [narration_msg]
