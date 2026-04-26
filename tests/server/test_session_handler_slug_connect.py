@@ -642,6 +642,143 @@ async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
 
 
 @pytest.mark.asyncio
+async def test_slug_connect_backfills_presence_for_existing_peers(
+    seeded_game: Path, caplog
+):
+    """Playtest 2026-04-26 S2-BUG: PLAYER_PRESENCE back-fill on slug_connect.
+
+    The MultiplayerSessionStatus widget on the chargen screen only showed
+    the local player plus players who joined AFTER them. The server
+    broadcasts PLAYER_PRESENCE on each new connect (so later joiners
+    show up live for earlier joiners) but never sent the *new* connection
+    a snapshot of who was already there. Net result for a 4-player game:
+    P1 sees all 4, P2 sees 3, P3 sees 2, P4 sees only self.
+
+    Fix verification: connect three players in order to a shared room.
+    The third connection must receive PRESENCE{connected} frames for the
+    first two players via its outbound queue. Existing peers must NOT
+    receive duplicate frames for already-known players (only the live
+    join broadcast for the *new* player). Plus the GM-panel watcher
+    log line must be emitted.
+    """
+    import logging
+
+    # Single shared RoomRegistry so all three handlers attach to the same
+    # SessionRoom — that's what production does (one registry per app).
+    registry = RoomRegistry()
+
+    def _make_member_handler(socket_id: str) -> tuple[WebSocketSessionHandler, asyncio.Queue]:
+        handler = WebSocketSessionHandler(
+            save_dir=seeded_game,
+            genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
+        )
+        out = asyncio.Queue()
+        handler.attach_room_context(
+            registry=registry, socket_id=socket_id, out_queue=out,
+        )
+        return handler, out
+
+    async def _connect(handler: WebSocketSessionHandler, player_id: str, name: str) -> None:
+        msg = SessionEventMessage(
+            type="SESSION_EVENT",
+            player_id=player_id,
+            payload=SessionEventPayload(
+                event="connect", game_slug=_SLUG, player_name=name,
+            ),
+        )
+        await handler.handle_message(msg)
+
+    h1, q1 = _make_member_handler("sock-1")
+    h2, q2 = _make_member_handler("sock-2")
+    h3, q3 = _make_member_handler("sock-3")
+
+    # P1 connects: nobody else in room → no back-fill expected.
+    await _connect(h1, "P1", "Alice")
+    # Drain P1's queue — the only PRESENCE we'd ever expect in q1 from
+    # this point is for P2 / P3 joining live (the standard broadcast).
+    initial_q1_msgs = []
+    while not q1.empty():
+        initial_q1_msgs.append(q1.get_nowait())
+    p1_backfill_presences = [
+        m for m in initial_q1_msgs
+        if getattr(m, "type", None) == "PLAYER_PRESENCE"
+    ]
+    assert p1_backfill_presences == [], (
+        "First connection must not receive any back-fill — there were no "
+        f"existing peers; got: {p1_backfill_presences}"
+    )
+
+    # P2 connects with caplog capturing the back-fill log line.
+    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+        await _connect(h2, "P2", "Bob")
+
+    # P2's queue must now contain a PRESENCE{P1, connected} back-fill.
+    q2_msgs = []
+    while not q2.empty():
+        q2_msgs.append(q2.get_nowait())
+    q2_presence = [
+        m for m in q2_msgs if getattr(m, "type", None) == "PLAYER_PRESENCE"
+    ]
+    q2_presence_ids = [
+        m.payload.player_id for m in q2_presence
+        if getattr(m.payload, "state", None) == "connected"
+    ]
+    assert q2_presence_ids == ["P1"], (
+        f"P2 must receive exactly one PRESENCE back-fill for P1; got: {q2_presence_ids}"
+    )
+
+    # The standard outbound broadcast must have hit P1's queue with
+    # PRESENCE{P2, connected} — that's the existing live-join behaviour
+    # we explicitly do NOT want to regress.
+    q1_after_p2 = []
+    while not q1.empty():
+        q1_after_p2.append(q1.get_nowait())
+    q1_p2_join = [
+        m for m in q1_after_p2
+        if getattr(m, "type", None) == "PLAYER_PRESENCE"
+        and getattr(m.payload, "player_id", None) == "P2"
+    ]
+    assert q1_p2_join, (
+        "P1 must still receive the live-join PRESENCE for P2 (existing "
+        f"behaviour); got: {q1_after_p2}"
+    )
+
+    # P3 connects: must back-fill BOTH P1 and P2.
+    await _connect(h3, "P3", "Carol")
+    q3_msgs = []
+    while not q3.empty():
+        q3_msgs.append(q3.get_nowait())
+    q3_presence_ids = [
+        m.payload.player_id for m in q3_msgs
+        if getattr(m, "type", None) == "PLAYER_PRESENCE"
+        and getattr(m.payload, "state", None) == "connected"
+    ]
+    assert sorted(q3_presence_ids) == ["P1", "P2"], (
+        "P3 must receive PRESENCE back-fill for both P1 and P2; got: "
+        f"{q3_presence_ids}"
+    )
+    # P3 must NOT see itself in its own back-fill — the UI tracks the
+    # local player separately via connectedPlayerName.
+    assert "P3" not in q3_presence_ids, (
+        f"Back-fill must exclude the connecting player; got: {q3_presence_ids}"
+    )
+
+    # GM-panel observability: the back-fill log line must fire.
+    backfill_records = [
+        r for r in caplog.records
+        if "session.presence_backfill" in r.getMessage()
+    ]
+    assert backfill_records, (
+        "Back-fill must emit session.presence_backfill log line for "
+        "GM-panel observability (CLAUDE.md OTEL mandate)"
+    )
+    msg_text = backfill_records[0].getMessage()
+    assert "backfilled_count=1" in msg_text, (
+        f"P2's back-fill log line should report backfilled_count=1; got: {msg_text}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_slug_connect_without_room_context_raises(seeded_game: Path):
     """Wiring test: slug-connect must fail loudly when attach_room_context was skipped.
 

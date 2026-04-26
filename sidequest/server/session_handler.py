@@ -1324,6 +1324,19 @@ class WebSocketSessionHandler:
                 # Snapshot pause state BEFORE connecting so we can detect
                 # whether this connect resolved an existing pause (MP-02 Task 6).
                 was_paused_before_connect = room.is_paused()
+                # Snapshot the peer set BEFORE we add the new player to
+                # ``_connected``. This is the back-fill source for the
+                # PLAYER_PRESENCE roster the new client needs (playtest
+                # 2026-04-26 S2-BUG): the server already broadcasts
+                # PLAYER_PRESENCE on each new connect (so later joiners show
+                # up live for earlier joiners), but never sent the *new*
+                # connection a snapshot of who was already there. Net effect
+                # in a 4-player game: P1 sees all 4, P2 sees 3, P3 sees 2,
+                # P4 sees only self. Excludes the connecting player_id in
+                # case this is a same-player reconnect on a new socket.
+                peers_to_backfill = [
+                    pid for pid in room.connected_player_ids() if pid != player_id
+                ]
                 try:
                     room.connect(player_id, socket_id=self._socket_id)
                 except SoloSlotConflict as exc:
@@ -1334,6 +1347,39 @@ class WebSocketSessionHandler:
                 room.broadcast(
                     _presence_msg(player_id, "connected"),
                     exclude_socket_id=self._socket_id,
+                )
+                # PLAYER_PRESENCE back-fill (playtest 2026-04-26 S2-BUG).
+                # Push one PRESENCE{connected} frame per pre-existing peer
+                # into THIS socket's outbound queue. Existing peers' rosters
+                # are already correct (the standard outbound broadcast above
+                # handles them); only the connecting client needs catch-up.
+                # Mirrors the live-join shape: the UI's PLAYER_PRESENCE
+                # handler folds these straight into ``connectedPeerIds`` —
+                # no UI change required (per OQ-2 analysis).
+                for peer_id in peers_to_backfill:
+                    self._out_queue.put_nowait(_presence_msg(peer_id, "connected"))
+                if peers_to_backfill:
+                    _watcher_publish(
+                        "session_presence_backfill",
+                        {
+                            "slug": slug,
+                            "player_id": player_id,
+                            "backfilled_count": len(peers_to_backfill),
+                            "backfilled_player_ids": peers_to_backfill,
+                        },
+                        component="session",
+                        severity="info",
+                    )
+                    logger.info(
+                        "session.presence_backfill slug=%s player_id=%s "
+                        "backfilled_count=%d backfilled_player_ids=%s",
+                        slug,
+                        player_id,
+                        len(peers_to_backfill),
+                        peers_to_backfill,
+                    )
+                _mp_span.set_attribute(
+                    "presence_backfill_count", len(peers_to_backfill)
                 )
                 # If this connect resolved the pause (was paused before, not
                 # paused now), broadcast GAME_RESUMED to all players
