@@ -4528,6 +4528,16 @@ class WebSocketSessionHandler:
             # CharacterCatalog / PlaceCatalog / StyleCatalog by (genre, world).
             # Without this field the daemon's compose conditional is dead and
             # every render falls through to the prose-subject prompt path.
+            #
+            # Bug #2a (playtest 2026-04-26) reinforced the same constraint:
+            # the daemon's PromptComposer gate at
+            # sidequest-daemon/sidequest_daemon/media/daemon.py:453 short-
+            # circuits when ``params["world"]`` is absent, falling back to a
+            # raw subject+mood+tags prompt with no genre/world style. That
+            # silent fallback is why grimvault renders looked generic.
+            # Sending ``world`` engages the explicit-recipes pipeline so the
+            # world-scoped ``visual_style.yaml::positive_suffix`` actually
+            # lands in the ART_SENSIBILITY.WORLD slot.
             "world": sd.world_slug,
         }
         # Portrait initials overlay (story 37-30 AC-4): the daemon's
@@ -4560,6 +4570,12 @@ class WebSocketSessionHandler:
                 "turn_number": sd.snapshot.turn_manager.interaction,
                 "player_id": player_id,
                 "room_slug": room_slug or "",
+                # Bug #2a lie-detector: surface the genre/world routing the
+                # daemon will see. If ``world`` is empty here, the daemon's
+                # PromptComposer gate will short-circuit and the render will
+                # silently fall back to a styleless prompt.
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
             },
             component="render",
         )
