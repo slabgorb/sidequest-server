@@ -1575,6 +1575,52 @@ class WebSocketSessionHandler:
             opening_directive: str | None = None
             if opening is not None:
                 opening_seed, opening_directive = opening
+
+            # MP-joiner cold-open suppression (playtest 2026-04-26 "Multiplayer
+            # parallel-solo desynchronizes scene context entirely"). When a
+            # second player joins an in-progress MP session, they go through
+            # chargen and then fire `_run_opening_turn_narration` at the end.
+            # Without this guard the narrator gets a fresh kidnapping/
+            # in-medias-res cold-open directive — which it dutifully obeys by
+            # inventing a NEW scene ("THE THROAT", descending into the dungeon)
+            # that has nothing to do with where the existing party already is
+            # ("Sinkhole Inn Room"). The shared narrator session (ADR-067)
+            # remembers the prior scene, but a fresh opening_directive in the
+            # Early zone overrides scene continuity.
+            #
+            # Detection: this player has no character yet (going to chargen)
+            # AND there is at least one character already on the snapshot
+            # (someone else has already started the world). When both hold
+            # we're an MP joiner — suppress opening so the post-chargen
+            # narration falls back to the generic "I look around and take in
+            # my surroundings." which the persistent narrator handles as a
+            # continuation of the existing scene.
+            is_mp_joiner = (
+                not has_character
+                and len(snapshot.characters) > 0
+            )
+            if is_mp_joiner:
+                _watcher_publish(
+                    "mp_joiner_opening_suppressed",
+                    {
+                        "slug": slug,
+                        "player_id": player_id,
+                        "player_name": display_name,
+                        "existing_character_count": len(snapshot.characters),
+                        "had_seed": opening_seed is not None,
+                        "had_directive": opening_directive is not None,
+                    },
+                    component="opening_hook",
+                    severity="info",
+                )
+                logger.info(
+                    "session.mp_joiner_opening_suppressed slug=%s "
+                    "player_id=%s display_name=%s existing_chars=%d",
+                    slug, player_id, display_name,
+                    len(snapshot.characters),
+                )
+                opening_seed = None
+                opening_directive = None
             culture_ref = resolve_culture_reference(genre_pack, row.world_slug)
             world_context: str | None = culture_ref if culture_ref else None
             audio_backend = self._build_audio_backend(row.genre_slug, genre_pack)

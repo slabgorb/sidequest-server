@@ -321,6 +321,35 @@ def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
     assert payload.target_step == 2
 
 
+def test_chargen_payload_action_back_without_phase() -> None:
+    """The UI sends `{action: 'back'}` with no `phase` field — must deserialize."""
+    wire = json.dumps({
+        "type": "CHARACTER_CREATION",
+        "payload": {"action": "back"},
+        "player_id": "test-player",
+    })
+    msg = parse_wire(wire)
+    payload = msg.payload
+    assert isinstance(payload, CharacterCreationPayload)
+    assert payload.action == "back"
+    assert payload.phase is None
+
+
+def test_chargen_payload_action_edit_without_phase() -> None:
+    """The UI sends `{action: 'edit', target_step: N}` with no `phase` field."""
+    wire = json.dumps({
+        "type": "CHARACTER_CREATION",
+        "payload": {"action": "edit", "target_step": 0},
+        "player_id": "test-player",
+    })
+    msg = parse_wire(wire)
+    payload = msg.payload
+    assert isinstance(payload, CharacterCreationPayload)
+    assert payload.action == "edit"
+    assert payload.target_step == 0
+    assert payload.phase is None
+
+
 def test_chargen_payload_without_action_still_deserializes() -> None:
     """Backwards compatibility: existing messages without action must still work."""
     wire = json.dumps({

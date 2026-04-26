@@ -197,8 +197,10 @@ class CharacterCreationPayload(ProtocolBase):
     Port of sidequest_protocol::CharacterCreationPayload.
     """
 
-    phase: str
-    """Creation phase: 'scene', 'confirmation', 'complete'."""
+    phase: str | None = None
+    """Creation phase: 'scene', 'confirmation', 'complete'. Optional — omitted
+    when ``action`` is set (navigation messages like 'back' and 'edit' don't
+    carry a phase)."""
     scene_index: int | None = None
     """Current scene index (1-based)."""
     total_scenes: int | None = None

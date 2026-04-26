@@ -558,6 +558,90 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
 
 
 @pytest.mark.asyncio
+async def test_mp_joiner_suppresses_opening_seed(tmp_path: Path, caplog):
+    """Wiring test: MP joiner does NOT inherit the cold-open hook.
+
+    Playtest 2026-04-26 "Multiplayer parallel-solo desynchronizes scene
+    context entirely". When Player 2 joins a slug that already has a
+    seated character, completing chargen used to trigger
+    ``_run_opening_turn_narration`` with the genre pack's
+    in-medias-res ``opening_seed`` + ``opening_directive``. The narrator
+    obeyed the directive and invented a NEW scene divorced from where
+    Player 1 already was — Ralph stuck at the Sinkhole Inn while Potsie
+    descended into "THE THROAT".
+
+    Post-fix: when ``has_character=False`` AND the snapshot already has
+    >=1 character, the connect handler suppresses ``opening_seed`` and
+    ``opening_directive`` on the new joiner's session, and emits the
+    ``mp_joiner_opening_suppressed`` watcher event so the GM panel can
+    confirm the suppression. The post-chargen narration falls back to
+    the generic "I look around…" action which the shared narrator
+    (ADR-067) handles as a continuation of the existing scene.
+    """
+    import logging
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-04-26-mp-joiner-opening-suppressed"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
+                genre_slug=_GENRE, world_slug=_WORLD)
+
+    # Seat Ralph as the existing character so Potsie joins an in-progress
+    # world. player_seats populated → the gate's ``player_seats`` branch
+    # fires (Potsie absent → has_character=False), which is the canonical
+    # MP-joiner path post-MP-02.
+    core = CreatureCore(
+        name="Ralph", description="d", personality="p", inventory=Inventory(),
+    )
+    char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Sinkhole Inn Room")
+    snap.characters = [char]
+    snap.player_seats = {"ralph-id": "Ralph"}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="potsie-id",
+        payload=SessionEventPayload(
+            event="connect", game_slug=slug, player_name="Potsie",
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
+        await handler.handle_message(msg)
+
+    # The session-data we just constructed must have None for both opening
+    # fields — that's the actual state the post-chargen turn will read.
+    sd = handler._session_data
+    assert sd is not None, "Handler must have built _session_data on connect"
+    assert sd.opening_seed is None, (
+        "MP joiner must NOT inherit the genre pack's opening_seed; got: "
+        f"{sd.opening_seed!r}"
+    )
+    assert sd.opening_directive is None, (
+        "MP joiner must NOT inherit the genre pack's opening_directive; got: "
+        f"{sd.opening_directive!r}"
+    )
+    # Suppression decision must be logged so a future drift can be diagnosed
+    # from logs alone (not just from missing scenes).
+    suppress_records = [
+        r for r in caplog.records
+        if "session.mp_joiner_opening_suppressed" in r.getMessage()
+    ]
+    assert suppress_records, (
+        "Suppression must log session.mp_joiner_opening_suppressed for "
+        "GM-panel observability"
+    )
+
+
+@pytest.mark.asyncio
 async def test_slug_connect_without_room_context_raises(seeded_game: Path):
     """Wiring test: slug-connect must fail loudly when attach_room_context was skipped.
 
