@@ -111,6 +111,9 @@ from sidequest.protocol.messages import (
     PartyStatusPayload,
     RenderQueuedMessage,
     RenderQueuedPayload,
+    ScrapbookEntryMessage,
+    ScrapbookEntryNpcRef,
+    ScrapbookEntryPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SecretNoteMessage,
@@ -170,7 +173,25 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
     "CONFRONTATION": ConfrontationMessage,
     "SECRET_NOTE": SecretNoteMessage,
+    "SCRAPBOOK_ENTRY": ScrapbookEntryMessage,
 }
+
+# Kinds persisted to the events table by side-channel writers (e.g.
+# ``telemetry.watcher_hub._maybe_persist_encounter_row``) for OTEL replay
+# but never fanned out to clients via ``_emit_event``. Replay must skip these
+# rather than crash — pingpong 2026-04-26 [S3-BUG] Reconnect crash on
+# ENCOUNTER_STARTED. Add new internal kinds here when their producers land.
+_REPLAY_SKIP_KINDS: frozenset[str] = frozenset({
+    "ENCOUNTER_STARTED",
+    "ENCOUNTER_BEAT_APPLIED",
+    "ENCOUNTER_METRIC_ADVANCE",
+    "ENCOUNTER_BEAT_SKIPPED",
+    "ENCOUNTER_TAG_CREATED",
+    "ENCOUNTER_STATUS_ADDED",
+    "ENCOUNTER_YIELD",
+    "ENCOUNTER_RESOLVED",
+    "ENCOUNTER_RESOLUTION_SIGNAL",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +260,23 @@ def _rename_resumed_character_if_uuid(
     return renamed
 
 
-def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object:
+def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object | None:
     """Build a typed protocol message from a persisted event row for replay.
 
-    Raises ValueError on unknown kinds — no silent fallback.
-    Caller: slug-connect branch, after SESSION_CONNECTED is built, to
-    reconstruct missed events since last_seen_seq.
+    Returns ``None`` for journal-only telemetry kinds (``_REPLAY_SKIP_KINDS``)
+    so replay can step over them without crashing the entire reconnect — these
+    rows live in the events table for OTEL persistence (see
+    ``telemetry.watcher_hub._maybe_persist_encounter_row``) but were never
+    intended for the client wire. Pingpong 2026-04-26 [S3-BUG]: dropping the
+    fail-loud here is intentional; the caller logs the skip via OTEL.
+
+    Raises ValueError for kinds that are neither in the live-emit map nor on
+    the explicit skip-list — that's a real schema-drift bug worth surfacing.
     """
     import json
+
+    if kind in _REPLAY_SKIP_KINDS:
+        return None
 
     message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
     if message_cls is None:
@@ -264,6 +294,9 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
 
     if kind == "SECRET_NOTE":
         return message_cls(payload=SecretNotePayload(**data))
+
+    if kind == "SCRAPBOOK_ENTRY":
+        return message_cls(payload=ScrapbookEntryPayload(**data))
 
     # Unreachable: _KIND_TO_MESSAGE_CLS guard above catches unknowns.
     # Kept as a belt-and-suspenders hard fail.
@@ -964,6 +997,169 @@ class WebSocketSessionHandler:
             out_to_self = message_cls(payload=payload_model)
 
         return out_to_self
+
+    # ------------------------------------------------------------------
+    # Scrapbook entry emission (pingpong 2026-04-26 [S3-REGRESSION])
+    # ------------------------------------------------------------------
+
+    def _emit_scrapbook_entry(
+        self,
+        *,
+        sd: _SessionData,
+        snapshot: GameSnapshot,
+        result: object,
+    ) -> None:
+        """Persist a scrapbook row + emit a SCRAPBOOK_ENTRY event for one turn.
+
+        Called immediately after the NARRATION emit so the entry's seq lands
+        adjacent to its narration in the journal. The IMAGE that may follow
+        from the daemon is async — its URL arrives later and the UI gallery
+        merges by ``turn_id``. We never block on the daemon here.
+
+        Pure reuse: location from snapshot, excerpt from the narrator's prose,
+        NPCs from the orchestrator's structured extraction. No new LLM calls.
+        """
+        from sidequest.agents.orchestrator import NarrationTurnResult
+
+        if not isinstance(result, NarrationTurnResult):
+            return
+
+        narration_text = (result.narration or "").strip()
+        if not narration_text:
+            # The UI requires a non-empty excerpt; skip cleanly when the turn
+            # produced no prose (only happens in degraded edge cases).
+            return
+
+        # UI contract: ``location`` must be non-empty. Fall back to the raw
+        # snapshot location when the display lookup yields nothing — better
+        # to surface "Unknown" than to silently drop the entry.
+        loc_display = _resolve_location_display(
+            sd.genre_pack, sd.world_slug, snapshot.location
+        ) or (snapshot.location or "Unknown")
+
+        # Trim the excerpt to a reasonable length for caption rendering. The
+        # narrator's full prose lives on the NarrationMessage; the scrapbook
+        # caption is a short teaser.
+        excerpt = narration_text
+        if len(excerpt) > 320:
+            excerpt = excerpt[:317].rstrip() + "..."
+
+        # NPCs from the orchestrator's structured extraction — no new
+        # inference. ``role`` is the side flag (player/opponent/neutral);
+        # ``disposition`` falls back to role when no behavioral string was
+        # extracted.
+        npc_refs: list[ScrapbookEntryNpcRef] = []
+        for mention in (result.npcs_present or []):
+            name = (getattr(mention, "name", "") or "").strip()
+            if not name:
+                continue
+            role = getattr(mention, "side", "") or "neutral"
+            disposition = getattr(mention, "role", "") or role
+            npc_refs.append(
+                ScrapbookEntryNpcRef(
+                    name=name,
+                    role=role,
+                    disposition=disposition,
+                )
+            )
+
+        # World facts: lift the narrator's footnote summaries when present.
+        world_facts: list[str] = []
+        for fn in (result.footnotes or []):
+            if not isinstance(fn, dict):
+                continue
+            summary = fn.get("summary") or fn.get("text") or ""
+            if isinstance(summary, str) and summary.strip():
+                world_facts.append(summary.strip())
+
+        scene_type: str | None = None
+        scene_title: str | None = None
+        visual = getattr(result, "visual_scene", None)
+        if visual is not None:
+            tier = (getattr(visual, "tier", None) or "").strip()
+            scene_type = tier or None
+            subject = (getattr(visual, "subject", None) or "").strip()
+            if subject:
+                scene_title = subject[:120]
+
+        turn_id = int(snapshot.turn_manager.interaction)
+
+        payload = ScrapbookEntryPayload(
+            turn_id=turn_id,
+            location=loc_display,
+            narrative_excerpt=excerpt,
+            scene_title=scene_title,
+            scene_type=scene_type,
+            image_url=None,  # Async — IMAGE frame follows from the daemon
+            world_facts=world_facts,
+            npcs_present=npc_refs,
+        )
+
+        # Persist to the dedicated scrapbook_entries table — keeps the
+        # gallery queryable post-game without walking the events journal.
+        try:
+            self._persist_scrapbook_entry(payload)
+        except Exception as exc:  # noqa: BLE001 — persistence failure must not block emit
+            logger.warning(
+                "scrapbook.persist_failed turn=%d error=%s", turn_id, exc
+            )
+
+        # Route through _emit_event so the journal gets a row + reconnect
+        # replay surfaces prior entries to fresh sockets.
+        self._emit_event("SCRAPBOOK_ENTRY", payload)
+
+        # OTEL lie-detector: GM panel sees per-turn confirmation that the
+        # scrapbook subsystem fired. Without this, regression #2 was
+        # invisible for two stories.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "scrapbook",
+                "op": "entry_emitted",
+                "turn_id": turn_id,
+                "image_url": None,
+                "location": loc_display,
+                "npc_count": len(npc_refs),
+                "world_fact_count": len(world_facts),
+                "player_id": sd.player_id,
+            },
+            component="scrapbook",
+        )
+
+    def _persist_scrapbook_entry(self, payload: ScrapbookEntryPayload) -> None:
+        """Insert a scrapbook row into the dedicated table (schema in
+        ``game/persistence.py``). The table allows multiple rows per turn —
+        no UNIQUE on turn_id.
+        """
+        import json as _json
+
+        if self._event_log is None:
+            return  # Legacy non-slug path — no DB to write to
+        store = self._event_log.store
+        npcs_json = _json.dumps(
+            [
+                {"name": ref.name, "role": ref.role, "disposition": ref.disposition}
+                for ref in payload.npcs_present
+            ]
+        )
+        facts_json = _json.dumps(list(payload.world_facts))
+        with store._conn:
+            store._conn.execute(
+                "INSERT INTO scrapbook_entries "
+                "(turn_id, scene_title, scene_type, location, image_url, "
+                " narrative_excerpt, world_facts, npcs_present) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    payload.turn_id,
+                    payload.scene_title,
+                    payload.scene_type,
+                    payload.location,
+                    payload.image_url,
+                    payload.narrative_excerpt,
+                    facts_json,
+                    npcs_json,
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -1757,6 +1953,7 @@ class WebSocketSessionHandler:
             _replay_cache_rows = 0
             _replay_excluded = 0
             _replay_kind_lookup_miss = 0
+            _replay_skipped_internal = 0
             _replay_kinds: dict[str, int] = {}
             if self._projection_cache is not None:
                 cached_rows = self._projection_cache.read_since(
@@ -1777,14 +1974,18 @@ class WebSocketSessionHandler:
                         _replay_kind_lookup_miss += 1
                         continue
                     _kind = kind_lookup[0].kind
-                    _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
-                    replay_msgs.append(
-                        _build_message_for_kind(
-                            kind=_kind,
-                            payload_json=c.payload_json,
-                            seq=c.event_seq,
-                        )
+                    _built = _build_message_for_kind(
+                        kind=_kind,
+                        payload_json=c.payload_json,
+                        seq=c.event_seq,
                     )
+                    if _built is None:
+                        # Internal telemetry kind (encounter*, etc.) — not
+                        # client-bound. Skip without crashing replay.
+                        _replay_skipped_internal += 1
+                        continue
+                    _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
+                    replay_msgs.append(_built)
             else:
                 # Legacy fallback: no cache available, filter live (may diverge
                 # from cached projections in edge cases; v1 accepts this).
@@ -1801,16 +2002,18 @@ class WebSocketSessionHandler:
                     )
                     if not dec.include:
                         continue
+                    _built = _build_message_for_kind(
+                        kind=event_row.kind,
+                        payload_json=dec.payload_json,
+                        seq=event_row.seq,
+                    )
+                    if _built is None:
+                        _replay_skipped_internal += 1
+                        continue
                     _replay_kinds[event_row.kind] = (
                         _replay_kinds.get(event_row.kind, 0) + 1
                     )
-                    replay_msgs.append(
-                        _build_message_for_kind(
-                            kind=event_row.kind,
-                            payload_json=dec.payload_json,
-                            seq=event_row.seq,
-                        )
-                    )
+                    replay_msgs.append(_built)
 
             # Pingpong 2026-04-24 "Slug-resume shows empty Narrative pane on
             # fresh browser session" — when the client's stored
@@ -1849,6 +2052,9 @@ class WebSocketSessionHandler:
             _replay_span.set_attribute(
                 "slug_connect.replay.kind_lookup_miss", _replay_kind_lookup_miss
             )
+            _replay_span.set_attribute(
+                "slug_connect.replay.skipped_internal", _replay_skipped_internal
+            )
             _replay_span.set_attribute("slug_connect.replay.emitted", len(replay_msgs))
             _replay_span.set_attribute(
                 "slug_connect.replay.narration_count",
@@ -1861,11 +2067,12 @@ class WebSocketSessionHandler:
                 "slug_connect.replay.last_seen_seq", self._last_seen_seq
             )
             logger.info(
-                "slug_connect.replay cache_rows=%d excluded=%d emitted=%d "
-                "narration=%d tail_backfill=%d last_seen_seq=%d "
+                "slug_connect.replay cache_rows=%d excluded=%d skipped_internal=%d "
+                "emitted=%d narration=%d tail_backfill=%d last_seen_seq=%d "
                 "player=%s slug=%s kinds=%s",
                 _replay_cache_rows,
                 _replay_excluded,
+                _replay_skipped_internal,
                 len(replay_msgs),
                 _replay_kinds.get("NARRATION", 0),
                 tail_backfill_count,
@@ -3375,7 +3582,25 @@ class WebSocketSessionHandler:
             )
             # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
             narration_msg = self._emit_event("NARRATION", narration_payload)
-    
+
+            # Pingpong 2026-04-26 [S3-REGRESSION]: emit a SCRAPBOOK_ENTRY for
+            # every narration turn so the UI gallery has metadata to merge with
+            # the IMAGE that lands later from the daemon. Pure reuse — no new
+            # LLM calls. Fields come from the orchestrator result and the
+            # snapshot the narrator just stamped.
+            try:
+                self._emit_scrapbook_entry(
+                    sd=sd,
+                    snapshot=snapshot,
+                    result=result,
+                )
+            except Exception as exc:  # noqa: BLE001 — scrapbook must never crash a turn
+                logger.warning(
+                    "scrapbook.emit_failed turn=%d error=%s",
+                    snapshot.turn_manager.interaction,
+                    exc,
+                )
+
             # Group G Task 6: route prompt-redacted dispatches as SECRET_NOTE
             # events. Task 5's ``redact_dispatch_package`` stripped these from the
             # narrator prompt and parked them on ``result.secret_routes``; here we
