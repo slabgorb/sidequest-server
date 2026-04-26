@@ -638,6 +638,7 @@ def create_rest_router() -> APIRouter:
         """
         from sidequest.telemetry.spans import (
             lobby_force_new_disambiguated_span,
+            lobby_session_join_existing_span,
             mp_game_created_span,
         )
 
@@ -649,36 +650,59 @@ def create_rest_router() -> APIRouter:
         # When the lobby insists this is a fresh journey, a same-day same-mode
         # collision must not silently resume the prior session. Walk -2, -3,
         # ... until we find an unclaimed slug.
+        #
+        # MP-mode exception (playtest 2026-04-26 S4-UX): the lobby's
+        # ``force_new`` heuristic compares the typed name against the
+        # **per-browser** Past Journey list. Across hosts (P1 on
+        # ``player1.local``, P2 on ``player2.local``) that list is empty
+        # for P2, so the UI always sends ``force_new=True`` — and the
+        # disambiguator faithfully splits the table by minting ``-2``.
+        # In MP mode the correct semantics are "join the existing
+        # same-day same-world MP session", so we ignore ``force_new``
+        # whenever the existing same-slug game is itself a multiplayer
+        # game. Solo journeys are per-player and keep the original
+        # disambiguation behavior unchanged.
         slug = base_slug
         attempts = 1
+        mp_join_existing = False
         if req.force_new:
             probe_db = db_path_for_slug(save_dir, slug)
             if probe_db.exists():
                 probe_store = SqliteStore(probe_db)
                 probe_store.initialize()
-                if get_game(probe_store, slug) is not None:
-                    while True:
-                        attempts += 1
-                        candidate = f"{base_slug}-{attempts}"
-                        cand_db = db_path_for_slug(save_dir, candidate)
-                        if not cand_db.exists():
-                            slug = candidate
-                            break
-                        cand_store = SqliteStore(cand_db)
-                        cand_store.initialize()
-                        if get_game(cand_store, candidate) is None:
-                            slug = candidate
-                            break
-                    with lobby_force_new_disambiguated_span(
-                        requested_slug=base_slug,
-                        final_slug=slug,
-                        attempts=attempts,
-                        player_name=req.player_name or "",
-                        mode=str(req.mode.value) if hasattr(req.mode, "value") else str(req.mode),
-                        genre_slug=req.genre_slug,
-                        world_slug=req.world_slug,
-                    ):
-                        pass
+                existing_row = get_game(probe_store, slug)
+                if existing_row is not None:
+                    is_mp_request = req.mode == GameMode.MULTIPLAYER
+                    is_mp_existing = existing_row.mode == GameMode.MULTIPLAYER
+                    if is_mp_request and is_mp_existing:
+                        # MP-join short-circuit. Fall through to the
+                        # existing-row branch below; the join span fires
+                        # there once the row is opened on the canonical
+                        # ``store`` handle (avoids span-on-probe drift).
+                        mp_join_existing = True
+                    else:
+                        while True:
+                            attempts += 1
+                            candidate = f"{base_slug}-{attempts}"
+                            cand_db = db_path_for_slug(save_dir, candidate)
+                            if not cand_db.exists():
+                                slug = candidate
+                                break
+                            cand_store = SqliteStore(cand_db)
+                            cand_store.initialize()
+                            if get_game(cand_store, candidate) is None:
+                                slug = candidate
+                                break
+                        with lobby_force_new_disambiguated_span(
+                            requested_slug=base_slug,
+                            final_slug=slug,
+                            attempts=attempts,
+                            player_name=req.player_name or "",
+                            mode=str(req.mode.value) if hasattr(req.mode, "value") else str(req.mode),
+                            genre_slug=req.genre_slug,
+                            world_slug=req.world_slug,
+                        ):
+                            pass
 
         db = db_path_for_slug(save_dir, slug)
         db.parent.mkdir(parents=True, exist_ok=True)
@@ -689,8 +713,19 @@ def create_rest_router() -> APIRouter:
         if existing is not None:
             # Existing row "wins" — emit span with the frozen metadata so GM
             # panel sees which mode/genre/world are actually in effect, not
-            # what the client requested. (force_new path can't land here:
-            # we picked an unused slug above.)
+            # what the client requested. (force_new path can land here ONLY
+            # via the MP-join short-circuit above; solo force_new+collision
+            # always picked an unused slug.)
+            if mp_join_existing:
+                with lobby_session_join_existing_span(
+                    slug=slug,
+                    mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
+                    genre_slug=existing.genre_slug,
+                    world_slug=existing.world_slug,
+                    player_name=req.player_name or "",
+                    force_new_requested=True,
+                ):
+                    pass
             with mp_game_created_span(
                 slug=slug,
                 mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
