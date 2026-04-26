@@ -103,6 +103,7 @@ from sidequest.protocol.messages import (
     GameResumedMessage,
     ImageMessage,
     ImagePayload,
+    MapUpdateMessage,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -1128,6 +1129,144 @@ class WebSocketSessionHandler:
                 "player_id": sd.player_id,
             },
             component="scrapbook",
+        )
+
+    # ------------------------------------------------------------------
+    # MAP_UPDATE emission — slice 1 of N (pingpong 2026-04-26
+    # [S3-PORT-REGRESSION]). The Rust port had three trigger sites for
+    # MAP_UPDATE: every-turn refresh, location-change, and reconnect-replay.
+    # Slice 1 ports only the cartography-render trigger so the UI's
+    # MapOverlay stops receiving nothing the first time the narrator picks
+    # the cartography tier. The other two trigger sites land in slice 2/3.
+    # ------------------------------------------------------------------
+
+    def _emit_map_update_for_cartography(
+        self,
+        *,
+        sd: _SessionData,
+        render_id: str,
+        player_id: str,
+    ) -> None:
+        """Push a ``MAP_UPDATE`` frame to the player's outbound queue when a
+        cartography render is dispatched. Mirrors the IMAGE async-emit
+        pattern: direct queue push, no journaling, no fan-out via
+        ``_emit_event``.
+
+        Why no journaling: ``MAP_UPDATE`` is a derived view of world state —
+        on reconnect the slice-3 reconnect-replay path will rebuild the
+        current map from cartography + ``snapshot.discovered_regions``
+        rather than replay every historical frame. Adding a journal arm
+        would force a ``_KIND_TO_MESSAGE_CLS`` registration and a builder
+        case in ``_build_message_for_kind``, which is out of scope for
+        slice 1 (see hard scope cap in the story).
+
+        OTEL: emits ``map.update_emitted`` so the GM panel's "lie detector"
+        can confirm the map subsystem actually fired (CLAUDE.md OTEL
+        Observability Principle). Without this event there is no way to
+        distinguish "map rendered + UI updated" from "map rendered + UI
+        showing stale state" — the exact failure mode the Rust impl had
+        before its emit_map_update_telemetry helper landed.
+        """
+        from sidequest.server.dispatch.map_update import build_map_update_payload
+
+        # Resolve the live outbound queue. Mirror of the IMAGE completion
+        # path (story 37-30): when room context is bound, the registry's
+        # current socket queue survives mid-turn reconnects; otherwise fall
+        # back to the legacy out_queue captured at construction.
+        target_queue: asyncio.Queue[object] | None = None
+        room_slug: str | None = None
+        if self._room is not None:
+            room_slug = self._room.slug
+            registry = self._room_registry
+            if registry is not None:
+                room = registry.get(room_slug)
+                if room is not None:
+                    socket_id = room.socket_for_player(player_id)
+                    if socket_id is not None:
+                        target_queue = room.queue_for_socket(socket_id)
+        if target_queue is None:
+            target_queue = self._out_queue
+        if target_queue is None:
+            logger.warning(
+                "map_update.skipped reason=no_outbound_queue render_id=%s",
+                render_id,
+            )
+            return
+
+        # Pull cartography from the bound world. ``getattr`` chain handles
+        # legacy/test fixtures where the world or its cartography may be
+        # absent — emit anyway with cartography=None (the wire model allows
+        # it) so the UI at least learns the current location.
+        world = sd.genre_pack.worlds.get(sd.world_slug) if sd.genre_pack else None
+        cartography = getattr(world, "cartography", None) if world is not None else None
+
+        payload = build_map_update_payload(
+            snapshot=sd.snapshot, cartography=cartography,
+        )
+        if payload is None:
+            # No current location — emitting an empty MAP_UPDATE would make
+            # the UI worse, not better. Surface via OTEL so the GM panel
+            # can see the skip rather than silently dropping.
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "map",
+                    "op": "skipped",
+                    "reason": "no_current_location",
+                    "render_id": render_id,
+                    "tier": "cartography",
+                    "player_id": player_id,
+                },
+                component="map",
+                severity="warning",
+            )
+            return
+
+        msg = MapUpdateMessage(
+            type=MessageType.MAP_UPDATE,  # type: ignore[arg-type]
+            payload=payload,
+            player_id=player_id,
+        )
+
+        try:
+            target_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            logger.warning(
+                "map_update.outbound_queue_full render_id=%s", render_id
+            )
+            return
+
+        # OTEL lie-detector — every MAP_UPDATE that hits a queue gets a
+        # span. Origin marker mirrors the Rust ``emit_map_update_telemetry``
+        # helper so when the location-change and reconnect paths land in
+        # slices 2/3, the GM panel can distinguish them at a glance.
+        nav_mode = (
+            payload.cartography.navigation_mode if payload.cartography else "none"
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "map",
+                "op": "update_emitted",
+                "origin": "cartography_render",
+                "render_id": render_id,
+                "tier": "cartography",
+                "player_id": player_id,
+                "room_slug": room_slug or "",
+                "current_location": str(payload.current_location),
+                "region": str(payload.region),
+                "explored_count": len(payload.explored),
+                "has_cartography": payload.cartography is not None,
+                "cartography_navigation_mode": nav_mode,
+                "genre": sd.genre_slug,
+            },
+            component="map",
+        )
+        logger.info(
+            "map_update.emitted render_id=%s location=%s explored=%d",
+            render_id,
+            str(payload.current_location),
+            len(payload.explored),
         )
 
     def _persist_scrapbook_entry(self, payload: ScrapbookEntryPayload) -> None:
@@ -4288,6 +4427,27 @@ class WebSocketSessionHandler:
             },
             component="render",
         )
+
+        # Pingpong 2026-04-26 [S3-PORT-REGRESSION] MAP_UPDATE — slice 1 of N
+        # from the Rust port. When the narrator picks the cartography tier,
+        # the daemon will render a map; without an accompanying MAP_UPDATE
+        # the UI's MapOverlay/Automapper has no metadata to overlay on the
+        # rendered image. Emit alongside the render dispatch (mirror of the
+        # IMAGE/SCRAPBOOK twin pattern) so the map subsystem is visibly
+        # engaged. Deferred to follow-up: location-change trigger,
+        # journaling for replay. See pingpong file for the full deferred-
+        # with-spec list.
+        if tier == "cartography":
+            try:
+                self._emit_map_update_for_cartography(
+                    sd=sd, render_id=render_id, player_id=player_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — map emit must never crash a turn
+                logger.warning(
+                    "map_update.emit_failed render_id=%s error=%s",
+                    render_id,
+                    exc,
+                )
 
         # Capture the legacy out_queue only as a fallback for the
         # pre-room-context test/legacy path. When `_room` is set (the
