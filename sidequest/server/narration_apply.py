@@ -149,6 +149,9 @@ def _apply_narration_result_to_snapshot(
     dice_failed: bool | None = None,
     dice_actor: str | None = None,
     from_explicit_action: bool = False,
+    opposed_player_d20: int | None = None,
+    opposed_player_beat_id: str | None = None,
+    opposed_player_actor: str | None = None,
 ) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
@@ -517,6 +520,30 @@ def _apply_narration_result_to_snapshot(
                 # Fall-through: skip beat loop by NOT defining beat_by_id
                 # and gating the loop below.
                 _legacy_beat_path = False
+            elif cdef.resolution_mode == ResolutionMode.opposed_check:
+                # ---- Opposed-check resolution branch (combat fairness, 2026-04-26) ----
+                # Both sides roll d20 + modifier; tier comes from the shift.
+                # The player's roll arrived via DICE_THROW and is stashed on
+                # session_data; ``dispatch_dice_throw`` deferred apply_beat
+                # for the player so this branch can derive the tier from the
+                # opposing roll instead of the legacy roll-vs-DC tier.
+                #
+                # Spec: ``.archive/handoffs/opposed-checks-design.md``.
+                outcome_obj = _resolve_opposed_check_branch(
+                    encounter=enc,
+                    cdef=cdef,
+                    selections=gated_selections,
+                    pack_beats={b.id: b for b in cdef.beats},
+                    pending_player_d20=opposed_player_d20,
+                    pending_player_beat_id=opposed_player_beat_id,
+                    pending_player_actor=opposed_player_actor,
+                    turn=snapshot.turn_manager.interaction,
+                )
+                if outcome_obj.encounter_resolved:
+                    snapshot.pending_resolution_signal = (
+                        _build_resolution_signal(enc)
+                    )
+                _legacy_beat_path = False
             else:
                 _legacy_beat_path = True
                 beat_by_id = {b.id: b for b in cdef.beats}
@@ -746,3 +773,258 @@ def _build_resolution_signal(enc: object) -> object:
         yielded_actors=tuple(),
         edge_refreshed=0,
     )
+
+
+@dataclass
+class _OpposedBranchOutcome:
+    """Outcome of one opposed_check dispatch branch — kept terse."""
+
+    encounter_resolved: bool
+
+
+def _roll_d20_server_side() -> int:
+    """Server-side d20 roll for the opponent in an opposed-check turn.
+
+    Recommended in ``.archive/handoffs/opposed-checks-design.md`` §Open
+    questions (1): opponent's d20 is server-side, no animation. The
+    rolling player keeps their physics-settled die; the opponent's roll
+    appears in the result pane after both sides commit.
+
+    Wrapped so tests can monkey-patch the import for deterministic
+    coverage of the shift bands without touching the global RNG.
+    """
+    import random
+    return random.randint(1, 20)
+
+
+def _resolve_opposed_check_branch(
+    *,
+    encounter,
+    cdef,
+    selections,
+    pack_beats,
+    pending_player_d20: int | None,
+    pending_player_beat_id: str | None,
+    pending_player_actor: str | None,
+    turn: int,
+) -> _OpposedBranchOutcome:
+    """Run the opposed-check dispatch branch.
+
+    Pulls the player's roll + beat from the pending stash (set by
+    ``dispatch_dice_throw``), finds the narrator-emitted opponent beat
+    in ``selections`` (the SOUL gate will already have dropped any
+    PC-side selections — the opponent beat is what survives), rolls the
+    opponent's d20 server-side, runs ``resolve_opposed_check`` to derive
+    the tier, emits the lie-detector OTEL span, and finally calls
+    ``apply_beat`` for both sides with the engine-derived tier.
+
+    Hard-fails-loud (CLAUDE.md no-silent-fallback) when:
+
+    - ``pending_player_*`` are None — opposed_check requires a preceding
+      DICE_THROW frame; the legacy narrator-only path is structurally
+      ineligible because PC mechanical actions must trace back to an
+      explicit player consent.
+    - The player's beat_id is not in ``pack_beats``.
+    - No opponent-side beat selection is present in ``selections``.
+    - The opponent's beat_id is not in ``pack_beats``.
+    """
+    from sidequest.game.beat_kinds import apply_beat
+    from sidequest.game.opposed_check import resolve_opposed_check
+    from sidequest.telemetry.spans import (
+        encounter_beat_skipped_span,
+        encounter_opposed_roll_resolved_span,
+        encounter_resolved_span,
+    )
+
+    if (
+        pending_player_d20 is None
+        or pending_player_beat_id is None
+        or pending_player_actor is None
+    ):
+        raise ValueError(
+            f"opposed_check encounter {encounter.encounter_type!r} narration "
+            f"arrived without a pending DICE_THROW player roll — "
+            f"opposed_check is dice-throw-only (no narrator-only path). "
+            f"Bug: dispatch_dice_throw should have stashed "
+            f"pending_opposed_player_d20 / _beat_id / _actor on session_data."
+        )
+
+    player_actor = encounter.find_actor(pending_player_actor)
+    if player_actor is None:
+        # Fall back to the first player-side actor — same fallback logic
+        # the dice dispatcher applies, kept symmetric so a stash mismatch
+        # doesn't destroy the resolution.
+        player_actor = next(
+            (a for a in encounter.actors if a.side == "player"),
+            None,
+        )
+    if player_actor is None:
+        raise ValueError(
+            f"opposed_check: no player actor found for pending roll "
+            f"(actor name {pending_player_actor!r} not in encounter; "
+            f"no fallback player-side actor available)"
+        )
+
+    player_beat = pack_beats.get(pending_player_beat_id)
+    if player_beat is None:
+        raise ValueError(
+            f"opposed_check: pending player beat_id "
+            f"{pending_player_beat_id!r} not in pack beats for encounter "
+            f"{encounter.encounter_type!r}"
+        )
+
+    opponent_selection = None
+    for sel in selections:
+        sel_actor = encounter.find_actor(sel.actor)
+        if sel_actor is None:
+            continue
+        if sel_actor.side == "opponent" and not sel_actor.withdrawn:
+            opponent_selection = sel
+            break
+
+    if opponent_selection is None:
+        raise ValueError(
+            f"opposed_check: narrator emitted no opponent-side beat "
+            f"selection for encounter {encounter.encounter_type!r}. The "
+            f"engine cannot derive an opposed tier without an opposing "
+            f"beat. (Narrator prompt regression — see narrator gate text "
+            f"for opposed_check.)"
+        )
+
+    opponent_actor = encounter.find_actor(opponent_selection.actor)
+    if opponent_actor is None:
+        raise ValueError(
+            f"opposed_check: opponent beat selection references actor "
+            f"{opponent_selection.actor!r} not in encounter actors"
+        )
+    opponent_beat = pack_beats.get(opponent_selection.beat_id)
+    if opponent_beat is None:
+        raise ValueError(
+            f"opposed_check: opponent beat_id {opponent_selection.beat_id!r} "
+            f"not in pack beats for encounter {encounter.encounter_type!r}"
+        )
+
+    opponent_d20 = _roll_d20_server_side()
+
+    roll_result = resolve_opposed_check(
+        player_actor=player_actor,
+        opponent_actor=opponent_actor,
+        player_beat=player_beat,
+        opponent_beat=opponent_beat,
+        cdef=cdef,
+        player_roll=pending_player_d20,
+        opponent_roll=opponent_d20,
+        encounter=encounter,
+    )
+
+    # Emit BEFORE apply_beat so the GM panel reads the resolver inputs
+    # paired with the resulting metric_advance spans below.
+    with encounter_opposed_roll_resolved_span(
+        encounter_type=encounter.encounter_type,
+        player_roll=roll_result.player_roll,
+        player_mod=roll_result.player_mod,
+        opponent_roll=roll_result.opponent_roll,
+        opponent_mod=roll_result.opponent_mod,
+        shift=roll_result.shift,
+        tier=roll_result.tier.value,
+    ):
+        pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "opposed_roll_resolved",
+            "encounter_type": encounter.encounter_type,
+            "player_roll": roll_result.player_roll,
+            "player_mod": roll_result.player_mod,
+            "opponent_roll": roll_result.opponent_roll,
+            "opponent_mod": roll_result.opponent_mod,
+            "shift": roll_result.shift,
+            "tier": roll_result.tier.value,
+        },
+        component="encounter",
+    )
+
+    encounter_resolved = False
+    # Apply player beat first (matches threshold-cross order in apply_beat
+    # docstring — "player_metric first, then opponent_metric"). The
+    # leading "player"/"opponent" label is preserved as a comment-anchor
+    # so future readers see the order intent without diving into actor.side.
+    for sel_actor, sel_beat, beat_id in (
+        # ("player", ...),
+        (player_actor, player_beat, pending_player_beat_id),
+        # ("opponent", ...),
+        (opponent_actor, opponent_beat, opponent_selection.beat_id),
+    ):
+        applied = apply_beat(
+            encounter, sel_actor, sel_beat, roll_result.tier, turn=turn,
+        )
+        if applied.skipped_reason is not None:
+            with encounter_beat_skipped_span(
+                reason=applied.skipped_reason,
+                actor=sel_actor.name,
+                actor_side=sel_actor.side,
+                beat_id=beat_id,
+            ):
+                pass
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_skipped",
+                    "reason": applied.skipped_reason,
+                    "actor": sel_actor.name,
+                    "actor_side": sel_actor.side,
+                    "beat_id": beat_id,
+                    "source": "opposed_check",
+                },
+                component="encounter",
+            )
+            continue
+        own_delta = applied.deltas.own if applied.deltas else 0
+        opp_delta = applied.deltas.opponent if applied.deltas else 0
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "beat_applied",
+                "actor": sel_actor.name,
+                "actor_side": sel_actor.side,
+                "beat_id": beat_id,
+                "beat_kind": (
+                    sel_beat.kind.value
+                    if hasattr(sel_beat.kind, "value")
+                    else str(sel_beat.kind)
+                ),
+                "outcome_tier": roll_result.tier.value,
+                "own_delta": own_delta,
+                "opponent_delta": opp_delta,
+                "metric_target": encounter.encounter_type,
+                "source": "opposed_check",
+            },
+            component="encounter",
+        )
+        if applied.resolved:
+            with encounter_resolved_span(
+                encounter_type=encounter.encounter_type,
+                outcome=encounter.outcome or "",
+                source="opposed_check",
+            ):
+                pass
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "resolved",
+                    "encounter_type": encounter.encounter_type,
+                    "outcome": encounter.outcome or "",
+                    "source": "opposed_check",
+                    "final_player_metric": encounter.player_metric.current,
+                    "final_opponent_metric": encounter.opponent_metric.current,
+                },
+                component="encounter",
+            )
+            encounter_resolved = True
+            break
+
+    return _OpposedBranchOutcome(encounter_resolved=encounter_resolved)

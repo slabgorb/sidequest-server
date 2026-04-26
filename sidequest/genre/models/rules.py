@@ -149,11 +149,25 @@ class MetricDef(BaseModel):
         return self
 
 
-class ResolutionMode(str, Enum):
-    """How a confrontation resolves each turn."""
+class ResolutionMode(str, Enum):  # noqa: UP042 — matches project convention (see protocol/enums.py)
+    """How a confrontation resolves each turn.
+
+    - ``beat_selection``: player rolls d20 vs static DC. Tier drives delta
+      application. Opponent outcome tier is narrator-fiat (no opposing roll).
+    - ``sealed_letter_lookup``: simultaneous-commit cell-table resolution
+      (dogfight, ADR-077).
+    - ``opposed_check``: BOTH sides roll d20 + modifier; outcome tier is
+      derived from the shift between rolls (Fate-style bands). Combat
+      encounters use this so the opponent dial only advances when the
+      opponent's roll actually beats the player's. The narrator picks
+      WHICH beat the opponent took, but never the outcome tier — the
+      engine derives it from the dice. See:
+      ``.archive/handoffs/opposed-checks-design.md``.
+    """
 
     beat_selection = "beat_selection"
     sealed_letter_lookup = "sealed_letter_lookup"
+    opposed_check = "opposed_check"
 
 
 class InteractionCell(BaseModel):
@@ -235,6 +249,16 @@ class ConfrontationDef(BaseModel):
     escalates_to: str | None = None
     mood: str | None = None
     interaction_table: InteractionTable | None = None
+    # Genre-level opponent stat fallback. Used by opposed_check resolution
+    # when an EncounterActor lacks a per_actor_state.stats entry for the
+    # beat's stat_check. Maps stat name → raw ability score (the same
+    # 3..20 D&D-style score the player side uses; modifier is derived
+    # via floor((score-10)/2)). Hard-fail-loud when neither this map nor
+    # the per-actor block carries the stat (CLAUDE.md no-silent-fallback).
+    # ``None`` means the pack has not migrated this confrontation to
+    # opposed_check — only valid when ``resolution_mode`` is something
+    # other than ``opposed_check``.
+    opponent_default_stats: dict[str, int] | None = None
 
     @model_validator(mode="before")
     @classmethod

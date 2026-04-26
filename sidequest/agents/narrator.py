@@ -548,9 +548,36 @@ class NarratorAgent(BaseAgent):
                 f"created turn {t.created_turn})"
                 for t in encounter.tags
             ) or "  (none)"
+            # Resolution-mode gate (combat fairness, 2026-04-26).
+            # When the active confrontation is opposed_check, the engine
+            # rolls dice for both sides and derives the outcome tier from
+            # the shift between rolls. The narrator's job is to PICK
+            # WHICH BEAT the opponent took (which action), but never the
+            # outcome tier — that comes from the resolver. Without this
+            # explicit gate the LLM tends to write "the orc swings and
+            # connects, opening a gash on Sam's arm" (i.e. embeds an
+            # outcome) which makes the engine-derived tier inconsistent
+            # with the prose. See:
+            # ``.archive/handoffs/opposed-checks-design.md``.
+            from sidequest.genre.models.rules import ResolutionMode
+            opposed_gate_text = ""
+            if cdef.resolution_mode == ResolutionMode.opposed_check:
+                opposed_gate_text = (
+                    "RESOLUTION_MODE: opposed_check\n"
+                    "When the active confrontation has resolution_mode: "
+                    "opposed_check, you select only the OPPONENT'S BEAT "
+                    "(which action). The engine rolls dice and derives "
+                    "the outcome tier from the shift between your roll "
+                    "and the player's. You DO NOT specify outcome tier "
+                    "for either side — the dice decide. Describe the "
+                    "opponent's action as it begins; do not narrate "
+                    "whether it lands or fails until the engine returns "
+                    "the resolved tier on the next turn.\n"
+                )
             body = (
                 f"<encounter-live>\n"
                 f"Active encounter: {cdef.label} ({cdef.confrontation_type})\n"
+                f"{opposed_gate_text}"
                 f"Player metric: {encounter.player_metric.current} / "
                 f"{encounter.player_metric.threshold}\n"
                 f"Opponent metric: {encounter.opponent_metric.current} / "

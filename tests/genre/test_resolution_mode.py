@@ -59,14 +59,19 @@ def _conf_yaml(*, resolution_mode: str | None = None) -> str:
 # --- Enum -------------------------------------------------------------------
 
 
-def test_resolution_mode_enum_has_both_variants():
+def test_resolution_mode_enum_has_all_variants():
     assert ResolutionMode.beat_selection.value == "beat_selection"
     assert ResolutionMode.sealed_letter_lookup.value == "sealed_letter_lookup"
+    assert ResolutionMode.opposed_check.value == "opposed_check"
 
 
 def test_resolution_mode_round_trips_through_yaml():
     """Every variant survives a YAML serialize→parse cycle on its string value."""
-    for variant in (ResolutionMode.beat_selection, ResolutionMode.sealed_letter_lookup):
+    for variant in (
+        ResolutionMode.beat_selection,
+        ResolutionMode.sealed_letter_lookup,
+        ResolutionMode.opposed_check,
+    ):
         dumped = yaml.safe_dump({"resolution_mode": variant.value})
         loaded = yaml.safe_load(dumped)
         assert ResolutionMode(loaded["resolution_mode"]) is variant
@@ -123,14 +128,19 @@ def test_existing_genre_pack_loads_with_resolution_mode_field(slug: str):
 
 @pytest.mark.skipif(not _has_real_content(), reason="sidequest-content not on disk")
 @pytest.mark.parametrize("slug", ["elemental_harmony", "heavy_metal"])
-def test_packs_without_explicit_field_default_to_beat_selection(slug: str):
-    """Packs that don't declare resolution_mode get the legacy default."""
+def test_non_combat_confrontations_default_to_beat_selection(slug: str):
+    """Non-combat confrontations (negotiation, chase, parley) keep the
+    legacy single-roll-vs-DC ``beat_selection`` mode. Only combat
+    confrontations migrate to ``opposed_check`` (combat fairness, 2026-04-26).
+    """
     pack = load_pack(slug)
     assert pack.rules is not None
     for cdef in pack.rules.confrontations:
+        if cdef.category == "combat":
+            continue
         assert cdef.resolution_mode is ResolutionMode.beat_selection, (
-            f"{slug} confrontation {cdef.confrontation_type!r} unexpectedly "
-            f"set resolution_mode to {cdef.resolution_mode}"
+            f"{slug} non-combat confrontation {cdef.confrontation_type!r} "
+            f"unexpectedly set resolution_mode to {cdef.resolution_mode}"
         )
 
 

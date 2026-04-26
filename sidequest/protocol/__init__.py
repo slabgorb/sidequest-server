@@ -16,6 +16,7 @@ from sidequest.protocol.dice import (
     DieGroupResult,
     DieSides,
     DieSpec,
+    OpposedRollResult,
     RollOutcome,
     ThrowParams,
 )
@@ -141,6 +142,7 @@ __all__ = [
     "DieGroupResult",
     "DieSides",
     "DieSpec",
+    "OpposedRollResult",
     "RollOutcome",
     "ThrowParams",
     "DiceRequestMessage",
