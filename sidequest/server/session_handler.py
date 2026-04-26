@@ -1524,6 +1524,18 @@ class WebSocketSessionHandler:
             logger.warning("dice.dispatch_error error=%s", exc)
             return [_error_msg(f"Dice throw failed: {exc}")]
 
+        # Encounter just resolved via dice — sweep Scratch off the party
+        # (Playtest 2026-04-26 Bug #1: conditions never clear). The
+        # narrator-beat resolution path in narration_apply.py does the
+        # same sweep; both call sites must stay in sync.
+        if outcome.encounter_resolved:
+            from sidequest.server.status_clear import clear_scratch_on_scene_end
+            clear_scratch_on_scene_end(
+                snapshot,
+                reason="scene_end",
+                turn=snapshot.turn_manager.interaction,
+            )
+
         # Persist the resolved outcome so follow-up narrator runs can use it
         # (Rust parity: pending_roll_outcome). Stashed on session_data for
         # the next turn's TurnContext to pick up if needed.

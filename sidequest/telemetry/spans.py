@@ -1502,6 +1502,7 @@ SPAN_ENCOUNTER_METRIC_ADVANCE = "encounter.metric_advance"
 SPAN_ENCOUNTER_TAG_CREATED = "encounter.tag_created"
 SPAN_ENCOUNTER_TAG_BACKFIRE = "encounter.tag_backfire"
 SPAN_ENCOUNTER_STATUS_ADDED = "encounter.status_added"
+SPAN_ENCOUNTER_STATUS_CLEARED = "encounter.status_cleared"
 SPAN_ENCOUNTER_YIELD_RECEIVED = "encounter.yield_received"
 SPAN_ENCOUNTER_YIELD_RESOLVED = "encounter.yield_resolved"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
@@ -1740,6 +1741,29 @@ def encounter_status_added_span(
         SPAN_ENCOUNTER_STATUS_ADDED,
         attributes={"actor": actor, "text": text, "severity": severity,
                     "source": source, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_status_cleared_span(
+    *, actor: str, text: str, severity: str, reason: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Fires when a Status leaves a CreatureCore.statuses list.
+
+    ``reason`` is one of:
+      - ``"scene_end"``: Scratch auto-clear when an encounter resolves.
+      - ``"narrator_clear"``: explicit clear emitted in status_changes.
+      - ``"location_change"``: scene transition swept stale Scratches.
+
+    Without this span the GM panel can't tell whether a condition fell off
+    because of a real subsystem decision or because the narrator simply
+    stopped mentioning it. Per CLAUDE.md OTEL Observability Principle.
+    """
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_STATUS_CLEARED,
+        attributes={"actor": actor, "text": text, "severity": severity,
+                    "reason": reason, **attrs},
     ) as s:
         yield s
 
@@ -2211,6 +2235,7 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_TAG_CREATED,
         SPAN_ENCOUNTER_TAG_BACKFIRE,
         SPAN_ENCOUNTER_STATUS_ADDED,
+        SPAN_ENCOUNTER_STATUS_CLEARED,
         SPAN_ENCOUNTER_YIELD_RECEIVED,
         SPAN_ENCOUNTER_YIELD_RESOLVED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,

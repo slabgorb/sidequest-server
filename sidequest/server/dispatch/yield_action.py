@@ -100,6 +100,16 @@ def handle_yield(
     enc.resolved = True
     enc.outcome = "yielded"
 
+    # Yielded out of the encounter — scene ended for the party. Sweep
+    # Scratch (Playtest 2026-04-26 Bug #1). Wound/Scar persist; this is
+    # the same trigger as narrator-beat / dice-beat resolution.
+    from sidequest.server.status_clear import clear_scratch_on_scene_end
+    clear_scratch_on_scene_end(
+        snapshot,
+        reason="scene_end",
+        turn=snapshot.turn_manager.interaction,
+    )
+
     snapshot.pending_resolution_signal = ResolutionSignal(
         encounter_type=enc.encounter_type,
         outcome="yielded",
