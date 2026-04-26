@@ -266,6 +266,57 @@ def _rename_resumed_character_if_uuid(
     return renamed
 
 
+def _slugify_player_name(name: str) -> str:
+    """Mirror of ``sidequest_daemon.media.catalogs._slugify_name``.
+
+    Lowercase, collapse runs of whitespace to ``_``, drop punctuation except
+    ``_`` and ``-``. We mirror the daemon's rule rather than importing the
+    helper because the server doesn't depend on the daemon package — and
+    duplicating five lines is cheaper than introducing a cross-repo runtime
+    dependency for a single call site. The contract that matters is *output
+    equality* on the same input; the wiring test pins shared cases.
+    """
+    lowered = name.strip().lower()
+    collapsed = re.sub(r"\s+", "_", lowered)
+    return re.sub(r"[^a-z0-9_-]", "", collapsed)
+
+
+def _build_pc_descriptor(sd: _SessionData, pc_slug: str) -> dict | None:
+    """Project the requesting socket's PC into the descriptor blob the
+    daemon's ``CharacterCatalog.add_pc`` consumes.
+
+    Returns ``None`` when the snapshot has no Character to project (e.g.
+    early portraits fired before chargen confirmation, or saves that
+    never seated this ``player_id``). The compose path catalog-misses on
+    the ``pc:<slug>`` ref in that case and the daemon's safe wrapper falls
+    back to the prose-subject prompt — so omitting the descriptor is the
+    correct signal, not a silent fallback.
+
+    Appearance prose is built from ``(race, char_class)`` only — the
+    daemon replicates whatever we send to every LOD, and verbose backstory
+    prose would blow the 512-token budget on the SOLO LOD. Genre packs
+    that ship richer per-PC visuals can extend this later by widening
+    the descriptor schema; the daemon already accepts arbitrary keys.
+    """
+    snapshot = sd.snapshot
+    if not snapshot.characters:
+        return None
+    name = _resolve_acting_character_name(sd, None)
+    character = next(
+        (c for c in snapshot.characters if c.core.name == name),
+        None,
+    )
+    if character is None:
+        return None
+    appearance = f"a {character.race} {character.char_class}".strip()
+    return {
+        "id": pc_slug,
+        "appearance": appearance,
+        "default_pose": "",
+        "culture": None,
+    }
+
+
 def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object | None:
     """Build a typed protocol message from a persisted event row for replay.
 
@@ -4492,6 +4543,20 @@ class WebSocketSessionHandler:
         # the initials card. Other tiers ignore the field.
         if tier == "portrait":
             params["subject_name"] = sd.player_name
+            # Catalog-injected compose, slice 2: emit a structured `pc:<slug>`
+            # ref so the daemon's PromptComposer routes the portrait through
+            # the catalog instead of falling through to the prose-subject
+            # path. When the snapshot has a Character to project, we ship a
+            # descriptor blob alongside; the daemon's `_get_composer` calls
+            # `CharacterCatalog.add_pc` from it. Without a character (early
+            # portraits before chargen confirmation) we still ship the ref —
+            # the daemon's `try_compose_prompt_for` catches the catalog miss
+            # and falls back without crashing.
+            pc_slug = _slugify_player_name(sd.player_name)
+            params["characters"] = [f"pc:{pc_slug}"]
+            descriptor = _build_pc_descriptor(sd, pc_slug)
+            if descriptor is not None:
+                params["pc_descriptor"] = descriptor
 
         # Story 37-30 — record the (room_slug, player_id) mapping at
         # dispatch so the completion handler can route the IMAGE through

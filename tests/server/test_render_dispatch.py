@@ -105,6 +105,54 @@ def _make_session_data(player_id: str = "p-1") -> _SessionData:
     return sd
 
 
+def _make_session_data_with_pc(
+    player_name: str = "Rux",
+    player_id: str = "p-1",
+    *,
+    race: str = "human",
+    char_class: str = "ranger",
+) -> _SessionData:
+    """Variant of ``_make_session_data`` with a real Character on the snapshot
+    so the portrait-dispatch path can project descriptor fields. The seat
+    map is keyed by player_id → character.core.name so the resolver lands
+    on this character (not the legacy first-PC path)."""
+    from unittest.mock import MagicMock
+
+    from sidequest.game.character import Character, CreatureCore
+    from sidequest.game.session import GameSnapshot, TurnManager
+
+    character = Character(
+        core=CreatureCore(
+            name=player_name,
+            description="A weathered traveler.",
+            personality="Quiet, observant.",
+        ),
+        backstory="Born in the dust under the lamppost towns.",
+        char_class=char_class,
+        race=race,
+        pronouns="they/them",
+    )
+    snap = GameSnapshot(
+        genre_slug="mutant_wasteland",
+        world_slug="flickering_reach",
+        location="Tood's Dome — Nest Crack",
+        turn_manager=TurnManager(interaction=3),
+        characters=[character],
+        player_seats={player_id: player_name},
+    )
+    sd = _SessionData(
+        genre_slug="mutant_wasteland",
+        world_slug="flickering_reach",
+        player_name=player_name,
+        player_id=player_id,
+        snapshot=snap,
+        store=MagicMock(),
+        genre_pack=MagicMock(),
+        orchestrator=MagicMock(),
+    )
+    return sd
+
+
 def _make_handler_with_queue() -> tuple[WebSocketSessionHandler, asyncio.Queue]:
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/never-used"))
     queue: asyncio.Queue[object] = asyncio.Queue()
@@ -178,6 +226,129 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
     # daemon's compose conditional skips, leaving the legacy prose-subject
     # prompt as the input to Z-Image.
     assert req["params"]["world"] == "flickering_reach"
+
+
+@pytest.mark.asyncio
+async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 2 of catalog-injected compose wiring (paired with sidequest-daemon
+    PR registering runtime PCs from descriptor blobs).
+
+    For portrait dispatches the server must emit a structured ``pc:<slug>``
+    ref AND a descriptor blob so the daemon can ``add_pc`` into its
+    CharacterCatalog without a disk-side portrait_manifest entry. Without
+    this projection the daemon's compose path eats a CatalogMissError on
+    every portrait and falls through to the prose-subject prompt — i.e.
+    slice 2 is dead until both sides ship.
+
+    Pins:
+      * ``params["characters"] == ["pc:<slug>"]`` — the structured ref the
+        daemon's ``build_render_target`` consumes for tier=PORTRAIT.
+      * ``params["pc_descriptor"]`` carries id/appearance/default_pose/culture
+        the daemon's ``CharacterTokens`` constructor needs.
+      * Slug is lowercase, whitespace→``_``, drops punctuation — same rule
+        as ``catalogs._slugify_name`` so PCs registered at runtime collide-
+        check cleanly with NPCs loaded from disk.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "portrait_xyz.png"),
+            "width": 768,
+            "height": 1024,
+            "elapsed_ms": 3100,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data_with_pc(player_name="Roxie Two-Tongues")
+    result = NarrationTurnResult(
+        narration="Roxie's silhouette against the sodium lamps.",
+        visual_scene=VisualScene(
+            subject="a wiry rover lit by sodium lamps",
+            tier="portrait",
+            mood="moody",
+            tags=["nightside"],
+        ),
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+
+    # Drain the background render so the daemon receives the params.
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["params"]
+    assert params["tier"] == "portrait"
+    # Structured PC ref — slugified to mirror catalogs._slugify_name.
+    assert params["characters"] == ["pc:roxie_two-tongues"]
+    descriptor = params["pc_descriptor"]
+    assert descriptor["id"] == "roxie_two-tongues"
+    assert descriptor["appearance"], "appearance prose must be non-empty"
+    # ``human ranger`` — descriptor's appearance prose is built from
+    # (race, char_class) — that's what the daemon will replicate to every LOD.
+    assert "human" in descriptor["appearance"].lower()
+    assert "ranger" in descriptor["appearance"].lower()
+    # Slug rule: lowercase + collapse whitespace + drop punctuation except _/-.
+    # An apostrophe (e.g. "O'Connor") would be dropped, but here the test
+    # name has only the hyphen which is preserved.
+    assert "-" in descriptor["id"]
+
+
+@pytest.mark.asyncio
+async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the snapshot has no character to project (e.g. an early portrait
+    fired before chargen confirmation), the structured PC ref still ships —
+    the daemon's safe wrapper will catalog-miss + fall back. The descriptor
+    is omitted so we don't ship empty-prose tokens that would degrade the
+    fallback prompt."""
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "portrait_empty.png"),
+            "width": 768,
+            "height": 1024,
+            "elapsed_ms": 3000,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data(player_id="p-2")  # no characters on snapshot
+    result = NarrationTurnResult(
+        narration="...",
+        visual_scene=VisualScene(subject="a face in shadow", tier="portrait"),
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    params = daemon.requests[0]["params"]
+    # Ref still ships — daemon's try_compose handles the catalog miss.
+    assert params["characters"] == ["pc:rux"]
+    assert "pc_descriptor" not in params
 
 
 @pytest.mark.asyncio
