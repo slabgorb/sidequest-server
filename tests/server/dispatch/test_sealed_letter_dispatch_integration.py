@@ -475,6 +475,81 @@ def test_legacy_beat_selection_path_still_works(
 
 
 # ---------------------------------------------------------------------------
+# Bounded narrator_hints — only the LAST cell's hint survives across turns
+# ---------------------------------------------------------------------------
+
+
+def test_narrator_hints_does_not_accumulate_across_dogfight_turns(
+    space_opera_snap: tuple[GameSnapshot, GenrePack],
+) -> None:
+    """narrator_hints must hold only the LAST cell's hint, not the history.
+
+    Stale hints across turns bloat the narrator prompt and confuse the
+    narrator (turn 1's "merge" hint is wrong context for turn 5's
+    "knife fight"). ``encounter_render`` joins ``narrator_hints`` with
+    "; " and pastes that into the prompt every turn — accumulation here
+    silently degrades narration quality with each round.
+    """
+    snap, pack = space_opera_snap
+
+    # Turn 1: instantiate the dogfight encounter
+    _apply_narration_result_to_snapshot(
+        snap,
+        NarrationTurnResult(
+            narration="Merge.",
+            confrontation="dogfight",
+            npcs_present=[
+                NpcMention(name="Reaper", role="ace", side="opponent"),
+            ],
+        ),
+        player_name="Saber",
+        pack=pack,
+    )
+    enc = snap.encounter
+    assert enc is not None
+    assert enc.narrator_hints == []
+
+    # Three resolution turns with different maneuver pairs — each must
+    # OVERWRITE the previous hint, not append.
+    turn_pairs = [
+        ("straight", "straight"),
+        ("loop", "kill_rotation"),
+        ("bank", "loop"),
+    ]
+    captured_hints: list[str] = []
+    for player_maneuver, opponent_maneuver in turn_pairs:
+        _apply_narration_result_to_snapshot(
+            snap,
+            NarrationTurnResult(
+                narration="Maneuver.",
+                beat_selections=[
+                    BeatSelection(actor="Saber", beat_id=player_maneuver),
+                    BeatSelection(actor="Reaper", beat_id=opponent_maneuver),
+                ],
+            ),
+            player_name="Saber",
+            pack=pack,
+        )
+        # After each turn, exactly one hint — never accumulating.
+        assert len(enc.narrator_hints) == 1, (
+            f"narrator_hints accumulated to {len(enc.narrator_hints)} entries "
+            f"after maneuver pair ({player_maneuver}, {opponent_maneuver}); "
+            f"got {enc.narrator_hints!r}"
+        )
+        captured_hints.append(enc.narrator_hints[0])
+
+    # The last turn's hint is what survives — not turn 1's.
+    assert enc.narrator_hints == [captured_hints[-1]]
+    # Sanity: at least one transition produced a different hint string,
+    # otherwise the test wouldn't actually be proving "replace" semantics.
+    assert len(set(captured_hints)) > 1, (
+        f"all 3 turns produced identical hints {captured_hints!r}; pick "
+        f"maneuver pairs that map to distinct cells so the test guards "
+        f"against append-vs-replace drift"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Validation — unknown maneuver in sealed-letter beat surfaces loudly
 # ---------------------------------------------------------------------------
 

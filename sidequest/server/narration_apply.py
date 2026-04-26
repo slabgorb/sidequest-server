@@ -9,6 +9,8 @@ import logging
 
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.genre.models.pack import GenrePack
+from sidequest.genre.models.rules import ResolutionMode
+from sidequest.server.dispatch.sealed_letter import resolve_sealed_letter_lookup
 from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
 )
@@ -309,11 +311,7 @@ def _apply_narration_result_to_snapshot(
             # Sealed-letter resolution is EXCLUSIVE of the legacy beat loop —
             # because maneuver IDs collide with beat IDs by content design,
             # falling through to apply_beat would double-apply mechanics.
-            from sidequest.genre.models.rules import ResolutionMode
             if cdef.resolution_mode == ResolutionMode.sealed_letter_lookup:
-                from sidequest.server.dispatch.sealed_letter import (
-                    resolve_sealed_letter_lookup,
-                )
                 if cdef.interaction_table is None:
                     raise ValueError(
                         f"confrontation {enc.encounter_type!r} declares "
@@ -336,8 +334,17 @@ def _apply_narration_result_to_snapshot(
                 sl_outcome = resolve_sealed_letter_lookup(
                     enc, commits, cdef.interaction_table,
                 )
+                # Replace, do not append: only the most recent cell's hint
+                # is relevant context for the next narrator turn.
+                # ``narrator_hints`` is consumed by
+                # ``sidequest.agents.encounter_render`` which "; "-joins
+                # the list into the prompt — appending across turns would
+                # bloat the prompt with stale hints (turn 1's "merge"
+                # hint is misleading once turn 5 is a knife fight).
                 if sl_outcome.narration_hint:
-                    enc.narrator_hints.append(sl_outcome.narration_hint)
+                    enc.narrator_hints = [sl_outcome.narration_hint]
+                else:
+                    enc.narrator_hints = []
                 # Status-change processing further down still runs because
                 # we only short-circuit the beat-selection block, not the
                 # whole snapshot mutation phase.
