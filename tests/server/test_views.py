@@ -140,3 +140,27 @@ def test_backfill_last_narration_block_delegate_calls_module_function(
 
     assert result is sentinel
     assert captured == [(handler, "p:test")]
+
+
+def test_party_member_from_character_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._party_member_from_character
+    must delegate to views.party_member_from_character."""
+    from sidequest.server import views
+
+    sd, handler = session_handler_factory()
+    sentinel = object()
+    captured: list[tuple] = []
+
+    def _spy(h, sd_arg, character, player_id, player_name):
+        captured.append((h, sd_arg, character, player_id, player_name))
+        return sentinel
+
+    monkeypatch.setattr(views, "party_member_from_character", _spy)
+
+    fake_char = object()
+    result = handler._party_member_from_character(sd, fake_char, "p:abc", "Alice")
+
+    assert result is sentinel
+    assert captured == [(handler, sd, fake_char, "p:abc", "Alice")]

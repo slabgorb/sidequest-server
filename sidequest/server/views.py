@@ -280,3 +280,102 @@ def backfill_last_narration_block(
         )
     )
     return messages
+
+
+def party_member_from_character(
+    handler: WebSocketSessionHandler,
+    sd: _SessionData,
+    character: Character,
+    player_id: str,
+    player_name: str,
+):
+    """Build a single PartyMember from a Character object.
+
+    Factored out of :func:`build_session_start_party_status` so the
+    same construction can run for the requesting socket's PC and for
+    peer PCs that landed in the snapshot via multiplayer chargen.
+    """
+    from sidequest.protocol.models import (
+        CharacterSheetDetails,
+        InventoryItem,
+        InventoryPayload,
+        PartyMember,
+    )
+    from sidequest.protocol.types import NonBlankString
+    from sidequest.server.session_helpers import _resolve_location_display
+
+    # Inventory is stored as list[dict] in Phase 1 (creature_core.py:158).
+    # Filter to Carried items — identical to Rust's inventory.carried()
+    # iterator, which skips Stored/Dropped.
+    carried = [
+        item
+        for item in character.core.inventory.items
+        if str(item.get("state", "Carried")) == "Carried"
+    ]
+
+    stats = dict(character.stats)
+    abilities = [a.name for a in character.abilities]
+    equipment = [
+        f"{item['name']} [equipped]" if item.get("equipped") else item["name"]
+        for item in carried
+    ]
+
+    sheet = CharacterSheetDetails(
+        race=NonBlankString(character.race),
+        stats=stats,
+        abilities=abilities,
+        backstory=NonBlankString(character.backstory or "(no backstory)"),
+        personality=NonBlankString(character.core.personality),
+        pronouns=NonBlankString(character.pronouns) if character.pronouns else None,
+        equipment=equipment,
+    )
+
+    # Currency noun from inventory.yaml::currency.name (pingpong
+    # 2026-04-24 fantasy-leak bug). None → UI neutral fallback;
+    # no silent default to "gold".
+    currency_name: str | None = None
+    if sd.genre_pack.inventory is not None and sd.genre_pack.inventory.currency is not None:
+        currency_name = sd.genre_pack.inventory.currency.name
+
+    inventory_payload = InventoryPayload(
+        items=[
+            InventoryItem(
+                name=NonBlankString(str(item["name"])),
+                # Protocol alias: "type". Dicts carry "category" from
+                # the loadout encoder; map and keep a non-blank string.
+                **{"type": str(item.get("category", "equipment") or "equipment")},  # type: ignore[arg-type]
+                equipped=bool(item.get("equipped", False)),
+                quantity=int(item.get("quantity", 1)),
+                description=NonBlankString(str(item.get("description") or item["name"])),
+            )
+            for item in carried
+        ],
+        gold=character.core.inventory.gold,
+        currency_name=currency_name,
+    )
+
+    location_nbs: NonBlankString | None = None
+    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, sd.snapshot.location)
+    if loc_display:
+        try:
+            location_nbs = NonBlankString(loc_display)
+        except Exception:
+            location_nbs = None
+
+    class_nbs = NonBlankString(character.char_class or "Adventurer")
+    char_name_nbs = NonBlankString(character.core.name)
+
+    return PartyMember(
+        player_id=NonBlankString(player_id or "anon"),
+        name=NonBlankString(player_name or "Player"),
+        character_name=char_name_nbs,
+        current_hp=character.core.edge.current,
+        max_hp=character.core.edge.max,
+        statuses=[s.text for s in character.core.statuses],
+        **{"class": class_nbs},  # type: ignore[arg-type]
+        level=character.core.level,
+        portrait_url=None,
+        current_location=location_nbs,
+        sheet=sheet,
+        inventory=inventory_payload,
+    )
