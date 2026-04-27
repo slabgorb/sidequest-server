@@ -403,8 +403,11 @@ class TestLoreRagWiring:
             def _capture_publish(kind: str, payload: dict[str, Any], **kwargs: Any) -> None:
                 watcher_calls.append((kind, dict(payload)))
 
+            # Phase 3 of session_handler decomposition moved the dispatch
+            # body into sidequest.server.dispatch.lore_embed; the skip-path
+            # _watcher_publish now resolves through that module's namespace.
             monkeypatch.setattr(
-                "sidequest.server.session_handler._watcher_publish",
+                "sidequest.server.dispatch.lore_embed._watcher_publish",
                 _capture_publish,
             )
 

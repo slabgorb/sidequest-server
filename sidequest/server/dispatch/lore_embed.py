@@ -109,3 +109,46 @@ async def run_worker(
         },
         component="lore",
     )
+
+
+def dispatch_worker(handler: WebSocketSessionHandler, sd: _SessionData) -> None:
+    """Spawn a background embed worker for any newly-added lore.
+
+    Fire-and-forget, but lifecycle-tracked. The worker itself checks
+    :meth:`DaemonClient.is_available` before opening any connection
+    and returns early with ``skipped_daemon_unavailable=True`` when
+    the sidecar is absent — matching the render-dispatch graceful
+    degradation pattern.
+
+    Double-dispatch gate: if a previous worker for this session is
+    still running, skip this turn's dispatch. The next turn will pick
+    up the remaining pending fragments. This prevents two concurrent
+    workers from racing at the ``await client.embed()`` yield point
+    and double-incrementing the retry counter on the same fragment.
+    """
+    tracer = trace.get_tracer("sidequest.server.session_handler")
+    previous = sd.embed_task
+    if previous is not None and not previous.done():
+        # Emit a span for the skip so the GM panel's OTEL audit trail
+        # shows it alongside the worker's own ``lore_embedding.worker``
+        # span. Watcher event stays as well for the live state_transition
+        # stream.
+        with tracer.start_as_current_span("lore_embedding.dispatch_skipped") as skip_span:
+            skip_span.set_attribute("lore.skip_reason", "worker_still_running")
+            skip_span.set_attribute("lore.turn_number", sd.snapshot.turn_manager.interaction)
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "lore_embedding",
+                "op": "skipped",
+                "reason": "worker_still_running",
+                "turn_number": sd.snapshot.turn_manager.interaction,
+            },
+            component="lore",
+        )
+        return
+    pending = sd.lore_store.pending_embedding_ids(max_retries=3)
+    if not pending:
+        return
+    turn_number = sd.snapshot.turn_manager.interaction
+    sd.embed_task = asyncio.create_task(run_worker(handler, sd, len(pending), turn_number))
