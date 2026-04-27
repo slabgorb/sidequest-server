@@ -29,7 +29,6 @@ from sidequest.game.persistence import GameMode
 from sidequest.protocol.messages import PlayerActionMessage, PlayerActionPayload
 from sidequest.protocol.types import NonBlankString
 
-
 # ---------------------------------------------------------------------------
 # AC1 — barrier fires only on playing peers (the evropi scenario, wire-first)
 # ---------------------------------------------------------------------------
@@ -168,9 +167,17 @@ async def test_barrier_fires_after_chargen_peers_abandon_via_disconnect(
         ],
         active_player=("rux", "Rux"),
     )
+    # Test precondition: rux is PLAYING; the other three are in CHARGEN
+    # (they connected and claimed seats but haven't committed characters).
+    # The conftest fixture auto-promotes seated peers to PLAYING for
+    # backward compat with existing post-chargen barrier tests, so we
+    # roll the non-rux peers back to CHARGEN explicitly here — that is
+    # the actual evropi situation we want to test.
     room._seated["rux"].state = LobbyState.PLAYING  # noqa: SLF001
-    # Other three are in default post-seat state (CHARGEN). The fixture wires
-    # their socket ids as sock-0..sock-3.
+    for pid in ("prot_thokk", "hant", "pumblestone"):
+        room._seated[pid].state = LobbyState.CHARGEN  # noqa: SLF001
+    # Now disconnect the three CHARGEN peers — sock ids are sock-0..sock-3
+    # in fixture order.
     for sid_idx, pid in enumerate(("rux", "prot_thokk", "hant", "pumblestone")):
         if pid == "rux":
             continue

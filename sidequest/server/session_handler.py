@@ -1140,6 +1140,13 @@ class WebSocketSessionHandler:
             # Seat the player in the room (thread-safe, idempotent)
             if self._room is not None:
                 self._room.seat(player_id, character_slot=character_slot)
+                # Story 45-2: returning player — handler is already in
+                # _State.Playing because the connect flow detected an
+                # existing character and skipped chargen. Promote the
+                # fresh seat directly to PLAYING so the turn barrier
+                # counts them on the next submission.
+                if self._state is _State.Playing:
+                    self._room.transition_to_playing(player_id)
                 logger.info(
                     "session.player_seated player_id=%s character_slot=%s slug=%s",
                     player_id,
@@ -2984,6 +2991,13 @@ class WebSocketSessionHandler:
         # first action lost the save-state flag.
         self._state = _State.Playing
 
+        # Story 45-2: chargen committed → seat transitions CHARGEN → PLAYING
+        # so the turn barrier counts this peer. No-op if no room (solo
+        # path with no MP room) or if the peer was already PLAYING (safe
+        # under double-confirmation).
+        if self._room is not None:
+            self._room.transition_to_playing(player_id)
+
         sd.builder = None
         # ADR-014 / ADR-078: HP was removed in favor of EdgePool (composure).
         # Log surface-level mechanical state as edge=current/max so playtest
@@ -3219,9 +3233,36 @@ class WebSocketSessionHandler:
                 acting_name,
                 action,
             )
-            snapshot.turn_manager.set_player_count(self._room.seated_player_count())
+            # Story 45-2: barrier counts PLAYING peers only — chargen /
+            # abandoned seats do not block. The seated count is captured
+            # alongside for the GM panel's lie-detector (Sebastien sees
+            # the lobby_participant_count vs active_turn_count divergence).
+            playing_count = self._room.playing_player_count()
+            seated_count = self._room.seated_player_count()
+            snapshot.turn_manager.set_player_count(playing_count)
             snapshot.turn_manager.submit_input(sd.player_id)
-            if snapshot.turn_manager.get_phase() != TurnPhase.InputCollection:
+            submitted_count = len(
+                object.__getattribute__(snapshot.turn_manager, "_submitted")
+            )
+            barrier_fired = snapshot.turn_manager.get_phase() != TurnPhase.InputCollection
+            # Story 45-2 AC4: barrier.wait fires on EVERY barrier check —
+            # not only on barrier_fired transitions. A wait that never
+            # fires is exactly the bug being fixed; if the span only
+            # emits on fire, the GM panel can't see why the wait persists.
+            _watcher_publish(
+                "barrier.wait",
+                {
+                    "slug": self._room.slug,
+                    "interaction_id": snapshot.turn_manager.interaction,
+                    "lobby_participant_count": seated_count,
+                    "active_turn_count": playing_count,
+                    "submitted_count": submitted_count if not barrier_fired else playing_count,
+                    "fired": barrier_fired,
+                    "submitter_player_id": sd.player_id,
+                },
+                component="multiplayer",
+            )
+            if barrier_fired:
                 # Barrier just fired on this submission — emit before the
                 # dispatch CAS so a failed dispatch still leaves the
                 # barrier-fired event visible.
@@ -3230,13 +3271,13 @@ class WebSocketSessionHandler:
                     {
                         "slug": self._room.slug,
                         "round": snapshot.turn_manager.round,
-                        "player_count": self._room.seated_player_count(),
+                        "player_count": playing_count,
                         "submitter_player_id": sd.player_id,
                     },
                     component="multiplayer",
                 )
             if snapshot.turn_manager.get_phase() == TurnPhase.InputCollection:
-                # Still waiting on other seated players. Broadcasts already
+                # Still waiting on other PLAYING players. Broadcasts already
                 # delivered turn_status_active above; the dispatcher will
                 # handle the actual narration when the last submission arrives.
                 return []

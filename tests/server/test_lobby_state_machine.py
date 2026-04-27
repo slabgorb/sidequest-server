@@ -26,12 +26,9 @@ See `sprint/context/context-story-45-2.md` for the full design.
 """
 from __future__ import annotations
 
-import pytest
-
 import sidequest.telemetry.watcher_hub as _hub
 from sidequest.game.persistence import GameMode
 from sidequest.server.session_room import SessionRoom
-
 
 # ---------------------------------------------------------------------------
 # Enum + new predicates (AC2 surface)
