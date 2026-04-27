@@ -31,3 +31,43 @@ def test_views_module_exposes_required_functions() -> None:
     assert hasattr(views, "party_member_from_character")
     assert hasattr(views, "resolve_self_character")
     assert hasattr(views, "build_session_start_party_status")
+
+
+def test_is_hidden_status_list_delegate_calls_module_function(monkeypatch) -> None:
+    """Wiring guard — WebSocketSessionHandler._is_hidden_status_list
+    must delegate to views.is_hidden_status_list."""
+    from sidequest.game.status import Status, StatusSeverity
+    from sidequest.server import views
+    from sidequest.server.session_handler import WebSocketSessionHandler
+
+    captured: list[list[Status]] = []
+    sentinel = object()
+
+    def _spy(statuses):
+        captured.append(statuses)
+        return sentinel
+
+    monkeypatch.setattr(views, "is_hidden_status_list", _spy)
+
+    statuses = [Status(text="hidden", severity=StatusSeverity.Scratch)]
+    result = WebSocketSessionHandler._is_hidden_status_list(statuses)
+
+    assert result is sentinel
+    assert captured == [statuses]
+
+
+def test_is_hidden_status_list_matches_hidden_tokens() -> None:
+    """Behavioral test — each of the four hidden tokens triggers a True
+    result; an unrelated token returns False; an empty list returns False."""
+    from sidequest.game.status import Status, StatusSeverity
+    from sidequest.server import views
+
+    assert views.is_hidden_status_list([]) is False
+    assert views.is_hidden_status_list([Status(text="poisoned", severity=StatusSeverity.Scratch)]) is False
+    for token in ("hidden", "invisible", "stealth", "concealed"):
+        assert views.is_hidden_status_list([Status(text=token, severity=StatusSeverity.Scratch)]) is True
+    # Case-insensitive whole-token (the lowercase comparison is the
+    # contract; substring matches are explicitly out of scope per
+    # tests/server/test_session_handler_view.py:216).
+    assert views.is_hidden_status_list([Status(text="HIDDEN", severity=StatusSeverity.Scratch)]) is True
+    assert views.is_hidden_status_list([Status(text="hiddenly", severity=StatusSeverity.Scratch)]) is False

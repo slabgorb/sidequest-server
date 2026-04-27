@@ -681,27 +681,16 @@ class WebSocketSessionHandler:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
-    # Status tokens the engine uses to mark a creature as non-visible for
-    # projection purposes. Compared case-insensitively against
-    # ``CreatureCore.statuses`` via **whole-token membership** — substring
-    # matching produced false-positives like ``"unhidden"`` or
-    # ``"hidden_buff_removed"`` silently masking characters. Genre packs
-    # that mint stealth/invisibility mechanics must emit statuses that are
-    # exactly one of these tokens (case-insensitive) for the projection
-    # filter's ``visible_to()`` to mask the creature. Kept conservative:
-    # a missing/unknown marker must never unmask a target.
-    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset(
-        {
-            "hidden",
-            "invisible",
-            "stealth",
-            "concealed",
-        }
-    )
-
     @classmethod
     def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
-        return any(s.text.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
+        """Whole-token hidden-status check. Delegates to ``views.is_hidden_status_list``.
+
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+        """
+        from sidequest.server import views
+
+        return views.is_hidden_status_list(statuses)
 
     def _build_game_state_view(self) -> SessionGameStateView:
         """Read-only view of current session state for the projection filter.
