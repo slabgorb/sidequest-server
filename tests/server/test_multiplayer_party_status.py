@@ -7,13 +7,14 @@ Covers the Phase 2 fixes from the 2026-04-24 Mawdeep playtest:
   ``snapshot.characters[0]`` which is arbitrary across commit order).
 - ``_build_turn_context`` builds ``party_peers`` excluding the acting
   PC, so the narrator no longer absorbs the peer as a hireling.
-- ``_build_session_start_party_status`` enumerates every PC in the
-  snapshot, mapping each character_slot back to its owning player_id
-  via the room.
+- ``views.build_session_start_party_status(handler, ...)`` enumerates
+  every PC in the snapshot, mapping each character_slot back to its
+  owning player_id via the room.
 
 These three together close the gap behind the playtest bugs:
 "Party panel only shows self" and "Narrator absorbs peer as hireling".
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,6 +24,7 @@ from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, EdgePool, Inventory
 from sidequest.game.persistence import GameMode
 from sidequest.game.session import GameSnapshot
+from sidequest.server import views
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.session_handler import (
@@ -33,9 +35,7 @@ from sidequest.server.session_handler import (
 )
 from sidequest.server.session_room import SessionRoom
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _char(name: str) -> Character:
@@ -140,7 +140,7 @@ def test_party_status_enumerates_all_pcs_in_multiplayer() -> None:
     room.seat("p:shirley", character_slot="Shirley")
     handler._room = room
 
-    msg = handler._build_session_start_party_status(sd, shirley, "p:shirley")
+    msg = views.build_session_start_party_status(handler, sd, shirley, "p:shirley")
     members = msg.payload.members
     # Self first, then peer
     assert [str(m.character_name) for m in members] == ["Shirley", "Laverne"]
@@ -167,7 +167,7 @@ def test_party_status_falls_back_to_synthetic_peer_id_when_no_seat() -> None:
     room.seat("p:shirley", character_slot="Shirley")
     handler._room = room
 
-    msg = handler._build_session_start_party_status(sd, shirley, "p:shirley")
+    msg = views.build_session_start_party_status(handler, sd, shirley, "p:shirley")
     members = msg.payload.members
     laverne_member = next(m for m in members if str(m.character_name) == "Laverne")
     assert str(laverne_member.player_id) == "peer:Laverne"
@@ -179,7 +179,7 @@ def test_party_status_solo_returns_single_member() -> None:
     sd = _sd("p:solo", "Solo", [pc])
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
-    msg = handler._build_session_start_party_status(sd, pc, "p:solo")
+    msg = views.build_session_start_party_status(handler, sd, pc, "p:solo")
     assert len(msg.payload.members) == 1
     assert str(msg.payload.members[0].character_name) == "Solo"
 
@@ -197,7 +197,7 @@ def test_resolve_self_character_uses_player_seats_binding() -> None:
     sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
-    resolved = handler._resolve_self_character(sd)
+    resolved = views.resolve_self_character(handler, sd)
     assert resolved is shirley
     assert resolved is not laverne
 
@@ -221,7 +221,7 @@ def test_resolve_self_character_uses_room_seat_when_player_seats_empty() -> None
     room.seat("p:shirley", character_slot="Shirley")
     handler._room = room
 
-    resolved = handler._resolve_self_character(sd)
+    resolved = views.resolve_self_character(handler, sd)
     assert resolved is shirley
 
 
@@ -233,7 +233,7 @@ def test_resolve_self_character_returns_none_for_legacy_solo() -> None:
     sd = _sd("p:solo", "Solo", [pc])
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
-    assert handler._resolve_self_character(sd) is None
+    assert views.resolve_self_character(handler, sd) is None
 
 
 def test_party_status_uses_resolver_when_caller_passes_resolved_character() -> None:
@@ -260,16 +260,13 @@ def test_party_status_uses_resolver_when_caller_passes_resolved_character() -> N
     handler._room = room
 
     # Mimic the fixed call-site pattern: resolver-or-fallback.
-    self_char = (
-        handler._resolve_self_character(sd)
-        or sd.snapshot.characters[0]
-    )
+    self_char = views.resolve_self_character(handler, sd) or sd.snapshot.characters[0]
     assert self_char is shirley, (
         "Resolver must pick Shirley for sd.player_id=p:shirley — picking "
         "characters[0] (Laverne) is the bug we're regressing against"
     )
 
-    msg = handler._build_session_start_party_status(sd, self_char, "p:shirley")
+    msg = views.build_session_start_party_status(handler, sd, self_char, "p:shirley")
     members = msg.payload.members
     # Self comes first; self's character_name and player_id must agree.
     self_member = members[0]
@@ -281,9 +278,7 @@ def test_party_status_uses_resolver_when_caller_passes_resolved_character() -> N
     assert str(peer_member.player_id) == "p:laverne"
     # No two members share a player_id (the bug produced colliding ids).
     pids = [str(m.player_id) for m in members]
-    assert len(set(pids)) == len(pids), (
-        f"Duplicate player_id in PartyMember frame: {pids}"
-    )
+    assert len(set(pids)) == len(pids), f"Duplicate player_id in PartyMember frame: {pids}"
 
 
 # ---------------------------------------------------------------------------

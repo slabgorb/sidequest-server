@@ -3,7 +3,7 @@
 Reviewer finding for Task 1: the SessionGameStateView zones/hidden_characters
 fields are useless if the predicate path can't reach them. This test drives
 ``ComposedFilter.project()`` with a ``SessionGameStateView`` produced by
-the production ``WebSocketSessionHandler._build_game_state_view()`` against
+the production ``views.build_game_state_view(handler)`` against
 a ``visible_to(target)`` rule. Before the fix, ``player_id_to_character``
 was empty, so ``view.character_of(player_id)`` returned ``None`` and
 ``_visible_to`` short-circuited to ``False`` before the new zone data was
@@ -20,6 +20,7 @@ from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection.rules import load_rules_from_yaml_str
 from sidequest.game.session import Npc
+from sidequest.server import views
 
 
 def _make_character(name: str, *, statuses: list[str] | None = None) -> Character:
@@ -71,7 +72,7 @@ def test_visible_to_round_trip_co_located_viewer_sees_target(session_fixture) ->
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.npcs.append(_make_npc("Barkeep", location="Main Hall"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
     filt = ComposedFilter(rules=_rules_redact_target_unless_visible(), pack_slug="test")
 
     envelope = MessageEnvelope(
@@ -99,7 +100,7 @@ def test_visible_to_round_trip_different_zone_redacts(session_fixture) -> None:
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.npcs.append(_make_npc("Barkeep", location="The Tavern"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
     filt = ComposedFilter(rules=_rules_redact_target_unless_visible(), pack_slug="test")
 
     envelope = MessageEnvelope(
@@ -120,7 +121,7 @@ def test_visible_to_round_trip_unknown_player_redacts(session_fixture) -> None:
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.npcs.append(_make_npc("Barkeep", location="Main Hall"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
     filt = ComposedFilter(rules=_rules_redact_target_unless_visible(), pack_slug="test")
 
     envelope = MessageEnvelope(
@@ -143,7 +144,7 @@ def test_visible_to_round_trip_hidden_target_redacts(session_fixture) -> None:
         _make_npc("ShadowThief", location="Main Hall", statuses=["invisible"]),
     )
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
     filt = ComposedFilter(rules=_rules_redact_target_unless_visible(), pack_slug="test")
 
     envelope = MessageEnvelope(
