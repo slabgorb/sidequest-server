@@ -117,3 +117,26 @@ def test_status_effects_by_player_delegate_calls_module_function(
 
     assert result is sentinel
     assert captured == [handler]
+
+
+def test_backfill_last_narration_block_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._backfill_last_narration_block
+    must delegate to views.backfill_last_narration_block."""
+    from sidequest.server import views
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+    sentinel: list[object] = []
+
+    def _spy(h, *, player_id):
+        captured.append((h, player_id))
+        return sentinel
+
+    monkeypatch.setattr(views, "backfill_last_narration_block", _spy)
+
+    result = handler._backfill_last_narration_block(player_id="p:test")
+
+    assert result is sentinel
+    assert captured == [(handler, "p:test")]

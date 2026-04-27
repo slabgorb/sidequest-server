@@ -195,3 +195,88 @@ def status_effects_by_player(handler: WebSocketSessionHandler) -> dict[str, list
     # first character. Any connected non-active player_id gets []
     # until MP seat-assignment plumbs a real mapping.
     return {sd.player_id: [s.text for s in snapshot.characters[0].core.statuses]}
+
+
+def backfill_last_narration_block(
+    handler: WebSocketSessionHandler,
+    *,
+    player_id: str,
+) -> list[object]:
+    """Fetch the most recent NARRATION (and its preceding CHAPTER_MARKER,
+    if one was emitted without an intervening narration) from the event
+    log and re-emit them as cached-projection messages — regardless of
+    ``last_seen_seq``.
+
+    Used to paint the narrative pane on a fresh-browser slug-resume
+    where the normal replay would otherwise be empty because the
+    client's persisted ``last_seen_seq`` already covers the tail.
+
+    Returns the messages in emit order (CHAPTER_MARKER first if present,
+    then NARRATION). Silently returns an empty list when no narration
+    has been logged, when the cache has no include=True decision for
+    the relevant event, or when the event log is unavailable. The
+    caller is responsible for updating replay telemetry.
+    """
+    from sidequest.server.session_handler import _build_message_for_kind
+
+    if handler._event_log is None or handler._projection_cache is None:
+        return []
+    store = handler._event_log.store
+    with store._conn:
+        narration_row = store._conn.execute(
+            "SELECT seq, kind, payload_json FROM events "
+            "WHERE kind = 'NARRATION' "
+            "ORDER BY seq DESC LIMIT 1",
+        ).fetchone()
+    if narration_row is None:
+        return []
+    narration_seq = int(narration_row[0])
+
+    with store._conn:
+        chapter_row = store._conn.execute(
+            "SELECT seq, kind, payload_json FROM events "
+            "WHERE kind = 'CHAPTER_MARKER' AND seq < ? "
+            "  AND seq > COALESCE("
+            "    (SELECT MAX(seq) FROM events "
+            "     WHERE kind = 'NARRATION' AND seq < ?),"
+            "    0"
+            "  ) "
+            "ORDER BY seq DESC LIMIT 1",
+            (narration_seq, narration_seq),
+        ).fetchone()
+
+    def _cached_payload(seq: int) -> str | None:
+        with store._conn:
+            row = store._conn.execute(
+                "SELECT include, payload_json FROM projection_cache "
+                "WHERE player_id = ? AND event_seq = ?",
+                (player_id, seq),
+            ).fetchone()
+        if row is None or not bool(row[0]) or row[1] is None:
+            return None
+        return str(row[1])
+
+    messages: list[object] = []
+    if chapter_row is not None:
+        chapter_seq = int(chapter_row[0])
+        chapter_payload = _cached_payload(chapter_seq)
+        if chapter_payload is not None:
+            messages.append(
+                _build_message_for_kind(
+                    kind="CHAPTER_MARKER",
+                    payload_json=chapter_payload,
+                    seq=chapter_seq,
+                )
+            )
+
+    narration_payload = _cached_payload(narration_seq)
+    if narration_payload is None:
+        return messages  # Can't emit bare chapter without its narration
+    messages.append(
+        _build_message_for_kind(
+            kind="NARRATION",
+            payload_json=narration_payload,
+            seq=narration_seq,
+        )
+    )
+    return messages
