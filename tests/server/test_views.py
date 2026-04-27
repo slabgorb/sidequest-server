@@ -71,3 +71,26 @@ def test_is_hidden_status_list_matches_hidden_tokens() -> None:
     # tests/server/test_session_handler_view.py:216).
     assert views.is_hidden_status_list([Status(text="HIDDEN", severity=StatusSeverity.Scratch)]) is True
     assert views.is_hidden_status_list([Status(text="hiddenly", severity=StatusSeverity.Scratch)]) is False
+
+
+def test_build_game_state_view_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._build_game_state_view must
+    delegate to views.build_game_state_view."""
+    from sidequest.server import views
+
+    sd, handler = session_handler_factory()
+    captured: list[object] = []
+    sentinel = object()
+
+    def _spy(h):
+        captured.append(h)
+        return sentinel
+
+    monkeypatch.setattr(views, "build_game_state_view", _spy)
+
+    result = handler._build_game_state_view()
+
+    assert result is sentinel
+    assert captured == [handler]
