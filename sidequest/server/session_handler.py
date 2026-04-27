@@ -64,7 +64,6 @@ from sidequest.game.persistence import (
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
-from sidequest.game.projection.view import SessionGameStateView
 from sidequest.game.projection_filter import FilterDecision, ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
@@ -79,7 +78,6 @@ from sidequest.game.shared_world_delta import (
     SharedWorldDelta,
     build_shared_world_delta,
 )
-from sidequest.game.status import Status
 from sidequest.game.turn import TurnPhase
 from sidequest.game.world_materialization import (
     CampaignMaturity,
@@ -112,7 +110,6 @@ from sidequest.protocol.messages import (
     NarrationEndPayload,
     NarrationMessage,
     NarrationPayload,
-    PartyStatusMessage,
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryMessage,
@@ -129,7 +126,6 @@ from sidequest.protocol.messages import (
 from sidequest.protocol.models import (
     Footnote,
     PartyFormationWireEntry,
-    PartyMember,
     StateDelta,
 )
 from sidequest.protocol.types import NonBlankString
@@ -139,6 +135,7 @@ from sidequest.server.dispatch.chargen_summary import render_confirmation_summar
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
+from sidequest.server import views
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
@@ -676,56 +673,6 @@ class WebSocketSessionHandler:
     def current_room(self) -> SessionRoom | None:
         """Return the room this handler is currently registered in, or None."""
         return self._room
-
-    @classmethod
-    def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
-        """Whole-token hidden-status check. Delegates to ``views.is_hidden_status_list``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.is_hidden_status_list(statuses)
-
-    def _build_game_state_view(self) -> SessionGameStateView:
-        """Read-only view of current session state. Delegates to ``views.build_game_state_view``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.build_game_state_view(self)
-
-    def status_effects_by_player(self) -> dict[str, list[str]]:
-        """Per-player status-effect tokens. Delegates to ``views.status_effects_by_player``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.status_effects_by_player(self)
-
-    # ------------------------------------------------------------------
-    # Slug-resume narrative tail backfill (pingpong 2026-04-24)
-    # ------------------------------------------------------------------
-
-    def _backfill_last_narration_block(
-        self,
-        *,
-        player_id: str,
-    ) -> list[object]:
-        """Backfill last narration block on slug-resume.
-        Delegates to ``views.backfill_last_narration_block``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.backfill_last_narration_block(self, player_id=player_id)
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -1598,7 +1545,7 @@ class WebSocketSessionHandler:
                     event_log=self._event_log,
                     cache=self._projection_cache,
                     filter_=self._projection_filter,
-                    view=self._build_game_state_view(),
+                    view=views.build_game_state_view(self),
                     player_id=player_id,
                 )
 
@@ -1655,7 +1602,7 @@ class WebSocketSessionHandler:
                 # Legacy fallback: no cache available, filter live (may diverge
                 # from cached projections in edge cases; v1 accepts this).
                 missed = self._event_log.read_since(since_seq=self._last_seen_seq)
-                view = self._build_game_state_view()
+                view = views.build_game_state_view(self)
                 for event_row in missed:
                     envelope = MessageEnvelope(
                         kind=event_row.kind,
@@ -1691,7 +1638,8 @@ class WebSocketSessionHandler:
             # render. Bounded to 2 messages to avoid dumping a long replay.
             tail_backfill_count = 0
             if _replay_kinds.get("NARRATION", 0) == 0 and self._projection_cache is not None:
-                tail_msgs = self._backfill_last_narration_block(
+                tail_msgs = views.backfill_last_narration_block(
+                    self,
                     player_id=self._current_player_id,
                 )
                 if tail_msgs:
@@ -1808,12 +1756,12 @@ class WebSocketSessionHandler:
                 if snapshot.characters:
                     try:
                         self_char = (
-                            self._resolve_self_character(self._session_data)
+                            views.resolve_self_character(self, self._session_data)
                             or snapshot.characters[0]
                         )
                         bootstrap_msgs.append(
-                            self._build_session_start_party_status(
-                                self._session_data, self_char, player_id
+                            views.build_session_start_party_status(
+                                self, self._session_data, self_char, player_id
                             )
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -2085,11 +2033,12 @@ class WebSocketSessionHandler:
             if snapshot.characters:
                 try:
                     self_char = (
-                        self._resolve_self_character(self._session_data) or snapshot.characters[0]
+                        views.resolve_self_character(self, self._session_data)
+                        or snapshot.characters[0]
                     )
                     outbound.append(
-                        self._build_session_start_party_status(
-                            self._session_data, self_char, player_id
+                        views.build_session_start_party_status(
+                            self, self._session_data, self_char, player_id
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -2795,7 +2744,9 @@ class WebSocketSessionHandler:
         # to peers so they see the new arrival without waiting for their
         # own turn-end refresh.
         try:
-            party_status_msg = self._build_session_start_party_status(sd, character, player_id)
+            party_status_msg = views.build_session_start_party_status(
+                self, sd, character, player_id
+            )
             out.append(party_status_msg)
             from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
                 GameMode as _GameMode,
@@ -3594,9 +3545,11 @@ class WebSocketSessionHandler:
                             # data with the requesting socket's player_id and the UI
                             # renders the wrong PC as "(YOU)" — playtest 2026-04-25
                             # "Tab 2 sees Laverne (YOU)".
-                            self_char = self._resolve_self_character(sd) or snapshot.characters[0]
-                            party_status = self._build_session_start_party_status(
-                                sd, self_char, sd.player_id
+                            self_char = (
+                                views.resolve_self_character(self, sd) or snapshot.characters[0]
+                            )
+                            party_status = views.build_session_start_party_status(
+                                self, sd, self_char, sd.player_id
                             )
                             outbound.append(party_status)
                             logger.info(
@@ -4689,48 +4642,6 @@ class WebSocketSessionHandler:
             },
             component="render",
         )
-
-    def _party_member_from_character(
-        self,
-        sd: _SessionData,
-        character: Character,
-        player_id: str,
-        player_name: str,
-    ) -> PartyMember:
-        """Build a single PartyMember. Delegates to ``views.party_member_from_character``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.party_member_from_character(self, sd, character, player_id, player_name)
-
-    def _resolve_self_character(self, sd: _SessionData) -> Character | None:
-        """Find the Character belonging to ``sd.player_id``. Delegates to
-        ``views.resolve_self_character``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.resolve_self_character(self, sd)
-
-    def _build_session_start_party_status(
-        self,
-        sd: _SessionData,
-        character: Character,
-        player_id: str,
-    ) -> PartyStatusMessage:
-        """PARTY_STATUS frame at chargen end. Delegates to ``views.build_session_start_party_status``.
-
-        Phase 2 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import views
-
-        return views.build_session_start_party_status(self, sd, character, player_id)
 
 
 # ---------------------------------------------------------------------------

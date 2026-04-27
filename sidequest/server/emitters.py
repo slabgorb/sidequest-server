@@ -118,7 +118,9 @@ def emit_event(
             seq = row.seq
 
             if room is not None and projection_filter is not None:
-                view = handler._build_game_state_view()
+                from sidequest.server import views
+
+                view = views.build_game_state_view(handler)
                 envelope = MessageEnvelope(
                     kind=row.kind,
                     payload_json=row.payload_json,
@@ -127,7 +129,7 @@ def emit_event(
                 # G6: status-effect perception overlay. Built once per
                 # event (not per recipient) — snapshot statuses don't
                 # change mid-fanout.
-                status_effects = handler.status_effects_by_player()
+                status_effects = views.status_effects_by_player(handler)
 
                 # G8: route through the shared write-split helper so the
                 # per-peer filter loop is a single code path (test and

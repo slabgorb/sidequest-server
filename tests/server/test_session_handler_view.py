@@ -1,16 +1,18 @@
 """Session handler projection view — zone + visibility wiring.
 
-Verifies that ``WebSocketSessionHandler._build_game_state_view()`` pulls
-zone information off the live ``GameSnapshot`` so projection-filter
+Verifies that ``views.build_game_state_view(handler)`` pulls zone
+information off the live ``GameSnapshot`` so projection-filter
 predicates (``visible_to``, ``in_same_zone``) see real data rather than
 the conservative ``None`` / ``False`` defaults.
 """
+
 from __future__ import annotations
 
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.session import Npc
 from sidequest.game.status import Status, StatusSeverity
+from sidequest.server import views
 
 
 def _make_character(name: str, *, statuses: list[str] | None = None) -> Character:
@@ -48,7 +50,7 @@ def test_session_view_reflects_party_location(session_fixture) -> None:
     sd.snapshot.characters.append(_make_character("Bob"))
     # session_fixture already sets snapshot.location = "Main Hall".
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.zone_of("Alice") == "Main Hall"
     assert view.zone_of("Bob") == "Main Hall"
@@ -62,7 +64,7 @@ def test_session_view_reflects_npc_location(session_fixture) -> None:
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.npcs.append(_make_npc("Barkeep", location="The Tavern"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.zone_of("Barkeep") == "The Tavern"
     # Alice is in "Main Hall", Barkeep in "The Tavern" -> different zones.
@@ -75,7 +77,7 @@ def test_session_view_hides_stealthed_character(session_fixture) -> None:
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.characters.append(_make_character("Bob", statuses=["hidden"]))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     # Same party zone, but Bob is hidden -> not visible.
     assert view.zone_of("Bob") == "Main Hall"
@@ -87,7 +89,7 @@ def test_session_view_when_snapshot_missing_returns_empty(session_fixture) -> No
     _sd, handler = session_fixture
     handler._session_data = None
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.zone_of("Anyone") is None
     assert view.visible_to("A", "B") is False
@@ -101,7 +103,7 @@ def test_session_view_hides_stealth_npc(session_fixture) -> None:
         _make_npc("ShadowThief", location="Main Hall", statuses=["Invisible"]),
     )
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.zone_of("ShadowThief") == "Main Hall"
     # Co-located but hidden -> masked.
@@ -121,7 +123,7 @@ def test_session_view_maps_player_id_to_character(session_fixture) -> None:
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.character_of(sd.player_id) == "Alice"
 
@@ -131,7 +133,7 @@ def test_session_view_player_mapping_empty_when_no_characters(session_fixture) -
     sd, handler = session_fixture
     assert sd.snapshot.characters == []
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.character_of(sd.player_id) is None
 
@@ -141,7 +143,7 @@ def test_session_view_player_mapping_unknown_player(session_fixture) -> None:
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
 
-    view = handler._build_game_state_view()
+    view = views.build_game_state_view(handler)
 
     assert view.character_of("someone-else") is None
 
@@ -161,15 +163,12 @@ def test_session_view_warns_once_when_party_zone_absent(session_fixture, caplog)
     sd.snapshot.location = ""  # Fresh session, pre-first-encounter.
     sd.snapshot.characters.append(_make_character("Alice"))
 
-    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
-        handler._build_game_state_view()
-        handler._build_game_state_view()
-        handler._build_game_state_view()
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):
+        views.build_game_state_view(handler)
+        views.build_game_state_view(handler)
+        views.build_game_state_view(handler)
 
-    matching = [
-        r for r in caplog.records
-        if "party_zone_absent_with_characters" in r.getMessage()
-    ]
+    matching = [r for r in caplog.records if "party_zone_absent_with_characters" in r.getMessage()]
     assert len(matching) == 1, (
         f"expected exactly one party_zone_absent warning, got {len(matching)}: "
         f"{[r.getMessage() for r in matching]}"
@@ -184,13 +183,10 @@ def test_session_view_does_not_warn_when_party_zone_present(session_fixture, cap
     # session_fixture defaults to location="Main Hall".
     sd.snapshot.characters.append(_make_character("Alice"))
 
-    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
-        handler._build_game_state_view()
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):
+        views.build_game_state_view(handler)
 
-    matching = [
-        r for r in caplog.records
-        if "party_zone_absent_with_characters" in r.getMessage()
-    ]
+    matching = [r for r in caplog.records if "party_zone_absent_with_characters" in r.getMessage()]
     assert matching == []
 
 
@@ -202,26 +198,21 @@ def test_session_view_does_not_warn_when_no_characters(session_fixture, caplog) 
     sd.snapshot.location = ""
     assert sd.snapshot.characters == []
 
-    with caplog.at_level(logging.WARNING, logger="sidequest.server.session_handler"):
-        handler._build_game_state_view()
+    with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):
+        views.build_game_state_view(handler)
 
-    matching = [
-        r for r in caplog.records
-        if "party_zone_absent_with_characters" in r.getMessage()
-    ]
+    matching = [r for r in caplog.records if "party_zone_absent_with_characters" in r.getMessage()]
     assert matching == []
 
 
 # ---------------------------------------------------------------------------
-# Finding 3: _is_hidden_status_list must use whole-token membership, not
+# Finding 3: is_hidden_status_list must use whole-token membership, not
 # substring match. "unhidden", "hidden_buff_removed", etc. must NOT match.
 # ---------------------------------------------------------------------------
 
 
 def test_hidden_status_whole_token_membership() -> None:
-    from sidequest.server.session_handler import WebSocketSessionHandler
-
-    check = WebSocketSessionHandler._is_hidden_status_list
+    check = views.is_hidden_status_list
 
     def s(text: str) -> Status:
         return Status(text=text, severity=StatusSeverity.Scratch)

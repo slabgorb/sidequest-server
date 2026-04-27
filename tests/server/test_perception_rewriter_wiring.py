@@ -2,7 +2,7 @@
 
 Proves two wiring invariants:
 
-1. ``WebSocketSessionHandler.status_effects_by_player`` reads the existing
+1. ``views.status_effects_by_player(handler)`` reads the existing
    character-status map from the live ``GameSnapshot`` — no new tracking
    state is introduced. A blinded character on ``snapshot.characters[0]``
    surfaces as ``{sd.player_id: ["blinded"]}``.
@@ -33,6 +33,7 @@ from sidequest.game.persistence import (
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.session import GameSnapshot
+from sidequest.server import views
 from sidequest.server.session_handler import (
     WebSocketSessionHandler,
     _SessionData,
@@ -58,10 +59,10 @@ def _make_character(*, name: str, statuses: list[str]) -> Character:
 
 def _make_handler_with_character(tmp_path: Path, *, statuses: list[str]) -> WebSocketSessionHandler:
     """Construct a handler with a minimal _SessionData carrying a character
-    whose ``statuses`` list drives ``status_effects_by_player``."""
+    whose ``statuses`` list drives ``views.status_effects_by_player``."""
     handler = WebSocketSessionHandler(save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS])
-    # Minimal fake _SessionData — enough that status_effects_by_player can
-    # read snapshot.characters[0].core.statuses.
+    # Minimal fake _SessionData — enough that views.status_effects_by_player
+    # can read snapshot.characters[0].core.statuses.
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [_make_character(name="Thorn", statuses=statuses)]
     handler._session_data = _SessionData.__new__(_SessionData)
@@ -79,12 +80,12 @@ def _make_handler_with_character(tmp_path: Path, *, statuses: list[str]) -> WebS
 
 def test_status_effects_by_player_reads_snapshot_statuses(tmp_path: Path) -> None:
     handler = _make_handler_with_character(tmp_path, statuses=["blinded"])
-    assert handler.status_effects_by_player() == {"alice": ["blinded"]}
+    assert views.status_effects_by_player(handler) == {"alice": ["blinded"]}
 
 
 def test_status_effects_by_player_empty_when_no_session(tmp_path: Path) -> None:
     handler = WebSocketSessionHandler(save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS])
-    assert handler.status_effects_by_player() == {}
+    assert views.status_effects_by_player(handler) == {}
 
 
 def test_status_effects_by_player_empty_when_no_characters(tmp_path: Path) -> None:
@@ -95,7 +96,7 @@ def test_status_effects_by_player_empty_when_no_characters(tmp_path: Path) -> No
     handler._session_data.player_id = "alice"
     handler._session_data.genre_slug = _GENRE
     handler._session_data.world_slug = _WORLD
-    assert handler.status_effects_by_player() == {}
+    assert views.status_effects_by_player(handler) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ def test_emit_event_strips_visual_spans_for_blinded_viewer(
     # wiring isn't plumbed through yet, so we stub the accessor directly.
     # What we're testing here is that *whatever* status map the accessor
     # returns flows into the per-recipient rewriter.
-    handler.status_effects_by_player = lambda: {"bob": ["blinded"]}  # type: ignore[method-assign]
+    monkeypatch.setattr(views, "status_effects_by_player", lambda _h: {"bob": ["blinded"]})
 
     # Fake message class so we can inspect the delivered payload.
     from sidequest.server import session_handler as handler_module
@@ -311,7 +312,7 @@ def test_emit_event_preserves_spans_for_unaffected_viewer(
     handler._room = room
 
     # bob has no status effects.
-    handler.status_effects_by_player = lambda: {}  # type: ignore[method-assign]
+    monkeypatch.setattr(views, "status_effects_by_player", lambda _h: {})
 
     from sidequest.server import session_handler as handler_module
 
