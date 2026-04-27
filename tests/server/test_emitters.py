@@ -115,9 +115,7 @@ def test_persist_scrapbook_entry_legacy_path_no_event_log_is_noop(
     emitters.persist_scrapbook_entry(handler, payload)
 
 
-def test_emit_event_delegate_calls_module_function(
-    monkeypatch, session_handler_factory
-) -> None:
+def test_emit_event_delegate_calls_module_function(monkeypatch, session_handler_factory) -> None:
     """Wiring guard — WebSocketSessionHandler._emit_event must delegate
     to emitters.emit_event."""
     from sidequest.server import emitters
@@ -155,9 +153,7 @@ def test_emit_map_update_for_cartography_delegate_calls_module_function(
 
     monkeypatch.setattr(emitters, "emit_map_update_for_cartography", _spy)
 
-    handler._emit_map_update_for_cartography(
-        sd=sd, render_id="render-1", player_id=sd.player_id
-    )
+    handler._emit_map_update_for_cartography(sd=sd, render_id="render-1", player_id=sd.player_id)
 
     assert captured == [(handler, sd, "render-1", sd.player_id)]
 

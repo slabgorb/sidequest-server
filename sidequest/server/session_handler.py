@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
-from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
@@ -105,7 +104,6 @@ from sidequest.protocol.messages import (
     GameResumedMessage,
     ImageMessage,
     ImagePayload,
-    MapUpdateMessage,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -115,7 +113,6 @@ from sidequest.protocol.messages import (
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryMessage,
-    ScrapbookEntryNpcRef,
     ScrapbookEntryPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
@@ -1207,6 +1204,7 @@ class WebSocketSessionHandler:
         # same sweep; both call sites must stay in sync.
         if outcome.encounter_resolved:
             from sidequest.server.status_clear import clear_scratch_on_scene_end
+
             clear_scratch_on_scene_end(
                 snapshot,
                 reason="scene_end",
@@ -3135,7 +3133,8 @@ class WebSocketSessionHandler:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "session.acting_name_resolve_failed error=%s falling_back_to=%s",
-                exc, sd.player_name,
+                exc,
+                sd.player_name,
             )
             acting_name = sd.player_name
         if self._room is not None and sd.player_name:
@@ -3181,7 +3180,9 @@ class WebSocketSessionHandler:
         if self._room is not None:
             snapshot = sd.snapshot
             self._room.record_pending_action(
-                sd.player_id, acting_name, action,
+                sd.player_id,
+                acting_name,
+                action,
             )
             snapshot.turn_manager.set_player_count(self._room.seated_player_count())
             snapshot.turn_manager.submit_input(sd.player_id)
@@ -3223,9 +3224,7 @@ class WebSocketSessionHandler:
                     "slug": self._room.slug,
                     "round": snapshot.turn_manager.round,
                     "player_count": self._room.seated_player_count(),
-                    "action_lengths": {
-                        pid: len(p.action) for pid, p in pending
-                    },
+                    "action_lengths": {pid: len(p.action) for pid, p in pending},
                     "combined_action_len": (
                         sum(len(p.action) for _, p in pending)
                         + sum(len(p.character_name) + 2 for _, p in pending)
@@ -3234,11 +3233,11 @@ class WebSocketSessionHandler:
                 component="multiplayer",
             )
 
-            combined_action = "\n".join(
-                f"{p.character_name}: {p.action}" for _, p in pending
-            )
+            combined_action = "\n".join(f"{p.character_name}: {p.action}" for _, p in pending)
             result = await self._execute_narration_turn(
-                sd, combined_action, turn_context,
+                sd,
+                combined_action,
+                turn_context,
             )
             return result
 
@@ -3358,10 +3357,14 @@ class WebSocketSessionHandler:
                         dice_failed = outcome_name in ("Fail", "CritFail")
                     dice_actor: str | None = getattr(sd, "pending_roll_actor", None)
                     opposed_player_d20: int | None = getattr(
-                        sd, "pending_opposed_player_d20", None,
+                        sd,
+                        "pending_opposed_player_d20",
+                        None,
                     )
                     opposed_player_beat_id: str | None = getattr(
-                        sd, "pending_opposed_player_beat_id", None,
+                        sd,
+                        "pending_opposed_player_beat_id",
+                        None,
                     )
                     _apply_narration_result_to_snapshot(
                         snapshot,
@@ -3823,9 +3826,7 @@ class WebSocketSessionHandler:
                             )
                         if result.lore_established:
                             _patch_summaries.append(
-                                PatchSummary(
-                                    patch_type="lore", fields_changed=["lore_established"]
-                                )
+                                PatchSummary(patch_type="lore", fields_changed=["lore_established"])
                             )
                         if result.npcs_present:
                             _patch_summaries.append(
@@ -4327,7 +4328,9 @@ class WebSocketSessionHandler:
         if tier == "cartography":
             try:
                 self._emit_map_update_for_cartography(
-                    sd=sd, render_id=render_id, player_id=player_id,
+                    sd=sd,
+                    render_id=render_id,
+                    player_id=player_id,
                 )
             except Exception as exc:  # noqa: BLE001 — map emit must never crash a turn
                 logger.warning(
@@ -4720,8 +4723,7 @@ class WebSocketSessionHandler:
                 # No live room — surface as session_not_found so the GM
                 # panel sees the drop instead of it being silent.
                 logger.warning(
-                    "render.session_not_found render_id=%s room=%s player=%s "
-                    "reason=room_missing",
+                    "render.session_not_found render_id=%s room=%s player=%s reason=room_missing",
                     render_id,
                     room_slug,
                     player_id,
@@ -4822,15 +4824,12 @@ class WebSocketSessionHandler:
             try:
                 target_queue.put_nowait(msg)
             except asyncio.QueueFull:
-                logger.warning(
-                    "render.outbound_queue_full render_id=%s", render_id
-                )
+                logger.warning("render.outbound_queue_full render_id=%s", render_id)
                 return
             recipients_count = 1
 
         logger.info(
-            "render.completed render_id=%s url=%s elapsed_ms=%d "
-            "recipients=%d broadcast=%s",
+            "render.completed render_id=%s url=%s elapsed_ms=%d recipients=%d broadcast=%s",
             render_id,
             served_url,
             elapsed,

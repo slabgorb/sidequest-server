@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 
 def persist_scrapbook_entry(
-    handler: "WebSocketSessionHandler",
-    payload: "ScrapbookEntryPayload",
+    handler: WebSocketSessionHandler,
+    payload: ScrapbookEntryPayload,
 ) -> None:
     """Insert a scrapbook row into the dedicated table (schema in
     ``game/persistence.py``). The table allows multiple rows per turn —
@@ -60,7 +60,7 @@ def persist_scrapbook_entry(
 
 
 def emit_event(
-    handler: "WebSocketSessionHandler",
+    handler: WebSocketSessionHandler,
     kind: str,
     payload_model: object,
 ) -> object:
@@ -114,9 +114,7 @@ def emit_event(
         conn = store._conn
         fanout: list[tuple[str, FilterDecision, dict]] = []
         with conn:
-            row = event_log.append_in_transaction(
-                kind=kind, payload_json=payload_json, conn=conn
-            )
+            row = event_log.append_in_transaction(kind=kind, payload_json=payload_json, conn=conn)
             seq = row.seq
 
             if room is not None and projection_filter is not None:
@@ -227,9 +225,9 @@ def emit_event(
 
 
 def emit_map_update_for_cartography(
-    handler: "WebSocketSessionHandler",
+    handler: WebSocketSessionHandler,
     *,
-    sd: "_SessionData",
+    sd: _SessionData,
     render_id: str,
     player_id: str,
 ) -> None:
@@ -285,7 +283,8 @@ def emit_map_update_for_cartography(
     cartography = getattr(world, "cartography", None) if world is not None else None
 
     payload = build_map_update_payload(
-        snapshot=sd.snapshot, cartography=cartography,
+        snapshot=sd.snapshot,
+        cartography=cartography,
     )
     if payload is None:
         # No current location — emitting an empty MAP_UPDATE would make
@@ -315,18 +314,14 @@ def emit_map_update_for_cartography(
     try:
         target_queue.put_nowait(msg)
     except asyncio.QueueFull:
-        logger.warning(
-            "map_update.outbound_queue_full render_id=%s", render_id
-        )
+        logger.warning("map_update.outbound_queue_full render_id=%s", render_id)
         return
 
     # OTEL lie-detector — every MAP_UPDATE that hits a queue gets a
     # span. Origin marker mirrors the Rust ``emit_map_update_telemetry``
     # helper so when the location-change and reconnect paths land in
     # slices 2/3, the GM panel can distinguish them at a glance.
-    nav_mode = (
-        payload.cartography.navigation_mode if payload.cartography else "none"
-    )
+    nav_mode = payload.cartography.navigation_mode if payload.cartography else "none"
     _watcher_publish(
         "state_transition",
         {
@@ -355,9 +350,9 @@ def emit_map_update_for_cartography(
 
 
 def emit_scrapbook_entry(
-    handler: "WebSocketSessionHandler",
+    handler: WebSocketSessionHandler,
     *,
-    sd: "_SessionData",
+    sd: _SessionData,
     snapshot,  # GameSnapshot — avoid circular import in TYPE_CHECKING
     result: object,
 ) -> None:
@@ -391,9 +386,9 @@ def emit_scrapbook_entry(
     # UI contract: ``location`` must be non-empty. Fall back to the raw
     # snapshot location when the display lookup yields nothing — better
     # to surface "Unknown" than to silently drop the entry.
-    loc_display = _resolve_location_display(
-        sd.genre_pack, sd.world_slug, snapshot.location
-    ) or (snapshot.location or "Unknown")
+    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, snapshot.location) or (
+        snapshot.location or "Unknown"
+    )
 
     # Trim the excerpt to a reasonable length for caption rendering. The
     # narrator's full prose lives on the NarrationMessage; the scrapbook
