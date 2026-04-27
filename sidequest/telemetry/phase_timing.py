@@ -25,10 +25,6 @@ class PhaseTimings:
     NULL: ClassVar[PhaseTimings]
 
     def __init__(self, *, action_received_monotonic: float) -> None:
-        # Touch monotonic at construction time so timings start from a
-        # consistent reference point (and so tests can mock a single
-        # __init__→__enter__→__exit__ sequence).
-        _ = time.monotonic()
         self._start: float = action_received_monotonic
         self._totals_ms: dict[str, int] = {}
         self._call_counts: dict[str, int] = {}
@@ -56,7 +52,10 @@ class PhaseTimings:
     @property
     def total_ms(self) -> int:
         if self._total_duration_ms is None:
-            return round((time.monotonic() - self._start) * 1000)
+            raise RuntimeError(
+                "PhaseTimings.total_ms read before mark_done(); "
+                "call mark_done() to finalize the timer first."
+            )
         return self._total_duration_ms
 
     @property
@@ -66,17 +65,27 @@ class PhaseTimings:
     @property
     def unaccounted_ms(self) -> int:
         accounted = sum(self._totals_ms.values())
-        return max(0, self.total_ms - accounted)
+        return self.total_ms - accounted
 
     def to_dict(self) -> dict[str, int]:
         return dict(self._totals_ms)
 
 
 class _NullPhaseTimings(PhaseTimings):
-    """No-op singleton for fixtures and partial mocks."""
+    """No-op singleton for fixtures and partial mocks.
 
-    def __init__(self) -> None:  # noqa: D401 — explicit override
-        super().__init__(action_received_monotonic=0.0)
+    Construction does not call super().__init__ — avoids the unused
+    time.monotonic() syscall at module import and decouples NULL state
+    from parent internals so a future parent refactor can't silently
+    leak live monotonic time into the singleton's reads.
+    """
+
+    def __init__(self) -> None:
+        self._start = 0.0
+        self._totals_ms: dict[str, int] = {}
+        self._call_counts: dict[str, int] = {}
+        self._total_duration_ms: int | None = 0
+        self._finalized: bool = True
 
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:

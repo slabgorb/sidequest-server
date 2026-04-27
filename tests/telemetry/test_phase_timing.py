@@ -12,7 +12,7 @@ from sidequest.telemetry.phase_timing import PhaseTimings
 
 def test_phase_records_elapsed_ms() -> None:
     """A single .phase() block records the elapsed time in to_dict()."""
-    times = iter([100.0, 100.0, 100.5])  # __init__, __enter__, __exit__
+    times = iter([100.0, 100.5])  # __enter__, __exit__
     with patch("sidequest.telemetry.phase_timing.time.monotonic", side_effect=lambda: next(times)):
         timings = PhaseTimings(action_received_monotonic=100.0)
         with timings.phase("preprocess_llm"):
@@ -22,7 +22,7 @@ def test_phase_records_elapsed_ms() -> None:
 
 def test_phase_accumulates_on_repeat() -> None:
     """Two .phase('X') blocks sum into one entry; call count tracks both."""
-    times = iter([0.0, 0.0, 0.1, 0.5, 0.7])  # __init__, enter1, exit1, enter2, exit2
+    times = iter([0.0, 0.1, 0.5, 0.7])  # enter1, exit1, enter2, exit2
     with patch("sidequest.telemetry.phase_timing.time.monotonic", side_effect=lambda: next(times)):
         timings = PhaseTimings(action_received_monotonic=0.0)
         with timings.phase("X"):
@@ -35,7 +35,7 @@ def test_phase_accumulates_on_repeat() -> None:
 
 def test_phase_records_on_exception() -> None:
     """Exception inside a phase block: elapsed still recorded, exception propagates."""
-    times = iter([0.0, 0.0, 0.4])  # __init__, enter, exit
+    times = iter([0.0, 0.4])  # enter, exit
     with patch("sidequest.telemetry.phase_timing.time.monotonic", side_effect=lambda: next(times)):
         timings = PhaseTimings(action_received_monotonic=0.0)
         with pytest.raises(ValueError, match="boom"), timings.phase("preprocess_llm"):
@@ -63,7 +63,7 @@ def test_null_singleton_is_noop() -> None:
 
 def test_unaccounted_ms_computed() -> None:
     """unaccounted_ms = total - sum(phases); always >= 0."""
-    times = iter([0.0, 0.0, 0.1, 1.0])  # __init__, enter, exit, mark_done
+    times = iter([0.0, 0.1, 1.0])  # enter, exit, mark_done
     with patch("sidequest.telemetry.phase_timing.time.monotonic", side_effect=lambda: next(times)):
         timings = PhaseTimings(action_received_monotonic=0.0)
         with timings.phase("preprocess_llm"):
@@ -74,15 +74,22 @@ def test_unaccounted_ms_computed() -> None:
     assert timings.unaccounted_ms == 900
 
 
+def test_total_ms_raises_before_finalize() -> None:
+    """total_ms is unreadable until mark_done() — no silent live snapshot."""
+    timings = PhaseTimings(action_received_monotonic=0.0)
+    with pytest.raises(RuntimeError, match="before mark_done"):
+        _ = timings.total_ms
+    with pytest.raises(RuntimeError, match="before mark_done"):
+        _ = timings.unaccounted_ms
+
+
 def test_sum_of_phases_approximates_total() -> None:
     """Over 100 randomized turn shapes: sum(phases) + unaccounted == total, all >= 0."""
     rng = random.Random(0xC0FFEE)
     for _ in range(100):
-        # Build a sequence of (start, exit) monotonic timestamps for K phases.
-        # All phases happen between t=0 (start) and t=total (mark_done).
         k = rng.randint(0, 8)
         total_s = rng.uniform(0.5, 5.0)
-        times: list[float] = [0.0]  # __init__
+        times: list[float] = []  # no __init__ placeholder
         cursor = 0.0
         for _ in range(k):
             enter = cursor + rng.uniform(0.0, 0.05)
@@ -91,7 +98,6 @@ def test_sum_of_phases_approximates_total() -> None:
             cursor = exit_
             if cursor > total_s:
                 break
-        # Ensure mark_done's monotonic >= the last phase exit so total >= accounted.
         times.append(max(total_s, cursor))  # mark_done
 
         it = iter(times)
@@ -100,7 +106,7 @@ def test_sum_of_phases_approximates_total() -> None:
             side_effect=lambda it=it: next(it),
         ):
             timings = PhaseTimings(action_received_monotonic=0.0)
-            phase_count = (len(times) - 2) // 2
+            phase_count = (len(times) - 1) // 2
             for i in range(phase_count):
                 with timings.phase(f"p{i}"):
                     pass
