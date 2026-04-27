@@ -138,3 +138,25 @@ def test_emit_event_delegate_calls_module_function(
     assert len(captured) == 1
     assert captured[0][0] is handler
     assert captured[0][1] == "NARRATION"
+
+
+def test_emit_map_update_for_cartography_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._emit_map_update_for_cartography
+    must delegate to emitters.emit_map_update_for_cartography."""
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+
+    def _spy(h, *, sd, render_id, player_id):
+        captured.append((h, sd, render_id, player_id))
+
+    monkeypatch.setattr(emitters, "emit_map_update_for_cartography", _spy)
+
+    handler._emit_map_update_for_cartography(
+        sd=sd, render_id="render-1", player_id=sd.player_id
+    )
+
+    assert captured == [(handler, sd, "render-1", sd.player_id)]
