@@ -94,3 +94,26 @@ def test_build_game_state_view_delegate_calls_module_function(
 
     assert result is sentinel
     assert captured == [handler]
+
+
+def test_status_effects_by_player_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler.status_effects_by_player
+    must delegate to views.status_effects_by_player."""
+    from sidequest.server import views
+
+    sd, handler = session_handler_factory()
+    captured: list[object] = []
+    sentinel = {"sentinel": ["yes"]}
+
+    def _spy(h):
+        captured.append(h)
+        return sentinel
+
+    monkeypatch.setattr(views, "status_effects_by_player", _spy)
+
+    result = handler.status_effects_by_player()
+
+    assert result is sentinel
+    assert captured == [handler]

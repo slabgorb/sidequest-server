@@ -703,31 +703,14 @@ class WebSocketSessionHandler:
         return views.build_game_state_view(self)
 
     def status_effects_by_player(self) -> dict[str, list[str]]:
-        """Per-player status-effect tokens, for PerceptionRewriter.
+        """Per-player status-effect tokens. Delegates to ``views.status_effects_by_player``.
 
-        Reads the *existing* character-status map on the active
-        ``GameSnapshot`` — no new state is introduced. Mirrors the
-        player->character mapping used by :meth:`_build_game_state_view`:
-        the session's active ``player_id`` is mapped to the first entry
-        in ``snapshot.characters`` (single-player authoritative today;
-        MP seat-assignment will feed the multi-player case via
-        ``SessionRoom`` in a later sprint, at which point this accessor
-        should fan out the same way).
-
-        Returns ``dict[player_id, list[status_token]]``. An empty dict
-        (no session, no snapshot, no characters) is safe: the rewriter
-        treats missing entries as "no status effects".
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        sd = self._session_data
-        if sd is None:
-            return {}
-        snapshot = sd.snapshot
-        if not snapshot.characters:
-            return {}
-        # Mirror _build_game_state_view's mapping: active player_id ->
-        # first character. Any connected non-active player_id gets []
-        # until MP seat-assignment plumbs a real mapping.
-        return {sd.player_id: [s.text for s in snapshot.characters[0].core.statuses]}
+        from sidequest.server import views
+
+        return views.status_effects_by_player(self)
 
     # ------------------------------------------------------------------
     # Slug-resume narrative tail backfill (pingpong 2026-04-24)
