@@ -20,3 +20,96 @@ def test_emitters_module_exposes_required_functions() -> None:
     assert hasattr(emitters, "emit_event")
     assert hasattr(emitters, "emit_map_update_for_cartography")
     assert hasattr(emitters, "emit_scrapbook_entry")
+
+
+def test_persist_scrapbook_entry_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._persist_scrapbook_entry
+    must delegate to emitters.persist_scrapbook_entry."""
+    from sidequest.protocol.messages import ScrapbookEntryPayload
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+
+    def _spy(h, payload):
+        captured.append((h, payload))
+
+    monkeypatch.setattr(emitters, "persist_scrapbook_entry", _spy)
+
+    payload = ScrapbookEntryPayload(
+        turn_id=1,
+        location="test_loc",
+        narrative_excerpt="hello",
+        scene_title=None,
+        scene_type=None,
+        image_url=None,
+        world_facts=[],
+        npcs_present=[],
+    )
+    handler._persist_scrapbook_entry(payload)
+
+    assert captured == [(handler, payload)]
+
+
+def test_persist_scrapbook_entry_inserts_row(session_handler_factory) -> None:
+    """Behavioral test — calling the function inserts a row into the
+    scrapbook_entries table that can be read back."""
+    from sidequest.game.event_log import EventLog
+    from sidequest.protocol.messages import ScrapbookEntryNpcRef, ScrapbookEntryPayload
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    # The factory does not seed an EventLog by default (legacy path);
+    # attach one so the function has a store to write to.
+    handler._event_log = EventLog(sd.store)
+
+    payload = ScrapbookEntryPayload(
+        turn_id=42,
+        location="test_loc",
+        narrative_excerpt="The fighter pondered.",
+        scene_title="A pondering",
+        scene_type="character",
+        image_url=None,
+        world_facts=["a fact"],
+        npcs_present=[
+            ScrapbookEntryNpcRef(name="Goblin", role="opponent", disposition="hostile"),
+        ],
+    )
+
+    emitters.persist_scrapbook_entry(handler, payload)
+
+    rows = sd.store._conn.execute(
+        "SELECT turn_id, location, narrative_excerpt FROM scrapbook_entries"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 42
+    assert rows[0][1] == "test_loc"
+    assert rows[0][2] == "The fighter pondered."
+
+
+def test_persist_scrapbook_entry_legacy_path_no_event_log_is_noop(
+    session_handler_factory,
+) -> None:
+    """Behavioral test — when handler._event_log is None (legacy path),
+    the function returns cleanly without writing or raising."""
+    from sidequest.protocol.messages import ScrapbookEntryPayload
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    handler._event_log = None  # legacy path
+
+    payload = ScrapbookEntryPayload(
+        turn_id=1,
+        location="test_loc",
+        narrative_excerpt="nope",
+        scene_title=None,
+        scene_type=None,
+        image_url=None,
+        world_facts=[],
+        npcs_present=[],
+    )
+
+    # Must not raise.
+    emitters.persist_scrapbook_entry(handler, payload)
