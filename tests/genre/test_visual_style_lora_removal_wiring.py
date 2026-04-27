@@ -24,7 +24,6 @@ import yaml
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models import VisualStyle
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVER_SRC = REPO_ROOT / "sidequest-server" / "sidequest"
 CONTENT_GENRE_PACKS = REPO_ROOT / "sidequest-content" / "genre_packs"

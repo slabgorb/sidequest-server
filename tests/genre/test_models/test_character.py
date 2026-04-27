@@ -47,30 +47,6 @@ class TestMechanicalEffects:
 
 
 class TestVisualStyle:
-    def test_lora_scale_validation(self) -> None:
-        vs = VisualStyle(
-            positive_suffix="dungeon style",
-            negative_prompt="blur",
-            preferred_model="flux",
-            base_seed=42,
-            lora_scale=1.5,
-        )
-        assert vs.lora_scale == pytest.approx(1.5)
-
-    def test_lora_scale_rejects_above_2(self) -> None:
-        with pytest.raises(Exception, match="<= 2.0"):
-            VisualStyle(
-                positive_suffix="s", negative_prompt="n",
-                preferred_model="m", base_seed=0, lora_scale=3.0,
-            )
-
-    def test_lora_scale_rejects_negative(self) -> None:
-        with pytest.raises(Exception):
-            VisualStyle(
-                positive_suffix="s", negative_prompt="n",
-                preferred_model="m", base_seed=0, lora_scale=-1.0,
-            )
-
     def test_extra_allowed(self) -> None:
         """VisualStyle accepts extra genre-specific fields."""
         vs = VisualStyle.model_validate({

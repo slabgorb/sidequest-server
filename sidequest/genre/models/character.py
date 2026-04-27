@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from sidequest.genre.models.ocean import OceanProfile
 
@@ -131,7 +131,9 @@ class VisualStyle(BaseModel):
     Intentionally no extra="forbid" — genre packs may add flavor fields.
     """
 
-    # Note: No extra="forbid" per Rust comment (visual_style_accepts_extra_fields)
+    # Note: No extra="forbid" per Rust comment (visual_style_accepts_extra_fields).
+    # Legacy LoRA YAMLs (still containing `lora:` / `lora_trigger:` / `loras:`)
+    # remain loadable as opaque extras until Story 43-4 scrubs them.
     model_config = {"extra": "allow"}
 
     positive_suffix: str
@@ -139,21 +141,3 @@ class VisualStyle(BaseModel):
     preferred_model: str
     base_seed: int
     visual_tag_overrides: dict[str, str] = Field(default_factory=dict)
-    lora: str | None = None
-    lora_trigger: str | None = None
-    lora_scale: float | None = None
-
-    @field_validator("lora_scale", mode="before")
-    @classmethod
-    def _validate_lora_scale(cls, v: Any) -> Any:
-        if v is None:
-            return None
-        v = float(v)
-        import math
-        if not math.isfinite(v):
-            raise ValueError(f"lora_scale must be a finite number in [0.0, 2.0], got {v}")
-        if v < 0.0:
-            raise ValueError(f"lora_scale must be >= 0.0, got {v}")
-        if v > 2.0:
-            raise ValueError(f"lora_scale must be <= 2.0, got {v}")
-        return v
