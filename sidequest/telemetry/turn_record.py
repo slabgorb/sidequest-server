@@ -11,7 +11,7 @@ cost on every turn.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -45,3 +45,11 @@ class TurnRecord:
     token_count_out: int
     agent_duration_ms: int
     is_degraded: bool
+    # Phase-timing fields (Story: turn-pipeline phase-timing).
+    # Defaulted so existing TurnRecord(...) call-sites that don't yet pass
+    # phase data keep working until they migrate. The Validator emits
+    # whichever values arrive — empty dicts are surfaced as missing keys
+    # in the turn_complete event, not zeros (a missing phase ≠ a 0 ms phase).
+    phase_durations_ms: dict[str, int] = field(default_factory=dict)
+    phase_call_counts: dict[str, int] = field(default_factory=dict)
+    total_duration_ms: int = 0
