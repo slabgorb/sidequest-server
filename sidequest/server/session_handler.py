@@ -113,7 +113,6 @@ from sidequest.protocol.messages import (
     NarrationMessage,
     NarrationPayload,
     PartyStatusMessage,
-    PartyStatusPayload,
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryMessage,
@@ -128,10 +127,7 @@ from sidequest.protocol.messages import (
     TurnStatusPayload,
 )
 from sidequest.protocol.models import (
-    CharacterSheetDetails,
     Footnote,
-    InventoryItem,
-    InventoryPayload,
     PartyFormationWireEntry,
     PartyMember,
     StateDelta,
@@ -681,181 +677,36 @@ class WebSocketSessionHandler:
         """Return the room this handler is currently registered in, or None."""
         return self._room
 
-    # Status tokens the engine uses to mark a creature as non-visible for
-    # projection purposes. Compared case-insensitively against
-    # ``CreatureCore.statuses`` via **whole-token membership** — substring
-    # matching produced false-positives like ``"unhidden"`` or
-    # ``"hidden_buff_removed"`` silently masking characters. Genre packs
-    # that mint stealth/invisibility mechanics must emit statuses that are
-    # exactly one of these tokens (case-insensitive) for the projection
-    # filter's ``visible_to()`` to mask the creature. Kept conservative:
-    # a missing/unknown marker must never unmask a target.
-    _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset(
-        {
-            "hidden",
-            "invisible",
-            "stealth",
-            "concealed",
-        }
-    )
-
     @classmethod
     def _is_hidden_status_list(cls, statuses: list[Status]) -> bool:
-        return any(s.text.lower() in cls._HIDDEN_STATUS_TOKENS for s in statuses)
+        """Whole-token hidden-status check. Delegates to ``views.is_hidden_status_list``.
+
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+        """
+        from sidequest.server import views
+
+        return views.is_hidden_status_list(statuses)
 
     def _build_game_state_view(self) -> SessionGameStateView:
-        """Read-only view of current session state for the projection filter.
+        """Read-only view of current session state. Delegates to ``views.build_game_state_view``.
 
-        Zone + visibility state is populated from the live ``GameSnapshot``:
-        all player-characters share the party-level ``snapshot.location``,
-        and NPCs report their per-entity ``Npc.location``. Creatures whose
-        ``statuses`` contain a stealth-like marker go into
-        ``hidden_characters`` so ``visible_to()`` masks them even when
-        co-located with the viewer. Per-item ownership is not yet tracked
-        and stays at the conservative default.
-
-        **GM identity wiring (C1, still partial):**
-
-        - Solo sessions have no separate GM player by design; ``gm_player_id``
-          is correctly ``None`` there. ``CoreInvariantStage`` never
-          short-circuits on ``is_gm()`` for solo — which is the right
-          behavior, because in solo play the single player is the only
-          recipient and has no counterpart to be "GM" to.
-        - Multiplayer sessions *should* name a GM player (e.g. the session
-          creator or a designated seat) so that ``unless: is_gm()`` in
-          ``projection.yaml`` can exempt them. That wiring lives downstream
-          of MP-02 seating — ``SessionRoom`` does not yet carry a GM seat
-          designation, so we still fall through to ``None`` for multiplayer
-          with a logged warning. Genre packs that ship ``unless: is_gm()``
-          rules today will mask the GM identically to a regular player
-          (the safe direction: over-redact rather than leak).
-
-        **Player-character mapping:** ``Character`` does not yet carry a
-        ``player_id`` attribute, so the session's active player_id
-        (``sd.player_id``) is mapped to the first entry in
-        ``snapshot.characters`` — the single-player case this branch is
-        authoritative for today. MP seat-assignment (sprint 2) will feed
-        the multi-player case via ``SessionRoom``. When no character
-        exists yet (pre-chargen) the mapping stays empty and predicates
-        that depend on ``character_of()`` evaluate to ``False`` (the
-        masked direction).
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        sd = self._session_data
-        if sd is None:
-            return SessionGameStateView(gm_player_id=None, player_id_to_character={})
+        from sidequest.server import views
 
-        from sidequest.game.persistence import GameMode  # noqa: PLC0415 — break import cycle
-
-        # Solo: no human GM. None is correct; CoreInvariantStage's
-        # gm-sees-all branch never fires for the single player.
-        gm_player_id: str | None = None
-        if sd.mode is not None and sd.mode != GameMode.SOLO:
-            # Multiplayer: GM seat assignment not yet plumbed through
-            # SessionRoom. Log one warning per build so GM-panel users
-            # can see that ``unless: is_gm()`` rules are currently
-            # over-masking the GM in multiplayer sessions.
-            if not getattr(self, "_gm_wiring_warned", False):
-                logger.warning(
-                    "projection.gm_identity_unwired slug=%s mode=%s — "
-                    "multiplayer sessions do not yet carry a GM-seat "
-                    "designation; `unless: is_gm()` rules will mask the "
-                    "GM like any other player until MP-02 GM seating "
-                    "lands.",
-                    sd.game_slug,
-                    sd.mode,
-                )
-                self._gm_wiring_warned = True
-
-        snapshot = sd.snapshot
-
-        # Player -> Character.name mapping. Solo / single-player sessions
-        # today have exactly one character; that character belongs to the
-        # session's active player_id. Without this mapping, the predicate
-        # path (e.g. ``visible_to(target)``) receives
-        # ``view.character_of(player_id) is None`` and short-circuits to
-        # False before ever consulting zone data. Populated from the
-        # existing session state — no new fields introduced.
-        mapping: dict[str, str] = {}
-        if snapshot.characters:
-            mapping[sd.player_id] = snapshot.characters[0].core.name
-
-        # Zone + hidden-character tracking from the live snapshot. Characters
-        # share the party-level location today (no per-character zone split
-        # in the engine yet); NPCs carry their own ``location``. Keys are
-        # creature names — the same identity the rest of the projection
-        # system uses when it refers to characters by ID. Single pass per
-        # collection so character_zones and hidden_characters stay in sync.
-        character_zones: dict[str, str] = {}
-        hidden_characters: set[str] = set()
-        party_zone = snapshot.location or None
-
-        # One-shot OTEL breadcrumb: if we have player-characters but no
-        # party zone, every co-located visible_to() collapses to False.
-        # The direction is conservative-correct but invisible to the GM
-        # panel — surface it once per session so rule authors can see why
-        # their ``visible_to`` rules are masking everything.
-        if (
-            party_zone is None
-            and snapshot.characters
-            and not getattr(self, "_party_zone_absent_warned", False)
-        ):
-            logger.warning(
-                "projection.party_zone_absent_with_characters slug=%s "
-                "characters=%d — snapshot.location is empty while "
-                "snapshot.characters is non-empty; visible_to() / "
-                "in_same_zone() will mask every co-located target until "
-                "a location is set (typically the first encounter).",
-                sd.game_slug,
-                len(snapshot.characters),
-            )
-            self._party_zone_absent_warned = True
-
-        for ch in snapshot.characters:
-            name = ch.core.name
-            if party_zone is not None:
-                character_zones[name] = party_zone
-            if self._is_hidden_status_list(ch.core.statuses):
-                hidden_characters.add(name)
-        for npc in snapshot.npcs:
-            name = npc.core.name
-            if npc.location:
-                character_zones[name] = npc.location
-            if self._is_hidden_status_list(npc.core.statuses):
-                hidden_characters.add(name)
-
-        return SessionGameStateView(
-            gm_player_id=gm_player_id,
-            player_id_to_character=mapping,
-            character_zones=character_zones,
-            hidden_characters=hidden_characters,
-        )
+        return views.build_game_state_view(self)
 
     def status_effects_by_player(self) -> dict[str, list[str]]:
-        """Per-player status-effect tokens, for PerceptionRewriter.
+        """Per-player status-effect tokens. Delegates to ``views.status_effects_by_player``.
 
-        Reads the *existing* character-status map on the active
-        ``GameSnapshot`` — no new state is introduced. Mirrors the
-        player->character mapping used by :meth:`_build_game_state_view`:
-        the session's active ``player_id`` is mapped to the first entry
-        in ``snapshot.characters`` (single-player authoritative today;
-        MP seat-assignment will feed the multi-player case via
-        ``SessionRoom`` in a later sprint, at which point this accessor
-        should fan out the same way).
-
-        Returns ``dict[player_id, list[status_token]]``. An empty dict
-        (no session, no snapshot, no characters) is safe: the rewriter
-        treats missing entries as "no status effects".
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        sd = self._session_data
-        if sd is None:
-            return {}
-        snapshot = sd.snapshot
-        if not snapshot.characters:
-            return {}
-        # Mirror _build_game_state_view's mapping: active player_id ->
-        # first character. Any connected non-active player_id gets []
-        # until MP seat-assignment plumbs a real mapping.
-        return {sd.player_id: [s.text for s in snapshot.characters[0].core.statuses]}
+        from sidequest.server import views
+
+        return views.status_effects_by_player(self)
 
     # ------------------------------------------------------------------
     # Slug-resume narrative tail backfill (pingpong 2026-04-24)
@@ -866,82 +717,15 @@ class WebSocketSessionHandler:
         *,
         player_id: str,
     ) -> list[object]:
-        """Fetch the most recent NARRATION (and its preceding CHAPTER_MARKER,
-        if one was emitted without an intervening narration) from the event
-        log and re-emit them as cached-projection messages — regardless of
-        ``last_seen_seq``.
+        """Backfill last narration block on slug-resume.
+        Delegates to ``views.backfill_last_narration_block``.
 
-        Used to paint the narrative pane on a fresh-browser slug-resume
-        where the normal replay would otherwise be empty because the
-        client's persisted ``last_seen_seq`` already covers the tail.
-
-        Returns the messages in emit order (CHAPTER_MARKER first if present,
-        then NARRATION). Silently returns an empty list when no narration
-        has been logged, when the cache has no include=True decision for
-        the relevant event, or when the event log is unavailable. The
-        caller is responsible for updating replay telemetry.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        if self._event_log is None or self._projection_cache is None:
-            return []
-        store = self._event_log.store
-        with store._conn:
-            narration_row = store._conn.execute(
-                "SELECT seq, kind, payload_json FROM events "
-                "WHERE kind = 'NARRATION' "
-                "ORDER BY seq DESC LIMIT 1",
-            ).fetchone()
-        if narration_row is None:
-            return []
-        narration_seq = int(narration_row[0])
+        from sidequest.server import views
 
-        with store._conn:
-            chapter_row = store._conn.execute(
-                "SELECT seq, kind, payload_json FROM events "
-                "WHERE kind = 'CHAPTER_MARKER' AND seq < ? "
-                "  AND seq > COALESCE("
-                "    (SELECT MAX(seq) FROM events "
-                "     WHERE kind = 'NARRATION' AND seq < ?),"
-                "    0"
-                "  ) "
-                "ORDER BY seq DESC LIMIT 1",
-                (narration_seq, narration_seq),
-            ).fetchone()
-
-        def _cached_payload(seq: int) -> str | None:
-            with store._conn:
-                row = store._conn.execute(
-                    "SELECT include, payload_json FROM projection_cache "
-                    "WHERE player_id = ? AND event_seq = ?",
-                    (player_id, seq),
-                ).fetchone()
-            if row is None or not bool(row[0]) or row[1] is None:
-                return None
-            return str(row[1])
-
-        messages: list[object] = []
-        if chapter_row is not None:
-            chapter_seq = int(chapter_row[0])
-            chapter_payload = _cached_payload(chapter_seq)
-            if chapter_payload is not None:
-                messages.append(
-                    _build_message_for_kind(
-                        kind="CHAPTER_MARKER",
-                        payload_json=chapter_payload,
-                        seq=chapter_seq,
-                    )
-                )
-
-        narration_payload = _cached_payload(narration_seq)
-        if narration_payload is None:
-            return messages  # Can't emit bare chapter without its narration
-        messages.append(
-            _build_message_for_kind(
-                kind="NARRATION",
-                payload_json=narration_payload,
-                seq=narration_seq,
-            )
-        )
-        return messages
+        return views.backfill_last_narration_block(self, player_id=player_id)
 
     # ------------------------------------------------------------------
     # EventLog fan-out helper (MP-03 Task 3)
@@ -3742,7 +3526,8 @@ class WebSocketSessionHandler:
                     # (playtest 3 fix: stops narrator fabricating
                     # "collapsed corridor" between Orin and Blutka).
                     handshake_delta = build_shared_world_delta(
-                        snapshot, room=self._room,
+                        snapshot,
+                        room=self._room,
                     )
                     outbound.append(
                         NarrationEndMessage(
@@ -4912,121 +4697,25 @@ class WebSocketSessionHandler:
         player_id: str,
         player_name: str,
     ) -> PartyMember:
-        """Build a single PartyMember from a Character object.
+        """Build a single PartyMember. Delegates to ``views.party_member_from_character``.
 
-        Factored out of :meth:`_build_session_start_party_status` so the
-        same construction can run for the requesting socket's PC and for
-        peer PCs that landed in the snapshot via multiplayer chargen.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        # Inventory is stored as list[dict] in Phase 1 (creature_core.py:158).
-        # Filter to Carried items — identical to Rust's inventory.carried()
-        # iterator, which skips Stored/Dropped.
-        carried = [
-            item
-            for item in character.core.inventory.items
-            if str(item.get("state", "Carried")) == "Carried"
-        ]
+        from sidequest.server import views
 
-        stats = dict(character.stats)
-        abilities = [a.name for a in character.abilities]
-        equipment = [
-            f"{item['name']} [equipped]" if item.get("equipped") else item["name"]
-            for item in carried
-        ]
-
-        sheet = CharacterSheetDetails(
-            race=NonBlankString(character.race),
-            stats=stats,
-            abilities=abilities,
-            backstory=NonBlankString(character.backstory or "(no backstory)"),
-            personality=NonBlankString(character.core.personality),
-            pronouns=NonBlankString(character.pronouns) if character.pronouns else None,
-            equipment=equipment,
-        )
-
-        # Currency noun from inventory.yaml::currency.name (pingpong
-        # 2026-04-24 fantasy-leak bug). None → UI neutral fallback;
-        # no silent default to "gold".
-        currency_name: str | None = None
-        if sd.genre_pack.inventory is not None and sd.genre_pack.inventory.currency is not None:
-            currency_name = sd.genre_pack.inventory.currency.name
-
-        inventory_payload = InventoryPayload(
-            items=[
-                InventoryItem(
-                    name=NonBlankString(str(item["name"])),
-                    # Protocol alias: "type". Dicts carry "category" from
-                    # the loadout encoder; map and keep a non-blank string.
-                    **{"type": str(item.get("category", "equipment") or "equipment")},  # type: ignore[arg-type]
-                    equipped=bool(item.get("equipped", False)),
-                    quantity=int(item.get("quantity", 1)),
-                    description=NonBlankString(str(item.get("description") or item["name"])),
-                )
-                for item in carried
-            ],
-            gold=character.core.inventory.gold,
-            currency_name=currency_name,
-        )
-
-        location_nbs: NonBlankString | None = None
-        loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, sd.snapshot.location)
-        if loc_display:
-            try:
-                location_nbs = NonBlankString(loc_display)
-            except Exception:
-                location_nbs = None
-
-        class_nbs = NonBlankString(character.char_class or "Adventurer")
-        char_name_nbs = NonBlankString(character.core.name)
-
-        return PartyMember(
-            player_id=NonBlankString(player_id or "anon"),
-            name=NonBlankString(player_name or "Player"),
-            character_name=char_name_nbs,
-            current_hp=character.core.edge.current,
-            max_hp=character.core.edge.max,
-            statuses=[s.text for s in character.core.statuses],
-            **{"class": class_nbs},  # type: ignore[arg-type]
-            level=character.core.level,
-            portrait_url=None,
-            current_location=location_nbs,
-            sheet=sheet,
-            inventory=inventory_payload,
-        )
+        return views.party_member_from_character(self, sd, character, player_id, player_name)
 
     def _resolve_self_character(self, sd: _SessionData) -> Character | None:
-        """Find the Character belonging to ``sd.player_id`` in the snapshot.
+        """Find the Character belonging to ``sd.player_id``. Delegates to
+        ``views.resolve_self_character``.
 
-        Used to disambiguate "which PC is *me*" when the snapshot carries
-        multiple PCs (multiplayer). Returning ``snapshot.characters[0]`` is
-        wrong for any player whose seat isn't first — that's the playtest
-        2026-04-25 "Tab 2 sees Laverne (YOU)" bug. The seat map (written at
-        chargen-commit, lines 2440-2475) is the source of truth; the room
-        seat is the live runtime mirror used as a fallback.
-
-        Returns ``None`` for legacy saves with no ``player_seats`` binding
-        AND no live room seat (very old solo saves). Callers should fall
-        back to ``snapshot.characters[0]`` in that case to keep solo
-        single-PC sessions working.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        snapshot = sd.snapshot
-        if not snapshot.characters:
-            return None
-        if sd.player_id and snapshot.player_seats:
-            char_name = snapshot.player_seats.get(sd.player_id)
-            if char_name:
-                for c in snapshot.characters:
-                    if c.core.name == char_name:
-                        return c
-        if sd.player_id and self._room is not None:
-            seat_lookup = getattr(self._room, "slot_to_player_id", None)
-            if callable(seat_lookup):
-                for slot, pid in seat_lookup().items():
-                    if pid == sd.player_id:
-                        for c in snapshot.characters:
-                            if c.core.name == slot:
-                                return c
-        return None
+        from sidequest.server import views
+
+        return views.resolve_self_character(self, sd)
 
     def _build_session_start_party_status(
         self,
@@ -5034,40 +4723,14 @@ class WebSocketSessionHandler:
         character: Character,
         player_id: str,
     ) -> PartyStatusMessage:
-        """PARTY_STATUS frame at chargen end (Rust connect.rs:2533).
+        """PARTY_STATUS frame at chargen end. Delegates to ``views.build_session_start_party_status``.
 
-        MP: enumerates every PC; maps each slot back to its seating
-        player_id via the room. Falls back to ``peer:<name>`` when
-        no seat record is available.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        seat_map: dict[str, str] = {}
-        if self._room is not None:
-            seat_lookup = getattr(self._room, "slot_to_player_id", None)
-            if callable(seat_lookup):
-                seat_map = seat_lookup()
+        from sidequest.server import views
 
-        members: list[PartyMember] = []
-        all_chars = list(sd.snapshot.characters or [])
-        if not all_chars:
-            all_chars = [character]
-        # Stable ordering: self first, then peers in snapshot order.
-        self_chars = [c for c in all_chars if c.core.name == character.core.name]
-        peer_chars = [c for c in all_chars if c.core.name != character.core.name]
-        for char in self_chars + peer_chars:
-            is_self = char.core.name == character.core.name
-            if is_self:
-                pid = player_id or "anon"
-                pname = sd.player_name or "Player"
-            else:
-                pid = seat_map.get(char.core.name) or f"peer:{char.core.name}"
-                pname = char.core.name
-            members.append(self._party_member_from_character(sd, char, pid, pname))
-
-        return PartyStatusMessage(
-            type="PARTY_STATUS",  # type: ignore[arg-type]
-            payload=PartyStatusPayload(members=members),
-            player_id=player_id,
-        )
+        return views.build_session_start_party_status(self, sd, character, player_id)
 
 
 # ---------------------------------------------------------------------------
