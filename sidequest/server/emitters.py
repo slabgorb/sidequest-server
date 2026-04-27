@@ -352,3 +352,132 @@ def emit_map_update_for_cartography(
         str(payload.current_location),
         len(payload.explored),
     )
+
+
+def emit_scrapbook_entry(
+    handler: "WebSocketSessionHandler",
+    *,
+    sd: "_SessionData",
+    snapshot,  # GameSnapshot — avoid circular import in TYPE_CHECKING
+    result: object,
+) -> None:
+    """Persist a scrapbook row + emit a SCRAPBOOK_ENTRY event for one turn.
+
+    Called immediately after the NARRATION emit so the entry's seq lands
+    adjacent to its narration in the journal. The IMAGE that may follow
+    from the daemon is async — its URL arrives later and the UI gallery
+    merges by ``turn_id``. We never block on the daemon here.
+
+    Pure reuse: location from snapshot, excerpt from the narrator's prose,
+    NPCs from the orchestrator's structured extraction. No new LLM calls.
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.protocol.messages import ScrapbookEntryNpcRef, ScrapbookEntryPayload
+    from sidequest.server.session_handler import (
+        _resolve_location_display,
+        _watcher_publish,
+        logger,
+    )
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+
+    narration_text = (result.narration or "").strip()
+    if not narration_text:
+        # The UI requires a non-empty excerpt; skip cleanly when the turn
+        # produced no prose (only happens in degraded edge cases).
+        return
+
+    # UI contract: ``location`` must be non-empty. Fall back to the raw
+    # snapshot location when the display lookup yields nothing — better
+    # to surface "Unknown" than to silently drop the entry.
+    loc_display = _resolve_location_display(
+        sd.genre_pack, sd.world_slug, snapshot.location
+    ) or (snapshot.location or "Unknown")
+
+    # Trim the excerpt to a reasonable length for caption rendering. The
+    # narrator's full prose lives on the NarrationMessage; the scrapbook
+    # caption is a short teaser.
+    excerpt = narration_text
+    if len(excerpt) > 320:
+        excerpt = excerpt[:317].rstrip() + "..."
+
+    # NPCs from the orchestrator's structured extraction — no new
+    # inference. ``role`` is the side flag (player/opponent/neutral);
+    # ``disposition`` falls back to role when no behavioral string was
+    # extracted.
+    npc_refs: list[ScrapbookEntryNpcRef] = []
+    for mention in result.npcs_present or []:
+        name = (getattr(mention, "name", "") or "").strip()
+        if not name:
+            continue
+        role = getattr(mention, "side", "") or "neutral"
+        disposition = getattr(mention, "role", "") or role
+        npc_refs.append(
+            ScrapbookEntryNpcRef(
+                name=name,
+                role=role,
+                disposition=disposition,
+            )
+        )
+
+    # World facts: lift the narrator's footnote summaries when present.
+    world_facts: list[str] = []
+    for fn in result.footnotes or []:
+        if not isinstance(fn, dict):
+            continue
+        summary = fn.get("summary") or fn.get("text") or ""
+        if isinstance(summary, str) and summary.strip():
+            world_facts.append(summary.strip())
+
+    scene_type: str | None = None
+    scene_title: str | None = None
+    visual = getattr(result, "visual_scene", None)
+    if visual is not None:
+        tier = (getattr(visual, "tier", None) or "").strip()
+        scene_type = tier or None
+        subject = (getattr(visual, "subject", None) or "").strip()
+        if subject:
+            scene_title = subject[:120]
+
+    turn_id = int(snapshot.turn_manager.interaction)
+
+    payload = ScrapbookEntryPayload(
+        turn_id=turn_id,
+        location=loc_display,
+        narrative_excerpt=excerpt,
+        scene_title=scene_title,
+        scene_type=scene_type,
+        image_url=None,  # Async — IMAGE frame follows from the daemon
+        world_facts=world_facts,
+        npcs_present=npc_refs,
+    )
+
+    # Persist to the dedicated scrapbook_entries table — keeps the
+    # gallery queryable post-game without walking the events journal.
+    try:
+        persist_scrapbook_entry(handler, payload)
+    except Exception as exc:  # noqa: BLE001 — persistence failure must not block emit
+        logger.warning("scrapbook.persist_failed turn=%d error=%s", turn_id, exc)
+
+    # Route through emit_event so the journal gets a row + reconnect
+    # replay surfaces prior entries to fresh sockets.
+    emit_event(handler, "SCRAPBOOK_ENTRY", payload)
+
+    # OTEL lie-detector: GM panel sees per-turn confirmation that the
+    # scrapbook subsystem fired. Without this, regression #2 was
+    # invisible for two stories.
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "scrapbook",
+            "op": "entry_emitted",
+            "turn_id": turn_id,
+            "image_url": None,
+            "location": loc_display,
+            "npc_count": len(npc_refs),
+            "world_fact_count": len(world_facts),
+            "player_id": sd.player_id,
+        },
+        component="scrapbook",
+    )

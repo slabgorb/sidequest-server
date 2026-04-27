@@ -160,3 +160,26 @@ def test_emit_map_update_for_cartography_delegate_calls_module_function(
     )
 
     assert captured == [(handler, sd, "render-1", sd.player_id)]
+
+
+def test_emit_scrapbook_entry_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._emit_scrapbook_entry
+    must delegate to emitters.emit_scrapbook_entry."""
+    from sidequest.game.session import GameSnapshot
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+
+    def _spy(h, *, sd, snapshot, result):
+        captured.append((h, sd, snapshot, result))
+
+    monkeypatch.setattr(emitters, "emit_scrapbook_entry", _spy)
+
+    snap = GameSnapshot(genre_slug=sd.genre_slug)
+    sentinel_result = object()
+    handler._emit_scrapbook_entry(sd=sd, snapshot=snap, result=sentinel_result)
+
+    assert captured == [(handler, sd, snap, sentinel_result)]
