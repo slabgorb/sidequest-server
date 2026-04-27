@@ -1,7 +1,5 @@
 """Shared threshold-crossing helpers (story 39-1).
 
-Port of ``sidequest-api/crates/sidequest-game/src/thresholds.rs``.
-
 Extracted from :mod:`sidequest.game.resource_pool` so ``ResourcePool``
 (float-valued) and ``EdgePool`` (int-valued composure currency, epic 39)
 can mint the same kind of LoreFragment-via-event when a pool value
@@ -16,12 +14,10 @@ Semantics
 - :func:`mint_threshold_lore` turns each crossed threshold into a
   :class:`LoreFragment` in the :attr:`LoreCategory.Event` category —
   high-relevance for narrator context selection — keyed by the
-  threshold's ``event_id``. Duplicate ids are silently skipped: Rust's
-  ``LoreStore.add`` returns ``Err`` (Python raises
-  :class:`DuplicateLoreId`), and we log ``tracing::warn!`` /
-  :func:`logging.warning` so the GM panel can still surface a
-  misconfigured genre pack where two distinct thresholds share an
-  event_id.
+  threshold's ``event_id``. Duplicate ids raise
+  :class:`DuplicateLoreId`; we log :func:`logging.warning` so the GM
+  panel can still surface a misconfigured genre pack where two distinct
+  thresholds share an event_id.
 """
 
 from __future__ import annotations
@@ -45,7 +41,6 @@ logger = logging.getLogger(__name__)
 class ThresholdAt(Protocol):
     """Protocol for threshold types that fire when a pool value crosses downward.
 
-    Port of Rust ``trait ThresholdAt`` (``type Value: PartialOrd + Copy``).
     Implemented by :class:`sidequest.game.resource_pool.ResourceThreshold`
     (``at: float``) and :class:`sidequest.game.creature_core.EdgeThreshold`
     (``at: int``). The attribute is widened to ``int | float`` so both
@@ -70,9 +65,7 @@ def detect_crossings(
     """Return thresholds crossed by a value change (downward only).
 
     A threshold ``t`` is crossed when ``old_value > t.at`` and
-    ``new_value <= t.at``. Port of Rust ``detect_crossings``. Values may
-    be ``int`` or ``float`` — mirrors Rust's generic ``Value: PartialOrd
-    + Copy``.
+    ``new_value <= t.at``. Values may be ``int`` or ``float``.
     """
     return [t for t in thresholds if old_value > t.at and new_value <= t.at]
 
@@ -84,8 +77,7 @@ def mint_threshold_lore(
 ) -> None:
     """Mint a :class:`LoreFragment` per threshold crossing (story 16-11).
 
-    Port of Rust ``mint_threshold_lore``. Each crossed threshold becomes
-    a :class:`LoreFragment` with:
+    Each crossed threshold becomes a :class:`LoreFragment` with:
 
     - ``id`` = threshold ``event_id``
     - ``category`` = :attr:`LoreCategory.Event` (high relevance for

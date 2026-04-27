@@ -1,14 +1,12 @@
 """Game state composition — GameSnapshot, WorldStatePatch, NpcPatch.
 
-Port of sidequest_game::state (state.rs, 919 LOC) — Phase 1 slice.
+GameSnapshot composes all domain types — serializable for persistence
+and WebSocket broadcast.
 
-GameSnapshot composes all domain types (port lesson #4). Serializable for
-persistence and WebSocket broadcast.
-
-Phase 1 includes: all fields from GameSnapshot to avoid elision, with comments
-marking which fields belong to deferred subsystems. Methods that depend on
-deferred subsystems (apply_merchant_transactions, etc.) are ported as-is where
-they don't pull in deferred types, or noted as deferred.
+Phase 1 includes all fields on GameSnapshot to avoid elision, with
+comments marking which fields belong to deferred subsystems. Methods
+that depend on deferred subsystems (apply_merchant_transactions, etc.)
+are stubbed where they would pull in deferred types.
 """
 
 from __future__ import annotations
@@ -44,10 +42,7 @@ from sidequest.genre.models.rules import ResourceDeclaration
 
 
 class EncounterTag(BaseModel):
-    """NPC encounter tag within a narrative entry (story F3).
-
-    Port of sidequest_game::narrative::EncounterTag.
-    """
+    """NPC encounter tag within a narrative entry (story F3)."""
 
     model_config = {"extra": "forbid"}
 
@@ -60,7 +55,6 @@ class EncounterTag(BaseModel):
 class NarrativeEntry(BaseModel):
     """A single narrative entry in the game log.
 
-    Port of sidequest_game::narrative::NarrativeEntry.
     P1-required: narrator reads narrative_log for context.
     """
 
@@ -84,15 +78,14 @@ class NarrativeEntry(BaseModel):
 class Npc(BaseModel):
     """Non-player character — minimal Phase 1 port.
 
-    Port of sidequest_game::npc::Npc.
-    Full port (OCEAN, BeliefState, ResolutionTier) is P5-deferred (scenario system).
-    Fields are included to match the Rust struct for JSON round-tripping.
+    Full enrichment (OCEAN, BeliefState, ResolutionTier) is P5-deferred
+    (scenario system). All fields are included so JSON round-trips
+    losslessly.
     """
 
     model_config = {"extra": "forbid"}
 
-    # Flattened CreatureCore fields (Rust: #[serde(flatten)] pub core: CreatureCore)
-    # Stored as nested in Python for clarity, flattened in persistence.
+    # CreatureCore is nested here for clarity and flattened in persistence.
     core: CreatureCore
 
     # NPC-specific fields (P1-required: narrator uses name, personality, disposition)
@@ -108,11 +101,11 @@ class Npc(BaseModel):
 
     # P5-deferred: OCEAN personality (story 10-1, scenario system)
     ocean: dict | None = None
-    # Scenario system (Epic 7): per-NPC knowledge bubble. Ported in
-    # Story 2.3 Slice D — seeded from ScenarioPack.npcs.initial_beliefs
-    # at chargen confirmation and mutated between turns by gossip /
-    # narrator-driven learning. Gossip + accusation logic defer to a
-    # later slice; the data model and mutation surface are live.
+    # Scenario system (Epic 7): per-NPC knowledge bubble. Seeded from
+    # ScenarioPack.npcs.initial_beliefs at chargen confirmation and
+    # mutated between turns by gossip / narrator-driven learning.
+    # Gossip + accusation logic defer to a later slice; the data model
+    # and mutation surface are live.
     belief_state: BeliefState = Field(default_factory=BeliefState)
     # P2-deferred: ResolutionTier (NPC enrichment system)
     resolution_tier: str = "spawn"
@@ -130,7 +123,6 @@ class Npc(BaseModel):
 class NpcRegistryEntry(BaseModel):
     """Lightweight NPC registry entry for narrator prompt consistency.
 
-    Port of sidequest_game::npc::NpcRegistryEntry.
     P1-required: narrator uses registry for name/identity consistency.
     """
 
@@ -183,10 +175,7 @@ class PartyPeer(BaseModel):
 
 
 class NpcPatch(BaseModel):
-    """Patch for NPC upsert — used in npcs_present.
-
-    Port of sidequest_game::state::NpcPatch.
-    """
+    """Patch for NPC upsert — used in npcs_present."""
 
     model_config = {"extra": "forbid"}
 
@@ -218,7 +207,6 @@ class NpcPatch(BaseModel):
 class DiscoveredFact(BaseModel):
     """A fact discovered by a character this turn (story 9-3).
 
-    Port of sidequest_game::known_fact::DiscoveredFact (inline for Phase 1).
     P1-required: narrator-delivered facts routed to character known_facts.
     """
 
@@ -231,10 +219,8 @@ class DiscoveredFact(BaseModel):
 class WorldStatePatch(BaseModel):
     """Patch for world-level state (location, atmosphere, quests, regions).
 
-    Port of sidequest_game::state::WorldStatePatch.
-    Only Some fields are applied; None means "no change."
-
-    P1-required: all fields ported. Used by narrator agent to update state.
+    Only set fields are applied; ``None`` means "no change". Used by
+    the narrator agent to update state.
     """
 
     model_config = {"extra": "forbid"}
@@ -267,7 +253,7 @@ class WorldStatePatch(BaseModel):
 class TropeState(BaseModel):
     """Active trope state (minimal, for JSON round-tripping).
 
-    Port of sidequest_game::trope::TropeState — P2-deferred full port.
+    P2-deferred full port.
     """
 
     model_config = {"extra": "ignore"}
@@ -281,7 +267,7 @@ class TropeState(BaseModel):
 class GenieWish(BaseModel):
     """Genie wish entry — power-grab with ironic consequences (F9).
 
-    Port of sidequest_game::consequence::GenieWish — P5-deferred.
+    P5-deferred.
     """
 
     model_config = {"extra": "ignore"}
@@ -294,7 +280,7 @@ class GenieWish(BaseModel):
 class AxisValue(BaseModel):
     """Narrative axis value for /tone command (F2/F10).
 
-    Port of sidequest_game::axis::AxisValue — P2-deferred.
+    P2-deferred.
     """
 
     model_config = {"extra": "ignore"}
@@ -304,23 +290,21 @@ class AxisValue(BaseModel):
 
 
 class AchievementTracker(BaseModel):
-    """Achievement tracker (F7) — P6-deferred.
-
-    Port of sidequest_game::achievement::AchievementTracker.
-    """
+    """Achievement tracker (F7) — P6-deferred."""
 
     model_config = {"extra": "ignore"}
 
     achievements: list[dict] = Field(default_factory=list)
 
 
-# ResourcePool lives in sidequest.game.resource_pool (story 42-2 port of
-# ADR-033 resource_pool.rs). Imported at module top for use in
-# ``GameSnapshot.resources`` and the patch-application methods below.
+# ResourcePool lives in sidequest.game.resource_pool (ADR-033).
+# Imported at module top for use in ``GameSnapshot.resources`` and the
+# patch-application methods below.
 
 
-# ScenarioState is fully deferred (P5 — Epic 7 / scenario system)
-# We use dict | None for the field type to avoid pulling in unported types.
+# ScenarioState is fully deferred (P5 — Epic 7 / scenario system).
+# We use dict | None for the field type to avoid pulling in deferred
+# types.
 
 
 # ---------------------------------------------------------------------------
@@ -331,12 +315,9 @@ class AchievementTracker(BaseModel):
 class GameSnapshot(BaseModel):
     """The complete game state at a point in time.
 
-    Port of sidequest_game::state::GameSnapshot (state.rs, 919 LOC).
-
-    All fields ported to match the Rust JSON schema for save compatibility.
     Deferred-subsystem fields are present but noted:
-    - encounter: typed StructuredEncounter | None as of story 42-1 (ADR-082
-      Phase 3). Dispatch-side wiring and OTEL emission land in 42-4.
+    - encounter: typed ``StructuredEncounter | None``. Dispatch-side
+      wiring and OTEL emission land in 42-4.
     - active_tropes: P2-deferred (trope engine)
     - campaign_maturity / world_history: P3-deferred (world materialization)
     - genie_wishes: P5-deferred (consequence engine)
@@ -345,9 +326,8 @@ class GameSnapshot(BaseModel):
     - scenario_state: runtime holder live (Story 2.3 Slice D); gossip/
       accusation logic defers to a later slice
     - discovered_rooms: P3-deferred (room-graph navigation)
-    - resources: typed dict[str, ResourcePool] as of story 42-2
-      (ADR-033 port). Dispatch-side wiring and OTEL emission land
-      in 42-4.
+    - resources: typed ``dict[str, ResourcePool]`` (ADR-033). Dispatch-
+      side wiring and OTEL emission land in 42-4.
 
     P1-required: genre_slug, world_slug, characters, npcs, location,
                  time_of_day, quest_log, notes, narrative_log, atmosphere,
@@ -449,13 +429,12 @@ class GameSnapshot(BaseModel):
     # ------------------------------------------------------------------
     # Legacy save migration (story 42-2 / resource-consolidation phase 4)
     #
-    # Port of the ``impl From<GameSnapshotRaw> for GameSnapshot`` block in
-    # ``sidequest-api/crates/sidequest-game/src/state.rs``. Old saves stored
-    # resources in ``resource_state: dict[str, float]`` with metadata in a
-    # parallel ``resource_declarations`` vec. New saves store them as
-    # ``resources: dict[str, ResourcePool]``. The migration is performed in
-    # a ``@model_validator(mode="before")`` so the legacy fields never touch
-    # the validated model (they are not declared fields on GameSnapshot).
+    # Old saves stored resources in ``resource_state: dict[str, float]``
+    # with metadata in a parallel ``resource_declarations`` vec. New
+    # saves store them as ``resources: dict[str, ResourcePool]``. The
+    # migration is performed in a ``@model_validator(mode="before")`` so
+    # the legacy fields never touch the validated model (they are not
+    # declared fields on GameSnapshot).
     # ------------------------------------------------------------------
 
     @model_validator(mode="before")
@@ -463,9 +442,7 @@ class GameSnapshot(BaseModel):
     def _migrate_legacy_resource_fields(cls, data):
         """Migrate legacy ``resource_state`` + ``resource_declarations`` into ``resources``.
 
-        Port of Rust ``From<GameSnapshotRaw> for GameSnapshot`` migration shim.
-
-        Precedence mirrors the Rust logic:
+        Precedence:
 
         1. If ``resources`` is populated in the payload, use it directly
            (new save — takes precedence over any stale legacy fields).
@@ -539,11 +516,9 @@ class GameSnapshot(BaseModel):
                     ],
                 }
             else:
-                # No declaration — synthesize unbounded defaults. Rust uses
-                # ``f64::MIN`` / ``f64::MAX``; Python matches with
-                # ``sys.float_info.max`` (magnitude) and negates for the
-                # lower bound. Rust ``f64::MIN`` is the most-negative finite
-                # value, so ``-sys.float_info.max`` matches that semantic.
+                # No declaration — synthesize unbounded defaults using
+                # ``sys.float_info.max`` (magnitude), negated for the
+                # lower bound (the most-negative finite double).
                 migrated[name] = {
                     "name": name,
                     "label": "",
@@ -585,10 +560,7 @@ class GameSnapshot(BaseModel):
             setattr(self, name, getattr(other, name))
 
     def apply_world_patch(self, patch: WorldStatePatch) -> None:
-        """Apply a world state patch. Only Some fields are updated.
-
-        Port of sidequest_game::state::GameSnapshot::apply_world_patch.
-        """
+        """Apply a world state patch. Only set fields are updated."""
         if patch.location is not None:
             self.location = patch.location
         if patch.time_of_day is not None:
@@ -702,12 +674,10 @@ class GameSnapshot(BaseModel):
         return min(fracs) if fracs else 1.0
 
     # ------------------------------------------------------------------
-    # Resource pool mutation (story 42-2 — ADR-033 port)
+    # Resource pool mutation (ADR-033)
     #
-    # Port of the ``impl GameSnapshot`` block in
-    # ``sidequest-api/crates/sidequest-game/src/resource_pool.rs``. These
-    # methods are the public surface for ResourcePool mutation; the
-    # per-pool clamp + crossing-detection primitive lives in
+    # These methods are the public surface for ResourcePool mutation;
+    # the per-pool clamp + crossing-detection primitive lives in
     # ``ResourcePool._apply_and_clamp`` and is the single invariant-
     # enforcing path for all pool mutation (including decay).
     #
@@ -719,8 +689,8 @@ class GameSnapshot(BaseModel):
     def apply_resource_patch(self, patch: ResourcePatch) -> ResourcePatchResult:
         """Apply a resource patch (engine-level — ignores ``voluntary`` flag).
 
-        Port of Rust ``GameSnapshot::apply_resource_patch``. Raises
-        :class:`UnknownResource` if no pool matches ``patch.resource_name``.
+        Raises :class:`UnknownResource` if no pool matches
+        ``patch.resource_name``.
         """
         pool = self.resources.get(patch.resource_name)
         if pool is None:
@@ -732,11 +702,11 @@ class GameSnapshot(BaseModel):
     ) -> ResourcePatchResult:
         """Apply a resource patch as a player action.
 
-        Port of Rust ``GameSnapshot::apply_resource_patch_player``. Rejects
-        ``Subtract`` against non-voluntary pools with :class:`NotVoluntary`;
-        ``Add`` and ``Set`` bypass the voluntary check (voluntary only gates
-        player-initiated spend). Raises :class:`UnknownResource` if no pool
-        matches ``patch.resource_name``.
+        Rejects ``Subtract`` against non-voluntary pools with
+        :class:`NotVoluntary`; ``Add`` and ``Set`` bypass the voluntary
+        check (voluntary only gates player-initiated spend). Raises
+        :class:`UnknownResource` if no pool matches
+        ``patch.resource_name``.
         """
         if patch.operation is ResourcePatchOp.Subtract:
             pool = self.resources.get(patch.resource_name)
@@ -749,13 +719,12 @@ class GameSnapshot(BaseModel):
     def apply_pool_decay(self) -> list[ResourceThreshold]:
         """Apply ``decay_per_turn`` to all resource pools.
 
-        Port of Rust ``GameSnapshot::apply_pool_decay``. Skips pools whose
-        ``decay_per_turn`` is effectively zero (``abs < sys.float_info.epsilon``
-        mirrors Rust's ``f64::EPSILON`` guard). Routes each non-zero decay
-        through :meth:`ResourcePool._apply_and_clamp` so clamp + crossing
-        detection share the same invariant-enforcing primitive as the
-        patch path. Returns a flat list of all thresholds crossed across
-        all pools this tick (also available via
+        Skips pools whose ``decay_per_turn`` is effectively zero
+        (``abs < sys.float_info.epsilon``). Routes each non-zero decay
+        through :meth:`ResourcePool._apply_and_clamp` so clamp +
+        crossing detection share the same invariant-enforcing primitive
+        as the patch path. Returns a flat list of all thresholds
+        crossed across all pools this tick (also available via
         :attr:`ResourcePatchResult.crossed_thresholds` per-pool).
         """
         import sys
@@ -776,8 +745,7 @@ class GameSnapshot(BaseModel):
     ) -> None:
         """Initialize or upsert resource pools from genre pack declarations.
 
-        Port of Rust ``GameSnapshot::init_resource_pools``. Upsert semantics
-        (critical for save migration):
+        Upsert semantics (critical for save migration):
 
         - If a pool with this name already exists (e.g., from a loaded save),
           update its declaration-derived fields (``label``, ``min``, ``max``,
@@ -831,10 +799,7 @@ class GameSnapshot(BaseModel):
         op: ResourcePatchOp,
         value: float,
     ) -> ResourcePatchResult:
-        """Convenience: apply a resource patch by name, op, and value.
-
-        Port of Rust ``GameSnapshot::apply_resource_patch_by_name``.
-        """
+        """Convenience: apply a resource patch by name, op, and value."""
         return self.apply_resource_patch(
             ResourcePatch(resource_name=name, operation=op, value=value)
         )
@@ -849,8 +814,7 @@ class GameSnapshot(BaseModel):
     ) -> ResourcePatchResult:
         """Apply a resource patch and mint LoreFragments for crossings.
 
-        Port of Rust ``GameSnapshot::process_resource_patch_with_lore``
-        (story 16-11). Threshold crossings are minted into ``store`` via
+        Story 16-11. Threshold crossings are minted into ``store`` via
         :func:`mint_threshold_lore`; duplicate event_ids are idempotent.
         """
         result = self.apply_resource_patch_by_name(name, op, value)

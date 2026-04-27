@@ -1,22 +1,6 @@
-"""SQLite session persistence — Python port of sidequest_game::persistence.
+"""SQLite session persistence.
 
-Port of sidequest_game::persistence (persistence.rs, 581 LOC).
-
-Schema matches the Rust save format exactly (table names, column names,
-column types). GameSnapshot is serialized as JSON TEXT in the game_state
-table — same as Rust's serde_json::to_string.
-
-NOTE on Rust save compatibility:
-  The Rust SqliteStore serializes GameSnapshot using serde_json::to_string
-  which produces flattened JSON (CreatureCore fields appear at the Npc/Character
-  level due to #[serde(flatten)]). The Python GameSnapshot uses nested core:
-  CreatureCore. This means a Rust save will not load directly via
-  GameSnapshot.model_validate_json() without a migration step.
-
-  Status: DONE_WITH_CONCERNS — Python round-trips work correctly.
-  Loading a Rust save requires a migration shim (flatten → nested transform).
-  That shim is deferred and documented in docs/port-notes/game-phase1-slice.md.
-  Tests use Python-only round-trips and skip Rust save loading.
+GameSnapshot is serialized as JSON TEXT in the ``game_state`` table.
 
 ADR-006: One .db file per genre/world/player session.
 ADR-023: Auto-save after every turn, atomic writes via SQLite transactions.
@@ -195,10 +179,7 @@ class SavedSession:
 
 
 class PersistError(Exception):
-    """Errors from persistence operations.
-
-    Port of sidequest_game::persistence::PersistError.
-    """
+    """Errors from persistence operations."""
 
 
 class NotFoundError(PersistError):
@@ -237,12 +218,8 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
 class SqliteStore:
     """SQLite-backed session store. One .db file per save slot.
 
-    Port of sidequest_game::persistence::SqliteStore.
-
     Uses singleton tables (session_meta, game_state) plus append-only
-    narrative_log. Python uses stdlib sqlite3 instead of rusqlite.
-
-    Rust compatibility note: see module docstring.
+    narrative_log. Built on stdlib sqlite3.
     """
 
     def __init__(self, conn: sqlite3.Connection | Path) -> None:
@@ -429,10 +406,7 @@ def db_path_for_session(
     world_slug: str,
     player_name: str,
 ) -> Path:
-    """Compute the .db file path for a genre/world/player triple.
-
-    Mirrors PersistenceWorker::db_path in Rust.
-    """
+    """Compute the .db file path for a genre/world/player triple."""
     safe = "".join(
         c if c.isalnum() or c in ("-", "_") else "_" for c in player_name
     ).lower() or "default"
@@ -535,7 +509,6 @@ def _generate_recap(
 ) -> str | None:
     """Generate a 'Previously On...' recap.
 
-    Port of sidequest_game::narrative::generate_recap_with_facts.
     Uses known_facts as primary source, falls back to narration entries.
     """
     if not entries and not known_facts:

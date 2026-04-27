@@ -116,11 +116,32 @@ class CharacterState(ProtocolBase):
 # ---------------------------------------------------------------------------
 
 
+class PartyFormationWireEntry(ProtocolBase):
+    """Wire-side party formation entry — story 45-1 sealed-letter handshake.
+
+    Mirrors :class:`sidequest.game.shared_world_delta.PartyFormationEntry`
+    but lives on the protocol boundary so non-Python clients can decode it
+    without pulling game-side types. Carries canonical placement only —
+    perceived state (mood/tactics/personality) never lands here.
+    """
+
+    player_id: str
+    """Player_id whose character occupies this slot."""
+    location: str
+    """Canonical room/POI for this PC."""
+    adjacency: list[str]
+    """Other player_ids sharing this location."""
+
+
 class StateDelta(ProtocolBase):
     """State changes carried in NARRATION and TURN_STATUS.
 
     Port of sidequest_protocol::StateDelta.
     All fields are optional — only changed state is included.
+
+    Story 45-1 added ``encounter_id`` and ``party_formation`` so the
+    sealed-letter shared-world handshake can ride NARRATION_END alongside
+    the existing location field.
     """
 
     location: str | None = None
@@ -131,6 +152,10 @@ class StateDelta(ProtocolBase):
     """Updated quest statuses, merged by key."""
     items_gained: list[ItemGained] | None = None
     """Items gained by the player this turn."""
+    encounter_id: str | None = None
+    """Active encounter id (encounter_type), or None when no encounter is live."""
+    party_formation: list[PartyFormationWireEntry] | None = None
+    """Per-player canonical placement — story 45-1 sealed-letter handshake."""
 
 
 # ---------------------------------------------------------------------------

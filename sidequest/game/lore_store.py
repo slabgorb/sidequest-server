@@ -1,8 +1,6 @@
 """In-memory indexed lore collection — Story 2.3 Slice F MVP.
 
-Port of ``sidequest-api/crates/sidequest-game/src/lore/store.rs``
-covering the mutation + query surface the chargen confirmation and
-narration-turn paths consume:
+Surface used by the chargen confirmation and narration-turn paths:
 
 - :meth:`LoreStore.add` with duplicate-id rejection
 - :meth:`LoreStore.query_by_category`
@@ -17,10 +15,9 @@ their ``embedding`` vector across save/load; the embedding worker
 in :mod:`sidequest.game.lore_embedding` populates them asynchronously
 and the narrator RAG path reads them back via ``query_by_similarity``.
 
-The ``metadata`` dict is string-to-string to match Rust's
-``HashMap<String, String>``. Callers should not stash structured
-objects there — use metadata keys for scene_id, choice_index, etc.,
-not ad-hoc blobs.
+The ``metadata`` dict is string-to-string. Callers should not stash
+structured objects there — use metadata keys for scene_id, choice_index,
+etc., not ad-hoc blobs.
 """
 
 from __future__ import annotations
@@ -31,17 +28,16 @@ from collections.abc import Iterator
 from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
-# Category / source enums — match Rust string serialization
+# Category / source enums
 # ---------------------------------------------------------------------------
 
 
 class LoreCategory:
     """String constants for the :class:`LoreFragment` category tag.
 
-    Values match Rust ``#[serde(rename_all = \"snake_case\")]`` output so
-    saves round-trip across backends. ``Custom`` is represented as the
-    raw custom label; a free-form string value on this set is treated
-    as a custom category (Rust's ``LoreCategory::Custom(String)``).
+    Values are snake_case so saves round-trip stably. ``Custom`` is
+    represented as the raw custom label; any free-form string value here
+    is treated as a custom category.
     """
 
     History = "history"
@@ -67,7 +63,7 @@ class LoreSource:
 
 
 def _estimate_tokens(content: str) -> int:
-    """~4 chars per token, ceiling — mirrors Rust ``content.len().div_ceil(4)``."""
+    """~4 chars per token, ceiling."""
     return (len(content) + 3) // 4
 
 
@@ -118,11 +114,10 @@ class LoreFragment(BaseModel):
     ) -> LoreFragment:
         """Build a fragment with a computed token estimate.
 
-        Matches Rust ``LoreFragment::new`` — the token estimate is
-        always derived from ``content`` length, never supplied by the
-        caller. This keeps the budget-tracking math honest. Fragments
-        start with ``embedding_pending=True`` so the embedding worker
-        will pick them up on the next narration turn.
+        The token estimate is always derived from ``content`` length,
+        never supplied by the caller. This keeps the budget-tracking
+        math honest. Fragments start with ``embedding_pending=True`` so
+        the embedding worker picks them up on the next narration turn.
         """
         return cls(
             id=id,
@@ -147,10 +142,8 @@ class DuplicateLoreId(Exception):
 class LoreStore(BaseModel):
     """In-memory collection of :class:`LoreFragment` keyed by id.
 
-    Matches the Rust ``LoreStore`` mutation + query surface for the
-    chargen confirmation path. Save files serialize the full
-    ``fragments`` dict; semantic-search bookkeeping (embeddings,
-    pending-retry flags) round-trips untouched.
+    Save files serialize the full ``fragments`` dict; semantic-search
+    bookkeeping (embeddings, pending-retry flags) round-trips untouched.
     """
 
     model_config = {"extra": "forbid"}
@@ -162,11 +155,10 @@ class LoreStore(BaseModel):
     # ------------------------------------------------------------------
 
     def add(self, fragment: LoreFragment) -> None:
-        """Insert a fragment. Raises on duplicate id.
+        """Insert a fragment.
 
-        The Rust signature returns ``Result<(), String>``; the Python
-        port raises :class:`DuplicateLoreId` so callers use idiomatic
-        ``try / except`` or short-circuit at the call site.
+        Raises :class:`DuplicateLoreId` when an entry with the same id
+        already exists; callers use ``try / except`` or short-circuit.
         """
         if fragment.id in self.fragments:
             raise DuplicateLoreId(f"duplicate id: {fragment.id}")

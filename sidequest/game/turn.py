@@ -1,7 +1,5 @@
 """Turn management — phase tracking, round counting, and barrier semantics.
 
-Port of sidequest_game::turn (turn.rs, 165 LOC).
-
 Two-tier turn model:
 - interaction (granular): increments every player-narrator exchange.
   Powers fact/item discovery chronology. Monotonic, never resets.
@@ -20,10 +18,7 @@ from pydantic import BaseModel, Field
 
 
 class TurnPhase(str, Enum):
-    """The phases of a game turn (ADR-006).
-
-    Port of sidequest_game::turn::TurnPhase.
-    """
+    """The phases of a game turn (ADR-006)."""
 
     InputCollection = "InputCollection"
     IntentRouting = "IntentRouting"
@@ -44,17 +39,14 @@ _PHASE_TRANSITIONS: dict[TurnPhase, TurnPhase] = {
 class TurnManager(BaseModel):
     """Tracks current turn round, phase, and player input barrier.
 
-    Port of sidequest_game::turn::TurnManager.
-
     Two-tier model:
     - round: display counter for meaningful narrative beats.
     - interaction: monotonic counter for every player-narrator exchange.
 
     Both counters always increment, never reset. Persisted across sessions.
 
-    The `submitted` set (Rust: HashSet<String>) is skipped in serialization
-    (#[serde(skip)]). In Python we also skip it (not in JSON) — populated
-    at runtime.
+    The ``submitted`` set is runtime-only and skipped in serialization —
+    populated as players submit and cleared on phase transitions.
     """
 
     model_config = {"extra": "forbid"}
@@ -63,7 +55,7 @@ class TurnManager(BaseModel):
     interaction: int = Field(default=1)
     phase: TurnPhase = TurnPhase.InputCollection
     player_count: int = 1
-    # submitted is runtime-only, not persisted (Rust: #[serde(skip)])
+    # submitted is runtime-only, not persisted.
     # We use a separate attribute, not a pydantic field, so it won't round-trip
     # through model_dump/validate_json.
 
@@ -126,7 +118,6 @@ class TurnManager(BaseModel):
 class PreprocessedAction(BaseModel):
     """Player action after STT cleanup and perspective rewriting.
 
-    Port of sidequest_game::preprocessor::PreprocessedAction.
     Produced by the action preprocessor before being handed to agents.
     """
 

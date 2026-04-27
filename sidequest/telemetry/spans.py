@@ -323,6 +323,25 @@ SPAN_ROUTES[SPAN_QUEST_UPDATE] = SpanRoute(
 SPAN_BUILD_PROTOCOL_DELTA = "build_protocol_delta"
 
 # ---------------------------------------------------------------------------
+# Sealed-letter shared-world handshake — sidequest/game/shared_world_delta.py
+# Story 45-1 (ADR-085 re-scope of 37-37). Fires every time the merge runs
+# during _build_turn_context so the GM panel can verify the narrator was
+# given ground-truth party adjacency (vs. fabricating "collapsed corridor").
+# ---------------------------------------------------------------------------
+SPAN_GAME_HANDSHAKE_DELTA_APPLIED = "game.handshake.delta_applied"
+SPAN_ROUTES[SPAN_GAME_HANDSHAKE_DELTA_APPLIED] = SpanRoute(
+    event_type="state_transition",
+    component="game",
+    extract=lambda span: {
+        "field": "shared_world_delta",
+        "op": "applied",
+        "delta_fields": (span.attributes or {}).get("delta_fields", []),
+        "conflict_count": (span.attributes or {}).get("conflict_count", 0),
+        "resolution_path": (span.attributes or {}).get("resolution_path", ""),
+    },
+)
+
+# ---------------------------------------------------------------------------
 # Delta — sidequest-game/delta.rs
 # Python-port note: ``compute_delta`` exists in ``game/delta.py`` but has no
 # production caller (port artifact — see SPAN_APPLY_WORLD_PATCH note above).

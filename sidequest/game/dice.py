@@ -1,10 +1,9 @@
 """Pure-function dice resolver — physics-is-the-roll path.
 
-Port of sidequest-game/src/dice.rs::resolve_dice_with_faces — the server
-takes a dice pool plus client-reported face values (ADR-074, story 34-12)
-and produces a ResolvedRoll.
+The server takes a dice pool plus client-reported face values (ADR-074,
+story 34-12) and produces a ResolvedRoll.
 
-Crit semantics (locked by Keith 2026-04-11, mirrored from Rust):
+Crit semantics (locked by Keith 2026-04-11):
 - Any d20 face of 20 → CritSuccess regardless of DC / modifier
 - Any d20 face of 1 → CritFail regardless of DC / modifier
 - CritSuccess wins over CritFail when both appear in the same pool
@@ -102,8 +101,7 @@ def resolve_dice_with_faces(
     - Every face is in ``1..=sides`` for its die
 
     Returns a ``ResolvedRoll`` whose ``outcome`` is never
-    ``RollOutcome.Unknown``. The crit rules match Rust ``resolve_dice_with_faces``
-    exactly — Keith's 2026-04-11 lock.
+    ``RollOutcome.Unknown``. Crit rules per Keith's 2026-04-11 lock.
     """
     if not dice:
         raise EmptyPool()
@@ -167,16 +165,15 @@ def resolve_dice_with_faces(
 def generate_dice_seed(session_id: str, round_number: int) -> int:
     """Deterministic physics seed for spectator replay.
 
-    Mirrors Rust ``dice_dispatch::generate_dice_seed`` — combines session_id
-    and round so every client in the room computes the same value for the
-    same roll. Seed no longer drives the outcome on the physics-is-the-roll
-    path (client faces are authoritative), but spectators still use it to
-    animate the same tumble as the rolling player.
+    Combines session_id and round so every client in the room computes
+    the same value for the same roll. Seed no longer drives the outcome
+    on the physics-is-the-roll path (client faces are authoritative),
+    but spectators still use it to animate the same tumble as the
+    rolling player.
     """
-    # FNV-1a 64-bit over (session_id || ':' || round). Matches the Rust
-    # crate's custom hash — we don't share a binary, so any stable hash
-    # that both ends compute the same works. We never re-hash on the
-    # client: the client consumes the seed as an opaque u64 for Rapier.
+    # FNV-1a 64-bit over (session_id || ':' || round). Any stable hash
+    # both ends compute the same works. We never re-hash on the client:
+    # the client consumes the seed as an opaque u64 for Rapier.
     h = 0xcbf29ce484222325
     prime = 0x100000001b3
     mask = (1 << 64) - 1

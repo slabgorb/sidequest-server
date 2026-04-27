@@ -1,8 +1,5 @@
 """sidequest.game — Phase 1 minimal slice of the game engine.
 
-Port of sidequest_game crate (selected modules).
-ADR-082: Python server narration vertical slice.
-
 Phase 1 exports:
 - Character, CreatureCore, EdgePool, EdgeThreshold, Inventory
 - GameSnapshot, WorldStatePatch, NpcPatch, NpcRegistryEntry, NarrativeEntry
@@ -10,10 +7,10 @@ Phase 1 exports:
 - TurnManager, TurnPhase
 - CommandHandler, CommandResult, BUILTIN_COMMANDS
 - SqliteStore, SavedSession, SessionMeta, PersistError
-- Resource pools (story 42-2 — ADR-033): ResourcePool, ResourceThreshold,
+- Resource pools (ADR-033): ResourcePool, ResourceThreshold,
   ResourcePatch, ResourcePatchOp, ResourcePatchResult, ResourcePatchError,
   UnknownResource, NotVoluntary, detect_crossings, mint_threshold_lore
-- Encounter (story 42-1 — ADR-082 Phase 3): StructuredEncounter,
+- Encounter: StructuredEncounter,
   EncounterActor, EncounterMetric, EncounterPhase,
   RigType, SecondaryStats, StatValue
 
@@ -155,7 +152,7 @@ __all__ = [
     "SessionMeta",
     "SqliteStore",
     "db_path_for_session",
-    # resource_pool (story 42-2 — ADR-033 port)
+    # resource_pool (ADR-033)
     "NotVoluntary",
     "ResourcePatch",
     "ResourcePatchError",

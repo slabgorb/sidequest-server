@@ -1,7 +1,5 @@
 """Tension tracker — dual-track pacing model for combat drama.
 
-Port of ``sidequest-api/crates/sidequest-game/src/tension_tracker.rs`` (803 LOC).
-
 Tracks two independent tension axes:
 
 - ``action_tension`` (gambler's ramp): rises during consecutive low-action
@@ -13,7 +11,7 @@ Tracks two independent tension axes:
 The combined ``drama_weight`` is ``max(action_tension, stakes_tension,
 effective_spike)`` with per-event linear decay on the spike.
 
-The Python API mirrors the Rust source 1:1:
+API:
 
 - ``TensionTracker()`` / ``TensionTracker.with_values(action, stakes)``
 - ``action_tension()`` / ``stakes_tension()`` / ``drama_weight()`` /
@@ -31,11 +29,10 @@ Free functions:
 - ``classify_combat_outcome(round, killed, lowest_hp_ratio) -> TurnClassification``
 
 ``DramaThresholds`` is loaded from the genre pack via ``sidequest.genre``
-and passed in by the caller — never read from Python-side constants
-(matches Rust ``DramaThresholds`` in ``sidequest-genre``).
+and passed in by the caller — never read from Python-side constants.
 
 Stories: 5-1 (dual-track), 5-2 (event classification), 5-7 (pacing hint
-narrator wiring), Epic 42 / 42-3 (Python port).
+narrator wiring).
 """
 
 from __future__ import annotations
@@ -50,7 +47,7 @@ from pydantic import BaseModel, Field
 from sidequest.genre.models.ocean import DramaThresholds
 
 # ---------------------------------------------------------------------------
-# Constants — mirror Rust file-private const items
+# Constants
 # ---------------------------------------------------------------------------
 
 #: Base increment per boring turn, multiplied by streak count.
@@ -66,7 +63,7 @@ _NEAR_MISS_HP_THRESHOLD: float = 0.2
 
 
 def _clamp01(v: float) -> float:
-    """Clamp a float to ``[0.0, 1.0]``. Mirror of Rust ``clamp01``."""
+    """Clamp a float to ``[0.0, 1.0]``."""
     if v < 0.0:
         return 0.0
     if v > 1.0:
@@ -80,11 +77,7 @@ def _clamp01(v: float) -> float:
 
 
 class DamageEvent(BaseModel):
-    """A damage event within a combat round — used for tension classification.
-
-    Port of Rust ``DamageEvent``. Fields keep the same names and types
-    (Rust ``i32`` damage maps to Python ``int``).
-    """
+    """A damage event within a combat round — used for tension classification."""
 
     model_config = {"extra": "forbid"}
 
@@ -95,10 +88,7 @@ class DamageEvent(BaseModel):
 
 
 class RoundResult(BaseModel):
-    """Result of resolving one combat round — used for tension classification.
-
-    Port of Rust ``RoundResult``.
-    """
+    """Result of resolving one combat round — used for tension classification."""
 
     model_config = {"extra": "forbid"}
 
@@ -116,8 +106,7 @@ class RoundResult(BaseModel):
 class DeliveryMode(StrEnum):
     """Drama-aware text delivery mode — controls how narration is revealed.
 
-    Port of Rust ``DeliveryMode`` (``#[non_exhaustive]`` in Rust; Python
-    enums are open for extension by adding a member here).
+    Open for extension by adding a member here.
     """
 
     Instant = "Instant"
@@ -126,10 +115,7 @@ class DeliveryMode(StrEnum):
 
 
 class CombatEvent(StrEnum):
-    """Combat event classification for the gambler's ramp.
-
-    Port of Rust ``CombatEvent``.
-    """
+    """Combat event classification for the gambler's ramp."""
 
     Boring = "Boring"
     Dramatic = "Dramatic"
@@ -139,9 +125,8 @@ class CombatEvent(StrEnum):
 class DetailedCombatEvent(StrEnum):
     """Specific dramatic combat events with spike magnitudes.
 
-    Port of Rust ``DetailedCombatEvent`` (``#[non_exhaustive]``). Add a
-    member here to extend; the ``spike_magnitude`` and ``decay_rate``
-    methods must grow a matching arm.
+    Add a member here to extend; the ``spike_magnitude`` and
+    ``decay_rate`` methods must grow a matching arm.
     """
 
     CriticalHit = "CriticalHit"
@@ -184,10 +169,9 @@ _DECAY_RATE: dict[DetailedCombatEvent, float] = {
 # ---------------------------------------------------------------------------
 
 
-#: The three valid TurnClassification kinds — closed set, mirror of the
-#: Rust algebraic enum's variant tags. Constructing with any other string
-#: is a type-checker error; the factory methods are the only sanctioned
-#: construction path.
+#: The three valid TurnClassification kinds — closed set. Constructing
+#: with any other string is a type-checker error; the factory methods
+#: are the only sanctioned construction path.
 TurnClassificationKind = Literal["Boring", "Normal", "Dramatic"]
 
 
@@ -195,20 +179,12 @@ TurnClassificationKind = Literal["Boring", "Normal", "Dramatic"]
 class TurnClassification:
     """Classification of a combat turn for pacing decisions.
 
-    Port of Rust enum::
-
-        enum TurnClassification {
-            Boring,
-            Dramatic(DetailedCombatEvent),
-            Normal,
-        }
-
     Modeled as a frozen dataclass with a discriminator (``kind``, typed
-    as a closed Literal) and an optional payload (``event``, only set
-    when ``kind == "Dramatic"``). Use the ``boring()``, ``normal()``,
-    ``dramatic(event)`` factories — they are the only sanctioned
-    construction path and structurally guarantee that ``Dramatic``
-    always carries a non-None ``event``.
+    as a closed Literal of ``"Boring" | "Normal" | "Dramatic"``) and an
+    optional payload (``event``, only set when ``kind == "Dramatic"``).
+    Use the ``boring()``, ``normal()``, ``dramatic(event)`` factories —
+    they are the only sanctioned construction path and structurally
+    guarantee that ``Dramatic`` always carries a non-None ``event``.
     """
 
     kind: TurnClassificationKind
@@ -236,8 +212,6 @@ class TurnClassification:
 class PacingHint:
     """Pacing guidance for a single turn — computed from TensionTracker state.
 
-    Port of Rust ``PacingHint``.
-
     - ``drama_weight``: combined drama metric (0.0–1.0)
     - ``target_sentences``: suggested narration length (1–6)
     - ``delivery_mode``: how the client should reveal the narration text
@@ -253,7 +227,7 @@ class PacingHint:
     def narrator_directive(self) -> str:
         """Produce a narrator-facing directive string for prompt injection.
 
-        Format is byte-identical to Rust:
+        Format::
 
             "Target approximately N sentence(s) for this narration.
              Drama level: P%."
@@ -275,10 +249,9 @@ class PacingHint:
 class _EventSpike:
     """A single event-driven tension spike with per-event decay.
 
-    Port of private Rust ``EventSpike`` struct. ``frozen=True`` mirrors
-    Rust's value-type semantics — magnitude and decay_rate are never
-    mutated after construction; the tracker replaces the spike whole
-    when a new event fires.
+    ``frozen=True``: magnitude and decay_rate are never mutated after
+    construction; the tracker replaces the spike whole when a new event
+    fires.
     """
 
     magnitude: float
@@ -294,9 +267,7 @@ class TensionTracker:
     """Dual-track tension model combining action tension (gambler's ramp)
     and stakes tension (HP-based).
 
-    Port of Rust ``TensionTracker``. State fields are kept private and
-    exposed via accessor methods (mirrors Rust's accessor pattern; Rust
-    fields are private by default and exposed via ``pub fn``).
+    State fields are kept private and exposed via accessor methods.
     """
 
     def __init__(self) -> None:
@@ -363,16 +334,16 @@ class TensionTracker:
             self._action_tension = 0.0
             self._boring_streak = 0
         elif event == CombatEvent.Normal:
-            # No effect on action tension — matches Rust's empty arm.
+            # No effect on action tension.
             pass
 
     def update_stakes(self, current_hp: int, max_hp: int) -> None:
         """Update stakes tension from HP values.
 
-        ``stakes = 1.0 - (current / max)``. Rust uses ``debug_assert!``
-        on positive max_hp; the Python equivalent must survive ``-O``
-        (per CLAUDE.md "no silent fallbacks"), so the guard is an
-        explicit ``ValueError`` raise rather than ``assert``.
+        ``stakes = 1.0 - (current / max)``. Per CLAUDE.md "no silent
+        fallbacks", a non-positive ``max_hp`` raises ``ValueError``
+        rather than relying on ``assert`` (which is stripped under
+        ``-O``).
         """
         if max_hp <= 0:
             raise ValueError(f"max_hp must be positive, got {max_hp}")
@@ -492,7 +463,7 @@ class TensionTracker:
 def classify_round(round: RoundResult, killed: str | None) -> CombatEvent:
     """Classify a combat round result as Boring, Dramatic, or Normal.
 
-    Rules (mirror Rust):
+    Rules:
 
     - Dramatic: a combatant was killed (``killed`` is not None — empty
       string still counts), total damage >= dramatic threshold, or new
@@ -501,8 +472,8 @@ def classify_round(round: RoundResult, killed: str | None) -> CombatEvent:
     - Normal: some damage dealt but below the dramatic threshold, no
       kills or effects.
     """
-    # A kill is always dramatic. Note: Rust ``Option<&str>`` distinguishes
-    # ``Some("")`` from ``None`` — mirror with ``killed is not None``.
+    # A kill is always dramatic. ``killed is not None`` distinguishes
+    # an explicit empty-string kill from "no kill".
     if killed is not None:
         return CombatEvent.Dramatic
 
@@ -510,7 +481,7 @@ def classify_round(round: RoundResult, killed: str | None) -> CombatEvent:
     if round.effects_applied:
         return CombatEvent.Dramatic
 
-    # Negative damage is clamped to zero per event (matches Rust ``e.damage.max(0)``).
+    # Negative damage is clamped to zero per event.
     total_damage: int = sum(max(e.damage, 0) for e in round.damage_events)
 
     if total_damage >= _DRAMATIC_DAMAGE_THRESHOLD:
@@ -529,8 +500,8 @@ def classify_combat_outcome(
 ) -> TurnClassification:
     """Classify a combat round into a detailed turn classification.
 
-    Priority ordering (mirror Rust): kill → near miss (low HP) → critical
-    hit (high damage) → effects → normal → boring.
+    Priority ordering: kill → near miss (low HP) → critical hit (high
+    damage) → effects → normal → boring.
 
     - ``round``: the combat round result with damage events and effects.
     - ``killed``: name of a combatant who died this round, if any (empty

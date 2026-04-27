@@ -1,11 +1,10 @@
 """CreatureCore — shared fields for Character and NPC.
 
-Port of sidequest_game::creature_core (creature_core.rs, 129 LOC).
 Story 1-13: Extracted from Character and NPC via composition.
 
-EdgePool is the composure currency (Epic 39). Replaces the old hp/max_hp/ac
-fields. Stories 39-1 through 39-6 tune thresholds, recovery triggers, and
-per-class base_max values.
+EdgePool is the composure currency (Epic 39). Replaces the old
+hp/max_hp/ac fields. Stories 39-1 through 39-6 tune thresholds, recovery
+triggers, and per-class base_max values.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ PLACEHOLDER_EDGE_BASE_MAX: int = 10
 class RecoveryTrigger(str):
     """Recovery trigger values for EdgePool.
 
-    Port of sidequest_genre::RecoveryTrigger (re-exported via creature_core).
-    Using str constants rather than Enum to avoid import coupling.
+    Re-exported here from the genre layer. Using ``str`` constants rather
+    than ``Enum`` to avoid import coupling.
     """
 
     OnResolution = "OnResolution"
@@ -34,7 +33,6 @@ class RecoveryTrigger(str):
 class EdgeThreshold(BaseModel):
     """A downward threshold on an EdgePool.
 
-    Port of sidequest_game::creature_core::EdgeThreshold.
     P1-required: thresholds appear in JSON; must round-trip.
     """
 
@@ -48,8 +46,8 @@ class EdgeThreshold(BaseModel):
 class EdgePool(BaseModel):
     """First-class composure pool (Epic 39, story 39-1).
 
-    Port of sidequest_game::creature_core::EdgePool.
-    Replaces legacy hp/max_hp fields. current is clamped to [0, max].
+    Replaces legacy hp/max_hp fields. ``current`` is clamped to
+    ``[0, max]``.
 
     P1-required: narrator uses edge/max_edge for health-state framing.
     P2-deferred: recovery_triggers / thresholds (advancement/combat systems).
@@ -91,13 +89,12 @@ class EdgeConfigMissingClassError(KeyError):
     """Genre pack declared `edge_config` but omitted a `base_max_by_class`
     entry for the character's class.
 
-    Port of sidequest_game::creature_core::EdgeConfigMissingClassError.
-    Raised loudly by edge_pool_from_config (Story 39-3) — silently
+    Raised loudly by ``edge_pool_from_config`` (Story 39-3) — silently
     reverting to the placeholder pool would hide content bugs. SOUL.md:
     fail loud at the boundary.
 
-    Subclasses KeyError because this is conceptually a dict lookup miss;
-    callers can still catch it as KeyError.
+    Subclasses ``KeyError`` because this is conceptually a dict lookup
+    miss; callers can still catch it as ``KeyError``.
     """
 
     def __init__(self, class_name: str) -> None:
@@ -109,8 +106,6 @@ class EdgeConfigMissingClassError(KeyError):
 
 def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:
     """Build a genre-authored EdgePool from an EdgeConfig and a class name.
-
-    Port of sidequest_game::creature_core::edge_pool_from_config.
 
     Resolves base_max from edge_config.base_max_by_class[class] (raises
     EdgeConfigMissingClassError when absent), converts every
@@ -152,8 +147,8 @@ def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:
 class Inventory(BaseModel):
     """Character inventory ledger — append-only item history and gold.
 
-    Port of sidequest_game::inventory::Inventory (subset for Phase 1).
-    Full item evolution (narrative_weight thresholds) is P2-deferred.
+    Phase 1 subset. Full item evolution (narrative_weight thresholds) is
+    P2-deferred.
     """
 
     model_config = {"extra": "forbid"}
@@ -165,9 +160,7 @@ class Inventory(BaseModel):
 class CreatureCore(BaseModel):
     """Shared fields for any creature (Character or NPC).
 
-    Port of sidequest_game::creature_core::CreatureCore.
     Embedded via composition in both Character and Npc.
-    In Rust, #[serde(flatten)] exposes all fields at the parent level.
 
     P1-required: name, description, personality, level, edge, inventory, statuses.
     P2-deferred: acquired_advancements (advancement system, Epic 39-8).
