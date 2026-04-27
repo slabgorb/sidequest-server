@@ -37,7 +37,6 @@ import pytest
 
 from sidequest.game.persistence import GameMode
 
-
 # ---------------------------------------------------------------------------
 # AC1 + AC4 — Producer-side: build_shared_world_delta yields canonical-only
 # fields. This is the contract the broadcast carries.
