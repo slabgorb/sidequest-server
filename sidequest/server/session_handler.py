@@ -4324,35 +4324,14 @@ class WebSocketSessionHandler:
     async def _run_embed_worker(
         self, sd: _SessionData, pending_count: int, turn_number: int
     ) -> None:
-        """Background embed worker — never raises, always emits telemetry."""
-        try:
-            result = await embed_pending_fragments(sd.lore_store)
-        except Exception as exc:  # noqa: BLE001 — worker cannot crash the loop
-            logger.exception("lore_embedding.worker_exception")
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "lore_embedding",
-                    "op": "failed",
-                    "reason": "exception",
-                    "error": type(exc).__name__,
-                    "turn_number": turn_number,
-                },
-                component="lore",
-                severity="error",
-            )
-            return
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "lore_embedding",
-                "op": "completed",
-                "pending_at_dispatch": pending_count,
-                "turn_number": turn_number,
-                **result.as_dict(),
-            },
-            component="lore",
-        )
+        """Background embed worker. Delegates to ``lore_embed.run_worker``.
+
+        Phase 3 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+        """
+        from sidequest.server.dispatch import lore_embed
+
+        await lore_embed.run_worker(self, sd, pending_count, turn_number)
 
     async def _run_render(
         self,

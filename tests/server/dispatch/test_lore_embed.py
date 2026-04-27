@@ -93,3 +93,24 @@ async def test_retrieve_for_turn_returns_none_on_unexpected_exception(
     assert payload["error"] == "KeyError"
     assert component == "lore"
     assert severity == "error"
+
+
+@pytest.mark.asyncio
+async def test_run_worker_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._run_embed_worker
+    must delegate to lore_embed.run_worker."""
+    from sidequest.server.dispatch import lore_embed
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+
+    async def _spy(h, sd_arg, pending_count, turn_number):
+        captured.append((h, sd_arg, pending_count, turn_number))
+
+    monkeypatch.setattr(lore_embed, "run_worker", _spy)
+
+    await handler._run_embed_worker(sd, 7, 42)
+
+    assert captured == [(handler, sd, 7, 42)]
