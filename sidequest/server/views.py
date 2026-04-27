@@ -379,3 +379,41 @@ def party_member_from_character(
         sheet=sheet,
         inventory=inventory_payload,
     )
+
+
+def resolve_self_character(
+    handler: WebSocketSessionHandler,
+    sd: _SessionData,
+) -> Character | None:
+    """Find the Character belonging to ``sd.player_id`` in the snapshot.
+
+    Used to disambiguate "which PC is *me*" when the snapshot carries
+    multiple PCs (multiplayer). Returning ``snapshot.characters[0]`` is
+    wrong for any player whose seat isn't first — that's the playtest
+    2026-04-25 "Tab 2 sees Laverne (YOU)" bug. The seat map (written at
+    chargen-commit, lines 2440-2475) is the source of truth; the room
+    seat is the live runtime mirror used as a fallback.
+
+    Returns ``None`` for legacy saves with no ``player_seats`` binding
+    AND no live room seat (very old solo saves). Callers should fall
+    back to ``snapshot.characters[0]`` in that case to keep solo
+    single-PC sessions working.
+    """
+    snapshot = sd.snapshot
+    if not snapshot.characters:
+        return None
+    if sd.player_id and snapshot.player_seats:
+        char_name = snapshot.player_seats.get(sd.player_id)
+        if char_name:
+            for c in snapshot.characters:
+                if c.core.name == char_name:
+                    return c
+    if sd.player_id and handler._room is not None:
+        seat_lookup = getattr(handler._room, "slot_to_player_id", None)
+        if callable(seat_lookup):
+            for slot, pid in seat_lookup().items():
+                if pid == sd.player_id:
+                    for c in snapshot.characters:
+                        if c.core.name == slot:
+                            return c
+    return None

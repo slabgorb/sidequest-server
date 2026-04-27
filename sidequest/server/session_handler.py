@@ -4710,38 +4710,15 @@ class WebSocketSessionHandler:
         return views.party_member_from_character(self, sd, character, player_id, player_name)
 
     def _resolve_self_character(self, sd: _SessionData) -> Character | None:
-        """Find the Character belonging to ``sd.player_id`` in the snapshot.
+        """Find the Character belonging to ``sd.player_id``. Delegates to
+        ``views.resolve_self_character``.
 
-        Used to disambiguate "which PC is *me*" when the snapshot carries
-        multiple PCs (multiplayer). Returning ``snapshot.characters[0]`` is
-        wrong for any player whose seat isn't first — that's the playtest
-        2026-04-25 "Tab 2 sees Laverne (YOU)" bug. The seat map (written at
-        chargen-commit, lines 2440-2475) is the source of truth; the room
-        seat is the live runtime mirror used as a fallback.
-
-        Returns ``None`` for legacy saves with no ``player_seats`` binding
-        AND no live room seat (very old solo saves). Callers should fall
-        back to ``snapshot.characters[0]`` in that case to keep solo
-        single-PC sessions working.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        snapshot = sd.snapshot
-        if not snapshot.characters:
-            return None
-        if sd.player_id and snapshot.player_seats:
-            char_name = snapshot.player_seats.get(sd.player_id)
-            if char_name:
-                for c in snapshot.characters:
-                    if c.core.name == char_name:
-                        return c
-        if sd.player_id and self._room is not None:
-            seat_lookup = getattr(self._room, "slot_to_player_id", None)
-            if callable(seat_lookup):
-                for slot, pid in seat_lookup().items():
-                    if pid == sd.player_id:
-                        for c in snapshot.characters:
-                            if c.core.name == slot:
-                                return c
-        return None
+        from sidequest.server import views
+
+        return views.resolve_self_character(self, sd)
 
     def _build_session_start_party_status(
         self,
