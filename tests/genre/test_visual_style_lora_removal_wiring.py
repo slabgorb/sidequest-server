@@ -32,7 +32,7 @@ _LORA_ATTR_PATTERN = re.compile(
 
 
 def _iter_server_python_files() -> list[Path]:
-    """Yield every .py file under SERVER_SRC, skipping __pycache__ trees."""
+    """Return every .py file under SERVER_SRC, skipping __pycache__ trees."""
     return [
         p for p in SERVER_SRC.rglob("*.py")
         if "__pycache__" not in p.parts
