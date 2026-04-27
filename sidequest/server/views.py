@@ -12,6 +12,7 @@ WebSocketSessionHandler.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from sidequest.game.status import Status
@@ -20,7 +21,11 @@ if TYPE_CHECKING:
     from sidequest.game.character import Character
     from sidequest.game.projection.view import SessionGameStateView
     from sidequest.protocol.messages import PartyStatusMessage
+    from sidequest.protocol.models import PartyMember
     from sidequest.server.session_handler import WebSocketSessionHandler, _SessionData
+
+
+logger = logging.getLogger(__name__)
 
 
 _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset(
@@ -78,7 +83,6 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
     """
     from sidequest.game.persistence import GameMode  # noqa: PLC0415 — break import cycle
     from sidequest.game.projection.view import SessionGameStateView
-    from sidequest.server.session_handler import logger
 
     sd = handler._session_data
     if sd is None:
@@ -288,7 +292,7 @@ def party_member_from_character(
     character: Character,
     player_id: str,
     player_name: str,
-):
+) -> PartyMember:
     """Build a single PartyMember from a Character object.
 
     Factored out of :func:`build_session_start_party_status` so the
@@ -431,7 +435,6 @@ def build_session_start_party_status(
     no seat record is available.
     """
     from sidequest.protocol.messages import PartyStatusMessage, PartyStatusPayload
-    from sidequest.protocol.models import PartyMember
 
     seat_map: dict[str, str] = {}
     if handler._room is not None:
