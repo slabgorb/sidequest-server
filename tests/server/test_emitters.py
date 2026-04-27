@@ -113,3 +113,28 @@ def test_persist_scrapbook_entry_legacy_path_no_event_log_is_noop(
 
     # Must not raise.
     emitters.persist_scrapbook_entry(handler, payload)
+
+
+def test_emit_event_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._emit_event must delegate
+    to emitters.emit_event."""
+    from sidequest.server import emitters
+
+    sd, handler = session_handler_factory()
+    sentinel = object()
+    captured: list[tuple] = []
+
+    def _spy(h, kind, payload):
+        captured.append((h, kind, payload))
+        return sentinel
+
+    monkeypatch.setattr(emitters, "emit_event", _spy)
+
+    result = handler._emit_event("NARRATION", object())
+
+    assert result is sentinel
+    assert len(captured) == 1
+    assert captured[0][0] is handler
+    assert captured[0][1] == "NARRATION"

@@ -157,6 +157,7 @@ def test_emit_event_calls_rewriter_per_recipient(
     # Spy on the rewriter — capture calls and pass-through to the real impl.
     from sidequest.agents import perception_rewriter as pr_module
     from sidequest.server import session_handler as handler_module
+    from sidequest.server import emitters as emitters_module
 
     real_rewrite = pr_module.rewrite_for_recipient
     calls: list[dict] = []
@@ -179,7 +180,8 @@ def test_emit_event_calls_rewriter_per_recipient(
         calls[-1]["spans_out"] = [s.get("kind") for s in out.get("spans", [])]
         return out
 
-    monkeypatch.setattr(handler_module, "rewrite_for_recipient", spy)
+    # emit_event is now in emitters.py, so we monkeypatch rewrite_for_recipient there
+    monkeypatch.setattr(emitters_module, "rewrite_for_recipient", spy)
 
     # Emit a narration-shaped event via the raw path. Using a plain dict
     # payload sidesteps NarrationPayload's extra="forbid" + missing `spans`
