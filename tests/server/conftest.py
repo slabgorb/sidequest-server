@@ -136,10 +136,12 @@ def _install_genre_loader_cache_patch() -> None:
     original_load = _genre_loader_mod.GenreLoader.load
 
     def _cached_load(self, code):  # noqa: ANN001
-        code_str = str(code)
-        if code_str not in _pack_cache:
-            _pack_cache[code_str] = original_load(self, code)
-        return _copy.deepcopy(_pack_cache[code_str])
+        # Include search_paths in the cache key to prevent cross-contamination
+        # when tests load from different directories
+        cache_key = (str(code), tuple(str(p) for p in self.search_paths))
+        if cache_key not in _pack_cache:
+            _pack_cache[cache_key] = original_load(self, code)
+        return _copy.deepcopy(_pack_cache[cache_key])
 
     if getattr(_genre_loader_mod.GenreLoader.load, "_is_test_cache", False):
         return
