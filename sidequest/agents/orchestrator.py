@@ -52,6 +52,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dice import RollOutcome
 from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
+from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
@@ -446,6 +447,12 @@ class TurnContext:
     # returns — TurnContext is a local copy; the snapshot isn't in scope here.
     # Typed as Any to avoid a circular import on ResolutionSignal.
     pending_resolution_signal: Any = None
+
+    # Per-turn phase-timing accumulator (Story: phase-timing instrumentation).
+    # Defaults to PhaseTimings.NULL so legacy fixtures and partial mocks
+    # continue to work without provisioning a real timer. Real instances
+    # are populated by ``_execute_narration_turn`` at action receipt.
+    phase_timings: PhaseTimings = field(default_factory=lambda: PhaseTimings.NULL)
 
 
 # ---------------------------------------------------------------------------
