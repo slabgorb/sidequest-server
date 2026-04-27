@@ -107,6 +107,10 @@ class TestVisualStyleLoraFieldsRemoved:
         survive, so legacy genre pack YAMLs that still mention `lora:`
         keep loading without raising. (Story 43-4 will scrub the YAMLs;
         43-1 just removes the typed fields, preserving tolerant loading.)
+
+        Pins the `__pydantic_extra__` preservation contract: if a future
+        change flips `extra='allow'` to `'ignore'`, legacy values would
+        be silently discarded — these assertions catch that regression.
         """
         vs = VisualStyle.model_validate({
             "positive_suffix": "x",
@@ -123,3 +127,9 @@ class TestVisualStyleLoraFieldsRemoved:
         assert "lora" not in type(vs).model_fields
         assert "lora_trigger" not in type(vs).model_fields
         assert "lora_scale" not in type(vs).model_fields
+        # The legacy values must round-trip into __pydantic_extra__,
+        # available to migration tooling and Story 43-4 scrubbing.
+        extras = vs.__pydantic_extra__ or {}
+        assert extras.get("lora") == "legacy.safetensors"
+        assert extras.get("lora_trigger") == "legacy_trigger"
+        assert extras.get("lora_scale") == 0.8

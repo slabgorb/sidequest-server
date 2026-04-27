@@ -1,25 +1,22 @@
 """Wiring tests for Story 43-1: VisualStyle LoRA-field removal.
 
-These tests fail in RED until the LoRA fields drop from VisualStyle and
-no production code path references them. They exercise the *system*, not
-the model in isolation:
+These tests exercise the *system*, not the model in isolation:
 
 - Production source (sidequest/) must contain no `.lora`, `.lora_trigger`,
   `.lora_scale`, or `.lora_path` attribute access — guards against the
   field being silently re-added or accessed via duck typing.
 - The genre-pack loader must successfully load a real, clean pack
   (heavy_metal) and surface a VisualStyle with the expected core fields.
-- The loader must tolerate legacy YAMLs that still mention `lora:` —
-  Story 43-4 owns scrubbing the YAMLs, so 43-1 must not break them.
+- The genre-pack loader must tolerate a real pack whose
+  `visual_style.yaml` still contains a `loras:` block (e.g.
+  `elemental_harmony`). Story 43-4 owns scrubbing those YAMLs; 43-1
+  must not regress loader compatibility while they remain.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-
-import pytest
-import yaml
 
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models import VisualStyle
@@ -35,6 +32,7 @@ _LORA_ATTR_PATTERN = re.compile(
 
 
 def _iter_server_python_files() -> list[Path]:
+    """Yield every .py file under SERVER_SRC, skipping __pycache__ trees."""
     return [
         p for p in SERVER_SRC.rglob("*.py")
         if "__pycache__" not in p.parts
@@ -47,16 +45,19 @@ class TestNoLoraAttributeAccessInServer:
         .lora_scale / .lora_path off any object. Story 43-2 will scrub the
         daemon side; this test covers the server side and is the wiring
         proof for AC3.
+
+        Scope note: the regex matches dot-prefixed attribute access only
+        (e.g. `vs.lora`). It will not flag bare-word mentions of `lora_*`
+        in comments, docstrings, or string literals — those would require
+        an AST walk. If a future story wants comment/docstring coverage,
+        widen the pattern; for now AC3's "grep lora_ across server" is
+        satisfied by the attribute-access form, which is what production
+        code actually does.
         """
         offenders: list[str] = []
         for path in _iter_server_python_files():
             text = path.read_text(encoding="utf-8")
             for lineno, line in enumerate(text.splitlines(), start=1):
-                # Skip comments and docstrings is hard without an AST;
-                # keep it simple — string-literal mentions of "lora_" in
-                # docstrings should be scrubbed too if they describe a
-                # removed field. Story 43-1 scope explicitly says
-                # "verify no callers remain (grep lora_ across server)".
                 if _LORA_ATTR_PATTERN.search(line):
                     offenders.append(
                         f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
@@ -70,59 +71,63 @@ class TestNoLoraAttributeAccessInServer:
 class TestVisualStyleLoaderStillWorks:
     def test_load_clean_pack_yields_visual_style(self) -> None:
         """heavy_metal/visual_style.yaml has no LoRA references; it must
-        round-trip through the loader to a VisualStyle.
+        round-trip through the loader to a VisualStyle whose values match
+        the on-disk pack content.
         """
         pack = load_genre_pack(CONTENT_GENRE_PACKS / "heavy_metal")
-        # The loader exposes the visual style under the GenrePack model.
-        # Different access paths exist across the codebase; this test
-        # tolerates either `pack.visual_style` (typed) or accessing it via
-        # a dict key on the parsed pack.
-        visual_style = getattr(pack, "visual_style", None)
-        assert visual_style is not None, (
-            "load_genre_pack(heavy_metal) must surface a visual_style"
-        )
+        visual_style = pack.visual_style
         assert isinstance(visual_style, VisualStyle), (
             f"Expected VisualStyle, got {type(visual_style).__name__}"
         )
-        assert visual_style.positive_suffix, (
-            "VisualStyle.positive_suffix must be populated for heavy_metal"
+        # heavy_metal's positive_suffix opens with the Doré reference;
+        # the substring is stable on-disk content and a sharper assertion
+        # than truthy.
+        assert "Doré" in visual_style.positive_suffix, (
+            "heavy_metal positive_suffix must reference Gustave Doré "
+            f"(got: {visual_style.positive_suffix!r})"
         )
-        assert visual_style.preferred_model, (
-            "VisualStyle.preferred_model must be populated for heavy_metal"
+        assert visual_style.preferred_model == "dev", (
+            f"heavy_metal preferred_model expected 'dev', "
+            f"got {visual_style.preferred_model!r}"
         )
 
-    def test_visual_style_tolerates_legacy_lora_yaml(
-        self, tmp_path: Path
-    ) -> None:
-        """A YAML that still has top-level singular `lora:` / `lora_trigger:`
-        / `lora_scale:` keys must continue to load (extra='allow'). 43-4
-        owns the YAML cleanup; 43-1 must not regress legacy compatibility.
+    def test_load_pack_with_legacy_lora_block(self) -> None:
+        """`elemental_harmony/visual_style.yaml` still ships a top-level
+        `loras:` block (Story 43-4 will scrub it). The loader must tolerate
+        that block today — pack must load, visual_style must be a
+        VisualStyle, and the unknown `loras` key must round-trip into
+        `__pydantic_extra__` (proving `extra='allow'` survived).
+
+        This is the load-bearing wiring proof for AC3/AC4: the deletion of
+        the typed LoRA fields does not break a real, on-disk pack that
+        still references them.
         """
-        yaml_path = tmp_path / "visual_style.yaml"
-        yaml_path.write_text(
-            yaml.safe_dump(
-                {
-                    "positive_suffix": "old style",
-                    "negative_prompt": "blur",
-                    "preferred_model": "flux1",
-                    "base_seed": 7,
-                    "lora": "legacy.safetensors",
-                    "lora_trigger": "legacy_trigger",
-                    "lora_scale": 0.8,
-                }
-            ),
-            encoding="utf-8",
+        pack = load_genre_pack(CONTENT_GENRE_PACKS / "elemental_harmony")
+        visual_style = pack.visual_style
+        assert isinstance(visual_style, VisualStyle), (
+            f"Expected VisualStyle, got {type(visual_style).__name__}"
         )
-        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-        # Direct model_validate proves the schema (post-removal) still
-        # parses legacy YAMLs without raising.
-        vs = VisualStyle.model_validate(raw)
-        assert vs.positive_suffix == "old style"
-        # Typed-field assertions: the LoRA keys are NOT exposed as
-        # declared fields, even when present in the raw YAML.
-        assert "lora" not in type(vs).model_fields
-        assert "lora_trigger" not in type(vs).model_fields
-        assert "lora_scale" not in type(vs).model_fields
+        # The pack's `loras:` block lives at the top level of
+        # visual_style.yaml — it must survive into __pydantic_extra__
+        # because extra='allow' is preserved on the model. If a future
+        # change flips extra to 'ignore', the legacy block would be
+        # silently dropped and this assertion would catch it.
+        extras = visual_style.__pydantic_extra__ or {}
+        assert "loras" in extras, (
+            "elemental_harmony's `loras:` block was dropped during load — "
+            "extra='allow' may have regressed. Got extras keys: "
+            f"{sorted(extras.keys())}"
+        )
+        loras = extras["loras"]
+        assert isinstance(loras, list) and len(loras) >= 1, (
+            f"elemental_harmony loras must be a non-empty list, got {loras!r}"
+        )
+        # Typed-field surface: even when `loras:` is present in the YAML,
+        # nothing LoRA-shaped lands on the typed model.
+        for forbidden in ("lora", "lora_trigger", "lora_scale", "lora_path"):
+            assert forbidden not in type(visual_style).model_fields, (
+                f"VisualStyle.{forbidden} re-introduced into model_fields"
+            )
 
 
 class TestVisualStyleSchemaSurface:
@@ -144,16 +149,3 @@ class TestVisualStyleSchemaSurface:
             f"VisualStyle declared fields drifted: "
             f"unexpected={declared - expected}, missing={expected - declared}"
         )
-
-
-@pytest.mark.parametrize(
-    "field_name",
-    ["lora", "lora_trigger", "lora_scale", "lora_path"],
-)
-def test_visual_style_field_removed_parametrized(field_name: str) -> None:
-    """Parametrized guard rail — explicit per-field assertion mirroring
-    the AC1 enumeration so the failure message names the offending field.
-    """
-    assert field_name not in VisualStyle.model_fields, (
-        f"VisualStyle.{field_name} must be removed per ADR-070 supersession"
-    )
