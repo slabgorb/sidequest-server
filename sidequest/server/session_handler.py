@@ -3756,32 +3756,33 @@ class WebSocketSessionHandler:
                         t.at,
                     )
 
-                try:
-                    # ADR-037 Python port: room owns the canonical snapshot, so a
-                    # plain room.save() is sufficient — there is no per-session
-                    # divergence to merge. Falls back to sd.store.save when the
-                    # legacy non-slug path didn't bind a room.
-                    if self._room is not None:
-                        self._room.save()
-                    else:
-                        sd.store.save(snapshot)
-                    narrative_entry = NarrativeEntry(
-                        timestamp=0,
-                        round=snapshot.turn_manager.interaction,
-                        author="narrator",
-                        content=result.narration,
-                        tags=[],
-                    )
-                    sd.store.append_narrative(narrative_entry)
-                    logger.info(
-                        "session.persisted turn=%d player=%s char_count=%d seat_count=%d",
-                        snapshot.turn_manager.interaction,
-                        sd.player_name,
-                        len(snapshot.characters),
-                        len(snapshot.player_seats),
-                    )
-                except Exception as exc:
-                    logger.error("session.persist_failed error=%s", exc)
+                with timings.phase("persistence"):
+                    try:
+                        # ADR-037 Python port: room owns the canonical snapshot, so a
+                        # plain room.save() is sufficient — there is no per-session
+                        # divergence to merge. Falls back to sd.store.save when the
+                        # legacy non-slug path didn't bind a room.
+                        if self._room is not None:
+                            self._room.save()
+                        else:
+                            sd.store.save(snapshot)
+                        narrative_entry = NarrativeEntry(
+                            timestamp=0,
+                            round=snapshot.turn_manager.interaction,
+                            author="narrator",
+                            content=result.narration,
+                            tags=[],
+                        )
+                        sd.store.append_narrative(narrative_entry)
+                        logger.info(
+                            "session.persisted turn=%d player=%s char_count=%d seat_count=%d",
+                            snapshot.turn_manager.interaction,
+                            sd.player_name,
+                            len(snapshot.characters),
+                            len(snapshot.player_seats),
+                        )
+                    except Exception as exc:
+                        logger.error("session.persist_failed error=%s", exc)
 
                 # Story 37-33: embed newly-seeded / pending lore fragments in the
                 # background so the *next* turn's RAG retrieval can find them.
@@ -3838,7 +3839,8 @@ class WebSocketSessionHandler:
                     visibility_sidecar=aggregate_visibility(dispatch_package),
                 )
                 # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
-                narration_msg = self._emit_event("NARRATION", narration_payload)
+                with timings.phase("broadcast"):
+                    narration_msg = self._emit_event("NARRATION", narration_payload)
 
                 # Pingpong 2026-04-26 [S3-REGRESSION]: emit a SCRAPBOOK_ENTRY for
                 # every narration turn so the UI gallery has metadata to merge with
@@ -4117,100 +4119,99 @@ class WebSocketSessionHandler:
                         except Exception as exc:  # noqa: BLE001 — party refresh must never crash a turn
                             logger.warning("state.party_status_refresh_failed error=%s", exc)
 
-                with timings.phase("persistence"):
-                    # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
-                    # message ships with the NARRATION payload; the async render task
-                    # posts an IMAGE message onto the per-connection outbound queue
-                    # when the daemon replies. Short-circuits without any socket work
-                    # when: render flag off, no visual scene, daemon socket missing,
-                    # or outbound queue unavailable (test configurations that don't
-                    # attach room context).
-                    render_queued = self._maybe_dispatch_render(sd, result)
-                    if render_queued is not None:
-                        outbound.append(render_queued)
+                # Visual-scene render dispatch. Fire-and-forget: the RENDER_QUEUED
+                # message ships with the NARRATION payload; the async render task
+                # posts an IMAGE message onto the per-connection outbound queue
+                # when the daemon replies. Short-circuits without any socket work
+                # when: render flag off, no visual scene, daemon socket missing,
+                # or outbound queue unavailable (test configurations that don't
+                # attach room context).
+                render_queued = self._maybe_dispatch_render(sd, result)
+                if render_queued is not None:
+                    outbound.append(render_queued)
 
-                    # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
-                    # with this turn's outbound frames. No placeholder + later message
-                    # dance — the DJ is a local filesystem lookup.
-                    audio_cue = self._maybe_dispatch_audio(sd, result)
-                    if audio_cue is not None:
-                        outbound.append(audio_cue)
+                # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
+                # with this turn's outbound frames. No placeholder + later message
+                # dance — the DJ is a local filesystem lookup.
+                audio_cue = self._maybe_dispatch_audio(sd, result)
+                if audio_cue is not None:
+                    outbound.append(audio_cue)
 
-                    # turn_complete is now emitted by the validator (per ADR-089 §6.7).
-                    # The TurnRecord assembled below is the single source of truth.
+                # turn_complete is now emitted by the validator (per ADR-089 §6.7).
+                # The TurnRecord assembled below is the single source of truth.
 
-                    # --- TurnRecord assembly + validator submit ---
-                    # Wrapped in try/except: the validator must NEVER crash the hot path.
-                    if self._validator is not None:
-                        try:
-                            _patch_summaries: list[PatchSummary] = []
-                            if result.location:
-                                _patch_summaries.append(
-                                    PatchSummary(patch_type="location", fields_changed=["location"])
-                                )
-                            if result.quest_updates:
-                                _patch_summaries.append(
-                                    PatchSummary(
-                                        patch_type="quest",
-                                        fields_changed=list(result.quest_updates),
-                                    )
-                                )
-                            if result.lore_established:
-                                _patch_summaries.append(
-                                    PatchSummary(
-                                        patch_type="lore", fields_changed=["lore_established"]
-                                    )
-                                )
-                            if result.npcs_present:
-                                _patch_summaries.append(
-                                    PatchSummary(
-                                        patch_type="npc_registry",
-                                        fields_changed=[n.name for n in result.npcs_present],
-                                    )
-                                )
-                            if result.items_gained or result.items_lost:
-                                _patch_summaries.append(
-                                    PatchSummary(patch_type="inventory", fields_changed=[])
-                                )
-
-                            _beats_fired: list[tuple[str, float]] = []
-                            for beat in result.beat_selections or []:
-                                _beats_fired.append(
-                                    (
-                                        getattr(beat, "trope_id", None)
-                                        or getattr(beat, "beat_id", None)
-                                        or "unknown",
-                                        float(getattr(beat, "threshold", 0.0) or 0.0),
-                                    )
-                                )
-
-                            timings.mark_done()
-                            record = TurnRecord(
-                                turn_id=snapshot.turn_manager.interaction,
-                                timestamp=datetime.now(UTC),
-                                player_id=sd.player_id,
-                                player_input=action,
-                                classified_intent="unknown",  # TODO: tighten when LocalDM exposes intent
-                                agent_name=result.agent_name or "narrator",
-                                narration=result.narration or "",
-                                patches_applied=_patch_summaries,
-                                snapshot_before_hash=snapshot_before_hash,
-                                snapshot_after=snapshot,
-                                delta=None,  # TODO: tighten when StateDelta is wired
-                                beats_fired=_beats_fired,
-                                extraction_tier=1,  # TODO: map result.prompt_tier to int tier
-                                token_count_in=result.token_count_in or 0,
-                                token_count_out=result.token_count_out or 0,
-                                agent_duration_ms=result.agent_duration_ms or 0,
-                                is_degraded=result.is_degraded,
-                                phase_durations_ms=timings.to_dict(),
-                                phase_call_counts=timings.phase_call_counts,
-                                total_duration_ms=timings.total_ms,
+                # --- TurnRecord assembly + validator submit ---
+                # Wrapped in try/except: the validator must NEVER crash the hot path.
+                if self._validator is not None:
+                    try:
+                        _patch_summaries: list[PatchSummary] = []
+                        if result.location:
+                            _patch_summaries.append(
+                                PatchSummary(patch_type="location", fields_changed=["location"])
                             )
-                            await self._validator.submit(record)
-                            submitted = True
-                        except Exception as exc:  # noqa: BLE001
-                            logger.exception("turn_record.assemble_failed: %s", exc)
+                        if result.quest_updates:
+                            _patch_summaries.append(
+                                PatchSummary(
+                                    patch_type="quest",
+                                    fields_changed=list(result.quest_updates),
+                                )
+                            )
+                        if result.lore_established:
+                            _patch_summaries.append(
+                                PatchSummary(
+                                    patch_type="lore", fields_changed=["lore_established"]
+                                )
+                            )
+                        if result.npcs_present:
+                            _patch_summaries.append(
+                                PatchSummary(
+                                    patch_type="npc_registry",
+                                    fields_changed=[n.name for n in result.npcs_present],
+                                )
+                            )
+                        if result.items_gained or result.items_lost:
+                            _patch_summaries.append(
+                                PatchSummary(patch_type="inventory", fields_changed=[])
+                            )
+
+                        _beats_fired: list[tuple[str, float]] = []
+                        for beat in result.beat_selections or []:
+                            _beats_fired.append(
+                                (
+                                    getattr(beat, "trope_id", None)
+                                    or getattr(beat, "beat_id", None)
+                                    or "unknown",
+                                    float(getattr(beat, "threshold", 0.0) or 0.0),
+                                )
+                            )
+
+                        timings.mark_done()
+                        record = TurnRecord(
+                            turn_id=snapshot.turn_manager.interaction,
+                            timestamp=datetime.now(UTC),
+                            player_id=sd.player_id,
+                            player_input=action,
+                            classified_intent="unknown",  # TODO: tighten when LocalDM exposes intent
+                            agent_name=result.agent_name or "narrator",
+                            narration=result.narration or "",
+                            patches_applied=_patch_summaries,
+                            snapshot_before_hash=snapshot_before_hash,
+                            snapshot_after=snapshot,
+                            delta=None,  # TODO: tighten when StateDelta is wired
+                            beats_fired=_beats_fired,
+                            extraction_tier=1,  # TODO: map result.prompt_tier to int tier
+                            token_count_in=result.token_count_in or 0,
+                            token_count_out=result.token_count_out or 0,
+                            agent_duration_ms=result.agent_duration_ms or 0,
+                            is_degraded=result.is_degraded,
+                            phase_durations_ms=timings.to_dict(),
+                            phase_call_counts=timings.phase_call_counts,
+                            total_duration_ms=timings.total_ms,
+                        )
+                        await self._validator.submit(record)
+                        submitted = True
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("turn_record.assemble_failed: %s", exc)
 
                 return outbound
         finally:
