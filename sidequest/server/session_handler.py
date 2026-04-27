@@ -4270,39 +4270,14 @@ class WebSocketSessionHandler:
     # ------------------------------------------------------------------
 
     async def _retrieve_lore_for_turn(self, sd: _SessionData, action: str) -> str | None:
-        """Fetch the pre-turn lore block via semantic search.
+        """Pre-turn lore RAG retrieval. Delegates to ``lore_embed.retrieve_for_turn``.
 
-        Always returns ``None`` on empty stores, missing daemons, or
-        embed failures — the narrator will run without RAG injection,
-        which is strictly better than crashing the turn. Expected failure
-        modes (empty store, daemon unavailable, embed error, query too
-        large) are logged inside :func:`retrieve_lore_context` and surface
-        their own OTEL span attribute. The blanket ``except Exception``
-        below exists precisely for paths those guards do not cover (e.g.
-        a malformed daemon reply that raises ``KeyError`` from
-        ``EmbedResponse`` construction) so a buggy codepath never crashes
-        the turn.
+        Phase 3 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        try:
-            return await retrieve_lore_context(sd.lore_store, action)
-        except Exception as exc:  # noqa: BLE001 — RAG must never crash a turn
-            logger.warning(
-                "lore_retrieval.unexpected_exception action_len=%d error=%s",
-                len(action),
-                exc,
-            )
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "lore_retrieval",
-                    "op": "failed",
-                    "reason": "unexpected_exception",
-                    "error": type(exc).__name__,
-                },
-                component="lore",
-                severity="error",
-            )
-            return None
+        from sidequest.server.dispatch import lore_embed
+
+        return await lore_embed.retrieve_for_turn(self, sd, action)
 
     def _dispatch_embed_worker(self, sd: _SessionData) -> None:
         """Spawn a background embed worker for any newly-added lore.

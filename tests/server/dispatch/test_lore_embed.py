@@ -12,6 +12,8 @@ Phase 3 of session_handler decomposition. These tests verify:
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_lore_embed_module_exposes_required_functions() -> None:
     """Wiring guard — the three required functions must be importable
@@ -26,3 +28,68 @@ def test_lore_embed_module_exposes_required_functions() -> None:
     assert hasattr(lore_embed, "retrieve_for_turn")
     assert hasattr(lore_embed, "dispatch_worker")
     assert hasattr(lore_embed, "run_worker")
+
+
+@pytest.mark.asyncio
+async def test_retrieve_for_turn_delegate_calls_module_function(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Wiring guard — WebSocketSessionHandler._retrieve_lore_for_turn
+    must delegate to lore_embed.retrieve_for_turn."""
+    from sidequest.server.dispatch import lore_embed
+
+    sd, handler = session_handler_factory()
+    captured: list[tuple] = []
+    sentinel: str | None = "<lore-block-sentinel>"
+
+    async def _spy(h, sd_arg, action):
+        captured.append((h, sd_arg, action))
+        return sentinel
+
+    monkeypatch.setattr(lore_embed, "retrieve_for_turn", _spy)
+
+    result = await handler._retrieve_lore_for_turn(sd, "look around")
+
+    assert result == sentinel
+    assert captured == [(handler, sd, "look around")]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_for_turn_returns_none_on_unexpected_exception(
+    monkeypatch, session_handler_factory
+) -> None:
+    """Behavioral test — when retrieve_lore_context raises an unexpected
+    exception, retrieve_for_turn must swallow it, log a warning, emit a
+    failure watcher event, and return None. The turn must never crash
+    on RAG failure (CLAUDE.md "No Silent Fallbacks" carve-out: the
+    fallback is loud-via-OTEL, silent-to-the-caller-by-design)."""
+    from sidequest.server.dispatch import lore_embed
+
+    sd, handler = session_handler_factory()
+
+    async def _boom(*args, **kwargs):
+        raise KeyError("simulated malformed embed response")
+
+    # Patch the caller's namespace, not sidequest.game.lore_embedding —
+    # see "Critical note on monkeypatch target" above.
+    monkeypatch.setattr(lore_embed, "retrieve_lore_context", _boom)
+
+    captured_events: list[tuple] = []
+
+    def _capture(event_kind, payload, component=None, severity=None):
+        captured_events.append((event_kind, payload, component, severity))
+
+    monkeypatch.setattr(lore_embed, "_watcher_publish", _capture)
+
+    result = await lore_embed.retrieve_for_turn(handler, sd, "look around")
+
+    assert result is None
+    assert len(captured_events) == 1
+    kind, payload, component, severity = captured_events[0]
+    assert kind == "state_transition"
+    assert payload["field"] == "lore_retrieval"
+    assert payload["op"] == "failed"
+    assert payload["reason"] == "unexpected_exception"
+    assert payload["error"] == "KeyError"
+    assert component == "lore"
+    assert severity == "error"
