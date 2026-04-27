@@ -38,14 +38,21 @@ class LobbyState(StrEnum):
     chargen-abandonment edge each ask a different question of the same
     record without rotting.
 
-    State storage: CHARGEN / PLAYING / ABANDONED are stored on _Seat.
-    CONNECTED and CLAIMING_SEAT are observable via the lobby.state_transition
-    watcher event but not stored — they describe the brief window between
-    SESSION_EVENT.connect and PLAYER_SEAT.
+    Storage and observability:
+      - CHARGEN / PLAYING / ABANDONED are stored on _Seat.
+      - CONNECTED is emitted as `lobby.state_transition` from `connect()`
+        but not stored on _Seat (no seat exists yet at connect time).
+      - CLAIMING_SEAT is defined for completeness — it represents the
+        brief edge between PLAYER_SEAT receipt and the `seat()` call —
+        but no code path currently emits a transition with
+        `to_state=CLAIMING_SEAT` because that edge is a single
+        function-call (`_handle_player_seat` validates and immediately
+        calls `room.seat()`). Exported for forward extensibility; future
+        code may use it without an enum change.
     """
 
-    CONNECTED = "connected"          # WS open, no PLAYER_SEAT yet (transient)
-    CLAIMING_SEAT = "claiming_seat"  # PLAYER_SEAT in flight (transient)
+    CONNECTED = "connected"          # WS open, no PLAYER_SEAT yet (emitted, not stored)
+    CLAIMING_SEAT = "claiming_seat"  # reserved — not currently emitted or stored
     CHARGEN = "chargen"              # seat claimed, character builder active
     PLAYING = "playing"              # chargen committed, character in world
     ABANDONED = "abandoned"          # disconnected during chargen — reclaimable
@@ -387,6 +394,24 @@ class SessionRoom:
         """Number of PLAYING peers — input to the turn barrier (Story 45-2)."""
         return len(self.playing_player_ids())
 
+    def non_abandoned_player_count(self) -> int:
+        """Story 45-2: count of seats with `state != ABANDONED`.
+
+        This is the `lobby_participant_count` source for the `barrier.wait`
+        OTEL event (Sebastien's lie-detector reads `lobby > active` to see
+        phantom-peer pressure). The raw `seated_player_count()` is not
+        suitable because it counts ABANDONED slots — historical
+        chargen-failure orphans that shouldn't inflate the lobby count.
+        Sibling to `playing_player_count()` which filters in the other
+        direction (only PLAYING).
+        """
+        with self._lock:
+            return sum(
+                1
+                for seat in self._seated.values()
+                if seat.state != LobbyState.ABANDONED
+            )
+
     def record_pending_action(
         self, player_id: str, character_name: str, action: str,
     ) -> None:
@@ -454,12 +479,17 @@ class SessionRoom:
         """Game is paused if any PLAYING peer is not currently connected.
 
         Story 45-2 (AC6 regression): chargen-abandoned peers do NOT pause
-        the game — their slot is reclaimable, not held. Only PLAYING
-        peers (committed character, in-world presence) hold the slot
-        across a disconnect. CHARGEN peers transition to ABANDONED on
-        disconnect (see `disconnect()`), so the only seats this predicate
-        considers are CHARGEN-but-still-connected (no pause needed) and
-        PLAYING (the original pause case).
+        the game — their slot is reclaimable, not held. Only PLAYING peers
+        (committed character, in-world presence) hold the slot across a
+        disconnect. CHARGEN peers either stay connected (no pause needed)
+        or transition to ABANDONED on disconnect (see `disconnect()`).
+
+        Iteration semantics: this predicate iterates over every seat in
+        `_seated` regardless of state. Seats with `state != PLAYING` —
+        whether CHARGEN-still-connected or ABANDONED — are silently
+        excluded by the `state == PLAYING` filter. ABANDONED seats remain
+        in `_seated` for forensic/GM-panel inspection, but they never
+        contribute to pause.
         """
         with self._lock:
             return any(
