@@ -1,11 +1,9 @@
 """Per-NPC belief bubbles for the Scenario System.
 
-Port of ``sidequest-api/crates/sidequest-game/src/belief_state.rs``.
-
 Each NPC carries a :class:`BeliefState` — a list of :class:`Belief`
 records (``Fact`` / ``Suspicion`` / ``Claim``) and a map of trust
 scores (:class:`Credibility`) for other named NPCs. Story 2.3 Slice D
-ports only the data model and mutation surface needed by scenario
+covers only the data model and mutation surface needed by scenario
 binding at chargen confirmation: :meth:`BeliefState.add_belief`,
 :meth:`BeliefState.beliefs_about`, :meth:`BeliefState.credibility_of`,
 :meth:`BeliefState.update_credibility`. Gossip propagation and
@@ -13,9 +11,7 @@ accusation evaluation land in a later slice.
 
 OTEL: :meth:`add_belief` and :meth:`update_credibility` emit watcher
 events on the current span (``belief_state.belief_added`` /
-``belief_state.credibility_updated``). These match the Rust
-``WatcherEventBuilder`` shape so the GM panel sees the same attribute
-keys regardless of which backend produced the event.
+``belief_state.credibility_updated``).
 """
 
 from __future__ import annotations
@@ -73,7 +69,7 @@ BeliefSource = Annotated[
 
 
 def _source_label(source: BeliefSource) -> str:
-    """OTEL label for a belief source (matches Rust ``belief_signature``)."""
+    """OTEL label for a belief source."""
     if isinstance(source, BeliefSourceToldBy):
         return f"told_by:{source.by}"
     return source.kind
@@ -130,7 +126,7 @@ class BeliefSuspicion(BaseModel):
         source: BeliefSource,
         confidence: float,
     ) -> BeliefSuspicion:
-        """Clamped constructor — mirrors Rust ``Belief::suspicion``."""
+        """Clamped constructor — confidence is forced into ``[0.0, 1.0]``."""
         return cls(
             subject=subject,
             content=content,
@@ -206,11 +202,7 @@ class BeliefState(BaseModel):
     # ------------------------------------------------------------------
 
     def add_belief(self, belief: BeliefFact | BeliefSuspicion | BeliefClaim) -> None:
-        """Append a belief and emit a ``belief_state.belief_added`` event.
-
-        Event attributes mirror Rust's ``belief_added`` shape so the GM
-        panel treats them identically.
-        """
+        """Append a belief and emit a ``belief_state.belief_added`` event."""
         self.beliefs.append(belief)
         span = trace.get_current_span()
         span.add_event(

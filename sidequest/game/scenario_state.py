@@ -1,30 +1,29 @@
 """Runtime state for an active scenario — Slice D data model.
 
-Port of ``sidequest-api/crates/sidequest-game/src/scenario_state.rs``
-at the "binding" surface only: :meth:`ScenarioState.from_genre_pack`
+Covers the "binding" surface only: :meth:`ScenarioState.from_genre_pack`
 and its accessors. Between-turn processing (gossip, NPC autonomous
-actions, clue availability), accusation evaluation, and narrator
-context formatting are explicitly deferred — they have no consumer
-until the narrator/between-turn pipeline lands post-Story-2.3.
+actions, clue availability), accusation evaluation, and narrator context
+formatting are explicitly deferred — they have no consumer until the
+narrator/between-turn pipeline lands post-Story-2.3.
 
 Scope decisions:
 
 - ``clue_graph`` stores the genre-level :class:`~sidequest.genre.models.scenario.ClueGraph`
-  directly. Rust converts to a typed game-level ``ClueGraph`` with enum
-  ``ClueType`` / ``DiscoveryMethod`` / ``ClueVisibility`` for
-  :class:`ClueActivation`; that port lands with the runtime that consumes
-  it. Storing the genre form avoids a silent stub.
+  directly. A typed game-level ``ClueGraph`` with enum ``ClueType`` /
+  ``DiscoveryMethod`` / ``ClueVisibility`` for :class:`ClueActivation`
+  lands with the runtime that consumes it. Storing the genre form
+  avoids a silent stub.
 - ``adjacency`` is built fully-connected (every NPC can gossip with
-  every other in the scenario), matching the Rust constructor.
-- ``npc_roles`` keys on NPC *name* (not id) — same as Rust. Role is
-  ``Guilty`` for the chosen suspect, ``Witness`` for any NPC whose
+  every other in the scenario).
+- ``npc_roles`` keys on NPC *name* (not id). Role is ``Guilty`` for the
+  chosen suspect, ``Witness`` for any NPC whose
   ``initial_beliefs.suspicions`` is non-empty, otherwise ``Innocent``.
-- ``guilty_npc`` is the *id* (per Rust: ``suspects.*.id``), selected
-  randomly from ``can_be_guilty`` suspects. Falls back to the first
-  NPC id if no suspect is marked can_be_guilty.
+- ``guilty_npc`` is the *id*, selected randomly from ``can_be_guilty``
+  suspects. Falls back to the first NPC id if no suspect is marked
+  ``can_be_guilty``.
 
-Selection is seedable for test determinism via the optional
-``rng`` argument on :meth:`from_genre_pack`.
+Selection is seedable for test determinism via the optional ``rng``
+argument on :meth:`from_genre_pack`.
 """
 
 from __future__ import annotations
@@ -80,10 +79,8 @@ class ScenarioState(BaseModel):
     ) -> ScenarioState:
         """Initialize scenario state from a genre pack's scenario pack.
 
-        Mirrors Rust ``ScenarioState::from_genre_pack``:
-
         - Copies the clue graph verbatim (genre form; game-form
-          conversion defers until :class:`ClueActivation` ports).
+          conversion defers until :class:`ClueActivation` lands).
         - Chooses a guilty NPC from ``assignment_matrix.suspects``
           filtered by ``can_be_guilty``. Falls back to the first
           scenario NPC id if no suspect is eligible.
@@ -98,10 +95,10 @@ class ScenarioState(BaseModel):
         """
         picker: random.Random | random.Random = rng if rng is not None else random.Random()
 
-        # Guilty selection: prefer can_be_guilty suspects; fall back to
-        # the first scenario NPC id (Rust parity "unknown" fallback is
-        # unreachable for any well-formed pack — keep the deterministic
-        # first-NPC fallback instead of a magic string).
+        # Guilty selection: prefer can_be_guilty suspects; otherwise
+        # fall back to the first scenario NPC id. The "unknown"
+        # fallback is unreachable for any well-formed pack, so the
+        # deterministic first-NPC choice avoids a magic string.
         guilty_candidates = [
             s.id for s in pack.assignment_matrix.suspects if s.can_be_guilty
         ]
@@ -112,7 +109,7 @@ class ScenarioState(BaseModel):
         else:
             guilty_npc = ""
 
-        # Role map keyed by NPC name (Rust stores `npc.name`, not id).
+        # Role map keyed by NPC name.
         npc_roles: dict[str, str] = {}
         for snpc in pack.npcs:
             if snpc.id == guilty_npc:

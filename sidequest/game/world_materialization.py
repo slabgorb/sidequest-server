@@ -1,7 +1,5 @@
 """Campaign maturity + world materialization from genre pack history.
 
-Port of ``sidequest-api/crates/sidequest-game/src/world_materialization.rs``.
-
 Maps:
 - ``CampaignMaturity`` — Fresh / Early / Mid / Veteran progression tier.
 - ``parse_history_chapters`` — extract a typed chapter list from raw
@@ -17,15 +15,11 @@ Chapter DTOs (``HistoryChapter``, ``ChapterCharacter`` etc.) live in
 ``sidequest.game.history_chapter`` to avoid a circular import with
 ``session.py``.
 
-Stress-testing extras from Rust (``with_extra_npcs``, ``with_extra_lore``,
-``with_combat``) are intentionally NOT ported — they have no production
-consumer. A future playtesting-fixture story can add them if needed.
-
 No silent fallbacks: unparseable chapter data raises
 ``HistoryParseError``; the dispatch layer decides whether to log-and-
 continue or propagate. Chapter ids outside {fresh, early, mid, veteran}
-are skipped (Rust parity — ``CampaignMaturity::from_chapter_id`` returns
-None, so the chapter doesn't match any maturity level).
+are skipped — ``CampaignMaturity.from_chapter_id`` returns None, so the
+chapter doesn't match any maturity level.
 """
 
 from __future__ import annotations
@@ -53,11 +47,7 @@ from sidequest.game.session import NarrativeEntry, Npc, TropeState
 
 
 class CampaignMaturity(str, Enum):
-    """Campaign maturity tier derived from turn count + beats fired.
-
-    Port of Rust ``CampaignMaturity`` enum. String values match Rust's
-    default serde Debug representation so JSON round-trips identically.
-    """
+    """Campaign maturity tier derived from turn count + beats fired."""
 
     Fresh = "Fresh"
     """Turns 0-5 effective: minimal history, world is new."""
@@ -76,7 +66,7 @@ class CampaignMaturity(str, Enum):
         """Derive maturity from a snapshot's turn count + beats fired.
 
         Beats accelerate maturity: a dramatic early game matures faster.
-        Rust parity: ``effective = round + beats / 2``.
+        ``effective = round + beats / 2``.
         """
         try:
             turn = int(snapshot.turn_manager.round)
@@ -136,7 +126,6 @@ class CampaignMaturity(str, Enum):
 class HistoryParseError(ValueError):
     """Raised when pack ``history.yaml`` chapter data can't be parsed.
 
-    Rust returns ``Result<Vec<HistoryChapter>, String>``; Python raises.
     The dispatch layer catches this and logs-and-continues with an
     empty chapter list so a malformed history never hard-fails a
     session.
@@ -151,12 +140,10 @@ class HistoryParseError(ValueError):
 def parse_history_chapters(value: Any) -> list[HistoryChapter]:
     """Extract a typed chapter list from raw pack history.
 
-    The genre pack loader stores ``history.yaml`` as an untyped dict
-    (the Rust side stores ``Option<serde_json::Value>``). The outer
-    shape is ``{"chapters": [...]}`` when present; we return an empty
-    list for null, missing ``chapters`` key, or empty chapter list.
-
-    Rust parity: ``parse_history_chapters(&Value) -> Result<Vec<HistoryChapter>, String>``.
+    The genre pack loader stores ``history.yaml`` as an untyped dict.
+    The outer shape is ``{"chapters": [...]}`` when present; we return
+    an empty list for null, missing ``chapters`` key, or empty chapter
+    list.
     """
     if value is None:
         return []
@@ -190,16 +177,11 @@ def parse_history_chapters(value: Any) -> list[HistoryChapter]:
 class WorldBuilder:
     """Fluent builder that produces a GameSnapshot at a given maturity.
 
-    Port of Rust ``WorldBuilder``. Ported methods:
-    - ``new`` / ``__init__`` — default Fresh maturity, no chapters.
+    Methods:
+    - ``__init__`` — default Fresh maturity, no chapters.
     - ``at_maturity`` — set the target maturity tier.
     - ``with_chapters`` — supply history chapters to apply.
     - ``build`` — materialize the snapshot, returning a new GameSnapshot.
-
-    NOT ported (no production consumer):
-    - ``with_extra_npcs`` — stress-testing NPC generator.
-    - ``with_extra_lore`` — stress-testing lore generator.
-    - ``with_combat`` — stress-testing combat setup.
     """
 
     def __init__(self) -> None:
@@ -250,7 +232,7 @@ class WorldBuilder:
     def _apply_chapter(self, snap: Any, chapter: HistoryChapter) -> None:
         """Apply a single chapter to the snapshot, cumulatively.
 
-        Semantics match Rust ``apply_chapter``:
+        Semantics:
         - Character data populates a new Character when snapshot is empty,
           otherwise selectively updates existing fields.
         - NPCs upsert by name (update existing, else append new).
@@ -315,12 +297,10 @@ class WorldBuilder:
         When a character already exists, selectively updates in place —
         only non-empty fields on the chapter overwrite.
 
-        Rust parity: ``apply_character`` (connect.rs equivalent).
         Note: hp/max_hp/ac from chapter are intentionally unused — the
         placeholder EdgePool stays as-is (Epic 39 wires per-class edge
-        seeding from YAML). This is not a silent fallback; the Rust
-        comment at character.rs notes these are advisory chapter
-        defaults.
+        seeding from YAML). These chapter fields are advisory defaults,
+        not a silent fallback.
         """
         if not snap.characters:
             name = char_data.name if char_data.name else "Adventurer"
@@ -386,11 +366,11 @@ class WorldBuilder:
     def _apply_npc(self, snap: Any, npc_data: ChapterNpc) -> None:
         """Upsert an NPC by name.
 
-        Blank name → skip (Rust parity — ``apply_npc`` short-circuits).
-        Existing NPC → update disposition, description, personality,
-        location in place. New NPC → append a new ``Npc`` with chapter
-        data and defaults for Phase-1-deferred fields (OCEAN, belief
-        state, resolution tier, archetype axes).
+        Blank name → skip (short-circuit). Existing NPC → update
+        disposition, description, personality, location in place. New
+        NPC → append a new ``Npc`` with chapter data and defaults for
+        Phase-1-deferred fields (OCEAN, belief state, resolution tier,
+        archetype axes).
         """
         if not npc_data.name:
             return
@@ -450,9 +430,8 @@ class WorldBuilder:
         """Upsert a trope state on the snapshot.
 
         Blank id → skip. Unknown status string → defaults to "active"
-        (Rust parity — the match arm has no guard beyond the four known
-        values). The Python ``TropeState`` model stores the id under
-        ``id`` (not ``trope_definition_id`` like Rust).
+        (no guard beyond the four known values). ``TropeState`` stores
+        the id under ``id``.
         """
         if not trope_data.id:
             return
@@ -491,8 +470,6 @@ def materialize_world(snapshot: Any, chapters: list[HistoryChapter]) -> None:
     filters chapters at-or-below that tier, and sets
     ``snapshot.world_history`` + ``snapshot.campaign_maturity``.
     Idempotent — safe to call repeatedly.
-
-    Rust parity: ``materialize_world(&mut GameSnapshot, &[HistoryChapter])``.
     """
     maturity = CampaignMaturity.from_snapshot(snapshot)
     applicable = [
@@ -524,11 +501,8 @@ def materialize_from_genre_pack(
 
     On parse failure, raises ``HistoryParseError`` — the dispatch
     wrapper decides whether to log-and-fall-back to an empty snapshot
-    (Rust does ``unwrap_or_else(|e| {...default})`` with a warning log)
     or propagate. We push that decision to the caller rather than
     hiding it in a silent fallback here.
-
-    Rust parity: ``materialize_from_genre_pack(&Value, CampaignMaturity, &str, &str)``.
     """
     chapters = parse_history_chapters(history_value)
     snap = WorldBuilder().at_maturity(maturity).with_chapters(chapters).build()

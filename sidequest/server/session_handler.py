@@ -75,6 +75,10 @@ from sidequest.game.session import (
     GameSnapshot,
     NarrativeEntry,
 )
+from sidequest.game.shared_world_delta import (
+    SharedWorldDelta,
+    build_shared_world_delta,
+)
 from sidequest.game.status import Status
 from sidequest.game.turn import TurnPhase
 from sidequest.game.world_materialization import (
@@ -128,7 +132,9 @@ from sidequest.protocol.models import (
     Footnote,
     InventoryItem,
     InventoryPayload,
+    PartyFormationWireEntry,
     PartyMember,
+    StateDelta,
 )
 from sidequest.protocol.types import NonBlankString
 from sidequest.server.audio_cue import build_audio_cue_payload
@@ -158,6 +164,35 @@ logger = logging.getLogger(__name__)
 def _hash_snapshot(snap: object) -> str:
     """BLAKE2b-16 fingerprint of a snapshot's repr. Used for before/after change detection."""
     return blake2b(repr(snap).encode(), digest_size=16).hexdigest()
+
+
+def _shared_world_delta_to_state_delta(delta: SharedWorldDelta) -> StateDelta:
+    """Project a :class:`SharedWorldDelta` onto the wire :class:`StateDelta`.
+
+    Story 45-1 — sealed-letter shared-world handshake. The game-side
+    SharedWorldDelta is the canonical model; the protocol StateDelta is
+    what the UI consumes. They share location/encounter_id/party_formation
+    by intent, but the transport boundary keeps them separate so the
+    game-side model can evolve without breaking wire compatibility.
+
+    Returns a StateDelta whose perceived-state fields (characters/quests/
+    items_gained) stay None — the canonical/perceived split is enforced
+    structurally here, not by ad-hoc filtering.
+    """
+    return StateDelta(
+        location=delta.location or None,
+        encounter_id=delta.encounter_id,
+        party_formation=[
+            PartyFormationWireEntry(
+                player_id=entry.player_id,
+                location=entry.location,
+                adjacency=list(entry.adjacency),
+            )
+            for entry in delta.party_formation
+        ]
+        if delta.party_formation
+        else None,
+    )
 
 
 tracer = trace.get_tracer("sidequest.server.session_handler")
@@ -3700,10 +3735,23 @@ class WebSocketSessionHandler:
                                 player_id=sd.player_id,
                             ),
                         )
+                    # Story 45-1 — sealed-letter shared-world handshake.
+                    # Build the canonical delta from the post-resolution
+                    # snapshot and ride it on NARRATION_END so peers see
+                    # ground-truth location/encounter/party formation
+                    # (playtest 3 fix: stops narrator fabricating
+                    # "collapsed corridor" between Orin and Blutka).
+                    handshake_delta = build_shared_world_delta(
+                        snapshot, room=self._room,
+                    )
                     outbound.append(
                         NarrationEndMessage(
                             type="NARRATION_END",  # type: ignore[arg-type]
-                            payload=NarrationEndPayload(state_delta=None),
+                            payload=NarrationEndPayload(
+                                state_delta=_shared_world_delta_to_state_delta(
+                                    handshake_delta,
+                                ),
+                            ),
                             player_id=sd.player_id,
                         ),
                     )

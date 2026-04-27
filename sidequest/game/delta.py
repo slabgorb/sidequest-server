@@ -1,17 +1,15 @@
 """State delta — captures client-visible changes between two game snapshots.
 
-Port of sidequest_game::delta (delta.rs, 212 LOC).
+The game-layer StateDelta is a boolean-flagged change detector used
+internally to determine which parts of state changed. It is DISTINCT
+from the protocol's ``sidequest.protocol.models.StateDelta``, which
+carries actual data values over the wire to the client.
 
-The game-layer StateDelta is a boolean-flagged change detector used internally
-to determine which parts of state changed. It is DISTINCT from the protocol's
-sidequest.protocol.models.StateDelta, which carries actual data values over the
-wire to the client.
+StateSnapshot stores serialized JSON strings per field group so equality
+checks are O(1).
 
-Rust uses StateSnapshot (serialized JSON strings per field group) for comparison.
-Python replicates the same semantics via model_dump_json() comparison.
-
-The compute_delta function takes two GameSnapshot instances and returns a
-StateDelta indicating which field groups changed.
+The ``compute_delta`` function takes two GameSnapshot instances and
+returns a StateDelta indicating which field groups changed.
 """
 
 from __future__ import annotations
@@ -28,14 +26,14 @@ if TYPE_CHECKING:
 class StateDelta(BaseModel):
     """Boolean flags indicating which game state fields changed between snapshots.
 
-    Port of sidequest_game::delta::StateDelta.
-    Used internally for broadcast optimization — avoids sending full state
-    every turn. Only changed field groups trigger client updates.
+    Used internally for broadcast optimization — avoids sending full
+    state every turn. Only changed field groups trigger client updates.
 
     NOTE: This is NOT the same as sidequest.protocol.models.StateDelta.
     The protocol StateDelta carries wire-format data (location string,
     character list, etc.). This type carries only boolean change flags.
-    build_protocol_delta() (in session.py) converts this into the protocol type.
+    build_protocol_delta() (in session.py) converts this into the
+    protocol type.
     """
 
     model_config = {"extra": "forbid"}
@@ -96,7 +94,6 @@ class StateDelta(BaseModel):
 class StateSnapshot:
     """Frozen JSON snapshot of game state for delta comparison.
 
-    Port of sidequest_game::delta::StateSnapshot.
     Uses serialized JSON strings per field group for O(1) equality checks.
     """
 

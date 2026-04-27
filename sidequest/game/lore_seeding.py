@@ -1,19 +1,17 @@
 """Seed a :class:`LoreStore` from genre pack + character creation data.
 
-Port of ``sidequest-api/crates/sidequest-game/src/lore/seeding.rs``.
 Called at chargen confirmation so backstory choices made during
 character creation are visible to the later RAG retrieval pipeline.
 Without this seed the character's narrative anchors only live on the
 builder, which is discarded immediately after confirmation.
 
-Fragment id formats match Rust so saves are cross-backend compatible:
+Fragment id formats:
 
 - Genre pack: ``lore_genre_history`` / ``lore_genre_geography`` /
   ``lore_genre_cosmology`` / ``lore_genre_faction_<slug>``
 - Character creation: ``lore_char_creation_<scene_id>_<choice_index>``
 
-Duplicate ids are silently skipped (Rust uses
-``if store.add(frag).is_ok()``). This keeps seeding idempotent — a
+Duplicate ids are silently skipped — seeding is idempotent so a
 reconnect that re-seeds won't hard-fail.
 """
 
@@ -43,7 +41,7 @@ def seed_lore_from_genre_pack(store: LoreStore, pack: GenrePack) -> int:
     """Seed ``store`` with fragments derived from ``pack.lore``.
 
     Returns the number of fragments successfully added (duplicates
-    skipped). Mirrors Rust ``seed_lore_from_genre_pack``.
+    skipped).
     """
     count = 0
 
@@ -76,7 +74,7 @@ def seed_lore_from_genre_pack(store: LoreStore, pack: GenrePack) -> int:
             store,
             LoreFragment.new(
                 id="lore_genre_cosmology",
-                # Rust bucket: cosmology → History (per seeding.rs parity).
+                # Cosmology fragments bucket into the History category.
                 category=LoreCategory.History,
                 content=pack.lore.cosmology,
                 source=LoreSource.GenrePack,

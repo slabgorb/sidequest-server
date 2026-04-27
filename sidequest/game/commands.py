@@ -1,16 +1,14 @@
 """Slash commands — /status, /inventory, /quests, /map, /save, /gm.
 
-Port of sidequest_game::commands (commands.rs, 403 LOC).
+Dispatch via a ``CommandHandler`` ABC plus a dataclass-style
+``CommandResult`` union.
 
-The Rust implementation uses a CommandHandler trait and CommandResult enum
-for dispatch. Python uses a dataclass-style CommandResult + base class.
-
-Phase 1 variants ported: all six commands (status, inventory, quests,
-map, save, gm) since they are pure read-only or produce WorldStatePatch
+Phase 1 covers all six commands (status, inventory, quests, map, save,
+gm) since they are pure read-only or produce ``WorldStatePatch``
 mutations — no combat/dice/chase dependency.
 
-Deferred (Phase 3+): commands that depend on StructuredEncounter or dice
-resolution (e.g., /roll) are not implemented here.
+Deferred (Phase 3+): commands that depend on ``StructuredEncounter`` or
+dice resolution (e.g., ``/roll``) are not implemented here.
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ class StateMutationResult:
     patch: WorldStatePatch
 
 
-# Union type matching Rust's CommandResult enum
+# Sum type for command handler return values.
 CommandResult = DisplayResult | ErrorResult | StateMutationResult
 
 
@@ -59,10 +57,7 @@ CommandResult = DisplayResult | ErrorResult | StateMutationResult
 
 
 class CommandHandler(ABC):
-    """Base class for slash command handlers.
-
-    Port of sidequest_game::slash_router::CommandHandler trait.
-    """
+    """Base class for slash command handlers."""
 
     @property
     @abstractmethod

@@ -1,9 +1,7 @@
 """History chapter DTOs — the typed shape of a ``history.yaml`` chapter.
 
-Port of the chapter-data types from
-``sidequest-api/crates/sidequest-game/src/world_materialization.rs``:
-``ChapterCharacter``, ``ChapterNpc``, ``ChapterNarrativeEntry``,
-``ChapterTrope``, ``HistoryChapter``.
+Defines ``ChapterCharacter``, ``ChapterNpc``, ``ChapterNarrativeEntry``,
+``ChapterTrope`` and ``HistoryChapter``.
 
 This module deliberately has NO dependencies on game-state types
 (Character/Npc/TropeState) — the chapter DTOs are forward-compat
@@ -24,10 +22,10 @@ from pydantic import BaseModel, Field
 class ChapterCharacter(BaseModel):
     """Character data within a history chapter.
 
-    Port of Rust ``ChapterCharacter`` struct. All fields optional so a
-    chapter can declare partial character updates (e.g. level-only).
-    ``class_name`` is the Python-side field; YAML key is ``class`` —
-    pydantic alias handles both read and serialize.
+    All fields optional so a chapter can declare partial character
+    updates (e.g. level-only). ``class_name`` is the Python-side field;
+    YAML key is ``class`` — pydantic alias handles both read and
+    serialize.
     """
 
     model_config = {"extra": "ignore", "populate_by_name": True}
@@ -48,10 +46,9 @@ class ChapterCharacter(BaseModel):
 class ChapterNpc(BaseModel):
     """NPC data within a history chapter.
 
-    Port of Rust ``ChapterNpc`` struct. ``name`` is blank-allowed because
-    Rust defaults it — ``apply_npc`` short-circuits when the name is
-    empty so a malformed chapter entry degrades silently rather than
-    exploding the whole materialization.
+    ``name`` is blank-allowed because ``apply_npc`` short-circuits when
+    the name is empty, so a malformed chapter entry degrades silently
+    rather than exploding the whole materialization.
     """
 
     model_config = {"extra": "ignore"}
@@ -68,10 +65,7 @@ class ChapterNpc(BaseModel):
 
 
 class ChapterNarrativeEntry(BaseModel):
-    """A narrative log entry within a history chapter.
-
-    Port of Rust ``ChapterNarrativeEntry`` struct.
-    """
+    """A narrative log entry within a history chapter."""
 
     model_config = {"extra": "ignore"}
 
@@ -80,10 +74,7 @@ class ChapterNarrativeEntry(BaseModel):
 
 
 class ChapterTrope(BaseModel):
-    """Trope state within a history chapter.
-
-    Port of Rust ``ChapterTrope`` struct.
-    """
+    """Trope state within a history chapter."""
 
     model_config = {"extra": "ignore"}
 
@@ -96,12 +87,10 @@ class ChapterTrope(BaseModel):
 class HistoryChapter(BaseModel):
     """A history chapter from the genre pack, keyed by maturity level.
 
-    Port of Rust ``HistoryChapter`` struct (Story 18-8 expansion of
-    the minimal 6-6 version). Carries everything the WorldBuilder
-    consumes — character, NPCs, quests, lore, notes, narrative log,
-    scene context, tropes — plus forward-compat fields
-    (``points_of_interest`` as raw Any) the engine doesn't consume
-    directly but the content authors populate.
+    Carries everything the WorldBuilder consumes — character, NPCs,
+    quests, lore, notes, narrative log, scene context, tropes — plus
+    forward-compat fields (``points_of_interest`` as raw Any) the engine
+    doesn't consume directly but content authors populate.
     """
 
     model_config = {"extra": "ignore"}

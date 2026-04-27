@@ -10,6 +10,7 @@ external callers that import these symbols from there.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,10 @@ from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.session import (
     NpcRegistryEntry,
     PartyPeer,
+)
+from sidequest.game.shared_world_delta import (
+    build_shared_world_delta,
+    merge_shared_delta_into_snapshot,
 )
 from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dispatch import DispatchPackage
@@ -210,6 +215,21 @@ def _build_turn_context(
         if pc.core.name != char_name
     ]
 
+    # Story 45-1 — sealed-letter shared-world handshake. Build the
+    # canonical delta, merge it back, and attach to state_summary so the
+    # narrator sees ground-truth party adjacency. Without this the
+    # narrator fabricates separations ("collapsed corridor" — playtest 3).
+    # The merge is idempotent on a fresh snapshot (all fields already
+    # match) — its job is to fire the OTEL event and provide MergeResult.
+    handshake_delta = build_shared_world_delta(snapshot, room=room)
+    merge_shared_delta_into_snapshot(snapshot, handshake_delta)
+    state_summary_payload = json.loads(snapshot.model_dump_json())
+    state_summary_payload["party_formation"] = [
+        entry.model_dump() for entry in handshake_delta.party_formation
+    ]
+    state_summary_payload["shared_world_delta"] = handshake_delta.model_dump()
+    state_summary_json = json.dumps(state_summary_payload, indent=2)
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -218,7 +238,7 @@ def _build_turn_context(
         confrontation_def=confrontation_def,
         available_confrontations=available_confrontations,
         encounter_summary=encounter_summary,
-        state_summary=snapshot.model_dump_json(indent=2),
+        state_summary=state_summary_json,
         narrator_verbosity="standard",
         narrator_vocabulary="literary",
         genre=sd.genre_slug,
