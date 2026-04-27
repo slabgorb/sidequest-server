@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
 from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
-from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
@@ -105,7 +104,6 @@ from sidequest.protocol.messages import (
     GameResumedMessage,
     ImageMessage,
     ImagePayload,
-    MapUpdateMessage,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -115,7 +113,6 @@ from sidequest.protocol.messages import (
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryMessage,
-    ScrapbookEntryNpcRef,
     ScrapbookEntryPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
@@ -916,158 +913,14 @@ class WebSocketSessionHandler:
     # ------------------------------------------------------------------
 
     def _emit_event(self, kind: str, payload_model: object) -> object:
-        """Persist an event to the EventLog and fan-out to all connected players.
+        """Persist + fan-out an event. Delegates to ``emitters.emit_event``.
 
-        Invariants (per Plan 03):
-        1. EventLog.append fires BEFORE any socket send.
-        2. Fan-out consults ProjectionFilter per recipient.
-        3. The emitter (self) receives the raw, unfiltered event.
-
-        Returns the outbound message object for the calling player (the emitter).
-        Falls back to a plain message without seq when EventLog is unavailable
-        (legacy non-slug connect path doesn't initialize _event_log).
+        Phase 1 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        import json
+        from sidequest.server import emitters
 
-        from pydantic import BaseModel
-
-        message_cls = _KIND_TO_MESSAGE_CLS.get(kind)
-        if message_cls is None:
-            raise ValueError(f"_emit_event: unknown kind {kind!r}")
-
-        event_log = self._event_log
-        projection_filter = self._projection_filter
-
-        # Serialize payload excluding seq (seq is assigned from the DB row)
-        if isinstance(payload_model, BaseModel):
-            payload_json = payload_model.model_dump_json(exclude={"seq"})
-        else:
-            payload_json = json.dumps(payload_model)  # type: ignore[arg-type]
-
-        if event_log is not None:
-            room = self._room
-            emitter_player_id = self._session_data.player_id if self._session_data else None
-
-            # C2: event append + all cache writes share a single transaction.
-            # Projections are computed inside the block so the cache row's
-            # event_seq is the freshly-assigned one. If the server crashes
-            # mid-block, sqlite rolls back both the event row and any partial
-            # cache rows — either the event is fully persisted with its
-            # projection cache, or not at all.
-            store = event_log.store
-            conn = store._conn
-            fanout: list[tuple[str, FilterDecision, dict]] = []
-            with conn:
-                row = event_log.append_in_transaction(
-                    kind=kind, payload_json=payload_json, conn=conn
-                )
-                seq = row.seq
-
-                if room is not None and projection_filter is not None:
-                    view = self._build_game_state_view()
-                    envelope = MessageEnvelope(
-                        kind=row.kind,
-                        payload_json=row.payload_json,
-                        origin_seq=row.seq,
-                    )
-                    # G6: status-effect perception overlay. Built once per
-                    # event (not per recipient) — snapshot statuses don't
-                    # change mid-fanout.
-                    status_effects = self.status_effects_by_player()
-
-                    # G8: route through the shared write-split helper so the
-                    # per-peer filter loop is a single code path (test and
-                    # production exercise `_project_frames`).
-                    recipients = [
-                        pid for pid in room.connected_player_ids() if pid != emitter_player_id
-                    ]
-
-                    def _cache_decision(pid: str, decision: FilterDecision) -> None:
-                        if self._projection_cache is not None:
-                            self._projection_cache.write_in_transaction(
-                                event_seq=seq,
-                                player_id=pid,
-                                decision=decision,
-                                conn=conn,
-                            )
-
-                    decisions = _project_frames(
-                        envelope=envelope,
-                        projection_filter=projection_filter,
-                        connected_players=recipients,
-                        view=view,
-                        on_decision=_cache_decision,
-                    )
-                    for other_pid, decision in decisions:
-                        filtered_data: dict = {}
-                        if decision.include:
-                            filtered_data = json.loads(decision.payload_json)
-                            # G6: PerceptionRewriter — strip spans whose kind
-                            # is incompatible with the recipient's effective
-                            # fidelity (base fidelity + status effects like
-                            # blinded/deafened). Runs on the already-filtered
-                            # payload, before WS send. Deterministic only;
-                            # LLM re-voicing is deferred to post-MP.
-                            filtered_data = rewrite_for_recipient(
-                                canonical_payload=filtered_data,
-                                viewer_player_id=other_pid,
-                                status_effects=status_effects,
-                            )
-                        fanout.append((other_pid, decision, filtered_data))
-
-            # Build emitter's message with raw, unfiltered payload + seq
-            # (Invariant 3). model_copy with scalar update is safe here —
-            # only `seq` is being added, no existing field is being replaced
-            # with a filtered value.
-            if isinstance(payload_model, BaseModel):
-                emitter_payload = payload_model.model_copy(update={"seq": seq})
-            else:
-                emitter_payload = payload_model  # type: ignore[assignment]
-            out_to_self = message_cls(payload=emitter_payload)
-
-            # Socket fan-out happens AFTER the DB transaction commits. A
-            # crash between commit and send is recoverable via the cache on
-            # reconnect; sending before commit would risk a client observing
-            # an event that never hit disk.
-            if room is not None:
-                payload_cls = type(payload_model) if isinstance(payload_model, BaseModel) else None
-                for other_pid, decision, filtered_data in fanout:
-                    if not decision.include:
-                        continue
-                    socket_id = room.socket_for_player(other_pid)
-                    if socket_id is None:
-                        continue
-                    queue = room.queue_for_socket(socket_id)
-                    if queue is None:
-                        continue
-                    try:
-                        if payload_cls is not None:
-                            # C3: rebuild the recipient payload from the
-                            # filtered dict alone (plus seq). Do NOT use
-                            # model_copy(update=...) — merging leaves fields
-                            # absent from the filtered dict at their canonical
-                            # values, which would leak any field a future rule
-                            # drops entirely.
-                            recipient_payload = payload_cls.model_validate(
-                                {**filtered_data, "seq": seq}
-                            )
-                            recipient_msg = message_cls(payload=recipient_payload)
-                        else:
-                            recipient_msg = message_cls(payload={**filtered_data, "seq": seq})
-                    except Exception:
-                        # Never silently fail fan-out; log and skip this recipient.
-                        logger.error(
-                            "emit_event.fanout_failed kind=%s other_pid=%s",
-                            kind,
-                            other_pid,
-                        )
-                        continue
-                    queue.put_nowait(recipient_msg)
-        else:
-            # Legacy path (non-slug connect): no EventLog, no seq
-            out_to_self = message_cls(payload=payload_model)
-
-        return out_to_self
+        return emitters.emit_event(self, kind, payload_model)
 
     # ------------------------------------------------------------------
     # Scrapbook entry emission (pingpong 2026-04-26 [S3-REGRESSION])
@@ -1080,120 +933,14 @@ class WebSocketSessionHandler:
         snapshot: GameSnapshot,
         result: object,
     ) -> None:
-        """Persist a scrapbook row + emit a SCRAPBOOK_ENTRY event for one turn.
+        """Persist + emit a scrapbook entry. Delegates to ``emitters.emit_scrapbook_entry``.
 
-        Called immediately after the NARRATION emit so the entry's seq lands
-        adjacent to its narration in the journal. The IMAGE that may follow
-        from the daemon is async — its URL arrives later and the UI gallery
-        merges by ``turn_id``. We never block on the daemon here.
-
-        Pure reuse: location from snapshot, excerpt from the narrator's prose,
-        NPCs from the orchestrator's structured extraction. No new LLM calls.
+        Phase 1 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        from sidequest.agents.orchestrator import NarrationTurnResult
+        from sidequest.server import emitters
 
-        if not isinstance(result, NarrationTurnResult):
-            return
-
-        narration_text = (result.narration or "").strip()
-        if not narration_text:
-            # The UI requires a non-empty excerpt; skip cleanly when the turn
-            # produced no prose (only happens in degraded edge cases).
-            return
-
-        # UI contract: ``location`` must be non-empty. Fall back to the raw
-        # snapshot location when the display lookup yields nothing — better
-        # to surface "Unknown" than to silently drop the entry.
-        loc_display = _resolve_location_display(
-            sd.genre_pack, sd.world_slug, snapshot.location
-        ) or (snapshot.location or "Unknown")
-
-        # Trim the excerpt to a reasonable length for caption rendering. The
-        # narrator's full prose lives on the NarrationMessage; the scrapbook
-        # caption is a short teaser.
-        excerpt = narration_text
-        if len(excerpt) > 320:
-            excerpt = excerpt[:317].rstrip() + "..."
-
-        # NPCs from the orchestrator's structured extraction — no new
-        # inference. ``role`` is the side flag (player/opponent/neutral);
-        # ``disposition`` falls back to role when no behavioral string was
-        # extracted.
-        npc_refs: list[ScrapbookEntryNpcRef] = []
-        for mention in result.npcs_present or []:
-            name = (getattr(mention, "name", "") or "").strip()
-            if not name:
-                continue
-            role = getattr(mention, "side", "") or "neutral"
-            disposition = getattr(mention, "role", "") or role
-            npc_refs.append(
-                ScrapbookEntryNpcRef(
-                    name=name,
-                    role=role,
-                    disposition=disposition,
-                )
-            )
-
-        # World facts: lift the narrator's footnote summaries when present.
-        world_facts: list[str] = []
-        for fn in result.footnotes or []:
-            if not isinstance(fn, dict):
-                continue
-            summary = fn.get("summary") or fn.get("text") or ""
-            if isinstance(summary, str) and summary.strip():
-                world_facts.append(summary.strip())
-
-        scene_type: str | None = None
-        scene_title: str | None = None
-        visual = getattr(result, "visual_scene", None)
-        if visual is not None:
-            tier = (getattr(visual, "tier", None) or "").strip()
-            scene_type = tier or None
-            subject = (getattr(visual, "subject", None) or "").strip()
-            if subject:
-                scene_title = subject[:120]
-
-        turn_id = int(snapshot.turn_manager.interaction)
-
-        payload = ScrapbookEntryPayload(
-            turn_id=turn_id,
-            location=loc_display,
-            narrative_excerpt=excerpt,
-            scene_title=scene_title,
-            scene_type=scene_type,
-            image_url=None,  # Async — IMAGE frame follows from the daemon
-            world_facts=world_facts,
-            npcs_present=npc_refs,
-        )
-
-        # Persist to the dedicated scrapbook_entries table — keeps the
-        # gallery queryable post-game without walking the events journal.
-        try:
-            self._persist_scrapbook_entry(payload)
-        except Exception as exc:  # noqa: BLE001 — persistence failure must not block emit
-            logger.warning("scrapbook.persist_failed turn=%d error=%s", turn_id, exc)
-
-        # Route through _emit_event so the journal gets a row + reconnect
-        # replay surfaces prior entries to fresh sockets.
-        self._emit_event("SCRAPBOOK_ENTRY", payload)
-
-        # OTEL lie-detector: GM panel sees per-turn confirmation that the
-        # scrapbook subsystem fired. Without this, regression #2 was
-        # invisible for two stories.
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "scrapbook",
-                "op": "entry_emitted",
-                "turn_id": turn_id,
-                "image_url": None,
-                "location": loc_display,
-                "npc_count": len(npc_refs),
-                "world_fact_count": len(world_facts),
-                "player_id": sd.player_id,
-            },
-            component="scrapbook",
-        )
+        emitters.emit_scrapbook_entry(self, sd=sd, snapshot=snapshot, result=result)
 
     # ------------------------------------------------------------------
     # MAP_UPDATE emission — slice 1 of N (pingpong 2026-04-26
@@ -1211,162 +958,26 @@ class WebSocketSessionHandler:
         render_id: str,
         player_id: str,
     ) -> None:
-        """Push a ``MAP_UPDATE`` frame to the player's outbound queue when a
-        cartography render is dispatched. Mirrors the IMAGE async-emit
-        pattern: direct queue push, no journaling, no fan-out via
-        ``_emit_event``.
+        """Push a MAP_UPDATE frame. Delegates to ``emitters.emit_map_update_for_cartography``.
 
-        Why no journaling: ``MAP_UPDATE`` is a derived view of world state —
-        on reconnect the slice-3 reconnect-replay path will rebuild the
-        current map from cartography + ``snapshot.discovered_regions``
-        rather than replay every historical frame. Adding a journal arm
-        would force a ``_KIND_TO_MESSAGE_CLS`` registration and a builder
-        case in ``_build_message_for_kind``, which is out of scope for
-        slice 1 (see hard scope cap in the story).
-
-        OTEL: emits ``map.update_emitted`` so the GM panel's "lie detector"
-        can confirm the map subsystem actually fired (CLAUDE.md OTEL
-        Observability Principle). Without this event there is no way to
-        distinguish "map rendered + UI updated" from "map rendered + UI
-        showing stale state" — the exact failure mode the Rust impl had
-        before its emit_map_update_telemetry helper landed.
+        Phase 1 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        from sidequest.server.dispatch.map_update import build_map_update_payload
+        from sidequest.server import emitters
 
-        # Resolve the live outbound queue. Mirror of the IMAGE completion
-        # path (story 37-30): when room context is bound, the registry's
-        # current socket queue survives mid-turn reconnects; otherwise fall
-        # back to the legacy out_queue captured at construction.
-        target_queue: asyncio.Queue[object] | None = None
-        room_slug: str | None = None
-        if self._room is not None:
-            room_slug = self._room.slug
-            registry = self._room_registry
-            if registry is not None:
-                room = registry.get(room_slug)
-                if room is not None:
-                    socket_id = room.socket_for_player(player_id)
-                    if socket_id is not None:
-                        target_queue = room.queue_for_socket(socket_id)
-        if target_queue is None:
-            target_queue = self._out_queue
-        if target_queue is None:
-            logger.warning(
-                "map_update.skipped reason=no_outbound_queue render_id=%s",
-                render_id,
-            )
-            return
-
-        # Pull cartography from the bound world. ``getattr`` chain handles
-        # legacy/test fixtures where the world or its cartography may be
-        # absent — emit anyway with cartography=None (the wire model allows
-        # it) so the UI at least learns the current location.
-        world = sd.genre_pack.worlds.get(sd.world_slug) if sd.genre_pack else None
-        cartography = getattr(world, "cartography", None) if world is not None else None
-
-        payload = build_map_update_payload(
-            snapshot=sd.snapshot, cartography=cartography,
-        )
-        if payload is None:
-            # No current location — emitting an empty MAP_UPDATE would make
-            # the UI worse, not better. Surface via OTEL so the GM panel
-            # can see the skip rather than silently dropping.
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "map",
-                    "op": "skipped",
-                    "reason": "no_current_location",
-                    "render_id": render_id,
-                    "tier": "cartography",
-                    "player_id": player_id,
-                },
-                component="map",
-                severity="warning",
-            )
-            return
-
-        msg = MapUpdateMessage(
-            type=MessageType.MAP_UPDATE,  # type: ignore[arg-type]
-            payload=payload,
-            player_id=player_id,
-        )
-
-        try:
-            target_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            logger.warning(
-                "map_update.outbound_queue_full render_id=%s", render_id
-            )
-            return
-
-        # OTEL lie-detector — every MAP_UPDATE that hits a queue gets a
-        # span. Origin marker mirrors the Rust ``emit_map_update_telemetry``
-        # helper so when the location-change and reconnect paths land in
-        # slices 2/3, the GM panel can distinguish them at a glance.
-        nav_mode = (
-            payload.cartography.navigation_mode if payload.cartography else "none"
-        )
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "map",
-                "op": "update_emitted",
-                "origin": "cartography_render",
-                "render_id": render_id,
-                "tier": "cartography",
-                "player_id": player_id,
-                "room_slug": room_slug or "",
-                "current_location": str(payload.current_location),
-                "region": str(payload.region),
-                "explored_count": len(payload.explored),
-                "has_cartography": payload.cartography is not None,
-                "cartography_navigation_mode": nav_mode,
-                "genre": sd.genre_slug,
-            },
-            component="map",
-        )
-        logger.info(
-            "map_update.emitted render_id=%s location=%s explored=%d",
-            render_id,
-            str(payload.current_location),
-            len(payload.explored),
+        emitters.emit_map_update_for_cartography(
+            self, sd=sd, render_id=render_id, player_id=player_id
         )
 
     def _persist_scrapbook_entry(self, payload: ScrapbookEntryPayload) -> None:
-        """Insert a scrapbook row into the dedicated table (schema in
-        ``game/persistence.py``). The table allows multiple rows per turn —
-        no UNIQUE on turn_id.
-        """
-        import json as _json
+        """Insert a scrapbook row. Delegates to ``emitters.persist_scrapbook_entry``.
 
-        if self._event_log is None:
-            return  # Legacy non-slug path — no DB to write to
-        store = self._event_log.store
-        npcs_json = _json.dumps(
-            [
-                {"name": ref.name, "role": ref.role, "disposition": ref.disposition}
-                for ref in payload.npcs_present
-            ]
-        )
-        facts_json = _json.dumps(list(payload.world_facts))
-        with store._conn:
-            store._conn.execute(
-                "INSERT INTO scrapbook_entries "
-                "(turn_id, scene_title, scene_type, location, image_url, "
-                " narrative_excerpt, world_facts, npcs_present) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    payload.turn_id,
-                    payload.scene_title,
-                    payload.scene_type,
-                    payload.location,
-                    payload.image_url,
-                    payload.narrative_excerpt,
-                    facts_json,
-                    npcs_json,
-                ),
-            )
+        Phase 1 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+        """
+        from sidequest.server import emitters
+
+        emitters.persist_scrapbook_entry(self, payload)
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -1593,6 +1204,7 @@ class WebSocketSessionHandler:
         # same sweep; both call sites must stay in sync.
         if outcome.encounter_resolved:
             from sidequest.server.status_clear import clear_scratch_on_scene_end
+
             clear_scratch_on_scene_end(
                 snapshot,
                 reason="scene_end",
@@ -3521,7 +3133,8 @@ class WebSocketSessionHandler:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "session.acting_name_resolve_failed error=%s falling_back_to=%s",
-                exc, sd.player_name,
+                exc,
+                sd.player_name,
             )
             acting_name = sd.player_name
         if self._room is not None and sd.player_name:
@@ -3567,7 +3180,9 @@ class WebSocketSessionHandler:
         if self._room is not None:
             snapshot = sd.snapshot
             self._room.record_pending_action(
-                sd.player_id, acting_name, action,
+                sd.player_id,
+                acting_name,
+                action,
             )
             snapshot.turn_manager.set_player_count(self._room.seated_player_count())
             snapshot.turn_manager.submit_input(sd.player_id)
@@ -3609,9 +3224,7 @@ class WebSocketSessionHandler:
                     "slug": self._room.slug,
                     "round": snapshot.turn_manager.round,
                     "player_count": self._room.seated_player_count(),
-                    "action_lengths": {
-                        pid: len(p.action) for pid, p in pending
-                    },
+                    "action_lengths": {pid: len(p.action) for pid, p in pending},
                     "combined_action_len": (
                         sum(len(p.action) for _, p in pending)
                         + sum(len(p.character_name) + 2 for _, p in pending)
@@ -3620,11 +3233,11 @@ class WebSocketSessionHandler:
                 component="multiplayer",
             )
 
-            combined_action = "\n".join(
-                f"{p.character_name}: {p.action}" for _, p in pending
-            )
+            combined_action = "\n".join(f"{p.character_name}: {p.action}" for _, p in pending)
             result = await self._execute_narration_turn(
-                sd, combined_action, turn_context,
+                sd,
+                combined_action,
+                turn_context,
             )
             return result
 
@@ -3744,10 +3357,14 @@ class WebSocketSessionHandler:
                         dice_failed = outcome_name in ("Fail", "CritFail")
                     dice_actor: str | None = getattr(sd, "pending_roll_actor", None)
                     opposed_player_d20: int | None = getattr(
-                        sd, "pending_opposed_player_d20", None,
+                        sd,
+                        "pending_opposed_player_d20",
+                        None,
                     )
                     opposed_player_beat_id: str | None = getattr(
-                        sd, "pending_opposed_player_beat_id", None,
+                        sd,
+                        "pending_opposed_player_beat_id",
+                        None,
                     )
                     _apply_narration_result_to_snapshot(
                         snapshot,
@@ -4209,9 +3826,7 @@ class WebSocketSessionHandler:
                             )
                         if result.lore_established:
                             _patch_summaries.append(
-                                PatchSummary(
-                                    patch_type="lore", fields_changed=["lore_established"]
-                                )
+                                PatchSummary(patch_type="lore", fields_changed=["lore_established"])
                             )
                         if result.npcs_present:
                             _patch_summaries.append(
@@ -4713,7 +4328,9 @@ class WebSocketSessionHandler:
         if tier == "cartography":
             try:
                 self._emit_map_update_for_cartography(
-                    sd=sd, render_id=render_id, player_id=player_id,
+                    sd=sd,
+                    render_id=render_id,
+                    player_id=player_id,
                 )
             except Exception as exc:  # noqa: BLE001 — map emit must never crash a turn
                 logger.warning(
@@ -5106,8 +4723,7 @@ class WebSocketSessionHandler:
                 # No live room — surface as session_not_found so the GM
                 # panel sees the drop instead of it being silent.
                 logger.warning(
-                    "render.session_not_found render_id=%s room=%s player=%s "
-                    "reason=room_missing",
+                    "render.session_not_found render_id=%s room=%s player=%s reason=room_missing",
                     render_id,
                     room_slug,
                     player_id,
@@ -5208,15 +4824,12 @@ class WebSocketSessionHandler:
             try:
                 target_queue.put_nowait(msg)
             except asyncio.QueueFull:
-                logger.warning(
-                    "render.outbound_queue_full render_id=%s", render_id
-                )
+                logger.warning("render.outbound_queue_full render_id=%s", render_id)
                 return
             recipients_count = 1
 
         logger.info(
-            "render.completed render_id=%s url=%s elapsed_ms=%d "
-            "recipients=%d broadcast=%s",
+            "render.completed render_id=%s url=%s elapsed_ms=%d recipients=%d broadcast=%s",
             render_id,
             served_url,
             elapsed,

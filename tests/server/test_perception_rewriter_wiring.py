@@ -13,6 +13,7 @@ Proves two wiring invariants:
    end-to-end by seating a NARRATION event with visual/audio spans and
    spying on the rewriter call via monkeypatch.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,19 +53,13 @@ def _make_character(*, name: str, statuses: list[str]) -> Character:
         inventory=Inventory(),
         statuses=statuses,
     )
-    return Character(
-        core=core, char_class="Fighter", race="Human", backstory="A wanderer."
-    )
+    return Character(core=core, char_class="Fighter", race="Human", backstory="A wanderer.")
 
 
-def _make_handler_with_character(
-    tmp_path: Path, *, statuses: list[str]
-) -> WebSocketSessionHandler:
+def _make_handler_with_character(tmp_path: Path, *, statuses: list[str]) -> WebSocketSessionHandler:
     """Construct a handler with a minimal _SessionData carrying a character
     whose ``statuses`` list drives ``status_effects_by_player``."""
-    handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS]
-    )
+    handler = WebSocketSessionHandler(save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS])
     # Minimal fake _SessionData — enough that status_effects_by_player can
     # read snapshot.characters[0].core.statuses.
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
@@ -88,16 +83,12 @@ def test_status_effects_by_player_reads_snapshot_statuses(tmp_path: Path) -> Non
 
 
 def test_status_effects_by_player_empty_when_no_session(tmp_path: Path) -> None:
-    handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS]
-    )
+    handler = WebSocketSessionHandler(save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS])
     assert handler.status_effects_by_player() == {}
 
 
 def test_status_effects_by_player_empty_when_no_characters(tmp_path: Path) -> None:
-    handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS]
-    )
+    handler = WebSocketSessionHandler(save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS])
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     handler._session_data = _SessionData.__new__(_SessionData)
     handler._session_data.snapshot = snap
@@ -118,7 +109,11 @@ def _seed_game_row(tmp_path: Path) -> SqliteStore:
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=_SLUG, mode=GameMode.SOLO, genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=_SLUG,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     return store
 
@@ -156,14 +151,13 @@ def test_emit_event_calls_rewriter_per_recipient(
 
     # Spy on the rewriter — capture calls and pass-through to the real impl.
     from sidequest.agents import perception_rewriter as pr_module
+    from sidequest.server import emitters as emitters_module
     from sidequest.server import session_handler as handler_module
 
     real_rewrite = pr_module.rewrite_for_recipient
     calls: list[dict] = []
 
-    def spy(
-        *, canonical_payload: dict, viewer_player_id: str, status_effects: dict
-    ) -> dict:
+    def spy(*, canonical_payload: dict, viewer_player_id: str, status_effects: dict) -> dict:
         calls.append(
             {
                 "viewer": viewer_player_id,
@@ -179,7 +173,8 @@ def test_emit_event_calls_rewriter_per_recipient(
         calls[-1]["spans_out"] = [s.get("kind") for s in out.get("spans", [])]
         return out
 
-    monkeypatch.setattr(handler_module, "rewrite_for_recipient", spy)
+    # emit_event is now in emitters.py, so we monkeypatch rewrite_for_recipient there
+    monkeypatch.setattr(emitters_module, "rewrite_for_recipient", spy)
 
     # Emit a narration-shaped event via the raw path. Using a plain dict
     # payload sidesteps NarrationPayload's extra="forbid" + missing `spans`
@@ -292,9 +287,7 @@ def test_emit_event_strips_visual_spans_for_blinded_viewer(
     assert "visual_only" not in kinds, (
         f"blinded bob must not receive visual_only spans; got {kinds}"
     )
-    assert "audio_only" in kinds, (
-        f"blinded bob must still receive audio_only spans; got {kinds}"
-    )
+    assert "audio_only" in kinds, f"blinded bob must still receive audio_only spans; got {kinds}"
 
 
 def test_emit_event_preserves_spans_for_unaffected_viewer(
