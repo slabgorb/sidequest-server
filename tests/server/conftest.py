@@ -473,10 +473,15 @@ def session_handler_factory(tmp_path):
             room = SessionRoom(slug=slug, mode=mode)
             # Bind a snapshot + store so the room is fully initialised.
             room.bind_world(snapshot=snap, store=store)
-            # Connect and seat every player.
+            # Connect and seat every player. The fixture's intent is a
+            # post-chargen "in-game" room, so each peer is promoted to
+            # PLAYING — this is what existing barrier tests assume and
+            # what Story 45-2 made explicit. Tests that need a CHARGEN /
+            # ABANDONED scenario override `_seated[pid].state` directly.
             for i, (pid, character_slot) in enumerate(seat_players):
                 room.connect(pid, socket_id=f"sock-{i}")
                 room.seat(pid, character_slot=character_slot)
+                room.transition_to_playing(pid)
             handler._room = room
             # Silence broadcast so tests don't need a real WebSocket.
             room.broadcast = MagicMock()  # type: ignore[method-assign]

@@ -355,17 +355,26 @@ def test_buffered_action_survives_buffer_owner_disconnect() -> None:
     """If a player submits, then disconnects before the barrier fires, the
     buffered PendingAction stays in the room buffer. (Pause-gate semantics
     happen at the handler entry point — this test covers the buffer-state
-    invariant.)"""
+    invariant.)
+
+    Story 45-2 update: pause now keys on PLAYING-but-disconnected (not on
+    every seated peer). Promoting both peers to PLAYING here preserves
+    this test's original authorial intent — a paused game with a
+    buffered action — under the new lobby state machine.
+    """
     room = SessionRoom(slug="test-disc", mode=GameMode.MULTIPLAYER)
     room.connect("p1", socket_id="s1")
     room.seat("p1", character_slot="Gladstone")
+    room.transition_to_playing("p1")
     room.connect("p2", socket_id="s2")
     room.seat("p2", character_slot="Zanzibar Jones")
+    room.transition_to_playing("p2")
 
     # p1 submits.
     room.record_pending_action("p1", "Gladstone", "I prepare for the dungeon")
 
-    # p1 disconnects (simulating WS drop).
+    # p1 disconnects (simulating WS drop). PLAYING peer disconnect → seat
+    # stays held in PLAYING (pause kicks in), NOT abandoned.
     room.disconnect(socket_id="s1")
     # Still seated despite disconnect (seat survives socket drop).
     assert "p1" in room.seated_player_ids()

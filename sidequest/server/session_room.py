@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+import sidequest.telemetry.watcher_hub as _hub
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
 
@@ -26,10 +28,51 @@ class SoloSlotConflict(Exception):
     """Raised when a second player tries to connect to a solo game."""
 
 
+class LobbyState(StrEnum):
+    """Lifecycle of a peer's lobby slot (Story 45-2).
+
+    Story 45-2 fix: the structured-mode turn barrier must count only
+    PLAYING peers, not every seated lobby connection. Modeling lobby
+    presence as an explicit state machine (vs. implicit booleans) lets
+    the barrier predicate, the pause-banner predicate, and the
+    chargen-abandonment edge each ask a different question of the same
+    record without rotting.
+
+    Storage and observability:
+      - CHARGEN / PLAYING / ABANDONED are stored on _Seat.
+      - CONNECTED is emitted as `lobby.state_transition` from `connect()`
+        but not stored on _Seat (no seat exists yet at connect time).
+      - CLAIMING_SEAT is defined for completeness — it represents the
+        brief edge between PLAYER_SEAT receipt and the `seat()` call —
+        but no code path currently emits a transition with
+        `to_state=CLAIMING_SEAT` because that edge is a single
+        function-call (`_handle_player_seat` validates and immediately
+        calls `room.seat()`). Exported for forward extensibility; future
+        code may use it without an enum change.
+    """
+
+    CONNECTED = "connected"          # WS open, no PLAYER_SEAT yet (emitted, not stored)
+    CLAIMING_SEAT = "claiming_seat"  # reserved — not currently emitted or stored
+    CHARGEN = "chargen"              # seat claimed, character builder active
+    PLAYING = "playing"              # chargen committed, character in world
+    ABANDONED = "abandoned"          # disconnected during chargen — reclaimable
+
+
+# Watcher event names (Story 45-2). String constants here so call sites
+# stay grep-friendly and so the names are reviewable in one place.
+EVENT_LOBBY_STATE_TRANSITION = "lobby.state_transition"
+EVENT_LOBBY_SEAT_ABANDONED = "lobby.seat_abandoned"
+
+
 @dataclass
 class _Seat:
     player_id: str
     character_slot: str | None = None
+    # Story 45-2: explicit lifecycle. Default is CHARGEN because seat()
+    # represents a fresh seat-claim; transition_to_playing() flips it
+    # once the character is committed (chargen confirmation, or a
+    # returning player whose character is already in the snapshot).
+    state: LobbyState = LobbyState.CHARGEN
 
 
 @dataclass
@@ -203,7 +246,25 @@ class SessionRoom:
             self._connected[player_id] = socket_id
             self._sockets[socket_id] = player_id
 
+        # Story 45-2: emit state-transition (CONNECTED is implicit / not
+        # stored, but the GM panel still wants to see the edge fire).
+        _hub.publish_event(
+            EVENT_LOBBY_STATE_TRANSITION,
+            {
+                "player_id": player_id,
+                "from_state": "(new)",
+                "to_state": LobbyState.CONNECTED.value,
+                "reason": "ws_connect",
+            },
+            component="lobby",
+        )
+
     def disconnect(self, *, socket_id: str) -> str | None:
+        # Capture transition info under the lock so the seat-state read and
+        # the mutation happen atomically; emit watcher events outside the
+        # lock (publish_event may be patched in tests / has its own
+        # synchronization).
+        abandon_payload: dict[str, Any] | None = None
         with self._lock:
             player_id = self._sockets.pop(socket_id, None)
             if player_id is None:
@@ -211,11 +272,90 @@ class SessionRoom:
             # Only remove from _connected if this socket is still the active one for that player.
             if self._connected.get(player_id) == socket_id:
                 self._connected.pop(player_id, None)
-            return player_id
+            seat = self._seated.get(player_id)
+            if seat is not None and seat.state == LobbyState.CHARGEN:
+                # Story 45-2 fix dimension #4: disconnect during chargen
+                # cancels the seat. ABANDONED slots are reclaimable —
+                # they are NOT counted by the turn barrier.
+                seat.state = LobbyState.ABANDONED
+                abandon_payload = {
+                    "player_id": player_id,
+                    "character_slot": seat.character_slot,
+                    "from_state": LobbyState.CHARGEN.value,
+                }
+
+        if abandon_payload is not None:
+            _hub.publish_event(
+                EVENT_LOBBY_STATE_TRANSITION,
+                {
+                    "player_id": player_id,
+                    "from_state": LobbyState.CHARGEN.value,
+                    "to_state": LobbyState.ABANDONED.value,
+                    "reason": "chargen_disconnect",
+                },
+                component="lobby",
+            )
+            _hub.publish_event(
+                EVENT_LOBBY_SEAT_ABANDONED,
+                abandon_payload,
+                component="lobby",
+            )
+        return player_id
 
     def seat(self, player_id: str, *, character_slot: str | None) -> None:
+        # Track the prior state under the lock so the from_state on the
+        # transition event is accurate even on the rare re-seat path.
         with self._lock:
-            self._seated[player_id] = _Seat(player_id=player_id, character_slot=character_slot)
+            existing = self._seated.get(player_id)
+            from_state = (
+                existing.state.value if existing is not None else LobbyState.CONNECTED.value
+            )
+            # New seat starts in CHARGEN by default — transition_to_playing()
+            # flips to PLAYING once the character is committed.
+            self._seated[player_id] = _Seat(
+                player_id=player_id, character_slot=character_slot,
+            )
+
+        _hub.publish_event(
+            EVENT_LOBBY_STATE_TRANSITION,
+            {
+                "player_id": player_id,
+                "from_state": from_state,
+                "to_state": LobbyState.CHARGEN.value,
+                "reason": "seat_claim",
+            },
+            component="lobby",
+        )
+
+    def transition_to_playing(self, player_id: str) -> None:
+        """Transition a seat from CHARGEN to PLAYING (Story 45-2).
+
+        Called from `_chargen_confirmation()` after `builder.build()`
+        succeeds, and from `_handle_player_seat()` for returning players
+        whose character is already in the snapshot. Idempotent: a
+        no-op if the seat is already PLAYING (silent — no duplicate
+        transition event). No-op if no seat exists (returning-player
+        race where PLAYER_SEAT lands before connect-time bookkeeping).
+        """
+        with self._lock:
+            seat = self._seated.get(player_id)
+            if seat is None:
+                return
+            if seat.state == LobbyState.PLAYING:
+                return
+            from_state = seat.state.value
+            seat.state = LobbyState.PLAYING
+
+        _hub.publish_event(
+            EVENT_LOBBY_STATE_TRANSITION,
+            {
+                "player_id": player_id,
+                "from_state": from_state,
+                "to_state": LobbyState.PLAYING.value,
+                "reason": "chargen_complete",
+            },
+            component="lobby",
+        )
 
     def unseat(self, player_id: str) -> None:
         with self._lock:
@@ -232,6 +372,45 @@ class SessionRoom:
     def absent_seated_player_ids(self) -> list[str]:
         with self._lock:
             return [p for p in self._seated if p not in self._connected]
+
+    def playing_player_ids(self) -> list[str]:
+        """Story 45-2: only PLAYING peers count toward the turn barrier.
+
+        Sibling to `seated_player_ids()` — `seated` returns every seat
+        record (CHARGEN / PLAYING / ABANDONED), `playing` filters to
+        peers whose character is committed and in the world. The turn
+        barrier predicate at session_handler.py reads `playing_*` so
+        that phantom chargen peers don't block solo players (the evropi
+        2026-04-19 scenario).
+        """
+        with self._lock:
+            return [
+                pid
+                for pid, seat in self._seated.items()
+                if seat.state == LobbyState.PLAYING
+            ]
+
+    def playing_player_count(self) -> int:
+        """Number of PLAYING peers — input to the turn barrier (Story 45-2)."""
+        return len(self.playing_player_ids())
+
+    def non_abandoned_player_count(self) -> int:
+        """Story 45-2: count of seats with `state != ABANDONED`.
+
+        This is the `lobby_participant_count` source for the `barrier.wait`
+        OTEL event (Sebastien's lie-detector reads `lobby > active` to see
+        phantom-peer pressure). The raw `seated_player_count()` is not
+        suitable because it counts ABANDONED slots — historical
+        chargen-failure orphans that shouldn't inflate the lobby count.
+        Sibling to `playing_player_count()` which filters in the other
+        direction (only PLAYING).
+        """
+        with self._lock:
+            return sum(
+                1
+                for seat in self._seated.values()
+                if seat.state != LobbyState.ABANDONED
+            )
 
     def record_pending_action(
         self, player_id: str, character_name: str, action: str,
@@ -297,8 +476,26 @@ class SessionRoom:
             }
 
     def is_paused(self) -> bool:
-        """Game is paused if any seated player is not currently connected."""
-        return len(self.absent_seated_player_ids()) > 0
+        """Game is paused if any PLAYING peer is not currently connected.
+
+        Story 45-2 (AC6 regression): chargen-abandoned peers do NOT pause
+        the game — their slot is reclaimable, not held. Only PLAYING peers
+        (committed character, in-world presence) hold the slot across a
+        disconnect. CHARGEN peers either stay connected (no pause needed)
+        or transition to ABANDONED on disconnect (see `disconnect()`).
+
+        Iteration semantics: this predicate iterates over every seat in
+        `_seated` regardless of state. Seats with `state != PLAYING` —
+        whether CHARGEN-still-connected or ABANDONED — are silently
+        excluded by the `state == PLAYING` filter. ABANDONED seats remain
+        in `_seated` for forensic/GM-panel inspection, but they never
+        contribute to pause.
+        """
+        with self._lock:
+            return any(
+                pid not in self._connected and seat.state == LobbyState.PLAYING
+                for pid, seat in self._seated.items()
+            )
 
     # ------------------------------------------------------------------
     # Outbound queue management (MP-02 Task 4)

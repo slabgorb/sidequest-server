@@ -871,6 +871,13 @@ class WebSocketSessionHandler:
             # Seat the player in the room (thread-safe, idempotent)
             if self._room is not None:
                 self._room.seat(player_id, character_slot=character_slot)
+                # Story 45-2: returning player — handler is already in
+                # _State.Playing because the connect flow detected an
+                # existing character and skipped chargen. Promote the
+                # fresh seat directly to PLAYING so the turn barrier
+                # counts them on the next submission.
+                if self._state is _State.Playing:
+                    self._room.transition_to_playing(player_id)
                 logger.info(
                     "session.player_seated player_id=%s character_slot=%s slug=%s",
                     player_id,
@@ -2717,6 +2724,13 @@ class WebSocketSessionHandler:
         # first action lost the save-state flag.
         self._state = _State.Playing
 
+        # Story 45-2: chargen committed → seat transitions CHARGEN → PLAYING
+        # so the turn barrier counts this peer. No-op if no room (solo
+        # path with no MP room) or if the peer was already PLAYING (safe
+        # under double-confirmation).
+        if self._room is not None:
+            self._room.transition_to_playing(player_id)
+
         sd.builder = None
         # ADR-014 / ADR-078: HP was removed in favor of EdgePool (composure).
         # Log surface-level mechanical state as edge=current/max so playtest
@@ -2944,9 +2958,11 @@ class WebSocketSessionHandler:
         # on the TurnManager barrier. If the barrier hasn't fired yet
         # (still in InputCollection), this handler returns []; another
         # player's later submission will fire the barrier and dispatch the
-        # narrator with the combined action. Solo rooms (seated_player_count
-        # == 1) flip the barrier on the first call and continue into the
-        # elected branch immediately — zero overhead.
+        # narrator with the combined action. Solo rooms (Story 45-2:
+        # playing_player_count() == 1 — a solo player must reach PLAYING
+        # via _chargen_confirmation before the barrier fires on their
+        # first action) flip the barrier on the first submission and
+        # continue into the elected branch immediately — zero overhead.
         if self._room is not None:
             snapshot = sd.snapshot
             self._room.record_pending_action(
@@ -2954,9 +2970,38 @@ class WebSocketSessionHandler:
                 acting_name,
                 action,
             )
-            snapshot.turn_manager.set_player_count(self._room.seated_player_count())
+            # Story 45-2: barrier counts PLAYING peers only — chargen /
+            # abandoned seats do not block. The non-abandoned count is
+            # captured alongside for the GM panel's lie-detector (Sebastien
+            # sees the lobby_participant_count vs active_turn_count
+            # divergence — abandoned seats are NOT counted as participants
+            # because they're reclaimable orphans, not active lobby members).
+            playing_count = self._room.playing_player_count()
+            lobby_participant_count = self._room.non_abandoned_player_count()
+            snapshot.turn_manager.set_player_count(playing_count)
             snapshot.turn_manager.submit_input(sd.player_id)
-            if snapshot.turn_manager.get_phase() != TurnPhase.InputCollection:
+            submitted_count = len(
+                object.__getattribute__(snapshot.turn_manager, "_submitted")
+            )
+            barrier_fired = snapshot.turn_manager.get_phase() != TurnPhase.InputCollection
+            # Story 45-2 AC4: barrier.wait fires on EVERY barrier check —
+            # not only on barrier_fired transitions. A wait that never
+            # fires is exactly the bug being fixed; if the span only
+            # emits on fire, the GM panel can't see why the wait persists.
+            _watcher_publish(
+                "barrier.wait",
+                {
+                    "slug": self._room.slug,
+                    "interaction_id": snapshot.turn_manager.interaction,
+                    "lobby_participant_count": lobby_participant_count,
+                    "active_turn_count": playing_count,
+                    "submitted_count": submitted_count if not barrier_fired else playing_count,
+                    "fired": barrier_fired,
+                    "submitter_player_id": sd.player_id,
+                },
+                component="multiplayer",
+            )
+            if barrier_fired:
                 # Barrier just fired on this submission — emit before the
                 # dispatch CAS so a failed dispatch still leaves the
                 # barrier-fired event visible.
@@ -2965,13 +3010,13 @@ class WebSocketSessionHandler:
                     {
                         "slug": self._room.slug,
                         "round": snapshot.turn_manager.round,
-                        "player_count": self._room.seated_player_count(),
+                        "player_count": playing_count,
                         "submitter_player_id": sd.player_id,
                     },
                     component="multiplayer",
                 )
             if snapshot.turn_manager.get_phase() == TurnPhase.InputCollection:
-                # Still waiting on other seated players. Broadcasts already
+                # Still waiting on other PLAYING players. Broadcasts already
                 # delivered turn_status_active above; the dispatcher will
                 # handle the actual narration when the last submission arrives.
                 return []
@@ -2993,7 +3038,12 @@ class WebSocketSessionHandler:
                 {
                     "slug": self._room.slug,
                     "round": snapshot.turn_manager.round,
-                    "player_count": self._room.seated_player_count(),
+                    # Story 45-2: report the count the barrier actually used
+                    # (playing peers), not the raw seat dict size. Pre-fix this
+                    # diverged from `barrier.wait.active_turn_count` for the
+                    # same round, telling Sebastien's GM panel two different
+                    # numbers about the same dispatch.
+                    "player_count": playing_count,
                     "action_lengths": {pid: len(p.action) for pid, p in pending},
                     "combined_action_len": (
                         sum(len(p.action) for _, p in pending)
