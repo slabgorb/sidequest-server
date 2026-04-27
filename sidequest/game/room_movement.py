@@ -1,10 +1,9 @@
-"""Room-graph movement — Slice E ports the chargen-time init surface only.
+"""Room-graph movement — Slice E provides the chargen-time init surface only.
 
-Port of ``sidequest-api/crates/sidequest-game/src/room_movement.rs``
-restricted to :func:`init_room_graph_location`. The runtime movement
-surface (``validate_room_transition``, ``apply_validated_move``,
-``build_room_graph_explored``) belongs to the per-turn dispatch
-pipeline and lands with the narrator runtime in a later story.
+This module exposes :func:`init_room_graph_location`. The runtime
+movement surface (``validate_room_transition``, ``apply_validated_move``,
+``build_room_graph_explored``) belongs to the per-turn dispatch pipeline
+and lands with the narrator runtime in a later story.
 
 No silent fallback: a room graph declared ``room_graph`` mode but
 carrying no room tagged ``entrance`` is an authoring bug. We raise
@@ -28,9 +27,8 @@ def init_room_graph_location(snap: GameSnapshot, rooms: list[RoomDef]) -> str:
     Mutates ``snap`` in place:
 
     - ``snap.location`` = the first room with ``room_type == "entrance"``
-    - ``snap.discovered_rooms`` gains that room id (dedup-append; the
-      Rust field is a ``HashSet<String>`` but the Python port keeps
-      ``list[str]`` for JSON parity with existing saves).
+    - ``snap.discovered_rooms`` gains that room id (dedup-append on a
+      ``list[str]`` for JSON stability with existing saves).
 
     Returns the chosen entrance id so the caller can emit OTEL without
     re-scanning ``snap.location``.

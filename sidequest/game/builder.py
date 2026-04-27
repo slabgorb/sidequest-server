@@ -1,18 +1,8 @@
 """CharacterBuilder — state machine for genre-driven character creation.
 
-Port of sidequest_game::builder (builder.rs, 903 LOC implementation).
-ADR-015: builder FSM — builder doesn't exist before new(), conceptually
-consumed by build(). No IDLE or COMPLETE states; construction and
-consumption are the boundaries.
-
-This module is ported in slices:
-- Slice 1: pure types — BuilderPhase, SceneInputType, SceneResult,
-  AccumulatedChoices, NarrativeHook, HookType, LoreAnchor, BuilderError.
-- Slice 2 (this commit): CharacterBuilder core + scene walking +
-  accumulated() + extract_hooks/anchors + helper formatters.
-- Slice 3: stat generation + HP formula.
-- Slice 4: build() finalizer + to_scene_message + OTEL watcher events.
-- Slice 5: integration test walking a real genre pack end-to-end.
+ADR-015: builder FSM — the builder doesn't exist before ``new()`` and
+is conceptually consumed by ``build()``. No IDLE or COMPLETE states;
+construction and consumption are the boundaries.
 """
 
 from __future__ import annotations
@@ -54,10 +44,7 @@ from sidequest.protocol.types import NonBlankString
 
 
 class HookType(str, Enum):
-    """Category of narrative hook.
-
-    Port of sidequest_game::builder::HookType.
-    """
+    """Category of narrative hook."""
 
     ORIGIN = "Origin"
     """From race_hint."""
@@ -79,10 +66,7 @@ class HookType(str, Enum):
 
 @dataclass
 class NarrativeHook:
-    """A narrative hook derived from character creation choices.
-
-    Port of sidequest_game::builder::NarrativeHook.
-    """
+    """A narrative hook derived from character creation choices."""
 
     hook_type: HookType
     source_scene: str
@@ -93,8 +77,6 @@ class NarrativeHook:
 @dataclass
 class LoreAnchor:
     """A connection to the game world (faction, NPC, location).
-
-    Port of sidequest_game::builder::LoreAnchor.
 
     anchor_type: "faction", "npc_relationship", "location" or similar.
     """
@@ -116,20 +98,14 @@ class SceneInputType:
 
 @dataclass(frozen=True)
 class ChoiceInput(SceneInputType):
-    """Player selected a numbered choice.
-
-    Port of Rust SceneInputType::Choice(usize).
-    """
+    """Player selected a numbered choice."""
 
     index: int
 
 
 @dataclass(frozen=True)
 class FreeformInput(SceneInputType):
-    """Player typed freeform text.
-
-    Port of Rust SceneInputType::Freeform(String).
-    """
+    """Player typed freeform text."""
 
     text: str
 
@@ -143,11 +119,9 @@ class FreeformInput(SceneInputType):
 class SceneResult:
     """What a single scene produced — the unit of revert.
 
-    Port of sidequest_game::builder::SceneResult.
-
-    choice_description stores the flavor description text from the chosen
-    option so we can compose a narrative backstory instead of only keeping
-    the mechanical label.
+    ``choice_description`` stores the flavor description text from the
+    chosen option so we can compose a narrative backstory instead of
+    only keeping the mechanical label.
     """
 
     input_type: SceneInputType
@@ -166,15 +140,14 @@ class SceneResult:
 class AccumulatedChoices:
     """Accumulated mechanical effects across all completed scenes.
 
-    Port of sidequest_game::builder::AccumulatedChoices.
+    Most hint fields follow last-one-wins semantics (a later scene
+    overrides an earlier one). Lists and stat_bonuses accumulate.
 
-    Most hint fields follow last-one-wins semantics (a later scene overrides
-    an earlier one). Lists and stat_bonuses accumulate.
-
-    reputation_bonus wires the Phase 1 IOU (character.py:66) —
-    spaghetti_western chargen choices tag reputation_bonus; the builder now
-    accumulates it alongside other hints. Downstream reputation system is
-    still post-Phase-2; the value simply flows through for now.
+    ``reputation_bonus`` wires the Phase 1 IOU (character.py:66) —
+    spaghetti_western chargen choices tag ``reputation_bonus``; the
+    builder accumulates it alongside other hints. The downstream
+    reputation system is still post-Phase-2; the value simply flows
+    through for now.
     """
 
     class_hint: str | None = None
@@ -211,20 +184,14 @@ class BuilderPhase:
 
 @dataclass(frozen=True)
 class InProgress(BuilderPhase):
-    """Processing genre-defined scenes.
-
-    Port of Rust BuilderPhase::InProgress { scene_index }.
-    """
+    """Processing genre-defined scenes."""
 
     scene_index: int
 
 
 @dataclass(frozen=True)
 class AwaitingFollowup(BuilderPhase):
-    """Scene has a hook_prompt — waiting for player's followup text.
-
-    Port of Rust BuilderPhase::AwaitingFollowup { scene_index, hook_prompt }.
-    """
+    """Scene has a hook_prompt — waiting for player's followup text."""
 
     scene_index: int
     hook_prompt: str
@@ -232,10 +199,7 @@ class AwaitingFollowup(BuilderPhase):
 
 @dataclass(frozen=True)
 class Confirmation(BuilderPhase):
-    """All scenes done, showing summary for confirmation.
-
-    Port of Rust BuilderPhase::Confirmation.
-    """
+    """All scenes done, showing summary for confirmation."""
 
 
 # Singleton instance of Confirmation — it carries no data, so sharing is fine.
@@ -243,15 +207,15 @@ CONFIRMATION: Confirmation = Confirmation()
 
 
 # ---------------------------------------------------------------------------
-# BuilderError — typed exceptions matching Rust BuilderError enum
+# BuilderError — typed exception hierarchy
 # ---------------------------------------------------------------------------
 
 
 class BuilderError(Exception):
     """Base class for CharacterBuilder errors.
 
-    Port of sidequest_game::builder::BuilderError enum. Each Rust variant
-    maps to a subclass so callers can catch specific failure modes:
+    Each variant maps to a subclass so callers can catch specific
+    failure modes::
 
         try:
             builder.apply_choice(idx)
@@ -348,8 +312,7 @@ class EdgeConfigMissingClassError(BuilderError):
 
 
 # Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
-# in catch blocks, matching the Rust `BuilderError::InvalidChoice { .. }`
-# read pattern.
+# in catch blocks without importing each variant.
 BuilderError.InvalidChoice = InvalidChoiceError  # type: ignore[attr-defined]
 BuilderError.WrongPhase = WrongPhaseError  # type: ignore[attr-defined]
 BuilderError.FreeformNotAllowed = FreeformNotAllowedError  # type: ignore[attr-defined]
@@ -369,10 +332,9 @@ BuilderError.EdgeConfigMissingClass = EdgeConfigMissingClassError  # type: ignor
 def extract_hooks(scene_id: str, effects: MechanicalEffects) -> list[NarrativeHook]:
     """Derive narrative hooks from mechanical effects on a chosen option.
 
-    Port of sidequest_game::builder::extract_hooks (module-private in Rust).
-    Each produced hook records the mechanical_key that generated it so the
-    build() finalizer can filter hooks already represented on the character
-    sheet (race, class, personality).
+    Each produced hook records the ``mechanical_key`` that generated it
+    so the ``build()`` finalizer can filter hooks already represented on
+    the character sheet (race, class, personality).
     """
     hooks: list[NarrativeHook] = []
 
@@ -442,8 +404,7 @@ def extract_hooks(scene_id: str, effects: MechanicalEffects) -> list[NarrativeHo
 def extract_anchors(scene_id: str, effects: MechanicalEffects) -> list[LoreAnchor]:
     """Derive lore anchors (world-graph links) from mechanical effects.
 
-    Port of sidequest_game::builder::extract_anchors (module-private in
-    Rust). Relationship effects imply NPC anchors — if the choice names a
+    Relationship effects imply NPC anchors — if the choice names a
     mentor or rival, that name becomes a future lore seed.
     """
     anchors: list[LoreAnchor] = []
@@ -466,7 +427,6 @@ def extract_anchors(scene_id: str, effects: MechanicalEffects) -> list[LoreAncho
 def humanize_snake_case(s: str) -> str:
     """Convert a snake_case identifier to Title Case display name.
 
-    Port of sidequest_game::builder::humanize_snake_case.
     E.g. "natural_armor" → "Natural Armor",
          "mystery_compass" → "Mystery Compass".
     """
@@ -476,8 +436,6 @@ def humanize_snake_case(s: str) -> str:
 def strip_unmatched_placeholders(s: str) -> str:
     """Strip any unmatched `{key}` placeholders and orphan trailing
     punctuation/whitespace from a substituted template.
-
-    Port of sidequest_game::builder::strip_unmatched_placeholders.
 
     After a template has had every known table key substituted, any
     remaining `{key}` placeholders correspond to keys the genre pack didn't
@@ -518,8 +476,6 @@ def strip_unmatched_placeholders(s: str) -> str:
 
 def find_unrecognized_tokens(rendered: str) -> list[str]:
     """Scan interpolated narration for placeholders the interpolator didn't resolve.
-
-    Port of sidequest_game::builder::find_unrecognized_tokens.
 
     Used by CharacterBuilder.interpolate_scene_narration to surface author-typo'd
     or unsupported placeholder keys via one OTEL Warn event per offending token.
@@ -577,20 +533,9 @@ class _ArithmeticParseError(Exception):
 class CharacterBuilder:
     """State machine for character creation driven by genre-pack scenes.
 
-    Port of sidequest_game::builder::CharacterBuilder. Tracks scene
-    progression, accumulates mechanical effects, extracts narrative hooks,
-    and ultimately produces a Character (build() lands in Slice 4).
-
-    Slice 2 scope: construction, phase queries, scene walking
-    (apply_choice / apply_freeform / answer_followup / apply_auto_advance /
-    go_back / go_to_scene / revert), accumulated() view computation.
-
-    Out of scope for Slice 2: stat_generation (Slice 3), hp_formula
-    evaluation (Slice 3), build() finalizer (Slice 4), to_scene_message
-    protocol rendering (Slice 4), scene narration interpolation + OTEL
-    watcher events (Slice 4). Rolling of 3d6 strict stats at construction
-    is also deferred to Slice 3 — the rolled_stats field is reserved and
-    reads as None in Slice 2.
+    Tracks scene progression, accumulates mechanical effects, extracts
+    narrative hooks, and ultimately produces a ``Character`` via
+    ``build()``.
     """
 
     def __init__(
@@ -603,16 +548,11 @@ class CharacterBuilder:
     ) -> None:
         """Create a new builder.
 
-        Raises NoScenesError if `scenes` is empty. The Rust API exposed a
-        panicking `new` and a fallible `try_new`; Python collapses those to
-        a single constructor that raises — matching Python's exception-
-        first idiom and removing a duplicate code path.
+        Raises ``NoScenesError`` if ``scenes`` is empty.
 
-        `rng` is a seeded RNG source for deterministic stat generation in
-        tests. Production callers should omit it (defaults to a fresh
-        `random.Random()`). Rust rolls via `rand::rng()` — which is process-
-        local and non-deterministic — so production parity is preserved;
-        the explicit parameter is only for test seeding.
+        ``rng`` is a seeded RNG source for deterministic stat generation
+        in tests. Production callers should omit it (defaults to a fresh
+        ``random.Random()``).
         """
         if not scenes:
             raise NoScenesError()
@@ -631,7 +571,7 @@ class CharacterBuilder:
 
         # Configuration sourced from RulesConfig. Keep these as attributes
         # (not a stored reference) so scene directives can override
-        # stat_generation at apply time (Rust apply_freeform semantics).
+        # stat_generation at apply time.
         self._stat_generation: str = rules.stat_generation
         self._ability_score_names: list[str] = list(rules.ability_score_names)
         self._default_class: str | None = rules.default_class
@@ -646,11 +586,11 @@ class CharacterBuilder:
         self._class_label: str = rules.class_label or "Class"
 
         # Eager roll at construction — scan scenes for the first
-        # `stat_generation: roll_3d6_strict` directive. Rust rolls eagerly
-        # so stat values are available for narration injection when the
-        # declaring scene is first rendered (the scene content is
-        # authoritative: if a scene declares roll_3d6_strict, that scene's
-        # narration gets stat values).
+        # `stat_generation: roll_3d6_strict` directive so stat values
+        # are available for narration injection when the declaring scene
+        # is first rendered. The scene content is authoritative: if a
+        # scene declares roll_3d6_strict, that scene's narration gets
+        # stat values.
         self._rolled_stats: list[tuple[str, int]] | None = None
         for s in scenes:
             eff = s.mechanical_effects
@@ -810,22 +750,19 @@ class CharacterBuilder:
     def accumulated(self) -> AccumulatedChoices:
         """Compute accumulated choices from scene results.
 
-        Most hint fields follow last-one-wins (a later scene overrides an
-        earlier one). Lists and stat_bonuses accumulate additively.
+        Most hint fields follow last-one-wins (a later scene overrides
+        an earlier one). Lists and stat_bonuses accumulate additively.
 
-        Port of sidequest_game::builder::CharacterBuilder::accumulated.
+        ``reputation_bonus`` is accepted as pass-through on
+        ``MechanicalEffects`` and accumulated here last-one-wins like
+        other single-value hints.
 
-        The reputation_bonus accumulation here closes the Phase 1 IOU
-        from docs/plans/phase-2-chargen-port.md — the field was accepted
-        as pass-through on MechanicalEffects in Phase 1; this is the
-        first consumer. Last-one-wins like other single-value hints.
-
-        The pronoun-only-choice filter for backstory_fragments excludes
-        "He.", "She.", etc. — single-token pronoun picks that aren't
-        narrative-bearing. Any other hint field on the same result
-        re-qualifies the fragment so meaningful descriptions like "the
-        armed woman with murder in her eyes" survive (reviewer finding
-        from story 31-2).
+        The pronoun-only-choice filter for ``backstory_fragments``
+        excludes "He.", "She.", etc. — single-token pronoun picks that
+        aren't narrative-bearing. Any other hint field on the same
+        result re-qualifies the fragment so meaningful descriptions
+        like "the armed woman with murder in her eyes" survive
+        (reviewer finding from story 31-2).
         """
         acc = AccumulatedChoices()
         for result in self._results:
@@ -868,8 +805,8 @@ class CharacterBuilder:
             if eff.reputation_bonus is not None:
                 acc.reputation_bonus = eff.reputation_bonus
 
-            # Multi-value accumulation — item_hints skips sentinel "none" /
-            # empty strings to match the Rust filter.
+            # Multi-value accumulation — item_hints skips sentinel "none"
+            # and empty strings.
             if eff.item_hint is not None and eff.item_hint not in ("", "none"):
                 acc.item_hints.append(eff.item_hint)
 
@@ -907,8 +844,6 @@ class CharacterBuilder:
 
     def interpolate_scene_narration(self, text: str) -> str:
         """Resolve {name}/{class}/{race} placeholders in scene narration.
-
-        Port of sidequest_game::builder::CharacterBuilder::interpolate_scene_narration.
 
         Resolution order for {name}: the player's scene-entered name wins, falling
         back to the lobby name for genres that don't include a name-entry scene.
@@ -980,21 +915,18 @@ class CharacterBuilder:
     def to_scene_message(self, player_id: str) -> CharacterCreationMessage:
         """Render the current builder phase as a CHARACTER_CREATION message.
 
-        Port of sidequest_game::builder::CharacterBuilder::to_scene_message.
-
-        Covers InProgress and AwaitingFollowup. Confirmation-phase rendering
-        requires pack inventory + the lobby-provided name, neither of which the
-        builder owns; the server's chargen_summary module renders confirmation
-        from the outside (Rust parity — sidequest-server's
-        dispatch::chargen_summary::render_confirmation_summary). Calling this
-        method in Confirmation phase is a programmer error and raises
-        RuntimeError with the same diagnostic the Rust source panics with.
+        Covers InProgress and AwaitingFollowup. Confirmation-phase
+        rendering requires pack inventory + the lobby-provided name,
+        neither of which the builder owns; the server's
+        ``chargen_summary`` module renders confirmation from the outside
+        via ``render_confirmation_summary``. Calling this method in
+        Confirmation phase is a programmer error and raises
+        ``RuntimeError`` with a diagnostic.
 
         Wire format notes:
-          - scene_index is 0-based on the wire (matches Rust). The payload
-            docstring calls it "1-based" — that's a pre-existing mislabel from
-            the Phase 1 protocol port, not introduced here. UI consumers
-            already display scene_index + 1.
+          - scene_index is 0-based on the wire. The payload docstring
+            calls it "1-based" — that's a pre-existing mislabel; UI
+            consumers already display ``scene_index + 1``.
           - Empty label/description on any CharCreationChoice fails loud via
             the NonBlankString validator — pack YAML must fix blanks at the
             source, not silently fall back at render time.
@@ -1101,7 +1033,8 @@ class CharacterBuilder:
 
         scene = self._scenes[scene_index]
         if index >= len(scene.choices):
-            # Rust uses saturating_sub on max; we mirror for parity.
+            # Saturating subtraction so an empty-choice scene reports
+            # ``max_index=0`` instead of a negative value.
             max_index = max(len(scene.choices) - 1, 0)
             raise InvalidChoiceError(index=index, max_index=max_index)
 
@@ -1157,9 +1090,9 @@ class CharacterBuilder:
             else MechanicalEffects()
         )
 
-        # Scene-level stat_generation directive applies at freeform input
-        # (Rust parity): roll_3d6_strict re-rolls; any other method
-        # overrides the builder's default stat_generation for later
+        # Scene-level stat_generation directive applies at freeform
+        # input: roll_3d6_strict re-rolls; any other method overrides
+        # the builder's default stat_generation for later
         # generate_stats() calls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
@@ -1241,11 +1174,11 @@ class CharacterBuilder:
             else MechanicalEffects()
         )
 
-        # Scene-level stat_generation directive: roll_3d6_strict only rolls
-        # if we don't already have rolled stats (unlike apply_freeform which
-        # unconditionally re-rolls). This mirrors Rust's behavior where
-        # auto_advance guards `if self.rolled_stats.is_none()` but
-        # apply_freeform always re-rolls.
+        # Scene-level stat_generation directive: roll_3d6_strict only
+        # rolls if we don't already have rolled stats (unlike
+        # apply_freeform which unconditionally re-rolls). auto_advance
+        # guards on ``rolled_stats is None``; apply_freeform always
+        # re-rolls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
                 if self._rolled_stats is None:
@@ -1299,11 +1232,10 @@ class CharacterBuilder:
     def revert(self) -> None:
         """Revert the last scene — pop the SceneResult and go back one.
 
-        Port of sidequest_game::builder::CharacterBuilder::revert. Distinct
-        from go_back in that go_back's "at-the-first-scene" guard raises
-        WrongPhaseError; revert raises CannotRevertError. The semantic
-        difference is cosmetic in Rust but callers depend on the specific
-        error variant — keep them distinct in Python too.
+        Distinct from ``go_back`` in that ``go_back``'s
+        "at-the-first-scene" guard raises ``WrongPhaseError``; ``revert``
+        raises ``CannotRevertError``. Callers depend on the specific
+        error variant.
         """
         if not self._results:
             raise CannotRevertError()
@@ -1315,31 +1247,27 @@ class CharacterBuilder:
     def build(self, name: str) -> Character:
         """Build the final Character from accumulated choices.
 
-        Port of sidequest_game::builder::CharacterBuilder::build.
-
-        Only valid from Confirmation phase — raises WrongPhaseError
+        Only valid from Confirmation phase — raises ``WrongPhaseError``
         otherwise. Composes the Character from accumulated hints:
         race/class (accumulated or rules default), stats (via
-        generate_stats), HP (hp_formula OR class_hp_bases fallback),
+        ``generate_stats``), HP (hp_formula OR class_hp_bases fallback),
         backstory (fragments OR tables OR mechanical labels OR hardcoded
         fallback), abilities (resolved from mutation / affinity /
         training hints with an AbilitySource tag), inventory
         (item_hints first then equipment_tables), edge pool (from
-        edge_config OR placeholder for unmigrated packs), and the
-        Fighter +2 Edge stub from Story 39-4.
+        edge_config OR placeholder for legacy packs), and the Fighter
+        +2 Edge stub from Story 39-4.
 
         Numeric-name guard (Story 30-1): reject purely numeric names —
         they indicate a UI choice index leaked into the name fallback.
         Blank names are caught by the Character pydantic validators.
 
         OTEL watcher events are emitted via the current span's
-        add_event API — Python's equivalent of Rust's
-        WatcherEventBuilder broadcast channel. Events carry structured
-        attributes so the GM panel can reconstruct decisions: hp
-        resolution path, backstory method, equipment method, edge
-        seeding source, etc. SOUL.md: no silent fallbacks — every path
-        that resolves a default explicitly emits the fallback source
-        and severity.
+        ``add_event`` API. Events carry structured attributes so the GM
+        panel can reconstruct decisions: hp resolution path, backstory
+        method, equipment method, edge seeding source, etc. SOUL.md: no
+        silent fallbacks — every path that resolves a default
+        explicitly emits the fallback source and severity.
         """
         if not self.is_confirmation():
             raise WrongPhaseError(
@@ -1606,10 +1534,10 @@ class CharacterBuilder:
             },
         )
 
-        # EdgePool seeding: edge_config path OR placeholder for
-        # unmigrated packs (Story 39-3). Missing class → raise the
-        # builder's EdgeConfigMissingClassError per Rust .map_err
-        # pattern, not the core module's error directly.
+        # EdgePool seeding: edge_config path OR placeholder for legacy
+        # packs (Story 39-3). Missing class → raise the builder's
+        # EdgeConfigMissingClassError, not the core module's error
+        # directly.
         if self._edge_config is not None:
             try:
                 edge = edge_pool_from_config(self._edge_config, class_str)
@@ -1639,8 +1567,7 @@ class CharacterBuilder:
 
         # Story 39-4: hardcoded Fighter +2 Edge stub. Smoke-gate so the
         # Edge system can be playtested before authored AdvancementTree
-        # lands in 39-5. Preserved verbatim from Rust for parity —
-        # replacing it is a future-story concern, not 2.1's.
+        # lands in 39-5. Replacing it is a future-story concern.
         if class_str == "Fighter":
             edge.max += 2
             edge.base_max += 2
@@ -1696,10 +1623,9 @@ class CharacterBuilder:
     # --- Stat generation ---
 
     def _roll_3d6_stats(self) -> list[tuple[str, int]]:
-        """Roll 3d6 for each ability score in order. Returns (name, total)
-        pairs in ability_score_names order.
+        """Roll 3d6 for each ability score in order. Returns ``(name, total)``
+        pairs in ``ability_score_names`` order.
 
-        Port of sidequest_game::builder::CharacterBuilder::roll_3d6_stats.
         Uses the builder's seedable RNG so tests can drive deterministic
         outputs.
         """
@@ -1714,8 +1640,6 @@ class CharacterBuilder:
     @staticmethod
     def _allocate_point_buy(n: int, budget: int) -> list[int]:
         """Allocate a point-buy budget across `n` stats.
-
-        Port of sidequest_game::builder::CharacterBuilder::allocate_point_buy.
 
         All stats start at 8. Points distributed round-robin, raising each
         stat by 1 at a time (cheapest-first) until budget is spent. No
@@ -1752,8 +1676,6 @@ class CharacterBuilder:
     def generate_stats(self, acc: AccumulatedChoices) -> dict[str, int]:
         """Generate ability scores per the declared stat_generation method.
 
-        Port of sidequest_game::builder::CharacterBuilder::generate_stats.
-
         Strategies:
         - roll_3d6_strict: reuse pre-rolled stats from construction or
           scene directive; re-roll inline if absent (defensive — the
@@ -1777,8 +1699,7 @@ class CharacterBuilder:
                 stats = dict(self._rolled_stats)
             else:
                 # Defensive re-roll — shouldn't fire in practice because
-                # the eager construction roll covers this path. Mirrors
-                # Rust's fallback.
+                # the eager construction roll covers this path.
                 rolled = self._roll_3d6_stats()
                 stats = dict(rolled)
 
@@ -1808,8 +1729,8 @@ class CharacterBuilder:
                 stats[stat] += bonus
 
         # Standard-array derivation: when no explicit bonuses were
-        # authored and we have at least 3 stats, differentiate the spread
-        # using accumulated hints. Mirrors Rust's behavior exactly.
+        # authored and we have at least 3 stats, differentiate the
+        # spread using accumulated hints.
         if (
             not acc.stat_bonuses
             and method == "standard_array"
@@ -1843,8 +1764,6 @@ class CharacterBuilder:
     ) -> int:
         """Evaluate an hp_formula string using stats and class config.
 
-        Port of sidequest_game::builder::CharacterBuilder::evaluate_hp_formula.
-
         Supported variables:
         - `XXX_modifier` — D&D-style ability modifier: trunc((stat - 10) / 2)
           where XXX matches any key in stats (e.g. CON, STR, body).
@@ -1854,16 +1773,16 @@ class CharacterBuilder:
         - Integer literals (positive or negative).
 
         Supported operators: +, -, * (left-to-right, no precedence).
-        Parentheses are stripped before evaluation. Returns max(1, result)
+        Parentheses are stripped before evaluation. Returns ``max(1, result)``
         — HP floors at 1, never zero or negative.
 
-        Raises InvalidHpFormulaError for empty or unparseable formulas.
+        Raises ``InvalidHpFormulaError`` for empty or unparseable formulas.
 
-        Integer division note: Rust uses truncation (toward zero); Python
-        `//` is floor (toward negative infinity). For negative modifiers
-        (stat < 10 after bonuses) the two disagree — e.g. `(5 - 10) / 2`
-        is `-2` in Rust but `-3` with Python `//`. We use `int(a / b)` to
-        truncate toward zero for Rust parity.
+        Integer division note: Python's ``//`` is floor (toward negative
+        infinity), so for negative modifiers (stat < 10 after bonuses)
+        ``(5 - 10) / 2`` would yield ``-3`` under ``//`` but ``-2``
+        under truncation toward zero. We use ``int(a / b)`` to truncate
+        toward zero so the modifier matches D&D rounding.
         """
         if not formula.strip():
             raise InvalidHpFormulaError(detail="hp_formula is empty")
@@ -1878,7 +1797,7 @@ class CharacterBuilder:
         # "CON_modifier"'s lowercase form. Order of dict iteration is
         # insertion order in 3.7+; we iterate a stable list.
         for stat_name, stat_value in stats.items():
-            modifier = int((stat_value - 10) / 2)  # Rust-style trunc
+            modifier = int((stat_value - 10) / 2)  # truncate toward zero
             expr = expr.replace(f"{stat_name}_modifier", str(modifier))
             expr = expr.replace(f"{stat_name.lower()}_mod", str(modifier))
 
@@ -1902,8 +1821,6 @@ class CharacterBuilder:
     @staticmethod
     def _eval_simple_arithmetic(expr: str) -> int:
         """Evaluate a simple arithmetic expression with +, -, * operators.
-
-        Port of sidequest_game::builder::CharacterBuilder::eval_simple_arithmetic.
 
         Left-to-right, no operator precedence. Handles negative literals
         from variable substitution — a '-' at the start of the expression
