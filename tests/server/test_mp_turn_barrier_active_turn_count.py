@@ -273,8 +273,20 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
     lie-detector reads the divergence: if `lobby > active`, that's the
     phantom-peer story being told in real time.
 
-    In this fixture: 1 PLAYING + 3 CHARGEN = 4 lobby participants but only
-    1 active. `barrier.wait` must carry both numbers.
+    Story 45-2 spec (OTEL spans table): "lobby_participant_count (sum across
+    all non-`abandoned` states), active_turn_count (= `playing` count)".
+    The fixture intentionally includes a 5th seated peer who was disconnected
+    mid-CHARGEN (state=ABANDONED) so the assertion catches the
+    seated-vs-non-abandoned distinction:
+
+      _seated dict size       = 5 (rux + prot_thokk + hant + pumblestone + flake)
+      non-ABANDONED count     = 4 (excludes flake)
+      PLAYING count           = 1 (rux only)
+
+    Without the ABANDONED peer in the fixture, `lobby_participant_count == 4`
+    is satisfied by EITHER the spec-correct "non-abandoned sum" OR the
+    incorrect "raw seated sum" — the test cannot distinguish. Adding the
+    5th ABANDONED peer pins the contract.
     """
     from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
 
@@ -292,6 +304,19 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
     room._seated["rux"].state = LobbyState.PLAYING  # noqa: SLF001
     for pid in ("prot_thokk", "hant", "pumblestone"):
         room._seated[pid].state = LobbyState.CHARGEN  # noqa: SLF001
+
+    # Add a 5th peer who was seated, entered chargen, and disconnected
+    # mid-chargen — their seat is now ABANDONED. This is the load-bearing
+    # case that distinguishes "non-abandoned sum" from "raw seated sum".
+    # Use the public connect/seat/disconnect API so the state-machine
+    # transition runs through production code paths.
+    room.connect("flake", socket_id="sock-flake")
+    room.seat("flake", character_slot="Flake")  # → CHARGEN
+    room.disconnect(socket_id="sock-flake")    # CHARGEN → ABANDONED
+    assert room._seated["flake"].state == LobbyState.ABANDONED, (  # noqa: SLF001
+        "Test precondition: flake must be ABANDONED for this fixture to "
+        "test the seated-vs-non-abandoned distinction"
+    )
 
     handler._execute_narration_turn = AsyncMock(  # type: ignore[method-assign]
         return_value=[],
@@ -315,10 +340,13 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
     # The payload (second positional arg) must carry both counts.
     payload = wait_calls[0].args[1]
     assert payload.get("lobby_participant_count") == 4, (
-        f"lobby_participant_count must equal sum of non-ABANDONED peers; got {payload}"
+        f"lobby_participant_count must equal sum of non-ABANDONED peers "
+        f"(4: rux PLAYING + 3 CHARGEN; flake ABANDONED is excluded); "
+        f"got {payload}. If this is 5, the implementation is using raw "
+        f"seated_player_count() which incorrectly counts ABANDONED slots."
     )
     assert payload.get("active_turn_count") == 1, (
-        f"active_turn_count must equal playing peer count; got {payload}"
+        f"active_turn_count must equal playing peer count (1: rux only); got {payload}"
     )
 
 
@@ -367,4 +395,118 @@ async def test_barrier_wait_span_fires_when_barrier_does_fire(
     assert "mp.barrier_fired" in event_names, (
         f"Sanity: existing mp.barrier_fired event must continue to fire on "
         f"the transition; captured={event_names}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC1 / AC4 cross-event consistency — Sebastien's lie-detector pins
+# the same number across barrier.wait, mp.barrier_fired, and mp.round_dispatched.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
+    session_handler_factory,
+) -> None:
+    """`mp.round_dispatched.player_count` must equal `barrier.wait.active_turn_count`
+    for the same round — both are reading the same underlying invariant
+    (how many PLAYING peers were active when the barrier evaluated).
+
+    The Story 45-2 fix swapped the barrier predicate from `seated_player_count()`
+    to `playing_player_count()`. The companion OTEL event `mp.barrier_fired`
+    was correctly updated to report `playing_count`. But `mp.round_dispatched`
+    fires immediately after — and if it still reports `seated_player_count()`,
+    Sebastien's lie-detector reads two different numbers for the same round:
+    `barrier.wait.active_turn_count=1` (correct) vs
+    `mp.round_dispatched.player_count=4` (stale).
+
+    Test scenario: 4 seated peers, 1 PLAYING (rux), 3 CHARGEN. Rux's
+    submission fires the barrier. All three OTEL events for this round
+    must report consistent counts:
+      barrier.wait.active_turn_count == 1
+      mp.barrier_fired.player_count == 1
+      mp.round_dispatched.player_count == 1
+
+    RED today: mp.round_dispatched.player_count == 4 because
+    session_handler.py:3302 still calls seated_player_count(). The fix
+    is a one-line edit to use `playing_count` (already in scope as a
+    local variable from line 3240).
+    """
+    from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
+
+    handler, sd, room = session_handler_factory(
+        slug="round-dispatched-consistency",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[
+            ("rux", "Rux"),
+            ("prot_thokk", "ProtThokk"),
+            ("hant", "Hant"),
+            ("pumblestone", "Pumblestone"),
+        ],
+        active_player=("rux", "Rux"),
+    )
+    room._seated["rux"].state = LobbyState.PLAYING  # noqa: SLF001
+    for pid in ("prot_thokk", "hant", "pumblestone"):
+        room._seated[pid].state = LobbyState.CHARGEN  # noqa: SLF001
+
+    async def fake_execute(sd, action, turn_context):
+        return []
+
+    handler._execute_narration_turn = fake_execute  # type: ignore[method-assign]
+
+    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+        msg = PlayerActionMessage(
+            payload=PlayerActionPayload(
+                action=NonBlankString.model_validate("I press forward alone"),
+            ),
+            player_id="rux",
+        )
+        await handler._handle_player_action(msg)
+
+    # Extract payloads for the three load-bearing events.
+    wait_payload = next(
+        (c.args[1] for c in wp.call_args_list if c.args[0] == "barrier.wait"),
+        None,
+    )
+    fired_payload = next(
+        (c.args[1] for c in wp.call_args_list if c.args[0] == "mp.barrier_fired"),
+        None,
+    )
+    dispatched_payload = next(
+        (
+            c.args[1]
+            for c in wp.call_args_list
+            if c.args[0] == "mp.round_dispatched"
+        ),
+        None,
+    )
+
+    assert wait_payload is not None, "barrier.wait must fire on the submission"
+    assert fired_payload is not None, "mp.barrier_fired must fire when barrier flips"
+    assert dispatched_payload is not None, (
+        "mp.round_dispatched must fire when the elected dispatcher runs"
+    )
+
+    # Pin the cross-event invariant: every event reads from the same
+    # post-Story-45-2 source of truth (playing_player_count).
+    active_turn_count = wait_payload.get("active_turn_count")
+    fired_count = fired_payload.get("player_count")
+    dispatched_count = dispatched_payload.get("player_count")
+
+    assert active_turn_count == 1, (
+        f"barrier.wait.active_turn_count must be 1 (rux is sole PLAYING peer); "
+        f"got {active_turn_count}"
+    )
+    assert fired_count == 1, (
+        f"mp.barrier_fired.player_count must be 1 (already correct in code); "
+        f"got {fired_count}"
+    )
+    assert dispatched_count == 1, (
+        f"mp.round_dispatched.player_count must equal "
+        f"barrier.wait.active_turn_count for the same round. Got "
+        f"{dispatched_count} (vs active_turn_count={active_turn_count}). "
+        f"If this is 4, session_handler.py:3302 is still reading "
+        f"seated_player_count() instead of playing_count — the post-barrier "
+        f"OTEL event will tell Sebastien a different number than the "
+        f"barrier itself just used."
     )

@@ -420,3 +420,99 @@ def test_abandoned_seats_excluded_from_seated_player_count_for_barrier() -> None
     # the call site (session_handler.py:3222), not by mutating the
     # legacy predicate.
     assert room.seated_player_count() == 4
+
+
+def test_transition_to_playing_emits_state_transition_span() -> None:
+    """`transition_to_playing()` must emit a `lobby.state_transition` span
+    with `to_state=playing` and `reason=chargen_complete` (AC5).
+
+    This is the most load-bearing transition for the GM panel — the
+    "chargen committed" edge — because Sebastien sees this fire when the
+    barrier predicate flips from "phantom in chargen" to "active player."
+    Without this test, an implementation that silently no-ops the OTEL
+    emit (or uses the wrong reason string) would not be caught.
+
+    Companion to `test_lobby_state_transition_span_fires_on_seat`, which
+    covers the (new) → CONNECTED → CHARGEN edges. This test pins the
+    CHARGEN → PLAYING edge explicitly.
+    """
+    from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
+
+    captured: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict, *, component: str = "") -> None:
+        captured.append((name, payload))
+
+    original = _hub.publish_event
+    _hub.publish_event = _capture  # type: ignore[assignment]
+    try:
+        room = SessionRoom(slug="transition-otel", mode=GameMode.MULTIPLAYER)
+        room.connect("rux", socket_id="sock-rux")
+        room.seat("rux", character_slot="Rux")  # → CHARGEN
+        # Drop captures from connect()/seat() so the assertion below
+        # operates only on the transition_to_playing event.
+        captured.clear()
+        room.transition_to_playing("rux")  # CHARGEN → PLAYING
+    finally:
+        _hub.publish_event = original  # type: ignore[assignment]
+
+    transitions = [(name, p) for name, p in captured if name == "lobby.state_transition"]
+    assert transitions, (
+        f"transition_to_playing() must emit lobby.state_transition; "
+        f"captured={[n for n, _ in captured]}"
+    )
+    # Expect exactly one transition for this single state change.
+    assert len(transitions) == 1, (
+        f"Exactly one lobby.state_transition must fire per transition_to_playing() "
+        f"call; got {len(transitions)}: {transitions}"
+    )
+    payload = transitions[0][1]
+    assert payload.get("player_id") == "rux"
+    assert payload.get("from_state") in ("chargen", "CHARGEN"), (
+        f"from_state must be 'chargen' (the prior _Seat state); got {payload}"
+    )
+    assert payload.get("to_state") in ("playing", "PLAYING"), (
+        f"to_state must be 'playing'; got {payload}"
+    )
+    assert payload.get("reason") == "chargen_complete", (
+        f"reason must be 'chargen_complete' so the GM panel can distinguish "
+        f"this transition from PLAYER_SEAT-driven transitions; got {payload}"
+    )
+
+
+def test_transition_to_playing_is_idempotent_no_duplicate_span() -> None:
+    """`transition_to_playing()` is documented as idempotent: a no-op when
+    the seat is already PLAYING. The negative-case assertion: a duplicate
+    call must NOT emit a second `lobby.state_transition` event (otherwise
+    the GM panel would see a phantom CHARGEN → PLAYING transition for a
+    seat that was already in PLAYING).
+
+    Distinguishes correctness from "fire on every call regardless of
+    state."
+    """
+    from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
+
+    captured: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict, *, component: str = "") -> None:
+        captured.append((name, payload))
+
+    room = SessionRoom(slug="transition-idempotent", mode=GameMode.MULTIPLAYER)
+    room.connect("rux", socket_id="sock-rux")
+    room.seat("rux", character_slot="Rux")
+    room.transition_to_playing("rux")
+    assert room._seated["rux"].state == LobbyState.PLAYING  # noqa: SLF001
+
+    # Now patch and call again — must be a silent no-op.
+    original = _hub.publish_event
+    _hub.publish_event = _capture  # type: ignore[assignment]
+    try:
+        room.transition_to_playing("rux")  # already PLAYING — no-op
+    finally:
+        _hub.publish_event = original  # type: ignore[assignment]
+
+    transitions = [(n, p) for n, p in captured if n == "lobby.state_transition"]
+    assert not transitions, (
+        f"Duplicate transition_to_playing() on already-PLAYING seat must NOT "
+        f"emit a second state_transition event; got {transitions}"
+    )
