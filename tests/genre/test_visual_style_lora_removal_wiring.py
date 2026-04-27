@@ -1,4 +1,4 @@
-"""Wiring tests for Story 43-1: VisualStyle LoRA-field removal.
+"""Wiring tests for Epic 43: VisualStyle LoRA-removal cleanup.
 
 These tests exercise the *system*, not the model in isolation:
 
@@ -7,16 +7,18 @@ These tests exercise the *system*, not the model in isolation:
   field being silently re-added or accessed via duck typing.
 - The genre-pack loader must successfully load a real, clean pack
   (heavy_metal) and surface a VisualStyle with the expected core fields.
-- The genre-pack loader must tolerate a real pack whose
-  `visual_style.yaml` still contains a `loras:` block (e.g.
-  `elemental_harmony`). Story 43-4 owns scrubbing those YAMLs; 43-1
-  must not regress loader compatibility while they remain.
+- Post-43-4: every `visual_style.yaml` in the content tree (both
+  genre-level and world-level) must be free of `loras:` and
+  `lora_triggers:` blocks. `test_no_visual_style_yaml_has_lora_keys`
+  enforces the invariant going forward.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+
+import yaml
 
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models import VisualStyle
@@ -91,43 +93,77 @@ class TestVisualStyleLoaderStillWorks:
             f"got {visual_style.preferred_model!r}"
         )
 
-    def test_load_pack_with_legacy_lora_block(self) -> None:
-        """`elemental_harmony/visual_style.yaml` still ships a top-level
-        `loras:` block (Story 43-4 will scrub it). The loader must tolerate
-        that block today — pack must load, visual_style must be a
-        VisualStyle, and the unknown `loras` key must round-trip into
-        `__pydantic_extra__` (proving `extra='allow'` survived).
+    def test_no_visual_style_yaml_has_lora_keys(self) -> None:
+        """Post-43-4: every `visual_style.yaml` in the content tree —
+        genre-level OR world-level — must be free of LoRA YAML keys
+        (`loras`, `lora_triggers`, `lora`, `lora_trigger`, `lora_scale`,
+        `lora_path`).
 
-        This is the load-bearing wiring proof for AC3/AC4: the deletion of
-        the typed LoRA fields does not break a real, on-disk pack that
-        still references them.
+        Implementation note: the genre-pack loader exposes the *genre*
+        `VisualStyle` via `pack.visual_style`, but it loads world-level
+        `visual_style.yaml` as raw `Any` (see `loader._load_single_world`
+        — no Pydantic validation, no `__pydantic_extra__` to inspect).
+        So rather than route through the loader, we scan every
+        `visual_style.yaml` file directly with `yaml.safe_load` and
+        assert the top-level mapping carries no forbidden key. This
+        catches both genre and world tiers in one pass.
+
+        Also asserts a minimum file count to prevent vacuous success if
+        `CONTENT_GENRE_PACKS` ever resolves to the wrong path.
+
+        This is the load-bearing wiring proof that Epic 43 fully removed
+        LoRA references from on-disk content — a future commit re-adding
+        a `loras:` block to any pack (genre or world) would fail this
+        test.
         """
-        pack = load_genre_pack(CONTENT_GENRE_PACKS / "elemental_harmony")
-        visual_style = pack.visual_style
-        assert isinstance(visual_style, VisualStyle), (
-            f"Expected VisualStyle, got {type(visual_style).__name__}"
+        forbidden_keys = {
+            "loras", "lora_triggers",
+            "lora", "lora_trigger", "lora_scale", "lora_path",
+        }
+        offenders: list[str] = []
+        files_checked = 0
+        for visual_yaml in CONTENT_GENRE_PACKS.rglob("visual_style.yaml"):
+            raw = yaml.safe_load(visual_yaml.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                offenders.append(
+                    f"{visual_yaml.relative_to(REPO_ROOT)}: top-level is not a mapping"
+                )
+                continue
+            for key in forbidden_keys & raw.keys():
+                offenders.append(
+                    f"{visual_yaml.relative_to(REPO_ROOT)}: contains forbidden key '{key}'"
+                )
+            files_checked += 1
+
+        # Hard floor: the content tree currently ships ~10 genre packs
+        # plus several worlds. A misconfigured CONTENT_GENRE_PACKS path
+        # finding only a handful of files should fail loudly rather than
+        # vacuously pass. Bumping this floor is the right reaction when
+        # packs are added; lowering it requires explicit justification.
+        MIN_VISUAL_STYLE_FILES = 8
+        assert files_checked >= MIN_VISUAL_STYLE_FILES, (
+            f"Expected at least {MIN_VISUAL_STYLE_FILES} visual_style.yaml "
+            f"files under {CONTENT_GENRE_PACKS}; found {files_checked}. "
+            "CONTENT_GENRE_PACKS may be misconfigured."
         )
-        # The pack's `loras:` block lives at the top level of
-        # visual_style.yaml — it must survive into __pydantic_extra__
-        # because extra='allow' is preserved on the model. If a future
-        # change flips extra to 'ignore', the legacy block would be
-        # silently dropped and this assertion would catch it.
-        extras = visual_style.__pydantic_extra__ or {}
-        assert "loras" in extras, (
-            "elemental_harmony's `loras:` block was dropped during load — "
-            "extra='allow' may have regressed. Got extras keys: "
-            f"{sorted(extras.keys())}"
+        assert offenders == [], (
+            "Found LoRA YAML keys still present after Epic 43 cleanup:\n"
+            + "\n".join(offenders)
         )
-        loras = extras["loras"]
-        assert isinstance(loras, list) and len(loras) >= 1, (
-            f"elemental_harmony loras must be a non-empty list, got {loras!r}"
-        )
-        # Typed-field surface: even when `loras:` is present in the YAML,
-        # nothing LoRA-shaped lands on the typed model.
-        for forbidden in ("lora", "lora_trigger", "lora_scale", "lora_path"):
-            assert forbidden not in type(visual_style).model_fields, (
+        # Typed-field surface: nothing LoRA-shaped on the model itself.
+        for forbidden in ("lora", "lora_trigger", "lora_scale",
+                          "lora_path", "lora_triggers"):
+            assert forbidden not in VisualStyle.model_fields, (
                 f"VisualStyle.{forbidden} re-introduced into model_fields"
             )
+
+        # Sanity-check that the loader still returns a VisualStyle on a
+        # representative pack now that no `loras:` extras exist anywhere.
+        pack = load_genre_pack(CONTENT_GENRE_PACKS / "elemental_harmony")
+        assert isinstance(pack.visual_style, VisualStyle), (
+            f"elemental_harmony visual_style: expected VisualStyle, "
+            f"got {type(pack.visual_style).__name__}"
+        )
 
 
 class TestVisualStyleSchemaSurface:
