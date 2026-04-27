@@ -316,8 +316,7 @@ def party_member_from_character(
     stats = dict(character.stats)
     abilities = [a.name for a in character.abilities]
     equipment = [
-        f"{item['name']} [equipped]" if item.get("equipped") else item["name"]
-        for item in carried
+        f"{item['name']} [equipped]" if item.get("equipped") else item["name"] for item in carried
     ]
 
     sheet = CharacterSheetDetails(

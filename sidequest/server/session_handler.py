@@ -113,7 +113,6 @@ from sidequest.protocol.messages import (
     NarrationMessage,
     NarrationPayload,
     PartyStatusMessage,
-    PartyStatusPayload,
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryMessage,
@@ -128,10 +127,7 @@ from sidequest.protocol.messages import (
     TurnStatusPayload,
 )
 from sidequest.protocol.models import (
-    CharacterSheetDetails,
     Footnote,
-    InventoryItem,
-    InventoryPayload,
     PartyFormationWireEntry,
     PartyMember,
     StateDelta,
@@ -3530,7 +3526,8 @@ class WebSocketSessionHandler:
                     # (playtest 3 fix: stops narrator fabricating
                     # "collapsed corridor" between Orin and Blutka).
                     handshake_delta = build_shared_world_delta(
-                        snapshot, room=self._room,
+                        snapshot,
+                        room=self._room,
                     )
                     outbound.append(
                         NarrationEndMessage(
