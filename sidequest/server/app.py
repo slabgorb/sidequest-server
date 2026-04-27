@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sidequest.agents.claude_client import LlmClient
 from sidequest.agents.llm_factory import build_llm_client
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
+from sidequest.server.dashboard import dashboard_router
 from sidequest.server.rest import create_rest_router
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import RoomRegistry
@@ -208,6 +209,9 @@ def create_app(
     # --- REST routes ---
     rest_router = create_rest_router()
     app.include_router(rest_router)
+
+    # --- /dashboard — OTEL dashboard HTML (browser opens its own WS). ---
+    app.include_router(dashboard_router)
 
     # --- Static /genre/* mount — serve genre pack assets (POI images, portraits, etc.) ---
     # URL /genre/<genre>/worlds/<world>/assets/poi/<file> → first-matching genre_packs dir.
