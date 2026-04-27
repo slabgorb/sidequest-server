@@ -4726,40 +4726,14 @@ class WebSocketSessionHandler:
         character: Character,
         player_id: str,
     ) -> PartyStatusMessage:
-        """PARTY_STATUS frame at chargen end (Rust connect.rs:2533).
+        """PARTY_STATUS frame at chargen end. Delegates to ``views.build_session_start_party_status``.
 
-        MP: enumerates every PC; maps each slot back to its seating
-        player_id via the room. Falls back to ``peer:<name>`` when
-        no seat record is available.
+        Phase 2 of session_handler decomposition (see
+        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
         """
-        seat_map: dict[str, str] = {}
-        if self._room is not None:
-            seat_lookup = getattr(self._room, "slot_to_player_id", None)
-            if callable(seat_lookup):
-                seat_map = seat_lookup()
+        from sidequest.server import views
 
-        members: list[PartyMember] = []
-        all_chars = list(sd.snapshot.characters or [])
-        if not all_chars:
-            all_chars = [character]
-        # Stable ordering: self first, then peers in snapshot order.
-        self_chars = [c for c in all_chars if c.core.name == character.core.name]
-        peer_chars = [c for c in all_chars if c.core.name != character.core.name]
-        for char in self_chars + peer_chars:
-            is_self = char.core.name == character.core.name
-            if is_self:
-                pid = player_id or "anon"
-                pname = sd.player_name or "Player"
-            else:
-                pid = seat_map.get(char.core.name) or f"peer:{char.core.name}"
-                pname = char.core.name
-            members.append(self._party_member_from_character(sd, char, pid, pname))
-
-        return PartyStatusMessage(
-            type="PARTY_STATUS",  # type: ignore[arg-type]
-            payload=PartyStatusPayload(members=members),
-            player_id=player_id,
-        )
+        return views.build_session_start_party_status(self, sd, character, player_id)
 
 
 # ---------------------------------------------------------------------------
