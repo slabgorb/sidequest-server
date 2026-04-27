@@ -432,7 +432,13 @@ class Validator:
                 "agent_name": record.agent_name,
                 # Timing & metering
                 "agent_duration_ms": record.agent_duration_ms,
-                "total_duration_ms": record.agent_duration_ms,
+                "total_duration_ms": record.total_duration_ms,
+                "phase_durations_ms": dict(record.phase_durations_ms),
+                "phase_call_counts": dict(record.phase_call_counts),
+                "_unaccounted_ms": max(
+                    0,
+                    record.total_duration_ms - sum(record.phase_durations_ms.values()),
+                ),
                 "token_count_in": record.token_count_in,
                 "token_count_out": record.token_count_out,
                 "extraction_tier": record.extraction_tier,  # int

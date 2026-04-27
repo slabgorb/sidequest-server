@@ -52,6 +52,7 @@ from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dice import RollOutcome
 from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
+from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
@@ -446,6 +447,12 @@ class TurnContext:
     # returns — TurnContext is a local copy; the snapshot isn't in scope here.
     # Typed as Any to avoid a circular import on ResolutionSignal.
     pending_resolution_signal: Any = None
+
+    # Per-turn phase-timing accumulator (Story: phase-timing instrumentation).
+    # Defaults to PhaseTimings.NULL so legacy fixtures and partial mocks
+    # continue to work without provisioning a real timer. Real instances
+    # are populated by ``_execute_narration_turn`` at action receipt.
+    phase_timings: PhaseTimings = field(default_factory=lambda: PhaseTimings.NULL)
 
 
 # ---------------------------------------------------------------------------
@@ -1338,9 +1345,10 @@ class Orchestrator:
                 "npc_registry": list(context.npc_registry or []),
             }
 
-            bank_result = await run_dispatch_bank(
-                visible_dispatch_package, context=bank_context,
-            )
+            with context.phase_timings.phase("dispatch_bank"):
+                bank_result = await run_dispatch_bank(
+                    visible_dispatch_package, context=bank_context,
+                )
 
             # Group C — lethality arbitration runs after the bank and before
             # the narrator_directives section is registered, so the arbiter's
@@ -1350,69 +1358,72 @@ class Orchestrator:
             # only decides how to describe it (spec §4.1).
             arbiter_directives: list[NarratorDirective] = []
             if context.lethality_policy is not None:
-                from sidequest.agents.lethality_arbiter import LethalityArbiter
+                with context.phase_timings.phase("lethality_arbiter"):
+                    from sidequest.agents.lethality_arbiter import LethalityArbiter
 
-                arbiter = LethalityArbiter(policy=context.lethality_policy)
-                l_result = arbiter.arbitrate(
-                    package=visible_dispatch_package,
-                    bank_result=bank_result,
-                    pc_cores_by_player=context.pc_cores_by_player,
-                    npc_cores_by_name=context.npc_cores_by_name,
-                )
-                arbiter_directives = l_result.directives
+                    arbiter = LethalityArbiter(policy=context.lethality_policy)
+                    l_result = arbiter.arbitrate(
+                        package=visible_dispatch_package,
+                        bank_result=bank_result,
+                        pc_cores_by_player=context.pc_cores_by_player,
+                        npc_cores_by_name=context.npc_cores_by_name,
+                    )
+                    arbiter_directives = l_result.directives
 
-            combined_directives = list(bank_result.directives) + arbiter_directives
-            if combined_directives:
-                block = "\n".join(
-                    f"- [{d.kind}] {d.payload}" for d in combined_directives
-                )
-                registry.register_section(
-                    agent_name,
-                    PromptSection.new(
-                        "narrator_directives",
-                        block,
-                        AttentionZone.Recency,
-                        SectionCategory.State,
-                    ),
-                )
-            for key, err in bank_result.errors:
-                logger.warning(
-                    "orchestrator.subsystem_error key=%s error=%s", key, err,
-                )
+            with context.phase_timings.phase("prompt_build"):
+                combined_directives = list(bank_result.directives) + arbiter_directives
+                if combined_directives:
+                    block = "\n".join(
+                        f"- [{d.kind}] {d.payload}" for d in combined_directives
+                    )
+                    registry.register_section(
+                        agent_name,
+                        PromptSection.new(
+                            "narrator_directives",
+                            block,
+                            AttentionZone.Recency,
+                            SectionCategory.State,
+                        ),
+                    )
+                for key, err in bank_result.errors:
+                    logger.warning(
+                        "orchestrator.subsystem_error key=%s error=%s", key, err,
+                    )
 
-        # Player action (Recency zone — highest attention, every tier)
-        registry.register_section(
-            agent_name,
-            PromptSection.new(
-                "player_action",
-                f"{context.character_name} says: {action}",
-                AttentionZone.Recency,
-                SectionCategory.Action,
-            ),
-        )
+        with context.phase_timings.phase("prompt_build"):
+            # Player action (Recency zone — highest attention, every tier)
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "player_action",
+                    f"{context.character_name} says: {action}",
+                    AttentionZone.Recency,
+                    SectionCategory.Action,
+                ),
+            )
 
-        prompt_text = registry.compose(agent_name)
-        section_count = len(registry.registry(agent_name))
-        logger.info(
-            "turn.agent_llm.prompt_build section_count=%d",
-            section_count,
-        )
-        # Dashboard Prompt tab consumes `prompt_assembled`. The hub
-        # lives in `sidequest.telemetry.watcher_hub` — importing from
-        # `sidequest.server.watcher` would drag in uvicorn's logging
-        # reconfiguration and break every caplog-based test.
-        from sidequest.telemetry.watcher_hub import publish_event as _pub
+            prompt_text = registry.compose(agent_name)
+            section_count = len(registry.registry(agent_name))
+            logger.info(
+                "turn.agent_llm.prompt_build section_count=%d",
+                section_count,
+            )
+            # Dashboard Prompt tab consumes `prompt_assembled`. The hub
+            # lives in `sidequest.telemetry.watcher_hub` — importing from
+            # `sidequest.server.watcher` would drag in uvicorn's logging
+            # reconfiguration and break every caplog-based test.
+            from sidequest.telemetry.watcher_hub import publish_event as _pub
 
-        _pub(
-            "prompt_assembled",
-            {
-                "agent_name": agent_name,
-                "section_count": section_count,
-                "prompt_len": len(prompt_text),
-                "tier": str(tier),
-            },
-            component="prompt_builder",
-        )
+            _pub(
+                "prompt_assembled",
+                {
+                    "agent_name": agent_name,
+                    "section_count": section_count,
+                    "prompt_len": len(prompt_text),
+                    "tier": str(tier),
+                },
+                component="prompt_builder",
+            )
         return prompt_text, registry
 
     # ------------------------------------------------------------------
@@ -1464,14 +1475,15 @@ class Orchestrator:
             ):
                 call_start = time.monotonic()
                 try:
-                    response: ClaudeResponse = await self._client.send_with_session(
-                        prompt=send_prompt,
-                        model=NARRATOR_MODEL,
-                        session_id=current_session_id,
-                        system_prompt=system_prompt_for_establish,
-                        allowed_tools=[],
-                        env_vars={},
-                    )
+                    with context.phase_timings.phase("narrator_subprocess"):
+                        response: ClaudeResponse = await self._client.send_with_session(
+                            prompt=send_prompt,
+                            model=NARRATOR_MODEL,
+                            session_id=current_session_id,
+                            system_prompt=system_prompt_for_establish,
+                            allowed_tools=[],
+                            env_vars={},
+                        )
                     elapsed_ms = int((time.monotonic() - call_start) * 1000)
                 except Exception as e:
                     elapsed_ms = int((time.monotonic() - call_start) * 1000)
@@ -1517,7 +1529,8 @@ class Orchestrator:
             )
 
             # Parse narrator response
-            extraction = extract_structured_from_response(raw_response)
+            with context.phase_timings.phase("narrator_extraction"):
+                extraction = extract_structured_from_response(raw_response)
 
             prose = extraction["prose"]
 
