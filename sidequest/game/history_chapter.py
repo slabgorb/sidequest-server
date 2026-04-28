@@ -16,7 +16,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+def _reject_template_markers(
+    model_name: str, fields: dict[str, str | None]
+) -> None:
+    """Raise ValueError if any field contains ``{{`` or ``}}``.
+
+    History chapters do not support template substitution — markers
+    like ``{{name}}`` indicate a content authoring bug (the YAML was
+    never rendered through a template engine before being shipped).
+    """
+
+    for field_name, value in fields.items():
+        if value is None:
+            continue
+        if "{{" in value or "}}" in value:
+            raise ValueError(
+                f"{model_name}.{field_name} contains unresolved template "
+                f"markers ({{{{ or }}}}); template substitution is not "
+                f"supported — use a literal value or leave the field empty. "
+                f"Offending value: {value!r}"
+            )
 
 
 class ChapterCharacter(BaseModel):
@@ -26,6 +48,10 @@ class ChapterCharacter(BaseModel):
     updates (e.g. level-only). ``class_name`` is the Python-side field;
     YAML key is ``class`` — pydantic alias handles both read and
     serialize.
+
+    An empty ``name`` means no chapter-supplied name; ``_apply_character``
+    defaults to 'Adventurer' for new characters and skips the name update
+    for existing characters.
     """
 
     model_config = {"extra": "ignore", "populate_by_name": True}
@@ -41,6 +67,21 @@ class ChapterCharacter(BaseModel):
     personality: str | None = None
     description: str | None = None
     gold: int | None = None
+
+    @model_validator(mode="after")
+    def _no_template_markers(self) -> ChapterCharacter:
+        _reject_template_markers(
+            "ChapterCharacter",
+            {
+                "name": self.name,
+                "race": self.race,
+                "class_name": self.class_name,
+                "backstory": self.backstory,
+                "personality": self.personality,
+                "description": self.description,
+            },
+        )
+        return self
 
 
 class ChapterNpc(BaseModel):
@@ -62,6 +103,22 @@ class ChapterNpc(BaseModel):
     backstory: str | None = None
     archetype: str | None = None
     dialogue_quirks: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _no_template_markers(self) -> ChapterNpc:
+        _reject_template_markers(
+            "ChapterNpc",
+            {
+                "name": self.name,
+                "role": self.role,
+                "description": self.description,
+                "personality": self.personality,
+                "location": self.location,
+                "backstory": self.backstory,
+                "archetype": self.archetype,
+            },
+        )
+        return self
 
 
 class ChapterNarrativeEntry(BaseModel):

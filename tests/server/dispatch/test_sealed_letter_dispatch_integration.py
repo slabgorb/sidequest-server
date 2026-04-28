@@ -407,10 +407,15 @@ def test_per_actor_state_round_trip_after_dispatch(
 def test_legacy_beat_selection_path_still_works(
     cac_snap: tuple[GameSnapshot, GenrePack],
 ) -> None:
-    """The CAC ``combat`` confrontation declares the default
-    ``resolution_mode=beat_selection`` and must continue to resolve
-    through the apply_beat loop unchanged. If the new branch was wired
-    too greedily, this test would diverge from prior behavior.
+    """The CAC ``combat`` confrontation must continue to resolve through
+    the legacy non-sealed-letter path; ``resolution_mode`` is now
+    ``opposed_check`` after PR #130 (CAC combat was migrated off
+    ``beat_selection``). The test name retains the historical
+    ``legacy_beat_selection_path`` framing because what's being pinned
+    is the legacy code path that handles non-sealed-letter resolution
+    via apply_beat — not the specific resolution_mode value. If the
+    sealed-letter branch were wired too greedily, this test would
+    diverge from prior behavior.
     """
     snap, pack = cac_snap
 
@@ -436,7 +441,7 @@ def test_legacy_beat_selection_path_still_works(
         pack.rules.confrontations if pack.rules else [], "combat",
     )
     assert cdef is not None
-    assert cdef.resolution_mode == ResolutionMode.beat_selection
+    assert cdef.resolution_mode == ResolutionMode.opposed_check
     assert all(a.role in ("combatant", "participant") for a in enc.actors), (
         f"legacy combat encounter should keep legacy role tags, got "
         f"{[(a.name, a.role) for a in enc.actors]}"
