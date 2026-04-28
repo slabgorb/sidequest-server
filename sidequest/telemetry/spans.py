@@ -1161,6 +1161,27 @@ SPAN_ROUTES[SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED] = SpanRoute(
     },
 )
 
+# Story 45-3: Mid-turn momentum broadcast lie-detector. Fires whenever the
+# server emits a CONFRONTATION frame carrying post-mutation momentum, so
+# the GM panel can audit "the dial moved on screen because the engine
+# moved a metric, not because the narrator improvised matching prose."
+# ``source`` distinguishes the dice-throw site from the post-narration
+# site; ``beat_id`` is non-null on dice_throw and may be null on
+# narration_apply emits.
+SPAN_ENCOUNTER_MOMENTUM_BROADCAST = "encounter.momentum_broadcast"
+SPAN_ROUTES[SPAN_ENCOUNTER_MOMENTUM_BROADCAST] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.momentum_broadcast",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "player_metric_after": (span.attributes or {}).get("player_metric_after", 0),
+        "opponent_metric_after": (span.attributes or {}).get("opponent_metric_after", 0),
+        "source": (span.attributes or {}).get("source", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+    },
+)
+
 # Dice dispatch (story 34-11) — names byte-identical to Rust
 # ``emit_dice_request_sent`` / ``emit_dice_throw_received`` /
 # ``emit_dice_result_broadcast`` so GM-panel queries line up.
@@ -1789,6 +1810,38 @@ def encounter_metric_advance_span(
         SPAN_ENCOUNTER_METRIC_ADVANCE,
         attributes={"side": side, "delta_kind": delta_kind, "delta": delta,
                     "before": before, "after": after, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_momentum_broadcast_span(
+    *,
+    encounter_type: str,
+    player_metric_after: int,
+    opponent_metric_after: int,
+    source: str,
+    beat_id: str | None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 45-3: Lie-detector for the mid-turn CONFRONTATION emit.
+
+    Wraps every server site that broadcasts a CONFRONTATION frame
+    carrying post-mutation momentum. ``source`` is ``"dice_throw"`` from
+    the dice-dispatch site and ``"narration_apply"`` from the post-
+    narration site. ``beat_id`` is the resolved beat on the dice path
+    and may be ``None`` for narrator-driven emits.
+    """
+    with tracer().start_as_current_span(
+        SPAN_ENCOUNTER_MOMENTUM_BROADCAST,
+        attributes={
+            "encounter_type": encounter_type,
+            "player_metric_after": player_metric_after,
+            "opponent_metric_after": opponent_metric_after,
+            "source": source,
+            "beat_id": beat_id or "",
+            **attrs,
+        },
     ) as s:
         yield s
 

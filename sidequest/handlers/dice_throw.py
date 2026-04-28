@@ -75,6 +75,7 @@ class DiceThrowHandler:
                 character_stats=stats,
                 encounter=encounter,
                 pack=sd.genre_pack,
+                genre_slug=sd.genre_slug,
                 session_id=f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}",
                 round_number=snapshot.turn_manager.interaction,
                 room_broadcast=room_broadcast,

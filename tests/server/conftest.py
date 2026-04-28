@@ -664,6 +664,7 @@ def dual_dial_test_setup(synthetic_two_dial_pack):
                 character_stats={"STR": 10, "DEX": 10, "CON": 10, "INT": 10, "WIS": 10, "CHA": 10},
                 encounter=self.encounter,
                 pack=self.pack,
+                genre_slug="test",
                 session_id="s1",
                 round_number=1,
                 room_broadcast=None,

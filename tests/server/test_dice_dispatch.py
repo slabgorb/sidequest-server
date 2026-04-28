@@ -144,6 +144,7 @@ class TestDispatchDiceThrow:
             character_stats={"STRENGTH": 16},  # +3 modifier
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="session-1",
             round_number=1,
             room_broadcast=None,
@@ -171,6 +172,7 @@ class TestDispatchDiceThrow:
             character_stats={"STRENGTH": 1},  # -5 modifier
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=None,
@@ -188,6 +190,7 @@ class TestDispatchDiceThrow:
             character_stats={"STRENGTH": 30},  # +10 modifier
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=None,
@@ -206,6 +209,7 @@ class TestDispatchDiceThrow:
                 character_stats={},
                 encounter=enc,
                 pack=pack,  # type: ignore[arg-type]
+                genre_slug="test",
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
@@ -222,6 +226,7 @@ class TestDispatchDiceThrow:
                 character_stats={"STRENGTH": 10},
                 encounter=None,
                 pack=pack,  # type: ignore[arg-type]
+                genre_slug="test",
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
@@ -239,6 +244,7 @@ class TestDispatchDiceThrow:
                 character_stats={"STRENGTH": 10},
                 encounter=enc,
                 pack=pack,  # type: ignore[arg-type]
+                genre_slug="test",
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
@@ -258,6 +264,7 @@ class TestDispatchDiceThrow:
                 character_stats={},
                 encounter=enc,
                 pack=pack,  # type: ignore[arg-type]
+                genre_slug="test",
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
@@ -278,6 +285,7 @@ class TestDispatchDiceThrow:
             character_stats={"Strength": 14},  # +2 modifier via case-insensitive lookup
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=None,
@@ -296,17 +304,26 @@ class TestDispatchDiceThrow:
             character_stats={"STRENGTH": 10},
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=broadcasts.append,
             snapshot=_make_snapshot(),
         )
         # Spectators need the overlay to open before the result lands.
-        assert len(broadcasts) == 2
+        # Story 45-3: a CONFRONTATION carrying post-apply momentum
+        # follows DICE_RESULT on every non-deferred beat. Order is:
+        #   DICE_REQUEST → DICE_RESULT → CONFRONTATION
+        from sidequest.protocol.messages import ConfrontationMessage
+
+        assert len(broadcasts) == 3
         assert isinstance(broadcasts[0], DiceRequestMessage)
         assert isinstance(broadcasts[1], DiceResultMessage)
+        assert isinstance(broadcasts[2], ConfrontationMessage)
         assert broadcasts[0].payload.request_id == "req-1"
         assert broadcasts[1].payload.request_id == "req-1"
+        # Mid-turn CONFRONTATION reflects post-apply momentum.
+        assert broadcasts[2].payload.player_metric["current"] == enc.player_metric.current
 
     def test_encounter_resolves_when_beat_hits_threshold(self) -> None:
         pack = _pack_with_combat()
@@ -319,6 +336,7 @@ class TestDispatchDiceThrow:
             character_stats={"STRENGTH": 10},
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=None,
@@ -342,6 +360,7 @@ class TestDiceThrowWireFormat:
             character_stats={"STRENGTH": 10},
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s",
             round_number=1,
             room_broadcast=None,

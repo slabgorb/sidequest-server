@@ -127,6 +127,7 @@ from sidequest.telemetry.spans import (
     audio_backend_enabled_span,
     audio_dispatched_span,
     audio_skipped_span,
+    encounter_momentum_broadcast_span,
     orchestrator_process_action_span,
     turn_span,
 )
@@ -1554,10 +1555,35 @@ class WebSocketSessionHandler:
                         }
 
                     if confrontation_payload is not None:
-                        confrontation_msg = self._emit_event(
-                            "CONFRONTATION",
-                            confrontation_payload,
-                        )
+                        # Story 45-3: lie-detector for the post-narration
+                        # CONFRONTATION emit. The narrator just opened or
+                        # advanced an encounter; the dial is about to move
+                        # on screen. Sebastien (mechanical-first player)
+                        # needs a span confirming the engine emitted
+                        # post-mutation momentum here, not just that the
+                        # narrator's prose happened to mention combat.
+                        # Only fires on the live branch (active emit
+                        # carrying real metric values) — the clear-payload
+                        # branch broadcasts active=false with empty
+                        # metrics, so there is no post-mutation momentum
+                        # to audit.
+                        if now_live and now_encounter is not None:
+                            with encounter_momentum_broadcast_span(
+                                encounter_type=now_encounter.encounter_type,
+                                player_metric_after=now_encounter.player_metric.current,
+                                opponent_metric_after=now_encounter.opponent_metric.current,
+                                source="narration_apply",
+                                beat_id=None,
+                            ):
+                                confrontation_msg = self._emit_event(
+                                    "CONFRONTATION",
+                                    confrontation_payload,
+                                )
+                        else:
+                            confrontation_msg = self._emit_event(
+                                "CONFRONTATION",
+                                confrontation_payload,
+                            )
                         assert confrontation_event_attrs is not None
                         trace.get_current_span().add_event(
                             "confrontation.dispatched",
