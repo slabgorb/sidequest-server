@@ -395,6 +395,42 @@ class TestWorldBuilderBuild:
         assert char.char_class == "Fighter"
         assert char.backstory == "Unknown origins."
 
+    def test_existing_character_name_preserved_when_chapter_name_blank(self) -> None:
+        """A second chapter with ``name=""`` must not overwrite an existing
+        chargen-built name. The empty-name short-circuit in
+        ``_apply_character`` (world_materialization.py:348) protects the
+        chargen-owned identity slot.
+        """
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(character=ChapterCharacter(
+                    name="Rux",
+                    race="Gnome",
+                    **{"class": "Delver"},  # YAML alias
+                    level=3,
+                    backstory="Orphan of the Reach.",
+                )),
+                _early_chapter(character=ChapterCharacter(
+                    name="",
+                    level=5,
+                    backstory="Now bears the Lantern.",
+                )),
+            ])
+            .build()
+        )
+        assert len(snap.characters) == 1
+        char = snap.characters[0]
+        # Empty chapter.name short-circuits — existing name preserved.
+        assert char.core.name == "Rux"
+        # Other non-empty fields from the second chapter still apply.
+        assert char.core.level == 5
+        assert char.backstory == "Now bears the Lantern."
+        # Untouched fields stay from the first chapter.
+        assert char.race == "Gnome"
+        assert char.char_class == "Delver"
+
 
 # ---------------------------------------------------------------------------
 # materialize_world — in-place, Story 6-6 shape
