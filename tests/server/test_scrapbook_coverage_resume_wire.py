@@ -234,28 +234,6 @@ class TestSlugResumeEndToEnd:
     helper monkeypatched away by a peer subsystem)."""
 
     @pytest.fixture
-    def otel_capture(self):
-        from opentelemetry import trace as otel_trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-            InMemorySpanExporter,
-        )
-
-        from sidequest.telemetry.setup import init_tracer
-
-        init_tracer()
-        provider = otel_trace.get_tracer_provider()
-        assert isinstance(provider, TracerProvider)
-        exporter = InMemorySpanExporter()
-        processor = SimpleSpanProcessor(exporter)
-        provider.add_span_processor(processor)
-        try:
-            yield exporter
-        finally:
-            processor.shutdown()
-
-    @pytest.fixture
     def populated_slug_save(self, tmp_path):
         """Build a slug-keyed save with the Orin regression fixture: 29
         narrative rounds, 10 scrapbook rounds. Returns the slug + save dir

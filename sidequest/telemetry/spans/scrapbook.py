@@ -49,7 +49,10 @@ SPAN_ROUTES[SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED] = SpanRoute(
         "max_round": (span.attributes or {}).get("max_round", 0),
         "covered_count": (span.attributes or {}).get("covered_count", 0),
         "gap_count": (span.attributes or {}).get("gap_count", 0),
-        "coverage_ratio": (span.attributes or {}).get("coverage_ratio", 0.0),
+        # Mirrors the SPAN_SCRAPBOOK_COVERAGE_EVALUATED default (1.0) for
+        # symmetry — gap_detected only fires when gap_count > 0 so the
+        # default is unreachable in practice; pick the same safe value.
+        "coverage_ratio": (span.attributes or {}).get("coverage_ratio", 1.0),
         # gap_rounds is the load-bearing payload — the GM panel renders the
         # missing-round list. OTEL serialises sequence attributes; tests
         # accept any string repr that names the boundary rounds.

@@ -39,35 +39,6 @@ import pytest
 
 
 @pytest.fixture
-def otel_capture():
-    """In-memory OTEL exporter shared across tests in this module.
-
-    Pattern lifted from ``test_dice_throw_momentum_span.py`` —
-    SimpleSpanProcessor + InMemorySpanExporter on the global tracer
-    provider.
-    """
-    from opentelemetry import trace as otel_trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-        InMemorySpanExporter,
-    )
-
-    from sidequest.telemetry.setup import init_tracer
-
-    init_tracer()
-    provider = otel_trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider)
-    exporter = InMemorySpanExporter()
-    processor = SimpleSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    try:
-        yield exporter
-    finally:
-        processor.shutdown()
-
-
-@pytest.fixture
 def watcher_capture(monkeypatch):
     """Capture every ``_watcher_publish`` call into a list of dicts.
 
@@ -416,7 +387,31 @@ class TestOrinRegression:
             "warning-level so they stand out from informational chatter."
         )
         assert evt.get("component") == "scrapbook"
-        assert evt["payload"].get("gap_count") == 19
+
+        # Lock the watcher payload contract — the GM-panel renderer reads
+        # these keys verbatim, so a payload-shape regression here would
+        # quietly break the dashboard.
+        payload = evt["payload"]
+        assert set(payload.keys()) >= {
+            "max_round",
+            "covered_count",
+            "gap_count",
+            "coverage_ratio",
+            "gap_rounds",
+            "genre",
+            "world",
+            "slug",
+        }, (
+            f"Watcher payload missing required keys for GM-panel render. "
+            f"Got: {sorted(payload.keys())}"
+        )
+        assert payload["max_round"] == 29
+        assert payload["covered_count"] == 10
+        assert payload["gap_count"] == 19
+        assert payload["coverage_ratio"] == pytest.approx(10 / 29, rel=1e-3)
+        assert payload["gap_rounds"] == list(range(11, 30))
+        assert payload["genre"] == "test_genre"
+        assert payload["world"] == "test_world"
 
 
 # ---------------------------------------------------------------------------
