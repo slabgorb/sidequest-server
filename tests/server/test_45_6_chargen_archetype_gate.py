@@ -8,7 +8,7 @@ class with no archetype to back it.
 
 Three silent-skip branches in
 ``WebSocketSessionHandler._resolve_character_archetype``
-(``websocket_session_handler.py:546-628``) let chargen complete without
+(``websocket_session_handler.py:548-630``) let chargen complete without
 binding an archetype:
 
 1. Builder produced no axis pair (``raw is None or "/" not in raw``).
@@ -66,11 +66,7 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler, _State
-
-CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-
-
-from tests.server.conftest import (  # noqa: E402
+from tests.server.conftest import (
     mock_claude_client_factory as _mock_claude_client_factory,
 )
 
@@ -104,13 +100,19 @@ def handler_factory(save_dir: Path):
       explicitly null the hints via ``_inject_hints(..., None, None)``
       to recreate the pumblestone failure case.
     """
-    if not (CONTENT_ROOT / "caverns_and_claudes").is_dir():
+    # CONTENT_ROOT lives inside the fixture so the conftest import above
+    # can stay at the top of the module (drops a noqa: E402 and matches
+    # the pattern used by the adjacent test_chargen_*.py files).
+    content_root = (
+        Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+    )
+    if not (content_root / "caverns_and_claudes").is_dir():
         pytest.skip("caverns_and_claudes content not found")
 
     def make() -> WebSocketSessionHandler:
         return WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
-            genre_pack_search_paths=[CONTENT_ROOT],
+            genre_pack_search_paths=[content_root],
             save_dir=save_dir,
         )
 
@@ -272,6 +274,21 @@ class TestArchetypeGateOkResolved:
                 "display name; got: "
                 f"{character.resolved_archetype!r}"
             )
+            # Lockstep contract with apply_archetype_resolved
+            # (sidequest/game/archetype_apply.py): resolved_archetype and
+            # archetype_provenance MUST be set together. The gate's
+            # discriminator currently checks "/" in resolved_archetype,
+            # but the more durable invariant is "archetype_provenance is
+            # not None" — Reviewer flagged that no test asserts this
+            # contract, so a future refactor that splits the two writes
+            # could silently break the gate's correctness. This assertion
+            # locks in the lockstep guarantee.
+            assert character.archetype_provenance is not None, (
+                "OK_RESOLVED must set archetype_provenance in lockstep "
+                "with resolved_archetype (apply_archetype_resolved "
+                "writes both atomically — if a future refactor splits "
+                "them, the gate's discriminator silently breaks)"
+            )
             # The handler must transition to Playing on success.
             assert handler._state == _State.Playing  # type: ignore[attr-defined]
 
@@ -284,7 +301,7 @@ class TestArchetypeGateOkResolved:
             evaluated = _spans_named(
                 otel_capture, "chargen.archetype_gate_evaluated"
             )
-            assert evaluated, (
+            assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_RESOLVED branch — without this span, the test "
                 "would pass even if the gate did not exist"
@@ -317,6 +334,7 @@ class TestArchetypeGateBlockedPartial:
         self,
         handler_factory,
         monkeypatch: pytest.MonkeyPatch,
+        otel_capture: InMemorySpanExporter,
     ) -> None:
         async def body() -> None:
             handler = handler_factory()
@@ -350,6 +368,29 @@ class TestArchetypeGateBlockedPartial:
             assert str(err.message).strip(), (
                 "BLOCKED_PARTIAL message must unwrap to a non-empty "
                 "string"
+            )
+
+            # Negative regression (Reviewer-flagged): the legacy
+            # ``character_creation.archetype_resolution_failed`` event
+            # is the inner-resolver event — it MUST fire only on the
+            # resolver-raised branch, not on missing_axes_with_pack_axes.
+            # Without this assertion, a future change that accidentally
+            # emits the legacy event on the pumblestone path would
+            # silently degrade Sebastien's GM-panel signal (the panel
+            # would conflate scene-malformed with resolver-error).
+            legacy_events = [
+                e
+                for span in otel_capture.get_finished_spans()
+                for e in span.events
+                if e.name == "character_creation.archetype_resolution_failed"
+            ]
+            assert not legacy_events, (
+                "On the missing_axes_with_pack_axes path the resolver "
+                "short-circuits at line 574 (raw is None / no '/') "
+                "BEFORE entering the try/except — the legacy "
+                "archetype_resolution_failed event must NOT fire. "
+                f"Found {len(legacy_events)} legacy event(s); the "
+                "gate's blocked span is the correct signal here."
             )
 
         asyncio.run(body())
@@ -390,6 +431,118 @@ class TestArchetypeGateBlockedPartial:
 
 
 # ---------------------------------------------------------------------------
+# AC2b — BLOCKED_PARTIAL with block_reason="raw_pair_unresolved"
+#
+# Reviewer-flagged gap: the gate has three documented `block_reason` values
+# (raw_pair_unresolved, missing_axes_with_pack_axes, resolver_raised) but
+# the original test suite exercised only two of them. This branch fires when
+# the builder writes a raw "jungian/rpg_role" pair onto the character (both
+# hints set) AND the pack has no axes — the resolver short-circuits at
+# `_resolve_character_archetype` line 579, leaving the raw pair in place.
+# The gate then sees `pack_has_axes=False` + `"/"` in `resolved_archetype`
+# and routes to BLOCKED_PARTIAL with `block_reason="raw_pair_unresolved"`.
+#
+# Real-world surface: a content author who declared chargen scenes with
+# hints (correct shape) but forgot to ship `archetype_constraints.yaml`
+# (or shipped `base_archetypes` only). Today no production pack hits this,
+# but the discriminator is part of the gate's public contract and a
+# regression in the routing would silently misclassify the failure mode.
+# ---------------------------------------------------------------------------
+
+
+class TestArchetypeGateRawPairUnresolved:
+    """AC2b: pack-axes-absent + scene-set-hints → BLOCKED_PARTIAL with
+    `block_reason="raw_pair_unresolved"`.
+
+    The builder writes `f"{jungian}/{rpg_role}"` onto
+    `character.resolved_archetype`. The resolver at
+    `_resolve_character_archetype` short-circuits at line 579 because the
+    pack lacks axes, leaving the raw pair. The gate observes
+    `pack_has_axes=False` AND `"/"` in `resolved_archetype` and routes
+    to the `raw_pair_unresolved` branch — distinct from
+    `missing_axes_with_pack_axes` (where `resolved_archetype is None`)
+    and `resolver_raised` (where pack HAS axes and the resolver was
+    called and raised)."""
+
+    def test_pack_axisless_with_set_hints_blocks_with_raw_pair_unresolved(
+        self,
+        handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        otel_capture: InMemorySpanExporter,
+    ) -> None:
+        async def body() -> None:
+            handler = handler_factory()
+            await _connect(handler)
+            await _walk_to_confirmation(handler)
+
+            # Both hints set — builder will produce raw "hero/tank".
+            _inject_hints(monkeypatch, jungian="hero", rpg_role="tank")
+
+            # Strip pack axes — resolver short-circuits at line 579,
+            # raw pair stays on the character.
+            sd = handler._session_data  # type: ignore[attr-defined]
+            sd.genre_pack.base_archetypes = None
+            sd.genre_pack.archetype_constraints = None
+
+            out = await _send_confirmation(handler)
+            assert out, "confirmation must produce a frame"
+            assert isinstance(out[0], ErrorMessage), (
+                "raw_pair_unresolved branch must return an ERROR frame, "
+                f"got {out[0]!r}"
+            )
+            assert out[0].payload.code == "chargen_archetype_unresolved", (
+                "raw_pair_unresolved ERROR must carry the documented "
+                "code; got "
+                f"{out[0].payload.code!r}"
+            )
+
+            # Character must NOT be persisted.
+            assert not sd.snapshot.characters, (
+                "raw_pair_unresolved must NOT append the character to "
+                "sd.snapshot.characters"
+            )
+
+            # The blocked span fires with block_reason='raw_pair_unresolved'
+            # — the load-bearing assertion. This is the only way to
+            # distinguish this branch from missing_axes_with_pack_axes
+            # at the OTEL surface; if the discriminator regresses, this
+            # test catches it.
+            blocked = _spans_named(
+                otel_capture, "chargen.archetype_gate_blocked"
+            )
+            assert len(blocked) >= 1, (
+                "chargen.archetype_gate_blocked must fire on the "
+                "raw_pair_unresolved branch"
+            )
+            bl_attrs = dict(blocked[-1].attributes or {})
+            assert bl_attrs.get("block_reason") == "raw_pair_unresolved", (
+                "Pack-axisless + raw pair must produce "
+                "block_reason='raw_pair_unresolved' (NOT "
+                "'missing_axes_with_pack_axes', NOT 'resolver_raised'); "
+                f"got {bl_attrs.get('block_reason')!r}"
+            )
+
+            # Negative regression: the legacy resolver-failed event
+            # must NOT fire on this branch (resolver short-circuited
+            # before the try/except).
+            legacy_events = [
+                e
+                for span in otel_capture.get_finished_spans()
+                for e in span.events
+                if e.name == "character_creation.archetype_resolution_failed"
+            ]
+            assert not legacy_events, (
+                "raw_pair_unresolved is the pack-lacks-axes short-circuit "
+                "at _resolve_character_archetype:579 — it returns BEFORE "
+                "the try/except, so the legacy resolver-failed event "
+                "must NOT fire. The gate's blocked span is the only "
+                "signal."
+            )
+
+        asyncio.run(body())
+
+
+# ---------------------------------------------------------------------------
 # AC3 — OK_NO_AXES: pack with no axes succeeds with resolved_archetype=None
 # ---------------------------------------------------------------------------
 
@@ -418,7 +571,7 @@ class TestArchetypeGateOkNoAxes:
             # caverns_and_claudes default chargen scenes set them
             # (post-Story 45-6 content fix), the resolver runs against
             # the now-None pack axes via the early-return at
-            # ``websocket_session_handler.py:577``, leaves the raw "j/r"
+            # ``websocket_session_handler.py:579``, leaves the raw "j/r"
             # pair on the character, and the gate would correctly block
             # it as ``raw_pair_unresolved``.
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -450,7 +603,7 @@ class TestArchetypeGateOkNoAxes:
             evaluated = _spans_named(
                 otel_capture, "chargen.archetype_gate_evaluated"
             )
-            assert evaluated, (
+            assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_NO_AXES branch — without this span the test would "
                 "pass even if the gate did not exist"
@@ -487,7 +640,7 @@ class TestArchetypeGateOtel:
             evaluated = _spans_named(
                 otel_capture, "chargen.archetype_gate_evaluated"
             )
-            assert evaluated, (
+            assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on every "
                 "confirm — Sebastien's GM panel needs the negative "
                 "confirmation that the gate ran"
@@ -532,7 +685,7 @@ class TestArchetypeGateOtel:
             evaluated = _spans_named(
                 otel_capture, "chargen.archetype_gate_evaluated"
             )
-            assert evaluated, (
+            assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_NO_AXES branch — every confirm path emits"
             )
@@ -570,7 +723,7 @@ class TestArchetypeGateOtel:
             evaluated = _spans_named(
                 otel_capture, "chargen.archetype_gate_evaluated"
             )
-            assert evaluated, (
+            assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "BLOCKED_PARTIAL branch too — Sebastien needs the "
                 "evaluator span every time"
@@ -584,7 +737,7 @@ class TestArchetypeGateOtel:
             blocked = _spans_named(
                 otel_capture, "chargen.archetype_gate_blocked"
             )
-            assert blocked, (
+            assert len(blocked) >= 1, (
                 "chargen.archetype_gate_blocked is the explicit "
                 "lie-detector entry — it must fire when chargen would "
                 "have shipped broken"
@@ -662,7 +815,7 @@ class TestArchetypeGateResolverRaised:
             _inject_hints(monkeypatch, jungian="hero", rpg_role="tank")
 
             # Stub the resolver to raise. This is the third silent-skip
-            # branch (websocket_session_handler.py:593-610): the catch
+            # branch (websocket_session_handler.py:595-612): the catch
             # logs and emits archetype_resolution_failed, then returns
             # — the raw pair stays on the character.
             def _raise(*args, **kwargs):
@@ -706,7 +859,7 @@ class TestArchetypeGateResolverRaised:
             blocked = _spans_named(
                 otel_capture, "chargen.archetype_gate_blocked"
             )
-            assert blocked, (
+            assert len(blocked) >= 1, (
                 "chargen.archetype_gate_blocked must fire on the "
                 "resolver-raised branch"
             )
@@ -732,36 +885,242 @@ class TestArchetypeGateResolverRaised:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Rule-enforcement: python.md rule 4 — error paths MUST log
+#
+# Reviewer flagged that the BLOCKED_PARTIAL gate path emits OTEL spans but
+# does NOT call ``logger.warning()`` or ``logger.error()``. Per python.md
+# rule 4 ("Error paths MUST have ``logger.error()`` or ``logger.warning()``"),
+# the OTEL span is not a substitute for the structured server log: the
+# server-log surface is independent (journald / CloudWatch / file), and ops
+# debugging without the entry is invisible.
+#
+# The reviewer's HIGH finding maps to this test. Until Dev adds a
+# WARNING-level log entry on the blocked branch, this test fails.
+# ---------------------------------------------------------------------------
+
+
+class TestArchetypeGateLogging:
+    """Rule 4 (python.md): error paths must log to the server log surface,
+    not just OTEL. Sebastien sees OTEL, but the on-call ops engineer
+    greps server logs — both surfaces need the entry."""
+
+    def test_blocked_partial_emits_warning_log(
+        self,
+        handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When the gate blocks, the structured server log MUST carry a
+        WARNING (or ERROR) entry — typically tagged
+        ``chargen.archetype_gate_blocked`` so it's grep-able alongside
+        the existing ``chargen.archetype_resolution_failed`` log line
+        already present in ``_resolve_character_archetype``. This is
+        not just style: per CLAUDE.md "No Silent Fallbacks", a
+        rejection that fires only an OTEL span is half-loud at best —
+        ops dashboards that don't speak OTEL miss it entirely."""
+        import logging
+
+        async def body() -> None:
+            handler = handler_factory()
+            await _connect(handler)
+            await _walk_to_confirmation(handler)
+            # Recreate pumblestone — pack has axes, hints unset.
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
+
+            with caplog.at_level(logging.WARNING):
+                await _send_confirmation(handler)
+
+            # Look for a WARNING (or ERROR) record from the
+            # session-handler module that mentions the gate block.
+            # Acceptable shapes: a dedicated chargen.archetype_gate_blocked
+            # logger line, OR any WARNING record that contains both
+            # "archetype_gate" and the block_reason. This gives Dev
+            # flexibility on the exact log message format while still
+            # enforcing the rule-4 contract.
+            relevant = [
+                rec
+                for rec in caplog.records
+                if rec.levelno >= logging.WARNING
+                and (
+                    "archetype_gate" in rec.getMessage()
+                    or "archetype_gate" in (rec.name or "")
+                )
+            ]
+            assert relevant, (
+                "BLOCKED_PARTIAL gate path must emit a WARNING-level "
+                "log entry (python.md rule 4 — error paths MUST log "
+                "to the server log surface). Found 0 matching records "
+                "in caplog. The OTEL span fires correctly, but the "
+                "server log is independent: ops debugging without "
+                "this entry is invisible."
+            )
+
+        asyncio.run(body())
+
+
+# ---------------------------------------------------------------------------
+# Robustness: gate discriminator survives a "/" in resolved display name
+#
+# Reviewer flagged that the gate's discriminator (`"/"` in
+# ``character.resolved_archetype``) is brittle — ``ArchetypeResolved.name``
+# is a free-form ``str`` with no validator forbidding "/". A funnel could
+# legitimately define a name like "Sage/Healer" today, and the gate would
+# misclassify the success as ``resolver_raised``. Reviewer recommended
+# switching the discriminator to ``character.archetype_provenance is not
+# None`` (set in lockstep by ``apply_archetype_resolved``), which is a
+# more durable signal.
+#
+# This test simulates a name with "/" and asserts the gate correctly
+# routes to OK_RESOLVED. With the current shape-based discriminator the
+# test fails; with Dev's fix using ``archetype_provenance`` it passes.
+# ---------------------------------------------------------------------------
+
+
+class TestArchetypeGateDiscriminatorRobustness:
+    """The gate must distinguish OK_RESOLVED from BLOCKED_PARTIAL using a
+    signal that survives ``ArchetypeResolved.name`` containing a "/".
+    The post-resolve invariant is: ``apply_archetype_resolved`` writes
+    BOTH ``resolved_archetype`` AND ``archetype_provenance`` together —
+    so ``archetype_provenance is not None`` is the durable
+    OK_RESOLVED marker, regardless of name shape."""
+
+    def test_resolved_name_with_slash_routes_to_ok_resolved(
+        self,
+        handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        otel_capture: InMemorySpanExporter,
+    ) -> None:
+        """Inject a successful resolution whose display name contains
+        "/". The current shape-based discriminator misclassifies this
+        as ``resolver_raised`` (raw pair); a discriminator that keys
+        on ``archetype_provenance is not None`` correctly routes to
+        OK_RESOLVED."""
+        from sidequest.protocol.provenance import Tier
+
+        async def body() -> None:
+            handler = handler_factory()
+            await _connect(handler)
+            await _walk_to_confirmation(handler)
+
+            # Patch apply_archetype_resolved (where the handler module
+            # imports it) to write a synthetic display name that contains
+            # "/". This is the latent risk Reviewer flagged: no validator
+            # currently forbids "/" in ArchetypeResolved.name.
+            def _apply_with_slash(character, resolution):
+                # Reproduce the lockstep contract — both fields together.
+                character.resolved_archetype = "Sage/Healer"
+                character.archetype_provenance = {
+                    "tier": Tier.world.value,
+                    "file": "synthetic",
+                    "merge_steps": [],
+                }
+
+            monkeypatch.setattr(
+                "sidequest.server.websocket_session_handler.apply_archetype_resolved",
+                _apply_with_slash,
+            )
+            # Both hints set — so the resolver is reached and the patched
+            # apply runs.
+            _inject_hints(monkeypatch, jungian="sage", rpg_role="healer")
+
+            out = await _send_confirmation(handler)
+            assert out, "confirmation must produce a frame"
+            for msg in out:
+                assert not isinstance(msg, ErrorMessage), (
+                    "A successful resolution whose display name contains "
+                    "'/' must route to OK_RESOLVED, not BLOCKED_PARTIAL. "
+                    "Today the gate's syntactic discriminator misclassifies "
+                    "this as resolver_raised. Fix: discriminate on "
+                    "archetype_provenance is not None (set by "
+                    "apply_archetype_resolved in lockstep with "
+                    f"resolved_archetype). Got: {msg!r}"
+                )
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd.snapshot.characters, (
+                "OK_RESOLVED with slash-in-name must persist the character"
+            )
+            character = sd.snapshot.characters[0]
+            assert character.resolved_archetype == "Sage/Healer"
+            assert character.archetype_provenance is not None
+
+            # Evaluator span MUST report state='ok_resolved' (not
+            # 'blocked_partial').
+            evaluated = _spans_named(
+                otel_capture, "chargen.archetype_gate_evaluated"
+            )
+            assert len(evaluated) >= 1, (
+                "Evaluator span must fire even on slash-in-name path"
+            )
+            attrs = dict(evaluated[-1].attributes or {})
+            assert attrs.get("state") == "ok_resolved", (
+                f"Slash-in-display-name must produce state='ok_resolved'; "
+                f"got {attrs.get('state')!r}. The gate must use "
+                f"archetype_provenance as the OK_RESOLVED signal, not the "
+                f"presence of '/' in the name string."
+            )
+
+        asyncio.run(body())
+
+
 class TestArchetypeGateWiring:
     def test_gate_helper_has_production_consumer(self) -> None:
-        """The gate's symbol — whatever Dev names the helper — MUST be
-        called from ``_chargen_confirmation``. We assert via source-
-        scan: at least one of the documented gate names is referenced
-        from ``websocket_session_handler.py`` outside its own
-        definition. If Dev extracts the gate but forgets to wire it,
-        every test above might still pass (because the gate logic
-        could be inlined elsewhere) but production would silently
-        bypass — this catches that."""
-        src = (
-            Path(__file__).resolve().parents[2]
-            / "sidequest"
-            / "server"
-            / "websocket_session_handler.py"
-        ).read_text(encoding="utf-8")
-        # The story context names ``_gate_archetype_resolution`` as the
-        # helper. Accept that name OR an inline ``archetype_gate``
-        # marker so Dev has flexibility — what matters is that the
-        # production seam references the gate.
-        candidates = [
-            "_gate_archetype_resolution",
-            "archetype_gate_evaluated",  # span name, ties inline gate to test
+        """The gate MUST be called from inside
+        ``_chargen_confirmation``. The original wire-check did a
+        whole-file source-scan that matched the def line itself — Dev
+        could keep the def and remove the call site and the test would
+        still pass. Reviewer flagged that as too weak.
+
+        This stronger version uses ``inspect.getsource`` to read just
+        the body of ``_chargen_confirmation`` and asserts that at
+        least one of the gate's invocation patterns (the helper call,
+        or the constant import as used in an inline gate, or the OTEL
+        span constant name) appears INSIDE the method body — not
+        merely somewhere in the file. A future refactor that drops the
+        call site fails immediately, regardless of whether the def
+        survives.
+        """
+        import inspect
+
+        from sidequest.server.session_handler import WebSocketSessionHandler
+
+        body = inspect.getsource(
+            WebSocketSessionHandler._chargen_confirmation
+        )
+        # Acceptable invocation patterns — at least ONE must appear
+        # inside the method body. The first is the canonical extracted
+        # helper; the other two cover an inline-gate alternative where
+        # Dev calls ``tracer.start_as_current_span`` directly with the
+        # imported constant.
+        invocation_patterns = [
+            "self._gate_archetype_resolution(",
+            "SPAN_CHARGEN_ARCHETYPE_GATE_EVALUATED",
+            "chargen.archetype_gate_evaluated",
         ]
-        assert any(token in src for token in candidates), (
-            "The chargen-confirmation seam must reference the archetype "
-            "gate by name (either the extracted helper "
-            "'_gate_archetype_resolution' or the OTEL span "
-            "'chargen.archetype_gate_evaluated') so a future refactor "
-            "that drops the gate fails this wire-check. Source scan of "
-            "websocket_session_handler.py found none of: "
-            f"{candidates!r}"
+        matches = [p for p in invocation_patterns if p in body]
+        assert matches, (
+            "The chargen-confirmation seam must INVOKE the archetype "
+            "gate. Acceptable invocation patterns inside "
+            "_chargen_confirmation's body:\n  "
+            + "\n  ".join(f"- {p!r}" for p in invocation_patterns)
+            + "\nNone found. If Dev kept the gate definition but "
+            "removed the call site (or inlined and removed the span "
+            "emission), production silently bypasses the gate — this "
+            "test is the wire-check that catches that regression."
+        )
+
+    def test_gate_definition_exists_in_handler_module(self) -> None:
+        """Companion to the call-site wire-check: confirm the gate
+        method actually exists on the handler class. Together the two
+        tests prove (a) the gate is defined, AND (b) the gate is
+        called — covering both halves of the wiring contract."""
+        from sidequest.server.session_handler import WebSocketSessionHandler
+
+        assert hasattr(
+            WebSocketSessionHandler, "_gate_archetype_resolution"
+        ), (
+            "WebSocketSessionHandler must define _gate_archetype_resolution. "
+            "If Dev renamed the method, update this assertion AND the "
+            "call-site test above to match."
         )
