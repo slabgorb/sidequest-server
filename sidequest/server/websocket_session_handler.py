@@ -25,8 +25,7 @@ if TYPE_CHECKING:
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
-from sidequest.agents.local_dm import LocalDM
-from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.orchestrator import TurnContext
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.daemon_client import (
     DaemonClient,
@@ -42,14 +41,7 @@ from sidequest.game.builder import (
 from sidequest.game.character import Character
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import seed_lore_from_char_creation
-from sidequest.game.persistence import (
-    SaveSchemaIncompatibleError,
-    SqliteStore,
-    db_path_for_session,
-)
 from sidequest.game.projection.cache import ProjectionCache
-from sidequest.game.projection.composed import ComposedFilter
-from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection_filter import ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
@@ -63,7 +55,6 @@ from sidequest.game.session import (
 from sidequest.game.shared_world_delta import (
     build_shared_world_delta,
 )
-from sidequest.game.turn import TurnPhase
 from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
@@ -74,7 +65,7 @@ from sidequest.genre.error import GenreValidationError
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.world import NavigationMode
-from sidequest.protocol import GameMessage, sanitize_player_text
+from sidequest.protocol import GameMessage
 from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
     AudioCueMessage,
@@ -84,9 +75,6 @@ from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
     ConfrontationPayload,
-    GamePausedMessage,
-    GamePausedPayload,
-    GameResumedMessage,
     ImageMessage,
     ImagePayload,
     NarrationEndMessage,
@@ -96,10 +84,7 @@ from sidequest.protocol.messages import (
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryPayload,
-    SeatConfirmedMessage,
-    SeatConfirmedPayload,
     SecretNotePayload,
-    SessionEventMessage,
     SessionEventPayload,
     TurnStatusMessage,
     TurnStatusPayload,
@@ -112,19 +97,14 @@ from sidequest.server import views
 from sidequest.server.audio_cue import build_audio_cue_payload
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
-from sidequest.server.dispatch.culture_context import resolve_culture_reference
-from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
-from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.server.narration_apply import (
     _apply_narration_result_to_snapshot,
 )
 from sidequest.server.session_handler import (
     _AUDIO_INTERPRETER,
-    _build_message_for_kind,
     _build_pc_descriptor,
     _hash_snapshot,
-    _rename_resumed_character_if_uuid,
     _SessionData,
     _shared_world_delta_to_state_delta,
     _State,
@@ -132,7 +112,6 @@ from sidequest.server.session_handler import (
 from sidequest.server.session_helpers import (
     _build_turn_context,
     _error_msg,
-    _presence_msg,
     _render_url_from_path,
     _resolve_acting_character_name,
     _resolve_location_display,
