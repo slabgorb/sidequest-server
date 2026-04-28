@@ -24,6 +24,8 @@ from sidequest.game.encounter import (
     EncounterPhase,
     StructuredEncounter,
 )
+from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
 from sidequest.genre.models.rules import (
     BeatDef,
     ConfrontationDef,
@@ -40,6 +42,19 @@ from sidequest.server.dispatch.dice import (
     DiceDispatchError,
     dispatch_dice_throw,
 )
+
+
+def _make_snapshot() -> GameSnapshot:
+    """Minimal GameSnapshot for dispatch_dice_throw tests.
+
+    Story 45-9: dispatch_dice_throw now requires a snapshot so it can
+    bump ``total_beats_fired`` on each successful beat fire.
+    """
+    return GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        turn_manager=TurnManager(),
+    )
 
 
 def _pack_with_combat() -> object:
@@ -132,6 +147,7 @@ class TestDispatchDiceThrow:
             session_id="session-1",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         # 13 + 3 = 16 >= DC(10 + |2|*2 = 14) → Success (margin 2 < DECISIVE_MARGIN)
         assert outcome.outcome is RollOutcome.Success
@@ -158,6 +174,7 @@ class TestDispatchDiceThrow:
             session_id="s",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         assert outcome.outcome is RollOutcome.CritSuccess
 
@@ -174,6 +191,7 @@ class TestDispatchDiceThrow:
             session_id="s",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         assert outcome.outcome is RollOutcome.CritFail
 
@@ -191,6 +209,7 @@ class TestDispatchDiceThrow:
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
+                snapshot=_make_snapshot(),
             )
 
     def test_no_active_encounter_raises(self) -> None:
@@ -206,6 +225,7 @@ class TestDispatchDiceThrow:
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
+                snapshot=_make_snapshot(),
             )
 
     def test_unknown_beat_id_raises(self) -> None:
@@ -222,6 +242,7 @@ class TestDispatchDiceThrow:
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
+                snapshot=_make_snapshot(),
             )
 
     def test_invalid_stat_check_raises_without_mutating_encounter(self) -> None:
@@ -240,6 +261,7 @@ class TestDispatchDiceThrow:
                 session_id="s",
                 round_number=1,
                 room_broadcast=None,
+                snapshot=_make_snapshot(),
             )
         # Validate-then-mutate: encounter untouched on validation failure.
         assert enc.player_metric.current == prev_player
@@ -259,6 +281,7 @@ class TestDispatchDiceThrow:
             session_id="s",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         assert outcome.request.modifier == 2
 
@@ -276,6 +299,7 @@ class TestDispatchDiceThrow:
             session_id="s",
             round_number=1,
             room_broadcast=broadcasts.append,
+            snapshot=_make_snapshot(),
         )
         # Spectators need the overlay to open before the result lands.
         assert len(broadcasts) == 2
@@ -298,6 +322,7 @@ class TestDispatchDiceThrow:
             session_id="s",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         assert enc.resolved is True
         assert enc.structured_phase is EncounterPhase.Resolution
@@ -320,6 +345,7 @@ class TestDiceThrowWireFormat:
             session_id="s",
             round_number=1,
             room_broadcast=None,
+            snapshot=_make_snapshot(),
         )
         wire = DiceResultMessage(
             payload=outcome.result, player_id="server",

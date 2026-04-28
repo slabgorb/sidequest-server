@@ -257,6 +257,11 @@ class NarrationTurnResult:
     npcs_present: list[NpcMention] = field(default_factory=list)
     items_gained: list[dict[str, Any]] = field(default_factory=list)
     items_lost: list[dict[str, Any]] = field(default_factory=list)
+    # Story 45-14: items dropped/abandoned in-world. Differs from items_lost
+    # (gone from continuity — given away, destroyed, stolen) — discarded
+    # items remain in inventory with state="Discarded" so they can be
+    # narratively recovered. Plumbed through the same narration_apply seam.
+    items_discarded: list[dict[str, Any]] = field(default_factory=list)
     footnotes: list[dict[str, Any]] = field(default_factory=list)
     quest_updates: dict[str, str] = field(default_factory=dict)
     sfx_triggers: list[str] = field(default_factory=list)
@@ -544,13 +549,15 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
     # Log extraction counts for OTEL visibility
     logger.info(
         "game_patch.extracted "
-        "footnotes=%d items_gained=%d npcs_present=%d "
-        "quest_updates=%d sfx_triggers=%d "
+        "footnotes=%d items_gained=%d items_lost=%d items_discarded=%d "
+        "npcs_present=%d quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
         "beat_selections=%d confrontation=%r "
         "has_location=%s gold_change=%r status_changes=%d",
         len(patch.get("footnotes", [])),
         len(patch.get("items_gained", [])),
+        len(patch.get("items_lost", [])),
+        len(patch.get("items_discarded", [])),
         len(patch.get("npcs_present", patch.get("npcs_met", []))),
         len(patch.get("quest_updates", {})),
         len(patch.get("sfx_triggers", [])),
@@ -571,6 +578,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "footnotes": patch.get("footnotes", []),
         "items_gained": patch.get("items_gained", []),
         "items_lost": patch.get("items_lost", []),
+        "items_discarded": patch.get("items_discarded", []),
         "npcs_present": patch.get("npcs_present", patch.get("npcs_met", [])),
         "quest_updates": patch.get("quest_updates", {}),
         "visual_scene": patch.get("visual_scene"),
@@ -1603,6 +1611,7 @@ class Orchestrator:
                 npcs_present=npc_mentions,
                 items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
                 items_lost=extraction.get("items_lost", []),
+                items_discarded=extraction.get("items_discarded", []),
                 footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
                 quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
                 sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],

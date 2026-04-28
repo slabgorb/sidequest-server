@@ -111,7 +111,7 @@ chapters:
       last week. Odige Fuseborn is looking for deniable muscle.
     character:
       archetype: Wasteland Trader
-      name: "{{generated at session start}}"
+      name: ""
       culture: Scrapborn or Drifter outsider
       level: 2
       hp: 18

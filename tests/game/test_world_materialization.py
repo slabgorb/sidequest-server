@@ -380,6 +380,9 @@ class TestWorldBuilderBuild:
         assert char.char_class == "Delver"
         assert char.core.level == 3
         assert char.backstory == "Orphan of the Reach."
+        # Story 45-7: description tracks selected race/class even when
+        # chapter omits an explicit description string.
+        assert char.core.description == "A Gnome Delver"
 
     def test_character_created_with_defaults_when_blank(self) -> None:
         snap = (
@@ -394,6 +397,106 @@ class TestWorldBuilderBuild:
         assert char.race == "Human"
         assert char.char_class == "Fighter"
         assert char.backstory == "Unknown origins."
+        # Story 45-7: blank chapter still produces an auto-template
+        # description from the resolved race+class defaults.
+        assert char.core.description == "A Human Fighter"
+
+    def test_character_description_refreshed_when_chapter_changes_race(self) -> None:
+        """Story 45-7 regression test.
+
+        Playtest 3 evropi shipped saves with race=Half-Orc but
+        description="A Human Fighter" because chargen ran with the
+        default race ("Human") and a later chapter set race=Half-Orc
+        without supplying a fresh description. ``_apply_character``
+        must refresh the auto-template description when race or class
+        changes and the prior description was the auto-generated
+        ``f"A {race} {class}"`` form.
+        """
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                # First chapter — chargen-style default (race unset →
+                # falls back to "Human"). Description is the auto-template.
+                _fresh_chapter(character=ChapterCharacter(
+                    name="Prot'Thokk",
+                    **{"class": "Fighter"},
+                )),
+                # Second chapter — sets the actual race, no description.
+                _early_chapter(character=ChapterCharacter(
+                    race="Half-Orc",
+                )),
+            ])
+            .build()
+        )
+        char = snap.characters[0]
+        assert char.race == "Half-Orc"
+        assert char.char_class == "Fighter"
+        # The auto-template description must follow the new race.
+        assert char.core.description == "A Half-Orc Fighter"
+
+    def test_character_description_preserved_when_hand_authored(self) -> None:
+        """Story 45-7: only auto-template descriptions are refreshed.
+
+        A hand-authored description (anything that isn't the exact
+        ``f"A {race} {class}"`` template) must survive a race-change
+        chapter update unchanged.
+        """
+        hand_authored = "A scarred half-orc, slow to anger and slower to laugh."
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(character=ChapterCharacter(
+                    name="Prot'Thokk",
+                    race="Human",
+                    **{"class": "Fighter"},
+                    description=hand_authored,
+                )),
+                _early_chapter(character=ChapterCharacter(race="Half-Orc")),
+            ])
+            .build()
+        )
+        char = snap.characters[0]
+        assert char.race == "Half-Orc"
+        # Hand-authored description stays put.
+        assert char.core.description == hand_authored
+
+    def test_existing_character_name_preserved_when_chapter_name_blank(self) -> None:
+        """A second chapter with ``name=""`` must not overwrite an existing
+        chargen-built name. The empty-name short-circuit in
+        ``_apply_character`` (world_materialization.py:348) protects the
+        chargen-owned identity slot.
+        """
+        snap = (
+            WorldBuilder()
+            .at_maturity(CampaignMaturity.Early)
+            .with_chapters([
+                _fresh_chapter(character=ChapterCharacter(
+                    name="Rux",
+                    race="Gnome",
+                    **{"class": "Delver"},  # YAML alias
+                    level=3,
+                    backstory="Orphan of the Reach.",
+                )),
+                _early_chapter(character=ChapterCharacter(
+                    name="",
+                    level=5,
+                    backstory="Now bears the Lantern.",
+                )),
+            ])
+            .build()
+        )
+        assert len(snap.characters) == 1
+        char = snap.characters[0]
+        # Empty chapter.name short-circuits — existing name preserved.
+        assert char.core.name == "Rux"
+        # Other non-empty fields from the second chapter still apply.
+        assert char.core.level == 5
+        assert char.backstory == "Now bears the Lantern."
+        # Untouched fields stay from the first chapter.
+        assert char.race == "Gnome"
+        assert char.char_class == "Delver"
 
 
 # ---------------------------------------------------------------------------
