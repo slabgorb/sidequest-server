@@ -46,6 +46,54 @@ def _validate_side(actor_name: str, declared: str) -> str:
     )
 
 
+def _registry_fallback_npcs(
+    snapshot: GameSnapshot,
+    *,
+    is_combat: bool,
+) -> list:
+    """Synthesise NpcMention entries from snapshot.npc_registry.
+
+    Story 45-18 (Playtest 3 Orin): when the narrator emits
+    ``confrontation=combat`` with an empty ``npcs_present`` list (the
+    structured-output extraction dropped the adversary), the encounter would
+    start with ``actors=[player only]`` and opponent-side beats would either
+    raise "unknown actor" or be silently dropped — opponent_metric stuck at 0
+    for 6 rounds. The registry already records who is in-scene at the
+    player's current location from prior turns, so we use it as a fallback
+    population source.
+
+    Filter: same location as the player. NPCs last seen elsewhere are NOT
+    pulled into the encounter — that would over-register characters who
+    happened to be in the registry at all.
+
+    Side: combat encounters default to ``opponent`` for the registry-derived
+    NPCs (the per-side dials require this so the opposing-side dial can
+    advance when the NPC's beat fires). Non-combat encounters use
+    ``neutral`` — the narrator can re-classify them on a later turn via an
+    explicit ``npcs_present`` mention.
+    """
+    from sidequest.agents.orchestrator import NpcMention
+
+    location = snapshot.location
+    if not location:
+        return []
+    default_side = "opponent" if is_combat else "neutral"
+    fallback: list = []
+    for entry in snapshot.npc_registry:
+        if entry.last_seen_location != location:
+            continue
+        fallback.append(
+            NpcMention(
+                name=entry.name,
+                pronouns=entry.pronouns or "",
+                role=entry.role or "",
+                appearance=entry.appearance or "",
+                side=default_side,
+            )
+        )
+    return fallback
+
+
 def instantiate_encounter_from_trigger(
     *,
     snapshot: GameSnapshot,
@@ -70,8 +118,12 @@ def instantiate_encounter_from_trigger(
     The encounter's dual dials are taken from the matched ConfrontationDef.
     Actors are assigned side="player" for the calling player and side read from
     each NpcMention's ``side`` field (validated against {player, opponent, neutral}).
-    When ``npcs_present`` is empty the encounter is instantiated with the player
-    only (lie-detector span is the caller's responsibility).
+
+    When ``npcs_present`` is empty the constructor falls back to NPCs from
+    ``snapshot.npc_registry`` whose ``last_seen_location`` matches the
+    player's current location (Story 45-18). The registry fallback is only
+    consulted when the explicit list is empty — an explicit ``npcs_present``
+    is always authoritative.
 
     Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
     passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
@@ -91,10 +143,21 @@ def instantiate_encounter_from_trigger(
             f"not in pack confrontations"
         )
 
+    # Story 45-18: registry fallback when narrator's npcs_present is empty.
+    # Sealed-letter encounters (commit-reveal duels) require exactly one
+    # opponent passed explicitly — the registry fallback would leak any
+    # bystander NPC at the location into the duel, so only the legacy path
+    # uses the fallback. The sealed-letter validator below still raises if
+    # npcs_present is wrong.
+    if not npcs_present and cdef.resolution_mode != ResolutionMode.sealed_letter_lookup:
+        npcs_present = _registry_fallback_npcs(
+            snapshot, is_combat=cdef.category == "combat",
+        )
+
     with encounter_confrontation_initiated_span(
         encounter_type=encounter_type,
         genre_slug=genre_slug or "",
-    ):
+    ) as _init_span:
         if cdef.resolution_mode == ResolutionMode.sealed_letter_lookup:
             # Sealed-letter encounters are commit-reveal duels addressed by
             # role tag ("red" / "blue") rather than the generic
@@ -141,6 +204,18 @@ def instantiate_encounter_from_trigger(
                 side_raw = getattr(npc, "side", None) or "neutral"
                 side = _validate_side(npc_name, side_raw)
                 actors.append(EncounterActor(name=npc_name, role=role, side=side))
+
+        # Story 45-18 AC3: GM-panel observability.
+        # Decorate the init span with the registered combatants so Keith can
+        # verify the actors array was populated end-to-end (and that the
+        # registry fallback is firing on Playtest 3 shapes). OTEL string
+        # attributes can't carry rich lists, so combatant_names is comma-joined.
+        # ``set_attribute`` is a no-op on NoOp / non-recording spans — safe
+        # to call unconditionally.
+        _init_span.set_attribute("actor_count", len(actors))
+        _init_span.set_attribute(
+            "combatant_names", ",".join(a.name for a in actors),
+        )
 
         pm = cdef.player_metric
         om = cdef.opponent_metric
