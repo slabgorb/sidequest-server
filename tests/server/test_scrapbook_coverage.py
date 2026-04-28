@@ -101,7 +101,7 @@ def populated_store(tmp_path):
     Closing the store between tests is the caller's responsibility.
     """
     from sidequest.game.persistence import SqliteStore
-    from sidequest.protocol.messages import NpcRef, ScrapbookEntryPayload
+    from sidequest.protocol.messages import ScrapbookEntryPayload
 
     created: list[SqliteStore] = []
 
@@ -172,11 +172,13 @@ def populated_store(tmp_path):
 
     yield _make
 
+    import contextlib
+
     for s in created:
-        try:
+        # Fixture cleanup must never raise — close() failures on already-
+        # closed handles are benign here.
+        with contextlib.suppress(Exception):
             s.close()
-        except Exception:  # noqa: BLE001 — fixture cleanup, never raise
-            pass
 
 
 # Stub snapshot — the detector's signature accepts (store, snapshot, **ctx)

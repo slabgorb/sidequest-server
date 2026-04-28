@@ -30,11 +30,9 @@ checks are sharp enough to catch the half-fix regression AC4 names.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Static-source location of the two resume seams
@@ -337,15 +335,20 @@ class TestSlugResumeEndToEnd:
         store.close()
         return {"slug": slug, "save_dir": tmp_path, "genre": genre, "world": world}
 
-    def test_slug_resume_emits_coverage_evaluated_and_gap_spans(
-        self, populated_slug_save, otel_capture, monkeypatch
+    @pytest.mark.asyncio
+    async def test_slug_resume_emits_coverage_evaluated_and_gap_spans(
+        self, populated_slug_save, otel_capture
     ) -> None:
         """Drive an end-to-end slug-keyed resume against the Orin fixture
         and assert the two spans land. This is the wire test that catches
         the half-fix where the helper exists, the import is present, but
-        the call site reads from the wrong store reference."""
-        # Resolve the call path lazily to keep the test importable even
-        # while the implementer is mid-flight.
+        the call site reads from the wrong store reference.
+
+        Mirrors ``test_scrapbook_entry_wiring.py`` setup conventions —
+        ``WebSocketSessionHandler(save_dir, genre_pack_search_paths)`` plus
+        ``attach_room_context``, then ``handle_message`` against a wire
+        ``SESSION_EVENT`` connect message.
+        """
         try:
             from sidequest.game.scrapbook_coverage import (  # noqa: F401
                 detect_scrapbook_coverage_gaps,
@@ -356,49 +359,41 @@ class TestSlugResumeEndToEnd:
                 "unit tests in test_scrapbook_coverage.py."
             )
 
-        # Build a minimal handler / room and exercise the slug-keyed
-        # connect path. This mirrors the pattern in
-        # ``test_scrapbook_entry_wiring.py`` so the test stays close to
-        # established conventions.
+        import asyncio
         from pathlib import Path
 
         from sidequest.protocol import GameMessage
-        from sidequest.protocol.enums import MessageType
         from sidequest.server.session_handler import WebSocketSessionHandler
         from sidequest.server.session_room import RoomRegistry
 
         save_dir: Path = populated_slug_save["save_dir"]
         slug: str = populated_slug_save["slug"]
-
-        registry = RoomRegistry()
         fixture_packs = (
             Path(__file__).resolve().parents[1] / "fixtures" / "packs"
         )
+
         handler = WebSocketSessionHandler(
-            send=_async_noop,
-            client_factory=_null_client_factory,
-            search_paths=[fixture_packs],
-            save_dir=save_dir,
-            room_registry=registry,
+            save_dir=save_dir, genre_pack_search_paths=[fixture_packs],
+        )
+        queue: asyncio.Queue[object] = asyncio.Queue()
+        handler.attach_room_context(
+            registry=RoomRegistry(), socket_id="sock-orin", out_queue=queue,
         )
 
-        connect = GameMessage(
-            type=MessageType.SESSION_EVENT,
-            payload={
-                "kind": "connect",
-                "slug": slug,
-                "genre_slug": populated_slug_save["genre"],
-                "world_slug": populated_slug_save["world"],
-                "player_name": "Orin",
-                "player_id": "player-1",
-            },
+        connect = GameMessage.model_validate(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "orin-player-1",
+                "payload": {
+                    "event": "connect",
+                    "game_slug": slug,
+                    "last_seen_seq": 0,
+                },
+            }
         )
 
-        import asyncio
+        await handler.handle_message(connect)
 
-        asyncio.run(handler.handle_message(connect))
-
-        # Now check spans.
         names = [s.name for s in otel_capture.get_finished_spans()]
         assert "scrapbook.coverage_evaluated" in names, (
             f"slug-resume MUST emit scrapbook.coverage_evaluated. "
@@ -409,19 +404,3 @@ class TestSlugResumeEndToEnd:
             f"slug-resume against the 29/10 Orin fixture MUST emit "
             f"scrapbook.coverage_gap_detected. Spans seen: {names!r}."
         )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _async_noop(*_args, **_kwargs):
-    return None
-
-
-def _null_client_factory():
-    """Stub Claude client — the resume path doesn't run a turn."""
-    from unittest.mock import MagicMock
-
-    return MagicMock()
