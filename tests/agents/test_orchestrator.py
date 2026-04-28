@@ -1043,3 +1043,49 @@ async def test_run_narration_turn_clears_pending_resolution_signal_on_error(
 
     # The contract: signal cleared even though the orchestrator raised.
     assert snapshot.pending_resolution_signal is None
+
+
+# ---------------------------------------------------------------------------
+# None-dispatch-package path — pins Group B / Group G guard behavior
+# ---------------------------------------------------------------------------
+
+
+async def test_build_narrator_prompt_with_none_dispatch_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When TurnContext.dispatch_package is None, build_narrator_prompt
+    must skip redact_dispatch_package, skip dispatch-bank execution,
+    and produce a prompt without subsystem-injected sections."""
+    import sidequest.agents.prompt_redaction as _redaction_mod
+    import sidequest.agents.subsystems as _subsystems_mod
+
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    # dispatch_package defaults to None — explicit for documentation clarity.
+    context = TurnContext(character_name="Kael", dispatch_package=None)
+
+    redact_called = False
+    bank_called = False
+
+    def _fake_redact(*args, **kwargs):  # pragma: no cover — must NOT be called
+        nonlocal redact_called
+        redact_called = True
+        raise AssertionError("redact_dispatch_package called on None path")
+
+    async def _fake_bank(*args, **kwargs):  # pragma: no cover — must NOT be called
+        nonlocal bank_called
+        bank_called = True
+        raise AssertionError("run_dispatch_bank called on None path")
+
+    monkeypatch.setattr(_redaction_mod, "redact_dispatch_package", _fake_redact)
+    monkeypatch.setattr(_subsystems_mod, "run_dispatch_bank", _fake_bank)
+
+    prompt_text, _registry = await orch.build_narrator_prompt(
+        action="I look around.",
+        context=context,
+        tier=NarratorPromptTier.Full,
+    )
+
+    assert redact_called is False
+    assert bank_called is False
+    assert prompt_text  # prompt was built successfully
