@@ -27,6 +27,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from opentelemetry import trace
+
 from sidequest.game.character import Character
 from sidequest.game.creature_core import (
     CreatureCore,
@@ -40,6 +42,27 @@ from sidequest.game.history_chapter import (
     HistoryChapter,
 )
 from sidequest.game.session import NarrativeEntry, Npc, TropeState
+
+
+def _auto_description(race: str, char_class: str) -> str:
+    """Compose the chargen-style 'A {race} {class}' description.
+
+    Mirrors the format used by ``GenericCharacterBuilder.build`` in
+    ``builder.py`` so that race-changing chapter updates can detect
+    and refresh an auto-generated description (Story 45-7).
+    """
+    return f"A {race} {char_class}"
+
+
+def _is_auto_description(description: str, race: str, char_class: str) -> bool:
+    """True when a description matches the chargen auto-template format.
+
+    Used by ``_apply_character`` to detect 'A {race} {class}' descriptions
+    that should be regenerated when race/class change in a chapter update.
+    Match is exact: any human-edited description (including additional
+    sentences or whitespace) is preserved untouched.
+    """
+    return description == _auto_description(race, char_class)
 
 # ---------------------------------------------------------------------------
 # CampaignMaturity
@@ -306,7 +329,10 @@ class WorldBuilder:
             name = char_data.name if char_data.name else "Adventurer"
             race = char_data.race if char_data.race else "Human"
             cls = char_data.class_name if char_data.class_name else "Fighter"
-            description = char_data.description or "An adventurer."
+            # Story 45-7: when chapter omits a description, fall back to
+            # the chargen auto-template so the description reflects the
+            # actual race/class instead of an opaque 'An adventurer.' stub.
+            description = char_data.description or _auto_description(race, cls)
             personality = char_data.personality or "Determined."
             backstory = char_data.backstory or "Unknown origins."
 
@@ -343,6 +369,11 @@ class WorldBuilder:
 
         # Update existing character — selective, non-empty fields only.
         char = snap.characters[0]
+        # Capture pre-update race/class so we can detect auto-template
+        # descriptions written against the previous identity (Story 45-7).
+        prev_race = char.race
+        prev_class = char.char_class
+        prev_description = char.core.description
         if char_data.level > 0:
             char.core.level = char_data.level
         if char_data.name:
@@ -357,6 +388,35 @@ class WorldBuilder:
             char.core.personality = char_data.personality
         if char_data.description:
             char.core.description = char_data.description
+        else:
+            # Story 45-7: if the chapter changes race or class without
+            # supplying a fresh description, refresh an auto-generated
+            # description ('A {race} {class}') so it tracks the new
+            # identity. Hand-authored descriptions are detected by
+            # comparing against the prior auto-template format and left
+            # untouched. No silent fallback: only the exact prior
+            # auto-template string is rewritten.
+            race_or_class_changed = (
+                char.race != prev_race or char.char_class != prev_class
+            )
+            if race_or_class_changed and _is_auto_description(
+                prev_description, prev_race, prev_class
+            ):
+                new_desc = _auto_description(char.race, char.char_class)
+                char.core.description = new_desc
+                span = trace.get_current_span()
+                span.add_event(
+                    "world_materialization.description_refreshed",
+                    {
+                        "reason": "race_or_class_changed",
+                        "prev_race": prev_race,
+                        "prev_class": prev_class,
+                        "new_race": char.race,
+                        "new_class": char.char_class,
+                        "prev_description": prev_description,
+                        "new_description": new_desc,
+                    },
+                )
         # hp/max_hp/ac/gold: advisory only, see docstring.
 
     # ------------------------------------------------------------------
