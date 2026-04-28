@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from sidequest.telemetry.spans import SPAN_ROUTES
 
-
 SPAN_NAME = "turn_manager.round_invariant"
 
 

@@ -3,8 +3,13 @@
 Two-tier turn model:
 - interaction (granular): increments every player-narrator exchange.
   Powers fact/item discovery chronology. Monotonic, never resets.
-- round (display): advances on meaningful narrative beats — location
-  changes, chapter markers, trope escalations. Shown to the player.
+- round (display): advances in lockstep with ``interaction`` via
+  ``record_interaction()`` (Story 45-11, Strategy A). Shown to the
+  player. The earlier "advances on narrative beats" model was never
+  wired into the resolution pipeline — ``advance_round()`` had zero
+  callers and the counter froze, drifting from
+  ``MAX(narrative_log.round_number)`` over long sessions
+  (Felix's Playtest 3: round=65 / max=72).
 
 ADR-006: Both counters always increment, never reset.
 Persisted across sessions — loading a save restores exact counts.

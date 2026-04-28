@@ -53,7 +53,6 @@ from sidequest.telemetry.setup import init_tracer
 from sidequest.telemetry.watcher_hub import WatcherHub
 from tests.server.conftest import _build_turn_context_for_test
 
-
 SPAN_NAME = "turn_manager.round_invariant"
 
 
