@@ -136,3 +136,31 @@ async def test_no_lethality_directives_when_character_above_zero_edge():
     )
     assert "wasteland is indifferent" not in prompt
     assert "miraculous rescues" not in prompt
+
+
+async def test_adventurer_fallback_name_flows_through_turn_context():
+    """When the world-materialization fallback names the PC 'Adventurer'
+    (no chargen-supplied name reached the snapshot), `_build_turn_context`
+    must surface that literal name as ``character_name`` rather than
+    silently substituting another value. Pins Story 45-4's
+    ``ChapterCharacter.name`` empty-string semantics end-to-end through
+    the narrator-context layer.
+    """
+    sd = _SessionData(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        player_name="Adventurer",
+        player_id="player:adventurer",
+        snapshot=GameSnapshot(
+            genre_slug="caverns_and_claudes",
+            world_slug="mawdeep",
+            location="Test",
+            turn_manager=TurnManager(interaction=1),
+            characters=[_character("Adventurer", edge_current=10)],
+        ),
+        store=MagicMock(),
+        genre_pack=load_genre_pack(CONTENT_GENRE_PACKS / "caverns_and_claudes"),
+        orchestrator=MagicMock(),
+    )
+    ctx = _build_turn_context(sd)
+    assert ctx.character_name == "Adventurer"
