@@ -147,7 +147,18 @@ class ScenarioState(BaseModel):
 
     def discover_clue(self, clue_id: str) -> None:
         """Mark a clue as discovered."""
-        self.discovered_clues.add(clue_id)
+        from sidequest.telemetry.spans import SPAN_SCENARIO_ADVANCE, Span
+        already = clue_id in self.discovered_clues
+        with Span.open(
+            SPAN_SCENARIO_ADVANCE,
+            {
+                "clue_id": clue_id,
+                "duplicate": bool(already),
+                "guilty_npc": self.guilty_npc,
+            },
+        ) as span:
+            self.discovered_clues.add(clue_id)
+            span.set_attribute("discovered_total", len(self.discovered_clues))
 
     def record_questioned_npc(self, npc_name: str) -> None:
         """Record that the player questioned a scenario NPC."""

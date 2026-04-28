@@ -615,6 +615,20 @@ class GameSnapshot(BaseModel):
 
     def apply_world_patch(self, patch: WorldStatePatch) -> None:
         """Apply a world state patch. Only set fields are updated."""
+        from sidequest.telemetry.spans import SPAN_APPLY_WORLD_PATCH, Span
+        with Span.open(
+            SPAN_APPLY_WORLD_PATCH,
+            {
+                "field_count": sum(
+                    1
+                    for f in patch.model_fields_set
+                    if getattr(patch, f, None) is not None
+                ),
+            },
+        ):
+            self._apply_world_patch_inner(patch)
+
+    def _apply_world_patch_inner(self, patch: WorldStatePatch) -> None:
         if patch.location is not None:
             self.location = patch.location
         if patch.time_of_day is not None:
@@ -656,10 +670,21 @@ class GameSnapshot(BaseModel):
             for name, delta in patch.hp_changes.items():
                 self._apply_hp_change(name, delta)
         if patch.npc_attitudes is not None:
+            from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Emitter
             for name, delta in patch.npc_attitudes.items():
                 for npc in self.npcs:
                     if npc.core.name == name:
+                        before = int(npc.disposition)
                         npc.disposition = max(-100, min(100, npc.disposition + delta))
+                        Emitter.fire(
+                            SPAN_DISPOSITION_SHIFT,
+                            {
+                                "npc_name": name,
+                                "delta": int(delta),
+                                "before": before,
+                                "after": int(npc.disposition),
+                            },
+                        )
         if patch.npcs_present is not None:
             for npc_patch in patch.npcs_present:
                 existing = next(

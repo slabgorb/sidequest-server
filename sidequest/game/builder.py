@@ -1482,8 +1482,9 @@ class CharacterBuilder:
                 ". ".join(parts) if parts else "A wanderer with a mysterious past"
             )
             backstory_method = "fallback"
+        from sidequest.telemetry.spans import SPAN_CHARGEN_BACKSTORY_COMPOSED
         span.add_event(
-            "chargen.backstory_composed",
+            SPAN_CHARGEN_BACKSTORY_COMPOSED,
             {"method": backstory_method, "length": len(backstory_text)},
         )
 
@@ -1629,11 +1630,20 @@ class CharacterBuilder:
         Uses the builder's seedable RNG so tests can drive deterministic
         outputs.
         """
+        from sidequest.telemetry.spans import SPAN_CHARGEN_STAT_ROLL, Emitter
         rng = self._rng
         results: list[tuple[str, int]] = []
         for name in self._ability_score_names:
             dice = (rng.randint(1, 6), rng.randint(1, 6), rng.randint(1, 6))
             total = sum(dice)
+            Emitter.fire(
+                SPAN_CHARGEN_STAT_ROLL,
+                {
+                    "stat": name,
+                    "dice": list(dice),
+                    "total": total,
+                },
+            )
             results.append((name, total))
         return results
 
@@ -1751,6 +1761,16 @@ class CharacterBuilder:
                 idx = min(2, len(names) - 1)
                 stats[names[idx]] = stats[names[idx]] + 2
 
+        import json as _json
+        from sidequest.telemetry.spans import SPAN_CHARGEN_STATS_GENERATED, Emitter
+        Emitter.fire(
+            SPAN_CHARGEN_STATS_GENERATED,
+            {
+                "method": method,
+                "stat_count": len(stats),
+                "stats_json": _json.dumps(dict(stats), sort_keys=True),
+            },
+        )
         return stats
 
     # --- HP formula ---
