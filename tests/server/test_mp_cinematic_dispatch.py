@@ -421,8 +421,10 @@ async def test_otel_events_emitted_on_barrier_fire_and_dispatch(
     handler1._execute_narration_turn = fake_execute  # type: ignore[method-assign]
     handler2._execute_narration_turn = fake_execute  # type: ignore[method-assign]
 
-    # Patch the _watcher_publish symbol used inside session_handler.
-    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+    # Patch the _watcher_publish symbol used inside the PLAYER_ACTION
+    # first-class handler (where the mp.barrier_fired / mp.round_dispatched
+    # / turn_status events are emitted from).
+    with patch("sidequest.handlers.player_action._watcher_publish") as wp:
         msg1 = PlayerActionMessage(
             payload=PlayerActionPayload(
                 action=NonBlankString.model_validate("I prepare for the dungeon"),

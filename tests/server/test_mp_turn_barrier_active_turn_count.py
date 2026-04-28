@@ -242,7 +242,7 @@ async def test_barrier_wait_span_fires_when_barrier_does_not_fire(
         return_value=[],
     )
 
-    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+    with patch("sidequest.handlers.player_action._watcher_publish") as wp:
         msg = PlayerActionMessage(
             payload=PlayerActionPayload(
                 action=NonBlankString.model_validate("I prepare for the dungeon"),
@@ -322,7 +322,7 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
         return_value=[],
     )
 
-    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+    with patch("sidequest.handlers.player_action._watcher_publish") as wp:
         msg = PlayerActionMessage(
             payload=PlayerActionPayload(
                 action=NonBlankString.model_validate("I check for traps"),
@@ -377,7 +377,7 @@ async def test_barrier_wait_span_fires_when_barrier_does_fire(
 
     handler._execute_narration_turn = fake_execute  # type: ignore[method-assign]
 
-    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+    with patch("sidequest.handlers.player_action._watcher_publish") as wp:
         msg = PlayerActionMessage(
             payload=PlayerActionPayload(
                 action=NonBlankString.model_validate("I open the door"),
@@ -454,7 +454,7 @@ async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
 
     handler._execute_narration_turn = fake_execute  # type: ignore[method-assign]
 
-    with patch("sidequest.server.session_handler._watcher_publish") as wp:
+    with patch("sidequest.handlers.player_action._watcher_publish") as wp:
         msg = PlayerActionMessage(
             payload=PlayerActionPayload(
                 action=NonBlankString.model_validate("I press forward alone"),

@@ -214,7 +214,7 @@ async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded
 
     with patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose), \
          patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)), \
-         patch("sidequest.server.session_handler._watcher_publish", side_effect=fake_publish):
+         patch("sidequest.server.websocket_session_handler._watcher_publish", side_effect=fake_publish):
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
     degraded_events = [

@@ -188,7 +188,7 @@ async def test_image_broadcasts_to_all_room_sockets(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -251,7 +251,7 @@ async def test_render_completion_otel_records_broadcast_and_recipients(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -320,7 +320,7 @@ async def test_legacy_no_room_path_uses_single_queue(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
