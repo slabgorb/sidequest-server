@@ -77,9 +77,9 @@ Write narrative prose (length governed by the <length-limit> guardrail below). S
 PART 2 — STATE PATCH
 After your prose, emit a fenced JSON block labeled game_patch containing \
 mechanical intents from this turn. Only include fields that changed.\
-Valid fields: confrontation, items_gained, items_lost, location, npcs_met, \
-mood, state_snapshot, beat_selections, visual_scene, footnotes, gold_change, \
-action_rewrite, status_changes.
+Valid fields: confrontation, items_gained, items_lost, items_discarded, \
+location, npcs_met, mood, state_snapshot, beat_selections, visual_scene, \
+footnotes, gold_change, action_rewrite, status_changes.
 gold_change: Integer. Emit when the player gains or loses gold/currency \
 outside of beat costs (e.g., winning a poker hand: +50, paying a bribe: -20, \
 finding a coin purse: +10). Beat costs are handled automatically — only emit \
@@ -99,17 +99,31 @@ receives, or is given a new item during this turn. Each entry:
   {"name": "<short item name>", "description": "<one-sentence description>", \
 "category": "weapon|armor|tool|consumable|quest|treasure|misc"}
 
-items_lost: Array. Same format as items_gained. Emit when the player loses, \
-drops, trades away, has stolen, or gives away an item. Only for non-currency \
-items — currency changes use gold_change.
+items_lost: Array. Same format as items_gained. Emit when the player loses \
+an item to the world — given away, traded, stolen, destroyed, consumed. The \
+item is GONE from continuity. Only for non-currency items — currency changes \
+use gold_change.
+
+items_discarded: Array. Same format as items_gained. Emit when the player \
+intentionally drops, abandons, leaves behind, or sets down an item that \
+remains in the world (still potentially recoverable). Examples: "abandons \
+the spear where it stands", "drops the lantern", "leaves the helmet on the \
+corpse". Use items_discarded (NOT items_lost) for these — discarded items \
+keep a paper-trail in inventory with state=Discarded so the player can \
+narratively pick them up later. If unsure between items_lost vs \
+items_discarded, prefer items_discarded — recoverability is the safer \
+default.
 
 CRITICAL INVENTORY RULE: If your narration describes ANY item changing hands \
-— the player acquiring, losing, trading, giving, dropping, or having an item \
-taken — you MUST emit the corresponding items_gained and/or items_lost in \
-the game_patch. The game state ONLY changes through these fields. If you \
-write "the merchant takes your sword" but don't emit items_lost, the sword \
-stays in inventory and the narrative diverges from game state. Every item \
-transaction in your prose MUST have a matching JSON field. No exceptions.
+or leaving the player's possession — acquiring, losing, trading, giving, \
+dropping, abandoning, or having an item taken — you MUST emit the \
+corresponding items_gained, items_lost, or items_discarded in the \
+game_patch. The game state ONLY changes through these fields. If you write \
+"the merchant takes your sword" but don't emit items_lost, the sword stays \
+in inventory and the narrative diverges from game state. If you write \
+"abandons the spear" but don't emit items_discarded, the spear still shows \
+state=Carried in inventory. Every item transaction in your prose MUST have \
+a matching JSON field. No exceptions.
 
 visual_scene: Include this on EVERY turn where the setting changes, a new \
 location is entered, or a visually significant event occurs (combat start, \

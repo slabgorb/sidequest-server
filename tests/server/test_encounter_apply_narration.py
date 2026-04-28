@@ -277,6 +277,93 @@ def test_items_lost_removes_first_matching_name_case_insensitive(
     assert character.core.inventory.items == []
 
 
+def test_items_discarded_transitions_state_out_of_carried(
+    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+) -> None:
+    """Story 45-14: narrator-extracted ``items_discarded`` flips a Carried
+    item's state to Discarded without removing it. Regression for
+    Playtest 3 Blutka turn 9: narrator wrote "abandons the spear where it
+    stands — shaft quivering in scavenger meat" but the spear still showed
+    state=Carried in the final inventory because the discard verb had no
+    plumbing.
+
+    Asserts:
+    - Item remains in inventory (recoverable narratively).
+    - Item state transitions out of "Carried" to "Discarded".
+    - Item is no longer equipped.
+    - OTEL span fires with the discarded name in the JSON attribute.
+    """
+    snap, pack, character = cac_snap_with_character
+    character.core.inventory.items.append(
+        {
+            "id": "narrator:bone_spear",
+            "name": "Bone Spear",
+            "description": "A scavenger's barbed shaft.",
+            "category": "weapon",
+            "value": 0, "weight": 2.0, "rarity": "common",
+            "narrative_weight": 0.5, "tags": [],
+            "equipped": True, "quantity": 1,
+            "uses_remaining": None, "state": "Carried",
+        }
+    )
+
+    result = NarrationTurnResult(
+        narration=(
+            "Blutka abandons the spear where it stands — shaft quivering "
+            "in scavenger meat."
+        ),
+        items_discarded=[
+            {"name": "Bone Spear", "category": "weapon"},
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Blutka", pack=pack,
+    )
+
+    # Item is still in inventory (discard ≠ removal — narratively
+    # recoverable) but state has transitioned out of Carried.
+    assert len(character.core.inventory.items) == 1
+    item = character.core.inventory.items[0]
+    assert item["name"] == "Bone Spear"
+    assert item["state"] == "Discarded"
+    assert item["equipped"] is False
+
+    # OTEL lie-detector span fired with the discarded name.
+    spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
+    assert "inventory.narrator_extracted" in spans_by_name, (
+        f"expected inventory.narrator_extracted span; "
+        f"got {list(spans_by_name)}"
+    )
+    span = spans_by_name["inventory.narrator_extracted"]
+    assert span.attributes["discarded_count"] == 1
+    assert span.attributes["discarded_json"] == '["bone spear"]'
+    assert span.attributes["unmatched_discards_count"] == 0
+
+
+def test_items_discarded_unmatched_logs_and_emits_count(
+    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+) -> None:
+    """No-silent-fallback: when narrator hallucinates a discard for an
+    item not in inventory, the span surfaces the miss via
+    ``unmatched_discards_count`` so the GM panel can spot the drift.
+    """
+    snap, pack, character = cac_snap_with_character
+    assert character.core.inventory.items == []
+
+    result = NarrationTurnResult(
+        narration="You drop the imaginary lantern.",
+        items_discarded=[{"name": "Phantom Lantern"}],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+
+    spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
+    span = spans_by_name["inventory.narrator_extracted"]
+    assert span.attributes["discarded_count"] == 0
+    assert span.attributes["unmatched_discards_count"] == 1
+
+
 def test_items_update_tolerates_missing_characters(cac_snap) -> None:
     """Called with no character seated (e.g., pre-chargen narration), the
     inventory block must no-op without raising. Single-player saves

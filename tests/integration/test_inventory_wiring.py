@@ -214,6 +214,83 @@ async def test_items_lost_emits_state_transition_with_matched_names_only(
 
 
 @pytest.mark.asyncio
+async def test_items_discarded_emits_state_transition_via_span_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 45-14 wiring: a NarrationTurnResult with ``items_discarded``
+    must (a) flip the matched item's state out of "Carried" in inventory
+    and (b) reach the hub as a routed ``state_transition`` event with the
+    discarded name surfaced in the route's ``discarded`` field. Closes
+    the Playtest 3 Blutka gap where the narrator's "abandons the spear"
+    prose left the spear at state=Carried because the discard verb had
+    no apply seam.
+    """
+    captured = await _setup(monkeypatch, "test-inventory-discarded-wiring")
+
+    pre_existing = [
+        {
+            "id": "narrator:bone_spear",
+            "name": "Bone Spear",
+            "description": "A scavenger's barbed shaft.",
+            "category": "weapon",
+            "value": 0,
+            "weight": 2.0,
+            "rarity": "common",
+            "narrative_weight": 0.5,
+            "tags": [],
+            "equipped": True,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
+        },
+    ]
+    snapshot = GameSnapshot(
+        genre_slug="mutant_wasteland",
+        world_slug="flickering_reach",
+        location="Scavenger Pit",
+        discovered_regions=["Scavenger Pit"],
+        npc_registry=[],
+        quest_log={},
+        lore_established=[],
+        characters=[_make_character("Blutka", items=pre_existing)],
+        turn_manager=TurnManager(),
+    )
+    snapshot.turn_manager.record_interaction()
+
+    result = NarrationTurnResult(
+        narration="Blutka abandons the spear where it stands.",
+        items_discarded=[{"name": "Bone Spear"}],
+    )
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Blutka")
+    await asyncio.sleep(0.05)
+
+    # Mutation: spear remains in inventory but state has transitioned out
+    # of "Carried" — the production state-transition AC1 demands.
+    items = snapshot.characters[0].core.inventory.items
+    assert len(items) == 1
+    assert items[0]["name"] == "Bone Spear"
+    assert items[0]["state"] == "Discarded"
+    assert items[0]["equipped"] is False
+
+    typed = [
+        e
+        for e in captured
+        if e["event_type"] == "state_transition"
+        and e["component"] == "inventory"
+        and e["fields"].get("op") == "narrator_extracted"
+    ]
+    assert len(typed) == 1, (
+        "expected exactly one narrator_extracted state_transition "
+        f"(got {len(typed)}: {[e['fields'] for e in typed]})"
+    )
+    fields = typed[0]["fields"]
+    assert fields["discarded"] == '["bone spear"]'
+    assert fields["discarded_count"] == 1
+    assert fields["lost_count"] == 0
+    assert fields["gained_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_inventory_route_is_single_source_no_double_emission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
