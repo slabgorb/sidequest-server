@@ -262,6 +262,14 @@ class NarrationTurnResult:
     # items remain in inventory with state="Discarded" so they can be
     # narratively recovered. Plumbed through the same narration_apply seam.
     items_discarded: list[dict[str, Any]] = field(default_factory=list)
+    # Story 45-15: items used up as consumables (patch-foam applied, ration
+    # eaten, charge expended). Removed from inventory through the same
+    # narration_apply seam as items_lost — distinguished as a separate lane
+    # so the OTEL span can surface "consumable spent" vs. "given away" for
+    # the GM panel lie-detector. Playtest 3 Felix found maintenance_kit
+    # remained in inventory at quantity=1 after patch-foam use because no
+    # extractor lane existed for the consume verb.
+    items_consumed: list[dict[str, Any]] = field(default_factory=list)
     footnotes: list[dict[str, Any]] = field(default_factory=list)
     quest_updates: dict[str, str] = field(default_factory=dict)
     sfx_triggers: list[str] = field(default_factory=list)
@@ -550,6 +558,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
     logger.info(
         "game_patch.extracted "
         "footnotes=%d items_gained=%d items_lost=%d items_discarded=%d "
+        "items_consumed=%d "
         "npcs_present=%d quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
         "beat_selections=%d confrontation=%r "
@@ -558,6 +567,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         len(patch.get("items_gained", [])),
         len(patch.get("items_lost", [])),
         len(patch.get("items_discarded", [])),
+        len(patch.get("items_consumed", [])),
         len(patch.get("npcs_present", patch.get("npcs_met", []))),
         len(patch.get("quest_updates", {})),
         len(patch.get("sfx_triggers", [])),
@@ -579,6 +589,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "items_gained": patch.get("items_gained", []),
         "items_lost": patch.get("items_lost", []),
         "items_discarded": patch.get("items_discarded", []),
+        "items_consumed": patch.get("items_consumed", []),
         "npcs_present": patch.get("npcs_present", patch.get("npcs_met", [])),
         "quest_updates": patch.get("quest_updates", {}),
         "visual_scene": patch.get("visual_scene"),
@@ -1612,6 +1623,7 @@ class Orchestrator:
                 items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
                 items_lost=extraction.get("items_lost", []),
                 items_discarded=extraction.get("items_discarded", []),
+                items_consumed=extraction.get("items_consumed", []),
                 footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
                 quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
                 sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],

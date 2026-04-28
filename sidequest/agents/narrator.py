@@ -78,6 +78,7 @@ PART 2 — STATE PATCH
 After your prose, emit a fenced JSON block labeled game_patch containing \
 mechanical intents from this turn. Only include fields that changed.\
 Valid fields: confrontation, items_gained, items_lost, items_discarded, \
+items_consumed, \
 location, npcs_met, mood, state_snapshot, beat_selections, visual_scene, \
 footnotes, gold_change, action_rewrite, status_changes.
 gold_change: Integer. Emit when the player gains or loses gold/currency \
@@ -114,16 +115,27 @@ narratively pick them up later. If unsure between items_lost vs \
 items_discarded, prefer items_discarded — recoverability is the safer \
 default.
 
+items_consumed: Array. Same format as items_gained. Emit when the player \
+USES UP a consumable — patch-foam applied, foil-strip torn open, potion \
+drunk, ration eaten, charge expended. The item is GONE from inventory \
+because its function was spent (distinct from items_lost which covers \
+given-away/stolen/destroyed items, and from items_gained which is \
+acquisition). Use items_consumed for one-shot consumables that vanish \
+on use.
+
 CRITICAL INVENTORY RULE: If your narration describes ANY item changing hands \
 or leaving the player's possession — acquiring, losing, trading, giving, \
-dropping, abandoning, or having an item taken — you MUST emit the \
-corresponding items_gained, items_lost, or items_discarded in the \
-game_patch. The game state ONLY changes through these fields. If you write \
-"the merchant takes your sword" but don't emit items_lost, the sword stays \
-in inventory and the narrative diverges from game state. If you write \
-"abandons the spear" but don't emit items_discarded, the spear still shows \
-state=Carried in inventory. Every item transaction in your prose MUST have \
-a matching JSON field. No exceptions.
+dropping, abandoning, having an item taken, or USING UP a consumable — \
+you MUST emit the corresponding items_gained, items_lost, items_discarded, \
+or items_consumed in the game_patch. The game state ONLY changes through \
+these fields. If you write "the merchant takes your sword" but don't emit \
+items_lost, the sword stays in inventory and the narrative diverges from \
+game state. If you write "abandons the spear" but don't emit \
+items_discarded, the spear still shows state=Carried in inventory. If you \
+write "you spray the last of the patch-foam" but don't emit \
+items_consumed, the empty kit still shows quantity=1 in inventory. Every \
+item transaction in your prose MUST have a matching JSON field. No \
+exceptions.
 
 visual_scene: Include this on EVERY turn where the setting changes, a new \
 location is entered, or a visually significant event occurs (combat start, \

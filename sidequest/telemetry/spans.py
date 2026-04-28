@@ -378,9 +378,14 @@ SPAN_ROUTES[SPAN_INVENTORY_NARRATOR_EXTRACTED] = SpanRoute(
         "lost": (span.attributes or {}).get("lost_json", "[]"),
         # Story 45-14: items moved to state=Discarded (kept in inventory).
         "discarded": (span.attributes or {}).get("discarded_json", "[]"),
+        # Story 45-15: items removed because used up as consumables —
+        # surfaced separately so the GM panel can distinguish "spent on
+        # use" from "given away" (lost) and "abandoned in world".
+        "consumed": (span.attributes or {}).get("consumed_json", "[]"),
         "gained_count": (span.attributes or {}).get("gained_count", 0),
         "lost_count": (span.attributes or {}).get("lost_count", 0),
         "discarded_count": (span.attributes or {}).get("discarded_count", 0),
+        "consumed_count": (span.attributes or {}).get("consumed_count", 0),
         "player_name": (span.attributes or {}).get("player_name", ""),
         "turn_number": (span.attributes or {}).get("turn_number", 0),
     },
@@ -2012,6 +2017,7 @@ def inventory_narrator_extracted_span(
     player_name: str,
     turn_number: int,
     discarded: list[str] | None = None,
+    consumed: list[str] | None = None,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
@@ -2021,26 +2027,34 @@ def inventory_narrator_extracted_span(
     pre-Phase-2 — the route preserves the dashboard payload shape (the
     validator's ``inventory_check`` already correlates on these fields).
 
-    ``gained`` / ``lost`` / ``discarded`` are serialized as JSON strings so
-    OTEL doesn't drop the list attributes (the primitive-types restriction
-    silently discards dict/list values).
+    ``gained`` / ``lost`` / ``discarded`` / ``consumed`` are serialized as
+    JSON strings so OTEL doesn't drop the list attributes (the
+    primitive-types restriction silently discards dict/list values).
 
     ``discarded`` (Story 45-14): names of items whose state transitioned
     out of "Carried" to "Discarded" — they remain in inventory but are no
     longer carried. This is the lie-detector for the "narrator wrote
     'abandons the spear' but inventory still shows it Carried" bug.
+
+    ``consumed`` (Story 45-15): names of items removed because the player
+    used them up as one-shot consumables (patch-foam applied, ration
+    eaten). This is the lie-detector for the "narrator wrote 'patch-foam
+    spent' but the kit still shows quantity=1" bug — Playtest 3 Felix.
     """
     import json as _json
 
     discarded_list = list(discarded or [])
+    consumed_list = list(consumed or [])
     t = _tracer if _tracer is not None else tracer()
     attributes: dict[str, Any] = {
         "gained_json": _json.dumps(list(gained)),
         "lost_json": _json.dumps(list(lost)),
         "discarded_json": _json.dumps(discarded_list),
+        "consumed_json": _json.dumps(consumed_list),
         "gained_count": len(gained),
         "lost_count": len(lost),
         "discarded_count": len(discarded_list),
+        "consumed_count": len(consumed_list),
         "player_name": player_name,
         "turn_number": turn_number,
         **attrs,
