@@ -74,7 +74,6 @@ from tests.server.conftest import (  # noqa: E402
     mock_claude_client_factory as _mock_claude_client_factory,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -95,15 +94,15 @@ def handler_factory(save_dir: Path):
       ``sidequest-content/archetypes_base.yaml``) and
       ``archetype_constraints`` (loaded from
       ``caverns_and_claudes/archetype_constraints.yaml``) — i.e. it
-      declares axes, so AC2 (BLOCKED_PARTIAL with axes-set pack) is
-      reachable.
-    - Its chargen scenes (``char_creation.yaml``) set neither
-      ``jungian_hint`` nor ``rpg_role_hint``, so a default-1 walk
-      naturally produces ``resolved_archetype=None``. AC2 needs no
-      monkeypatch — the existing chargen path is the bug surface.
-    - For AC1 / AC5 we inject hints through the
-      ``CharacterBuilder.accumulated`` seam so the test stays
-      content-agnostic.
+      declares axes, so the BLOCKED_PARTIAL case (pack-axes-set,
+      hints-unset) is reachable.
+    - As of Story 45-6 the pack's ``char_creation.yaml`` scene 1 sets
+      ``jungian_hint=hero`` / ``rpg_role_hint=jack_of_all_trades`` (a
+      ``common`` pairing). A default-1 walk now produces a
+      fully-resolved archetype, so the OK_RESOLVED-on-default tests
+      need no hint injection. The BLOCKED_PARTIAL and OK_NO_AXES tests
+      explicitly null the hints via ``_inject_hints(..., None, None)``
+      to recreate the pumblestone failure case.
     """
     if not (CONTENT_ROOT / "caverns_and_claudes").is_dir():
         pytest.skip("caverns_and_claudes content not found")
@@ -315,12 +314,20 @@ class TestArchetypeGateBlockedPartial:
     confirmation."""
 
     def test_confirmation_returns_typed_error_with_documented_code(
-        self, handler_factory
+        self,
+        handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         async def body() -> None:
             handler = handler_factory()
             await _connect(handler)
             await _walk_to_confirmation(handler)
+
+            # Strip both hints to simulate the pumblestone path
+            # (caverns_and_claudes scene 1 sets default hints, so we
+            # null them out to recreate the malformed-scene case the
+            # gate is supposed to catch).
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
 
             out = await _send_confirmation(handler)
             assert out, "confirmation must produce a frame"
@@ -334,21 +341,31 @@ class TestArchetypeGateBlockedPartial:
                 "'chargen_archetype_unresolved' so the UI can branch "
                 f"without keyword-matching; got code={err.code!r}"
             )
-            # Human-readable message must exist (NonBlankString contract)
-            # and must not be empty.
-            assert err.message and err.message.strip(), (
-                "BLOCKED_PARTIAL must include a human-readable message"
+            # Human-readable message must exist (NonBlankString
+            # constructor enforces non-blank — we just confirm the field
+            # is populated and unwraps to a non-empty string).
+            assert err.message is not None, (
+                "BLOCKED_PARTIAL must include a message field"
+            )
+            assert str(err.message).strip(), (
+                "BLOCKED_PARTIAL message must unwrap to a non-empty "
+                "string"
             )
 
         asyncio.run(body())
 
     def test_blocked_chargen_does_not_persist_character(
-        self, handler_factory
+        self,
+        handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         async def body() -> None:
             handler = handler_factory()
             await _connect(handler)
             await _walk_to_confirmation(handler)
+
+            # Recreate the pumblestone case: pack has axes, hints unset.
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
 
             sd_before = handler._session_data  # type: ignore[attr-defined]
             assert not sd_before.snapshot.characters, (
@@ -387,6 +404,7 @@ class TestArchetypeGateOkNoAxes:
     def test_axisless_pack_chargen_succeeds_with_null_archetype(
         self,
         handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
         otel_capture: InMemorySpanExporter,
     ) -> None:
         async def body() -> None:
@@ -394,11 +412,19 @@ class TestArchetypeGateOkNoAxes:
             await _connect(handler)
             await _walk_to_confirmation(handler)
 
-            # Strip axes from the loaded pack — simulating a pack that
-            # legitimately doesn't use the archetype system.
+            # Strip axes from the loaded pack AND null out hints —
+            # simulating a pack that legitimately doesn't use the
+            # archetype system. Without nulling the hints, the
+            # caverns_and_claudes default chargen scenes set them
+            # (post-Story 45-6 content fix), the resolver runs against
+            # the now-None pack axes via the early-return at
+            # ``websocket_session_handler.py:577``, leaves the raw "j/r"
+            # pair on the character, and the gate would correctly block
+            # it as ``raw_pair_unresolved``.
             sd = handler._session_data  # type: ignore[attr-defined]
             sd.genre_pack.base_archetypes = None
             sd.genre_pack.archetype_constraints = None
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
 
             out = await _send_confirmation(handler)
             assert out, "confirmation must produce a frame"
@@ -485,6 +511,7 @@ class TestArchetypeGateOtel:
     def test_evaluated_span_fires_on_ok_no_axes_with_state_attr(
         self,
         handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
         otel_capture: InMemorySpanExporter,
     ) -> None:
         async def body() -> None:
@@ -495,6 +522,10 @@ class TestArchetypeGateOtel:
             sd = handler._session_data  # type: ignore[attr-defined]
             sd.genre_pack.base_archetypes = None
             sd.genre_pack.archetype_constraints = None
+            # See test_axisless_pack_chargen_succeeds_with_null_archetype
+            # for the rationale — pack-axisless + caverns default hints
+            # would land in the gate's raw_pair_unresolved branch.
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
 
             await _send_confirmation(handler)
 
@@ -523,12 +554,16 @@ class TestArchetypeGateOtel:
     def test_blocked_span_fires_on_blocked_partial_with_block_reason(
         self,
         handler_factory,
+        monkeypatch: pytest.MonkeyPatch,
         otel_capture: InMemorySpanExporter,
     ) -> None:
         async def body() -> None:
             handler = handler_factory()
             await _connect(handler)
             await _walk_to_confirmation(handler)
+
+            # Recreate pumblestone: pack has axes, hints unset.
+            _inject_hints(monkeypatch, jungian=None, rpg_role=None)
 
             await _send_confirmation(handler)
 

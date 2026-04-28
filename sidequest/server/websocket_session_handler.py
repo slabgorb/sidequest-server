@@ -122,6 +122,8 @@ from sidequest.server.session_helpers import (
 from sidequest.server.utils import slugify_player_name as _slugify_player_name
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
+    SPAN_CHARGEN_ARCHETYPE_GATE_BLOCKED,
+    SPAN_CHARGEN_ARCHETYPE_GATE_EVALUATED,
     audio_backend_disabled_span,
     audio_backend_enabled_span,
     audio_dispatched_span,
@@ -599,6 +601,178 @@ class WebSocketSessionHandler:
             },
         )
 
+    # ---- archetype-resolution gate (Story 45-6) -------------------------
+    def _gate_archetype_resolution(
+        self,
+        character: Character,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> tuple[bool, str | None]:
+        """Inspect the post-resolve character state and decide whether
+        chargen is allowed to ship.
+
+        The gate distinguishes three states:
+
+        - **OK_RESOLVED** — ``resolved_archetype`` is a non-``"/"`` display
+          name and the resolver wrote ``archetype_provenance``. Pass.
+        - **OK_NO_AXES** — ``resolved_archetype is None`` AND the pack
+          opted out of the archetype system
+          (``base_archetypes is None and archetype_constraints is None``).
+          Pass.
+        - **BLOCKED_PARTIAL** — anything else. The three failure modes
+          this catches (Story 45-6 / playtest 3 ``pumblestone`` corpus):
+
+          1. ``raw_pair_unresolved`` — a literal ``"jungian/rpg_role"``
+             string is still on the character because either the resolver
+             returned silently (pack lacks resolver inputs) or the catch-
+             all branch ran.
+          2. ``missing_axes_with_pack_axes`` — pack declares axes but the
+             chargen scenes accumulated neither hint, so
+             ``resolved_archetype`` is ``None`` while the pack expected a
+             value. This is the ``pumblestone`` failure: chargen scenes
+             malformed.
+          3. ``resolver_raised`` — resolver caught a
+             ``GenreValidationError`` and silently returned, leaving the
+             raw pair on the character. Detected via the same shape as
+             case 1 (``"/"`` in the value), but distinguished by the
+             ``resolver_raised`` flag the caller passes through.
+
+        The evaluator span fires on every chargen-confirm; the blocked
+        span fires only on BLOCKED_PARTIAL. Both go to the GM panel via
+        ``SPAN_ROUTES`` (Sebastien's lie-detector — CLAUDE.md OTEL
+        Observability Principle).
+
+        Returns ``(is_blocked, block_reason)`` — ``block_reason`` is one
+        of ``"raw_pair_unresolved"``, ``"missing_axes_with_pack_axes"``,
+        ``"resolver_raised"``, or ``None`` on a pass.
+        """
+        pack = sd.genre_pack
+        pack_has_axes = (
+            pack.base_archetypes is not None
+            and pack.archetype_constraints is not None
+        )
+        # Recover the original hint signals from the raw pair (if still
+        # present) or from the resolved name (if the resolver succeeded).
+        # The character object only knows what it ended up with; the
+        # builder's accumulator is not available here. For OTEL we expose
+        # the boolean shape ``had_jungian_hint`` / ``had_rpg_role_hint``.
+        # If the resolver succeeded, both hints were present (the resolver
+        # short-circuits on missing axes and the raw pair is required to
+        # reach the resolver in the first place). If the value still
+        # contains ``"/"``, we can split it back out.
+        ra = character.resolved_archetype
+        if ra is None:
+            had_jungian_hint = False
+            had_rpg_role_hint = False
+        elif "/" in ra:
+            had_jungian_hint = True
+            had_rpg_role_hint = True
+        else:
+            # Resolver wrote a display name — both hints fed it.
+            had_jungian_hint = True
+            had_rpg_role_hint = True
+
+        # Decide.
+        gate_state: str
+        block_reason: str | None
+        if ra is not None and "/" not in ra:
+            # OK_RESOLVED — resolver wrote a display name.
+            gate_state = "ok_resolved"
+            block_reason = None
+        elif ra is None and not pack_has_axes:
+            # OK_NO_AXES — pack opted out of the archetype system.
+            gate_state = "ok_no_axes"
+            block_reason = None
+        elif ra is not None and "/" in ra:
+            # Raw pair still on the character. Distinguish whether the
+            # resolver raised (legacy ``archetype_resolution_failed``
+            # event already fired in ``_resolve_character_archetype``)
+            # vs. the resolver returned silently because the pack
+            # lacked inputs. Both leave the raw pair, but only the
+            # raise emitted the legacy event. We use the simpler
+            # discriminator: pack_has_axes True + raw pair = the
+            # resolver was called and either raised or returned a
+            # forbidden-pairing fallback. Since
+            # ``_resolve_character_archetype`` returns silently before
+            # calling ``resolve_archetype`` when the pack lacks axes
+            # (websocket_session_handler.py:577), a raw pair with
+            # pack_has_axes True can only mean the resolver was
+            # called and raised — the catch-block at line 593 swallowed
+            # it. Without pack axes, the pair stays via the
+            # short-circuit at line 577.
+            block_reason = (
+                "resolver_raised" if pack_has_axes else "raw_pair_unresolved"
+            )
+            gate_state = "blocked_partial"
+        else:
+            # ra is None and pack_has_axes — the pumblestone case.
+            block_reason = "missing_axes_with_pack_axes"
+            gate_state = "blocked_partial"
+
+        # Evaluator span — fires on every chargen-confirm. ``state``
+        # carries the decision so the GM panel sees the choice on every
+        # path, including the success branches (negative confirmation
+        # that the gate ran).
+        with tracer.start_as_current_span(
+            SPAN_CHARGEN_ARCHETYPE_GATE_EVALUATED,
+            attributes={
+                "state": gate_state,
+                "resolved_archetype": ra if ra is not None else "",
+                "pack_has_axes": pack_has_axes,
+                "had_jungian_hint": had_jungian_hint,
+                "had_rpg_role_hint": had_rpg_role_hint,
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "player_id": player_id,
+            },
+        ):
+            pass
+
+        if block_reason is None:
+            return False, None
+
+        # Blocked span — fires only on BLOCKED_PARTIAL. This is the
+        # explicit lie-detector entry that says "a chargen would have
+        # shipped broken; the gate caught it." The legacy
+        # ``character_creation.archetype_resolution_failed`` event is the
+        # inner-resolver event; the blocked span is the outer-gate event.
+        with tracer.start_as_current_span(
+            SPAN_CHARGEN_ARCHETYPE_GATE_BLOCKED,
+            attributes={
+                "state": "blocked_partial",
+                "block_reason": block_reason,
+                "resolved_archetype": ra if ra is not None else "",
+                "pack_has_axes": pack_has_axes,
+                "had_jungian_hint": had_jungian_hint,
+                "had_rpg_role_hint": had_rpg_role_hint,
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "player_id": player_id,
+            },
+        ) as gate_span:
+            # Also record on the parent span for correlation in the
+            # existing ``character_creation.*`` event stream.
+            span.add_event(
+                "character_creation.archetype_gate_blocked",
+                {
+                    "event": "archetype_gate_blocked",
+                    "block_reason": block_reason,
+                    "resolved_archetype": ra if ra is not None else "",
+                    "pack_has_axes": pack_has_axes,
+                    "player_id": player_id,
+                },
+            )
+            # Mirror onto the gate span as well so ReadableSpan
+            # consumers (test exporter) see the same payload either
+            # way.
+            gate_span.add_event(
+                "character_creation.archetype_gate_blocked",
+                {"block_reason": block_reason},
+            )
+
+        return True, block_reason
+
     # ---- phase=confirmation (commit) ------------------------------------
     async def _chargen_confirmation(
         self,
@@ -654,6 +828,24 @@ class WebSocketSessionHandler:
         # stamping ``archetype_provenance`` so the GM panel can show the
         # source tier. Rust parity: connect.rs:1644-1737.
         self._resolve_character_archetype(character, sd, player_id, span)
+
+        # Story 45-6: archetype-resolution gate. After resolution runs
+        # (or silently no-ops via one of the three early-return branches
+        # at lines 572, 577, 593), this gate inspects the post-state
+        # and rejects partial commits — the ``pumblestone`` regression
+        # from Playtest 3 evrópí. See ``_gate_archetype_resolution``
+        # docstring for the three pass / fail paths.
+        is_blocked, block_reason = self._gate_archetype_resolution(
+            character, sd, player_id, span
+        )
+        if is_blocked:
+            return [
+                _error_msg(
+                    "Character creation incomplete: archetype resolution "
+                    f"failed ({block_reason}). Please re-run chargen.",
+                    code="chargen_archetype_unresolved",
+                )
+            ]
 
         # Starting equipment loadout (Story 2.3 Slice A). The builder only
         # holds item_hints; the class-specific loadout from inventory.yaml
