@@ -242,13 +242,19 @@ def _apply_narration_result_to_snapshot(
                 player_name,
             )
 
-    # Inventory — apply narrator items_gained/items_lost on the rolling
-    # player's character. Playtest 2026-04-24 found a wiring gap: watcher
-    # emitted but inventory.items never updated, leaving UI out of sync.
-    # Item shape mirrors dispatch/chargen_loadout._item_dict_from_catalog.
-    # items_lost removes the first matching name (case-insensitive) —
-    # narrator-granted items currently arrive as quantity=1 singletons.
-    if (result.items_gained or result.items_lost) and snapshot.characters:
+    # Inventory — apply narrator items_gained/items_lost/items_discarded on
+    # the rolling player's character. Playtest 2026-04-24 found a wiring
+    # gap: watcher emitted but inventory.items never updated, leaving UI
+    # out of sync. Item shape mirrors dispatch/chargen_loadout
+    # ._item_dict_from_catalog. items_lost removes the first matching
+    # name (case-insensitive) — narrator-granted items currently arrive
+    # as quantity=1 singletons. items_discarded (Story 45-14) flips the
+    # first matching item's state from "Carried" to "Discarded" without
+    # removing it — narrator-recoverable abandon/drop semantics.
+    items_discarded = getattr(result, "items_discarded", None) or []
+    if (
+        result.items_gained or result.items_lost or items_discarded
+    ) and snapshot.characters:
         character = snapshot.characters[0]
         turn_num = snapshot.turn_manager.interaction
 
@@ -281,6 +287,8 @@ def _apply_narration_result_to_snapshot(
 
         added_names: list[str] = []
         removed_names: list[str] = []
+        discarded_names: list[str] = []
+        unmatched_discards: list[str] = []
         for entry in result.items_gained or []:
             item_dict = _narrator_item_dict(entry)
             character.core.inventory.items.append(item_dict)
@@ -297,25 +305,59 @@ def _apply_narration_result_to_snapshot(
                     removed_names.append(lost_name)
                     break
 
+        # Story 45-14: items_discarded — transition first matching item's
+        # state out of "Carried" instead of removing. Per CLAUDE.md
+        # "no silent fallbacks": when the narrator declares a discard for
+        # an item that isn't actually in inventory we log the miss and
+        # surface it on the OTEL span so the GM panel sees the gap (the
+        # narrator hallucinated, or extraction lost the prior pickup).
+        for entry in items_discarded:
+            discard_name = str(entry.get("name", "") or "").strip().lower()
+            if not discard_name:
+                continue
+            matched = False
+            for existing in character.core.inventory.items:
+                existing_name = str(existing.get("name", "") or "").strip().lower()
+                if existing_name == discard_name and (
+                    str(existing.get("state", "Carried")) == "Carried"
+                ):
+                    existing["state"] = "Discarded"
+                    existing["equipped"] = False
+                    discarded_names.append(discard_name)
+                    matched = True
+                    break
+            if not matched:
+                unmatched_discards.append(discard_name)
+                logger.warning(
+                    "state.inventory_discard_miss player=%s turn=%d name=%r "
+                    "reason=no_carried_match",
+                    player_name, turn_num, discard_name,
+                )
+
         # Span emission replaces the prior direct ``_watcher_publish`` —
         # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
         # event via ``SPAN_ROUTES[SPAN_INVENTORY_NARRATOR_EXTRACTED]``.
-        # ``added_names`` / ``removed_names`` reflect the actual mutation
-        # outcome (items_lost is case-insensitive and only records
-        # successful matches), so the route-extracted payload is identical
-        # to what the prior ``_watcher_publish`` call sent.
+        # ``added_names`` / ``removed_names`` / ``discarded_names`` reflect
+        # the actual mutation outcome (case-insensitive match, only
+        # successful transitions recorded), so the route-extracted payload
+        # mirrors the post-mutation state.
         with inventory_narrator_extracted_span(
             gained=added_names,
             lost=removed_names,
+            discarded=discarded_names,
             player_name=player_name,
             turn_number=turn_num,
+            unmatched_discards_count=len(unmatched_discards),
         ):
             logger.info(
-                "state.inventory_update player=%s turn=%d gained=%s lost=%s",
+                "state.inventory_update player=%s turn=%d gained=%s lost=%s "
+                "discarded=%s unmatched_discards=%s",
                 player_name,
                 turn_num,
                 added_names,
                 removed_names,
+                discarded_names,
+                unmatched_discards,
             )
 
     if result.lore_established:
