@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from sidequest.game.beat_kinds import apply_beat
 from sidequest.game.dice import ResolveError, resolve_dice_with_faces
 from sidequest.game.encounter import EncounterPhase, StructuredEncounter
+from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef, ResolutionMode
 from sidequest.protocol.dice import (
@@ -213,6 +214,7 @@ def dispatch_dice_throw(
     session_id: str,
     round_number: int,
     room_broadcast: Callable[[object], None] | None,
+    snapshot: GameSnapshot,
 ) -> DiceThrowOutcome:
     """Apply a beat, resolve dice, broadcast wire messages, return outcome.
 
@@ -393,6 +395,13 @@ def dispatch_dice_throw(
                 "source": "dice_throw",
             },
             component="encounter",
+        )
+        # Story 45-9: bump total_beats_fired counter + OTEL.
+        snapshot.record_beat_fired(
+            beat_id=payload.beat_id,
+            encounter_type=encounter.encounter_type,
+            turn=round_number,
+            source="dice_throw",
         )
 
         encounter_resolved = apply_result.resolved

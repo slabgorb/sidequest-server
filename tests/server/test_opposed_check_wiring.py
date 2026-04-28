@@ -42,6 +42,7 @@ from sidequest.game.encounter import (
     StructuredEncounter,
 )
 from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import (
@@ -58,6 +59,15 @@ from sidequest.protocol.dice import (
 from sidequest.server.dispatch.dice import dispatch_dice_throw
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from sidequest.telemetry.spans import SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
+
+
+def _make_snapshot() -> GameSnapshot:
+    """Story 45-9: dispatch_dice_throw now requires a snapshot."""
+    return GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        turn_manager=TurnManager(),
+    )
 
 CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 MIGRATION_ROOT = Path("/Users/slabgorb/Projects/oq-2-content-migration/genre_packs")
@@ -190,6 +200,7 @@ def test_dispatch_dice_throw_defers_apply_beat_for_opposed_check():
         session_id="s",
         round_number=1,
         room_broadcast=None,
+        snapshot=_make_snapshot(),
     )
 
     # Beat application was deferred — neither dial moves yet.
@@ -224,6 +235,7 @@ def test_dispatch_dice_throw_legacy_beat_selection_still_applies():
         session_id="s",
         round_number=1,
         room_broadcast=None,
+        snapshot=_make_snapshot(),
     )
 
     # Legacy path applied the beat — player metric advanced.

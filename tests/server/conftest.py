@@ -650,6 +650,13 @@ def dual_dial_test_setup(synthetic_two_dial_pack):
                 face=faces,
                 beat_id=beat_id,
             )
+            from sidequest.game.session import GameSnapshot
+            from sidequest.game.turn import TurnManager
+            snapshot = GameSnapshot(
+                genre_slug="test",
+                world_slug="test",
+                turn_manager=TurnManager(),
+            )
             return dispatch_dice_throw(
                 payload=payload,
                 rolling_player_id="p1",
@@ -660,6 +667,7 @@ def dual_dial_test_setup(synthetic_two_dial_pack):
                 session_id="s1",
                 round_number=1,
                 room_broadcast=None,
+                snapshot=snapshot,
             )
 
     enc = StructuredEncounter(

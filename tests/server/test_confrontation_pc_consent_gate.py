@@ -57,7 +57,18 @@ from sidequest.game.encounter import (
     EncounterMetric,
     StructuredEncounter,
 )
+from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
 from sidequest.protocol.dice import RollOutcome
+
+
+def _make_snapshot() -> GameSnapshot:
+    """Story 45-9: dispatch_dice_throw now requires a snapshot."""
+    return GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        turn_manager=TurnManager(),
+    )
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -324,6 +335,7 @@ def test_explicit_action_path_still_advances_pc_metric(
         session_id="s1",
         round_number=1,
         room_broadcast=None,
+        snapshot=_make_snapshot(),
     )
 
     # PC metric advanced — explicit action consent bears the apply.

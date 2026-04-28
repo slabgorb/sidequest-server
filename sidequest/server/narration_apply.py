@@ -538,6 +538,7 @@ def _apply_narration_result_to_snapshot(
                     pending_player_beat_id=opposed_player_beat_id,
                     pending_player_actor=opposed_player_actor,
                     turn=snapshot.turn_manager.interaction,
+                    snapshot=snapshot,
                 )
                 if outcome_obj.encounter_resolved:
                     snapshot.pending_resolution_signal = (
@@ -650,6 +651,17 @@ def _apply_narration_result_to_snapshot(
                         "turn": turn_num,
                     },
                     component="encounter",
+                )
+                # Story 45-9: bump total_beats_fired counter + OTEL.
+                # Every non-skipped apply_beat is one real beat fire; the
+                # campaign-maturity ladder in world_materialization reads
+                # this counter, so the increment must be unconditional
+                # here (CLAUDE.md no silent fallbacks).
+                snapshot.record_beat_fired(
+                    beat_id=sel.beat_id,
+                    encounter_type=enc.encounter_type,
+                    turn=turn_num,
+                    source="narrator_beat",
                 )
                 if result_apply.resolved:
                     with encounter_resolved_span(
@@ -807,6 +819,7 @@ def _resolve_opposed_check_branch(
     pending_player_beat_id: str | None,
     pending_player_actor: str | None,
     turn: int,
+    snapshot: GameSnapshot,
 ) -> _OpposedBranchOutcome:
     """Run the opposed-check dispatch branch.
 
@@ -1003,6 +1016,13 @@ def _resolve_opposed_check_branch(
                 "source": "opposed_check",
             },
             component="encounter",
+        )
+        # Story 45-9: bump total_beats_fired counter + OTEL.
+        snapshot.record_beat_fired(
+            beat_id=beat_id,
+            encounter_type=encounter.encounter_type,
+            turn=turn,
+            source="opposed_check",
         )
         if applied.resolved:
             with encounter_resolved_span(

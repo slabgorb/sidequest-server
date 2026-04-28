@@ -559,6 +559,50 @@ class GameSnapshot(BaseModel):
         for name in type(other).model_fields:
             setattr(self, name, getattr(other, name))
 
+    def record_beat_fired(
+        self,
+        *,
+        beat_id: str,
+        encounter_type: str | None,
+        turn: int,
+        source: str,
+    ) -> int:
+        """Increment ``total_beats_fired`` and emit an OTEL watcher event.
+
+        Call this after every successful ``apply_beat`` (i.e., when
+        ``ApplyResult.skipped_reason is None``). Returns the new counter
+        value.
+
+        Story 45-9: counter was defined but never bumped, so any
+        beat-gated unlock (campaign maturity tiers in
+        ``world_materialization.derive_maturity``) silently never opened.
+        Fix is unconditional bump on each successful fire — no silent
+        fallbacks (CLAUDE.md). The OTEL ``beat_fired`` event lets the GM
+        panel verify the counter is moving rather than trusting the
+        narration.
+        """
+        # Lazy import — telemetry depends on game models, so a top-level
+        # import would invert the dependency.
+        from sidequest.telemetry.watcher_hub import (
+            publish_event as _watcher_publish,
+        )
+
+        self.total_beats_fired += 1
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "beat_fired",
+                "beat_id": beat_id,
+                "encounter_type": encounter_type or "",
+                "turn": turn,
+                "source": source,
+                "total_beats_fired": self.total_beats_fired,
+            },
+            component="encounter",
+        )
+        return self.total_beats_fired
+
     def apply_world_patch(self, patch: WorldStatePatch) -> None:
         """Apply a world state patch. Only set fields are updated."""
         if patch.location is not None:
