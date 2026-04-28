@@ -371,5 +371,168 @@ async def test_momentum_broadcast_span_does_not_fire_on_dispatch_error(
     )
 
 
+# ---------------------------------------------------------------------------
+# AC2 second site: narration_apply emit must also fire the new span
+# ---------------------------------------------------------------------------
+#
+# context-story-45-3.md AC2 names TWO sources for the new
+# encounter.momentum_broadcast span: "dice_throw" (the dice-dispatch
+# site) and "narration_apply" (the post-narration CONFRONTATION emit
+# inside _execute_narration_turn). The lie-detector contract requires
+# the span to fire from EVERY site that broadcasts a CONFRONTATION
+# carrying post-mutation momentum — without it, the GM panel cannot
+# audit "the dial moved because the engine moved a metric, not because
+# the narrator improvised matching prose" on narrator-driven dial moves.
+#
+# This test exercises the post-narration emit path with a real
+# EventLog + ProjectionFilter (matching test_confrontation_mp_broadcast.py)
+# so _emit_event takes the production branch. It asserts the new span
+# fires with source="narration_apply" — currently failing; will go
+# GREEN once Dev wraps the _emit_event("CONFRONTATION", ...) call site
+# at session_handler.py with encounter_momentum_broadcast_span(
+# source="narration_apply", ...).
+
+
+@pytest.mark.asyncio
+async def test_narration_apply_emits_momentum_broadcast_span(
+    session_handler_factory, otel_capture, tmp_path,
+):
+    """Post-narration CONFRONTATION emit must fire ``encounter.momentum_broadcast``.
+
+    Drives ``_execute_narration_turn`` through a full session setup
+    (real EventLog, ProjectionCache, ComposedFilter, SessionRoom). The
+    orchestrator mock returns a narration that opens a fresh combat
+    confrontation (``confrontation="combat"``) — which is the branch
+    that triggers the post-narration CONFRONTATION emit at the
+    ``_emit_event("CONFRONTATION", ...)`` site.
+
+    AC2 requires this site fire the new span with:
+      - ``source="narration_apply"``
+      - ``encounter_type`` from the now-live encounter
+      - ``player_metric_after`` / ``opponent_metric_after`` from the
+        encounter's current state
+
+    Currently failing: the span helper is wired only at the dice-throw
+    site. The fix is to wrap the post-narration emit call site with
+    ``encounter_momentum_broadcast_span(source="narration_apply", ...)``.
+    """
+    import asyncio as _asyncio
+
+    from sidequest.game.event_log import EventLog
+    from sidequest.game.persistence import (
+        GameMode,
+        SqliteStore,
+        db_path_for_slug,
+        upsert_game,
+    )
+    from sidequest.game.projection.cache import ProjectionCache
+    from sidequest.game.projection.composed import ComposedFilter
+    from sidequest.server.session_handler import (
+        _build_turn_context,
+        _State,
+    )
+    from sidequest.server.session_room import RoomRegistry
+
+    slug = "ac2-narration-apply-span-test"
+
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(
+        store,
+        slug=slug,
+        mode=GameMode.MULTIPLAYER,
+        genre_slug="caverns_and_claudes",
+        world_slug="",
+    )
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    handler._state = _State.Playing
+    sd.player_id = "actor"
+    sd.player_name = "Rux"
+    sd.mode = GameMode.MULTIPLAYER
+    sd.game_slug = slug
+    # Ensure the pack has a "combat" confrontation def the narrator can
+    # open (matches the orchestrator mock's confrontation="combat").
+    _install_combat_def(sd)
+
+    handler._event_log = EventLog(store)
+    handler._projection_filter = ComposedFilter.with_no_genre_rules()
+    handler._projection_cache = ProjectionCache(store)
+
+    # Two-socket room — the actor plus a peer. We don't inspect the
+    # peer queue here (that's AC5's regression test), but the projection
+    # filter requires at least one connected non-emitter to take the
+    # production fan-out branch.
+    registry = RoomRegistry()
+    room = registry.get_or_create(slug=slug, mode=GameMode.MULTIPLAYER)
+    socket_ids = {"actor": "sock-actor", "peer": "sock-peer"}
+    for pid, sid in socket_ids.items():
+        room.connect(pid, socket_id=sid)
+        room.attach_outbound(sid, _asyncio.Queue())
+    handler._room = room
+    handler._socket_id = socket_ids["actor"]
+
+    # Orchestrator mock: opens a fresh combat confrontation. This is
+    # the branch in _execute_narration_turn that builds the post-
+    # narration CONFRONTATION via build_confrontation_payload + cdef
+    # and routes it through _emit_event. The encounter is currently
+    # None on the snapshot (no _install_active_encounter call) so
+    # confrontation="combat" triggers the now_live=True path that
+    # emits the CONFRONTATION.
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=NarrationTurnResult(
+            narration="Rux squares off — combat begins.",
+            confrontation="combat",
+        ),
+    )
+
+    await handler._execute_narration_turn(
+        sd, "I attack the goblin.", _build_turn_context(sd),
+    )
+
+    # Find the narration_apply-sourced span. Filter strictly by source
+    # — the dice path (which we're NOT exercising here) would emit
+    # source="dice_throw"; only narration_apply is in scope.
+    narration_apply_spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == SPAN_NAME
+        and (s.attributes or {}).get("source") == "narration_apply"
+    ]
+    assert len(narration_apply_spans) == 1, (
+        f"expected exactly ONE '{SPAN_NAME}' span with "
+        f"source='narration_apply' from the post-narration emit; got "
+        f"{len(narration_apply_spans)}. AC2 (context-story-45-3.md) "
+        f"requires the span fire from EVERY site that broadcasts a "
+        f"CONFRONTATION post-mutation; the post-narration emit at "
+        f"_emit_event(\"CONFRONTATION\", ...) inside _execute_narration_turn "
+        f"is one such site. All {SPAN_NAME} spans seen: "
+        f"{[(s.name, dict(s.attributes or {}).get('source', '?')) for s in otel_capture.get_finished_spans() if s.name == SPAN_NAME]!r}"
+    )
+
+    attrs = dict(narration_apply_spans[0].attributes or {})
+    # encounter_type must reflect the freshly-opened confrontation.
+    assert attrs.get("encounter_type") == "combat", (
+        f"narration_apply span must carry encounter_type from the live "
+        f"encounter; got {attrs.get('encounter_type')!r}"
+    )
+    # The metric values reflect the encounter state at emit time. The
+    # narrator-opened encounter starts with current=0 / threshold=10
+    # (per the cdef defaults); player_metric_after must match.
+    assert attrs.get("player_metric_after") == 0, (
+        f"narration_apply span must carry post-emit player_metric "
+        f"(=0 on a freshly-opened encounter); got "
+        f"{attrs.get('player_metric_after')!r}"
+    )
+    assert attrs.get("opponent_metric_after") == 0, (
+        f"narration_apply span must carry post-emit opponent_metric "
+        f"(=0 on a freshly-opened encounter); got "
+        f"{attrs.get('opponent_metric_after')!r}"
+    )
+    # source pinned exactly — no fallback or empty-string regression.
+    assert attrs.get("source") == "narration_apply"
+
+
 # asyncio marker for the test module
 _ = asyncio
