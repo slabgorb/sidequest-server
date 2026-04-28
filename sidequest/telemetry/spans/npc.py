@@ -1,0 +1,97 @@
+"""NPC registry spans — auto-registration and identity drift."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
+from opentelemetry import trace
+
+from ._core import FLAT_ONLY_SPANS, SPAN_ROUTES, SpanRoute
+from .span import Span
+
+# Port-artifact constants — kept flat-only.
+SPAN_NPC_MERGE_PATCH = "npc_merge_patch"
+SPAN_NPC_REGISTRATION = "npc.registration"
+
+FLAT_ONLY_SPANS.update({SPAN_NPC_MERGE_PATCH, SPAN_NPC_REGISTRATION})
+
+# Live spans (NPC bundle).
+SPAN_NPC_AUTO_REGISTERED = "npc.auto_registered"
+SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "auto_registered",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "pronouns": (span.attributes or {}).get("pronouns", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "registry_len": (span.attributes or {}).get("registry_len", 0),
+    },
+)
+SPAN_NPC_REINVENTED = "npc.reinvented"
+SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "reinvented",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "drift_field": (span.attributes or {}).get("drift_field", ""),
+        "expected": (span.attributes or {}).get("expected", ""),
+        "narrator": (span.attributes or {}).get("narrator", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
+
+@contextmanager
+def npc_auto_registered_span(
+    *,
+    npc_name: str,
+    pronouns: str,
+    role: str,
+    turn_number: int,
+    registry_len: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Attribute key ``npc_name`` avoids the OTEL span ``name`` reserved attribute."""
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "pronouns": pronouns,
+        "role": role,
+        "turn_number": turn_number,
+        "registry_len": registry_len,
+        **attrs,
+    }
+    with Span.open(SPAN_NPC_AUTO_REGISTERED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_reinvented_span(
+    *,
+    npc_name: str,
+    drift_field: str,
+    expected: str,
+    narrator: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """``severity="warning"`` so the WatcherSpanProcessor renders this as a drift alert."""
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "drift_field": drift_field,
+        "expected": expected,
+        "narrator": narrator,
+        "turn_number": turn_number,
+        "severity": "warning",
+        **attrs,
+    }
+    with Span.open(SPAN_NPC_REINVENTED, attributes, tracer_override=_tracer) as span:
+        yield span
