@@ -93,8 +93,20 @@ class TurnManager(BaseModel):
             submitted.clear()
 
     def record_interaction(self) -> None:
-        """Record a player-narrator interaction. Resets phase to InputCollection."""
+        """Record a player-narrator interaction. Resets phase to InputCollection.
+
+        Story 45-11 (Strategy A — turn_manager authoritative): advances
+        ``round`` in lockstep with ``interaction``. Felix's Playtest 3 ended
+        round=65 / max(narrative_log.round_number)=72 because the legacy
+        ``advance_round()`` was never called from the live resolution
+        pipeline — round froze while interaction kept ticking. The narrative
+        log is written keyed by ``interaction`` (see write site in
+        websocket_session_handler._execute_narration_turn), so for
+        ``turn_manager.round`` to track ``MAX(narrative_log.round_number)``
+        it must advance every time an interaction completes.
+        """
         self.interaction += 1
+        self.round += 1
         self.phase = TurnPhase.InputCollection
         submitted: set[str] = object.__getattribute__(self, "_submitted")
         submitted.clear()
