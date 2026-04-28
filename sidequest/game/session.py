@@ -124,6 +124,13 @@ class NpcRegistryEntry(BaseModel):
     """Lightweight NPC registry entry for narrator prompt consistency.
 
     P1-required: narrator uses registry for name/identity consistency.
+
+    Story 45-21: ``hp`` / ``max_hp`` are written when combat stats are
+    emitted (encounter handshake). They are intentionally ``None`` until
+    combat actually publishes a stat block — once populated, ``hp == 0``
+    unambiguously means "this NPC is dead." HP-check subsystems must NOT
+    treat ``None`` as zero (Playtest 3 Orin: registry always-zero
+    appeared dead-everywhere; the fix is "absent = no claim").
     """
 
     model_config = {"extra": "forbid"}
@@ -134,6 +141,9 @@ class NpcRegistryEntry(BaseModel):
     appearance: str | None = None
     last_seen_location: str | None = None
     last_seen_turn: int = 0
+    # Story 45-21: combat HP. None = "no combat stats published yet."
+    hp: int | None = None
+    max_hp: int | None = None
 
 
 class PartyPeer(BaseModel):

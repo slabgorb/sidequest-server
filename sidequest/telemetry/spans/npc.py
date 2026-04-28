@@ -47,6 +47,26 @@ SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
     },
 )
 
+# Story 45-21: combat-stats write into npc_registry entry.
+# Fired when an encounter handshake (or other combat-stats emit) publishes
+# HP/max_hp into a registry entry so HP-check subsystems can see real data
+# instead of the always-zero shape that made the Crawling Scavenger appear
+# dead for all of Playtest 3.
+SPAN_NPC_REGISTRY_HP_SET = "npc_registry.hp_set"
+SPAN_ROUTES[SPAN_NPC_REGISTRY_HP_SET] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "hp_set",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "hp": (span.attributes or {}).get("hp", 0),
+        "max_hp": (span.attributes or {}).get("max_hp", 0),
+        "source": (span.attributes or {}).get("source", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 
 @contextmanager
 def npc_auto_registered_span(
@@ -69,6 +89,37 @@ def npc_auto_registered_span(
         **attrs,
     }
     with Span.open(SPAN_NPC_AUTO_REGISTERED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_registry_hp_set_span(
+    *,
+    npc_name: str,
+    hp: int,
+    max_hp: int,
+    source: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 45-21: emitted when combat stats are written into a registry entry.
+
+    ``source`` labels which subsystem published the stats (e.g.
+    ``encounter_handshake``, ``apply_beat``). Allows the GM panel to
+    verify the registry-write seam is firing and not silently dropping.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "hp": hp,
+        "max_hp": max_hp,
+        "source": source,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_REGISTRY_HP_SET, attributes, tracer_override=_tracer,
+    ) as span:
         yield span
 
 

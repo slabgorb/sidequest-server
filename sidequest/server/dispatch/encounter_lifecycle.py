@@ -20,6 +20,7 @@ from sidequest.server.dispatch.sealed_letter import ROLE_BLUE, ROLE_RED
 from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_resolved_span,
+    npc_registry_hp_set_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
@@ -44,6 +45,68 @@ def _validate_side(actor_name: str, declared: str) -> str:
     raise ValueError(
         f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}"
     )
+
+
+def _publish_combat_stats_to_registry(
+    *,
+    snapshot: GameSnapshot,
+    actors: list[EncounterActor],
+    opponent_metric,
+    turn: int,
+    source: str,
+) -> None:
+    """Story 45-21: write HP/max_hp from a combat encounter into npc_registry.
+
+    For each opponent-side ``EncounterActor`` whose ``name`` matches an entry
+    in ``snapshot.npc_registry``, populate the entry's ``hp`` / ``max_hp``
+    using the opponent dial as the canonical pool size:
+
+        max_hp = opponent_metric.threshold
+        hp     = max(0, threshold - current)
+
+    The opponent dial is ascending — when ``current`` reaches ``threshold``
+    the opponent loses (= dead). Inverting it into a descending HP view
+    gives HP-check subsystems a consistent "0 means dead, >0 means alive"
+    contract while keeping the dial as the single source of truth.
+
+    Emits one ``npc_registry.hp_set`` OTEL span per write so the GM panel
+    can verify the seam fired (CLAUDE.md: every backend fix must add OTEL
+    so we can tell whether the subsystem engaged or Claude is improvising).
+
+    No-op for actors with no matching registry entry — the auto-register
+    seam in ``narration_apply`` adds entries; here we only update what is
+    already there. CLAUDE.md "no silent fallback": the no-match case is
+    expected for the player actor and registry-fallback synthetic mentions
+    that haven't been auto-registered yet.
+    """
+    if opponent_metric is None:
+        return
+    threshold = int(getattr(opponent_metric, "threshold", 0) or 0)
+    current = int(getattr(opponent_metric, "current", 0) or 0)
+    if threshold <= 0:
+        # Defensive: a zero-threshold dial would publish hp=0/max_hp=0,
+        # which is exactly the bug shape this story exists to fix.
+        return
+    max_hp = threshold
+    hp = max(0, threshold - current)
+
+    by_name = {entry.name: entry for entry in snapshot.npc_registry}
+    for actor in actors:
+        if actor.side != "opponent":
+            continue
+        entry = by_name.get(actor.name)
+        if entry is None:
+            continue
+        entry.hp = hp
+        entry.max_hp = max_hp
+        with npc_registry_hp_set_span(
+            npc_name=actor.name,
+            hp=hp,
+            max_hp=max_hp,
+            source=source,
+            turn_number=turn,
+        ):
+            pass
 
 
 def _registry_fallback_npcs(
@@ -252,6 +315,28 @@ def instantiate_encounter_from_trigger(
             },
             component="encounter",
         )
+
+        # Story 45-21: combat-stats emit → write HP/max_hp into npc_registry.
+        # Playtest 3 (Orin save): the Crawling Scavenger sat in the registry
+        # with hp=0/max_hp=0, making it appear always-dead to HP-check
+        # subsystems. The handshake is the natural seam — by the time we get
+        # here we know the actor list AND the dial threshold (= per-side
+        # HP pool), so we can publish a real stat block.
+        #
+        # Per AC2 ("registry entry cannot report HP=0 unless the NPC is
+        # actually dead") we ONLY write when the encounter is combat-category
+        # and only for opponent-side actors that have a matching registry
+        # entry. Non-combat encounters leave hp/max_hp as ``None`` (= no
+        # claim) so the validator's dead-NPC check stays correct.
+        if cdef.category == "combat":
+            _publish_combat_stats_to_registry(
+                snapshot=snapshot,
+                actors=actors,
+                opponent_metric=enc.opponent_metric,
+                turn=snapshot.turn_manager.interaction
+                    if hasattr(snapshot, "turn_manager") else 0,
+                source="encounter_handshake",
+            )
         return enc
 
 

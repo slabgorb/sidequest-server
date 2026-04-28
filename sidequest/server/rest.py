@@ -548,8 +548,15 @@ def create_rest_router() -> APIRouter:
                         "appearance": entry.appearance or "",
                         "ocean_summary": None,
                         "ocean": None,
-                        "hp": 0,
-                        "max_hp": 0,
+                        # Story 45-21: read combat HP from the registry entry.
+                        # ``None`` (= "no combat stats published yet")
+                        # surfaces as 0 here so the existing GM panel JSON
+                        # contract is unchanged; the entry itself preserves
+                        # the None-vs-0 distinction for HP-check subsystems.
+                        "hp": int(entry.hp) if entry.hp is not None else 0,
+                        "max_hp": (
+                            int(entry.max_hp) if entry.max_hp is not None else 0
+                        ),
                     }
                 )
             trope_states: list[dict[str, Any]] = []
