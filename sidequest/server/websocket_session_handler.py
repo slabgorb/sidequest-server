@@ -1411,7 +1411,7 @@ class WebSocketSessionHandler:
                     if result.secret_routes:
                         for _envelope in build_secret_note_events(
                             result.secret_routes,
-                            turn_id=dispatch_package.turn_id,
+                            turn_id=f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:{snapshot.turn_manager.interaction}",
                         ):
                             import json as _json
 
