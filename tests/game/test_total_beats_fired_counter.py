@@ -279,6 +279,7 @@ class TestDispatchDiceThrowWiring:
             character_stats={"STRENGTH": 10},
             encounter=enc,
             pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
             session_id="s1",
             round_number=1,
             room_broadcast=None,

@@ -51,7 +51,6 @@ from sidequest.genre.models.rules import (
 from sidequest.protocol.dice import DiceThrowPayload, ThrowParams
 from sidequest.protocol.messages import DiceThrowMessage
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

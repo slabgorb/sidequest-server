@@ -129,13 +129,13 @@ from sidequest.protocol.models import (
     StateDelta,
 )
 from sidequest.protocol.types import NonBlankString
+from sidequest.server import views
 from sidequest.server.audio_cue import build_audio_cue_payload
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
-from sidequest.server import views
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
@@ -963,6 +963,7 @@ class WebSocketSessionHandler:
                 character_stats=stats,
                 encounter=encounter,
                 pack=sd.genre_pack,
+                genre_slug=sd.genre_slug,
                 session_id=f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}",
                 round_number=snapshot.turn_manager.interaction,
                 room_broadcast=room_broadcast,

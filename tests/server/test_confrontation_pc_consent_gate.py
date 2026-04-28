@@ -332,6 +332,7 @@ def test_explicit_action_path_still_advances_pc_metric(
         },
         encounter=enc,
         pack=pack,
+        genre_slug="test",
         session_id="s1",
         round_number=1,
         room_broadcast=None,

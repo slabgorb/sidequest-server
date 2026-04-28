@@ -42,15 +42,24 @@ from sidequest.protocol.dice import (
     RollOutcome,
     ThrowParams,
 )
-from sidequest.protocol.messages import DiceRequestMessage, DiceResultMessage
+from sidequest.protocol.messages import (
+    ConfrontationMessage,
+    ConfrontationPayload,
+    DiceRequestMessage,
+    DiceResultMessage,
+)
 from sidequest.protocol.types import Stat
-from sidequest.server.dispatch.confrontation import find_confrontation_def
+from sidequest.server.dispatch.confrontation import (
+    build_confrontation_payload,
+    find_confrontation_def,
+)
 from sidequest.telemetry.spans import (
     combat_tick_span,
     emit_dice_request_sent,
     emit_dice_result_broadcast,
     emit_dice_throw_received,
     encounter_beat_applied_span,
+    encounter_momentum_broadcast_span,
     encounter_resolved_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
@@ -211,6 +220,7 @@ def dispatch_dice_throw(
     character_stats: dict[str, int],
     encounter: StructuredEncounter | None,
     pack: GenrePack,
+    genre_slug: str,
     session_id: str,
     round_number: int,
     room_broadcast: Callable[[object], None] | None,
@@ -464,6 +474,32 @@ def dispatch_dice_throw(
         res_msg = DiceResultMessage(payload=result, player_id="server")
         room_broadcast(req_msg)
         room_broadcast(res_msg)
+
+        # Story 45-3: Mid-turn CONFRONTATION emit. The metric mutation
+        # already landed via apply_beat above; without this broadcast the
+        # UI dial sits on the prior turn's CONFRONTATION snapshot through
+        # the entire dice + narration cycle (5–15s). Sebastien's lie-
+        # detector flag from playtest 2026-04-19. Skipped on the opposed
+        # branch where deltas are deferred to narration_apply.
+        if not opposed_pending:
+            mid_turn_payload = build_confrontation_payload(
+                encounter=encounter,
+                cdef=cdef,
+                genre_slug=genre_slug,
+            )
+            with encounter_momentum_broadcast_span(
+                encounter_type=encounter.encounter_type,
+                player_metric_after=encounter.player_metric.current,
+                opponent_metric_after=encounter.opponent_metric.current,
+                source="dice_throw",
+                beat_id=payload.beat_id,
+            ):
+                room_broadcast(
+                    ConfrontationMessage(
+                        payload=ConfrontationPayload(**mid_turn_payload),
+                        player_id="server",
+                    ),
+                )
 
     replay_text = _format_replay_action(
         beat_label=beat.label,

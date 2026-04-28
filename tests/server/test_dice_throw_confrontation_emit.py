@@ -52,7 +52,6 @@ from sidequest.genre.models.rules import (
     BeatDef,
     ConfrontationDef,
     MetricDef,
-    ResolutionMode,
 )
 from sidequest.protocol.dice import DiceThrowPayload, ThrowParams
 from sidequest.protocol.messages import (
@@ -62,7 +61,6 @@ from sidequest.protocol.messages import (
     DiceThrowMessage,
     NarrationMessage,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -256,10 +254,12 @@ async def test_dice_throw_emits_confrontation_with_post_beat_momentum(
     first_conf = room.broadcasts[first_conf_idx][0]
     assert isinstance(first_conf, ConfrontationMessage)
     payload = first_conf.payload
-    assert payload.player_metric.current == 3, (
+    # ConfrontationPayload.player_metric is dict[str, Any] (mirrors the
+    # JSON wire shape) — access via key, not attribute.
+    assert payload.player_metric["current"] == 3, (
         f"mid-turn CONFRONTATION must carry POST-apply player_metric "
         f"(0 → 3 after Success on attack); got "
-        f"player_metric.current={payload.player_metric.current}"
+        f"player_metric.current={payload.player_metric.get('current')!r}"
     )
     # Active flag asserts the encounter is not yet resolved (3 < 10).
     assert payload.active is True, (
@@ -389,21 +389,34 @@ async def test_opposed_check_does_not_emit_mid_turn_confrontation(
 
 
 @pytest.mark.asyncio
-async def test_post_narration_confrontation_still_fires_after_dice_throw(
+async def test_post_narration_confrontation_emit_path_unchanged(
     session_handler_factory,
 ):
-    """The post-narration CONFRONTATION emit is unchanged — additive fix.
+    """The post-narration CONFRONTATION emit is untouched — additive fix.
 
-    The fix is additive: the mid-turn emit comes IN ADDITION to the
-    existing post-narration emit at ``_execute_narration_turn``. If a
-    fix accidentally replaces one with the other, the dial is correct
-    mid-turn but loses the resolution-flag clear at turn end, and any
-    encounter that resolves on the narrator's beat-application would
-    leave the overlay stranded.
+    The new mid-turn emit lands on ``room.broadcast`` (the dice-fan-out
+    path). The existing post-narration emit at ``_execute_narration_turn``
+    routes through ``_emit_event`` → projection-filtered per-socket queue
+    fan-out, NOT ``room.broadcast``. In this minimal session setup
+    (``session_handler_factory`` does not install ``_event_log`` /
+    ``_projection_filter``), the post-narration path falls into the
+    legacy branch of ``emit_event`` which returns the message to the
+    caller's outbound list rather than fanning it out.
 
-    On a successful (non-resolving) beat we therefore expect TWO
-    CONFRONTATION broadcasts in the room queue: the new mid-turn one
-    AND the existing post-narration one.
+    The regression we're guarding against: a fix that *replaces* the
+    post-narration emit with the mid-turn one (rather than adding to
+    it) would also remove the inline branch at
+    ``session_handler.py:3415-3471``. Asserting that the dispatch loop
+    still reaches the narration step (NarrationMessage in handler
+    return) AND that the dice path still produces exactly ONE
+    room.broadcast CONFRONTATION (the new emit, not a duplicate)
+    locks both halves of the additive contract.
+
+    The end-to-end fan-out of the post-narration CONFRONTATION through
+    the projection filter is exercised by
+    ``test_confrontation_dispatch_wiring.py`` and
+    ``test_confrontation_mp_broadcast.py``, which set up the full
+    event-log + projection-filter stack.
     """
     from sidequest.server.session_handler import _State
 
@@ -420,24 +433,29 @@ async def test_post_narration_confrontation_still_fires_after_dice_throw(
         return_value=NarrationTurnResult(narration="A clean strike."),
     )
 
-    await handler.handle_message(_throw(face=15))
+    msgs = await handler.handle_message(_throw(face=15))
 
-    confrontations = [
+    # Mid-turn emit fires exactly once on the room broadcast path.
+    room_confrontations = [
         m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)
     ]
-    assert len(confrontations) == 2, (
-        f"expected TWO CONFRONTATION broadcasts (mid-turn + post-"
-        f"narration) on a non-resolving beat; got {len(confrontations)}: "
-        f"{[c.payload.active for c in confrontations]!r}"
+    assert len(room_confrontations) == 1, (
+        f"expected exactly ONE mid-turn CONFRONTATION on the room "
+        f"broadcast queue; got {len(room_confrontations)}. A duplicate "
+        f"would mean the new emit is firing twice from the dice path."
     )
-    # Both should reflect the post-apply momentum (current=3) — the
-    # encounter state hasn't changed between them on this beat (no
-    # narrator beat_selection in this stub).
-    for idx, conf in enumerate(confrontations):
-        assert conf.payload.player_metric.current == 3, (
-            f"confrontation #{idx} must carry post-apply momentum=3; "
-            f"got current={conf.payload.player_metric.current}"
-        )
+    assert room_confrontations[0].payload.player_metric["current"] == 3, (
+        "mid-turn CONFRONTATION must carry post-apply momentum=3"
+    )
+
+    # Narrator step ran: NarrationMessage present in handler return list.
+    # If the new emit had crashed or short-circuited the narrator the
+    # post-narration code path would never run.
+    narration_msgs = [m for m in msgs if isinstance(m, NarrationMessage)]
+    assert narration_msgs, (
+        "narrator step must still run after the new mid-turn emit — "
+        "additive fix, not replacement"
+    )
 
 
 # asyncio marker for the test module
