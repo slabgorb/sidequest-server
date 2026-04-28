@@ -3,8 +3,13 @@
 Two-tier turn model:
 - interaction (granular): increments every player-narrator exchange.
   Powers fact/item discovery chronology. Monotonic, never resets.
-- round (display): advances on meaningful narrative beats — location
-  changes, chapter markers, trope escalations. Shown to the player.
+- round (display): advances in lockstep with ``interaction`` via
+  ``record_interaction()`` (Story 45-11, Strategy A). Shown to the
+  player. The earlier "advances on narrative beats" model was never
+  wired into the resolution pipeline — ``advance_round()`` had zero
+  callers and the counter froze, drifting from
+  ``MAX(narrative_log.round_number)`` over long sessions
+  (Felix's Playtest 3: round=65 / max=72).
 
 ADR-006: Both counters always increment, never reset.
 Persisted across sessions — loading a save restores exact counts.
@@ -93,8 +98,20 @@ class TurnManager(BaseModel):
             submitted.clear()
 
     def record_interaction(self) -> None:
-        """Record a player-narrator interaction. Resets phase to InputCollection."""
+        """Record a player-narrator interaction. Resets phase to InputCollection.
+
+        Story 45-11 (Strategy A — turn_manager authoritative): advances
+        ``round`` in lockstep with ``interaction``. Felix's Playtest 3 ended
+        round=65 / max(narrative_log.round_number)=72 because the legacy
+        ``advance_round()`` was never called from the live resolution
+        pipeline — round froze while interaction kept ticking. The narrative
+        log is written keyed by ``interaction`` (see write site in
+        websocket_session_handler._execute_narration_turn), so for
+        ``turn_manager.round`` to track ``MAX(narrative_log.round_number)``
+        it must advance every time an interaction completes.
+        """
         self.interaction += 1
+        self.round += 1
         self.phase = TurnPhase.InputCollection
         submitted: set[str] = object.__getattribute__(self, "_submitted")
         submitted.clear()

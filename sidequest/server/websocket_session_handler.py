@@ -130,6 +130,7 @@ from sidequest.telemetry.spans import (
     audio_skipped_span,
     encounter_momentum_broadcast_span,
     orchestrator_process_action_span,
+    round_invariant_span,
     turn_span,
 )
 from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
@@ -1536,6 +1537,32 @@ class WebSocketSessionHandler:
                         )
                     except Exception as exc:
                         logger.error("session.persist_failed error=%s", exc)
+
+                # Story 45-11 — turn_manager.round invariant lie-detector.
+                # Felix's Playtest 3 ended round=65 / max(narrative_log)=72
+                # with nothing watching the divergence. Emit on EVERY tick
+                # (whether or not the invariant holds) so the GM panel can
+                # tell "engaged + clean" apart from "not engaged at all".
+                # Read MAX(round_number) from the durable narrative_log,
+                # not whatever in-memory mirror the snapshot carries —
+                # the SQL value is the ground truth Felix's save proved
+                # the snapshot can drift from.
+                try:
+                    max_narrative_round = int(sd.store.max_narrative_round())
+                except Exception as exc:  # noqa: BLE001 — telemetry must never crash a turn
+                    logger.warning(
+                        "round_invariant.max_lookup_failed error=%s", exc,
+                    )
+                    max_narrative_round = 0
+                with round_invariant_span(
+                    round=snapshot.turn_manager.round,
+                    interaction=snapshot.turn_manager.interaction,
+                    max_narrative_round=max_narrative_round,
+                ):
+                    # Span attributes are set by the helper; the body is
+                    # intentionally empty — this is a point-in-time emit,
+                    # not a wrapping span around downstream work.
+                    pass
 
                 # Story 37-33: embed newly-seeded / pending lore fragments in the
                 # background so the *next* turn's RAG retrieval can find them.

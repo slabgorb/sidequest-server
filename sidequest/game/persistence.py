@@ -336,6 +336,21 @@ class SqliteStore:
         )
         self._conn.commit()
 
+    def max_narrative_round(self) -> int:
+        """Return ``MAX(round_number)`` from ``narrative_log``, or 0 when empty.
+
+        Story 45-11 AC4: powers the ``turn_manager.round_invariant`` span
+        emitted at the end of every narration tick. Returns 0 (not None,
+        does not raise) on an empty log so the GM-panel chart axis is
+        always plottable on the first tick of a new session.
+        """
+        row = self._conn.execute(
+            "SELECT MAX(round_number) FROM narrative_log"
+        ).fetchone()
+        if row is None or row[0] is None:
+            return 0
+        return int(row[0])
+
     def recent_narrative(self, limit: int) -> list[NarrativeEntry]:
         """Get the most recent narrative entries, ordered oldest-first."""
         import json
