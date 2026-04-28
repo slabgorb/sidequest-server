@@ -115,7 +115,7 @@ def test_e2e_narration_turn_full_roundtrip(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -168,7 +168,7 @@ def test_e2e_narration_text_is_nonempty(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -204,7 +204,7 @@ def test_e2e_session_is_persisted_after_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -249,7 +249,7 @@ def test_e2e_second_action_calls_client_twice(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -316,7 +316,7 @@ def test_e2e_sanitize_applied_to_player_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -386,7 +386,7 @@ def test_e2e_npc_registry_populated_after_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:

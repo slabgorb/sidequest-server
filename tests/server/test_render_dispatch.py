@@ -178,7 +178,7 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -260,7 +260,7 @@ async def test_render_dispatch_otel_includes_genre_and_world(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -347,7 +347,7 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -411,7 +411,7 @@ async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -467,7 +467,7 @@ async def test_render_skipped_when_daemon_socket_missing(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     missing = tmp_path / "never-created.sock"
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(missing),
     )
     handler, queue = _make_handler_with_queue()
@@ -547,7 +547,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
     try:
         monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
         monkeypatch.setattr(
-            "sidequest.server.session_handler.DaemonClient",
+            "sidequest.server.websocket_session_handler.DaemonClient",
             lambda: _client_bound_to(short_sock),
         )
 

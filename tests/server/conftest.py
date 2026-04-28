@@ -91,7 +91,7 @@ def _mock_daemon_client(monkeypatch):
     this one for the duration of that test and teardown unwinds in LIFO.
     """
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda *a, **kw: _UnavailableDaemonClient(),
     )
     monkeypatch.setattr(

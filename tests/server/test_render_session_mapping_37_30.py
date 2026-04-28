@@ -210,7 +210,7 @@ async def test_render_dispatch_event_includes_player_and_room_slug(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -285,7 +285,7 @@ async def test_render_completion_routes_to_current_queue_after_reconnect(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -360,7 +360,7 @@ async def test_render_completion_emits_session_not_found_when_disconnected(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -439,7 +439,7 @@ async def test_portrait_render_params_include_character_name(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 
@@ -498,7 +498,7 @@ async def test_end_to_end_render_routes_through_registry_on_happy_path(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(sock),
     )
 

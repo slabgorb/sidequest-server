@@ -129,7 +129,7 @@ def test_websocket_connect_event_returns_connected(tmp_path):
     client = TestClient(app)
     mock_pack = _make_mock_genre_pack()
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -238,7 +238,7 @@ def test_websocket_connect_has_character_field(tmp_path):
     client = TestClient(app)
     mock_pack = _make_mock_genre_pack()
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -254,7 +254,7 @@ def test_websocket_connect_player_name_echoed(tmp_path):
     client = TestClient(app)
     mock_pack = _make_mock_genre_pack()
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
@@ -274,7 +274,7 @@ def test_websocket_reconnect_accepted_in_playing_state(tmp_path):
     client = TestClient(app)
     mock_pack = _make_mock_genre_pack()
 
-    with patch("sidequest.server.session_handler.GenreLoader") as MockLoader:
+    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
