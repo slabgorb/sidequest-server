@@ -23,6 +23,7 @@ from sidequest.game.persistence import (
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
+from sidequest.game.scrapbook_coverage import detect_scrapbook_coverage_gaps
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import GenreLoader
 from sidequest.protocol.messages import (
@@ -394,6 +395,13 @@ class ConnectHandler:
                     row.world_slug,
                     slug,
                     snapshot.turn_manager.interaction,
+                )
+                # Story 45-10: read-side hygiene for the scrapbook subsystem.
+                # Fires every save-resume; warns loudly + watcher-publishes
+                # only when the scrapbook coverage diverges from the
+                # narrative log. See sidequest/game/scrapbook_coverage.py.
+                detect_scrapbook_coverage_gaps(
+                    store=store, snapshot=snapshot, slug=slug,
                 )
             else:
                 snapshot = GameSnapshot(
@@ -894,6 +902,14 @@ class ConnectHandler:
                 world_slug,
                 player_name,
                 snapshot.turn_manager.interaction,
+            )
+            # Story 45-10: read-side hygiene for the scrapbook subsystem.
+            # Mirrors the slug-resume call site above so legacy non-slug
+            # saves (Felix's solo sessions) get the same coverage check.
+            # AC4 explicitly names this — a slug-only fix would leave
+            # legacy saves silent.
+            detect_scrapbook_coverage_gaps(
+                store=store, snapshot=snapshot, slug="",
             )
         else:
             snapshot = GameSnapshot(

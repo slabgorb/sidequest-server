@@ -911,3 +911,47 @@ def encounter_dispatch_helper():
                 )
 
     return _Helper()
+
+
+# ---------------------------------------------------------------------------
+# OTEL span-capture fixture (shared across server-layer tests).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def otel_capture():
+    """In-memory OTEL span exporter for span-assertion tests.
+
+    Installs a ``SimpleSpanProcessor`` with an ``InMemorySpanExporter`` on
+    the global ``TracerProvider`` so spans opened via ``Span.open`` (and
+    any direct ``tracer.start_as_current_span`` call site) land in
+    ``exporter.get_finished_spans()``.
+
+    Yields the exporter; tears down the processor on exit so spans from
+    one test never bleed into the next.
+
+    Reusable across stories — Story 45-10 (scrapbook coverage), Story 45-3
+    (dice-throw momentum span), and any future server-layer test that
+    asserts span emission. ``test_dice_throw_momentum_span.py`` still
+    defines a local copy that shadows this fixture; it can be migrated in
+    a follow-up.
+    """
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        yield exporter
+    finally:
+        processor.shutdown()
