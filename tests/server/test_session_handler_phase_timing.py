@@ -62,6 +62,14 @@ def _make_lethality_policy() -> LethalityPolicy:
     )
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "preprocess_llm phase no longer fires on the session-handler turn path. "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 @pytest.mark.asyncio
 async def test_execute_narration_turn_records_all_named_phases(
     session_fixture,

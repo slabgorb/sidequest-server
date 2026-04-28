@@ -1,4 +1,10 @@
-"""Wiring tests — LocalDM runs between sealed-letter and narrator in the session handler."""
+"""Wiring tests — LocalDM runs between sealed-letter and narrator in the session handler.
+
+QUARANTINE NOTE (2026-04-28): All tests in this module are quarantined because they
+pin LocalDM integration on the live session-handler turn path — a contract severed when
+LocalDM was made dormant per the localdm-offline-only design.  Re-enable when ADR-073
+wakes the dispatch bank back up.
+"""
 from __future__ import annotations
 
 import json
@@ -124,6 +130,13 @@ def _install_real_orchestrator(sd) -> None:
     sd.orchestrator = Orchestrator(client=MagicMock(spec=ClaudeClient))
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 async def test_execute_narration_turn_invokes_local_dm_before_narrator(session_fixture):
     """The session handler calls LocalDM.decompose exactly once before
     orchestrator.run_narration_turn, and attaches the result to TurnContext."""
@@ -160,6 +173,13 @@ async def test_execute_narration_turn_invokes_local_dm_before_narrator(session_f
     assert call_order == ["decompose", "narrator"], f"Expected decompose→narrator, got {call_order}"
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 async def test_execute_narration_turn_continues_when_decomposer_degraded(session_fixture):
     """A degraded decomposer package does not abort the turn."""
     sd, handler = session_fixture
@@ -185,6 +205,13 @@ async def test_execute_narration_turn_continues_when_decomposer_degraded(session
     assert narrator_called, "narrator must still run when decomposer is degraded"
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded(
     session_fixture,
 ):
@@ -231,6 +258,13 @@ async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded
     assert meta["severity"] == "warning"
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 async def test_execute_narration_turn_propagates_programmer_bug_exceptions(session_fixture):
     """Exceptions escaping LocalDM.decompose indicate programmer bugs
     (rename, signature drift). The session handler must NOT swallow them —
@@ -248,6 +282,13 @@ async def test_execute_narration_turn_propagates_programmer_bug_exceptions(sessi
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 async def test_execute_narration_turn_turn_id_includes_player_id(session_fixture):
     """turn_id must include player_id to disambiguate concurrent sessions in
     the same genre:world at the same interaction number."""
@@ -281,6 +322,13 @@ async def test_execute_narration_turn_turn_id_includes_player_id(session_fixture
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 @pytest.mark.asyncio
 async def test_full_turn_happy_path_pronoun_resolved(session_fixture):
     """Decomposer returns a clean pronoun resolution; the narrator prompt
@@ -325,6 +373,13 @@ async def test_full_turn_happy_path_pronoun_resolved(session_fixture):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 @pytest.mark.asyncio
 async def test_full_turn_absence_path_injects_reflect_absence_directives(session_fixture):
     """Decomposer resolves 'let's' to absence; narrator prompt tells it not
@@ -370,6 +425,13 @@ async def test_full_turn_absence_path_injects_reflect_absence_directives(session
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 @pytest.mark.asyncio
 async def test_full_turn_decomposer_timeout_narrator_still_runs(session_fixture):
     """A TimeoutError inside LocalDM.decompose falls back to a degraded
@@ -425,6 +487,13 @@ async def test_full_turn_decomposer_timeout_narrator_still_runs(session_fixture)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "LocalDM dormant on live turn as of 2026-04-28 "
+        "(docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md). "
+        "Re-enable when ADR-073 wakes the dispatch bank back up."
+    )
+)
 @pytest.mark.asyncio
 async def test_session_open_initializes_local_dm(tmp_path):
     """Wiring test — LocalDM is instantiated on every real session open.
