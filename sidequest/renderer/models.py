@@ -25,7 +25,6 @@ class RenderTier(StrEnum):
     PORTRAIT_SQUARE = "portrait_square"
     LANDSCAPE = "landscape"
     TEXT_OVERLAY = "text_overlay"
-    CARTOGRAPHY = "cartography"
     FOG_OF_WAR = "fog_of_war"
 
 

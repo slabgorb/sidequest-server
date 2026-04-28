@@ -165,7 +165,6 @@ async def patch_legality_check(record: TurnRecord) -> None:
     Checks (per ADR-031 §"Patch legality"):
       - HP > max for any character or NPC
       - Dead NPC (hp <= 0) appears in patches_applied as an actor
-      - Cartography graph adjacency check is deferred until ADR-019 is ported.
     """
     snap = record.snapshot_after
     characters = getattr(snap, "characters", None) or []

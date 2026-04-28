@@ -1,11 +1,11 @@
 """Region initialization on chargen confirmation — Story 37-31.
 
 Populates ``snap.current_region`` and seeds ``snap.discovered_regions``
-from the world's ``cartography.starting_region`` so the Map tab is
+from the world's ``cartography.starting_region`` so a player's region is
 load-bearing from turn 1. Runs for both ``region`` and ``room_graph``
 navigation modes — room-graph worlds still have a canonical region
-label (Grimvault → Ashgate Square) that the UI surfaces alongside the
-room-level position.
+label (Grimvault → Ashgate Square) that downstream consumers can surface
+alongside the room-level position.
 
 No silent fallback per project principle: a world that declares no
 ``starting_region`` — or one that does not match any declared region

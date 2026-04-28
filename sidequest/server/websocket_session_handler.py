@@ -248,33 +248,6 @@ class WebSocketSessionHandler:
 
         emitters.emit_scrapbook_entry(self, sd=sd, snapshot=snapshot, result=result)
 
-    # ------------------------------------------------------------------
-    # MAP_UPDATE emission — slice 1 of N (pingpong 2026-04-26
-    # [S3-PORT-REGRESSION]). The Rust port had three trigger sites for
-    # MAP_UPDATE: every-turn refresh, location-change, and reconnect-replay.
-    # Slice 1 ports only the cartography-render trigger so the UI's
-    # MapOverlay stops receiving nothing the first time the narrator picks
-    # the cartography tier. The other two trigger sites land in slice 2/3.
-    # ------------------------------------------------------------------
-
-    def _emit_map_update_for_cartography(
-        self,
-        *,
-        sd: _SessionData,
-        render_id: str,
-        player_id: str,
-    ) -> None:
-        """Push a MAP_UPDATE frame. Delegates to ``emitters.emit_map_update_for_cartography``.
-
-        Phase 1 of session_handler decomposition (see
-        docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
-        """
-        from sidequest.server import emitters
-
-        emitters.emit_map_update_for_cartography(
-            self, sd=sd, render_id=render_id, player_id=player_id
-        )
-
     def _persist_scrapbook_entry(self, payload: ScrapbookEntryPayload) -> None:
         """Insert a scrapbook row. Delegates to ``emitters.persist_scrapbook_entry``.
 
@@ -1722,7 +1695,7 @@ class WebSocketSessionHandler:
 
                     # Refresh PARTY_STATUS so `current_location` and any HP/inventory
                     # mutations landed by the narration apply propagate to the client
-                    # header / CharacterSheet / MapOverlay. Previously PARTY_STATUS
+                    # header / CharacterSheet. Previously PARTY_STATUS
                     # was emitted exactly once at chargen-end (before the opening
                     # turn), which froze the location at its pre-opening value
                     # (typically empty). Playtest 2026-04-22.
@@ -2291,29 +2264,6 @@ class WebSocketSessionHandler:
             },
             component="render",
         )
-
-        # Pingpong 2026-04-26 [S3-PORT-REGRESSION] MAP_UPDATE — slice 1 of N
-        # from the Rust port. When the narrator picks the cartography tier,
-        # the daemon will render a map; without an accompanying MAP_UPDATE
-        # the UI's MapOverlay/Automapper has no metadata to overlay on the
-        # rendered image. Emit alongside the render dispatch (mirror of the
-        # IMAGE/SCRAPBOOK twin pattern) so the map subsystem is visibly
-        # engaged. Deferred to follow-up: location-change trigger,
-        # journaling for replay. See pingpong file for the full deferred-
-        # with-spec list.
-        if tier == "cartography":
-            try:
-                self._emit_map_update_for_cartography(
-                    sd=sd,
-                    render_id=render_id,
-                    player_id=player_id,
-                )
-            except Exception as exc:  # noqa: BLE001 — map emit must never crash a turn
-                logger.warning(
-                    "map_update.emit_failed render_id=%s error=%s",
-                    render_id,
-                    exc,
-                )
 
         # Capture the legacy out_queue only as a fallback for the
         # pre-room-context test/legacy path. When `_room` is set (the
