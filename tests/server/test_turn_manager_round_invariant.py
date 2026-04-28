@@ -373,3 +373,88 @@ async def test_round_invariant_emits_typed_watcher_event(
         f"flat agent_span_close missing for {SPAN_NAME!r}; firehose got: "
         f"{sorted(n for n in flat_names if n)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Felix's exact shape — loaded save with pre-existing divergence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loaded_save_with_preexisting_divergence_captures_violation(
+    otel_capture, session_handler_factory,
+) -> None:
+    """Reproduce Felix's Playtest 3 shape directly: 72 narrative_log rows
+    persisted, ``turn_manager.round`` frozen at 65, drive one narration
+    turn, assert the invariant span captures the violation
+    (holds=False, gap>0) — does NOT silently auto-correct.
+
+    Per ``context-story-45-11.md`` §"Out of scope":
+
+      "Backfilling turn_manager.round on existing saves. The invariant
+       detector logs the gap; existing saves with round=65 / max=72
+       load and play with the gap visible."
+
+    This test is the durable proof of that scope decision: a freshly-loaded
+    Felix-style save must surface its divergence to Sebastien's GM panel,
+    not vanish it on read. Strategy A's lockstep-advance fix carries the
+    gap forward but never erases it; the OTEL span is the lie-detector.
+    """
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=_narration_result(),
+    )
+
+    # Synthesize Felix's save: 72 narrative_log rows, turn_manager.round=65.
+    # We seed rows directly via the existing append_narrative API rather
+    # than a custom SQL INSERT so the schema, column order, and tag
+    # serialization match production writes exactly. Insertion order is
+    # monotonic round_number → SQL MAX = 72.
+    from sidequest.game.session import NarrativeEntry
+
+    for r in range(1, 73):
+        sd.store.append_narrative(
+            NarrativeEntry(
+                timestamp=0,
+                round=r,
+                author="narrator",
+                content=f"Felix's row {r}",
+                tags=[],
+            ),
+        )
+    assert _max_narrative_round_via_sql(sd) == 72
+
+    # Frozen display counter — the original Felix bug.
+    sd.snapshot.turn_manager.round = 65
+    sd.snapshot.turn_manager.interaction = 72
+
+    # Drive one narration turn. Strategy A advances both interaction and
+    # round in lockstep, so post-tick: interaction=73, round=66, max=73.
+    # The pre-existing 7-round gap is preserved (not backfilled).
+    turn_context = _build_turn_context_for_test(sd)
+    await handler._execute_narration_turn(sd, "And so it goes.", turn_context)
+
+    spans = otel_capture.get_finished_spans()
+    invariant = [s for s in spans if s.name == SPAN_NAME]
+    assert len(invariant) == 1, (
+        f"expected exactly 1 {SPAN_NAME} span on the post-load tick, "
+        f"got {len(invariant)}"
+    )
+
+    attrs = dict(invariant[0].attributes or {})
+    assert attrs.get("holds") is False, (
+        f"loaded-save divergence must surface as holds=False; got "
+        f"holds={attrs.get('holds')!r} (round={attrs.get('round')}, "
+        f"max={attrs.get('max_narrative_round')}). The detector cannot "
+        f"silently auto-correct — Sebastien's panel needs to see the lie."
+    )
+    gap = attrs.get("gap")
+    assert isinstance(gap, int) and gap > 0, (
+        f"loaded-save divergence must surface as gap>0; got gap={gap!r}"
+    )
+    # The exact gap depends on whether the GREEN fix advances both
+    # counters in lockstep (gap stays at the original 7) or some other
+    # shape; we don't pin the magnitude — only that the violation is
+    # captured. Story scope explicitly forbids backfilling, so gap MUST
+    # NOT be zero.
+    assert gap >= 1
