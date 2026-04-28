@@ -572,11 +572,8 @@ def test_rules_config_resources_with_thresholds_parses():
 stat_generation: point_buy
 point_buy_budget: 27
 magic_level: none
-hp_formula: "class_base * level"
 default_class: Drifter
 default_race: "Frontier Born"
-default_hp: 10
-default_ac: 10
 default_location: "A nameless border town"
 default_time_of_day: high_noon
 

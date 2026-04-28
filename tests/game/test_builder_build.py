@@ -81,7 +81,6 @@ def base_rules() -> RulesConfig:
         point_buy_budget=27,
         default_class="Fighter",
         default_race="Human",
-        class_hp_bases={"Fighter": 10, "Ranger": 8, "Scribe": 6},
     )
 
 
@@ -186,65 +185,6 @@ class TestRaceClassResolution:
         char = b.build("Anon")
         assert char.race == "Human"
         assert char.char_class == "Fighter"
-
-
-# ===========================================================================
-# HP resolution
-# ===========================================================================
-
-
-class TestHpResolution:
-    def test_hp_formula_path(self) -> None:
-        rules = base_rules()
-        rules.hp_formula = "class_base + CON_modifier"
-        scenes = [
-            make_scene(
-                "class",
-                choices=[make_choice("Ranger", class_hint="Ranger")],
-            ),
-        ]
-        b = CharacterBuilder(scenes=scenes, rules=rules)
-        b.apply_choice(0)
-        char = b.build("Kara")
-        # The Character pydantic model doesn't surface base_hp directly
-        # (Epic 39 uses edge as the HP analogue) — we assert the build
-        # didn't crash and the formula path produced a plausible edge seed.
-        # The actual HP arithmetic is verified in test_builder_stats.py.
-        assert char is not None
-
-    def test_class_hp_bases_fallback(self) -> None:
-        """No hp_formula + class in class_hp_bases → lookup fires."""
-        b = minimal_happy_path_builder()
-        char = b.build("Kara")
-        # Ranger is in class_hp_bases — the fallback branch evaluated.
-        # Like the formula path, HP isn't on Character directly, so the
-        # assertion is that build() succeeded. The OTEL events carry the
-        # source tag — asserted in TestOtelEvents below.
-        assert char is not None
-
-    def test_default_hp_fallback_when_class_missing(self) -> None:
-        rules = RulesConfig(
-            stat_generation="standard_array",
-            ability_score_names=list(ABILITY_NAMES),
-            default_class="Unknown",
-            default_hp=15,
-        )
-        scenes = [make_scene("only", choices=[make_choice("Go")])]
-        b = CharacterBuilder(scenes=scenes, rules=rules)
-        b.apply_choice(0)
-        char = b.build("Anon")
-        assert char is not None
-
-    def test_hardcoded_10_when_nothing_else(self) -> None:
-        rules = RulesConfig(
-            stat_generation="standard_array",
-            ability_score_names=list(ABILITY_NAMES),
-        )
-        scenes = [make_scene("only", choices=[make_choice("Go")])]
-        b = CharacterBuilder(scenes=scenes, rules=rules)
-        b.apply_choice(0)
-        char = b.build("Anon")
-        assert char is not None
 
 
 # ===========================================================================

@@ -40,7 +40,6 @@ from .combat import *  # noqa: F401, F403
 from .compose import *  # noqa: F401, F403
 from .content import *  # noqa: F401, F403
 from .continuity import *  # noqa: F401, F403
-from .creature import *  # noqa: F401, F403
 from .dice import *  # noqa: F401, F403
 from .disposition import *  # noqa: F401, F403
 from .dogfight import *  # noqa: F401, F403

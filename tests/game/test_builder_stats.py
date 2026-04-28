@@ -1,4 +1,4 @@
-"""Tests for sidequest.game.builder — Slice 3: stat generation + HP formula.
+"""Tests for sidequest.game.builder — Slice 3: stat generation.
 
 Covers:
 - _roll_3d6_stats with seeded RNG (deterministic)
@@ -9,10 +9,6 @@ Covers:
 - Eager roll at construction when a scene declares roll_3d6_strict
 - Scene-directive re-roll on apply_freeform (unconditional) vs
   apply_auto_advance (guarded by "only if none yet")
-- _evaluate_hp_formula: modifier substitution, class_base, level, parens,
-  floor at 1, Rust-style integer truncation for negative modifiers
-- _eval_simple_arithmetic: left-to-right, leading-negative literal,
-  mid-expression negative literal, error on empty / bad token
 """
 
 from __future__ import annotations
@@ -24,7 +20,6 @@ import pytest
 from sidequest.game.builder import (
     AccumulatedChoices,
     CharacterBuilder,
-    InvalidHpFormulaError,
     UnknownStatGenerationError,
 )
 from sidequest.genre.models.character import (
@@ -79,7 +74,6 @@ def rules_standard_array() -> RulesConfig:
         ability_score_names=list(ABILITY_NAMES),
         point_buy_budget=27,
         default_class="Fighter",
-        class_hp_bases={"Fighter": 10, "Scribe": 6},
     )
 
 
@@ -415,163 +409,3 @@ class TestSceneDirectiveOverride:
         assert max(stats.values()) <= 15
 
 
-# ===========================================================================
-# _evaluate_hp_formula — substitution + arithmetic
-# ===========================================================================
-
-
-class TestEvaluateHpFormula:
-    def test_basic_constant(self) -> None:
-        result = CharacterBuilder._evaluate_hp_formula(
-            "10", stats={}, class_hp_bases={}, class_str="Fighter"
-        )
-        assert result == 10
-
-    def test_con_modifier_positive(self) -> None:
-        result = CharacterBuilder._evaluate_hp_formula(
-            "8 + CON_modifier",
-            stats={"CON": 14},
-            class_hp_bases={},
-            class_str="Fighter",
-        )
-        # CON 14 → modifier +2
-        assert result == 10
-
-    def test_con_modifier_negative_uses_rust_truncation(self) -> None:
-        """Rust integer division truncates toward zero; Python // floors.
-        For CON=5, (5-10)/2 = -2 in Rust (trunc), -3 with Python //.
-        Verify we use Rust semantics via int(float_div)."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "8 + CON_modifier",
-            stats={"CON": 5},
-            class_hp_bases={},
-            class_str="Fighter",
-        )
-        # 8 + (-2) = 6
-        assert result == 6
-
-    def test_lowercase_mod_alias(self) -> None:
-        """The shorter `{name}_mod` alias works too."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "5 + body_mod",
-            stats={"body": 16},
-            class_hp_bases={},
-            class_str="Warrior",
-        )
-        # body 16 → modifier +3
-        assert result == 8
-
-    def test_class_base_substitution(self) -> None:
-        result = CharacterBuilder._evaluate_hp_formula(
-            "class_base + CON_modifier",
-            stats={"CON": 12},
-            class_hp_bases={"Fighter": 10},
-            class_str="Fighter",
-        )
-        # 10 + 1
-        assert result == 11
-
-    def test_class_base_default_8_when_missing(self) -> None:
-        """No class entry → fallback to 8 per Rust behavior."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "class_base",
-            stats={},
-            class_hp_bases={},
-            class_str="Unknown",
-        )
-        assert result == 8
-
-    def test_level_substitution(self) -> None:
-        """level is always 1 at character creation."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "level * 10",
-            stats={},
-            class_hp_bases={},
-            class_str="Fighter",
-        )
-        assert result == 10
-
-    def test_parens_are_stripped(self) -> None:
-        """Parens are dropped before evaluation (simple formulas only)."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "(8 + CON_modifier) * level",
-            stats={"CON": 12},
-            class_hp_bases={},
-            class_str="Fighter",
-        )
-        # Strip parens: "8 + CON_modifier * level" → "8 + 1 * 1"
-        # Left-to-right, no precedence: ((8 + 1) * 1) = 9
-        assert result == 9
-
-    def test_floor_at_1(self) -> None:
-        """Zero or negative results clamp to 1."""
-        result = CharacterBuilder._evaluate_hp_formula(
-            "3 - 5",
-            stats={},
-            class_hp_bases={},
-            class_str="Fighter",
-        )
-        assert result == 1
-
-    def test_empty_formula_raises(self) -> None:
-        with pytest.raises(InvalidHpFormulaError) as excinfo:
-            CharacterBuilder._evaluate_hp_formula(
-                "", stats={}, class_hp_bases={}, class_str="Fighter"
-            )
-        assert "empty" in excinfo.value.detail
-
-    def test_whitespace_only_formula_raises(self) -> None:
-        with pytest.raises(InvalidHpFormulaError):
-            CharacterBuilder._evaluate_hp_formula(
-                "   ", stats={}, class_hp_bases={}, class_str="Fighter"
-            )
-
-    def test_unparseable_token_raises(self) -> None:
-        with pytest.raises(InvalidHpFormulaError) as excinfo:
-            CharacterBuilder._evaluate_hp_formula(
-                "8 + foobar",
-                stats={},
-                class_hp_bases={},
-                class_str="Fighter",
-            )
-        # The detail message surfaces both the original formula and the
-        # post-substitution string.
-        assert "foobar" in excinfo.value.detail
-
-
-# ===========================================================================
-# _eval_simple_arithmetic — operator semantics
-# ===========================================================================
-
-
-class TestEvalSimpleArithmetic:
-    @pytest.mark.parametrize(
-        "expr,expected",
-        [
-            ("5", 5),
-            ("5 + 3", 8),
-            ("5 - 3", 2),
-            ("5 * 3", 15),
-            ("5 + 3 - 2", 6),
-            ("4 * 3 + 1", 13),  # left-to-right
-            ("10 - 2 * 3", 24),  # left-to-right: (10 - 2) * 3
-            ("-5 + 10", 5),  # leading negative literal
-            ("-5", -5),  # bare negative
-            ("10 + -3", 7),  # negative after operator (Rust parity)
-        ],
-    )
-    def test_basic_arithmetic(self, expr: str, expected: int) -> None:
-        assert CharacterBuilder._eval_simple_arithmetic(expr) == expected
-
-    def test_empty_raises(self) -> None:
-        from sidequest.game.builder import _ArithmeticParseError
-
-        with pytest.raises(_ArithmeticParseError):
-            CharacterBuilder._eval_simple_arithmetic("")
-
-    def test_unparseable_token_raises(self) -> None:
-        from sidequest.game.builder import _ArithmeticParseError
-
-        with pytest.raises(_ArithmeticParseError) as excinfo:
-            CharacterBuilder._eval_simple_arithmetic("5 + foo")
-        assert excinfo.value.token == "foo"

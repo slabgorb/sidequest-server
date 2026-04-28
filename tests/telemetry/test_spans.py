@@ -167,13 +167,11 @@ def test_persistence_span_names() -> None:
 def test_chargen_span_names() -> None:
     from sidequest.telemetry.spans import (
         SPAN_CHARGEN_BACKSTORY_COMPOSED,
-        SPAN_CHARGEN_HP_FORMULA,
         SPAN_CHARGEN_STAT_ROLL,
         SPAN_CHARGEN_STATS_GENERATED,
     )
     assert SPAN_CHARGEN_STAT_ROLL == "chargen.stat_roll"
     assert SPAN_CHARGEN_STATS_GENERATED == "chargen.stats_generated"
-    assert SPAN_CHARGEN_HP_FORMULA == "chargen.hp_formula"
     assert SPAN_CHARGEN_BACKSTORY_COMPOSED == "chargen.backstory_composed"
 
 
@@ -184,11 +182,6 @@ def test_npc_span_names() -> None:
     )
     assert SPAN_NPC_MERGE_PATCH == "npc_merge_patch"
     assert SPAN_NPC_REGISTRATION == "npc.registration"
-
-
-def test_creature_span_names() -> None:
-    from sidequest.telemetry.spans import SPAN_CREATURE_HP_DELTA
-    assert SPAN_CREATURE_HP_DELTA == "creature.hp_delta"
 
 
 def test_disposition_span_names() -> None:
@@ -556,11 +549,9 @@ def test_span_name_drift_regression() -> None:
         spans.SPAN_PERSISTENCE_DELETE,
         spans.SPAN_CHARGEN_STAT_ROLL,
         spans.SPAN_CHARGEN_STATS_GENERATED,
-        spans.SPAN_CHARGEN_HP_FORMULA,
         spans.SPAN_CHARGEN_BACKSTORY_COMPOSED,
         spans.SPAN_NPC_MERGE_PATCH,
         spans.SPAN_NPC_REGISTRATION,
-        spans.SPAN_CREATURE_HP_DELTA,
         spans.SPAN_DISPOSITION_SHIFT,
         spans.SPAN_APPLY_WORLD_PATCH,
         spans.SPAN_QUEST_UPDATE,

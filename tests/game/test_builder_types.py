@@ -26,7 +26,6 @@ from sidequest.game.builder import (
     HookType,
     InProgress,
     InvalidChoiceError,
-    InvalidHpFormulaError,
     LoreAnchor,
     NarrativeHook,
     NoScenesError,
@@ -291,7 +290,6 @@ class TestBuilderError:
             NoScenesError(),
             CannotRevertError(),
             UnknownStatGenerationError(method="weird"),
-            InvalidHpFormulaError(detail="bad token"),
             NumericNameError(name="7"),
             EdgeConfigMissingClassError(class_name="Ranger"),
         ]
@@ -318,11 +316,6 @@ class TestBuilderError:
         assert e.method == "roll_5d20"
         assert "roll_5d20" in str(e)
 
-    def test_invalid_hp_formula_carries_detail(self) -> None:
-        e = InvalidHpFormulaError(detail="unparseable token 'foo'")
-        assert e.detail == "unparseable token 'foo'"
-        assert "unparseable token 'foo'" in str(e)
-
     def test_numeric_name_carries_name(self) -> None:
         e = NumericNameError(name="7")
         assert e.name == "7"
@@ -343,7 +336,6 @@ class TestBuilderError:
         assert BuilderError.NoScenes is NoScenesError
         assert BuilderError.CannotRevert is CannotRevertError
         assert BuilderError.UnknownStatGeneration is UnknownStatGenerationError
-        assert BuilderError.InvalidHpFormula is InvalidHpFormulaError
         assert BuilderError.NumericName is NumericNameError
         assert BuilderError.EdgeConfigMissingClass is EdgeConfigMissingClassError
 
