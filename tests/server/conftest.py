@@ -214,9 +214,10 @@ def _default_archetype_hints(monkeypatch):
     # test_pack_axisless_with_set_hints_blocks_with_raw_pair_unresolved)
     # replaces the function and the marker disappears, so the real gate
     # runs end-to-end on its own hints.
-    from sidequest.server.websocket_session_handler import (
-        WebSocketSessionHandler,
-    )
+    # Import via session_handler back-compat re-export to avoid the
+    # websocket_session_handler ↔ session_handler circular import that
+    # only surfaces when nothing else has loaded the chain yet.
+    from sidequest.server.session_handler import WebSocketSessionHandler
 
     real_gate = WebSocketSessionHandler._gate_archetype_resolution
 

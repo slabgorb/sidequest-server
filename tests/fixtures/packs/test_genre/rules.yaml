@@ -32,13 +32,6 @@ allowed_races:
 race_label: Stock
 class_label: Calling
 
-class_hp_bases:
-  Scavenger: 8
-  Mutant: 10
-  Pureblood: 8
-  Synth: 12
-  Beastkin: 10
-  Tinker: 6
 
 # ── Confrontations (dual-track momentum, spec 2026-04-25) ────────────────────
 confrontations:

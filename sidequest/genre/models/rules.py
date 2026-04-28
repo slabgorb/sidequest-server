@@ -352,12 +352,9 @@ class RulesConfig(BaseModel):
     ability_score_names: list[str] = Field(default_factory=list)
     allowed_classes: list[str] = Field(default_factory=list)
     allowed_races: list[str] = Field(default_factory=list)
-    class_hp_bases: dict[str, int] = Field(default_factory=dict)
     edge_config: EdgeConfig | None = None
     default_class: str | None = None
     default_race: str | None = None
-    default_hp: int | None = None
-    default_ac: int | None = None
     race_label: str | None = None
     class_label: str | None = None
     # Per-pack character-sheet vocabulary. Keys are the canonical chargen
@@ -373,7 +370,6 @@ class RulesConfig(BaseModel):
     chargen_field_labels: dict[str, str] = Field(default_factory=dict)
     default_location: str | None = None
     default_time_of_day: str | None = None
-    hp_formula: str | None = None
     banned_spells: list[str] = Field(default_factory=list)
     custom_rules: dict[str, str] = Field(default_factory=dict)
     stat_display_fields: list[str] = Field(default_factory=list)

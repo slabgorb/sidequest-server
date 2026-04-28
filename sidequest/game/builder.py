@@ -275,14 +275,6 @@ class UnknownStatGenerationError(BuilderError):
         super().__init__(f"unknown stat generation method: {method}")
 
 
-class InvalidHpFormulaError(BuilderError):
-    """HP formula evaluation failed."""
-
-    def __init__(self, detail: str) -> None:
-        self.detail = detail
-        super().__init__(f"hp_formula error: {detail}")
-
-
 class NumericNameError(BuilderError):
     """Name is purely numeric — likely a UI index, not a real character name.
 
@@ -319,7 +311,6 @@ BuilderError.FreeformNotAllowed = FreeformNotAllowedError  # type: ignore[attr-d
 BuilderError.NoScenes = NoScenesError  # type: ignore[attr-defined]
 BuilderError.CannotRevert = CannotRevertError  # type: ignore[attr-defined]
 BuilderError.UnknownStatGeneration = UnknownStatGenerationError  # type: ignore[attr-defined]
-BuilderError.InvalidHpFormula = InvalidHpFormulaError  # type: ignore[attr-defined]
 BuilderError.NumericName = NumericNameError  # type: ignore[attr-defined]
 BuilderError.EdgeConfigMissingClass = EdgeConfigMissingClassError  # type: ignore[attr-defined]
 
@@ -508,24 +499,6 @@ def find_unrecognized_tokens(rendered: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Internal arithmetic-parse failure — wrapped into InvalidHpFormulaError
-# by the caller. Private to this module.
-# ---------------------------------------------------------------------------
-
-
-class _ArithmeticParseError(Exception):
-    """Raised by _eval_simple_arithmetic when a token fails to parse.
-
-    Carries the offending token so the HP formula error message can
-    surface it — SOUL.md: "Fail loud at the boundary."
-    """
-
-    def __init__(self, token: str) -> None:
-        self.token = token
-        super().__init__(f"unparseable token: {token!r}")
-
-
-# ---------------------------------------------------------------------------
 # CharacterBuilder — the state machine
 # ---------------------------------------------------------------------------
 
@@ -576,10 +549,6 @@ class CharacterBuilder:
         self._ability_score_names: list[str] = list(rules.ability_score_names)
         self._default_class: str | None = rules.default_class
         self._default_race: str | None = rules.default_race
-        self._default_hp: int | None = rules.default_hp
-        self._default_ac: int | None = rules.default_ac
-        self._class_hp_bases: dict[str, int] = dict(rules.class_hp_bases)
-        self._hp_formula: str | None = rules.hp_formula
         self._edge_config: EdgeConfig | None = rules.edge_config
         self._point_buy_budget: int = rules.point_buy_budget
         self._race_label: str = rules.race_label or "Race"
@@ -1250,13 +1219,12 @@ class CharacterBuilder:
         Only valid from Confirmation phase — raises ``WrongPhaseError``
         otherwise. Composes the Character from accumulated hints:
         race/class (accumulated or rules default), stats (via
-        ``generate_stats``), HP (hp_formula OR class_hp_bases fallback),
-        backstory (fragments OR tables OR mechanical labels OR hardcoded
-        fallback), abilities (resolved from mutation / affinity /
-        training hints with an AbilitySource tag), inventory
-        (item_hints first then equipment_tables), edge pool (from
-        edge_config OR placeholder for legacy packs), and the Fighter
-        +2 Edge stub from Story 39-4.
+        ``generate_stats``), backstory (fragments OR tables OR
+        mechanical labels OR hardcoded fallback), abilities (resolved
+        from mutation / affinity / training hints with an AbilitySource
+        tag), inventory (item_hints first then equipment_tables), edge
+        pool (from edge_config OR placeholder for legacy packs), and
+        the Fighter +2 Edge stub from Story 39-4.
 
         Numeric-name guard (Story 30-1): reject purely numeric names —
         they indicate a UI choice index leaked into the name fallback.
@@ -1264,10 +1232,10 @@ class CharacterBuilder:
 
         OTEL watcher events are emitted via the current span's
         ``add_event`` API. Events carry structured attributes so the GM
-        panel can reconstruct decisions: hp resolution path, backstory
-        method, equipment method, edge seeding source, etc. SOUL.md: no
-        silent fallbacks — every path that resolves a default
-        explicitly emits the fallback source and severity.
+        panel can reconstruct decisions: backstory method, equipment
+        method, edge seeding source, etc. SOUL.md: no silent fallbacks
+        — every path that resolves a default explicitly emits the
+        fallback source and severity.
         """
         if not self.is_confirmation():
             raise WrongPhaseError(
@@ -1285,54 +1253,7 @@ class CharacterBuilder:
         class_str = acc.class_hint or self._default_class or "Fighter"
 
         stats = self.generate_stats(acc)
-
-        # HP resolution: hp_formula if set, else class_hp_bases lookup,
-        # else default_hp, else hardcoded 10. Every branch emits a
-        # watcher event with the source tag so the GM panel can audit
-        # which path fired.
         span = trace.get_current_span()
-        if self._hp_formula is not None:
-            hp_result = self._evaluate_hp_formula(
-                self._hp_formula, stats, self._class_hp_bases, class_str
-            )
-            con = stats.get("CON")
-            con_modifier = int((con - 10) / 2) if con is not None else None
-            span.add_event(
-                "chargen.hp_formula_evaluated",
-                {
-                    "formula": self._hp_formula,
-                    "class": class_str,
-                    "hp_result": hp_result,
-                    **(
-                        {"con_modifier": con_modifier}
-                        if con_modifier is not None
-                        else {}
-                    ),
-                },
-            )
-            base_hp = hp_result
-        else:
-            if class_str in self._class_hp_bases:
-                hp_value = self._class_hp_bases[class_str]
-                source = "class_hp_bases"
-            elif self._default_hp is not None:
-                hp_value = self._default_hp
-                source = "default_hp"
-            else:
-                hp_value = 10
-                source = "hardcoded_10"
-            span.add_event(
-                "chargen.hp_fallback",
-                {
-                    "class": class_str,
-                    "hp_result": hp_value,
-                    "source": source,
-                },
-            )
-            base_hp = hp_value
-
-        ac = self._default_ac if self._default_ac is not None else 10
-        _ = (base_hp, ac)  # wired into OTEL and future subsystems
 
         # Hooks: collect narrative hooks, excluding mechanical traits
         # already represented on the sheet (race, class, personality).
@@ -1773,129 +1694,6 @@ class CharacterBuilder:
         )
         return stats
 
-    # --- HP formula ---
-
-    @staticmethod
-    def _evaluate_hp_formula(
-        formula: str,
-        stats: dict[str, int],
-        class_hp_bases: dict[str, int],
-        class_str: str,
-    ) -> int:
-        """Evaluate an hp_formula string using stats and class config.
-
-        Supported variables:
-        - `XXX_modifier` — D&D-style ability modifier: trunc((stat - 10) / 2)
-          where XXX matches any key in stats (e.g. CON, STR, body).
-        - `xxx_mod` — lowercase alias of `XXX_modifier`.
-        - `class_base` — class_hp_bases lookup (default 8 if unset).
-        - `level` — always 1 at creation.
-        - Integer literals (positive or negative).
-
-        Supported operators: +, -, * (left-to-right, no precedence).
-        Parentheses are stripped before evaluation. Returns ``max(1, result)``
-        — HP floors at 1, never zero or negative.
-
-        Raises ``InvalidHpFormulaError`` for empty or unparseable formulas.
-
-        Integer division note: Python's ``//`` is floor (toward negative
-        infinity), so for negative modifiers (stat < 10 after bonuses)
-        ``(5 - 10) / 2`` would yield ``-3`` under ``//`` but ``-2``
-        under truncation toward zero. We use ``int(a / b)`` to truncate
-        toward zero so the modifier matches D&D rounding.
-        """
-        if not formula.strip():
-            raise InvalidHpFormulaError(detail="hp_formula is empty")
-
-        class_base = class_hp_bases.get(class_str, 8)
-        level = 1
-
-        expr = formula
-        # Replace stat_modifier and stat_mod tokens. Longest-first: do
-        # `{NAME}_modifier` before `{name}_mod` so "CON_modifier" doesn't
-        # accidentally match the shorter `con_mod` prefix inside
-        # "CON_modifier"'s lowercase form. Order of dict iteration is
-        # insertion order in 3.7+; we iterate a stable list.
-        for stat_name, stat_value in stats.items():
-            modifier = int((stat_value - 10) / 2)  # truncate toward zero
-            expr = expr.replace(f"{stat_name}_modifier", str(modifier))
-            expr = expr.replace(f"{stat_name.lower()}_mod", str(modifier))
-
-        expr = expr.replace("class_base", str(class_base))
-        expr = expr.replace("level", str(level))
-        expr = expr.replace("(", "").replace(")", "")
-
-        try:
-            result = CharacterBuilder._eval_simple_arithmetic(expr)
-        except _ArithmeticParseError as e:
-            raise InvalidHpFormulaError(
-                detail=(
-                    f"unparseable token '{e.token}' in formula '{formula}' "
-                    f"(after substitution: '{expr}')"
-                )
-            ) from None
-
-        # Floor at 1 — no zero or negative HP.
-        return max(1, result)
-
-    @staticmethod
-    def _eval_simple_arithmetic(expr: str) -> int:
-        """Evaluate a simple arithmetic expression with +, -, * operators.
-
-        Left-to-right, no operator precedence. Handles negative literals
-        from variable substitution — a '-' at the start of the expression
-        (or immediately after an operator) is part of a negative literal,
-        not a binary operator.
-
-        Raises _ArithmeticParseError (wrapping the offending token) when
-        any token fails to parse as int.
-        """
-        expr = expr.strip()
-
-        # Tokenize: split on +/-/* but preserve them as tokens. A binary
-        # operator only splits when the current buffer is non-empty after
-        # trimming — so a leading '-' or a '-' right after an operator
-        # stays glued to the following digits as a signed literal.
-        tokens: list[str] = []
-        current = ""
-        for ch in expr:
-            if ch in ("+", "-", "*") and current.strip() != "":
-                tokens.append(current.strip())
-                tokens.append(ch)
-                current = ""
-            else:
-                current += ch
-        if current.strip() != "":
-            tokens.append(current.strip())
-
-        if not tokens:
-            raise _ArithmeticParseError(token="")
-
-        try:
-            result = int(tokens[0])
-        except ValueError:
-            raise _ArithmeticParseError(token=tokens[0]) from None
-
-        i = 1
-        while i + 1 < len(tokens):
-            op = tokens[i]
-            operand_token = tokens[i + 1]
-            try:
-                operand = int(operand_token)
-            except ValueError:
-                raise _ArithmeticParseError(token=operand_token) from None
-            if op == "+":
-                result += operand
-            elif op == "-":
-                result -= operand
-            elif op == "*":
-                result *= operand
-            else:
-                raise _ArithmeticParseError(token=op)
-            i += 2
-
-        return result
-
     # --- Private helpers ---
 
     def _advance_scene(self, current: int) -> None:
@@ -1948,7 +1746,6 @@ __all__ = [
     "NoScenesError",
     "CannotRevertError",
     "UnknownStatGenerationError",
-    "InvalidHpFormulaError",
     "NumericNameError",
     "EdgeConfigMissingClassError",
     # Builder
