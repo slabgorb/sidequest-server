@@ -539,7 +539,7 @@ class _SessionData:
     # in-memory lore_store after disconnect and from racing a sibling worker
     # at the ``await client.embed()`` yield point on rapid successive turns.
     embed_task: asyncio.Task[None] | None = None
-# Last dice roll outcome (story 34 — physics-is-the-roll). Stashed on
+    # Last dice roll outcome (story 34 — physics-is-the-roll). Stashed on
     # DICE_THROW resolution and read by the next narration turn's context
     # builder so the narrator knows whether the roll succeeded. Cleared by
     # the consuming turn (``take`` semantics). None when no roll is
