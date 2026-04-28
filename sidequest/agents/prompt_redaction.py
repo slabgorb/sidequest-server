@@ -1,11 +1,16 @@
-"""Structural hiding — strips redact_from_narrator_canonical entries from a
-DispatchPackage BEFORE it enters the narrator prompt.
+"""prompt_redaction — DORMANT.
 
-Primary defense in Group G's two-layer redaction model. The narrator cannot
-leak what it never saw; this module is what ensures it never sees it.
+This module is not invoked on the live turn path as of 2026-04-28
+(see docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md).
 
-Paired with the OTEL leak-audit (sidequest.telemetry.leak_audit, Task 7)
-which verifies this module's output is actually reflected in canonical prose.
+It is preserved for two consumers:
+  1. The offline LocalDM corpus runner (follow-up story).
+  2. Re-engagement on the live path once ADR-073's local fine-tuned
+     router replaces the Haiku CLI subprocess.
+
+Unit tests for this module remain in `just check-all` so it does not
+bit-rot. If you find yourself adding a live caller, you are landing
+ADR-073 (or undoing this design); update both ends.
 """
 from __future__ import annotations
 
