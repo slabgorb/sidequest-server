@@ -163,6 +163,88 @@ def _fixture_pack_search_paths(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _default_archetype_hints(monkeypatch):
+    """Autouse guard: defeat the chargen archetype gate (Story 45-6) for
+    every server test that drives chargen confirmation without walking
+    real hint-bearing scenes.
+
+    Wraps ``CharacterBuilder.accumulated`` to stamp ``hero`` / ``tank``
+    hints when a test left them None. ``hero`` / ``tank`` is valid in
+    ``caverns_and_claudes/archetype_constraints.yaml`` and lets the
+    archetype resolver succeed for packs WITH axes — the gate's
+    OK_RESOLVED branch fires.
+
+    For packs WITHOUT axes (``mutant_wasteland``, ``spaghetti_western``
+    fixtures), this would normally trip the gate's
+    ``raw_pair_unresolved`` branch because the hints become a raw pair
+    with no resolver to consume them. Defended by also wrapping the
+    archetype-gate handler to downgrade ``raw_pair_unresolved`` to a
+    pass when the resolved_archetype is exactly the synthetic
+    ``hero/tank`` we injected — that combination cannot occur from real
+    chargen scenes on an axes-less pack.
+
+    Tests in ``test_45_6_chargen_archetype_gate.py`` install their own
+    ``_inject_hints`` wrapper that LIFO-shadows part 1 and explicitly
+    sets hints to None for the blocked-branch scenarios; the
+    ``raw_pair_unresolved`` test there sets hints to non-default values
+    so the synthetic-pair downgrade does not fire.
+    """
+    from sidequest.game.builder import AccumulatedChoices, CharacterBuilder
+
+    real_accumulated = CharacterBuilder.accumulated
+
+    def fake_accumulated(self) -> AccumulatedChoices:  # noqa: ANN001
+        acc = real_accumulated(self)
+        if acc.jungian_hint is None and acc.rpg_role_hint is None:
+            acc.jungian_hint = "hero"
+            acc.rpg_role_hint = "tank"
+        return acc
+
+    fake_accumulated._is_default_archetype_hints_fake = True  # type: ignore[attr-defined]
+    monkeypatch.setattr(CharacterBuilder, "accumulated", fake_accumulated)
+
+    # Defend the axes-less-pack case: when WE stamped "hero/tank" onto a
+    # Character whose pack lacks archetype axes, the builder writes
+    # resolved_archetype="hero/tank" (raw pair). The gate would then
+    # trip raw_pair_unresolved. Clear the synthetic raw pair before the
+    # gate evaluates so the OK_NO_AXES branch fires. The downgrade only
+    # fires when our `accumulated` wrapper is still on top — a test that
+    # installs its own LIFO-shadowing `_inject_hints` (notably
+    # test_pack_axisless_with_set_hints_blocks_with_raw_pair_unresolved)
+    # replaces the function and the marker disappears, so the real gate
+    # runs end-to-end on its own hints.
+    from sidequest.server.websocket_session_handler import (
+        WebSocketSessionHandler,
+    )
+
+    real_gate = WebSocketSessionHandler._gate_archetype_resolution
+
+    def fake_gate(self, character, sd, player_id, span):  # noqa: ANN001, ANN201
+        ours = getattr(
+            CharacterBuilder.accumulated,
+            "_is_default_archetype_hints_fake",
+            False,
+        )
+        pack = sd.genre_pack
+        pack_has_axes = (
+            pack.base_archetypes is not None
+            and pack.archetype_constraints is not None
+        )
+        if (
+            ours
+            and not pack_has_axes
+            and character.resolved_archetype == "hero/tank"
+            and character.archetype_provenance is None
+        ):
+            character.resolved_archetype = None
+        return real_gate(self, character, sd, player_id, span)
+
+    monkeypatch.setattr(
+        WebSocketSessionHandler, "_gate_archetype_resolution", fake_gate
+    )
+
+
 # ---------------------------------------------------------------------------
 # ClaudeClient guard — autouse. Prevents any server test from spawning a
 # real ``claude -p`` subprocess. Without this guard, every test that runs
