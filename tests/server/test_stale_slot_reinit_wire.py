@@ -43,6 +43,7 @@ reaches the clear.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,13 +59,12 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
+from tests.server.conftest import (
+    mock_claude_client_factory as _mock_claude_client_factory,
+)
 
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
-
-from tests.server.conftest import (
-    mock_claude_client_factory as _mock_claude_client_factory,  # noqa: E402
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -77,7 +77,7 @@ def save_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def handler_factory(save_dir: Path):
+def handler_factory(save_dir: Path) -> Callable[[], WebSocketSessionHandler]:
     if not (CONTENT_ROOT / "caverns_and_claudes").is_dir():
         pytest.skip("content pack not found")
 
@@ -134,7 +134,7 @@ async def _connect(
     *,
     player_name: str = "Persistent",
     world: str = "grimvault",
-):
+) -> list[object]:
     payload = SessionEventPayload(
         event="connect",
         player_name=player_name,
@@ -142,7 +142,13 @@ async def _connect(
         world=world,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
-    assert out, "connect must return at least one message"
+    assert isinstance(out[0], SessionEventMessage), (
+        f"connect must return a SessionEventMessage as the first frame; "
+        f"got {type(out[0]).__name__ if out else 'empty list'}"
+    )
+    assert not isinstance(out[0], ErrorMessage), (
+        f"connect returned an ErrorMessage: {getattr(out[0].payload, 'message', out[0])!r}"
+    )
     return out
 
 
@@ -253,7 +259,6 @@ def test_connect_emits_session_slot_reinitialized_watcher_event(
         # which is a useful signal.
         with patch(
             "sidequest.game.persistence._watcher_publish",
-            create=True,
         ) as wp:
             await _connect(handler)
             await handler.cleanup()
@@ -304,22 +309,19 @@ def test_post_chargen_turn_manager_is_fresh_after_stale_slot_reinit(
 
     round_, interaction = asyncio.run(body())
 
-    # The Playtest 3 wedge values were round=0, interaction=2.
-    # ``round=0`` is impossible from the ``TurnManager`` default
-    # (round=1, interaction=1). The post-fix ``materialize_from_genre_pack``
-    # → ``replace_with()`` path writes the fresh defaults; chargen
-    # confirmation then fires a first narration turn that bumps
-    # ``interaction`` (typically 1→2) but leaves ``round`` at 1.
-    assert round_ != 0, (
-        "AC2 violation: post-chargen turn_manager.round is 0 — exactly "
-        "the Playtest 3 prot_thokk/hant freeze. clear-on-reinit is not "
-        "preventing the wedge. Got "
-        f"round={round_}, interaction={interaction}."
-    )
-    assert round_ >= 1, (
-        f"AC3 violation: turn_manager.round={round_} after chargen "
-        "confirmation; must be at least 1 (the materialize_from_genre_pack "
-        "default) for the narrator to bootstrap turn 1."
+    # Post-chargen, ``materialize_from_genre_pack`` → ``replace_with()``
+    # writes fresh ``TurnManager(round=1, interaction=1)``. Chargen
+    # confirmation then fires the first narration turn, which bumps
+    # ``interaction`` (typically 1→2) but leaves ``round`` at 1. The
+    # Playtest 3 wedge values were round=0/interaction=2 — round=0 is
+    # impossible from the fresh default, so a non-1 ``round`` here means
+    # stale state survived the reinit.
+    assert round_ == 1, (
+        f"AC2/AC3 violation: post-chargen turn_manager.round={round_}, "
+        f"interaction={interaction}; must be exactly round=1 (the "
+        "materialize_from_genre_pack default). round=0 is the Playtest 3 "
+        "prot_thokk/hant freeze; round>1 means stale state survived the "
+        "reinit."
     )
 
     # AC1+AC3 round-trip: the stale prior-day row that we seeded must

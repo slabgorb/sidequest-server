@@ -343,11 +343,10 @@ SPAN_ROUTES[SPAN_GAME_HANDSHAKE_DELTA_APPLIED] = SpanRoute(
 
 # ---------------------------------------------------------------------------
 # Session lifecycle — sidequest/game/persistence.py
-# Story 45-5: stale-slot reuse on session reinit blocks turn 1.
 # Fires every time ``SqliteStore.init_session()`` runs — including on a
-# fresh slot — so Sebastien's GM panel gets the negative confirmation
-# that reinit ran cleanly (CLAUDE.md observability principle: a silent
-# half-clear regression must not be invisible).
+# fresh slot — so the GM panel gets the negative confirmation that reinit
+# ran cleanly (CLAUDE.md observability principle: a silent half-clear
+# regression must not be invisible).
 # ---------------------------------------------------------------------------
 SPAN_SESSION_SLOT_REINITIALIZED = "session.slot_reinitialized"
 SPAN_ROUTES[SPAN_SESSION_SLOT_REINITIALIZED] = SpanRoute(

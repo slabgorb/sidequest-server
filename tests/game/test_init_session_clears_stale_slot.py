@@ -28,10 +28,10 @@ at the persistence seam:
 Playtest 3 evidence (2026-04-19, evropi/prot_thokk and evropi/hant): the
 ``narrative_log`` carried a row dated 2026-04-18 in a save created at
 2026-04-19T16:31 UTC; ``init_session()`` overwrote ``session_meta`` row 1
-but left every other per-slot table untouched (``persistence.py:264-268``).
-The first ``_execute_narration_turn()`` call saw a populated
-``narrative_log`` and a ``turn_manager`` whose ``round=0`` disagreed with
-the log's ``max(round_number)``; turn 1 wedged.
+but left every other per-slot table untouched. The first
+``_execute_narration_turn()`` call saw a populated ``narrative_log`` and
+a ``turn_manager`` whose ``round=0`` disagreed with the log's
+``max(round_number)``; turn 1 wedged.
 
 These tests are **expected to fail** under the current implementation —
 they spec the clear-on-reinit fix (option 1 from the story context) that
@@ -258,15 +258,6 @@ class TestInitSessionFreshSlotIsCleanNoOp:
     by the call. Regression guard against a refuse-on-populated path
     being added by mistake."""
 
-    def test_fresh_slot_reinit_does_not_raise(self, tmp_path: Path) -> None:
-        db = db_path_for_slug(tmp_path, "test-fresh-noop")
-        db.parent.mkdir(parents=True, exist_ok=True)
-        store = SqliteStore(db)
-
-        # Must not raise — fresh-slot reinit is the legitimate first-time
-        # connect path that EVERY new save exercises.
-        store.init_session("caverns_and_claudes", "grimvault")
-
     def test_fresh_slot_per_slot_tables_remain_empty(self, tmp_path: Path) -> None:
         db = db_path_for_slug(tmp_path, "test-fresh-empty")
         db.parent.mkdir(parents=True, exist_ok=True)
@@ -317,7 +308,6 @@ class TestInitSessionEmitsWatcherEvent:
 
         with patch(
             "sidequest.game.persistence._watcher_publish",
-            create=True,
         ) as wp:
             store.init_session("caverns_and_claudes", "grimvault")
 
@@ -346,7 +336,6 @@ class TestInitSessionEmitsWatcherEvent:
 
         with patch(
             "sidequest.game.persistence._watcher_publish",
-            create=True,
         ) as wp:
             store.init_session("caverns_and_claudes", "grimvault")
 
@@ -404,7 +393,6 @@ class TestInitSessionEmitsWatcherEvent:
 
         with patch(
             "sidequest.game.persistence._watcher_publish",
-            create=True,
         ) as wp:
             store.init_session("caverns_and_claudes", "grimvault")
 
