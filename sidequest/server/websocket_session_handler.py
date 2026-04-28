@@ -117,7 +117,6 @@ from sidequest.server.session_helpers import (
     _resolve_acting_character_name,
     _resolve_location_display,
     _world_history_value,
-    aggregate_visibility,
     build_secret_note_events,
 )
 from sidequest.server.utils import slugify_player_name as _slugify_player_name
@@ -1185,49 +1184,10 @@ class WebSocketSessionHandler:
                 world=sd.world_slug,
                 action_len=len(action),
             ):
-                # Group B — Local DM decomposer runs between sealed-letter and narrator.
-                # LocalDM.decompose catches expected client failures internally and
-                # returns a degraded DispatchPackage. Any exception escaping here is a
-                # programmer bug (rename, signature drift); let it propagate — failing
-                # the turn loudly beats silently demoting bugs to degraded.
-                turn_id = (
-                    f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}:"
-                    f"{snapshot.turn_manager.interaction}"
-                )
-                assert turn_context.state_summary is not None, (
-                    "TurnContext.state_summary must be populated by _build_turn_context"
-                )
-                with timings.phase("preprocess_llm"):
-                    dispatch_package = await sd.local_dm.decompose(
-                        turn_id=turn_id,
-                        player_id=f"player:{sd.player_name}",
-                        raw_action=action,
-                        state_summary=turn_context.state_summary,
-                        visibility_baseline=sd.genre_pack.visibility_baseline,
-                    )
-                if dispatch_package.degraded:
-                    logger.info(
-                        "session.decomposer_degraded reason=%s turn_id=%s",
-                        dispatch_package.degraded_reason,
-                        turn_id,
-                    )
-                    # Surface to GM panel — per CLAUDE.md OTEL principle, every
-                    # subsystem decision must be visible. Decomposer degradation
-                    # silently strips per-player narrator instructions (which
-                    # ADR-028/036 multiplayer isolation depends on); without
-                    # this event the lie detector can't tell the dispatcher
-                    # ran on a degraded package.
-                    _watcher_publish(
-                        "decomposer_degraded",
-                        {
-                            "turn_id": turn_id,
-                            "reason": dispatch_package.degraded_reason or "",
-                            "player_id": f"player:{sd.player_name}",
-                        },
-                        component="local_dm",
-                        severity="warning",
-                    )
-                turn_context.dispatch_package = dispatch_package
+                # LocalDM is dormant on the live turn path as of 2026-04-28
+                # (docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md).
+                # turn_context.dispatch_package stays None; build_narrator_prompt's
+                # is-None guards skip redaction and the dispatch bank.
 
                 with orchestrator_process_action_span(action_len=len(action)):
                     result = await sd.orchestrator.run_narration_turn(action, turn_context)
@@ -1412,7 +1372,11 @@ class WebSocketSessionHandler:
                     text=narration_nbs,
                     state_delta=None,
                     footnotes=forwarded_footnotes,
-                    visibility_sidecar=aggregate_visibility(dispatch_package),
+                    # visibility_sidecar stays None on the live turn — the dispatch
+                    # package that fed aggregate_visibility(...) is dormant. MP wiring
+                    # will reintroduce a visibility classifier; until then, peers see
+                    # the same canonical narration.
+                    visibility_sidecar=None,
                 )
                 # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
                 with timings.phase("broadcast"):
@@ -1444,23 +1408,24 @@ class WebSocketSessionHandler:
                     # visibility_tag rule (Task 3) delivers it only to the recipients in
                     # its ``_visibility.visible_to``. Only SubsystemDispatch entries route;
                     # see ``build_secret_note_events`` for the skip rules.
-                    for _envelope in build_secret_note_events(
-                        result.secret_routes,
-                        turn_id=dispatch_package.turn_id,
-                    ):
-                        import json as _json
+                    if result.secret_routes:
+                        for _envelope in build_secret_note_events(
+                            result.secret_routes,
+                            turn_id=dispatch_package.turn_id,
+                        ):
+                            import json as _json
 
-                        _payload_data = _json.loads(_envelope.payload_json)
-                        self._emit_event(
-                            "SECRET_NOTE",
-                            SecretNotePayload(
-                                turn_id=_payload_data["turn_id"],
-                                idempotency_key=_payload_data["idempotency_key"],
-                                subsystem=_payload_data["subsystem"],
-                                params=_payload_data.get("params", {}),
-                                visibility_sidecar=_payload_data["_visibility"],
-                            ),
-                        )
+                            _payload_data = _json.loads(_envelope.payload_json)
+                            self._emit_event(
+                                "SECRET_NOTE",
+                                SecretNotePayload(
+                                    turn_id=_payload_data["turn_id"],
+                                    idempotency_key=_payload_data["idempotency_key"],
+                                    subsystem=_payload_data["subsystem"],
+                                    params=_payload_data.get("params", {}),
+                                    visibility_sidecar=_payload_data["_visibility"],
+                                ),
+                            )
 
                     # Story 3.4 Task 11: emit CONFRONTATION when encounter state transitions.
                     # OTEL visibility: add event to current span so the GM panel (Sebastien-
