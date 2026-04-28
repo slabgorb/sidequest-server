@@ -531,6 +531,7 @@ def materialize_world(snapshot: Any, chapters: list[HistoryChapter]) -> None:
     ``snapshot.world_history`` + ``snapshot.campaign_maturity``.
     Idempotent — safe to call repeatedly.
     """
+    from sidequest.telemetry.spans import SPAN_WORLD_MATERIALIZED, Span
     maturity = CampaignMaturity.from_snapshot(snapshot)
     applicable = [
         ch
@@ -538,8 +539,18 @@ def materialize_world(snapshot: Any, chapters: list[HistoryChapter]) -> None:
         if (m := CampaignMaturity.from_chapter_id(ch.id)) is not None
         and m <= maturity
     ]
-    snapshot.world_history = list(applicable)
-    snapshot.campaign_maturity = maturity.value
+    with Span.open(
+        SPAN_WORLD_MATERIALIZED,
+        {
+            "genre_slug": getattr(snapshot, "genre_slug", "") or "",
+            "world_slug": getattr(snapshot, "world_slug", "") or "",
+            "maturity": maturity.value,
+            "chapters_input": len(chapters),
+            "chapters_applied": len(applicable),
+        },
+    ):
+        snapshot.world_history = list(applicable)
+        snapshot.campaign_maturity = maturity.value
 
 
 # ---------------------------------------------------------------------------

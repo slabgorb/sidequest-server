@@ -124,10 +124,16 @@ class PromptRegistry:
 
         Sorts by zone order before joining — same as Rust implementation.
         """
-        sections = list(self._sections.get(agent_name, []))
-        sections.sort(key=lambda s: s.zone.order())
-        non_empty = [s.content for s in sections if not s.is_empty()]
-        return "\n\n".join(non_empty)
+        from sidequest.telemetry.spans import SPAN_COMPOSE, Span
+        with Span.open(SPAN_COMPOSE, {"agent_name": agent_name}) as span:
+            sections = list(self._sections.get(agent_name, []))
+            sections.sort(key=lambda s: s.zone.order())
+            non_empty = [s.content for s in sections if not s.is_empty()]
+            rendered = "\n\n".join(non_empty)
+            span.set_attribute("section_count", len(sections))
+            span.set_attribute("non_empty_count", len(non_empty))
+            span.set_attribute("rendered_chars", len(rendered))
+            return rendered
 
     def clear(self, agent_name: str) -> None:
         """Clear all sections for an agent."""
