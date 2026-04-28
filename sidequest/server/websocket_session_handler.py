@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 
 if TYPE_CHECKING:
+    from sidequest.handlers.base import MessageHandler
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
@@ -293,28 +294,57 @@ class WebSocketSessionHandler:
         return self._session_data
 
     async def handle_message(self, msg: GameMessage) -> list[object]:
-        """Dispatch an inbound message; return list of outbound protocol message objects."""
+        """Dispatch an inbound message; return list of outbound protocol message objects.
+
+        Looks the message type up in the per-class ``_MESSAGE_HANDLERS`` registry
+        (built once at first dispatch) and forwards to the corresponding
+        first-class handler under :mod:`sidequest.handlers`. The thin
+        ``_handle_X`` methods on this class remain as a test-friendly
+        public API so test suites can drive a single message type without
+        going through the WebSocket protocol layer.
+        """
         msg_type: str = msg.type  # type: ignore[attr-defined]
 
-        if msg_type == "SESSION_EVENT":
-            return await self._handle_session_event(msg)
-        elif msg_type == "PLAYER_ACTION":
-            return await self._handle_player_action(msg)
-        elif msg_type == "CHARACTER_CREATION":
-            return await self._handle_character_creation(msg)
-        elif msg_type == "PLAYER_SEAT":
-            return await self._handle_player_seat(msg)
-        elif msg_type == "DICE_THROW":
-            return await self._handle_dice_throw(msg)
-        elif msg_type == "YIELD":
-            return await self._handle_yield(msg)
-        else:
+        handler = type(self)._message_handler_for(msg_type)
+        if handler is None:
             logger.warning(
                 "session.unhandled_message_type type=%s state=%s",
                 msg_type,
                 self._state.name,
             )
             return [_error_msg(f"Unsupported message type in Phase 1: {msg_type}")]
+        return await handler.handle(self, msg)
+
+    @classmethod
+    def _message_handler_for(cls, msg_type: str) -> "MessageHandler | None":
+        """Lazy-built registry of message-type → first-class handler singleton.
+
+        Built on first call to avoid importing the handler modules at
+        ``WebSocketSessionHandler`` class-definition time, which would
+        eagerly drag in their transitive imports (and create a circular
+        reference, since the handler modules import this class for
+        type-checking). The registry is cached on the class so subsequent
+        dispatches are a single dict lookup.
+        """
+        registry = getattr(cls, "_MESSAGE_HANDLERS", None)
+        if registry is None:
+            from sidequest.handlers.character_creation import HANDLER as CHARACTER_CREATION_HANDLER
+            from sidequest.handlers.dice_throw import HANDLER as DICE_THROW_HANDLER
+            from sidequest.handlers.player_action import HANDLER as PLAYER_ACTION_HANDLER
+            from sidequest.handlers.player_seat import HANDLER as PLAYER_SEAT_HANDLER
+            from sidequest.handlers.session_event import HANDLER as SESSION_EVENT_HANDLER
+            from sidequest.handlers.yield_action import HANDLER as YIELD_HANDLER
+
+            registry = {
+                "SESSION_EVENT": SESSION_EVENT_HANDLER,
+                "PLAYER_ACTION": PLAYER_ACTION_HANDLER,
+                "CHARACTER_CREATION": CHARACTER_CREATION_HANDLER,
+                "PLAYER_SEAT": PLAYER_SEAT_HANDLER,
+                "DICE_THROW": DICE_THROW_HANDLER,
+                "YIELD": YIELD_HANDLER,
+            }
+            cls._MESSAGE_HANDLERS = registry
+        return registry.get(msg_type)
 
     async def cleanup(self) -> None:
         """Called on disconnect — persist current state if in Playing."""
