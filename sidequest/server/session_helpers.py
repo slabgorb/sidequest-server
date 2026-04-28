@@ -35,7 +35,10 @@ from sidequest.protocol.messages import (
     PlayerPresencePayload,
 )
 from sidequest.protocol.types import NonBlankString
-from sidequest.telemetry.spans import npc_reinvented_span
+from sidequest.telemetry.spans import (
+    npc_reinvented_span,
+    orchestrator_notorious_party_gate_span,
+)
 
 if TYPE_CHECKING:
     from sidequest.server.session_handler import _SessionData
@@ -208,12 +211,94 @@ def _build_turn_context(
         npc.core.name: npc.core for npc in snapshot.npcs
     }
 
-    # Story 37-36: peer-identity packets, acting PC excluded.
-    party_peers: list[PartyPeer] = [
-        PartyPeer.from_character(pc)
-        for pc in snapshot.characters
-        if pc.core.name != char_name
-    ]
+    # Story 45-8 — Notorious-party gating on session.player_count.
+    #
+    # Playtest 3 regression (evropi/pumblestone): a solo session whose
+    # snapshot still carried the canonical full-party cast (Rux, Hant,
+    # Ludzo, ...) leaked those names into the narrator's prose because
+    # the peer filter only excluded ``char_name`` — it did not check
+    # session player_count. The gate below drops every snapshot peer
+    # when the room reports a single playing player, and redacts the
+    # ``snapshot.characters`` JSON in ``state_summary`` so the names
+    # cannot ride in via the game-state block either.
+    #
+    # AC4 (No silent fallbacks): if ``room`` is None the gate machinery
+    # is unreachable. We default to safe-empty (no peers) AND emit a
+    # WARNING — never silently fall through to "all snapshot characters
+    # are peers".
+    if room is None:
+        player_count_for_gate = 0
+        gate_engaged = True
+        logger.warning(
+            "orchestrator.notorious_party_gate room=None — gate machinery "
+            "unreachable, defaulting to safe-empty party_peers "
+            "(notorious_party_gated=true, party_context_available=false). "
+            "session.player_count unknown.",
+        )
+    else:
+        # ``non_abandoned_player_count`` is the right source of truth: it
+        # counts seats in CHARGEN/PLAYING (every "live" lobby slot), which
+        # matches the bug surface — a solo save where only Pumblestone has
+        # a seat — without requiring every peer to have transitioned to
+        # PLAYING (the failing-precondition for ``playing_player_count``
+        # mid-chargen). ABANDONED orphans correctly drop out.
+        count_method = (
+            getattr(room, "non_abandoned_player_count", None)
+            or getattr(room, "playing_player_count", None)
+        )
+        try:
+            player_count_for_gate = int(count_method())
+        except Exception:  # noqa: BLE001 — fail loud on any contract drift
+            logger.warning(
+                "orchestrator.notorious_party_gate "
+                "player_count lookup raised — defaulting to safe-empty "
+                "(notorious_party_gated=true, party_context_available=false).",
+                exc_info=True,
+            )
+            player_count_for_gate = 0
+        # AC1/AC2: gate is strict `== 1` (solo). `> 1` passes. `<= 0` is
+        # an impossible state in normal operation (no seated players AND
+        # we're trying to build a turn) — treat as fail-loud-empty rather
+        # than re-opening the leak.
+        if player_count_for_gate == 1:
+            gate_engaged = True
+        elif player_count_for_gate > 1:
+            gate_engaged = False
+        else:
+            logger.warning(
+                "orchestrator.notorious_party_gate "
+                "player_count=%d (<= 0) — impossible state, defaulting "
+                "to safe-empty (notorious_party_gated=true).",
+                player_count_for_gate,
+            )
+            gate_engaged = True
+
+    if gate_engaged:
+        party_peers: list[PartyPeer] = []
+    else:
+        # Story 37-36: peer-identity packets, acting PC excluded.
+        party_peers = [
+            PartyPeer.from_character(pc)
+            for pc in snapshot.characters
+            if pc.core.name != char_name
+        ]
+    party_context_available = bool(party_peers)
+
+    # AC3 — Fire the gate-decision span on EVERY turn. The GM panel
+    # filters on this so Sebastien can see whether the gate engaged.
+    with orchestrator_notorious_party_gate_span(
+        player_count=player_count_for_gate,
+        notorious_party_gated=gate_engaged,
+        party_context_available=party_context_available,
+    ):
+        logger.info(
+            "orchestrator.notorious_party_gate "
+            "session.player_count=%d notorious_party_gated=%s "
+            "party_context_available=%s",
+            player_count_for_gate,
+            gate_engaged,
+            party_context_available,
+        )
 
     # Story 45-1 — sealed-letter shared-world handshake. Build the
     # canonical delta, merge it back, and attach to state_summary so the
@@ -224,6 +309,21 @@ def _build_turn_context(
     handshake_delta = build_shared_world_delta(snapshot, room=room)
     merge_shared_delta_into_snapshot(snapshot, handshake_delta)
     state_summary_payload = json.loads(snapshot.model_dump_json())
+    # Story 45-8 — when the gate is engaged, also redact non-self PCs
+    # from the state_summary JSON. Without this redaction the canonical
+    # party names ride into the narrator's <game_state> block via the
+    # snapshot dump even though ``ctx.party_peers`` is empty.
+    if gate_engaged and isinstance(state_summary_payload.get("characters"), list):
+        state_summary_payload["characters"] = [
+            entry
+            for entry in state_summary_payload["characters"]
+            if isinstance(entry, dict)
+            and (
+                entry.get("core", {}).get("name") == char_name
+                if isinstance(entry.get("core"), dict)
+                else entry.get("name") == char_name
+            )
+        ]
     state_summary_payload["party_formation"] = [
         entry.model_dump() for entry in handshake_delta.party_formation
     ]

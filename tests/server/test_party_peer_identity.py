@@ -105,6 +105,20 @@ def _make_orchestrator() -> Orchestrator:
     return Orchestrator(client=client)
 
 
+def _make_mp_room(*, playing_count: int = 2):
+    """Story 45-8: ``_build_turn_context`` now gates ``party_peers`` on
+    ``room.playing_player_count() > 1``. The 37-36 multiplayer tests must
+    therefore hand it a room mock that reports an MP count, otherwise the
+    notorious-party gate (correctly) zeroes the peer list.
+    """
+    room = MagicMock()
+    room.playing_player_count = MagicMock(return_value=playing_count)
+    room.non_abandoned_player_count = MagicMock(return_value=playing_count)
+    room.seated_player_count = MagicMock(return_value=playing_count)
+    room.slot_to_player_id = MagicMock(return_value={})
+    return room
+
+
 @pytest.fixture
 def sd_factory():
     """Build a ``_SessionData`` with a loaded caverns_and_claudes pack and
@@ -286,7 +300,7 @@ def test_build_turn_context_populates_party_peers_in_multiplayer(sd_factory) -> 
     from sidequest.server.session_handler import _build_turn_context
 
     sd = sd_factory([_blutka(), _orin()], acting_player="Blutka")
-    ctx = _build_turn_context(sd)
+    ctx = _build_turn_context(sd, room=_make_mp_room(playing_count=2))
 
     peers = getattr(ctx, "party_peers", None)
     assert peers is not None, "TurnContext.party_peers was not populated"
@@ -311,7 +325,7 @@ def test_build_turn_context_excludes_acting_player_from_peers(sd_factory) -> Non
     from sidequest.server.session_handler import _build_turn_context
 
     sd = sd_factory([_blutka(), _orin()], acting_player="Blutka")
-    ctx = _build_turn_context(sd)
+    ctx = _build_turn_context(sd, room=_make_mp_room(playing_count=2))
 
     peer_names = {p.name for p in ctx.party_peers}
     assert "Blutka" not in peer_names, (
@@ -699,7 +713,7 @@ async def test_wiring_sd_to_prompt_delivers_peer_identity(sd_factory):
 
     # Orin is the acting player; Blutka is the peer whose pronouns drifted.
     sd = sd_factory([_orin(), _blutka()], acting_player="Orin")
-    ctx = _build_turn_context(sd)
+    ctx = _build_turn_context(sd, room=_make_mp_room(playing_count=2))
 
     # Precondition: _build_turn_context actually produced a peer entry.
     peers = getattr(ctx, "party_peers", None)
