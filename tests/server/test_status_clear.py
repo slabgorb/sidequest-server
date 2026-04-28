@@ -293,23 +293,29 @@ def test_wiring_status_clear_module_imports():
 
 
 def test_wiring_session_handler_imports_status_clear():
-    """The dice-resolved branch in session_handler.py must keep the
-    import path valid (lazy-imported inside the handler — a stale path
-    would crash mid-encounter, not at startup)."""
+    """The dice-resolved branch must keep the import path valid
+    (lazy-imported inside the handler — a stale path would crash
+    mid-encounter, not at startup).
+
+    The dice-resolve callsite was extracted from
+    ``WebSocketSessionHandler._handle_dice_throw`` to its own
+    first-class handler at ``sidequest.handlers.dice_throw`` — this
+    test now greps the handler module's source.
+    """
     import importlib
 
-    sh = importlib.import_module("sidequest.server.session_handler")
+    dh = importlib.import_module("sidequest.handlers.dice_throw")
     src = importlib.util.find_spec(  # type: ignore[attr-defined]
         "sidequest.server.status_clear"
     )
     assert src is not None
-    # Lightweight string-grep: the call site exists in session_handler
+    # Lightweight string-grep: the call site exists in the handler
     # source. Stronger than a bare import — proves wiring, not just
     # presence.
     import inspect
-    text = inspect.getsource(sh)
+    text = inspect.getsource(dh)
     assert "clear_scratch_on_scene_end" in text, (
-        "session_handler.py must call clear_scratch_on_scene_end after "
+        "dice_throw handler must call clear_scratch_on_scene_end after "
         "dice-resolved encounters or Bug #1 regresses"
     )
 

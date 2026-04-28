@@ -138,7 +138,7 @@ def _capture_watcher_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, A
         events.append({"event": event, "payload": payload, "kwargs": kwargs})
 
     monkeypatch.setattr(
-        "sidequest.server.session_handler._watcher_publish",
+        "sidequest.server.websocket_session_handler._watcher_publish",
         _spy,
     )
     return events
@@ -170,7 +170,7 @@ async def test_first_render_passes_throttle_and_reaches_daemon(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(short_sock),
     )
 
@@ -220,7 +220,7 @@ async def test_second_render_within_cooldown_is_suppressed_before_daemon(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(short_sock),
     )
 
@@ -274,7 +274,7 @@ async def test_throttle_emits_suppress_decision_otel_event(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(short_sock),
     )
 
@@ -335,7 +335,7 @@ async def test_third_render_after_cooldown_passes(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda: _client_bound_to(short_sock),
     )
 

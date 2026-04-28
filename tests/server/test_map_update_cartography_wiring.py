@@ -218,6 +218,10 @@ async def test_cartography_render_emits_map_update_to_outbound_queue(
     def _capture(event_kind: str, fields: dict, **_kw: object) -> None:
         captured_events.append((event_kind, dict(fields)))
 
+    # The map.update_emitted event fires through emitters.py, which reaches
+    # _watcher_publish via a lazy `from sidequest.server.session_handler
+    # import _watcher_publish` inside its function body. Patching at that
+    # canonical alias is the only target the lazy import resolves through.
     monkeypatch.setattr(
         "sidequest.server.session_handler._watcher_publish", _capture,
     )
@@ -256,7 +260,7 @@ async def test_cartography_render_emits_map_update_to_outbound_queue(
             raise RuntimeError("embed should not be called in this test")
 
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda *a, **kw: _AvailableDaemonStub(),
     )
 
@@ -377,7 +381,7 @@ async def test_non_cartography_render_does_not_emit_map_update(
             raise RuntimeError("embed should not be called in this test")
 
     monkeypatch.setattr(
-        "sidequest.server.session_handler.DaemonClient",
+        "sidequest.server.websocket_session_handler.DaemonClient",
         lambda *a, **kw: _AvailableDaemonStub(),
     )
 
