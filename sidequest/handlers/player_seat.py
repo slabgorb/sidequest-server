@@ -51,6 +51,15 @@ class PlayerSeatHandler:
                     session._room.slug,
                 )
                 _seat_span.set_attribute("seated_count", len(session._room.seated_player_ids()))
+                # Story 45-2: returning player — handler is already in
+                # _State.Playing because the connect flow detected an
+                # existing character and skipped chargen. Promote the
+                # fresh seat directly to PLAYING so the turn barrier
+                # counts them on the next submission.
+                from sidequest.server.session_handler import _State  # noqa: PLC0415
+
+                if session._state is _State.Playing:
+                    session._room.transition_to_playing(player_id)
             else:
                 logger.warning(
                     "session.player_seat_no_room player_id=%s character_slot=%s",

@@ -713,11 +713,30 @@ class WebSocketSessionHandler:
                     sd.world_slug,
                 )
             except HistoryParseError as exc:
-                logger.warning(
+                # Loud failure (CLAUDE.md "No Silent Fallbacks"): log at
+                # ERROR and emit an OTEL span event so the GM panel /
+                # watcher dashboard surfaces the malformed shipping
+                # content. We retain the empty-snapshot fallback because
+                # the character has already been chargen-built and
+                # hard-failing here would orphan the commit; but the
+                # error is no longer invisible.
+                logger.error(
                     "world_materialization.parse_failed genre=%s world=%s error=%s",
                     sd.genre_slug,
                     sd.world_slug,
                     exc,
+                    exc_info=True,
+                )
+                span.add_event(
+                    "history.parse_failed",
+                    {
+                        "event": "history.parse_failed",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "error": str(exc),
+                        "exception_type": type(exc).__name__,
+                        "exception_repr": repr(exc),
+                    },
                 )
                 materialized = GameSnapshot(genre_slug=sd.genre_slug, world_slug=sd.world_slug)
             # Discard the "Adventurer" placeholder the fresh chapter may
@@ -1040,6 +1059,13 @@ class WebSocketSessionHandler:
         # connect.rs:2183). Pre-fix, a disconnect between confirm and
         # first action lost the save-state flag.
         self._state = _State.Playing
+
+        # Story 45-2: chargen committed → seat transitions CHARGEN → PLAYING
+        # so the turn barrier counts this peer. No-op if no room (solo
+        # path with no MP room) or if the peer was already PLAYING (safe
+        # under double-confirmation).
+        if self._room is not None:
+            self._room.transition_to_playing(player_id)
 
         sd.builder = None
         # ADR-014 / ADR-078: HP was removed in favor of EdgePool (composure).

@@ -78,6 +78,7 @@ class DiceThrowHandler:
                 session_id=f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}",
                 round_number=snapshot.turn_manager.interaction,
                 room_broadcast=room_broadcast,
+                snapshot=snapshot,
             )
         except DiceDispatchError as exc:
             logger.warning("dice.dispatch_error error=%s", exc)
