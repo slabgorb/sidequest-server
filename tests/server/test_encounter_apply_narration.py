@@ -364,6 +364,94 @@ def test_items_discarded_unmatched_logs_and_emits_count(
     assert span.attributes["unmatched_discards_count"] == 1
 
 
+def test_items_consumed_removes_item_and_emits_otel_span(
+    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+) -> None:
+    """Story 45-15: narrator-extracted ``items_consumed`` removes the
+    used-up consumable from inventory and fires the OTEL lie-detector
+    span with the consumed name.
+
+    Regression for Playtest 3 Felix: ``maintenance_kit.state=Consumed``
+    after patch-foam use (rounds 14-16) and foil-strip tear (round 48),
+    but the kit remained in inventory at quantity=1 because the consume
+    verb had no apply seam. Fix: consume lane removes outright (no
+    ``state=Consumed`` is ever written; AC1 satisfied by never setting
+    the state without removal).
+
+    Asserts:
+    - Item is removed from inventory (no item left at state=Consumed).
+    - OTEL span fires with the consumed name in ``consumed_json``.
+    - ``consumed_count=1``, ``unmatched_consumes_count=0``.
+    """
+    snap, pack, character = cac_snap_with_character
+    character.core.inventory.items.append(
+        {
+            "id": "narrator:maintenance_kit",
+            "name": "Maintenance Kit",
+            "description": "A scuffed tin of patch-foam and foil strips.",
+            "category": "consumable",
+            "value": 0, "weight": 0.5, "rarity": "common",
+            "narrative_weight": 0.4, "tags": [],
+            "equipped": False, "quantity": 1,
+            "uses_remaining": None, "state": "Carried",
+        }
+    )
+
+    result = NarrationTurnResult(
+        narration=(
+            "Felix sprays the last of the patch-foam over the gash; the "
+            "kit sputters dry."
+        ),
+        items_consumed=[
+            {"name": "Maintenance Kit", "category": "consumable"},
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Felix", pack=pack,
+    )
+
+    # AC1: no item remains at state=Consumed (we don't set Consumed —
+    # we just drop the item). Inventory is empty after consumption.
+    assert character.core.inventory.items == []
+
+    # AC2: OTEL span fires with the consumed name.
+    spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
+    assert "inventory.narrator_extracted" in spans_by_name, (
+        f"expected inventory.narrator_extracted span; "
+        f"got {list(spans_by_name)}"
+    )
+    span = spans_by_name["inventory.narrator_extracted"]
+    assert span.attributes["consumed_count"] == 1
+    assert span.attributes["consumed_json"] == '["maintenance kit"]'
+    assert span.attributes["unmatched_consumes_count"] == 0
+    assert span.attributes["player_name"] == "Felix"
+
+
+def test_items_consumed_unmatched_logs_and_emits_count(
+    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+) -> None:
+    """No-silent-fallback (CLAUDE.md): when narrator hallucinates a
+    consume for an item not in inventory, the span surfaces the miss via
+    ``unmatched_consumes_count`` so the GM panel can spot the drift —
+    rather than silently dropping the consume.
+    """
+    snap, pack, character = cac_snap_with_character
+    assert character.core.inventory.items == []
+
+    result = NarrationTurnResult(
+        narration="You drink the imaginary potion.",
+        items_consumed=[{"name": "Phantom Potion"}],
+    )
+    _apply_narration_result_to_snapshot(
+        snap, result, player_name="Slabgorb", pack=pack,
+    )
+
+    spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
+    span = spans_by_name["inventory.narrator_extracted"]
+    assert span.attributes["consumed_count"] == 0
+    assert span.attributes["unmatched_consumes_count"] == 1
+
+
 def test_items_update_tolerates_missing_characters(cac_snap) -> None:
     """Called with no character seated (e.g., pre-chargen narration), the
     inventory block must no-op without raising. Single-player saves

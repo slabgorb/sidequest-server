@@ -291,6 +291,82 @@ async def test_items_discarded_emits_state_transition_via_span_route(
 
 
 @pytest.mark.asyncio
+async def test_items_consumed_emits_state_transition_via_span_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 45-15 wiring: a NarrationTurnResult with ``items_consumed``
+    must (a) remove the matched item from inventory and (b) reach the
+    hub as a routed ``state_transition`` event with the consumed name
+    surfaced in the route's ``consumed`` field.
+
+    Closes Playtest 3 Felix gap: ``maintenance_kit`` lingered at
+    ``state=Consumed, quantity=1`` after patch-foam use because the
+    consume verb had no apply seam. Fix: consume lane removes outright;
+    no item ever sits in state=Consumed.
+    """
+    captured = await _setup(monkeypatch, "test-inventory-consumed-wiring")
+
+    pre_existing = [
+        {
+            "id": "narrator:maintenance_kit",
+            "name": "Maintenance Kit",
+            "description": "Patch-foam, foil strips, dust.",
+            "category": "consumable",
+            "value": 0,
+            "weight": 0.5,
+            "rarity": "common",
+            "narrative_weight": 0.4,
+            "tags": [],
+            "equipped": False,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
+        },
+    ]
+    snapshot = GameSnapshot(
+        genre_slug="mutant_wasteland",
+        world_slug="flickering_reach",
+        location="Felix's Workshop",
+        discovered_regions=["Felix's Workshop"],
+        npc_registry=[],
+        quest_log={},
+        lore_established=[],
+        characters=[_make_character("Felix", items=pre_existing)],
+        turn_manager=TurnManager(),
+    )
+    snapshot.turn_manager.record_interaction()
+
+    result = NarrationTurnResult(
+        narration="Felix sprays the last of the patch-foam over the gash.",
+        items_consumed=[{"name": "Maintenance Kit"}],
+    )
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Felix")
+    await asyncio.sleep(0.05)
+
+    # AC1: kit is gone from inventory — no item left at state=Consumed
+    # because the consume lane removes outright.
+    items = snapshot.characters[0].core.inventory.items
+    assert items == []
+
+    typed = [
+        e
+        for e in captured
+        if e["event_type"] == "state_transition"
+        and e["component"] == "inventory"
+        and e["fields"].get("op") == "narrator_extracted"
+    ]
+    assert len(typed) == 1, (
+        "expected exactly one narrator_extracted state_transition "
+        f"(got {len(typed)}: {[e['fields'] for e in typed]})"
+    )
+    fields = typed[0]["fields"]
+    assert fields["consumed"] == '["maintenance kit"]'
+    assert fields["consumed_count"] == 1
+    assert fields["lost_count"] == 0
+    assert fields["gained_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_inventory_route_is_single_source_no_double_emission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -242,18 +242,25 @@ def _apply_narration_result_to_snapshot(
                 player_name,
             )
 
-    # Inventory — apply narrator items_gained/items_lost/items_discarded on
-    # the rolling player's character. Playtest 2026-04-24 found a wiring
-    # gap: watcher emitted but inventory.items never updated, leaving UI
-    # out of sync. Item shape mirrors dispatch/chargen_loadout
-    # ._item_dict_from_catalog. items_lost removes the first matching
-    # name (case-insensitive) — narrator-granted items currently arrive
-    # as quantity=1 singletons. items_discarded (Story 45-14) flips the
-    # first matching item's state from "Carried" to "Discarded" without
-    # removing it — narrator-recoverable abandon/drop semantics.
+    # Inventory — apply narrator items_gained/items_lost/items_discarded/
+    # items_consumed on the rolling player's character. Playtest 2026-04-24
+    # found a wiring gap: watcher emitted but inventory.items never
+    # updated, leaving UI out of sync. Item shape mirrors
+    # dispatch/chargen_loadout._item_dict_from_catalog. items_lost removes
+    # the first matching name (case-insensitive) — narrator-granted items
+    # currently arrive as quantity=1 singletons. items_discarded (Story
+    # 45-14) flips the first matching item's state from "Carried" to
+    # "Discarded" without removing it — narrator-recoverable abandon/drop
+    # semantics. items_consumed (Story 45-15) also removes the first
+    # matching item but is a distinct lane so the OTEL span can surface
+    # "spent on use" vs. "given away" — Playtest 3 Felix found the
+    # maintenance kit lingered at quantity=1 after patch-foam use because
+    # the consume verb had no apply seam.
     items_discarded = getattr(result, "items_discarded", None) or []
+    items_consumed = getattr(result, "items_consumed", None) or []
     if (
         result.items_gained or result.items_lost or items_discarded
+        or items_consumed
     ) and snapshot.characters:
         character = snapshot.characters[0]
         turn_num = snapshot.turn_manager.interaction
@@ -289,6 +296,8 @@ def _apply_narration_result_to_snapshot(
         removed_names: list[str] = []
         discarded_names: list[str] = []
         unmatched_discards: list[str] = []
+        consumed_names: list[str] = []
+        unmatched_consumes: list[str] = []
         for entry in result.items_gained or []:
             item_dict = _narrator_item_dict(entry)
             character.core.inventory.items.append(item_dict)
@@ -334,30 +343,64 @@ def _apply_narration_result_to_snapshot(
                     player_name, turn_num, discard_name,
                 )
 
+        # Story 45-15: items_consumed — used-up consumables drop from
+        # inventory. AC1 demands no item remain at state=Consumed after
+        # end-of-turn; the simplest fix is to never set Consumed in the
+        # first place — the consume lane removes outright. Per CLAUDE.md
+        # "no silent fallbacks": when the narrator declares a consume for
+        # an item that isn't in inventory we surface ``unmatched_consumes``
+        # on the OTEL span so the GM panel sees the gap (the narrator
+        # hallucinated the use, or extraction lost the prior pickup).
+        for entry in items_consumed:
+            consume_name = str(entry.get("name", "") or "").strip().lower()
+            if not consume_name:
+                continue
+            matched = False
+            for idx, existing in enumerate(character.core.inventory.items):
+                existing_name = str(existing.get("name", "") or "").strip().lower()
+                if existing_name == consume_name:
+                    character.core.inventory.items.pop(idx)
+                    consumed_names.append(consume_name)
+                    matched = True
+                    break
+            if not matched:
+                unmatched_consumes.append(consume_name)
+                logger.warning(
+                    "state.inventory_consume_miss player=%s turn=%d "
+                    "name=%r reason=no_inventory_match",
+                    player_name, turn_num, consume_name,
+                )
+
         # Span emission replaces the prior direct ``_watcher_publish`` —
         # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
         # event via ``SPAN_ROUTES[SPAN_INVENTORY_NARRATOR_EXTRACTED]``.
-        # ``added_names`` / ``removed_names`` / ``discarded_names`` reflect
-        # the actual mutation outcome (case-insensitive match, only
-        # successful transitions recorded), so the route-extracted payload
+        # ``added_names`` / ``removed_names`` / ``discarded_names`` /
+        # ``consumed_names`` reflect the actual mutation outcome
+        # (case-insensitive match, only successful transitions/removals
+        # recorded), so the route-extracted payload
         # mirrors the post-mutation state.
         with inventory_narrator_extracted_span(
             gained=added_names,
             lost=removed_names,
             discarded=discarded_names,
+            consumed=consumed_names,
             player_name=player_name,
             turn_number=turn_num,
             unmatched_discards_count=len(unmatched_discards),
+            unmatched_consumes_count=len(unmatched_consumes),
         ):
             logger.info(
                 "state.inventory_update player=%s turn=%d gained=%s lost=%s "
-                "discarded=%s unmatched_discards=%s",
+                "discarded=%s unmatched_discards=%s consumed=%s "
+                "unmatched_consumes=%s",
                 player_name,
                 turn_num,
                 added_names,
                 removed_names,
                 discarded_names,
                 unmatched_discards,
+                consumed_names,
+                unmatched_consumes,
             )
 
     if result.lore_established:
