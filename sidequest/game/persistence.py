@@ -305,11 +305,9 @@ class SqliteStore:
             "SELECT COUNT(*) FROM events"
         ).fetchone()[0]
 
-        cleared_tables: list[str] = []
         with self._conn:
             for tbl in _PER_SLOT_TABLES:
                 self._conn.execute(f"DELETE FROM {tbl}")
-                cleared_tables.append(tbl)
             now = _now_rfc3339()
             self._conn.execute(
                 """INSERT OR REPLACE INTO session_meta
@@ -323,7 +321,7 @@ class SqliteStore:
             {
                 "genre_slug": genre_slug,
                 "world_slug": world_slug,
-                "cleared_tables": cleared_tables,
+                "cleared_tables": list(_PER_SLOT_TABLES),
                 "prior_narrative_count": int(prior_narrative_count),
                 "prior_event_count": int(prior_event_count),
                 "mode": "clear",
