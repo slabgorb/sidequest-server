@@ -1,0 +1,143 @@
+"""Audio + music spans — backend lifecycle and per-turn cue dispatch."""
+
+from __future__ import annotations
+
+import json as _json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
+from opentelemetry import trace
+
+from ._core import FLAT_ONLY_SPANS, SPAN_ROUTES, SpanRoute
+from .span import Span
+
+# Music director (Rust port artifact — agent not reimplemented)
+SPAN_MUSIC_EVALUATE = "music_evaluate"
+SPAN_MUSIC_CLASSIFY_MOOD = "music_classify_mood"
+
+FLAT_ONLY_SPANS.update({SPAN_MUSIC_EVALUATE, SPAN_MUSIC_CLASSIFY_MOOD})
+
+# Audio backend lifecycle + per-turn dispatch
+SPAN_AUDIO_BACKEND_ENABLED = "audio.backend_enabled"
+SPAN_ROUTES[SPAN_AUDIO_BACKEND_ENABLED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "enabled",
+        "genre": (span.attributes or {}).get("genre", ""),
+        "mood_count": (span.attributes or {}).get("mood_count", 0),
+        "sfx_count": (span.attributes or {}).get("sfx_count", 0),
+    },
+)
+SPAN_AUDIO_BACKEND_DISABLED = "audio.backend_disabled"
+SPAN_ROUTES[SPAN_AUDIO_BACKEND_DISABLED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "disabled",
+        "reason": (span.attributes or {}).get("reason", ""),
+        "genre": (span.attributes or {}).get("genre", ""),
+    },
+)
+SPAN_AUDIO_SKIPPED = "audio.skipped"
+SPAN_ROUTES[SPAN_AUDIO_SKIPPED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "skipped",
+        "reason": (span.attributes or {}).get("reason", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "extra": (span.attributes or {}).get("extra_json", "{}"),
+    },
+)
+SPAN_AUDIO_DISPATCHED = "audio.dispatched"
+SPAN_ROUTES[SPAN_AUDIO_DISPATCHED] = SpanRoute(
+    event_type="state_transition",
+    component="audio",
+    extract=lambda span: {
+        "field": "audio",
+        "op": "dispatched",
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "mood": (span.attributes or {}).get("mood", ""),
+        "music_track": (span.attributes or {}).get("music_track", ""),
+        "sfx_count": (span.attributes or {}).get("sfx_count", 0),
+    },
+)
+
+
+@contextmanager
+def audio_backend_enabled_span(
+    *,
+    genre: str,
+    mood_count: int,
+    sfx_count: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    attributes: dict[str, Any] = {
+        "genre": genre,
+        "mood_count": mood_count,
+        "sfx_count": sfx_count,
+        **attrs,
+    }
+    with Span.open(SPAN_AUDIO_BACKEND_ENABLED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def audio_backend_disabled_span(
+    *,
+    reason: str,
+    genre: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """``reason``: ``pack_dir_missing`` | ``empty_config``."""
+    attributes: dict[str, Any] = {"reason": reason, "genre": genre, **attrs}
+    with Span.open(SPAN_AUDIO_BACKEND_DISABLED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def audio_skipped_span(
+    *,
+    reason: str,
+    turn_number: int,
+    extra: dict[str, object] | None = None,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """``extra`` is JSON-encoded — OTEL silently drops dict attribute values."""
+    attributes: dict[str, Any] = {
+        "reason": reason,
+        "turn_number": turn_number,
+        "extra_json": _json.dumps(dict(extra or {}), sort_keys=True),
+        **attrs,
+    }
+    with Span.open(SPAN_AUDIO_SKIPPED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def audio_dispatched_span(
+    *,
+    turn_number: int,
+    mood: str,
+    music_track: str,
+    sfx_count: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    attributes: dict[str, Any] = {
+        "turn_number": turn_number,
+        "mood": mood,
+        "music_track": music_track,
+        "sfx_count": sfx_count,
+        **attrs,
+    }
+    with Span.open(SPAN_AUDIO_DISPATCHED, attributes, tracer_override=_tracer) as span:
+        yield span

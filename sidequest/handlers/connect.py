@@ -12,7 +12,6 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.game.builder import CharacterBuilder
 from sidequest.game.event_log import EventLog
@@ -512,7 +511,6 @@ class ConnectHandler:
                 store=room.store,
                 genre_pack=genre_pack,
                 orchestrator=shared_orchestrator,
-                local_dm=LocalDM(client=session._client_factory()),
                 builder=builder,
                 opening_seed=opening_seed,
                 opening_directive=opening_directive,
@@ -960,7 +958,6 @@ class ConnectHandler:
             store=store,
             genre_pack=genre_pack,
             orchestrator=orchestrator,
-            local_dm=LocalDM(client=session._client_factory()),
             builder=builder,
             opening_seed=opening_seed,
             opening_directive=opening_directive,

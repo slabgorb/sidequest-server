@@ -30,10 +30,7 @@ from sidequest.protocol.dice import (
 )
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
-    CartographyMetadata,
     CreationChoice,
-    ExploredLocation,
-    FogBounds,
     Footnote,
     InitialState,
     PartyMember,
@@ -292,29 +289,6 @@ class PartyStatusPayload(ProtocolBase):
 
     members: list[PartyMember]
     """All party members."""
-
-
-# ---------------------------------------------------------------------------
-# MapUpdatePayload
-# ---------------------------------------------------------------------------
-
-
-class MapUpdatePayload(ProtocolBase):
-    """Map update for the map overlay.
-
-    Port of sidequest_protocol::MapUpdatePayload.
-    """
-
-    current_location: NonBlankString
-    """Current player location. Non-blank."""
-    region: NonBlankString
-    """Current region name. Non-blank."""
-    explored: list[ExploredLocation]
-    """Explored locations."""
-    fog_bounds: FogBounds | None = None
-    """Fog of war bounds."""
-    cartography: CartographyMetadata | None = None
-    """Cartography metadata from genre pack."""
 
 
 # ---------------------------------------------------------------------------
@@ -639,14 +613,6 @@ class PartyStatusMessage(ProtocolBase):
     player_id: str = ""
 
 
-class MapUpdateMessage(ProtocolBase):
-    """GameMessage::MapUpdate wire representation."""
-
-    type: Literal[MessageType.MAP_UPDATE] = MessageType.MAP_UPDATE
-    payload: MapUpdatePayload
-    player_id: str = ""
-
-
 class ChapterMarkerMessage(ProtocolBase):
     """GameMessage::ChapterMarker wire representation."""
 
@@ -793,7 +759,6 @@ _Phase1Variant = Annotated[
     | ConfrontationMessage
     | TurnStatusMessage
     | PartyStatusMessage
-    | MapUpdateMessage
     | ChapterMarkerMessage
     | ActionQueueMessage
     | ErrorMessage

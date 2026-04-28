@@ -1,27 +1,18 @@
-"""LocalDM — structured-output decomposer between sealed-letter and narrator.
+"""local_dm — DORMANT.
 
-Spec: docs/superpowers/specs/2026-04-23-local-dm-decomposer-design.md §3-§7
+This module is not invoked on the live turn path as of 2026-04-28
+(see docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md).
 
-Reads player action + game state. Emits DispatchPackage (spec §5).
-Never writes prose.
+It is preserved for two consumers:
+  1. The offline LocalDM corpus runner (follow-up story).
+  2. Re-engagement on the live path once ADR-073's local fine-tuned
+     router replaces the Haiku CLI subprocess.
 
-**Session model: stateless per turn.** Spec §461 says "Start stateful;
-fall back to stateless if drift bugs surface." Drift surfaced in playtest
-2026-04-26 — turn 1 produced clean DispatchPackages, but turns 2+
-accumulated schema violations every turn (literal_error on
-``narrator_instructions.kind``, fabricated ``lethality`` shape with
-``threat_vector``/``severity``/``combatant_primary`` fields the
-``LethalityVerdict`` model rejects). The persistent Haiku session was
-de-prioritizing the system prompt's RULES block as state_summary filled
-the resumed-session context. Falling back to stateless restates the
-system prompt every turn and removes drift accumulation; we pay one
-extra establishment per turn for reliable schema adherence.
+Unit tests for this module remain in `just check-all` so it does not
+bit-rot. If you find yourself adding a live caller, you are landing
+ADR-073 (or undoing this design); update both ends.
 
-Group B scope: single-player decompose. Multiplayer batching lands in
-Group G alongside the multiplayer session model wiring.
-
-On any parse failure, LLM timeout, or unexpected exception, emits a
-degraded=True package (spec §6.6) — the table never blocks.
+Original design: docs/superpowers/specs/2026-04-23-local-dm-decomposer-design.md
 """
 
 from __future__ import annotations

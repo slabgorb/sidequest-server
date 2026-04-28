@@ -1,12 +1,16 @@
-"""npc_agency subsystem — surfaces registry facts for decomposer dispatch.
+"""npc_agency — DORMANT.
 
-Group B scope: look up an NPC by name in the snapshot's NpcRegistryEntry
-list, emit a must_narrate directive framing role + last-seen context, and
-surface the same fields as structured data for downstream consumers.
+This module is not invoked on the live turn path as of 2026-04-28
+(see docs/superpowers/specs/2026-04-28-localdm-offline-only-design.md).
 
-Group C extends this to consume confrontation resource pools + tension
-tracker state and emit disposition-aware directives / lethality-arbiter
-input. NpcRegistryEntry in the Python port today has no disposition field.
+It is preserved for two consumers:
+  1. The offline LocalDM corpus runner (follow-up story).
+  2. Re-engagement on the live path once ADR-073's local fine-tuned
+     router replaces the Haiku CLI subprocess.
+
+Unit tests for this module remain in `just check-all` so it does not
+bit-rot. If you find yourself adding a live caller, you are landing
+ADR-073 (or undoing this design); update both ends.
 """
 from __future__ import annotations
 

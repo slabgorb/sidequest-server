@@ -12,13 +12,12 @@ from __future__ import annotations
 
 
 def test_emitters_module_exposes_required_functions() -> None:
-    """Wiring guard — the four required functions must be importable
+    """Wiring guard — the required emitter functions must be importable
     from sidequest.server.emitters by their canonical names."""
     from sidequest.server import emitters
 
     assert hasattr(emitters, "persist_scrapbook_entry")
     assert hasattr(emitters, "emit_event")
-    assert hasattr(emitters, "emit_map_update_for_cartography")
     assert hasattr(emitters, "emit_scrapbook_entry")
 
 
@@ -136,26 +135,6 @@ def test_emit_event_delegate_calls_module_function(monkeypatch, session_handler_
     assert len(captured) == 1
     assert captured[0][0] is handler
     assert captured[0][1] == "NARRATION"
-
-
-def test_emit_map_update_for_cartography_delegate_calls_module_function(
-    monkeypatch, session_handler_factory
-) -> None:
-    """Wiring guard — WebSocketSessionHandler._emit_map_update_for_cartography
-    must delegate to emitters.emit_map_update_for_cartography."""
-    from sidequest.server import emitters
-
-    sd, handler = session_handler_factory()
-    captured: list[tuple] = []
-
-    def _spy(h, *, sd, render_id, player_id):
-        captured.append((h, sd, render_id, player_id))
-
-    monkeypatch.setattr(emitters, "emit_map_update_for_cartography", _spy)
-
-    handler._emit_map_update_for_cartography(sd=sd, render_id="render-1", player_id=sd.player_id)
-
-    assert captured == [(handler, sd, "render-1", sd.player_id)]
 
 
 def test_emit_scrapbook_entry_delegate_calls_module_function(

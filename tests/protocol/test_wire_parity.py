@@ -19,7 +19,6 @@ import json
 
 from sidequest.protocol import (
     CharacterState,
-    ExploredLocation,
     GameMessage,
     InitialState,
     InventoryItem,
@@ -29,8 +28,6 @@ from sidequest.protocol import (
     StateDelta,
 )
 from sidequest.protocol.messages import (
-    MapUpdateMessage,
-    MapUpdatePayload,
     NarrationEndPayload,
     NarrationMessage,
     PartyStatusMessage,
@@ -110,75 +107,6 @@ def test_narration_payload_omits_none_state_delta_through_game_message() -> None
     data = json.loads(msg.model_dump_json())
     assert "state_delta" not in data["payload"]
     assert "footnotes" not in data["payload"]
-
-
-# ---------------------------------------------------------------------------
-# ExploredLocation — room-graph fields skipped when absent/empty
-# ---------------------------------------------------------------------------
-
-
-def _make_loc(**kwargs: object) -> ExploredLocation:
-    """Construct ExploredLocation via model_validate (handles 'type' alias)."""
-    defaults: dict[str, object] = {"name": "Cave", "type": ""}
-    defaults.update(kwargs)
-    return ExploredLocation.model_validate(defaults)
-
-
-def test_explored_location_omits_empty_room_exits() -> None:
-    """room_exits=[] must be absent (Vec::is_empty parity)."""
-    loc = _make_loc()
-    data = json.loads(loc.model_dump_json())
-    assert "room_exits" not in data
-
-
-def test_explored_location_omits_empty_room_type() -> None:
-    """room_type='' must be absent (String::is_empty parity)."""
-    loc = _make_loc()
-    data = json.loads(loc.model_dump_json())
-    assert "room_type" not in data
-
-
-def test_explored_location_omits_none_size() -> None:
-    """size=None must be absent (Option::is_none parity)."""
-    loc = _make_loc()
-    data = json.loads(loc.model_dump_json())
-    assert "size" not in data
-
-
-def test_explored_location_omits_none_tactical_grid() -> None:
-    """tactical_grid=None must be absent (Option::is_none parity)."""
-    loc = _make_loc()
-    data = json.loads(loc.model_dump_json())
-    assert "tactical_grid" not in data
-
-
-def test_explored_location_keeps_numeric_defaults() -> None:
-    """x=0, y=0, is_current_room=False are NOT skipped (no skip_serializing_if in Rust)."""
-    loc = _make_loc()
-    data = json.loads(loc.model_dump_json())
-    # x and y are ints — kept even at zero
-    assert data["x"] == 0
-    assert data["y"] == 0
-    # is_current_room is bool — kept even at False
-    assert data["is_current_room"] is False
-
-
-def test_explored_location_includes_populated_room_exits() -> None:
-    """Non-empty room_exits must be present."""
-    from sidequest.protocol.models import RoomExitInfo
-    loc = _make_loc(
-        name="Dungeon Corridor",
-        **{"type": "dungeon"},
-        room_exits=[RoomExitInfo.model_validate({
-            "target": "chamber_1", "exit_type": "door"
-        })],
-        room_type="corridor",
-    )
-    data = json.loads(loc.model_dump_json())
-    assert "room_exits" in data
-    assert len(data["room_exits"]) == 1
-    assert "room_type" in data
-    assert data["room_type"] == "corridor"
 
 
 # ---------------------------------------------------------------------------
@@ -314,22 +242,3 @@ def test_inventory_item_type_wire_key_via_party_status_message() -> None:
     assert "item_type" not in item, "'item_type' Python name must not appear on the wire"
 
 
-def test_explored_location_type_wire_key_via_map_update_message() -> None:
-    """ExploredLocation.location_type must appear as 'type' on the wire, not 'location_type'.
-
-    Serialization path: MapUpdateMessage -> MapUpdatePayload ->
-    ExploredLocation (2 levels deep into GameMessage).
-    """
-    msg = MapUpdateMessage(payload=MapUpdatePayload(
-        current_location=nbs("Dark Cave"),
-        region=nbs("Dungeon"),
-        explored=[ExploredLocation.model_validate({
-            "id": "cave-1", "name": "Dark Cave",
-            "x": 10, "y": 5, "type": "dungeon",
-        })],
-    ))
-    wire = json.loads(msg.model_dump_json())
-    loc = wire["payload"]["explored"][0]
-    assert "type" in loc, "'type' key missing from ExploredLocation wire output"
-    assert loc["type"] == "dungeon"
-    assert "location_type" not in loc, "'location_type' Python name must not appear on the wire"

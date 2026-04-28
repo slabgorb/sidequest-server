@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 from sidequest.agents.claude_client import ClaudeClient, LlmClient
-from sidequest.agents.local_dm import LocalDM
 from sidequest.agents.orchestrator import Orchestrator, TurnContext
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
@@ -540,11 +539,6 @@ class _SessionData:
     # in-memory lore_store after disconnect and from racing a sibling worker
     # at the ``await client.embed()`` yield point on rapid successive turns.
     embed_task: asyncio.Task[None] | None = None
-    # Group B Local DM decomposer (Task 10). One instance per session so
-    # the decomposer can maintain a persistent Haiku sub-session across
-    # turns. Constructed with a default factory so existing _SessionData
-    # construction sites require no change.
-    local_dm: LocalDM = field(default_factory=LocalDM)
     # Last dice roll outcome (story 34 — physics-is-the-roll). Stashed on
     # DICE_THROW resolution and read by the next narration turn's context
     # builder so the narrator knows whether the roll succeeded. Cleared by

@@ -13,15 +13,10 @@ import pytest
 from pydantic import ValidationError
 
 from sidequest.protocol.models import (
-    CartographyMetadata,
-    CartographyRegion,
-    CartographyRoute,
     CharacterSheetDetails,
     CharacterState,
     CreationChoice,
-    ExploredLocation,
     FactCategory,
-    FogBounds,
     Footnote,
     InitialState,
     InventoryItem,
@@ -29,7 +24,6 @@ from sidequest.protocol.models import (
     ItemGained,
     PartyMember,
     RolledStat,
-    RoomExitInfo,
     StateDelta,
     TacticalFeaturePayload,
     TacticalGridPayload,
@@ -86,13 +80,6 @@ def make_inventory_item(**kwargs: object) -> InventoryItem:
     }
     defaults.update(kwargs)
     return InventoryItem.model_validate(defaults)
-
-
-def make_explored_location(**kwargs: object) -> ExploredLocation:
-    """Construct ExploredLocation via model_validate to handle 'type' alias."""
-    defaults: dict[str, object] = {"name": "Place", "type": ""}
-    defaults.update(kwargs)
-    return ExploredLocation.model_validate(defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -521,88 +508,6 @@ def test_party_member_deny_unknown_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FogBounds
-# ---------------------------------------------------------------------------
-
-
-def test_fog_bounds_basic() -> None:
-    fb = FogBounds(width=500, height=400)
-    assert fb.width == 500
-    assert fb.height == 400
-
-
-def test_fog_bounds_deny_unknown_fields() -> None:
-    with pytest.raises(ValidationError):
-        FogBounds.model_validate({"width": 100, "height": 100, "depth": 50})
-
-
-# ---------------------------------------------------------------------------
-# RoomExitInfo
-# ---------------------------------------------------------------------------
-
-
-def test_room_exit_info_basic() -> None:
-    exit_info = RoomExitInfo(target=nbs("dungeon_corridor"), exit_type="door")
-    assert str(exit_info.target) == "dungeon_corridor"
-    assert exit_info.exit_type == "door"
-
-
-def test_room_exit_info_deny_unknown_fields() -> None:
-    with pytest.raises(ValidationError):
-        RoomExitInfo.model_validate({
-            "target": "room_a",
-            "exit_type": "door",
-            "secret": True,
-        })
-
-
-# ---------------------------------------------------------------------------
-# ExploredLocation
-# ---------------------------------------------------------------------------
-
-
-def test_explored_location_basic() -> None:
-    loc = make_explored_location(
-        id="dark_cave",
-        name="Dark Cave",
-        x=100,
-        y=200,
-        **{"type": "dungeon"},
-        connections=["Forest Path"],
-    )
-    assert loc.id == "dark_cave"
-    assert str(loc.name) == "Dark Cave"
-    assert loc.x == 100
-    assert loc.location_type == "dungeon"
-
-
-def test_explored_location_serializes_type_not_location_type() -> None:
-    """Wire format must use 'type', not 'location_type'."""
-    loc = make_explored_location(name="Village", **{"type": "town"})
-    data = json.loads(loc.model_dump_json())
-    assert "type" in data
-    assert "location_type" not in data
-    assert data["type"] == "town"
-
-
-def test_explored_location_defaults() -> None:
-    loc = make_explored_location(name="Somewhere")
-    assert loc.id == ""
-    assert loc.x == 0
-    assert loc.y == 0
-    assert loc.is_current_room is False
-    assert loc.tactical_grid is None
-
-
-def test_explored_location_deny_unknown_fields() -> None:
-    with pytest.raises(ValidationError):
-        ExploredLocation.model_validate({
-            "name": "Place",
-            "bogus": "field",
-        })
-
-
-# ---------------------------------------------------------------------------
 # TacticalGridPayload / TacticalFeaturePayload
 # ---------------------------------------------------------------------------
 
@@ -642,48 +547,3 @@ def test_tactical_grid_deny_unknown_fields() -> None:
         })
 
 
-# ---------------------------------------------------------------------------
-# CartographyMetadata / CartographyRegion / CartographyRoute
-# ---------------------------------------------------------------------------
-
-
-def test_cartography_region_basic() -> None:
-    region = CartographyRegion(
-        name=nbs("The Wastes"),
-        description="Barren irradiated lands",
-        adjacent=["scrapyard", "highway"],
-    )
-    assert str(region.name) == "The Wastes"
-    assert region.adjacent == ["scrapyard", "highway"]
-
-
-def test_cartography_route_basic() -> None:
-    route = CartographyRoute(
-        name=nbs("Dust Road"),
-        description="A cracked highway",
-        from_id="wastes",
-        to_id="scrapyard",
-    )
-    assert str(route.name) == "Dust Road"
-    assert route.from_id == "wastes"
-    assert route.to_id == "scrapyard"
-
-
-def test_cartography_metadata_basic() -> None:
-    meta = CartographyMetadata(
-        navigation_mode="region",
-        starting_region="start_zone",
-        regions={
-            "start_zone": CartographyRegion(name=nbs("Start Zone")),
-        },
-        routes=[],
-    )
-    assert meta.navigation_mode == "region"
-    assert "start_zone" in meta.regions
-
-
-def test_cartography_metadata_defaults() -> None:
-    meta = CartographyMetadata(navigation_mode="room_graph")
-    assert meta.starting_region == ""
-    assert meta.regions == {}
-    assert meta.routes == []

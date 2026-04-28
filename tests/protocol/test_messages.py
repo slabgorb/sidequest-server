@@ -30,8 +30,6 @@ from sidequest.protocol.messages import (
     ErrorMessage,
     ErrorPayload,
     GameMessage,
-    MapUpdateMessage,
-    MapUpdatePayload,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -50,9 +48,7 @@ from sidequest.protocol.messages import (
 from sidequest.protocol.models import (
     CharacterState,
     CreationChoice,
-    ExploredLocation,
     FactCategory,
-    FogBounds,
     Footnote,
     InitialState,
     InventoryItem,
@@ -109,12 +105,6 @@ def make_inventory_item(**kwargs: object) -> InventoryItem:
     }
     defaults.update(kwargs)
     return InventoryItem.model_validate(defaults)
-
-
-def make_explored_location(**kwargs: object) -> ExploredLocation:
-    defaults: dict[str, object] = {"name": "Place", "type": ""}
-    defaults.update(kwargs)
-    return ExploredLocation.model_validate(defaults)
 
 
 def round_trip(msg: GameMessage) -> GameMessage:
@@ -432,30 +422,6 @@ def test_party_status_round_trip() -> None:
     parsed = json.loads(pre_json)
     assert "sheet" not in parsed or parsed.get("sheet") is None
     assert "inventory" not in parsed or parsed.get("inventory") is None
-
-
-def test_map_update_round_trip() -> None:
-    loc = make_explored_location(
-        id="dark_cave",
-        name="Dark Cave",
-        x=100,
-        y=200,
-        **{"type": "dungeon"},
-        connections=["Forest Path"],
-    )
-    msg = GameMessage(root=MapUpdateMessage(
-        payload=MapUpdatePayload(
-            current_location=nbs("Dark Cave"),
-            region=nbs("Shadowlands"),
-            explored=[loc],
-            fog_bounds=FogBounds(width=500, height=400),
-        ),
-        player_id="",
-    ))
-    json_str = msg.model_dump_json()
-    decoded = round_trip(msg)
-    assert decoded.type == MessageType.MAP_UPDATE
-    assert '"type":"MAP_UPDATE"' in json_str
 
 
 def test_chapter_marker_round_trip() -> None:
@@ -820,11 +786,6 @@ def test_all_phase1_variants_parse_correctly() -> None:
         (MessageType.CHARACTER_CREATION, {"payload": {"phase": "scene"}}),
         (MessageType.TURN_STATUS, {"payload": {"player_name": "Alice", "status": "active"}}),
         (MessageType.PARTY_STATUS, {"payload": {"members": []}}),
-        (MessageType.MAP_UPDATE, {"payload": {
-            "current_location": "Village",
-            "region": "Outlands",
-            "explored": [],
-        }}),
         (MessageType.CHAPTER_MARKER, {"payload": {}}),
         (MessageType.ACTION_QUEUE, {"payload": {"actions": []}}),
         (MessageType.ERROR, {"payload": {"message": "oops"}}),

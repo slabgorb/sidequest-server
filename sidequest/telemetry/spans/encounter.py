@@ -1,0 +1,462 @@
+"""Encounter spans — phase transitions, beats, dual-track momentum, yield."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
+from opentelemetry import trace
+
+from ._core import FLAT_ONLY_SPANS, SPAN_ROUTES, SpanRoute
+from .span import Span
+
+# Routed encounter spans
+SPAN_ENCOUNTER_PHASE_TRANSITION = "encounter.phase_transition"
+SPAN_ROUTES[SPAN_ENCOUNTER_PHASE_TRANSITION] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.phase_transition",
+        # Emission site uses keys "from" and "to".
+        "from_phase": (span.attributes or {}).get("from", ""),
+        "to_phase": (span.attributes or {}).get("to", ""),
+    },
+)
+SPAN_ENCOUNTER_RESOLVED = "encounter.resolved"
+SPAN_ROUTES[SPAN_ENCOUNTER_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.resolved",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "outcome": (span.attributes or {}).get("outcome", ""),
+        "source": (span.attributes or {}).get("source", ""),
+    },
+)
+SPAN_ENCOUNTER_BEAT_APPLIED = "encounter.beat_applied"
+SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_APPLIED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.beat_applied",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "actor": (span.attributes or {}).get("actor", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+        "metric_delta": (span.attributes or {}).get("metric_delta", 0),
+    },
+)
+SPAN_ENCOUNTER_CONFRONTATION_INITIATED = "encounter.confrontation_initiated"
+SPAN_ROUTES[SPAN_ENCOUNTER_CONFRONTATION_INITIATED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.confrontation_initiated",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+    },
+)
+SPAN_ENCOUNTER_EMPTY_ACTOR_LIST = "encounter.empty_actor_list"
+SPAN_ROUTES[SPAN_ENCOUNTER_EMPTY_ACTOR_LIST] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.empty_actor_list",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+    },
+)
+SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
+SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.beat_failure_branch",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+        "actor": (span.attributes or {}).get("actor", ""),
+        "base_delta": (span.attributes or {}).get("base_delta", 0),
+        "failure_delta": (span.attributes or {}).get("failure_delta", 0),
+    },
+)
+SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED = "encounter.opposed_roll_resolved"
+SPAN_ROUTES[SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.opposed_roll_resolved",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "player_roll": (span.attributes or {}).get("player_roll", 0),
+        "player_mod": (span.attributes or {}).get("player_mod", 0),
+        "opponent_roll": (span.attributes or {}).get("opponent_roll", 0),
+        "opponent_mod": (span.attributes or {}).get("opponent_mod", 0),
+        "shift": (span.attributes or {}).get("shift", 0),
+        "tier": (span.attributes or {}).get("tier", ""),
+    },
+)
+
+# Story 45-3: Mid-turn momentum broadcast lie-detector. Fires whenever the
+# server emits a CONFRONTATION frame carrying post-mutation momentum, so
+# the GM panel can audit "the dial moved on screen because the engine
+# moved a metric, not because the narrator improvised matching prose."
+# ``source`` distinguishes the dice-throw site from the post-narration
+# site; ``beat_id`` is non-null on dice_throw and may be null on
+# narration_apply emits.
+SPAN_ENCOUNTER_MOMENTUM_BROADCAST = "encounter.momentum_broadcast"
+SPAN_ROUTES[SPAN_ENCOUNTER_MOMENTUM_BROADCAST] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.momentum_broadcast",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "player_metric_after": (span.attributes or {}).get("player_metric_after", 0),
+        "opponent_metric_after": (span.attributes or {}).get("opponent_metric_after", 0),
+        "source": (span.attributes or {}).get("source", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+    },
+)
+
+# Dual-track momentum constants — flat-only baseline; routes land with the
+# GM-panel encounter timeline rollout.
+SPAN_ENCOUNTER_BEAT_SKIPPED = "encounter.beat_skipped"
+SPAN_ENCOUNTER_INVALID_SIDE = "encounter.invalid_side"
+SPAN_ENCOUNTER_INVALID_OUTCOME_TIER = "encounter.invalid_outcome_tier"
+SPAN_ENCOUNTER_METRIC_ADVANCE = "encounter.metric_advance"
+SPAN_ENCOUNTER_TAG_CREATED = "encounter.tag_created"
+SPAN_ENCOUNTER_TAG_BACKFIRE = "encounter.tag_backfire"
+SPAN_ENCOUNTER_STATUS_ADDED = "encounter.status_added"
+SPAN_ENCOUNTER_STATUS_CLEARED = "encounter.status_cleared"
+SPAN_ENCOUNTER_YIELD_RECEIVED = "encounter.yield_received"
+SPAN_ENCOUNTER_YIELD_RESOLVED = "encounter.yield_resolved"
+SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
+SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consumed"
+
+FLAT_ONLY_SPANS.update({
+    SPAN_ENCOUNTER_BEAT_SKIPPED,
+    SPAN_ENCOUNTER_INVALID_SIDE,
+    SPAN_ENCOUNTER_INVALID_OUTCOME_TIER,
+    SPAN_ENCOUNTER_METRIC_ADVANCE,
+    SPAN_ENCOUNTER_TAG_CREATED,
+    SPAN_ENCOUNTER_TAG_BACKFIRE,
+    SPAN_ENCOUNTER_STATUS_ADDED,
+    SPAN_ENCOUNTER_STATUS_CLEARED,
+    SPAN_ENCOUNTER_YIELD_RECEIVED,
+    SPAN_ENCOUNTER_YIELD_RESOLVED,
+    SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
+    SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
+})
+
+
+@contextmanager
+def encounter_phase_transition_span(
+    *,
+    from_phase: str,
+    to_phase: str,
+    encounter_type: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_PHASE_TRANSITION,
+        {"from": from_phase, "to": to_phase, "encounter_type": encounter_type, **attrs},
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_resolved_span(
+    *,
+    encounter_type: str,
+    outcome: str | None,
+    source: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    span_attrs = {"encounter_type": encounter_type, "source": source}
+    if outcome is not None:
+        span_attrs["outcome"] = outcome
+    span_attrs.update(attrs)
+    with Span.open(SPAN_ENCOUNTER_RESOLVED, span_attrs, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def encounter_beat_applied_span(
+    *,
+    encounter_type: str,
+    actor: str,
+    beat_id: str,
+    metric_delta: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_BEAT_APPLIED,
+        {
+            "encounter_type": encounter_type,
+            "actor": actor,
+            "beat_id": beat_id,
+            "metric_delta": metric_delta,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_confrontation_initiated_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_CONFRONTATION_INITIATED,
+        {"encounter_type": encounter_type, "genre_slug": genre_slug, **attrs},
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_opposed_roll_resolved_span(
+    *,
+    encounter_type: str,
+    player_roll: int,
+    player_mod: int,
+    opponent_roll: int,
+    opponent_mod: int,
+    shift: int,
+    tier: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Lie-detector for the opposed-check path. Emit BEFORE apply_beat so the
+    GM panel can correlate the engine-derived tier with the metric_advance.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED,
+        {
+            "encounter_type": encounter_type,
+            "player_roll": int(player_roll),
+            "player_mod": int(player_mod),
+            "opponent_roll": int(opponent_roll),
+            "opponent_mod": int(opponent_mod),
+            "shift": int(shift),
+            "tier": tier,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_empty_actor_list_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    player_name: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Narrator named adversaries in prose but the JSON game_patch omitted them."""
+    with Span.open(
+        SPAN_ENCOUNTER_EMPTY_ACTOR_LIST,
+        {
+            "encounter_type": encounter_type,
+            "genre_slug": genre_slug,
+            "player_name": player_name,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_beat_skipped_span(
+    *, reason: str, actor: str, actor_side: str, beat_id: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_BEAT_SKIPPED,
+        {"reason": reason, "actor": actor,
+         "actor_side": actor_side, "beat_id": beat_id, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_invalid_side_span(
+    *, actor_name: str, declared_side: str, valid_set: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_INVALID_SIDE,
+        {"actor_name": actor_name, "declared_side": declared_side,
+         "valid_set": valid_set, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_invalid_outcome_tier_span(
+    *, beat_id: str, actor: str, declared_tier: str, valid_set: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_INVALID_OUTCOME_TIER,
+        {"beat_id": beat_id, "actor": actor,
+         "declared_tier": declared_tier, "valid_set": valid_set, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_metric_advance_span(
+    *, side: str, delta_kind: str, delta: int, before: int, after: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_METRIC_ADVANCE,
+        {"side": side, "delta_kind": delta_kind, "delta": delta,
+         "before": before, "after": after, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_momentum_broadcast_span(
+    *,
+    encounter_type: str,
+    player_metric_after: int,
+    opponent_metric_after: int,
+    source: str,
+    beat_id: str | None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 45-3: Lie-detector for the mid-turn CONFRONTATION emit.
+
+    Wraps every server site that broadcasts a CONFRONTATION frame
+    carrying post-mutation momentum. ``source`` is ``"dice_throw"`` from
+    the dice-dispatch site and ``"narration_apply"`` from the post-
+    narration site. ``beat_id`` is the resolved beat on the dice path
+    and may be ``None`` for narrator-driven emits.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_MOMENTUM_BROADCAST,
+        {"encounter_type": encounter_type,
+         "player_metric_after": player_metric_after,
+         "opponent_metric_after": opponent_metric_after,
+         "source": source,
+         "beat_id": beat_id or "",
+         **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_tag_created_span(
+    *, tag_text: str, created_by: str, target: str | None,
+    leverage: int, fleeting: bool, created_via: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_TAG_CREATED,
+        {"tag_text": tag_text, "created_by": created_by,
+         "target": target or "", "leverage": leverage,
+         "fleeting": fleeting, "created_via": created_via, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_tag_backfire_span(
+    *, tag_text: str, created_by: str, target: str, triggering_beat: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_TAG_BACKFIRE,
+        {"tag_text": tag_text, "created_by": created_by,
+         "target": target, "triggering_beat": triggering_beat, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_status_added_span(
+    *, actor: str, text: str, severity: str, source: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_STATUS_ADDED,
+        {"actor": actor, "text": text, "severity": severity,
+         "source": source, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_status_cleared_span(
+    *, actor: str, text: str, severity: str, reason: str, **attrs: Any,
+) -> Iterator[trace.Span]:
+    """``reason``: ``scene_end`` | ``narrator_clear`` | ``location_change``."""
+    with Span.open(
+        SPAN_ENCOUNTER_STATUS_CLEARED,
+        {"actor": actor, "text": text, "severity": severity,
+         "reason": reason, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_yield_received_span(
+    *, player_id: str, actor_name: str, prior_player_metric: int,
+    prior_opponent_metric: int, statuses_taken_this_encounter: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_YIELD_RECEIVED,
+        {"player_id": player_id, "actor_name": actor_name,
+         "prior_player_metric": prior_player_metric,
+         "prior_opponent_metric": prior_opponent_metric,
+         "statuses_taken_this_encounter": statuses_taken_this_encounter,
+         **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_yield_resolved_span(
+    *, outcome: str, yielded_actors: tuple[str, ...], edge_refreshed: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_YIELD_RESOLVED,
+        {"outcome": outcome,
+         "yielded_actors": ",".join(yielded_actors),
+         "edge_refreshed": edge_refreshed, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_resolution_signal_emitted_span(
+    *, outcome: str, final_player_metric: int, final_opponent_metric: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
+        {"outcome": outcome,
+         "final_player_metric": final_player_metric,
+         "final_opponent_metric": final_opponent_metric, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_resolution_signal_consumed_span(
+    *, outcome: str, final_player_metric: int, final_opponent_metric: int, **attrs: Any,
+) -> Iterator[trace.Span]:
+    with Span.open(
+        SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
+        {"outcome": outcome,
+         "final_player_metric": final_player_metric,
+         "final_opponent_metric": final_opponent_metric, **attrs},
+    ) as s:
+        yield s

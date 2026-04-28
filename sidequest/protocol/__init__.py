@@ -21,6 +21,22 @@ from sidequest.protocol.dice import (
     ThrowParams,
 )
 
+# Local DM decomposer output contract (Group B)
+from sidequest.protocol.dispatch import (
+    CrossAction,
+    DispatchPackage,
+    LethalityVerdict,
+    LethalityVerdictKind,
+    NarratorDirective,
+    NarratorDirectiveKind,
+    PerceptionFidelity,
+    PlayerDispatch,
+    Referent,
+    Reversibility,
+    SubsystemDispatch,
+    VisibilityTag,
+)
+
 # Foundation types
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 
@@ -38,8 +54,6 @@ from sidequest.protocol.messages import (
     ErrorMessage,
     ErrorPayload,
     GameMessage,
-    MapUpdateMessage,
-    MapUpdatePayload,
     NarrationEndMessage,
     NarrationEndPayload,
     NarrationMessage,
@@ -58,15 +72,10 @@ from sidequest.protocol.messages import (
 
 # Nested model types
 from sidequest.protocol.models import (
-    CartographyMetadata,
-    CartographyRegion,
-    CartographyRoute,
     CharacterSheetDetails,
     CharacterState,
     CreationChoice,
-    ExploredLocation,
     FactCategory,
-    FogBounds,
     Footnote,
     InitialState,
     InventoryItem,
@@ -74,55 +83,9 @@ from sidequest.protocol.models import (
     ItemGained,
     PartyMember,
     RolledStat,
-    RoomExitInfo,
     StateDelta,
     TacticalFeaturePayload,
     TacticalGridPayload,
-)
-
-# Local DM decomposer output contract (Group B)
-from sidequest.protocol.dispatch import (
-    CrossAction,
-    DispatchPackage,
-    LethalityVerdict,
-    LethalityVerdictKind,
-    NarratorDirective,
-    NarratorDirectiveKind,
-    PerceptionFidelity,
-    PlayerDispatch,
-    Referent,
-    Reversibility,
-    SubsystemDispatch,
-    VisibilityTag,
-)
-
-# Phase 1 payload classes
-from sidequest.protocol.messages import (
-    ActionQueueMessage,
-    ActionQueuePayload,
-    CharacterCreationMessage,
-    CharacterCreationPayload,
-    ChapterMarkerMessage,
-    ChapterMarkerPayload,
-    ErrorMessage,
-    ErrorPayload,
-    GameMessage,
-    MapUpdateMessage,
-    MapUpdatePayload,
-    NarrationEndMessage,
-    NarrationEndPayload,
-    NarrationMessage,
-    NarrationPayload,
-    PartyStatusMessage,
-    PartyStatusPayload,
-    PlayerActionMessage,
-    PlayerActionPayload,
-    SessionEventMessage,
-    SessionEventPayload,
-    ThinkingMessage,
-    ThinkingPayload,
-    TurnStatusMessage,
-    TurnStatusPayload,
 )
 from sidequest.protocol.provenance import (
     ContributionKind,
@@ -174,15 +137,10 @@ __all__ = [
     "NonBlankString",
     "Stat",
     # Nested models
-    "CartographyMetadata",
-    "CartographyRegion",
-    "CartographyRoute",
     "CharacterSheetDetails",
     "CharacterState",
     "CreationChoice",
-    "ExploredLocation",
     "FactCategory",
-    "FogBounds",
     "Footnote",
     "InitialState",
     "InventoryItem",
@@ -190,7 +148,6 @@ __all__ = [
     "ItemGained",
     "PartyMember",
     "RolledStat",
-    "RoomExitInfo",
     "StateDelta",
     "TacticalFeaturePayload",
     "TacticalGridPayload",
@@ -204,8 +161,6 @@ __all__ = [
     "ErrorMessage",
     "ErrorPayload",
     "GameMessage",
-    "MapUpdateMessage",
-    "MapUpdatePayload",
     "NarrationEndMessage",
     "NarrationEndPayload",
     "NarrationMessage",
