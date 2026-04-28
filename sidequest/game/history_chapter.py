@@ -69,7 +69,7 @@ class ChapterCharacter(BaseModel):
     gold: int | None = None
 
     @model_validator(mode="after")
-    def _no_template_markers(self) -> "ChapterCharacter":
+    def _no_template_markers(self) -> ChapterCharacter:
         _reject_template_markers(
             "ChapterCharacter",
             {
@@ -105,7 +105,7 @@ class ChapterNpc(BaseModel):
     dialogue_quirks: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _no_template_markers(self) -> "ChapterNpc":
+    def _no_template_markers(self) -> ChapterNpc:
         _reject_template_markers(
             "ChapterNpc",
             {
