@@ -11,12 +11,31 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from sidequest.game.session import GameSnapshot, NarrativeEntry
+from sidequest.telemetry.spans import SPAN_SESSION_SLOT_REINITIALIZED
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+# Per-slot tables that ``init_session()`` clears on reinit. ``games``
+# (slug-keyed) and ``scenario_archive`` (session_id-keyed) are global
+# lifecycle, not per-slot, and survive reinit. ``session_meta`` is
+# replaced (not cleared) by the INSERT OR REPLACE in ``init_session()``.
+#
+# Order matters: ``projection_cache`` carries a foreign key to
+# ``events.seq`` (PRAGMA foreign_keys=ON in ``_configure_connection``).
+# Children must clear before parents.
+_PER_SLOT_TABLES: tuple[str, ...] = (
+    "projection_cache",
+    "events",
+    "game_state",
+    "narrative_log",
+    "scrapbook_entries",
+    "lore_fragments",
+)
 
 
 class SaveSchemaIncompatibleError(Exception):
@@ -51,7 +70,7 @@ class SaveSchemaIncompatibleError(Exception):
 # ---------------------------------------------------------------------------
 
 
-class GameMode(str, Enum):
+class GameMode(StrEnum):
     SOLO = "solo"
     MULTIPLAYER = "multiplayer"
 
@@ -258,15 +277,50 @@ class SqliteStore:
         self._init_schema()
 
     def init_session(self, genre_slug: str, world_slug: str) -> None:
-        """Initialize session metadata (genre + world). Call once for new sessions."""
-        now = _now_rfc3339()
-        self._conn.execute(
-            """INSERT OR REPLACE INTO session_meta
-               (id, genre_slug, world_slug, created_at, last_played, schema_version)
-               VALUES (1, ?, ?, ?, ?, 1)""",
-            (genre_slug, world_slug, now, now),
+        """Initialize or reinitialize a save slot.
+
+        Atomically clears every per-slot table (``_PER_SLOT_TABLES``) and
+        replaces ``session_meta`` row 1 with the new genre/world identity.
+        Either the whole transaction commits or none of it does — there is
+        no half-clear state. The slug-keyed ``games`` table and the global
+        ``scenario_archive`` are out of scope for per-slot lifecycle and
+        are preserved across reinits.
+
+        Emits a ``session.slot_reinitialized`` watcher event on every call,
+        including against a fresh slot, so the GM panel sees the negative
+        confirmation that reinit ran (zero priors) as well as the positive
+        one (non-zero priors).
+        """
+        prior_narrative_count = self._conn.execute(
+            "SELECT COUNT(*) FROM narrative_log"
+        ).fetchone()[0]
+        prior_event_count = self._conn.execute(
+            "SELECT COUNT(*) FROM events"
+        ).fetchone()[0]
+
+        with self._conn:
+            for tbl in _PER_SLOT_TABLES:
+                self._conn.execute(f"DELETE FROM {tbl}")
+            now = _now_rfc3339()
+            self._conn.execute(
+                """INSERT OR REPLACE INTO session_meta
+                   (id, genre_slug, world_slug, created_at, last_played, schema_version)
+                   VALUES (1, ?, ?, ?, ?, 1)""",
+                (genre_slug, world_slug, now, now),
+            )
+
+        _watcher_publish(
+            SPAN_SESSION_SLOT_REINITIALIZED,
+            {
+                "genre_slug": genre_slug,
+                "world_slug": world_slug,
+                "cleared_tables": list(_PER_SLOT_TABLES),
+                "prior_narrative_count": int(prior_narrative_count),
+                "prior_event_count": int(prior_event_count),
+                "mode": "clear",
+            },
+            component="session",
         )
-        self._conn.commit()
 
     def save(self, snapshot: GameSnapshot) -> None:
         """Save the current game state.
