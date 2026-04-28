@@ -237,6 +237,10 @@ def dispatch_dice_throw(
     messages are still built and returned on the outcome but not fanned
     out. Callers that want single-socket delivery can read them off the
     outcome.
+
+    ``genre_slug`` is forwarded to ``build_confrontation_payload`` for
+    the mid-turn CONFRONTATION frame (story 45-3); it must match the
+    active genre pack's slug — there is no fallback resolution.
     """
     if payload.beat_id is None:
         raise DiceDispatchError(
@@ -465,10 +469,18 @@ def dispatch_dice_throw(
         seed=result.seed,
     )
 
-    # Broadcast first so spectators' overlays open before the narration
-    # kicks off. The server-side DiceRequest echoes the rolling player's
-    # local build (same request_id); the UI is idempotent on request_id
-    # so the rolling player's overlay doesn't double-open.
+    # Broadcast the dice pair (DICE_REQUEST → DICE_RESULT) first so
+    # spectators' overlays open before the narration kicks off. The
+    # server-side DiceRequest echoes the rolling player's local build
+    # (same request_id); the UI is idempotent on request_id so the
+    # rolling player's overlay doesn't double-open. Story 45-3 then
+    # follows the pair with a third broadcast on the non-opposed
+    # branch — a CONFRONTATION carrying post-apply momentum so the UI
+    # dial advances as the dice settle, not after the narrator returns.
+    # Opposed-pending defers metric mutation to ``narration_apply``, so
+    # the third broadcast is gated on ``not opposed_pending`` and the
+    # post-narration emit at session_handler handles the eventual
+    # metric advance for that branch.
     if room_broadcast is not None:
         req_msg = DiceRequestMessage(payload=request, player_id="server")
         res_msg = DiceResultMessage(payload=result, player_id="server")
