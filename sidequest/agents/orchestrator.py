@@ -278,6 +278,12 @@ class NarrationTurnResult:
     gold_change: int | None = None
     lore_established: list[str] | None = None
     status_changes: list[dict[str, Any]] = field(default_factory=list)
+    # Magic system (Coyote Reach iter 3 — Task 3.3). When the narrator
+    # emits a ``magic_working`` field on its game_patch, this carries the
+    # raw dict through to ``narration_apply.apply_magic_working`` for
+    # validation + ledger application. ``None`` on every turn the
+    # narrator does NOT invoke a magic working (the common case).
+    magic_working: dict[str, Any] | None = None
 
     # OTEL / telemetry
     agent_name: str | None = None
@@ -613,6 +619,12 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "gold_change": patch.get("gold_change"),
         "lore_established": patch.get("lore_established"),
         "status_changes": patch.get("status_changes", []),
+        # Magic system (Coyote Reach iter 3 — Task 3.3). Forwarded as a
+        # raw dict; pydantic validation happens in
+        # ``narration_apply.apply_magic_working`` so the parse error is
+        # raised at the apply seam (where ``MagicWorkingParseError`` is
+        # defined) rather than during extraction.
+        "magic_working": patch.get("magic_working"),
     }
 
 
@@ -1659,6 +1671,11 @@ class Orchestrator:
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
                 status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+                magic_working=(
+                    extraction["magic_working"]
+                    if isinstance(extraction.get("magic_working"), dict)
+                    else None
+                ),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,

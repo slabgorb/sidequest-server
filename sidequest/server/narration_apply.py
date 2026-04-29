@@ -8,9 +8,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
+from sidequest.magic.models import Flag, MagicWorking
+from sidequest.magic.state import ApplyWorkingResult
+from sidequest.magic.validator import validate as magic_validate
 from sidequest.server.dispatch.sealed_letter import (
     SealedLetterOutcome,
     resolve_sealed_letter_lookup,
@@ -121,6 +126,38 @@ def _filter_inferred_pc_beats(
     return kept
 
 
+class MagicWorkingParseError(RuntimeError):
+    """Raised when ``game_patch.magic_working`` has invalid shape.
+
+    Surfaces three distinct failure modes:
+    - snapshot has ``magic_state=None`` but the narrator emitted a working
+      (no silent fallback per CLAUDE.md);
+    - the dict fails ``MagicWorking`` pydantic validation;
+    - the working names an actor that has no instantiated ledger bars
+      (call ``magic_state.add_character`` first).
+    """
+
+
+@dataclass
+class MagicApplyResult:
+    """Aggregate result of applying a ``magic_working`` patch field.
+
+    Wraps the underlying ``ApplyWorkingResult`` (ledger mutations + threshold
+    crossings) with the validator's flag list. Returned by
+    ``apply_magic_working`` and attached to ``NarrationApplyOutcome.magic``
+    so downstream tasks (3.4 status_changes auto-promotion, 3.5 OTEL span)
+    can read the threshold crossings + flag severity without re-running
+    validation.
+    """
+
+    apply: ApplyWorkingResult
+    flags: list[Flag]
+
+    @property
+    def crossings(self):
+        return self.apply.crossings
+
+
 @dataclass
 class NarrationApplyOutcome:
     """Aggregate result of applying a NarrationTurnResult to a snapshot.
@@ -135,9 +172,59 @@ class NarrationApplyOutcome:
     early-return on non-NarrationTurnResult input, etc.). Callers that
     don't care can ignore the return value entirely — it is purely
     additive over the prior ``None`` return.
+
+    ``magic`` carries the magic-working apply result when the narrator
+    emitted a ``magic_working`` field on this turn's ``game_patch``;
+    ``None`` otherwise. Tasks 3.4/3.5 read ``magic.crossings`` and
+    ``magic.flags`` to drive auto-promotion + OTEL. Direct callers that
+    don't care can ignore it.
     """
 
     sealed_letter: SealedLetterOutcome | None = None
+    magic: MagicApplyResult | None = None
+
+
+def apply_magic_working(
+    *, snapshot: GameSnapshot, patch_field: dict
+) -> MagicApplyResult:
+    """Parse a ``game_patch.magic_working`` dict, validate, and apply.
+
+    Returns ``MagicApplyResult`` aggregating the mutated ledger /
+    threshold crossings (via ``ApplyWorkingResult``) with the validator's
+    flag list. Raises ``MagicWorkingParseError`` on:
+
+    - ``snapshot.magic_state is None`` (world has no magic config loaded
+      but narrator emitted a working — fail loud per CLAUDE.md
+      no-silent-fallback);
+    - ``patch_field`` failing ``MagicWorking`` pydantic validation;
+    - ``apply_working`` raising ``KeyError`` (actor has no instantiated
+      character bars — caller must run ``add_character`` first).
+
+    The caller (the narration_apply pipeline branch below) is responsible
+    for promoting threshold crossings to ``status_changes`` (Task 3.4)
+    and emitting the ``magic.working_applied`` OTEL span (Task 3.5).
+    This function intentionally does NEITHER — it is the parse + validate
+    + apply seam only.
+    """
+    if snapshot.magic_state is None:
+        raise MagicWorkingParseError(
+            "magic_working emitted but world has no magic_state loaded"
+        )
+    try:
+        working = MagicWorking.model_validate(patch_field)
+    except ValidationError as e:
+        raise MagicWorkingParseError(
+            f"magic_working schema invalid: {e}"
+        ) from e
+
+    flags = magic_validate(working, snapshot.magic_state.config)
+
+    try:
+        apply_result = snapshot.magic_state.apply_working(working)
+    except KeyError as e:
+        raise MagicWorkingParseError(f"unknown actor: {e}") from e
+
+    return MagicApplyResult(apply=apply_result, flags=flags)
 
 
 def _apply_narration_result_to_snapshot(
@@ -187,6 +274,31 @@ def _apply_narration_result_to_snapshot(
 
     if not isinstance(result, NarrationTurnResult):
         return outcome
+
+    # Magic working (Coyote Reach iter 3 — Task 3.3). Run early so a
+    # parse error surfaces before downstream branches mutate the snapshot
+    # — the narrator's prose is already in the user's hands by the time
+    # we get here, so we don't gate on validity, but we DO log loudly.
+    # Threshold-crossing → status_changes auto-promotion (Task 3.4) and
+    # ``magic.working_applied`` OTEL span emission (Task 3.5) are
+    # explicitly NOT done here — see those tasks for the wire-up.
+    magic_working_field = getattr(result, "magic_working", None)
+    if magic_working_field is not None:
+        try:
+            outcome.magic = apply_magic_working(
+                snapshot=snapshot, patch_field=magic_working_field
+            )
+        except MagicWorkingParseError as e:
+            # Log + continue — narration is already delivered; the parse
+            # error must not crash the apply pipeline. Task 3.5 will
+            # promote this to a ``magic.parse_error`` OTEL span so the
+            # GM panel sees it. Until then, structured logging keeps the
+            # failure auditable.
+            logger.warning(
+                "magic.parse_error player=%s reason=%s",
+                player_name,
+                e,
+            )
 
     if result.location:
         old_loc = snapshot.location
