@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from sidequest.magic.models import Flag, FlagSeverity, MagicWorking, WorldMagicConfig
-from sidequest.magic.plugin import MAGIC_PLUGINS, MagicPlugin
+from sidequest.magic.plugin import MAGIC_PLUGINS, MagicPlugin, get_plugin
 
 
 class _FakePlugin:
@@ -51,7 +51,5 @@ def test_register_via_dict_mutation_and_lookup():
 
 def test_get_plugin_helper_raises_keyerror_with_registered_list():
     """get_plugin(id) helper raises KeyError listing what IS registered."""
-    from sidequest.magic.plugin import get_plugin
-
-    with pytest.raises(KeyError, match="not registered"):
+    with pytest.raises(KeyError, match=r"registered plugins: \["):
         get_plugin("nonexistent_v1")

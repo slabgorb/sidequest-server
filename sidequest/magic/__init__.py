@@ -14,14 +14,18 @@ from sidequest.magic.models import (
     WorldKnowledge,
     WorldMagicConfig,
 )
+from sidequest.magic.plugin import MAGIC_PLUGINS, MagicPlugin, get_plugin
 
 __all__ = [
+    "MAGIC_PLUGINS",
     "Flag",
     "FlagSeverity",
     "HardLimit",
     "LedgerBarSpec",
+    "MagicPlugin",
     "MagicWorking",
     "Plugin",
     "WorldKnowledge",
     "WorldMagicConfig",
+    "get_plugin",
 ]
