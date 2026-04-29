@@ -1683,6 +1683,7 @@ class CharacterBuilder:
                 stats[names[idx]] = stats[names[idx]] + 2
 
         import json as _json
+
         from sidequest.telemetry.spans import SPAN_CHARGEN_STATS_GENERATED, Emitter
         Emitter.fire(
             SPAN_CHARGEN_STATS_GENERATED,

@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 
-
 REF_SAVE = (
     Path.home() / ".sidequest" / "saves" / "games" /
     "2026-04-25-dungeon_survivor" / "save.db"

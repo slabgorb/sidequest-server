@@ -21,7 +21,6 @@ from sidequest.genre.models.visibility import (
 )
 from tests._helpers.genre_paths import GENRE_PACKS_DIR, find_pack_path
 
-
 SAMPLE_BASELINE = """
 tone: secret_heavy
 default_visibility:

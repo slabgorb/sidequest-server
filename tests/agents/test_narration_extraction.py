@@ -5,7 +5,11 @@ validation. Dual-track momentum (spec §Outcome declaration, §Side declaration)
 """
 import pytest
 
-from sidequest.agents.orchestrator import BeatSelection, NpcMention, extract_structured_from_response
+from sidequest.agents.orchestrator import (
+    BeatSelection,
+    NpcMention,
+    extract_structured_from_response,
+)
 from sidequest.protocol.dice import RollOutcome
 
 

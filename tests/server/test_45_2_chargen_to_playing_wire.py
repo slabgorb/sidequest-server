@@ -42,7 +42,6 @@ from sidequest.protocol.messages import (
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import LobbyState, RoomRegistry
 
-
 CONTENT_ROOT = (
     Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 )

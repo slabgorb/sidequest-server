@@ -131,8 +131,8 @@ from sidequest.server.dispatch.chargen_summary import render_confirmation_summar
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.dispatch.scenario_bind import bind_scenario
-from sidequest.server.utils import slugify_player_name as _slugify_player_name
 from sidequest.server.image_pacing import ImagePacingThrottle
+from sidequest.server.utils import slugify_player_name as _slugify_player_name
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers

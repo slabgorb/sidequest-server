@@ -292,7 +292,7 @@ class WebSocketSessionHandler:
         return await handler.handle(self, msg)
 
     @classmethod
-    def _message_handler_for(cls, msg_type: str) -> "MessageHandler | None":
+    def _message_handler_for(cls, msg_type: str) -> MessageHandler | None:
         """Lazy-built registry of message-type → first-class handler singleton.
 
         Built on first call to avoid importing the handler modules at

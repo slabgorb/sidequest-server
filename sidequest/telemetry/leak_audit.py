@@ -22,7 +22,6 @@ from opentelemetry import trace
 
 from sidequest.protocol.dispatch import DispatchPackage, SubsystemDispatch
 
-
 _tracer = trace.get_tracer("sidequest.leak_audit")
 
 

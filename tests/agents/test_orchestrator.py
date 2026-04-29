@@ -33,7 +33,6 @@ from sidequest.protocol.dispatch import (
     VisibilityTag,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers — fake subprocess process and canned spawn
 # ---------------------------------------------------------------------------
@@ -919,8 +918,8 @@ async def test_run_narration_turn_emits_leak_audit_span_with_zero_leaks(
     This is the safety-net verification: structural hiding (Task 5) removed
     the redacted entry from the prompt, and the canned narration below does
     not mention the hidden target, so the audit fires clean."""
-    from sidequest.protocol.dispatch import SubsystemDispatch
     from sidequest.game.session import NpcRegistryEntry
+    from sidequest.protocol.dispatch import SubsystemDispatch
 
     # Canned narrator response — no reference to the hidden target.
     client = make_canned_client("The evening wears on at the inn.")

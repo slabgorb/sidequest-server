@@ -8,7 +8,9 @@ def test_recovery_trigger_on_yield_constant():
 
 
 from sidequest.game.encounter import (
-    EncounterActor, EncounterMetric, StructuredEncounter,
+    EncounterActor,
+    EncounterMetric,
+    StructuredEncounter,
 )
 from sidequest.game.status import Status, StatusSeverity
 from sidequest.server.dispatch.yield_action import handle_yield

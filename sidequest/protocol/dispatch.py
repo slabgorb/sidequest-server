@@ -27,7 +27,6 @@ from pydantic import Field, model_validator
 
 from sidequest.protocol.base import ProtocolBase
 
-
 # ---------------------------------------------------------------------------
 # Visibility
 # ---------------------------------------------------------------------------
@@ -168,7 +167,7 @@ class CrossAction(ProtocolBase):
     dispatch: list[SubsystemDispatch] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _witnesses_include_participants(self) -> "CrossAction":
+    def _witnesses_include_participants(self) -> CrossAction:
         missing = set(self.participants) - set(self.witnesses)
         if missing:
             raise ValueError(f"witnesses must include all participants; missing={sorted(missing)}")
@@ -189,13 +188,13 @@ class DispatchPackage(ProtocolBase):
     degraded_reason: str | None = None
 
     @model_validator(mode="after")
-    def _degraded_requires_reason(self) -> "DispatchPackage":
+    def _degraded_requires_reason(self) -> DispatchPackage:
         if self.degraded and not self.degraded_reason:
             raise ValueError("degraded=True requires non-null degraded_reason")
         return self
 
     @model_validator(mode="after")
-    def _unique_idempotency_keys(self) -> "DispatchPackage":
+    def _unique_idempotency_keys(self) -> DispatchPackage:
         """Idempotency keys must be unique across per_player AND cross_player dispatches.
 
         The subsystem bank uses these keys as a single per-turn namespace, so
