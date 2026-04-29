@@ -121,6 +121,12 @@ from sidequest.genre.models.progression import (
     ProgressionConfig,
     WealthTier,
 )
+from sidequest.genre.models.rigs_world import (
+    BondSeed,
+    ChassisInstanceConfig,
+    OceanScores,
+    RigsWorldConfig,
+)
 from sidequest.genre.models.rules import (
     BeatDef,
     ConfrontationDef,
@@ -302,6 +308,11 @@ __all__ = [
     "LevelBonuses",
     "ProgressionConfig",
     "WealthTier",
+    # rigs_world (rig framework — slice scope)
+    "BondSeed",
+    "ChassisInstanceConfig",
+    "OceanScores",
+    "RigsWorldConfig",
     # rules
     "BeatDef",
     "ConfrontationDef",
