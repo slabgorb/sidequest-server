@@ -12,19 +12,28 @@ from sidequest.genre.models.chassis import BondTier, ChassisVoiceSpec
 
 
 class OceanScores(BaseModel):
+    """Chassis OCEAN — single-letter keys, 0.0–1.0 scale.
+
+    Distinct from `OceanProfile` (genre.models.ocean) which uses full
+    field names on a 0.0–10.0 scale for character OCEAN. The rig taxonomy
+    (docs/design/rig-taxonomy.md) authored chassis OCEAN at this scale
+    and shape; merging the two representations is deferred and tracked
+    as an open issue in the slice spec.
+    """
+
     model_config = {"extra": "forbid"}
-    O: float = 0.5  # noqa: E741
-    C: float = 0.5
-    E: float = 0.5
-    A: float = 0.5
-    N: float = 0.5
+    O: float = Field(default=0.5, ge=0.0, le=1.0)  # noqa: E741
+    C: float = Field(default=0.5, ge=0.0, le=1.0)
+    E: float = Field(default=0.5, ge=0.0, le=1.0)
+    A: float = Field(default=0.5, ge=0.0, le=1.0)
+    N: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class BondSeed(BaseModel):
     model_config = {"extra": "forbid"}
     character_role: str
-    bond_strength_character_to_chassis: float = 0.0
-    bond_strength_chassis_to_character: float = 0.0
+    bond_strength_character_to_chassis: float = Field(default=0.0, ge=-1.0, le=1.0)
+    bond_strength_chassis_to_character: float = Field(default=0.0, ge=-1.0, le=1.0)
     bond_tier_character: BondTier = "neutral"
     bond_tier_chassis: BondTier = "neutral"
     history_seeds: list[str] = Field(default_factory=list)
