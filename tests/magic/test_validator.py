@@ -33,6 +33,34 @@ def world_config() -> WorldMagicConfig:
     )
 
 
+def test_known_but_unregistered_plugin_emits_deep_red_not_keyerror(world_config):
+    """Forward-looking entries in `_PLUGIN_SOURCE` (e.g. divine_v1) point to
+    plugins that aren't yet implemented in MAGIC_PLUGINS. A misconfigured
+    world that activates one must produce a DEEP_RED flag — never an
+    unhandled KeyError from the get_plugin call at check #5.
+    """
+    bad_config = world_config.model_copy(
+        update={
+            "active_plugins": ["divine_v1"],
+            "allowed_sources": ["divine"],
+        }
+    )
+    w = MagicWorking(
+        plugin="divine_v1",
+        mechanism="cosmic",
+        actor="Sira",
+        costs={"sanity": 0.1},
+        domain="psychic",
+        narrator_basis="x",
+    )
+    flags = validate(w, bad_config)
+    assert any(
+        f.severity == FlagSeverity.DEEP_RED
+        and "plugin_known_but_not_registered" in f.reason
+        for f in flags
+    )
+
+
 def test_clean_innate_working(world_config):
     w = MagicWorking(
         plugin="innate_v1",

@@ -14,8 +14,13 @@ from sidequest.magic.models import (
 )
 from sidequest.magic.plugin import get_plugin
 
-# Mapping plugin_id → source (kept here to avoid circular imports;
-# extend when new plugins land).
+# Mapping plugin_id → source. The MagicPlugin Protocol exposes plugin_id
+# but not source (source lives on the Plugin descriptor model loaded from
+# each plugin's YAML, not on the runtime instance), so we mirror it here.
+# Forward-looking entries: learned_v1, divine_v1, bargained_for_v1 are
+# named in the spec but not yet implemented — they live here so a world
+# config that references them is rejected with a clean DEEP_RED at check
+# #2 rather than a KeyError at check #5. Check #5 also defends explicitly.
 _PLUGIN_SOURCE = {
     "innate_v1": "innate",
     "item_legacy_v1": "item_based",
@@ -78,7 +83,12 @@ def validate(working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
                 )
             )
 
-    # 4. Hard limits — keyword match in narrator_basis (v1 simple detector)
+    # 4. Hard limits — keyword match in narrator_basis (v1 simple detector).
+    # Substring match is intentionally crude: false positives are possible
+    # for short keywords ("war" would match "warning"). Coyote Reach's
+    # hard_limits are long phrases ("resurrection", "ftl telepathy") so the
+    # risk is low. Smarter detection (entity recognition, semantic match)
+    # is a future iteration per spec §5d.
     basis_lower = working.narrator_basis.lower()
     for limit in config.hard_limits:
         keyword = limit.id.replace("no_", "").replace("_", " ")
@@ -91,8 +101,25 @@ def validate(working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
                 )
             )
 
-    # 5. Plugin-side validation
-    plugin = get_plugin(working.plugin)
+    # 5. Plugin-side validation. Defend against `_PLUGIN_SOURCE` having
+    # forward-looking entries that aren't actually registered in
+    # MAGIC_PLUGINS — a misconfigured world could otherwise crash the
+    # validator with an unhandled KeyError.
+    try:
+        plugin = get_plugin(working.plugin)
+    except KeyError:
+        flags.append(
+            Flag(
+                severity=FlagSeverity.DEEP_RED,
+                reason="plugin_known_but_not_registered",
+                detail=(
+                    f"plugin {working.plugin!r} appears in _PLUGIN_SOURCE but "
+                    "is not present in MAGIC_PLUGINS — it has not been "
+                    "implemented yet"
+                ),
+            )
+        )
+        return flags
     flags.extend(plugin.validate_working(working, config))
 
     # v1: DEEP_RED flags surface in OTEL but DO NOT interrupt narration.
