@@ -1,12 +1,19 @@
 """innate_v1 — character-as-source magic.
 
 Mechanics live here; content lives in innate_v1.yaml. Loader pairs them.
+
+Importing this module is the public API: it mutates ``MAGIC_PLUGINS`` by
+side effect. Nothing here is intended to be re-exported through the
+``plugins`` package's star-import — ``__all__ = []`` keeps the namespace
+clean as more plugins are added.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
+
+__all__: list[str] = []
 
 from sidequest.magic.models import (
     Flag,

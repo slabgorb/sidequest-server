@@ -125,6 +125,27 @@ def test_innate_v1_consent_flavor_mismatch_yellow(world_config):
     )
 
 
+def test_innate_v1_faction_mechanism_red_flag(world_config):
+    """`faction` mechanism is bargained_for_v1's lane; flag RED."""
+    import sidequest.magic.plugins  # noqa: F401
+
+    plugin = get_plugin("innate_v1")
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="faction",
+        actor="Sira Mendes",
+        costs={"sanity": 0.12},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="involuntary",
+    )
+    flags = plugin.validate_working(working, world_config)
+    assert any(
+        f.severity == FlagSeverity.RED and "lane_violation" in f.reason for f in flags
+    )
+
+
 def test_innate_v1_yaml_descriptor_loads():
     """The paired .yaml descriptor loads as a Plugin model."""
     from sidequest.magic.plugins.innate_v1 import descriptor
