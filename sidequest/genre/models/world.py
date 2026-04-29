@@ -98,18 +98,37 @@ class RoomDef(BaseModel):
 
 
 class Terrain(StrEnum):
-    """Terrain type for graph edges."""
+    """Terrain type for graph edges.
 
+    Genre-spanning vocabulary. Terrestrial values (road/wilderness/water/underground)
+    cover most ground-bound worlds; space values (vacuum/atmospheric/jump_lane/orbit)
+    cover orbital and interstellar worlds. New values can be added as new genres
+    require them — the engine treats Terrain as opaque metadata for narrator color
+    and renderer hints, not as a closed mechanical category.
+    """
+
+    # Terrestrial
     road = "road"
     wilderness = "wilderness"
     water = "water"
     underground = "underground"
+    # Space / orbital
+    vacuum = "vacuum"
+    atmospheric = "atmospheric"
+    jump_lane = "jump_lane"
+    orbit = "orbit"
 
 
 class WorldGraphNode(BaseModel):
-    """A node in the world graph — a major location."""
+    """A node in the world graph — a major location.
 
-    model_config = {"extra": "forbid"}
+    ``extra="allow"`` so genre packs can decorate nodes with genre-specific flavor
+    (e.g. ``kind: gas_giant``, ``provenance: pre-collapse-relic``) without bloating
+    the engine schema. Unknown fields are preserved on the model so narrator and
+    renderer code can read them; the engine itself treats them as opaque.
+    """
+
+    model_config = {"extra": "allow"}
 
     id: str
     name: str
@@ -117,9 +136,13 @@ class WorldGraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
-    """An edge between two world graph nodes."""
+    """An edge between two world graph nodes.
 
-    model_config = {"extra": "forbid"}
+    ``extra="allow"`` so genre packs can tag edges with relationship metadata
+    (e.g. ``relation: orbits``, ``seasonal: true``) without forcing those
+    concepts into the engine schema. The engine reads only the typed fields;
+    extras are narrator/renderer flavor.
+    """
 
     from_: str = Field(alias="from", serialization_alias="from")
     to: str
@@ -128,7 +151,7 @@ class GraphEdge(BaseModel):
     distance: int = 1
     encounter_table_key: str | None = None
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class SubGraph(BaseModel):
