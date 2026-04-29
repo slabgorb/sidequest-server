@@ -18,10 +18,17 @@ from __future__ import annotations
 
 import logging
 
+from opentelemetry import trace as otel_trace
+
 from sidequest.game.character import Character
 from sidequest.genre.models.inventory import CatalogItem, InventoryConfig
+from sidequest.telemetry.spans import (
+    SPAN_CHARGEN_STARTING_KIT_DEDUP_EVALUATED,
+    SPAN_CHARGEN_STARTING_KIT_DEDUP_FIRED,
+)
 
 logger = logging.getLogger(__name__)
+_tracer = otel_trace.get_tracer(__name__)
 
 
 def _match_class(mapping_keys: list[str], class_name: str) -> str | None:
@@ -117,7 +124,12 @@ def _item_dict_minimal(item_id: str) -> dict:
 
 
 def apply_starting_loadout(
-    character: Character, inventory_config: InventoryConfig | None
+    character: Character,
+    inventory_config: InventoryConfig | None,
+    *,
+    genre: str = "",
+    world: str = "",
+    player_id: str = "",
 ) -> tuple[int, int]:
     """Append class-specific starting equipment and gold to the character's inventory.
 
@@ -125,59 +137,138 @@ def apply_starting_loadout(
     place — items append to ``inventory.items`` (builder-side hints are
     preserved), gold increments by ``starting_gold[class]``.
 
+    Story 45-12 added an identity-aware dedup pass: any catalogue id that
+    is already represented on ``character.core.inventory.items`` (matched
+    by id OR by case-insensitive name) is skipped rather than appended a
+    second time. Both extractors — ``CharacterBuilder.equipment_tables``
+    and ``starting_equipment[class]`` — are legitimate; this seam owns
+    deduplicating their union so Blutka-style 24-item kits stop shipping.
+
     Args:
         character: The built character (class already set).
         inventory_config: Genre pack inventory config; ``None`` means the
-            pack has no inventory.yaml and we no-op.
+            pack has no inventory.yaml and we no-op (still emits the
+            evaluated span for negative confirmation).
+        genre: Genre slug for OTEL attribution. Pass ``sd.snapshot.genre_slug``
+            from the chargen-confirm wire site.
+        world: World slug for OTEL attribution.
+        player_id: Player identity for OTEL attribution.
 
     Returns:
         ``(items_added, gold_added)`` — for logging and assertion in
-        tests. Both zero when the pack has no inventory config or when
-        the character's class isn't in ``starting_equipment``.
+        tests. ``items_added`` is the count after dedup (skipped items
+        are NOT in this count). Both zero when the pack has no
+        inventory config or when the character's class isn't in
+        ``starting_equipment``.
     """
-    if inventory_config is None:
-        return (0, 0)
-
     class_name = character.char_class
-    equipment_key = _match_class(
-        list(inventory_config.starting_equipment.keys()), class_name
-    )
-    gold_key = _match_class(list(inventory_config.starting_gold.keys()), class_name)
+    pre_dedup_count = len(character.core.inventory.items)
 
-    equipment_ids: list[str] = (
-        inventory_config.starting_equipment[equipment_key] if equipment_key else []
-    )
-    gold: int = inventory_config.starting_gold[gold_key] if gold_key else 0
-
-    catalog_by_id = {item.id: item for item in inventory_config.item_catalog}
-
-    # Upgrade builder-produced item_hint dicts (from chargen scene choices
-    # like "Mystery Compass") against the catalog. Without this, those
-    # items ship to the UI with the builder's stub metadata —
-    # ``category: weapon`` + ``description: "Starting equipment: X"``.
-    items_upgraded = _upgrade_hint_items_from_catalog(
-        character.core.inventory.items, catalog_by_id
-    )
-
+    # Defaults flow through the no-config path so the evaluated span fires
+    # with zero counts (CLAUDE.md OTEL Observability Principle —
+    # negative-confirmation contract: "no spans" must never mean "the
+    # dedup pass was forgotten").
+    equipment_ids: list[str] = []
+    gold: int = 0
+    items_upgraded = 0
     items_added = 0
-    for item_id in equipment_ids:
-        catalog_item = catalog_by_id.get(item_id)
-        if catalog_item is not None:
-            character.core.inventory.items.append(_item_dict_from_catalog(catalog_item))
-        else:
-            character.core.inventory.items.append(_item_dict_minimal(item_id))
-        items_added += 1
+    skipped_ids: list[str] = []
 
-    if gold:
-        character.core.inventory.gold += gold
+    if inventory_config is not None:
+        equipment_key = _match_class(list(inventory_config.starting_equipment.keys()), class_name)
+        gold_key = _match_class(list(inventory_config.starting_gold.keys()), class_name)
+        equipment_ids = inventory_config.starting_equipment[equipment_key] if equipment_key else []
+        gold = inventory_config.starting_gold[gold_key] if gold_key else 0
+        catalog_by_id = {item.id: item for item in inventory_config.item_catalog}
 
-    if items_added or gold or items_upgraded:
+        # Upgrade builder-produced item_hint dicts (from chargen scene
+        # choices like "Mystery Compass") against the catalog. Without
+        # this, those items ship to the UI with the builder's stub
+        # metadata — ``category: weapon`` + ``description: "Starting
+        # equipment: X"``.
+        items_upgraded = _upgrade_hint_items_from_catalog(
+            character.core.inventory.items, catalog_by_id
+        )
+
+        # Dedup pass (Story 45-12). The ``existing_*`` sets are mutated
+        # inside the loop so intra-batch duplicates within
+        # ``equipment_ids`` itself collapse alongside builder-vs-catalogue
+        # overlap.
+        existing_ids: set[str] = {
+            str(it.get("id", "")).strip().lower()
+            for it in character.core.inventory.items
+            if it.get("id")
+        }
+        existing_names: set[str] = {
+            str(it.get("name", "")).strip().lower()
+            for it in character.core.inventory.items
+            if it.get("name")
+        }
+
+        for item_id in equipment_ids:
+            catalog_item = catalog_by_id.get(item_id)
+            candidate = (
+                _item_dict_from_catalog(catalog_item)
+                if catalog_item is not None
+                else _item_dict_minimal(item_id)
+            )
+            cand_id = str(candidate.get("id", "")).strip().lower()
+            cand_name = str(candidate.get("name", "")).strip().lower()
+            if (cand_id and cand_id in existing_ids) or (cand_name and cand_name in existing_names):
+                skipped_ids.append(cand_id or cand_name or item_id)
+                continue
+            character.core.inventory.items.append(candidate)
+            if cand_id:
+                existing_ids.add(cand_id)
+            if cand_name:
+                existing_names.add(cand_name)
+            items_added += 1
+
+        if gold:
+            character.core.inventory.gold += gold
+
+    final_count = len(character.core.inventory.items)
+    skipped_count = len(skipped_ids)
+
+    # Single emission point for the evaluated span — fires on every code
+    # path (None config, no class match, full overlap, partial overlap,
+    # disjoint).
+    with _tracer.start_as_current_span(SPAN_CHARGEN_STARTING_KIT_DEDUP_EVALUATED) as span:
+        span.set_attribute("class_name", class_name)
+        span.set_attribute("pre_dedup_count", pre_dedup_count)
+        span.set_attribute("equipment_ids_count", len(equipment_ids))
+        span.set_attribute("skipped_count", skipped_count)
+        span.set_attribute("items_added", items_added)
+        span.set_attribute("items_upgraded", items_upgraded)
+        span.set_attribute("final_count", final_count)
+        span.set_attribute("genre", genre)
+        span.set_attribute("world", world)
+        span.set_attribute("player_id", player_id)
+
+    # Fired span only when the dedup actually skipped at least one item.
+    # The skipped_ids list is the load-bearing payload for the GM panel.
+    if skipped_count > 0:
+        with _tracer.start_as_current_span(SPAN_CHARGEN_STARTING_KIT_DEDUP_FIRED) as span:
+            span.set_attribute("class_name", class_name)
+            span.set_attribute("skipped_count", skipped_count)
+            # OTEL attribute spec accepts homogeneous sequences of
+            # primitives — pass the list as-is.
+            span.set_attribute("skipped_ids", skipped_ids)
+            span.set_attribute("items_added", items_added)
+            span.set_attribute("final_count", final_count)
+            span.set_attribute("genre", genre)
+            span.set_attribute("world", world)
+            span.set_attribute("player_id", player_id)
+
+    if items_added or gold or items_upgraded or skipped_count:
         logger.info(
             "chargen.starting_equipment — wired from inventory.yaml "
-            "class=%s items_added=%d items_upgraded=%d gold_added=%d",
+            "class=%s items_added=%d items_upgraded=%d skipped=%d "
+            "gold_added=%d",
             class_name,
             items_added,
             items_upgraded,
+            skipped_count,
             gold,
         )
 

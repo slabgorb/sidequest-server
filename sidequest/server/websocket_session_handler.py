@@ -667,10 +667,7 @@ class WebSocketSessionHandler:
         ``None`` on a pass.
         """
         pack = sd.genre_pack
-        pack_has_axes = (
-            pack.base_archetypes is not None
-            and pack.archetype_constraints is not None
-        )
+        pack_has_axes = pack.base_archetypes is not None and pack.archetype_constraints is not None
         ra = character.resolved_archetype
         provenance_set = character.archetype_provenance is not None
         # ``had_both_hints`` is the only granularity the gate has access
@@ -713,9 +710,7 @@ class WebSocketSessionHandler:
             # not run successfully). With pack-axes-set the resolver
             # was called and raised; without pack-axes it short-
             # circuited at line 579.
-            block_reason = (
-                "resolver_raised" if pack_has_axes else "raw_pair_unresolved"
-            )
+            block_reason = "resolver_raised" if pack_has_axes else "raw_pair_unresolved"
             gate_state = "blocked_partial"
 
         # Evaluator span — fires on every chargen-confirm. ``state``
@@ -861,9 +856,7 @@ class WebSocketSessionHandler:
         # commits — the ``pumblestone`` regression from Playtest 3
         # evrópí. See ``_gate_archetype_resolution`` docstring for the
         # three pass / fail paths.
-        is_blocked, block_reason = self._gate_archetype_resolution(
-            character, sd, player_id, span
-        )
+        is_blocked, block_reason = self._gate_archetype_resolution(character, sd, player_id, span)
         if is_blocked:
             return [
                 _error_msg(
@@ -876,7 +869,16 @@ class WebSocketSessionHandler:
         # Starting equipment loadout (Story 2.3 Slice A). The builder only
         # holds item_hints; the class-specific loadout from inventory.yaml
         # is wired in here. Rust parity: connect.rs:1745-1864.
-        apply_starting_loadout(character, sd.genre_pack.inventory)
+        # Story 45-12: pass session identity so the dedup-evaluated /
+        # dedup-fired spans carry genre/world/player_id for GM-panel
+        # attribution. Snapshot slugs are populated at connect time.
+        apply_starting_loadout(
+            character,
+            sd.genre_pack.inventory,
+            genre=sd.snapshot.genre_slug,
+            world=sd.snapshot.world_slug,
+            player_id=player_id,
+        )
 
         # MP: peer may have already committed on the same slug. The
         # ADR-037 Python port has every WS session on a slug share the
@@ -1551,7 +1553,8 @@ class WebSocketSessionHandler:
                     max_narrative_round = int(sd.store.max_narrative_round())
                 except Exception as exc:  # noqa: BLE001 — telemetry must never crash a turn
                     logger.warning(
-                        "round_invariant.max_lookup_failed error=%s", exc,
+                        "round_invariant.max_lookup_failed error=%s",
+                        exc,
                     )
                     max_narrative_round = 0
                 with round_invariant_span(
