@@ -2151,8 +2151,37 @@ class WebSocketSessionHandler:
             sd.opening_seed = None
             sd.opening_directive = None
 
-        action = sd.opening_seed or "I look around and take in my surroundings."
-        source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
+        # Playtest 2026-04-29 BUG-LOW: when MP joiner-orientation fires (the
+        # suppression branch above just zeroed the seed), the previous
+        # fallback "I look around and take in my surroundings." gave the
+        # narrator a generic, unattributed action — and the resulting
+        # narration treated the host PC as if THEY had performed it
+        # ("Laverne is in the pilot's couch, hands flat on her thighs..."),
+        # because the narrator had no anchor for whose POV the orientation
+        # belonged to. Naming the joining PC explicitly fixes the POV
+        # attribution; the SOUL.md Agency strengthening (sibling fix in
+        # this playtest cycle) keeps the narrator from inventing dialogue
+        # for either PC. We resolve the joining PC's character name from
+        # the snapshot — it was just appended in the second-commit branch,
+        # so the joiner is the LAST entry in ``snapshot.characters``.
+        joiner_orientation = sd.opening_seed is None and len(sd.snapshot.characters) > 1
+        if joiner_orientation:
+            joiner_char_name = (
+                sd.snapshot.characters[-1].core.name
+                if sd.snapshot.characters
+                else (sd.player_name or "the new arrival")
+            )
+            action = (
+                f"{joiner_char_name} steps into the scene and orients to "
+                "the surroundings — describe their arrival from their "
+                "point of view in a brief grounding paragraph. Do not "
+                "generate dialogue, decisions, or new actions for any "
+                "other PC already present."
+            )
+            source_tier = "mp_joiner_orientation"
+        else:
+            action = sd.opening_seed or "I look around and take in my surroundings."
+            source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
 
         # Cold-open delivery (playtest 2026-04-25 [P2]). The opening seed
         # is in-medias-res prose the world author wrote for the player to
