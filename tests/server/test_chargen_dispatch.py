@@ -707,7 +707,6 @@ class TestActions:
             assert sd is not None and sd.builder is not None
             if not sd.builder.current_scene().choices:
                 pytest.skip("elemental_harmony scene 0 has no choices")
-            before_idx = sd.builder.current_scene_index()
             await _send_chargen(
                 handler, CharacterCreationPayload(phase="scene", choice="1")
             )

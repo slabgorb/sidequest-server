@@ -11,6 +11,7 @@ span-source rename.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -382,10 +383,8 @@ class WebSocketSessionHandler:
                 # Legacy non-slug path (no room) still closes its
                 # per-session store here — it is owned by the session.
                 if self._room is None:
-                    try:
+                    with contextlib.suppress(Exception):
                         self._session_data.store.close()
-                    except Exception:
-                        pass
 
     # ------------------------------------------------------------------
     # PLAYER_SEAT dispatch (MP-02 Task 5)

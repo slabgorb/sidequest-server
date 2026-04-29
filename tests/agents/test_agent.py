@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from sidequest.agents import Agent, AgentResponse, BaseAgent, make_agent
-from sidequest.agents.agent import BaseAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone, SectionCategory
 

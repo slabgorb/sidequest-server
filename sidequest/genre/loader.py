@@ -10,7 +10,7 @@ supports multi-path search (local → home → install).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import yaml
 
@@ -51,8 +51,6 @@ from sidequest.genre.models.tropes import TropeDefinition
 from sidequest.genre.models.world import CartographyConfig, NavigationMode, WorldConfig
 from sidequest.genre.resolve import resolve_trope_inheritance
 
-T = TypeVar("T")
-
 # ---------------------------------------------------------------------------
 # Default search paths (mirrors Rust loader convention)
 # ---------------------------------------------------------------------------
@@ -72,7 +70,7 @@ DEFAULT_GENRE_PACK_SEARCH_PATHS: list[Path] = [
 # Low-level YAML helpers
 # ---------------------------------------------------------------------------
 
-def _load_yaml(path: Path, type_: type[T]) -> T:
+def _load_yaml[T](path: Path, type_: type[T]) -> T:
     """Load and parse a required YAML file.
 
     Port of Rust load_yaml<T>(path). Required; raises GenreLoadError on any
@@ -93,7 +91,7 @@ def _load_yaml(path: Path, type_: type[T]) -> T:
         raise GenreLoadError(path=path, detail=str(e)) from e
 
 
-def _load_yaml_optional(path: Path, type_: type[T]) -> T | None:
+def _load_yaml_optional[T](path: Path, type_: type[T]) -> T | None:
     """Load and parse an optional YAML file. Returns None if file doesn't exist.
 
     Port of Rust load_yaml_optional<T>(path). If present, failure is still loud.
@@ -366,10 +364,9 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         if isinstance(world_tropes_raw, list)
         else []
     )
-    if raw_world_tropes:
-        tropes = resolve_trope_inheritance(genre_tropes, raw_world_tropes)
-    else:
-        tropes = []
+    tropes = (
+        resolve_trope_inheritance(genre_tropes, raw_world_tropes) if raw_world_tropes else []
+    )
 
     # Optional world-level overrides
     archetypes_raw = _load_yaml_raw_optional(world_path / "archetypes.yaml")

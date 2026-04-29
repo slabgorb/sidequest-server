@@ -6,7 +6,7 @@ Port of sidequest-genre/src/models/world.rs.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -168,7 +168,7 @@ class LandmarkDetailed(BaseModel):
 
 # Landmark is either a plain string or a LandmarkDetailed dict.
 # We handle this at the Region level with a custom validator.
-Landmark = Union[str, LandmarkDetailed]
+Landmark = str | LandmarkDetailed
 
 
 class Region(BaseModel):

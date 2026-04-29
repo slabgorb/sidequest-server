@@ -86,12 +86,13 @@ class GenreRuleStage:
                 viz = payload.get("_visibility")
                 if isinstance(viz, dict):
                     visible_to = viz.get("visible_to")
-                    if visible_to != "all":
-                        if not isinstance(visible_to, list) or player_id not in visible_to:
-                            return GenreEvalResult(
-                                decision=FilterDecision(include=False, payload_json=""),
-                                matched_rule_index=rule_idx,
-                            )
+                    if visible_to != "all" and (
+                        not isinstance(visible_to, list) or player_id not in visible_to
+                    ):
+                        return GenreEvalResult(
+                            decision=FilterDecision(include=False, payload_json=""),
+                            matched_rule_index=rule_idx,
+                        )
                     fidelity_map = viz.get("fidelity") or {}
                     player_fidelity = fidelity_map.get(player_id)
                     if player_fidelity:

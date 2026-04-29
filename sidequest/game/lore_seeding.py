@@ -45,42 +45,39 @@ def seed_lore_from_genre_pack(store: LoreStore, pack: GenrePack) -> int:
     """
     count = 0
 
-    if pack.lore.history:
-        if _try_add(
-            store,
-            LoreFragment.new(
-                id="lore_genre_history",
-                category=LoreCategory.History,
-                content=pack.lore.history,
-                source=LoreSource.GenrePack,
-            ),
-        ):
-            count += 1
+    if pack.lore.history and _try_add(
+        store,
+        LoreFragment.new(
+            id="lore_genre_history",
+            category=LoreCategory.History,
+            content=pack.lore.history,
+            source=LoreSource.GenrePack,
+        ),
+    ):
+        count += 1
 
-    if pack.lore.geography:
-        if _try_add(
-            store,
-            LoreFragment.new(
-                id="lore_genre_geography",
-                category=LoreCategory.Geography,
-                content=pack.lore.geography,
-                source=LoreSource.GenrePack,
-            ),
-        ):
-            count += 1
+    if pack.lore.geography and _try_add(
+        store,
+        LoreFragment.new(
+            id="lore_genre_geography",
+            category=LoreCategory.Geography,
+            content=pack.lore.geography,
+            source=LoreSource.GenrePack,
+        ),
+    ):
+        count += 1
 
-    if pack.lore.cosmology:
-        if _try_add(
-            store,
-            LoreFragment.new(
-                id="lore_genre_cosmology",
-                # Cosmology fragments bucket into the History category.
-                category=LoreCategory.History,
-                content=pack.lore.cosmology,
-                source=LoreSource.GenrePack,
-            ),
-        ):
-            count += 1
+    if pack.lore.cosmology and _try_add(
+        store,
+        LoreFragment.new(
+            id="lore_genre_cosmology",
+            # Cosmology fragments bucket into the History category.
+            category=LoreCategory.History,
+            content=pack.lore.cosmology,
+            source=LoreSource.GenrePack,
+        ),
+    ):
+        count += 1
 
     for faction in pack.lore.factions:
         slug = faction.name.lower().replace(" ", "_")

@@ -838,16 +838,19 @@ class Orchestrator:
                 return NarratorPromptTier.Full
 
             # Genre switch detection
-            if context.genre is not None and self._session_genre is not None:
-                if context.genre != self._session_genre:
-                    logger.warning(
-                        "Genre switch detected — clearing stale session and forcing Full tier "
-                        "incoming_genre=%s",
-                        context.genre,
-                    )
-                    self._narrator_session_id = None
-                    self._session_genre = None
-                    return NarratorPromptTier.Full
+            if (
+                context.genre is not None
+                and self._session_genre is not None
+                and context.genre != self._session_genre
+            ):
+                logger.warning(
+                    "Genre switch detected — clearing stale session and forcing Full tier "
+                    "incoming_genre=%s",
+                    context.genre,
+                )
+                self._narrator_session_id = None
+                self._session_genre = None
+                return NarratorPromptTier.Full
 
         return NarratorPromptTier.Delta
 
@@ -1508,7 +1511,7 @@ class Orchestrator:
 
         Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
         """
-        with orchestrator_process_action_span(action_len=len(action)) as span:
+        with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
@@ -1732,10 +1735,7 @@ async def run_narration_turn(
     # Resolve character name
     char_name = character_name
     if char_name is None:
-        if session.characters:
-            char_name = session.characters[0].core.name
-        else:
-            char_name = "Player"
+        char_name = session.characters[0].core.name if session.characters else "Player"
 
     # Build state summary if not provided
     if state_summary is None:

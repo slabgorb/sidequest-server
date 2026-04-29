@@ -91,22 +91,25 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
     # Solo: no human GM. None is correct; CoreInvariantStage's
     # gm-sees-all branch never fires for the single player.
     gm_player_id: str | None = None
-    if sd.mode is not None and sd.mode != GameMode.SOLO:
+    if (
+        sd.mode is not None
+        and sd.mode != GameMode.SOLO
+        and not getattr(handler, "_gm_wiring_warned", False)
+    ):
         # Multiplayer: GM seat assignment not yet plumbed through
         # SessionRoom. Log one warning per build so GM-panel users
         # can see that ``unless: is_gm()`` rules are currently
         # over-masking the GM in multiplayer sessions.
-        if not getattr(handler, "_gm_wiring_warned", False):
-            logger.warning(
-                "projection.gm_identity_unwired slug=%s mode=%s — "
-                "multiplayer sessions do not yet carry a GM-seat "
-                "designation; `unless: is_gm()` rules will mask the "
-                "GM like any other player until MP-02 GM seating "
-                "lands.",
-                sd.game_slug,
-                sd.mode,
-            )
-            handler._gm_wiring_warned = True
+        logger.warning(
+            "projection.gm_identity_unwired slug=%s mode=%s — "
+            "multiplayer sessions do not yet carry a GM-seat "
+            "designation; `unless: is_gm()` rules will mask the "
+            "GM like any other player until MP-02 GM seating "
+            "lands.",
+            sd.game_slug,
+            sd.mode,
+        )
+        handler._gm_wiring_warned = True
 
     snapshot = sd.snapshot
 

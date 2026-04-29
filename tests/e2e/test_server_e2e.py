@@ -374,11 +374,6 @@ def test_e2e_npc_registry_populated_after_action(tmp_path):
     mock_client = _make_mock_client()
     mock_pack = _make_mock_genre_pack()
 
-    # We'll capture the session handler to inspect snapshot after
-    captured_handler: list = []
-
-    original_ws_endpoint = None
-
     app = create_app(
         claude_client_factory=lambda: mock_client,
         genre_pack_search_paths=[tmp_path],

@@ -16,6 +16,7 @@ and move on — renders are best-effort, text-only play must continue.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -254,10 +255,8 @@ class DaemonClient:
                 return dict(result)
             finally:
                 writer.close()
-                try:
+                with contextlib.suppress(Exception):
                     await writer.wait_closed()
-                except Exception:  # noqa: BLE001
-                    pass
 
 
 def render_enabled() -> bool:

@@ -387,7 +387,7 @@ class ClaudeClient:
                 elapsed,
                 self._timeout,
             )
-            raise TimeoutError(elapsed=elapsed)
+            raise TimeoutError(elapsed=elapsed) from None
 
         elapsed = time.monotonic() - start
         returncode = proc.returncode

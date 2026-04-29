@@ -136,8 +136,8 @@ def _audit_pack(pack_path: Path) -> dict[str, list[str]]:
 def _summarize_error_types(all_errors: dict[str, dict[str, list[str]]]) -> dict[str, int]:
     """Group errors by (file, field path, error type) to surface systemic drift."""
     counts: dict[str, int] = {}
-    for pack, files in all_errors.items():
-        for fname, errs in files.items():
+    for _pack, files in all_errors.items():
+        for _fname, errs in files.items():
             for err in errs:
                 # strip list indices so "archetypes.yaml[0]" and "[1]" collapse
                 import re
@@ -177,7 +177,7 @@ def _collect_raw_errors(pack_path: Path) -> list[tuple[str, str, dict[str, Any]]
             raw.append((path.name, canonical, err))
 
         if repeated and isinstance(loaded, list):
-            for idx, item in enumerate(loaded):
+            for _idx, item in enumerate(loaded):
                 try:
                     model.model_validate(item)
                 except ValidationError as e:

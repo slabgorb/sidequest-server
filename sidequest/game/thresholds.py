@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from sidequest.game.lore_store import (
     DuplicateLoreId,
@@ -58,10 +58,7 @@ class ThresholdAt(Protocol):
     narrator_hint: str
 
 
-T = TypeVar("T", bound=ThresholdAt)
-
-
-def detect_crossings(
+def detect_crossings[T: ThresholdAt](
     thresholds: list[T],
     old_value: int | float,
     new_value: int | float,
