@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from sidequest.game.belief_state import BeliefState
 from sidequest.game.character import Character
+from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
@@ -470,6 +471,11 @@ class GameSnapshot(BaseModel):
 
     # NPC registry (P1-required: narrator uses for name consistency)
     npc_registry: list[NpcRegistryEntry] = Field(default_factory=list)
+
+    # Chassis registry (rig MVP slice — fresh-session only). Materialized from
+    # `worlds/<world>/rigs.yaml` at connect time. Each entry is also projected
+    # into `npc_registry` so narrator name-continuity sees the chassis.
+    chassis_registry: dict[str, ChassisInstance] = Field(default_factory=dict)
 
     # P5-deferred: genie wishes (consequence engine, F9)
     genie_wishes: list[GenieWish] = Field(default_factory=list)

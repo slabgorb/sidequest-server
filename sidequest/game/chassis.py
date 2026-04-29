@@ -172,3 +172,82 @@ def apply_chassis_lineage_intimate(
             confrontation_id=confrontation_id,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# World-load wiring — fresh-session chassis_registry materialization
+# ---------------------------------------------------------------------------
+
+
+def _project_chassis_to_npc_entry(chassis: ChassisInstance):
+    """Return an NpcRegistryEntry projection of a ChassisInstance.
+
+    Imports happen lazily to avoid a session→chassis import cycle.
+    """
+    from sidequest.game.session import NpcRegistryEntry
+    return NpcRegistryEntry(
+        name=chassis.name,
+        role="ship_ai",
+        pronouns="she/her",
+    )
+
+
+def init_chassis_registry(snapshot, genre_pack) -> None:
+    """Load `worlds/<world_slug>/rigs.yaml` and materialize chassis state.
+
+    Slice scope: fresh-session only. Returning-player save rehydration is
+    deferred to a follow-on. Graceful no-op when:
+      - pack.chassis_classes is None (genre doesn't use rigs)
+      - pack.source_dir is None (in-memory pack with no on-disk YAML)
+      - the world has no rigs.yaml authored
+
+    Each chassis is added to ``snapshot.chassis_registry`` keyed by its id,
+    and projected into ``snapshot.npc_registry`` so the narrator's existing
+    name-continuity machinery sees the chassis as a named entity.
+    """
+    import yaml
+
+    from sidequest.genre.models.rigs_world import RigsWorldConfig
+
+    if genre_pack.chassis_classes is None:
+        return
+    if genre_pack.source_dir is None:
+        return
+
+    rigs_path = (
+        genre_pack.source_dir
+        / "worlds"
+        / snapshot.world_slug
+        / "rigs.yaml"
+    )
+    if not rigs_path.exists():
+        return
+
+    raw = yaml.safe_load(rigs_path.read_text(encoding="utf-8"))
+    cfg = RigsWorldConfig.model_validate(raw)
+
+    for inst_cfg in cfg.chassis_instances:
+        bond_seeds = [
+            BondLedgerEntry(
+                # character_role placeholder ("player_character") is
+                # rebound to the real character id at chargen time
+                # (deferred to a follow-on chargen wiring task).
+                character_id=seed.character_role,
+                bond_strength_character_to_chassis=seed.bond_strength_character_to_chassis,
+                bond_strength_chassis_to_character=seed.bond_strength_chassis_to_character,
+                bond_tier_character=seed.bond_tier_character,
+                bond_tier_chassis=seed.bond_tier_chassis,
+            )
+            for seed in inst_cfg.bond_seeds
+        ]
+        chassis = ChassisInstance(
+            id=inst_cfg.id,
+            name=inst_cfg.name,
+            class_id=inst_cfg.chassis_class_id,
+            OCEAN=inst_cfg.OCEAN,
+            voice=inst_cfg.voice,
+            interior_rooms=inst_cfg.interior_rooms,
+            bond_ledger=bond_seeds,
+        )
+        snapshot.chassis_registry[chassis.id] = chassis
+        snapshot.npc_registry.append(_project_chassis_to_npc_entry(chassis))
