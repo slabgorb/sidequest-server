@@ -354,6 +354,72 @@ async def test_build_narrator_prompt_contains_player_action():
     assert "Kael" in prompt
 
 
+async def test_build_narrator_prompt_merged_actions_render_per_pc_block():
+    """Multiplayer merged turn must render every PC's declaration on its own line.
+
+    Regression: 2026-04-29 multiplayer playtest. The previous prompt format was
+    ``"<one PC> says: <merged blob>"`` which both attributed every player's
+    action to the dispatch winner and invited the LLM to generate dialogue
+    for PCs whose players had only declared physical actions (SOUL.md
+    "Agency" violation: "If a response includes the player doing something
+    they didn't ask to do, it's wrong").
+    """
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    # Dispatch winner (character_name) is Laverne; merged action contains
+    # both PCs. The combined-action string is what the handler builds today
+    # — the orchestrator must NOT use it as the source of attribution.
+    context = TurnContext(
+        character_name="Laverne",
+        merged_player_actions=[
+            ("Shirley", "I look at Laverne"),
+            ("Laverne", "I look at Shirley"),
+        ],
+    )
+    prompt, _ = await orch.build_narrator_prompt(
+        "Shirley: I look at Laverne\nLaverne: I look at Shirley",
+        context,
+        tier=NarratorPromptTier.Full,
+    )
+    # Each PC's declaration appears on its own attributed line.
+    assert "Shirley declares: I look at Laverne" in prompt
+    assert "Laverne declares: I look at Shirley" in prompt
+    # The merged blob is NOT wrapped under a single "Laverne says:" header.
+    assert "Laverne says: Shirley:" not in prompt
+    # The inline strict reminder is present adjacent to the action block.
+    assert "Do NOT generate dialogue" in prompt
+
+
+async def test_build_narrator_prompt_solo_action_unchanged():
+    """Single-player turns keep the existing 'X says: ...' framing.
+
+    Guard against accidentally changing solo behavior while fixing the MP bug.
+    """
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael", merged_player_actions=None)
+    prompt, _ = await orch.build_narrator_prompt(
+        "look around", context, tier=NarratorPromptTier.Full,
+    )
+    assert "Kael says: look around" in prompt
+
+
+def test_narrator_agency_constant_forbids_pc_dialogue_generation():
+    """The strengthened agency rule must explicitly forbid PC dialogue.
+
+    Without this string in the Primacy guardrail, the multiplayer fix is
+    incomplete — the prompt structure handles attribution, but the rule
+    is what stops the LLM from inventing speech for an unspoken PC.
+    """
+    from sidequest.agents.narrator import NARRATOR_AGENCY
+
+    lower = NARRATOR_AGENCY.lower()
+    assert "dialogue" in lower
+    assert "must not" in lower or "may not" in lower
+    # Specifically calls out the speaking case.
+    assert "speak" in lower
+
+
 async def test_build_narrator_prompt_includes_genre_identity():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)

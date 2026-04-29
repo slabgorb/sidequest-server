@@ -333,6 +333,18 @@ class TurnContext:
     # Player character name (Recency zone — action attribution)
     character_name: str = "Player"
 
+    # Multiplayer merged-turn payload. When the per-room barrier fires and
+    # multiple PCs' actions are dispatched as a single narration turn, the
+    # session handler stores `(character_name, action_text)` per submitter
+    # here so build_narrator_prompt can render a multi-PC declaration block
+    # instead of a single `"<one PC> says: <merged blob>"` line — that
+    # framing both attributed every PC's words to the dispatch winner and
+    # invited the LLM to generate dialogue for PCs whose players had only
+    # declared physical actions (SOUL.md "Agency" violation flagged in the
+    # 2026-04-29 multiplayer playtest). When `None`, the prompt falls back
+    # to the single-player format.
+    merged_player_actions: list[tuple[str, str]] | None = None
+
     # Current location (for degraded response)
     current_location: str = "Unknown"
 
@@ -1411,11 +1423,37 @@ class Orchestrator:
 
         with context.phase_timings.phase("prompt_build"):
             # Player action (Recency zone — highest attention, every tier)
+            if context.merged_player_actions:
+                # Multiplayer merged turn (ADR-036 sealed-letter dispatch).
+                # Render every PC's declaration on its own line and reiterate
+                # the agency rule inline so the LLM sees it adjacent to the
+                # action block. Without this, the prior "Laverne says: ..."
+                # framing wrapped the whole merged blob in one PC's name and
+                # cued the model to generate dialogue for every PC named in
+                # the block (2026-04-29 playtest: "Your call, Engineer,"
+                # Laverne says — Laverne's player only typed "I look at
+                # Shirley", a glance).
+                lines = "\n".join(
+                    f"- {name} declares: {act}"
+                    for name, act in context.merged_player_actions
+                )
+                player_action_text = (
+                    "This turn, the seated players each declared an action "
+                    "simultaneously. Resolve them as a single narrative beat:\n"
+                    f"{lines}\n\n"
+                    "STRICT: Narrate the resolution of these declared actions "
+                    "ONLY. Do NOT generate dialogue, internal thoughts, "
+                    "decisions, or new physical actions for any PC listed "
+                    "above — only what their player declared. NPCs may speak "
+                    "and react. PCs may not be made to speak."
+                )
+            else:
+                player_action_text = f"{context.character_name} says: {action}"
             registry.register_section(
                 agent_name,
                 PromptSection.new(
                     "player_action",
-                    f"{context.character_name} says: {action}",
+                    player_action_text,
                     AttentionZone.Recency,
                     SectionCategory.Action,
                 ),
