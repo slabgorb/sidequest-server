@@ -711,11 +711,40 @@ class GameSnapshot(BaseModel):
         if patch.current_region is not None:
             self.current_region = patch.current_region
         if patch.discovered_regions is not None:
-            self.discovered_regions = patch.discovered_regions
+            # Story 45-16: filter the wholesale-replace patch path. A
+            # narrator-emitted patch could pass a list containing a
+            # parenthetical aside; reject per-entry instead of
+            # adopting the list verbatim.
+            from sidequest.game.region_validation import validate_region_name
+            from sidequest.telemetry.spans import region_entry_rejected_span
+            filtered: list[str] = []
+            for r in patch.discovered_regions:
+                ok, reason = validate_region_name(r)
+                if ok:
+                    filtered.append(r)
+                else:
+                    with region_entry_rejected_span(
+                        entry=r if isinstance(r, str) else repr(r),
+                        reason=reason or "unknown",
+                        caller_path="session.apply_patch.discovered_regions_set",
+                    ):
+                        pass
+            self.discovered_regions = filtered
         if patch.discovered_routes is not None:
             self.discovered_routes = patch.discovered_routes
         if patch.discover_regions is not None:
+            from sidequest.game.region_validation import validate_region_name
+            from sidequest.telemetry.spans import region_entry_rejected_span
             for r in patch.discover_regions:
+                ok, reason = validate_region_name(r)
+                if not ok:
+                    with region_entry_rejected_span(
+                        entry=r if isinstance(r, str) else repr(r),
+                        reason=reason or "unknown",
+                        caller_path="session.apply_patch.discover_regions",
+                    ):
+                        pass
+                    continue
                 if r not in self.discovered_regions:
                     self.discovered_regions.append(r)
         if patch.discover_routes is not None:
