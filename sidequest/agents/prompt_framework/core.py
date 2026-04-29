@@ -25,6 +25,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 
 if TYPE_CHECKING:
+    from sidequest.game.chassis import ChassisInstance
     from sidequest.game.session import NpcRegistryEntry, PartyPeer
 
 
@@ -73,6 +74,17 @@ class PromptComposer(Protocol):
 
 _PACING_AGENTS: frozenset[str] = frozenset(["narrator"])
 _NARRATING_AGENTS: frozenset[str] = frozenset(["narrator"])
+
+
+def _split_player_name(name: str) -> tuple[str, str]:
+    """Split a display name into (first, last). Single-token names get last="".
+
+    Slice-scope helper for chassis voice section. Real chargen rebind lands later.
+    """
+    parts = name.strip().split(maxsplit=1)
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], parts[1]
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +414,83 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
             PromptSection.new(
                 "npc_roster",
                 "\n".join(lines),
+                AttentionZone.Early,
+                SectionCategory.State,
+            ),
+        )
+
+    def register_chassis_voice_section(
+        self,
+        agent_name: str,
+        chassis_registry: dict[str, ChassisInstance],
+        character_name: str,
+    ) -> None:
+        """Inject chassis-as-speaker voice data into the narrator prompt.
+
+        The narrator already sees chassis names via register_npc_roster_section
+        (chassis project into npc_registry as ship_ai). This section adds the
+        register, vocal tics, silence register, and current bond-tier address
+        form so chassis dialogue stays consistent across turns.
+
+        Empty registry or no-voice chassis produces no output (zero-byte
+        leak discipline, mirrors npc_roster). Slice-scope: active character
+        is identified via the bond_seed placeholder id "player_character" —
+        full chargen rebind to real player_id is a follow-up.
+
+        Placed in the Early zone alongside the NPC roster: chassis voice is
+        acute identity data, not background lore.
+        """
+        from sidequest.agents.subsystems.chassis_voice import (
+            resolve_chassis_name_form,
+        )
+
+        if not chassis_registry:
+            return
+
+        # Build the stub _CharacterLike per slice scope.
+        first_name, last_name = _split_player_name(character_name)
+
+        class _StubCharacter:
+            def __init__(self) -> None:
+                self.id = "player_character"
+                self.first_name = first_name
+                self.last_name = last_name
+                self.nickname: str | None = None
+
+        stub = _StubCharacter()
+
+        rendered_lines: list[str] = []
+        for chassis in chassis_registry.values():
+            if chassis.voice is None:
+                continue
+            name_form = resolve_chassis_name_form(chassis, stub)
+            tics = (
+                "; ".join(chassis.voice.vocal_tics)
+                if chassis.voice.vocal_tics
+                else "(none)"
+            )
+            silence = chassis.voice.silence_register or "(unspecified)"
+            rendered_lines.append(
+                f"- {chassis.name} (chassis voice — {chassis.voice.default_register}): "
+                f"addresses you as \"{name_form}\". Vocal tics: {tics}. "
+                f"Silence reads as: {silence}."
+            )
+
+        if not rendered_lines:
+            return
+
+        body = "\n".join([
+            "## CHASSIS VOICES — Speak as them with this register",
+            *rendered_lines,
+            "Use the address-form exactly. The chassis's tone is set; "
+            "the narrator's job is to honor it.",
+        ])
+
+        self.register_section(
+            agent_name,
+            PromptSection.new(
+                "chassis_voices",
+                body,
                 AttentionZone.Early,
                 SectionCategory.State,
             ),
