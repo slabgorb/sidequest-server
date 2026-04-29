@@ -1,0 +1,50 @@
+# World-layer magic config (test fixture).
+# promote_to_status keys deferred to Task 3.4 when LedgerBarSpec.promote_to_status field lands.
+world: coyote_reach
+genre: space_opera
+intensity: 0.25
+active_plugins: [innate_v1, item_legacy_v1]
+world_knowledge:
+  primary: classified
+  local_register: folkloric
+visibility:
+  primary: feared
+  local_register: dismissed
+can_build_caster: false
+can_build_item_user: true
+hard_limits_additional: []
+cost_types_active: [sanity, notice, vitality]
+ledger_bars:
+  - id: sanity
+    scope: character
+    direction: down
+    range: [0.0, 1.0]
+    threshold_low: 0.40
+    consequence_on_low_cross: "auto-fire The Bleeding-Through"
+    starts_at_chargen: 1.0
+  - id: notice
+    scope: character
+    direction: up
+    range: [0.0, 1.0]
+    threshold_high: 0.75
+    consequence_on_high_cross: "auto-fire The Quiet Word"
+    starts_at_chargen: 0.0
+  - id: vitality
+    scope: character
+    direction: down
+    range: [0.0, 1.0]
+    threshold_low: 0.20
+    consequence_on_low_cross: "narrator-discretion: aging visibly"
+    starts_at_chargen: 1.0
+  - id: hegemony_heat
+    scope: world
+    direction: up
+    range: [0.0, 1.0]
+    threshold_high: 0.70
+    consequence_on_high_cross: "narrator-discretion: escalation"
+    # No promote_to_status — world bars don't surface as character statuses.
+    decay_per_session: 0.05
+    starts_at_chargen: 0.30
+narrator_register: |
+  The Reach doesn't perform miracles. It bleeds through. A ship's pilot taps
+  the panel that wasn't responding and it answers — once, never again.
