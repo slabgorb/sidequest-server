@@ -429,6 +429,31 @@ class TestMPJoinerRaceSuppression:
             assert sup_attrs.get("genre") == "caverns_and_claudes"
             assert sup_attrs.get("world") == "grimvault"
 
+            # Playtest 2026-04-29 BUG-LOW: the suppressed-joiner branch must
+            # report ``seed_source="mp_joiner_orientation"`` (not the legacy
+            # "fallback" tier — that label hid which dispatch path actually
+            # ran from the GM panel). The new tier proves the joiner-aware
+            # action string was built (joiner's character name + explicit
+            # no-puppeting directive) instead of the generic "I look around
+            # and take in my surroundings." that gave the narrator no POV
+            # anchor.
+            attrs2 = dict(dispatched[-1].attributes or {})
+            assert attrs2["seed_source"] == "mp_joiner_orientation", (
+                "MP joiner-orientation branch must label its dispatch tier "
+                "so the GM panel can verify the fix is firing — got "
+                f"seed_source={attrs2['seed_source']!r}"
+            )
+            # The new action string is longer than the 47-char legacy
+            # fallback ("I look around and take in my surroundings."). The
+            # bound is loose on purpose — the exact phrasing is allowed to
+            # evolve, but the directive is meaningfully longer than the
+            # prior generic fallback.
+            assert attrs2["action_len"] > 47, (
+                "MP joiner-orientation action must be the longer joiner-"
+                "aware string, not the generic fallback — got action_len="
+                f"{attrs2['action_len']}"
+            )
+
         asyncio.run(body())
 
 
