@@ -32,6 +32,23 @@ SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED] = SpanRoute(
         "registry_len": (span.attributes or {}).get("registry_len", 0),
     },
 )
+# Playtest 2026-04-29: PC names appearing in narration must NOT promote the PC
+# into the NPC registry. The skip span lets the GM panel verify the filter
+# fired (and surfaces "the narrator named your party member" events for
+# Sebastien's mechanical visibility).
+SPAN_NPC_PC_NAME_SKIPPED = "npc.pc_name_skipped"
+SPAN_ROUTES[SPAN_NPC_PC_NAME_SKIPPED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_registry",
+        "op": "pc_name_skipped",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "matched_pc": (span.attributes or {}).get("matched_pc", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 SPAN_NPC_REINVENTED = "npc.reinvented"
 SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
     event_type="state_transition",
@@ -89,6 +106,36 @@ def npc_auto_registered_span(
         **attrs,
     }
     with Span.open(SPAN_NPC_AUTO_REGISTERED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_pc_name_skipped_span(
+    *,
+    npc_name: str,
+    matched_pc: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Emitted when narration tries to auto-register a PC's name as an NPC.
+
+    ``matched_pc`` is the canonical PC name we matched against (case-folded
+    equality on ``character.core.name``). The span MUST fire whenever the
+    filter triggers — it's the only way Sebastien's GM panel can see that
+    the narrator is naming party members in NPC-registry contexts (one of
+    the symptoms behind the playtest 2026-04-29 "narrator confused PC for
+    NPC" report).
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "matched_pc": matched_pc,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_PC_NAME_SKIPPED, attributes, tracer_override=_tracer,
+    ) as span:
         yield span
 
 
