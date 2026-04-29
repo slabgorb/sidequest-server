@@ -14,7 +14,7 @@ from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
 from sidequest.magic.models import Flag, MagicWorking
-from sidequest.magic.state import ApplyWorkingResult
+from sidequest.magic.state import ApplyWorkingResult, ThresholdCrossingEvent
 from sidequest.magic.validator import validate as magic_validate
 from sidequest.server.dispatch.sealed_letter import (
     SealedLetterOutcome,
@@ -154,7 +154,7 @@ class MagicApplyResult:
     flags: list[Flag]
 
     @property
-    def crossings(self):
+    def crossings(self) -> list[ThresholdCrossingEvent]:
         return self.apply.crossings
 
 
@@ -275,13 +275,19 @@ def _apply_narration_result_to_snapshot(
     if not isinstance(result, NarrationTurnResult):
         return outcome
 
-    # Magic working (Coyote Reach iter 3 — Task 3.3). Run early so a
-    # parse error surfaces before downstream branches mutate the snapshot
-    # — the narrator's prose is already in the user's hands by the time
-    # we get here, so we don't gate on validity, but we DO log loudly.
-    # Threshold-crossing → status_changes auto-promotion (Task 3.4) and
-    # ``magic.working_applied`` OTEL span emission (Task 3.5) are
-    # explicitly NOT done here — see those tasks for the wire-up.
+    # Magic working (Coyote Reach iter 3 — Task 3.3). Ordered ahead of
+    # the location/quest/inventory/encounter branches so the
+    # ``magic.working_applied`` OTEL span Task 3.5 will add timestamps
+    # before any downstream snapshot mutation — the GM panel reads
+    # magic-resolution as the first event of the turn, paired tightly
+    # with the prose that produced it. The parse-error path is
+    # *swallowed* below (logged + continue) by design: narration is
+    # already in the user's hands, so we never crash the apply pipeline
+    # on a malformed working — Task 3.5 will promote that log to a
+    # ``magic.parse_error`` span. Threshold-crossing → status_changes
+    # auto-promotion (Task 3.4) and the working_applied span itself
+    # (Task 3.5) are explicitly NOT done here — see those tasks for
+    # the wire-up.
     magic_working_field = getattr(result, "magic_working", None)
     if magic_working_field is not None:
         try:

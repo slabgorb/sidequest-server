@@ -3,84 +3,33 @@ from __future__ import annotations
 
 import pytest
 
-from sidequest.magic.models import (
-    HardLimit,
-    LedgerBarSpec,
-    WorldKnowledge,
-    WorldMagicConfig,
-)
+from sidequest.magic.models import HardLimit, WorldMagicConfig
 
 
 @pytest.fixture()
-def world_config() -> WorldMagicConfig:
-    """Local override of the conftest world_config.
+def coyote_world_config(world_config: WorldMagicConfig) -> WorldMagicConfig:
+    """Conftest world_config + ``no_resurrection`` hard limit.
 
-    Adds ``no_resurrection`` to ``hard_limits`` so the validator's keyword
+    Derived from the canonical conftest fixture via ``model_copy`` rather
+    than re-declaring every bar — that way any future change to the shared
+    Coyote Reach config in ``tests/magic/conftest.py`` flows through
+    automatically. We add ``no_resurrection`` so the validator's keyword
     detector (id → "resurrection") matches the test 2 narrator_basis
-    "resurrection of the dead pilot via psychic touch". The conftest
-    fixture only ships ``psionics_never_decisive``, which would not match
-    that basis. Per the conftest comment "pytest local wins", this
-    file-scoped fixture replaces the session/conftest fixture for tests
-    in this module.
+    "resurrection of the dead pilot via psychic touch"; the conftest's
+    ``psionics_never_decisive`` limit alone would not match.
     """
-    return WorldMagicConfig(
-        world_slug="coyote_reach",
-        genre_slug="space_opera",
-        allowed_sources=["innate", "item_based"],
-        active_plugins=["innate_v1", "item_legacy_v1"],
-        intensity=0.25,
-        world_knowledge=WorldKnowledge(
-            primary="classified", local_register="folkloric"
-        ),
-        visibility={"primary": "feared", "local_register": "dismissed"},
-        hard_limits=[
-            HardLimit(id="no_resurrection", description="death is permanent"),
-            HardLimit(
-                id="psionics_never_decisive",
-                description="psionics cannot resolve a confrontation alone",
-            ),
-        ],
-        cost_types=["sanity", "notice", "vitality"],
-        ledger_bars=[
-            LedgerBarSpec(
-                id="sanity",
-                scope="character",
-                direction="down",
-                range=(0.0, 1.0),
-                threshold_low=0.40,
-                consequence_on_low_cross="auto-fire The Bleeding-Through",
-                starts_at_chargen=1.0,
-            ),
-            LedgerBarSpec(
-                id="notice",
-                scope="character",
-                direction="up",
-                range=(0.0, 1.0),
-                threshold_high=0.75,
-                consequence_on_high_cross="auto-fire The Quiet Word",
-                starts_at_chargen=0.0,
-            ),
-            LedgerBarSpec(
-                id="hegemony_heat",
-                scope="world",
-                direction="up",
-                range=(0.0, 1.0),
-                threshold_high=0.70,
-                consequence_on_high_cross="escalation",
-                decay_per_session=0.05,
-                starts_at_chargen=0.30,
-            ),
-        ],
-        narrator_register="x",
-    )
+    augmented = list(world_config.hard_limits) + [
+        HardLimit(id="no_resurrection", description="death is permanent"),
+    ]
+    return world_config.model_copy(update={"hard_limits": augmented})
 
 
 @pytest.fixture
-def coyote_snapshot(world_config):
+def coyote_snapshot(coyote_world_config: WorldMagicConfig):
     from sidequest.game.session import GameSnapshot
     from sidequest.magic.state import MagicState
 
-    state = MagicState.from_config(world_config)
+    state = MagicState.from_config(coyote_world_config)
     state.add_character("sira_mendes")
     return GameSnapshot.model_construct(magic_state=state)
 
@@ -126,7 +75,15 @@ def test_apply_magic_working_deep_red_flagged(coyote_snapshot):
     }
     result = apply_magic_working(snapshot=coyote_snapshot, patch_field=patch_field)
 
-    assert any(f.severity == FlagSeverity.DEEP_RED for f in result.flags)
+    # Couple to the specific hard limit, not just "any DEEP_RED" — the
+    # validator stamps the flag's reason as
+    # f"hard_limit_violation:{limit.id}", so a future regression that
+    # triggers a different DEEP_RED path won't pass this assertion.
+    assert any(
+        f.severity == FlagSeverity.DEEP_RED
+        and f.reason == "hard_limit_violation:no_resurrection"
+        for f in result.flags
+    )
 
 
 def test_apply_magic_working_malformed_patch_raises_parse_error(coyote_snapshot):
