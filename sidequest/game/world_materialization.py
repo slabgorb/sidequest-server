@@ -24,7 +24,7 @@ chapter doesn't match any maturity level.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from opentelemetry import trace
@@ -69,7 +69,7 @@ def _is_auto_description(description: str, race: str, char_class: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-class CampaignMaturity(str, Enum):
+class CampaignMaturity(StrEnum):
     """Campaign maturity tier derived from turn count + beats fired."""
 
     Fresh = "Fresh"

@@ -5,7 +5,7 @@ Port of sidequest-genre/src/models/rules.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -149,7 +149,7 @@ class MetricDef(BaseModel):
         return self
 
 
-class ResolutionMode(str, Enum):  # noqa: UP042 — matches project convention (see protocol/enums.py)
+class ResolutionMode(StrEnum):  # noqa: UP042 — matches project convention (see protocol/enums.py)
     """How a confrontation resolves each turn.
 
     - ``beat_selection``: player rolls d20 vs static DC. Tier drives delta
@@ -295,13 +295,13 @@ class ConfrontationDef(BaseModel):
         return self
 
 
-class CrossingDirection(str, Enum):
+class CrossingDirection(StrEnum):
     """Direction in which an EdgeThresholdDecl fires."""
 
     crossing_down = "crossing_down"
 
 
-class RecoveryBehaviour(str, Enum):
+class RecoveryBehaviour(StrEnum):
     """Recovery behaviour for an edge pool at a named cadence."""
 
     full = "full"

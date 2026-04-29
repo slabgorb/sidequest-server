@@ -5,7 +5,7 @@ Port of sidequest-genre/src/models/advancement.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -53,7 +53,7 @@ RecoveryTrigger = Annotated[
 # ---------------------------------------------------------------------------
 
 
-class LoreRevealScope(str, Enum):
+class LoreRevealScope(StrEnum):
     """Scope of a Lore-revealing advancement effect."""
 
     threshold_crossings = "threshold_crossings"

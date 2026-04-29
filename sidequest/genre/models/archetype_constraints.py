@@ -5,12 +5,12 @@ Port of sidequest-genre/src/models/archetype_constraints.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class PairingWeight(str, Enum):
+class PairingWeight(StrEnum):
     """Weight classification for a Jungian x RPG Role pairing."""
 
     common = "common"

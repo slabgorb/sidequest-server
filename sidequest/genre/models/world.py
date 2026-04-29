@@ -5,13 +5,13 @@ Port of sidequest-genre/src/models/world.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
 
-class NavigationMode(str, Enum):
+class NavigationMode(StrEnum):
     """Navigation mode for a world's cartography."""
 
     region = "region"
@@ -97,7 +97,7 @@ class RoomDef(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class Terrain(str, Enum):
+class Terrain(StrEnum):
     """Terrain type for graph edges."""
 
     road = "road"

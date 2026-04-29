@@ -11,7 +11,7 @@ Port of:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Generic, Self, TypeVar
 
@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sidequest.protocol.provenance import ContributionKind, MergeStep, Provenance, Tier
 
 
-class MergeStrategy(str, Enum):
+class MergeStrategy(StrEnum):
     """Per-field merge strategy, declared via Field(json_schema_extra={"merge": ...}).
 
     Maps directly to the Rust MergeStrategy enum in resolver/merge.rs.

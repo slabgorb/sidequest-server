@@ -23,7 +23,7 @@ view. New summary fields go here, not in the builder.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from opentelemetry import trace
 
@@ -80,7 +80,7 @@ def field_label(rules: RulesConfig, key: str) -> str:
     return DEFAULT_CHARGEN_FIELD_LABELS.get(key, key)
 
 
-class _NameSource(str, Enum):
+class _NameSource(StrEnum):
     """Which source produced the Name line in the rendered summary."""
 
     NAME_SCENE = "name_scene"
@@ -91,7 +91,7 @@ class _NameSource(str, Enum):
     """No name available from either source."""
 
 
-class _EquipmentSource(str, Enum):
+class _EquipmentSource(StrEnum):
     """Which source produced the Equipment line in the rendered summary."""
 
     SCENE_ITEM_HINTS = "scene_item_hints"

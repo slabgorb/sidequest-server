@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from opentelemetry import trace
 
@@ -43,7 +43,7 @@ from sidequest.protocol.types import NonBlankString
 # ---------------------------------------------------------------------------
 
 
-class HookType(str, Enum):
+class HookType(StrEnum):
     """Category of narrative hook."""
 
     ORIGIN = "Origin"

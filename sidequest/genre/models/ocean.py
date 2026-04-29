@@ -6,7 +6,7 @@ Also includes DramaThresholds which co-locates in ocean.rs in Rust.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -46,7 +46,7 @@ class OceanProfile(BaseModel):
         return max(0.0, min(10.0, float(v)))
 
 
-class OceanDimension(str, Enum):
+class OceanDimension(StrEnum):
     """One of the Big Five personality dimensions."""
 
     openness = "Openness"

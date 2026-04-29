@@ -7,7 +7,7 @@ this single file — do not fragment into sub-modules.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import Field
 
@@ -20,7 +20,7 @@ from sidequest.protocol.types import NonBlankString
 # ---------------------------------------------------------------------------
 
 
-class FactCategory(str, Enum):
+class FactCategory(StrEnum):
     """Classification category for narrator footnotes.
 
     Port of sidequest_protocol::FactCategory.
