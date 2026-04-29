@@ -15,16 +15,30 @@ from sidequest.magic.models import (
     WorldMagicConfig,
 )
 from sidequest.magic.plugin import MAGIC_PLUGINS, MagicPlugin, get_plugin
+from sidequest.magic.state import (
+    ApplyWorkingResult,
+    BarKey,
+    LedgerBar,
+    MagicState,
+    ThresholdCrossingEvent,
+    WorkingRecord,
+)
 
 __all__ = [
     "MAGIC_PLUGINS",
+    "ApplyWorkingResult",
+    "BarKey",
     "Flag",
     "FlagSeverity",
     "HardLimit",
+    "LedgerBar",
     "LedgerBarSpec",
     "MagicPlugin",
+    "MagicState",
     "MagicWorking",
     "Plugin",
+    "ThresholdCrossingEvent",
+    "WorkingRecord",
     "WorldKnowledge",
     "WorldMagicConfig",
     "get_plugin",

@@ -185,3 +185,34 @@ def test_pydantic_serialization_roundtrip(world_config):
         == pytest.approx(0.88)
     )
     assert len(restored.working_log) == 1
+
+
+def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
+    """Cost types with no character-scope bar (e.g. world-scope `notice`)
+    must surface in the log, never silently disappear. Per CLAUDE.md
+    'GM panel is the lie detector' — a skipped subsystem decision that
+    leaves no trace is a no-silent-fallback violation. Task 3.5 will
+    promote this to an OTEL span; for now a structured log keeps it
+    auditable."""
+    import logging
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+
+    # `karma` is not a bar in this world's ledger.
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="condition",
+        actor="sira_mendes",
+        costs={"karma": 0.10},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="involuntary",
+    )
+    with caplog.at_level(logging.WARNING, logger="sidequest.magic.state"):
+        state.apply_working(working)
+
+    assert any(
+        "magic.unrouted_cost" in r.message and "karma" in r.message for r in caplog.records
+    )

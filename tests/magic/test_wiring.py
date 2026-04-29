@@ -9,10 +9,16 @@ import pytest
 def test_magic_module_importable_from_top_level():
     """Production code can `from sidequest.magic import ...` cleanly."""
     from sidequest.magic import (  # noqa: F401
+        ApplyWorkingResult,
+        BarKey,
         Flag,
         FlagSeverity,
+        LedgerBar,
+        MagicState,
         MagicWorking,
         Plugin,
+        ThresholdCrossingEvent,
+        WorkingRecord,
         WorldMagicConfig,
     )
 

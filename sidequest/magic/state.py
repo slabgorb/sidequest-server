@@ -6,11 +6,14 @@ set_bar_value (testing), tick_session_decay (Phase 6).
 """
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from sidequest.magic.models import LedgerBarSpec, MagicWorking, WorldMagicConfig
+
+_log = logging.getLogger(__name__)
 
 
 class BarKey(BaseModel):
@@ -153,13 +156,13 @@ class MagicState(BaseModel):
         Raises KeyError if `actor` has no instantiated character bars.
         """
         # Confirm actor exists for at least one character bar (sanity check).
-        actor_keys = [
-            k for k in self.ledger
-            if _deserialize_bar_key(k).scope == "character"
-            and _deserialize_bar_key(k).owner_id == working.actor
-        ]
-        if not actor_keys:
-            raise KeyError(f"unknown actor: {working.actor!r}; call add_character first")
+        # Prefix scan instead of full BarKey deserialization — both are O(n)
+        # in the ledger, but startswith avoids constructing a BarKey per row.
+        actor_prefix = f"character|{working.actor}|"
+        if not any(k.startswith(actor_prefix) for k in self.ledger):
+            raise KeyError(
+                f"unknown actor: {working.actor!r}; call add_character first"
+            )
 
         record = WorkingRecord(**working.model_dump())
         crossings: list[ThresholdCrossingEvent] = []
@@ -169,9 +172,19 @@ class MagicState(BaseModel):
             key = BarKey(scope="character", owner_id=working.actor, bar_id=cost_type)
             serialized = _serialize_bar_key(key)
             if serialized not in self.ledger:
-                # Not all costs are character-scoped bars (e.g. notice is). Treat
-                # as no-op on this scope. World-scope and item-scope cost
-                # propagation are wired in later iterations.
+                # World-scope and item-scope cost propagation are wired in
+                # later iterations. Until then, costs targeting non-character
+                # bars are skipped — but the skip MUST be auditable per
+                # CLAUDE.md "GM panel is the lie detector". Task 3.5 will
+                # promote this to an OTEL `magic.unrouted_cost` span; until
+                # then a structured warning makes the skip visible in logs.
+                _log.warning(
+                    "magic.unrouted_cost actor=%s cost_type=%s amount=%s "
+                    "(no character-scope bar; world/item scope routing pending)",
+                    working.actor,
+                    cost_type,
+                    amount,
+                )
                 continue
             bar = self.ledger[serialized]
             prev = bar.value
