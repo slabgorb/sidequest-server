@@ -34,6 +34,7 @@ from sidequest.protocol.messages import (
     SessionEventPayload,
 )
 from sidequest.server import views
+from sidequest.server.dispatch.char_creation_resolve import resolve_char_creation_scenes
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.image_pacing import ImagePacingThrottle
@@ -124,7 +125,11 @@ class ConnectHandler:
             # have been called — slug-connect cannot proceed without a room
             # registry, socket id, and outbound queue. Fail loudly if the
             # WebSocket lifecycle was bypassed (no silent test-only path).
-            if session._room_registry is None or session._socket_id is None or session._out_queue is None:
+            if (
+                session._room_registry is None
+                or session._socket_id is None
+                or session._out_queue is None
+            ):
                 raise RuntimeError(
                     "slug-connect requires attach_room_context() to have been "
                     "called first — WebSocket lifecycle wiring is missing. "
@@ -401,7 +406,9 @@ class ConnectHandler:
                 # only when the scrapbook coverage diverges from the
                 # narrative log. See sidequest/game/scrapbook_coverage.py.
                 detect_scrapbook_coverage_gaps(
-                    store=store, snapshot=snapshot, slug=slug,
+                    store=store,
+                    snapshot=snapshot,
+                    slug=slug,
                 )
             else:
                 snapshot = GameSnapshot(
@@ -429,9 +436,10 @@ class ConnectHandler:
             # name is the human-readable display name sent by the UI (see
             # display_name resolution above) — NOT the opaque player UUID.
             builder: CharacterBuilder | None = None
-            if not has_character and genre_pack.char_creation:
+            chargen_scenes = resolve_char_creation_scenes(genre_pack, row.world_slug)
+            if not has_character and chargen_scenes:
                 builder = CharacterBuilder(
-                    scenes=list(genre_pack.char_creation),
+                    scenes=chargen_scenes,
                     rules=genre_pack.rules,
                     backstory_tables=genre_pack.backstory_tables,
                 ).with_lobby_name(display_name)
@@ -909,7 +917,9 @@ class ConnectHandler:
             # AC4 explicitly names this — a slug-only fix would leave
             # legacy saves silent.
             detect_scrapbook_coverage_gaps(
-                store=store, snapshot=snapshot, slug="",
+                store=store,
+                snapshot=snapshot,
+                slug="",
             )
         else:
             snapshot = GameSnapshot(
@@ -933,9 +943,10 @@ class ConnectHandler:
         # name is the fallback the Name line uses when the genre has no
         # name-entry scene (caverns_and_claudes, etc.).
         builder: CharacterBuilder | None = None
-        if not has_character and genre_pack.char_creation:
+        chargen_scenes = resolve_char_creation_scenes(genre_pack, world_slug)
+        if not has_character and chargen_scenes:
             builder = CharacterBuilder(
-                scenes=list(genre_pack.char_creation),
+                scenes=chargen_scenes,
                 rules=genre_pack.rules,
                 backstory_tables=genre_pack.backstory_tables,
             ).with_lobby_name(player_name)
