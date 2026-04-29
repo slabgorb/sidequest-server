@@ -195,7 +195,6 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
     Not Just Existence" warns about.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
-    from sidequest.game.ability import AbilitySource
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore
     from sidequest.game.session import GameSnapshot
@@ -254,4 +253,3 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
     assert len(bleeding) == 1, (
         f"expected one auto-promoted 'Bleeding through' Wound, got {statuses!r}"
     )
-    _ = AbilitySource  # keep import — silences unused if Character ctor evolves

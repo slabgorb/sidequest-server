@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -152,7 +153,7 @@ class StatusChangePromotion:
 
     actor: str
     status_text: str
-    severity: str  # "Scratch" | "Wound" | "Scar"
+    severity: Literal["Scratch", "Wound", "Scar"]
 
 
 @dataclass
@@ -244,6 +245,67 @@ def apply_magic_working(
     return MagicApplyResult(apply=apply_result, flags=flags)
 
 
+def _append_status_to_actor(
+    *,
+    target,
+    actor: str,
+    text: str,
+    severity,
+    source: str,
+    turn_num: int,
+    encounter_type: str | None,
+) -> None:
+    """Append a ``Status`` to ``target.core.statuses`` and emit OTEL.
+
+    Centralizes the side-effect shape shared by the narrator-extracted
+    ``status_changes`` path and the magic-threshold-promotion path: both
+    build the same ``Status`` record, open ``encounter_status_added_span``,
+    and publish the same ``state_transition`` watcher event. The only
+    caller-visible difference is ``source`` (``narrator_extraction`` vs.
+    ``magic_threshold_promotion``), which keeps Sebastien's mechanical-
+    visibility lens able to distinguish "narrator said so" from "bar
+    fired auto-promotion".
+
+    Each caller is responsible for resolving ``target`` (the
+    ``Character``) and emitting its own unknown-actor warning before
+    calling — the warning labels differ between the two paths and a
+    server-side test asserts the narrator-path warning text exactly.
+    """
+    from sidequest.game.status import Status
+    from sidequest.telemetry.spans import encounter_status_added_span
+
+    target.core.statuses.append(
+        Status(
+            text=text,
+            severity=severity,
+            absorbed_shifts=0,
+            created_turn=turn_num,
+            created_in_encounter=encounter_type,
+        )
+    )
+    with encounter_status_added_span(
+        actor=actor,
+        text=text,
+        severity=severity.value,
+        source=source,
+    ):
+        pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "status_added",
+            "actor": actor,
+            "text": text,
+            "severity": severity.value,
+            "source": source,
+            "turn": turn_num,
+            "encounter_type": encounter_type,
+        },
+        component="encounter",
+    )
+
+
 def _apply_magic_status_promotions(
     *,
     snapshot: GameSnapshot,
@@ -266,8 +328,7 @@ def _apply_magic_status_promotions(
     add_character) and a soft mismatch shouldn't crash the apply
     pipeline mid-turn.
     """
-    from sidequest.game.status import Status, StatusSeverity
-    from sidequest.telemetry.spans import encounter_status_added_span
+    from sidequest.game.status import StatusSeverity
 
     promotions = promote_crossings_to_status_changes(
         result=magic_result, snapshot=snapshot
@@ -291,36 +352,14 @@ def _apply_magic_status_promotions(
                 promo.actor, promo.status_text, player_name,
             )
             continue
-        severity = StatusSeverity[promo.severity]
-        target.core.statuses.append(
-            Status(
-                text=promo.status_text,
-                severity=severity,
-                absorbed_shifts=0,
-                created_turn=turn_num,
-                created_in_encounter=encounter_type,
-            )
-        )
-        with encounter_status_added_span(
+        _append_status_to_actor(
+            target=target,
             actor=promo.actor,
             text=promo.status_text,
-            severity=severity.value,
+            severity=StatusSeverity[promo.severity],
             source="magic_threshold_promotion",
-        ):
-            pass
-        _watcher_publish(
-            "state_transition",
-            {
-                "field": "encounter",
-                "op": "status_added",
-                "actor": promo.actor,
-                "text": promo.status_text,
-                "severity": severity.value,
-                "source": "magic_threshold_promotion",
-                "turn": turn_num,
-                "encounter_type": encounter_type,
-            },
-            component="encounter",
+            turn_num=turn_num,
+            encounter_type=encounter_type,
         )
 
 
@@ -1051,9 +1090,8 @@ def _apply_narration_result_to_snapshot(
                     break
 
     if result.status_changes:
-        from sidequest.game.status import Status, StatusSeverity
+        from sidequest.game.status import StatusSeverity
         from sidequest.server.status_clear import apply_explicit_status_clears
-        from sidequest.telemetry.spans import encounter_status_added_span
         turn_num = snapshot.turn_manager.interaction
         encounter_type = (
             snapshot.encounter.encounter_type if snapshot.encounter else None
@@ -1097,31 +1135,14 @@ def _apply_narration_result_to_snapshot(
                     actor_name, text,
                 )
                 continue
-            target.core.statuses.append(Status(
+            _append_status_to_actor(
+                target=target,
+                actor=actor_name,
                 text=text,
                 severity=severity,
-                absorbed_shifts=0,
-                created_turn=turn_num,
-                created_in_encounter=encounter_type,
-            ))
-            with encounter_status_added_span(
-                actor=actor_name, text=text, severity=severity.value,
                 source="narrator_extraction",
-            ):
-                pass
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "encounter",
-                    "op": "status_added",
-                    "actor": actor_name,
-                    "text": text,
-                    "severity": severity.value,
-                    "source": "narrator_extraction",
-                    "turn": turn_num,
-                    "encounter_type": encounter_type,
-                },
-                component="encounter",
+                turn_num=turn_num,
+                encounter_type=encounter_type,
             )
 
     return outcome
