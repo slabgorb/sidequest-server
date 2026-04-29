@@ -129,12 +129,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
 
 def _events(exporter: InMemorySpanExporter, name: str) -> list:
-    return [
-        e
-        for span in exporter.get_finished_spans()
-        for e in span.events
-        if e.name == name
-    ]
+    return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +138,7 @@ def _events(exporter: InMemorySpanExporter, name: str) -> list:
 
 
 class TestChargenPersistAndPlay:
-    def test_confirmation_flips_state_to_playing(
-        self, handler_factory
-    ) -> None:
+    def test_confirmation_flips_state_to_playing(self, handler_factory) -> None:
         async def body() -> None:
             handler = handler_factory()
             await _connect(handler)
@@ -159,9 +152,7 @@ class TestChargenPersistAndPlay:
 
         asyncio.run(body())
 
-    def test_confirmation_persists_snapshot_to_sqlite(
-        self, handler_factory
-    ) -> None:
+    def test_confirmation_persists_snapshot_to_sqlite(self, handler_factory) -> None:
         async def body() -> None:
             handler = handler_factory()
             await _connect(handler)
@@ -172,18 +163,14 @@ class TestChargenPersistAndPlay:
             # path to isolate the persistence assertion.
             saved = sd.store.load()
             assert saved is not None
-            assert saved.snapshot.characters, (
-                "persisted snapshot must carry the built character"
-            )
+            assert saved.snapshot.characters, "persisted snapshot must carry the built character"
             assert saved.snapshot.characters[0].core.name
             assert saved.snapshot.genre_slug == "caverns_and_claudes"
             assert saved.snapshot.world_slug == "grimvault"
 
         asyncio.run(body())
 
-    def test_reconnect_skips_chargen_with_has_character_true(
-        self, handler_factory
-    ) -> None:
+    def test_reconnect_skips_chargen_with_has_character_true(self, handler_factory) -> None:
         """End-to-end reconnect: walk chargen on handler #1, drop the
         connection, then open handler #2 against the same save dir with
         the same (genre, world, player_name). The second connect must
@@ -207,9 +194,7 @@ class TestChargenPersistAndPlay:
 
             sd2 = h2._session_data  # type: ignore[attr-defined]
             assert sd2.builder is None, "reconnect must not initialize a builder"
-            assert sd2.snapshot.characters, (
-                "reconnect must load the persisted character"
-            )
+            assert sd2.snapshot.characters, "reconnect must load the persisted character"
             # Resumed session is already Playing — no chargen path to walk.
             assert h2._state == _State.Playing  # type: ignore[attr-defined]
 
@@ -241,9 +226,7 @@ class TestChargenPersistAndPlay:
             for entry in sd.snapshot.npc_registry:  # pragma: no cover — empty
                 assert isinstance(entry, NpcRegistryEntry)
 
-            events = _events(
-                otel_capture, "npc_registry.cleared_on_chargen_complete"
-            )
+            events = _events(otel_capture, "npc_registry.cleared_on_chargen_complete")
             assert len(events) == 1
             attrs = dict(events[0].attributes or {})
             assert attrs["reason"] == "fresh_character_narrative_reset"
@@ -278,21 +261,32 @@ class TestChargenPersistAndPlay:
     # -----------------------------------------------------------------
 
     def test_chargen_confirm_persists_deduped_inventory(
-        self, handler_factory
+        self,
+        handler_factory,
+        otel_capture: InMemorySpanExporter,
     ) -> None:
         """AC6 wire-test: end-to-end chargen confirms produce a
         deduplicated inventory and the deduped result is what's
-        persisted to SQLite. The Blutka regression evidence (Playtest
-        3, 2026-04-19) was a 24-item starting kit; the
-        ``caverns_and_claudes/grimvault`` pack itself ships
-        ``starting_equipment[Delver]`` with 3 torches and 2 rations
-        intra-list — so a successful chargen-confirm must collapse those
-        before save. This catches the half-wired regression where dedup
-        runs in-memory but the persisted snapshot still has stale items.
+        persisted to SQLite. Catches the half-wired regression where
+        dedup runs in-memory but the persisted snapshot still has stale
+        items.
 
-        Invariant: after confirmation, the persisted snapshot's
-        inventory MUST have no duplicate ids and no duplicate
-        (case-insensitive) names.
+        Story scope: catalogue ids that overlap with builder-side items
+        are skipped; builder-side intra-list duplicates are explicitly
+        carved out (story Out-of-Scope: "Multi-quantity dedup... is a
+        separate fix. If the builder produced 6 torches as separate
+        items, the dedup will collapse the catalogue's 1 torch against
+        any of them — net result is the catalogue copy is dropped").
+
+        Wire-test invariants:
+        1. The dedup-evaluated span fires (proves the call site is wired
+           with span emission, not just helper changes).
+        2. The dedup-fired span fires AND the persisted final_count
+           equals what the span reported (proves in-memory state and
+           persisted state are symmetric — no half-wired regression).
+        3. ``starting_equipment[Delver]`` from the grimvault pack lists
+           ``torch`` 3× and ``rations_day`` 2×. The catalogue half MUST
+           NOT add a 4th torch beyond what the builder placed.
         """
 
         async def body() -> None:
@@ -302,44 +296,53 @@ class TestChargenPersistAndPlay:
 
             sd = handler._session_data  # type: ignore[attr-defined]
             saved = sd.store.load()
-            assert saved is not None, (
-                "chargen-confirm must persist the snapshot to SQLite"
-            )
-            assert saved.snapshot.characters, (
-                "persisted snapshot must carry the built character"
-            )
+            assert saved is not None, "chargen-confirm must persist the snapshot to SQLite"
+            assert saved.snapshot.characters, "persisted snapshot must carry the built character"
 
             items = saved.snapshot.characters[0].core.inventory.items
+            persisted_count = len(items)
 
-            # The bug-evidence shape: Blutka shipped 24 items; the
-            # spec count is 13. The persisted inventory must NOT
-            # exceed the catalogue spec count + any disjoint
-            # builder-side items. The strict invariant is uniqueness.
-            seen_ids: set[str] = set()
-            for item in items:
-                iid = str(item.get("id", "")).strip().lower()
-                if not iid:
-                    continue
-                assert iid not in seen_ids, (
-                    f"Persisted inventory contains DUPLICATE id "
-                    f"{iid!r}. Items: {[i.get('id') for i in items]!r}. "
-                    f"Dedup did not run, OR ran in-memory but the "
-                    f"persisted snapshot still has stale items "
-                    f"(half-wired regression)."
-                )
-                seen_ids.add(iid)
+            # Find the dedup-evaluated span the production confirm path
+            # emitted, and lock the in-memory ↔ on-disk symmetry.
+            evaluated_spans = [
+                s
+                for s in otel_capture.get_finished_spans()
+                if s.name == "chargen.starting_kit_dedup_evaluated"
+            ]
+            assert evaluated_spans, (
+                "Wire failure — chargen-confirm did not emit "
+                "chargen.starting_kit_dedup_evaluated. Helper change "
+                "without call-site wire is the half-wired regression "
+                "this test guards."
+            )
+            attrs = dict(evaluated_spans[-1].attributes or {})
+            final_count = attrs.get("final_count")
+            assert final_count == persisted_count, (
+                f"In-memory dedup result ({final_count}) does not match "
+                f"persisted item count ({persisted_count}). The dedup "
+                f"ran but the persisted snapshot diverged — this is the "
+                f"canonical half-wired regression."
+            )
 
-            seen_names: set[str] = set()
-            for item in items:
-                iname = str(item.get("name", "")).strip().lower()
-                if not iname:
-                    continue
-                assert iname not in seen_names, (
-                    f"Persisted inventory contains DUPLICATE name "
-                    f"{iname!r}. Names: "
-                    f"{[i.get('name') for i in items]!r}."
-                )
-                seen_names.add(iname)
+            # The grimvault pack lists ``starting_equipment[Delver]``
+            # with 3× torch entries. After dedup, no MORE than 3 torches
+            # may appear in the persisted inventory (the builder may
+            # add torches independently; the catalogue's 3 must be
+            # skipped). Without dedup, this would be 6+.
+            ids = [str(i.get("id", "")).strip().lower() for i in items]
+            torch_count = ids.count("torch")
+            assert torch_count <= 3, (
+                f"Catalogue's torch entries leaked through dedup — "
+                f"persisted inventory has {torch_count} torches. The "
+                f"grimvault pack's `starting_equipment[Delver]` lists "
+                f"3 torch entries; after dedup against any builder-side "
+                f"torch, the catalogue copies must be skipped. ids={ids!r}"
+            )
+            rations_count = ids.count("rations_day")
+            assert rations_count <= 2, (
+                f"rations_day catalogue entries leaked. Got "
+                f"{rations_count} (cap 2 from pack list). ids={ids!r}"
+            )
 
         asyncio.run(body())
 
