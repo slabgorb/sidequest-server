@@ -58,7 +58,6 @@ class ChassisClass(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
     id: str
     display_name: str
-    # Field name conflict with python keyword: alias.
     chassis_class: str = Field(alias="class")
     provenance: str
     scale_band: ScaleBand
@@ -69,7 +68,6 @@ class ChassisClass(BaseModel):
     default_voice: ChassisVoiceSpec | None = None
     interior_rooms: list[InteriorRoomSpec] = Field(default_factory=list)
     crew_roles: list[CrewRoleSpec] = Field(default_factory=list)
-    # Deferred per slice: hardpoints, chassis_death, ancillary_*.
 
 
 class ChassisClassesConfig(BaseModel):

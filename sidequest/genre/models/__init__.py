@@ -64,6 +64,19 @@ from sidequest.genre.models.character import (
     NpcArchetype,
     VisualStyle,
 )
+from sidequest.genre.models.chassis import (
+    BondTier,
+    ChassisClass,
+    ChassisClassesConfig,
+    ChassisVoiceSpec,
+    CrewAwareness,
+    CrewModel,
+    CrewRoleSpec,
+    EmbodimentModel,
+    InteriorRoomSpec,
+    PsiResonanceSpec,
+    ScaleBand,
+)
 from sidequest.genre.models.culture import CorpusRef, Culture, CultureSlot
 from sidequest.genre.models.inventory import (
     CarryMode,
@@ -219,6 +232,18 @@ __all__ = [
     "AxesConfig",
     "AxisDefinition",
     "AxisPreset",
+    # chassis (rig framework — slice scope)
+    "BondTier",
+    "ChassisClass",
+    "ChassisClassesConfig",
+    "ChassisVoiceSpec",
+    "CrewAwareness",
+    "CrewModel",
+    "CrewRoleSpec",
+    "EmbodimentModel",
+    "InteriorRoomSpec",
+    "PsiResonanceSpec",
+    "ScaleBand",
     # character
     "BackstoryTables",
     "CharCreationChoice",
