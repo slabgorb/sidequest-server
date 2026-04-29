@@ -27,8 +27,8 @@ class TestWorldKnowledge:
         assert wk.local_register == "folkloric"
 
     def test_local_register_must_be_le_primary_in_awareness(self):
-        # Awareness order: denied < classified < esoteric < mythic_lapsed
-        # < folkloric < acknowledged. local_register cannot exceed primary.
+        # Awareness order: denied < folkloric < mythic_lapsed < esoteric
+        # < classified < acknowledged. local_register cannot exceed primary.
         with pytest.raises(ValidationError, match="local_register"):
             WorldKnowledge(primary="classified", local_register="acknowledged")
 
