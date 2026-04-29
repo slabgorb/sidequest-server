@@ -732,21 +732,41 @@ class GameSnapshot(BaseModel):
         if patch.current_region is not None:
             self.current_region = patch.current_region
         if patch.discovered_regions is not None:
-            # Story 45-16: filter the wholesale-replace patch path. A
-            # narrator-emitted patch could pass a list containing a
-            # parenthetical aside; reject per-entry instead of
-            # adopting the list verbatim.
-            from sidequest.game.region_validation import validate_region_name
-            from sidequest.telemetry.spans import region_entry_rejected_span
+            # Stories 45-16 + 45-17: validate, then canonicalize-dedup.
+            # 45-16 rejected non-room shapes (brackets, multiline);
+            # 45-17 collapses surface variants of the same room
+            # ("The Crew Quarters" vs "the crew quarters") so the
+            # wholesale-replace path can't smuggle in dups either.
+            from sidequest.game.region_validation import (
+                canonicalize_region_name,
+                validate_region_name,
+            )
+            from sidequest.telemetry.spans import (
+                region_entry_canonicalized_dedup_span,
+                region_entry_rejected_span,
+            )
             filtered: list[str] = []
+            seen_slugs: dict[str, str] = {}  # slug → first surface form kept
             for r in patch.discovered_regions:
                 ok, reason = validate_region_name(r)
-                if ok:
-                    filtered.append(r)
-                else:
+                if not ok:
                     with region_entry_rejected_span(
                         entry=r if isinstance(r, str) else repr(r),
                         reason=reason or "unknown",
+                        caller_path="session.apply_patch.discovered_regions_set",
+                    ):
+                        pass
+                    continue
+                slug = canonicalize_region_name(r)
+                existing = seen_slugs.get(slug)
+                if existing is None:
+                    seen_slugs[slug] = r
+                    filtered.append(r)
+                elif existing != r:
+                    with region_entry_canonicalized_dedup_span(
+                        entry=r,
+                        canonical_slug=slug,
+                        existing_surface_form=existing,
                         caller_path="session.apply_patch.discovered_regions_set",
                     ):
                         pass
@@ -754,8 +774,14 @@ class GameSnapshot(BaseModel):
         if patch.discovered_routes is not None:
             self.discovered_routes = patch.discovered_routes
         if patch.discover_regions is not None:
-            from sidequest.game.region_validation import validate_region_name
-            from sidequest.telemetry.spans import region_entry_rejected_span
+            from sidequest.game.region_validation import (
+                canonicalize_region_name,
+                validate_region_name,
+            )
+            from sidequest.telemetry.spans import (
+                region_entry_canonicalized_dedup_span,
+                region_entry_rejected_span,
+            )
             for r in patch.discover_regions:
                 ok, reason = validate_region_name(r)
                 if not ok:
@@ -766,8 +792,25 @@ class GameSnapshot(BaseModel):
                     ):
                         pass
                     continue
-                if r not in self.discovered_regions:
+                # Story 45-17: canonical-dedup against existing list
+                # so incremental discoveries don't accumulate
+                # surface-variant duplicates.
+                new_slug = canonicalize_region_name(r)
+                existing_match: str | None = None
+                for existing in self.discovered_regions:
+                    if canonicalize_region_name(existing) == new_slug:
+                        existing_match = existing
+                        break
+                if existing_match is None:
                     self.discovered_regions.append(r)
+                elif existing_match != r:
+                    with region_entry_canonicalized_dedup_span(
+                        entry=r,
+                        canonical_slug=new_slug,
+                        existing_surface_form=existing_match,
+                        caller_path="session.apply_patch.discover_regions",
+                    ):
+                        pass
         if patch.discover_routes is not None:
             for r in patch.discover_routes:
                 if r not in self.discovered_routes:

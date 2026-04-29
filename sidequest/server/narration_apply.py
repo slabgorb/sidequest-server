@@ -11,7 +11,10 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from sidequest.game.region_validation import validate_region_name
+from sidequest.game.region_validation import (
+    canonicalize_region_name,
+    validate_region_name,
+)
 from sidequest.game.session import (
     ContainerState,
     GameSnapshot,
@@ -39,6 +42,7 @@ from sidequest.telemetry.spans import (
     npc_auto_registered_span,
     npc_pc_name_skipped_span,
     quest_update_span,
+    region_entry_canonicalized_dedup_span,
     region_entry_rejected_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
@@ -592,8 +596,35 @@ def _apply_narration_result_to_snapshot(
                     result.location,
                     player_name,
                 )
-        elif result.location not in snapshot.discovered_regions:
-            snapshot.discovered_regions.append(result.location)
+        else:
+            # Story 45-17: canonical-slug dedup. The narrator emits
+            # surface variants for the same room across turns
+            # (Felix's Playtest 3: "The Crew Quarters" vs "the crew
+            # quarters"); compare slugs, not raw strings.
+            new_slug = canonicalize_region_name(result.location)
+            existing_match: str | None = None
+            for existing in snapshot.discovered_regions:
+                if canonicalize_region_name(existing) == new_slug:
+                    existing_match = existing
+                    break
+            if existing_match is None:
+                snapshot.discovered_regions.append(result.location)
+            elif existing_match != result.location:
+                # Surface variants — emit dedup span so the GM panel
+                # sees the merge fire (CLAUDE.md OTEL principle).
+                with region_entry_canonicalized_dedup_span(
+                    entry=result.location,
+                    canonical_slug=new_slug,
+                    existing_surface_form=existing_match,
+                    caller_path="narration_apply.location_update",
+                    player_name=player_name,
+                ):
+                    logger.info(
+                        "region.entry_canonicalized_dedup entry=%r existing=%r slug=%s caller=narration_apply.location_update",
+                        result.location,
+                        existing_match,
+                        new_slug,
+                    )
         logger.info(
             "state.location_update old=%r new=%r player=%s",
             old_loc,
