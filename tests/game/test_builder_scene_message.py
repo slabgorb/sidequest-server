@@ -21,6 +21,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+from pydantic import ValidationError
 
 from sidequest.game.builder import (
     CharacterBuilder,
@@ -416,7 +417,7 @@ class TestToSceneMessageInProgress:
         # is the strict gate.
         scenes = [make_scene("bad", choices=[make_choice(" ")])]
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             b.to_scene_message("player-1")
 
 

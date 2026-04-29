@@ -20,6 +20,7 @@ from __future__ import annotations
 import random
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.game.ability import AbilitySource
 from sidequest.game.builder import (
@@ -147,7 +148,7 @@ class TestBuildGuards:
         """Blank names are caught by Character / CreatureCore's non-blank
         validators — not by NumericNameError (which only fires for digits)."""
         b = minimal_happy_path_builder()
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):  # pydantic ValidationError
             b.build("   ")
 
 

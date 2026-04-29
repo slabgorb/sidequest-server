@@ -10,6 +10,8 @@ slices with their own test files.
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from sidequest.game.builder import (
@@ -118,7 +120,7 @@ class TestSceneInputType:
     def test_frozen(self) -> None:
         # Frozen dataclasses — mutation raises FrozenInstanceError.
         c = ChoiceInput(index=0)
-        with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):  # dataclasses.FrozenInstanceError
             c.index = 1  # type: ignore[misc]
 
     def test_match_statement_dispatches(self) -> None:
@@ -254,7 +256,7 @@ class TestBuilderPhase:
 
     def test_frozen(self) -> None:
         p = InProgress(scene_index=0)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             p.scene_index = 1  # type: ignore[misc]
 
     def test_match_statement_dispatches(self) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import (
     BeatDef,
@@ -23,21 +24,21 @@ class TestResourceDeclaration:
         assert r.name == "luck"
 
     def test_rejects_max_less_than_min(self) -> None:
-        with pytest.raises(Exception, match="max.*must be.*min"):
+        with pytest.raises(ValidationError, match="max.*must be.*min"):
             ResourceDeclaration(
                 name="bad", label="Bad", min=10.0, max=5.0, starting=7.0,
                 voluntary=True, decay_per_turn=0.0,
             )
 
     def test_rejects_starting_out_of_range(self) -> None:
-        with pytest.raises(Exception, match="starting"):
+        with pytest.raises(ValidationError, match="starting"):
             ResourceDeclaration(
                 name="bad", label="Bad", min=0.0, max=10.0, starting=15.0,
                 voluntary=True, decay_per_turn=0.0,
             )
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ResourceDeclaration.model_validate({
                 "name": "x", "label": "X", "min": 0, "max": 10, "starting": 5,
                 "voluntary": True, "decay_per_turn": 0.0, "bogus": True,
@@ -52,11 +53,11 @@ class TestMetricDef:
         assert m.threshold == 10
 
     def test_rejects_threshold_not_greater_than_starting(self) -> None:
-        with pytest.raises(Exception, match="threshold"):
+        with pytest.raises(ValidationError, match="threshold"):
             MetricDef(name="hp", starting=10, threshold=5)
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             MetricDef.model_validate({"name": "hp", "starting": 0, "threshold": 10, "extra": True})
 
 
@@ -89,11 +90,11 @@ class TestBeatDef:
         assert b.kind.value == "strike"
 
     def test_rejects_empty_id(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BeatDef.model_validate(_beat({"id": ""}))
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BeatDef.model_validate({**_beat(), "unknown_field": True})
 
 
@@ -103,16 +104,16 @@ class TestConfrontationDef:
         assert c.confrontation_type == "combat"
 
     def test_rejects_invalid_category(self) -> None:
-        with pytest.raises(Exception, match="invalid confrontation category"):
+        with pytest.raises(ValidationError, match="invalid confrontation category"):
             ConfrontationDef.model_validate(_confrontation(category="invalid"))
 
     def test_rejects_empty_beats(self) -> None:
-        with pytest.raises(Exception, match="at least one beat"):
+        with pytest.raises(ValidationError, match="at least one beat"):
             ConfrontationDef.model_validate(_confrontation(beats=[]))
 
     def test_rejects_duplicate_beat_ids(self) -> None:
         beats = [_beat(), {**_beat(), "label": "Attack2"}]
-        with pytest.raises(Exception, match="duplicate beat id"):
+        with pytest.raises(ValidationError, match="duplicate beat id"):
             ConfrontationDef.model_validate(_confrontation(beats=beats))
 
     def test_resolution_mode_default(self) -> None:

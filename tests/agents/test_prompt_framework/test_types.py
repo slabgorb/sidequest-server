@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.agents.prompt_framework.types import (
     AttentionZone,
@@ -273,7 +274,7 @@ def test_prompt_section_rejects_unknown_fields():
             "bogus_field": "should fail",
         }
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         PromptSection.model_validate_json(bad_json)
 
 
