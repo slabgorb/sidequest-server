@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -107,8 +106,8 @@ def test_every_shipping_pack_projection_has_visibility_tag_rule(pack):
         VisibilityTagRule,
         load_rules_from_yaml_path,
     )
-    content_root = Path(__file__).resolve().parents[4] / "sidequest-content"
-    path = content_root / "genre_packs" / pack / "projection.yaml"
+    from tests._helpers.genre_paths import find_pack_path
+    path = find_pack_path(pack) / "projection.yaml"
     assert path.exists(), f"missing: {path}"
     rules = load_rules_from_yaml_path(path)
     narration_rules = [r for r in rules.rules if r.kind == "NARRATION"]
@@ -137,8 +136,8 @@ def test_every_shipping_pack_projection_has_secret_note_rule(pack):
         VisibilityTagRule,
         load_rules_from_yaml_path,
     )
-    content_root = Path(__file__).resolve().parents[4] / "sidequest-content"
-    path = content_root / "genre_packs" / pack / "projection.yaml"
+    from tests._helpers.genre_paths import find_pack_path
+    path = find_pack_path(pack) / "projection.yaml"
     assert path.exists(), f"missing: {path}"
     rules = load_rules_from_yaml_path(path)
     secret_rules = [r for r in rules.rules if r.kind == "SECRET_NOTE"]
