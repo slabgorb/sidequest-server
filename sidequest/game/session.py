@@ -57,18 +57,39 @@ class NarrativeEntry(BaseModel):
     """A single narrative entry in the game log.
 
     P1-required: narrator reads narrative_log for context.
+
+    Story 45-22: ``author`` MUST be non-blank. Playtest 3 Felix's save
+    showed 71 entries all ``author='narrator'`` because the player-turn
+    append site was never wired — Sebastien's GM panel could not
+    distinguish player input from narrator inference. Rejecting blank
+    authors at construction prevents the silent-default failure mode
+    AC4 calls out (CLAUDE.md "No Silent Fallbacks").
     """
 
     model_config = {"extra": "forbid"}
 
     timestamp: int = 0
     round: int = 0
-    author: str = ""
+    # Story 45-22: ``author`` is required (no default) and rejects
+    # blank values — the schema is the silent-fallback backstop.
+    # Felix's Playtest 3 had 71 entries all author='narrator' because
+    # nothing forced the player-turn append site to declare itself.
+    author: str
     content: str = ""
     tags: list[str] = Field(default_factory=list)
     encounter_tags: list[EncounterTag] = Field(default_factory=list)
     speaker: str | None = None
     entry_type: str | None = None
+
+    @field_validator("author")
+    @classmethod
+    def author_non_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                "NarrativeEntry.author cannot be blank — "
+                "every entry must declare its source (Story 45-22)"
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------

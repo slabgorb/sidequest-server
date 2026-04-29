@@ -1541,6 +1541,27 @@ class WebSocketSessionHandler:
                             self._room.save()
                         else:
                             sd.store.save(snapshot)
+                        # Story 45-22: log the player's turn before the narrator
+                        # response so the narrative_log shows both sources.
+                        # Felix's Playtest 3 had 71 entries all author='narrator'
+                        # because the player append site was missing — Sebastien
+                        # could not distinguish player input from narrator
+                        # inference on the GM panel. Skipped on the opening
+                        # turn (no real player input — chargen-confirmation
+                        # seeds the action programmatically).
+                        if not is_opening_turn:
+                            acting_name = _resolve_acting_character_name(
+                                sd, self._room,
+                            )
+                            player_entry = NarrativeEntry(
+                                timestamp=0,
+                                round=snapshot.turn_manager.interaction,
+                                author="player",
+                                content=action,
+                                tags=[],
+                                speaker=acting_name,
+                            )
+                            sd.store.append_narrative(player_entry)
                         narrative_entry = NarrativeEntry(
                             timestamp=0,
                             round=snapshot.turn_manager.interaction,
