@@ -35,16 +35,18 @@ class WorldKnowledge(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    # Order here matches `_AWARENESS_ORDER` (least-aware → most-aware) so the
+    # field declaration documents the same axis the validator enforces.
     primary: Literal[
-        "denied", "classified", "esoteric", "mythic_lapsed", "folkloric", "acknowledged"
+        "denied", "folkloric", "mythic_lapsed", "esoteric", "classified", "acknowledged"
     ]
     local_register: (
         Literal[
             "denied",
-            "classified",
-            "esoteric",
-            "mythic_lapsed",
             "folkloric",
+            "mythic_lapsed",
+            "esoteric",
+            "classified",
             "acknowledged",
         ]
         | None
@@ -138,6 +140,27 @@ class LedgerBarSpec(BaseModel):
             raise ValueError(
                 f"bar {self.id!r} direction=bidirectional requires both threshold_low and threshold_high"
             )
+        return self
+
+    @model_validator(mode="after")
+    def range_and_thresholds_in_bounds(self) -> LedgerBarSpec:
+        lo, hi = self.range
+        if not lo < hi:
+            raise ValueError(f"bar {self.id!r} range={self.range!r} must satisfy lo < hi")
+        for name in (
+            "threshold_high",
+            "threshold_higher",
+            "threshold_low",
+            "threshold_lower",
+            "starts_at_chargen",
+        ):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not lo <= value <= hi:
+                raise ValueError(
+                    f"bar {self.id!r} {name}={value!r} must lie within range={self.range!r}"
+                )
         return self
 
 

@@ -32,6 +32,11 @@ class TestWorldKnowledge:
         with pytest.raises(ValidationError, match="local_register"):
             WorldKnowledge(primary="classified", local_register="acknowledged")
 
+    def test_local_register_equal_to_primary_is_allowed(self):
+        # `<=` boundary: same level on both axes is valid.
+        wk = WorldKnowledge(primary="classified", local_register="classified")
+        assert wk.local_register == "classified"
+
 
 class TestMagicWorking:
     def test_minimum_required_fields(self):
@@ -91,6 +96,29 @@ class TestLedgerBarSpec:
                 scope="character",
                 direction="down",
                 range=(0.0, 1.0),
+                starts_at_chargen=1.0,
+            )
+
+    def test_threshold_outside_range_rejected(self):
+        # threshold_low above range[1] would never trigger — fail loudly.
+        with pytest.raises(ValidationError, match="must lie within range"):
+            LedgerBarSpec(
+                id="sanity",
+                scope="character",
+                direction="down",
+                range=(0.0, 1.0),
+                threshold_low=1.5,
+                starts_at_chargen=1.0,
+            )
+
+    def test_inverted_range_rejected(self):
+        with pytest.raises(ValidationError, match="must satisfy lo < hi"):
+            LedgerBarSpec(
+                id="sanity",
+                scope="character",
+                direction="down",
+                range=(1.0, 0.0),
+                threshold_low=0.4,
                 starts_at_chargen=1.0,
             )
 
