@@ -6,6 +6,10 @@ from __future__ import annotations
 
 from importlib.resources import files
 
+from fastapi.testclient import TestClient
+
+from sidequest.server.app import create_app
+
 
 def test_dashboard_html_ships_with_package() -> None:
     """The dashboard HTML must live inside the ``sidequest.server``
@@ -15,11 +19,6 @@ def test_dashboard_html_ships_with_package() -> None:
     """
     asset = files("sidequest.server").joinpath("static/dashboard.html")
     assert asset.is_file(), f"dashboard.html missing from package: {asset}"
-
-
-from fastapi.testclient import TestClient
-
-from sidequest.server.app import create_app
 
 
 def test_dashboard_route_returns_html() -> None:

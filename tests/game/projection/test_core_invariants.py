@@ -1,6 +1,8 @@
 """CoreInvariantStage — GM sees truth."""
 from __future__ import annotations
 
+import json
+
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection.invariants import CoreInvariantStage
 from sidequest.game.projection.view import SessionGameStateView
@@ -29,9 +31,6 @@ def test_non_gm_passes_through_gm_invariant() -> None:
     outcome = stage.evaluate(envelope=env, view=_view(), player_id="alice")
     assert outcome.terminal is False
     assert outcome.decision is None
-
-
-import json
 
 
 def test_secret_note_routes_only_to_recipient() -> None:

@@ -19,6 +19,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sidequest.server.app import create_app
+from tests.server.conftest import (
+    mock_claude_client_factory as _mock_claude_client_factory,
+)
 
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
@@ -26,11 +29,6 @@ CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genr
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
-
-
-from tests.server.conftest import (
-    mock_claude_client_factory as _mock_claude_client_factory,  # noqa: E402
-)
 
 
 def _make_client(tmp_path: Path) -> TestClient:

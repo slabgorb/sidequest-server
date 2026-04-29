@@ -26,6 +26,13 @@ from typing import Any
 
 import pytest
 
+from sidequest.agents.orchestrator import NarrationTurnResult, VisualScene
+from sidequest.protocol.enums import MessageType
+from sidequest.server.session_handler import (
+    WebSocketSessionHandler,
+    _SessionData,
+)
+
 
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
@@ -36,13 +43,6 @@ def short_sock(tmp_path: Path) -> Path:
     yield p
     if p.exists():
         p.unlink()
-
-from sidequest.agents.orchestrator import NarrationTurnResult, VisualScene
-from sidequest.protocol.enums import MessageType
-from sidequest.server.session_handler import (
-    WebSocketSessionHandler,
-    _SessionData,
-)
 
 
 class _FakeDaemon:
