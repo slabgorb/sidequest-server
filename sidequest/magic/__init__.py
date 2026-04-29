@@ -4,6 +4,7 @@ See docs/design/magic-taxonomy.md for the framework.
 See docs/superpowers/specs/2026-04-28-magic-system-coyote-reach-implementation-design.md
 for the v1 implementation scope.
 """
+from sidequest.magic.context_builder import build_magic_context_block
 from sidequest.magic.models import (
     Flag,
     FlagSeverity,
@@ -27,6 +28,7 @@ from sidequest.magic.state import (
 __all__ = [
     "MAGIC_PLUGINS",
     "ApplyWorkingResult",
+    "build_magic_context_block",
     "BarKey",
     "Flag",
     "FlagSeverity",
