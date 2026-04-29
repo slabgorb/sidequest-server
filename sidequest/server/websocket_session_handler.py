@@ -2504,12 +2504,15 @@ class WebSocketSessionHandler:
             # the catalog instead of falling through to the prose-subject
             # path. When the snapshot has a Character to project, we ship a
             # descriptor blob alongside; the daemon's `_get_composer` calls
-            # `CharacterCatalog.add_pc` from it. Without a character (early
-            # portraits before chargen confirmation) we still ship the ref —
-            # the daemon's `try_compose_prompt_for` catches the catalog miss
-            # and falls back without crashing.
+            # `CharacterCatalog.add_pc` from it.
             pc_slug = _slugify_player_name(sd.player_name)
             params["characters"] = [f"pc:{pc_slug}"]
+            descriptor = _build_pc_descriptor(sd, pc_slug)
+            if descriptor is not None:
+                params["pc_descriptor"] = descriptor
+        elif tier == "scene_illustration":
+            pc_slug = _slugify_player_name(sd.player_name)
+            params["participants"] = [f"pc:{pc_slug}"]
             descriptor = _build_pc_descriptor(sd, pc_slug)
             if descriptor is not None:
                 params["pc_descriptor"] = descriptor
