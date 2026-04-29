@@ -260,6 +260,16 @@ class PlayerActionHandler:
             )
 
             combined_action = "\n".join(f"{p.character_name}: {p.action}" for _, p in pending)
+            # Tag the TurnContext so build_narrator_prompt renders a multi-PC
+            # declaration block instead of attributing every line to the
+            # dispatch winner. Without this, the prompt read
+            # "Laverne says: Shirley: ...\nLaverne: ..." which both
+            # mis-attributed Shirley's declaration to Laverne and invited
+            # the LLM to put dialogue in either PC's mouth (2026-04-29
+            # multiplayer playtest, SOUL.md "Agency" violation).
+            turn_context.merged_player_actions = [
+                (p.character_name, p.action) for _, p in pending
+            ]
             result = await session._execute_narration_turn(
                 sd,
                 combined_action,
