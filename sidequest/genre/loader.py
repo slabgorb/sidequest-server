@@ -29,6 +29,7 @@ from sidequest.genre.models.character import (
     NpcArchetype,
     VisualStyle,
 )
+from sidequest.genre.models.chassis import ChassisClassesConfig
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.models.inventory import InventoryConfig
 from sidequest.genre.models.legends import Legend
@@ -531,6 +532,9 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     beat_vocabulary: BeatVocabulary | None = _load_yaml_optional(
         path / "beat_vocabulary.yaml", BeatVocabulary
     )
+    chassis_classes: ChassisClassesConfig | None = _load_yaml_optional(
+        path / "chassis_classes.yaml", ChassisClassesConfig
+    )
     voice_presets: VoicePresets | None = _load_yaml_optional(
         path / "voice_presets.yaml", VoicePresets
     )
@@ -637,6 +641,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         prompts=prompts,
         tropes=genre_tropes,
         beat_vocabulary=beat_vocabulary,
+        chassis_classes=chassis_classes,
         achievements=achievements,
         voice_presets=voice_presets,
         power_tiers=power_tiers,
