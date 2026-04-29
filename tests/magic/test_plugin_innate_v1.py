@@ -36,23 +36,16 @@ def world_config() -> WorldMagicConfig:
 
 
 def test_innate_v1_registered():
-    # Importing plugins package populates registry
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     assert plugin.plugin_id == "innate_v1"
 
 
 def test_innate_v1_required_attrs():
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     assert plugin.required_attrs() == {"flavor", "consent_state"}
 
 
 def test_innate_v1_clean_working_no_flags(world_config):
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     working = MagicWorking(
         plugin="innate_v1",
@@ -69,8 +62,6 @@ def test_innate_v1_clean_working_no_flags(world_config):
 
 
 def test_innate_v1_missing_flavor_yellow_flag(world_config):
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     working = MagicWorking(
         plugin="innate_v1",
@@ -88,8 +79,6 @@ def test_innate_v1_missing_flavor_yellow_flag(world_config):
 
 
 def test_innate_v1_missing_consent_state_yellow_flag(world_config):
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     working = MagicWorking(
         plugin="innate_v1",
@@ -106,8 +95,6 @@ def test_innate_v1_missing_consent_state_yellow_flag(world_config):
 
 def test_innate_v1_consent_flavor_mismatch_yellow(world_config):
     """flavor=acquired implies consent_state=involuntary in innate_v1 spec."""
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     working = MagicWorking(
         plugin="innate_v1",
@@ -127,8 +114,6 @@ def test_innate_v1_consent_flavor_mismatch_yellow(world_config):
 
 def test_innate_v1_faction_mechanism_red_flag(world_config):
     """`faction` mechanism is bargained_for_v1's lane; flag RED."""
-    import sidequest.magic.plugins  # noqa: F401
-
     plugin = get_plugin("innate_v1")
     working = MagicWorking(
         plugin="innate_v1",
