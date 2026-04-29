@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from sidequest.game.region_validation import validate_region_name
 from sidequest.game.session import (
     ContainerState,
     GameSnapshot,
@@ -38,6 +39,7 @@ from sidequest.telemetry.spans import (
     npc_auto_registered_span,
     npc_pc_name_skipped_span,
     quest_update_span,
+    region_entry_rejected_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
@@ -571,7 +573,26 @@ def _apply_narration_result_to_snapshot(
     if result.location:
         old_loc = snapshot.location
         snapshot.location = result.location
-        if result.location not in snapshot.discovered_regions:
+        # Story 45-16: filter narrator-emitted location before adding
+        # to the region graph. Playtest 3 leaked
+        # `(aside — narrator brief)` into discovered_regions because
+        # this seam appended unconditionally. Reject + emit OTEL so
+        # Sebastien's lie-detector sees the filter fire.
+        is_valid_region, rejection_reason = validate_region_name(result.location)
+        if not is_valid_region:
+            with region_entry_rejected_span(
+                entry=result.location,
+                reason=rejection_reason or "unknown",
+                caller_path="narration_apply.location_update",
+                player_name=player_name,
+            ):
+                logger.warning(
+                    "region.entry_rejected reason=%s entry=%r player=%s caller=narration_apply.location_update",
+                    rejection_reason,
+                    result.location,
+                    player_name,
+                )
+        elif result.location not in snapshot.discovered_regions:
             snapshot.discovered_regions.append(result.location)
         logger.info(
             "state.location_update old=%r new=%r player=%s",
