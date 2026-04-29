@@ -29,6 +29,7 @@ from sidequest.telemetry.spans import (
     inventory_narrator_extracted_span,
     lore_established_span,
     npc_auto_registered_span,
+    npc_pc_name_skipped_span,
     quest_update_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
@@ -528,7 +529,34 @@ def _apply_narration_result_to_snapshot(
 
     # NPC registry — auto-register + drift detection (Story 37-44).
     turn_num = snapshot.turn_manager.interaction
+    # Playtest 2026-04-29: pre-compute the case-folded set of PC names so the
+    # registry never admits a name that already belongs to a player character.
+    # The MP joiner-orientation auto-narration was naming the host PC in the
+    # narration block, and the auto-register loop was promoting that PC into
+    # the NPC registry as ``role=ally`` (symptom of the symmetric 45-18 bug).
+    # Once a PC is in the NPC registry, downstream beat-selection and party
+    # state queries treat them as fungible with NPCs — the narrator and the
+    # mechanical layer both stop knowing the player exists as a player.
+    pc_name_lookup = {
+        c.core.name.lower(): c.core.name
+        for c in snapshot.characters
+        if getattr(getattr(c, "core", None), "name", None)
+    }
     for npc_mention in result.npcs_present:
+        matched_pc = pc_name_lookup.get(npc_mention.name.lower())
+        if matched_pc is not None:
+            with npc_pc_name_skipped_span(
+                npc_name=npc_mention.name,
+                matched_pc=matched_pc,
+                turn_number=turn_num,
+            ):
+                logger.info(
+                    "npc.pc_name_skipped name=%r matched_pc=%r turn=%d",
+                    npc_mention.name,
+                    matched_pc,
+                    turn_num,
+                )
+            continue
         existing = next(
             (e for e in snapshot.npc_registry if e.name.lower() == npc_mention.name.lower()),
             None,

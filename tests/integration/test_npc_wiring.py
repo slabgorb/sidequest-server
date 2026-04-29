@@ -113,6 +113,158 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
 
 
 @pytest.mark.asyncio
+async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: 2026-04-29 multiplayer playtest. The MP joiner-orientation
+    auto-narration named the host PC (``Laverne``) and the auto-register
+    loop promoted that PC into the NPC registry as ``role=ally``. Once a
+    PC is in the NPC registry, downstream beat-selection and party-state
+    queries treat them as an NPC ally rather than the player they are.
+
+    The fix in ``narration_apply.py`` consults the snapshot's PC roster
+    (case-folded equality on ``character.core.name``) before registering,
+    skips PC-name matches, and emits ``npc.pc_name_skipped`` so the GM
+    panel can see the filter fire (Sebastien needs the visibility — the
+    narrator naming party members in NPC contexts is itself a signal).
+    """
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    captured = await _setup(monkeypatch, "test-npc-pc-name-skip-wiring")
+
+    laverne = Character(
+        core=CreatureCore(
+            name="Laverne",
+            description="Smuggler/Spacer",
+            personality="cool under fire",
+            inventory=Inventory(),
+            statuses=[],
+        ),
+        char_class="Smuggler",
+        race="Human",
+        backstory="Pilots the Coyote's Tooth.",
+    )
+    snapshot = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="coyote_reach",
+        location="The Bridge of the Coyote's Tooth",
+        discovered_regions=["The Bridge"],
+        npc_registry=[],
+        quest_log={},
+        lore_established=[],
+        characters=[laverne],
+        turn_manager=TurnManager(),
+    )
+    snapshot.turn_manager.record_interaction()  # turn 2 (joiner orientation)
+
+    # Same shape as the live playtest: narrator names the host PC in the
+    # joiner's orientation narration; ``npcs_present`` includes them
+    # because the extractor doesn't distinguish PC vs NPC mentions.
+    result = NarrationTurnResult(
+        narration="Laverne is in the pilot's couch, hands flat on her thighs.",
+        npcs_present=[
+            NpcMention(name="Laverne", pronouns="she/her", role="ally", appearance=""),
+        ],
+    )
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley")
+    await asyncio.sleep(0.05)
+
+    # Critical: registry must NOT have been mutated.
+    assert snapshot.npc_registry == [], (
+        "PC-name auto-register filter failed — Laverne was promoted to NPC: "
+        f"{snapshot.npc_registry}"
+    )
+
+    # The skip span must reach the hub (GM panel visibility).
+    skipped = [
+        e
+        for e in captured
+        if e["event_type"] == "state_transition"
+        and e["component"] == "npc_registry"
+        and e["fields"].get("op") == "pc_name_skipped"
+    ]
+    assert len(skipped) == 1, (
+        "expected exactly one pc_name_skipped state_transition "
+        f"(got {len(skipped)}: {[e['fields'] for e in skipped]})"
+    )
+    fields = skipped[0]["fields"]
+    assert fields["name"] == "Laverne"
+    assert fields["matched_pc"] == "Laverne"
+    assert fields["turn_number"] == 2
+
+    # Auto-registered span must NOT have fired for the PC.
+    auto_registered = [
+        e
+        for e in captured
+        if e["event_type"] == "state_transition"
+        and e["component"] == "npc_registry"
+        and e["fields"].get("op") == "auto_registered"
+    ]
+    assert auto_registered == [], (
+        "PC must not produce an auto_registered span — that's exactly the "
+        f"bug we're fixing (got {[e['fields'] for e in auto_registered]})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pc_name_filter_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The PC-name filter folds case. Without folding, ``Laverne`` (PC)
+    and ``laverne`` or ``LAVERNE`` (narration variation) would skip the
+    filter and re-introduce the bug.
+    """
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    captured = await _setup(monkeypatch, "test-npc-pc-name-skip-case-wiring")
+
+    laverne = Character(
+        core=CreatureCore(
+            name="Laverne",
+            description="Smuggler",
+            personality="cool",
+            inventory=Inventory(),
+            statuses=[],
+        ),
+        char_class="Smuggler",
+        race="Human",
+        backstory=".",
+    )
+    snapshot = GameSnapshot(
+        genre_slug="space_opera",
+        world_slug="coyote_reach",
+        location="Bridge",
+        discovered_regions=["Bridge"],
+        npc_registry=[],
+        quest_log={},
+        lore_established=[],
+        characters=[laverne],
+        turn_manager=TurnManager(),
+    )
+    snapshot.turn_manager.record_interaction()
+    result = NarrationTurnResult(
+        narration="laverne nods.",
+        npcs_present=[
+            NpcMention(name="laverne", pronouns="", role="", appearance=""),
+        ],
+    )
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley")
+    await asyncio.sleep(0.05)
+    assert snapshot.npc_registry == []
+    skipped = [
+        e
+        for e in captured
+        if e["event_type"] == "state_transition"
+        and e["component"] == "npc_registry"
+        and e["fields"].get("op") == "pc_name_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0]["fields"]["matched_pc"] == "Laverne"  # canonical form returned
+
+
+@pytest.mark.asyncio
 async def test_npc_reinvented_emits_warning_state_transition_via_span_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
