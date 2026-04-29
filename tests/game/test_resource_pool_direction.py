@@ -19,6 +19,14 @@ def test_default_direction_is_down():
     assert t.direction == "down"
 
 
+def test_downward_threshold_fires_on_downward_crossing():
+    """Cover the down branch directly — `direction='down'` regression bait."""
+    t = ResourceThreshold(at=0.40, event_id="sanity_break", narrator_hint="Sanity")
+    crossings = detect_crossings([t], 0.50, 0.35)
+    assert len(crossings) == 1
+    assert crossings[0].event_id == "sanity_break"
+
+
 def test_upward_threshold_fires_on_upward_crossing():
     t = ResourceThreshold(
         at=0.75, event_id="quiet_word", narrator_hint="Hegemony notice", direction="up"

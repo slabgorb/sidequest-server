@@ -8,9 +8,13 @@ crosses a named threshold downward.
 Semantics
 ---------
 
-- :func:`detect_crossings` returns thresholds where
-  ``old > at and new <= at``. Upward transitions never fire. Landing on
-  ``at`` from above fires; already being at ``at`` and holding does not.
+- :func:`detect_crossings` returns thresholds whose ``direction`` predicate
+  matched. ``direction="down"`` (the default and the only direction
+  ``EdgeThreshold`` knows) fires when ``old > at and new <= at``;
+  ``direction="up"`` fires when ``old < at and new >= at`` (added in Task
+  2.1 for upward magic-ledger bars like ``notice`` at 0.75). Landing on
+  ``at`` from the firing side fires; already being at ``at`` and holding
+  does not.
 - :func:`mint_threshold_lore` turns each crossed threshold into a
   :class:`LoreFragment` in the :attr:`LoreCategory.Event` category —
   high-relevance for narrator context selection — keyed by the
