@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import (
     AdvancementEffectBeatDiscount,
@@ -30,7 +31,7 @@ class TestRecoveryTrigger:
         assert t.while_strained is False
 
     def test_extra_forbidden_on_resolution(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             RecoveryTriggerOnResolution.model_validate({"kind": "on_resolution", "extra": True})
 
 
@@ -75,15 +76,15 @@ class TestAdvancementTier:
         assert t.id == "iron_track_1"
 
     def test_rejects_blank_id(self) -> None:
-        with pytest.raises(Exception, match="must not be blank"):
+        with pytest.raises(ValidationError, match="must not be blank"):
             AdvancementTier(id="  ", required_milestone="iron_track", effects=[])
 
     def test_rejects_blank_milestone(self) -> None:
-        with pytest.raises(Exception, match="must not be blank"):
+        with pytest.raises(ValidationError, match="must not be blank"):
             AdvancementTier(id="iron_1", required_milestone="", effects=[])
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AdvancementTier.model_validate({
                 "id": "t1", "required_milestone": "m1", "effects": [], "bogus": True,
             })
@@ -108,5 +109,5 @@ class TestAdvancementTree:
         assert len(tree.tiers) == 1
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AdvancementTree.model_validate({"tiers": [], "extra": True})

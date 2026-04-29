@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import (
     MechanicalEffects,
@@ -42,7 +43,7 @@ class TestMechanicalEffects:
         assert me.catch_phrase == "My war-cry!"
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             MechanicalEffects.model_validate({"bogus_field": True})
 
 

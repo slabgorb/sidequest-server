@@ -1,0 +1,21 @@
+# Genre-layer magic config (test fixture).
+genre: space_opera
+allowed_sources: [innate, item_based]
+permitted_plugins: [innate_v1, item_legacy_v1]
+intensity:
+  default: 0.3
+world_knowledge_default:
+  primary: classified
+hard_limits:
+  - id: no_resurrection
+    description: "Death is permanent. No one comes back."
+  - id: no_ftl_telepathy
+    description: "Psionics is bound to local space; jump distance breaks the link."
+  - id: no_tech_replacement
+    description: "Magic does not replace tech; ships still need fuel."
+  - id: psionics_never_decisive
+    description: "Psionics never decisively wins against weapons; uncanny, not combat-defining."
+cost_types: [sanity, notice, vitality]
+narrator_register: |
+  Space opera magic is rare, uncanny, and never decisive. Treat it as the
+  exception, not the toolkit.

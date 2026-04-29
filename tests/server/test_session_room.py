@@ -174,7 +174,7 @@ async def test_cleanup_does_not_close_room_owned_store(tmp_path):
     from unittest.mock import AsyncMock, MagicMock
 
     from sidequest.game.persistence import SqliteStore
-    from sidequest.server.session_handler import _SessionData, WebSocketSessionHandler
+    from sidequest.server.session_handler import WebSocketSessionHandler, _SessionData
 
     handler = WebSocketSessionHandler(save_dir=tmp_path)
     snap = _fresh_snapshot()
@@ -217,7 +217,7 @@ async def test_cleanup_closes_per_session_store_when_no_room(tmp_path):
     from unittest.mock import AsyncMock, MagicMock
 
     from sidequest.game.persistence import SqliteStore
-    from sidequest.server.session_handler import _SessionData, WebSocketSessionHandler
+    from sidequest.server.session_handler import WebSocketSessionHandler, _SessionData
 
     handler = WebSocketSessionHandler(save_dir=tmp_path)
     store = SqliteStore.open_in_memory()

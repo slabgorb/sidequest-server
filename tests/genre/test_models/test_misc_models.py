@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import (
     AxesConfig,
@@ -27,7 +28,7 @@ class TestAxesConfig:
         assert len(ac.definitions) == 1
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AxesConfig.model_validate({"definitions": [], "bogus": True})
 
 
@@ -53,7 +54,7 @@ class TestGenreTheme:
     def test_extra_forbidden(self) -> None:
         data = self._valid_data()
         data["extra_field"] = True
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             GenreTheme.model_validate(data)
 
 
@@ -64,7 +65,7 @@ class TestPrompts:
         assert p.chase is None
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Prompts.model_validate({
                 "narrator": "N", "combat": "C", "npc": "NPC",
                 "world_state": "WS", "bogus": True,
@@ -77,7 +78,7 @@ class TestCulture:
         assert c.name == "Nordic"
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Culture.model_validate({
                 "name": "X", "summary": "Y", "description": "Z",
                 "slots": {}, "person_patterns": [], "place_patterns": [],
@@ -104,7 +105,7 @@ class TestNpcTraits:
         assert t.trait_name == "cautious"
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             NpcTrait.model_validate({"trait": "x", "bogus": True})
 
     def test_database_valid(self) -> None:
@@ -125,7 +126,7 @@ class TestOpeningHook:
         assert o.id == "arena"
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             OpeningHook.model_validate({
                 "id": "x", "archetype": "a", "situation": "s",
                 "tone": "t", "first_turn_seed": "f", "bogus": True,
@@ -145,5 +146,5 @@ class TestLegend:
         assert leg2.era == "Ancient"
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Legend.model_validate({"name": "X", "summary": "Y", "extra": True})

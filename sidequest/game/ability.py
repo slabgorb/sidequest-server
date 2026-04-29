@@ -11,10 +11,10 @@ match.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AbilitySource(str, Enum):
+class AbilitySource(StrEnum):
     """How a character acquired an ability."""
 
     Race = "Race"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import AudioConfig, MixerConfig, MoodTrack
 
@@ -17,7 +18,7 @@ class TestMoodTrack:
         assert t.energy == pytest.approx(0.8)
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             MoodTrack.model_validate({"path": "x", "title": "T", "bpm": 60, "bogus": True})
 
 
@@ -27,7 +28,7 @@ class TestMixerConfig:
         assert m.voice_volume == pytest.approx(1.0)
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             MixerConfig.model_validate({
                 "music_volume": 0.8, "sfx_volume": 0.9,
                 "crossfade_default_ms": 500, "extra": True,
@@ -42,7 +43,7 @@ class TestMixerConfig:
 
 class TestAudioConfig:
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AudioConfig.model_validate({
                 "mood_tracks": {}, "sfx_library": {},
                 "mixer": {"music_volume": 0.8, "sfx_volume": 0.9, "crossfade_default_ms": 500},

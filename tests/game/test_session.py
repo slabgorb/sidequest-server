@@ -7,6 +7,7 @@ round-trips through model_dump_json()/validate_json().
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
 from sidequest.game.delta import compute_delta, snapshot
@@ -197,12 +198,12 @@ def test_apply_patch_none_fields_unchanged():
 
 
 def test_npc_patch_blank_name_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         NpcPatch(name="")
 
 
 def test_npc_patch_whitespace_name_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         NpcPatch(name="   ")
 
 

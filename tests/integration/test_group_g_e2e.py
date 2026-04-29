@@ -9,8 +9,6 @@ Scope note:
 """
 import json
 
-import pytest
-
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.agents.prompt_redaction import redact_dispatch_package
 from sidequest.game.projection.composed import ComposedFilter
@@ -18,10 +16,12 @@ from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection.rules import load_rules_from_yaml_str
 from sidequest.game.projection.view import SessionGameStateView
 from sidequest.protocol.dispatch import (
-    DispatchPackage, PlayerDispatch, SubsystemDispatch, VisibilityTag,
+    DispatchPackage,
+    PlayerDispatch,
+    SubsystemDispatch,
+    VisibilityTag,
 )
 from sidequest.telemetry.leak_audit import audit_canonical_prose
-
 
 RULES = load_rules_from_yaml_str("""
 rules:

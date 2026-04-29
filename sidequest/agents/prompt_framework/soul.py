@@ -116,10 +116,11 @@ def parse_soul_md(path: Path | str) -> SoulData:
     for m in _PRINCIPLE_RE.finditer(content):
         raw_text = m.group(2).strip()
         agents_match = _AGENTS_RE.search(raw_text)
-        if agents_match:
-            agents = [s.strip() for s in agents_match.group(1).split(",")]
-        else:
-            agents = ["all"]
+        agents = (
+            [s.strip() for s in agents_match.group(1).split(",")]
+            if agents_match
+            else ["all"]
+        )
         text = _AGENTS_RE.sub("", raw_text).strip()
         principles.append(SoulPrinciple(name=m.group(1), text=text, agents=agents))
 

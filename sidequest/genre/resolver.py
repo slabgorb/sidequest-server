@@ -11,7 +11,7 @@ Port of:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Generic, Self, TypeVar
 
@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sidequest.protocol.provenance import ContributionKind, MergeStep, Provenance, Tier
 
 
-class MergeStrategy(str, Enum):
+class MergeStrategy(StrEnum):
     """Per-field merge strategy, declared via Field(json_schema_extra={"merge": ...}).
 
     Maps directly to the Rust MergeStrategy enum in resolver/merge.rs.
@@ -131,7 +131,7 @@ class LayeredMerge(BaseModel):
 T = TypeVar("T")
 
 
-class Resolved(BaseModel, Generic[T]):
+class Resolved(BaseModel, Generic[T]):  # noqa: UP046 — pydantic 2.x BaseModel + PEP 695 syntax has known caveats
     """A resolved content value paired with its full provenance.
 
     Port of Rust Resolved<T> (resolver/resolved.rs). Generic over the value
@@ -197,7 +197,7 @@ def _load_tier(path: Path, type_: type[Any]) -> Any:
         ) from e
 
 
-class Resolver(Generic[T]):
+class Resolver[T]:
     """Loads tier files and applies the Layered merge walk, recording provenance.
 
     Port of Rust Resolver<T> (resolver/load.rs). Walks Global → Genre →

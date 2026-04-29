@@ -8,7 +8,6 @@ from __future__ import annotations
 from sidequest.agents.local_dm import apply_visibility_baseline
 from sidequest.genre.models.visibility import VisibilityBaseline
 
-
 BASELINE_SECRET = VisibilityBaseline.model_validate_yaml("""
 tone: secret_heavy
 default_visibility:

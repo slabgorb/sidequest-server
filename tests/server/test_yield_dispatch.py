@@ -1,17 +1,17 @@
 import pytest
 
 from sidequest.game.creature_core import RecoveryTrigger
+from sidequest.game.encounter import (
+    EncounterActor,
+    EncounterMetric,
+    StructuredEncounter,
+)
+from sidequest.game.status import Status, StatusSeverity
+from sidequest.server.dispatch.yield_action import handle_yield
 
 
 def test_recovery_trigger_on_yield_constant():
     assert RecoveryTrigger.OnYield == "OnYield"
-
-
-from sidequest.game.encounter import (
-    EncounterActor, EncounterMetric, StructuredEncounter,
-)
-from sidequest.game.status import Status, StatusSeverity
-from sidequest.server.dispatch.yield_action import handle_yield
 
 
 def _enc(*, p_metric=4, o_metric=7):

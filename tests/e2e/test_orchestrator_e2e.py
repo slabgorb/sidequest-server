@@ -213,7 +213,6 @@ async def test_narrator_turn_e2e_session_id_stored():
 
     pack = load_genre_pack(CAVERNS_PACK_DIR)
     genre_slug = CAVERNS_PACK_DIR.name
-    session = build_minimal_test_session(genre_slug)
 
     canned = "**The Hall**\n\nProse.\n\n```game_patch\n{}\n```"
     client = ClaudeClient(spawn_fn=make_canned_narrator_spawn(canned, session_id="e2e-sid-42"))

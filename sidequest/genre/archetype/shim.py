@@ -14,7 +14,7 @@ run the OTEL span infrastructure. The resolution logic is verbatim.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
@@ -26,7 +26,7 @@ from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.protocol.provenance import ContributionKind, MergeStep, Provenance, Tier
 
 
-class ResolutionSource(str, Enum):
+class ResolutionSource(StrEnum):
     """Which tier the archetype's display name came from.
 
     Port of Rust ResolutionSource enum (archetype/shim.rs).

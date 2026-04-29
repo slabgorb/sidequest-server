@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import Ability, AffinityTier, ProgressionConfig
 
@@ -19,7 +20,7 @@ class TestAbility:
         assert a.limits == ""
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             Ability.model_validate({"name": "X", "experience": "Y", "limits": "Z", "extra": True})
 
 
@@ -34,7 +35,7 @@ class TestAffinityTier:
         assert len(tier.abilities) == 1
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AffinityTier.model_validate({
                 "name": "T", "description": "D", "abilities": [], "unknown": True,
             })
@@ -54,5 +55,5 @@ class TestProgressionConfig:
         assert p2.milestones_per_level == 3
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ProgressionConfig.model_validate({"affinities": [], "bogus": True})

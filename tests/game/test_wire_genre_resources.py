@@ -49,19 +49,30 @@ from sidequest.game.resource_pool import ResourcePatchOp, ResourcePool
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models.rules import ResourceDeclaration, RulesConfig
+from tests._helpers.genre_paths import GENRE_PACKS_DIR, PackNotFound, find_pack_path
 
 # ═══════════════════════════════════════════════════════════
 # Test helpers (port of Rust helpers)
 # ═══════════════════════════════════════════════════════════
 
 def genre_pack_path(genre: str) -> Path:
-    """Path to genre packs in sidequest-content (relative to oq-1 root).
+    """Path to a genre pack on disk (resolves either content root).
 
-    Port of Rust ``genre_pack_path(genre)``.
+    Port of Rust ``genre_pack_path(genre)``. Routes through
+    :func:`tests._helpers.genre_paths.find_pack_path` so packs resolve
+    correctly whether they live under ``genre_packs/`` (production) or
+    ``genre_workshopping/`` (in development).
+
+    For packs that aren't on disk under either root, returns a sentinel
+    non-existent path so existing ``.exists()`` skip-marker checks still
+    behave as before (False → skip the test).
     """
-    # tests/game/test_wire_genre_resources.py → sidequest-server → oq-1
-    root = Path(__file__).resolve().parent.parent.parent.parent
-    return root / "sidequest-content" / "genre_packs" / genre
+    try:
+        return find_pack_path(genre)
+    except PackNotFound:
+        # Sentinel: a non-existent path so callers' .exists() checks fail.
+        root = Path(__file__).resolve().parents[3]
+        return root / "sidequest-content" / "genre_packs" / genre
 
 
 def load_rules_yaml(genre: str) -> RulesConfig:
@@ -115,20 +126,29 @@ def _pack_missing_reason(name: str) -> str:
     )
 
 
+# NOTE: skip markers deliberately check GENRE_PACKS_DIR (production root)
+# rather than genre_pack_path() — the latter resolves to genre_workshopping/
+# too, but the documented contract here ("auto-unskip when a pack graduates
+# back to genre_packs/") is specifically about *graduation to production*.
+# A pack still in workshopping must remain skipped even though it's on disk.
+def _is_promoted(name: str) -> bool:
+    return (GENRE_PACKS_DIR / name / "pack.yaml").is_file()
+
+
 _requires_neon_dystopia = pytest.mark.skipif(
-    not genre_pack_path("neon_dystopia").exists(),
+    not _is_promoted("neon_dystopia"),
     reason=_pack_missing_reason("neon_dystopia"),
 )
 _requires_pulp_noir = pytest.mark.skipif(
-    not genre_pack_path("pulp_noir").exists(),
+    not _is_promoted("pulp_noir"),
     reason=_pack_missing_reason("pulp_noir"),
 )
 _requires_road_warrior = pytest.mark.skipif(
-    not genre_pack_path("road_warrior").exists(),
+    not _is_promoted("road_warrior"),
     reason=_pack_missing_reason("road_warrior"),
 )
 _requires_low_fantasy = pytest.mark.skipif(
-    not genre_pack_path("low_fantasy").exists(),
+    not _is_promoted("low_fantasy"),
     reason=_pack_missing_reason("low_fantasy"),
 )
 

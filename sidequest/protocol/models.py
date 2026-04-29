@@ -7,7 +7,7 @@ this single file — do not fragment into sub-modules.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import Field
 
@@ -20,7 +20,7 @@ from sidequest.protocol.types import NonBlankString
 # ---------------------------------------------------------------------------
 
 
-class FactCategory(str, Enum):
+class FactCategory(StrEnum):
     """Classification category for narrator footnotes.
 
     Port of sidequest_protocol::FactCategory.
@@ -156,6 +156,9 @@ class StateDelta(ProtocolBase):
     """Active encounter id (encounter_type), or None when no encounter is live."""
     party_formation: list[PartyFormationWireEntry] | None = None
     """Per-player canonical placement — story 45-1 sealed-letter handshake."""
+    magic_state: dict | None = None
+    """Opaque magic-state payload when MagicState changed this turn (Task 2.4).
+    None when magic is inactive or unchanged. Client deserializes via TS types."""
 
 
 # ---------------------------------------------------------------------------

@@ -436,7 +436,6 @@ def test_transition_to_playing_emits_state_transition_span() -> None:
     covers the (new) → CONNECTED → CHARGEN edges. This test pins the
     CHARGEN → PLAYING edge explicitly.
     """
-    from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
 
     captured: list[tuple[str, dict]] = []
 

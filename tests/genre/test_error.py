@@ -195,5 +195,5 @@ def test_validation_errors_is_catchable_as_exception() -> None:
     """ValidationErrors is itself an Exception and can be caught."""
     errs = ValidationErrors()
     errs.push(GenreIoError("disk gone"))
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 — intentional: testing Exception-catchability contract
         errs.into_result()

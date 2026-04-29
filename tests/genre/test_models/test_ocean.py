@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import DramaThresholds, OceanProfile
 
@@ -33,7 +34,7 @@ class TestOceanProfile:
         assert p2.openness == pytest.approx(8.0)
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             OceanProfile.model_validate({"openness": 5.0, "unknown_field": True})
 
 

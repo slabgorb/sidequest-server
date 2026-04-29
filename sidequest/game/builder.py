@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from opentelemetry import trace
 
@@ -43,7 +43,7 @@ from sidequest.protocol.types import NonBlankString
 # ---------------------------------------------------------------------------
 
 
-class HookType(str, Enum):
+class HookType(StrEnum):
     """Category of narrative hook."""
 
     ORIGIN = "Origin"
@@ -1636,19 +1636,13 @@ class CharacterBuilder:
 
         elif method == "standard_array":
             base_values = [15, 14, 13, 12, 10, 8]
-            stats = {
-                name: val
-                for name, val in zip(self._ability_score_names, base_values)
-            }
+            stats = dict(zip(self._ability_score_names, base_values, strict=False))
 
         elif method == "point_buy":
             values = self._allocate_point_buy(
                 len(self._ability_score_names), self._point_buy_budget
             )
-            stats = {
-                name: val
-                for name, val in zip(self._ability_score_names, values)
-            }
+            stats = dict(zip(self._ability_score_names, values, strict=True))
 
         else:
             raise UnknownStatGenerationError(method=method)
@@ -1683,6 +1677,7 @@ class CharacterBuilder:
                 stats[names[idx]] = stats[names[idx]] + 2
 
         import json as _json
+
         from sidequest.telemetry.spans import SPAN_CHARGEN_STATS_GENERATED, Emitter
         Emitter.fire(
             SPAN_CHARGEN_STATS_GENERATED,

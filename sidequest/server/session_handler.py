@@ -16,136 +16,63 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import Enum, auto
 from hashlib import blake2b
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 
 if TYPE_CHECKING:
     from sidequest.game.persistence import GameMode
-    from sidequest.server.session_room import RoomRegistry, SessionRoom
 
-from sidequest.agents.claude_client import ClaudeClient, LlmClient
-from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.claude_client import (
+    ClaudeClient,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
+)
+from sidequest.agents.orchestrator import Orchestrator
 from sidequest.audio.interpreter import AudioInterpreter
 from sidequest.audio.library_backend import LibraryBackend
-from sidequest.daemon_client import (
-    DaemonClient,
-    DaemonRequestError,
-    DaemonUnavailableError,
-    render_enabled,
-)
-from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
-    BuilderError,
     CharacterBuilder,
 )
-from sidequest.game.character import Character
-from sidequest.game.event_log import EventLog
-from sidequest.game.lore_seeding import seed_lore_from_char_creation
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import (
-    SaveSchemaIncompatibleError,
     SqliteStore,
-    db_path_for_session,
 )
-from sidequest.game.projection.cache import ProjectionCache
-from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.projection_filter import FilterDecision, ProjectionFilter
-from sidequest.game.region_init import RegionInitError, init_region_location
-from sidequest.game.room_movement import (
-    RoomGraphInitError,
-    init_room_graph_location,
-)
 from sidequest.game.session import (
     GameSnapshot,
-    NarrativeEntry,
 )
 from sidequest.game.shared_world_delta import (
     SharedWorldDelta,
-    build_shared_world_delta,
 )
-from sidequest.game.turn import TurnPhase
-from sidequest.game.world_materialization import (
-    CampaignMaturity,
-    HistoryParseError,
-    materialize_from_genre_pack,
-)
-from sidequest.genre.archetype.shim import resolve_archetype
-from sidequest.genre.error import GenreValidationError
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.scenario import ScenarioPack
-from sidequest.genre.models.world import NavigationMode
-from sidequest.protocol import GameMessage, sanitize_player_text
-from sidequest.protocol.enums import MessageType
 from sidequest.protocol.messages import (
-    AudioCueMessage,
-    AudioCuePayload,
-    ChapterMarkerMessage,
-    ChapterMarkerPayload,
-    CharacterCreationMessage,
-    CharacterCreationPayload,
     ConfrontationMessage,
     ConfrontationPayload,
-    GamePausedMessage,
-    GamePausedPayload,
-    GameResumedMessage,
-    ImageMessage,
-    ImagePayload,
-    NarrationEndMessage,
-    NarrationEndPayload,
     NarrationMessage,
-    NarrationPayload,
-    RenderQueuedMessage,
-    RenderQueuedPayload,
     ScrapbookEntryMessage,
     ScrapbookEntryPayload,
-    SeatConfirmedMessage,
-    SeatConfirmedPayload,
     SecretNoteMessage,
     SecretNotePayload,
-    SessionEventMessage,
-    SessionEventPayload,
-    TurnStatusMessage,
-    TurnStatusPayload,
 )
 from sidequest.protocol.models import (
-    Footnote,
     PartyFormationWireEntry,
     StateDelta,
 )
-from sidequest.protocol.types import NonBlankString
-from sidequest.server import views
-from sidequest.server.audio_cue import build_audio_cue_payload
-from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
-from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
-from sidequest.server.dispatch.culture_context import resolve_culture_reference
-from sidequest.server.dispatch.opening_hook import resolve_opening
-from sidequest.server.dispatch.scenario_bind import bind_scenario
-from sidequest.server.utils import slugify_player_name as _slugify_player_name
+from sidequest.server.dispatch.opening_hook import (
+    resolve_opening,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
+)
 from sidequest.server.image_pacing import ImagePacingThrottle
-from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
-    audio_backend_disabled_span,
-    audio_backend_enabled_span,
-    audio_dispatched_span,
-    audio_skipped_span,
-    orchestrator_process_action_span,
-    turn_span,
 )
-from sidequest.telemetry.turn_record import PatchSummary, TurnRecord
-from sidequest.telemetry.validator import Validator
-from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+from sidequest.telemetry.watcher_hub import (
+    publish_event as _watcher_publish,  # noqa: F401 — back-compat re-export consumed by emitters.py
+)
 
 logger = logging.getLogger(__name__)
 

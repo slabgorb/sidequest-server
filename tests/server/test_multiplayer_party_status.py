@@ -24,9 +24,9 @@ from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, EdgePool, Inventory
 from sidequest.game.persistence import GameMode
 from sidequest.game.session import GameSnapshot
-from sidequest.server import views
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
+from sidequest.server import views
 from sidequest.server.session_handler import (
     WebSocketSessionHandler,
     _build_turn_context,

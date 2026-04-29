@@ -8,9 +8,13 @@ crosses a named threshold downward.
 Semantics
 ---------
 
-- :func:`detect_crossings` returns thresholds where
-  ``old > at and new <= at``. Upward transitions never fire. Landing on
-  ``at`` from above fires; already being at ``at`` and holding does not.
+- :func:`detect_crossings` returns thresholds whose ``direction`` predicate
+  matched. ``direction="down"`` (the default and the only direction
+  ``EdgeThreshold`` knows) fires when ``old > at and new <= at``;
+  ``direction="up"`` fires when ``old < at and new >= at`` (added in Task
+  2.1 for upward magic-ledger bars like ``notice`` at 0.75). Landing on
+  ``at`` from the firing side fires; already being at ``at`` and holding
+  does not.
 - :func:`mint_threshold_lore` turns each crossed threshold into a
   :class:`LoreFragment` in the :attr:`LoreCategory.Event` category —
   high-relevance for narrator context selection — keyed by the
@@ -24,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from sidequest.game.lore_store import (
     DuplicateLoreId,
@@ -54,20 +58,34 @@ class ThresholdAt(Protocol):
     narrator_hint: str
 
 
-T = TypeVar("T", bound=ThresholdAt)
-
-
-def detect_crossings(
+def detect_crossings[T: ThresholdAt](
     thresholds: list[T],
     old_value: int | float,
     new_value: int | float,
 ) -> list[T]:
-    """Return thresholds crossed by a value change (downward only).
+    """Return thresholds crossed by a value change.
 
-    A threshold ``t`` is crossed when ``old_value > t.at`` and
-    ``new_value <= t.at``. Values may be ``int`` or ``float``.
+    A threshold ``t`` is crossed when:
+
+    - ``direction == "down"`` (default): ``old_value > t.at`` and
+      ``new_value <= t.at`` — value fell through the boundary.
+    - ``direction == "up"``: ``old_value < t.at`` and
+      ``new_value >= t.at`` — value rose through the boundary.
+
+    ``direction`` is read via :func:`getattr` with a ``"down"`` default so
+    that :class:`EdgeThreshold` (which predates this field) satisfies the
+    :class:`ThresholdAt` protocol without carrying the attribute.
+
+    Values may be ``int`` or ``float``.
     """
-    return [t for t in thresholds if old_value > t.at and new_value <= t.at]
+    fired: list[T] = []
+    for t in thresholds:
+        direction = getattr(t, "direction", "down")
+        if (direction == "down" and old_value > t.at and new_value <= t.at) or (
+            direction == "up" and old_value < t.at and new_value >= t.at
+        ):
+            fired.append(t)
+    return fired
 
 
 def mint_threshold_lore(

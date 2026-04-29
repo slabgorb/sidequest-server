@@ -1,0 +1,37 @@
+plugin_id: item_legacy_v1
+source: item_based
+delivery_mechanisms:
+  - discovery
+  - mccoy
+  - relational
+  - faction
+ledger_bar_templates:
+  bond:
+    id: bond
+    scope: item
+    direction: bidirectional
+    range: [-1.0, 1.0]
+    threshold_high: 0.7
+    threshold_low: -0.7
+    consequence_on_high_cross: "item loyal — narrator may grant grace shots"
+    consequence_on_low_cross: "item refuses to fire / actively resists user"
+    starts_at_chargen: 0.0
+  item_history:
+    id: item_history
+    scope: item
+    direction: up
+    range: [0.0, 1.0]
+    threshold_high: 0.8
+    consequence_on_high_cross: "item achieves resonant identity (unique register)"
+    starts_at_chargen: 0.0
+narrator_register: |
+  The item carries the working. It has personality, history, and may refuse
+  to fire. A named gun is a character. A salvaged alien artifact has its own
+  opinion about being pulled. Builders (mccoy) make items; finders (discovery)
+  inherit them; bonded carriers (relational) grow into them.
+required_span_attrs:
+  - item_id
+  - alignment_with_item_nature
+optional_span_attrs:
+  - item_subtype
+  - prior_carrier

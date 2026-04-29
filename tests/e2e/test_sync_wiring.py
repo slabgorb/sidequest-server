@@ -102,89 +102,91 @@ def test_late_joiner_catches_up(tmp_path: Path) -> None:
 
     fake_result = _make_fake_narration_result()
 
-    with patch(
-        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-        new=AsyncMock(return_value=fake_result),
+    with (
+        patch(
+            "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+            new=AsyncMock(return_value=fake_result),
+        ),
+        client.websocket_connect("/ws") as ws_alice,
     ):
         # Alice connects and seats
-        with client.websocket_connect("/ws") as ws_alice:
-            ws_alice.send_json({
+        ws_alice.send_json({
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG,
+                "last_seen_seq": 0,
+            },
+        })
+        alice_connected = ws_alice.receive_json()
+        assert alice_connected["type"] == "SESSION_EVENT"
+        assert alice_connected["payload"]["event"] == "connected"
+        # Drain the resume bootstrap messages (has_character=True path):
+        # SESSION_EVENT{ready} + PARTY_STATUS.
+        ready_msg = ws_alice.receive_json()
+        assert ready_msg["type"] == "SESSION_EVENT"
+        assert ready_msg["payload"]["event"] == "ready"
+        party_status_msg = ws_alice.receive_json()
+        assert party_status_msg["type"] == "PARTY_STATUS"
+
+        # Alice claims a seat
+        ws_alice.send_json({
+            "type": "PLAYER_SEAT",
+            "player_id": "alice",
+            "payload": {"character_slot": "rux"},
+        })
+        alice_seat_confirmed = ws_alice.receive_json()
+        assert alice_seat_confirmed["type"] == "SEAT_CONFIRMED"
+
+        # Alice sends a PLAYER_ACTION
+        ws_alice.send_json({
+            "type": "PLAYER_ACTION",
+            "player_id": "alice",
+            "payload": {"action": "I look around the grimvault."},
+        })
+
+        # Alice receives NARRATION with seq >= 1
+        alice_narration = None
+        for _ in range(10):
+            m = ws_alice.receive_json()
+            if m["type"] == "NARRATION":
+                alice_narration = m
+                break
+
+        assert alice_narration is not None, "Expected NARRATION from Alice's action"
+        assert "seq" in alice_narration["payload"]
+        first_seq = alice_narration["payload"]["seq"]
+        assert first_seq >= 1, f"Expected seq >= 1, got {first_seq}"
+
+        # Late joiner Bob connects with last_seen_seq=0 to the same slug
+        with client.websocket_connect("/ws") as ws_bob:
+            ws_bob.send_json({
                 "type": "SESSION_EVENT",
-                "player_id": "alice",
+                "player_id": "bob",
                 "payload": {
                     "event": "connect",
                     "game_slug": _SLUG,
                     "last_seen_seq": 0,
                 },
             })
-            alice_connected = ws_alice.receive_json()
-            assert alice_connected["type"] == "SESSION_EVENT"
-            assert alice_connected["payload"]["event"] == "connected"
-            # Drain the resume bootstrap messages (has_character=True path):
-            # SESSION_EVENT{ready} + PARTY_STATUS.
-            ready_msg = ws_alice.receive_json()
-            assert ready_msg["type"] == "SESSION_EVENT"
-            assert ready_msg["payload"]["event"] == "ready"
-            party_status_msg = ws_alice.receive_json()
-            assert party_status_msg["type"] == "PARTY_STATUS"
+            bob_connected = ws_bob.receive_json()
+            assert bob_connected["type"] == "SESSION_EVENT"
+            assert bob_connected["payload"]["event"] == "connected"
 
-            # Alice claims a seat
-            ws_alice.send_json({
-                "type": "PLAYER_SEAT",
-                "player_id": "alice",
-                "payload": {"character_slot": "rux"},
-            })
-            alice_seat_confirmed = ws_alice.receive_json()
-            assert alice_seat_confirmed["type"] == "SEAT_CONFIRMED"
-
-            # Alice sends a PLAYER_ACTION
-            ws_alice.send_json({
-                "type": "PLAYER_ACTION",
-                "player_id": "alice",
-                "payload": {"action": "I look around the grimvault."},
-            })
-
-            # Alice receives NARRATION with seq >= 1
-            alice_narration = None
-            for _ in range(10):
-                m = ws_alice.receive_json()
+            # Bob may receive PLAYER_PRESENCE from alice as a side effect.
+            # Drain up to 5 messages looking for the replay NARRATION.
+            replay_narration = None
+            for _ in range(5):
+                m = ws_bob.receive_json()
                 if m["type"] == "NARRATION":
-                    alice_narration = m
+                    replay_narration = m
                     break
 
-            assert alice_narration is not None, "Expected NARRATION from Alice's action"
-            assert "seq" in alice_narration["payload"]
-            first_seq = alice_narration["payload"]["seq"]
-            assert first_seq >= 1, f"Expected seq >= 1, got {first_seq}"
-
-            # Late joiner Bob connects with last_seen_seq=0 to the same slug
-            with client.websocket_connect("/ws") as ws_bob:
-                ws_bob.send_json({
-                    "type": "SESSION_EVENT",
-                    "player_id": "bob",
-                    "payload": {
-                        "event": "connect",
-                        "game_slug": _SLUG,
-                        "last_seen_seq": 0,
-                    },
-                })
-                bob_connected = ws_bob.receive_json()
-                assert bob_connected["type"] == "SESSION_EVENT"
-                assert bob_connected["payload"]["event"] == "connected"
-
-                # Bob may receive PLAYER_PRESENCE from alice as a side effect.
-                # Drain up to 5 messages looking for the replay NARRATION.
-                replay_narration = None
-                for _ in range(5):
-                    m = ws_bob.receive_json()
-                    if m["type"] == "NARRATION":
-                        replay_narration = m
-                        break
-
-                assert replay_narration is not None, (
-                    "Expected NARRATION replay for bob after connecting with last_seen_seq=0"
-                )
-                assert replay_narration["payload"]["seq"] == first_seq, (
-                    f"Expected replay seq to match alice's seq ({first_seq}), "
-                    f"got {replay_narration['payload']['seq']}"
-                )
+            assert replay_narration is not None, (
+                "Expected NARRATION replay for bob after connecting with last_seen_seq=0"
+            )
+            assert replay_narration["payload"]["seq"] == first_seq, (
+                f"Expected replay seq to match alice's seq ({first_seq}), "
+                f"got {replay_narration['payload']['seq']}"
+            )

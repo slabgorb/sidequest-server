@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 
 from sidequest.agents.subsystems import (
-    SubsystemOutput,
     _REGISTRY,
+    SubsystemOutput,
     get_registered,
     register_subsystem,
     run_dispatch_bank,

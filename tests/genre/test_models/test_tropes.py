@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.genre.models import PassiveProgression, TropeDefinition, TropeEscalation
 
@@ -34,7 +35,7 @@ class TestTropeDefinition:
         assert t.passive_progression.rate_per_turn == pytest.approx(0.02)
 
     def test_extra_forbidden(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TropeDefinition.model_validate({"name": "T", "bogus_field": True})
 
     def test_roundtrip(self) -> None:

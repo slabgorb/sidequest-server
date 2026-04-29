@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import ValidationError
 
 from sidequest.game.session import (
     ContainerState,
@@ -16,6 +19,9 @@ from sidequest.game.session import (
 )
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
+from sidequest.magic.models import Flag, MagicWorking
+from sidequest.magic.state import ApplyWorkingResult, ThresholdCrossingEvent
+from sidequest.magic.validator import validate as magic_validate
 from sidequest.server.dispatch.sealed_letter import (
     SealedLetterOutcome,
     resolve_sealed_letter_lookup,
@@ -28,6 +34,7 @@ from sidequest.telemetry.spans import (
     container_retrieval_recorded_span,
     inventory_narrator_extracted_span,
     lore_established_span,
+    magic_working_span,
     npc_auto_registered_span,
     npc_pc_name_skipped_span,
     quest_update_span,
@@ -129,6 +136,55 @@ def _filter_inferred_pc_beats(
     return kept
 
 
+class MagicWorkingParseError(RuntimeError):
+    """Raised when ``game_patch.magic_working`` has invalid shape.
+
+    Surfaces three distinct failure modes:
+    - snapshot has ``magic_state=None`` but the narrator emitted a working
+      (no silent fallback per CLAUDE.md);
+    - the dict fails ``MagicWorking`` pydantic validation;
+    - the working names an actor that has no instantiated ledger bars
+      (call ``magic_state.add_character`` first).
+    """
+
+
+@dataclass
+class StatusChangePromotion:
+    """A magic threshold crossing promoted to a ``status_changes`` ADD.
+
+    The pipeline reuses the existing ``Status`` renderer downstream — this
+    dataclass is only the intermediate shape between
+    ``promote_crossings_to_status_changes`` and the snapshot mutation that
+    appends a ``Status`` to the actor's ``core.statuses``. Severity is
+    carried as a string keyed against ``StatusSeverity[...]`` (the enum's
+    member names: ``Scratch`` / ``Wound`` / ``Scar``).
+    """
+
+    actor: str
+    status_text: str
+    severity: Literal["Scratch", "Wound", "Scar"]
+
+
+@dataclass
+class MagicApplyResult:
+    """Aggregate result of applying a ``magic_working`` patch field.
+
+    Wraps the underlying ``ApplyWorkingResult`` (ledger mutations + threshold
+    crossings) with the validator's flag list. Returned by
+    ``apply_magic_working`` and attached to ``NarrationApplyOutcome.magic``
+    so downstream tasks (3.4 status_changes auto-promotion, 3.5 OTEL span)
+    can read the threshold crossings + flag severity without re-running
+    validation.
+    """
+
+    apply: ApplyWorkingResult
+    flags: list[Flag]
+
+    @property
+    def crossings(self) -> list[ThresholdCrossingEvent]:
+        return self.apply.crossings
+
+
 @dataclass
 class NarrationApplyOutcome:
     """Aggregate result of applying a NarrationTurnResult to a snapshot.
@@ -143,9 +199,283 @@ class NarrationApplyOutcome:
     early-return on non-NarrationTurnResult input, etc.). Callers that
     don't care can ignore the return value entirely — it is purely
     additive over the prior ``None`` return.
+
+    ``magic`` carries the magic-working apply result when the narrator
+    emitted a ``magic_working`` field on this turn's ``game_patch``;
+    ``None`` otherwise. Tasks 3.4/3.5 read ``magic.crossings`` and
+    ``magic.flags`` to drive auto-promotion + OTEL. Direct callers that
+    don't care can ignore it.
     """
 
     sealed_letter: SealedLetterOutcome | None = None
+    magic: MagicApplyResult | None = None
+
+
+def apply_magic_working(
+    *, snapshot: GameSnapshot, patch_field: dict
+) -> MagicApplyResult:
+    """Parse a ``game_patch.magic_working`` dict, validate, and apply.
+
+    Returns ``MagicApplyResult`` aggregating the mutated ledger /
+    threshold crossings (via ``ApplyWorkingResult``) with the validator's
+    flag list. Raises ``MagicWorkingParseError`` on:
+
+    - ``snapshot.magic_state is None`` (world has no magic config loaded
+      but narrator emitted a working — fail loud per CLAUDE.md
+      no-silent-fallback);
+    - ``patch_field`` failing ``MagicWorking`` pydantic validation;
+    - ``apply_working`` raising ``KeyError`` (actor has no instantiated
+      character bars — caller must run ``add_character`` first).
+
+    The caller (the narration_apply pipeline branch below) is responsible
+    for promoting threshold crossings to ``status_changes`` (Task 3.4)
+    and emitting the ``magic.working_applied`` OTEL span (Task 3.5).
+    This function intentionally does NEITHER — it is the parse + validate
+    + apply seam only.
+    """
+    if snapshot.magic_state is None:
+        raise MagicWorkingParseError(
+            "magic_working emitted but world has no magic_state loaded"
+        )
+    try:
+        working = MagicWorking.model_validate(patch_field)
+    except ValidationError as e:
+        raise MagicWorkingParseError(
+            f"magic_working schema invalid: {e}"
+        ) from e
+
+    flags = magic_validate(working, snapshot.magic_state.config)
+
+    try:
+        apply_result = snapshot.magic_state.apply_working(working)
+    except KeyError as e:
+        raise MagicWorkingParseError(f"unknown actor: {e}") from e
+
+    # Task 3.5: emit ``magic.working`` OTEL span + watcher publish so the
+    # GM panel sees every working land. Build the post-apply ledger
+    # snapshot from the bars touched by this working — world-scope bars
+    # (no character-scope bar for the cost type, e.g. ``vitality`` on a
+    # world that doesn't track it on the character) are tolerated via
+    # ``KeyError`` skip per architect plan §3.5: not every cost_type is
+    # surfaced as a character-scope bar; that's a config truth, not a
+    # silent fallback for a missing-data bug.
+    from sidequest.magic.state import BarKey
+
+    ledger_after: dict[str, float] = {}
+    for cost_type in working.costs:
+        try:
+            bar = snapshot.magic_state.get_bar(
+                BarKey(
+                    scope="character", owner_id=working.actor, bar_id=cost_type,
+                )
+            )
+        except KeyError:
+            continue
+        ledger_after[cost_type] = bar.value
+
+    with magic_working_span(
+        plugin=working.plugin,
+        mechanism=working.mechanism,
+        actor=working.actor,
+        domain=working.domain,
+        narrator_basis=working.narrator_basis,
+        costs_debited=dict(working.costs),
+        flags=flags,
+        ledger_after=ledger_after,
+        flavor=working.flavor,
+        consent_state=working.consent_state,
+        item_id=working.item_id,
+        alignment_with_item_nature=working.alignment_with_item_nature,
+    ):
+        # Direct watcher publish so OTEL-less paths (unit tests, headless
+        # playtest drivers without a TracerProvider) still see the
+        # working on the dashboard event feed. Mirrors the ``encounter``
+        # / ``inventory`` dual-path pattern elsewhere in this module.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "magic_state",
+                "op": "working",
+                "plugin": working.plugin,
+                "actor": working.actor,
+                "mechanism_engaged": working.mechanism,
+                "domain": working.domain,
+                "narrator_basis": working.narrator_basis,
+                "costs_debited": dict(working.costs),
+                "flags": [f.model_dump() for f in flags],
+                "ledger_after": ledger_after,
+                "flavor": working.flavor or "",
+                "consent_state": working.consent_state or "",
+                "item_id": working.item_id or "",
+                "alignment_with_item_nature": (
+                    float(working.alignment_with_item_nature)
+                    if working.alignment_with_item_nature is not None
+                    else 0.0
+                ),
+            },
+            component="magic",
+        )
+
+    return MagicApplyResult(apply=apply_result, flags=flags)
+
+
+def _append_status_to_actor(
+    *,
+    target,
+    actor: str,
+    text: str,
+    severity,
+    source: str,
+    turn_num: int,
+    encounter_type: str | None,
+) -> None:
+    """Append a ``Status`` to ``target.core.statuses`` and emit OTEL.
+
+    Centralizes the side-effect shape shared by the narrator-extracted
+    ``status_changes`` path and the magic-threshold-promotion path: both
+    build the same ``Status`` record, open ``encounter_status_added_span``,
+    and publish the same ``state_transition`` watcher event. The only
+    caller-visible difference is ``source`` (``narrator_extraction`` vs.
+    ``magic_threshold_promotion``), which keeps Sebastien's mechanical-
+    visibility lens able to distinguish "narrator said so" from "bar
+    fired auto-promotion".
+
+    Each caller is responsible for resolving ``target`` (the
+    ``Character``) and emitting its own unknown-actor warning before
+    calling — the warning labels differ between the two paths and a
+    server-side test asserts the narrator-path warning text exactly.
+    """
+    from sidequest.game.status import Status
+    from sidequest.telemetry.spans import encounter_status_added_span
+
+    target.core.statuses.append(
+        Status(
+            text=text,
+            severity=severity,
+            absorbed_shifts=0,
+            created_turn=turn_num,
+            created_in_encounter=encounter_type,
+        )
+    )
+    with encounter_status_added_span(
+        actor=actor,
+        text=text,
+        severity=severity.value,
+        source=source,
+    ):
+        pass
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "status_added",
+            "actor": actor,
+            "text": text,
+            "severity": severity.value,
+            "source": source,
+            "turn": turn_num,
+            "encounter_type": encounter_type,
+        },
+        component="encounter",
+    )
+
+
+def _apply_magic_status_promotions(
+    *,
+    snapshot: GameSnapshot,
+    magic_result: MagicApplyResult,
+    player_name: str,
+) -> None:
+    """Apply Task 3.4 status promotions to ``snapshot.characters``.
+
+    Mirrors the side-effect shape of the manual ``result.status_changes``
+    branch below (``Status`` append + watcher publish) so the GM panel
+    sees auto-promoted statuses on the same lane as narrator-extracted
+    ones. ``source="magic_threshold_promotion"`` distinguishes them in
+    the watcher feed — Sebastien's mechanical-visibility lens demands
+    that auto-fired statuses are traceable back to the bar that fired
+    them, not blurred into "narrator said so".
+
+    Does not raise: a missing actor character (BarKey owner_id with no
+    matching ``core.name``) logs and skips. The MagicState ledger and
+    the Character roster are populated from different paths (chargen vs.
+    add_character) and a soft mismatch shouldn't crash the apply
+    pipeline mid-turn.
+    """
+    from sidequest.game.status import StatusSeverity
+
+    promotions = promote_crossings_to_status_changes(
+        result=magic_result, snapshot=snapshot
+    )
+    if not promotions:
+        return
+
+    turn_num = snapshot.turn_manager.interaction
+    encounter_type = (
+        snapshot.encounter.encounter_type if snapshot.encounter else None
+    )
+    for promo in promotions:
+        target = next(
+            (c for c in snapshot.characters if c.core.name == promo.actor),
+            None,
+        )
+        if target is None:
+            logger.warning(
+                "magic.status_promotion_unknown_actor actor=%s text=%s "
+                "player=%s — bar fired but no matching character.core.name",
+                promo.actor, promo.status_text, player_name,
+            )
+            continue
+        _append_status_to_actor(
+            target=target,
+            actor=promo.actor,
+            text=promo.status_text,
+            severity=StatusSeverity[promo.severity],
+            source="magic_threshold_promotion",
+            turn_num=turn_num,
+            encounter_type=encounter_type,
+        )
+
+
+def promote_crossings_to_status_changes(
+    *, result: MagicApplyResult, snapshot: GameSnapshot
+) -> list[StatusChangePromotion]:
+    """Convert ``MagicApplyResult.crossings`` into status-change promotions.
+
+    Reads the per-bar ``promote_to_status`` config from the world's
+    ``LedgerBarSpec`` — NOT a hardcoded module-level dict (architect §5.3,
+    2026-04-29). This keeps status text/severity world-tunable: a different
+    innate-using world (e.g. victoria-touched) can map ``sanity`` →
+    ``"Slipping"``, ``Scar`` without code change. A bar without
+    ``promote_to_status`` is silently skipped — the architect explicitly
+    calls this out as the right behavior, not a fallback (not every bar
+    surfaces as a Status; world-scope bars never do).
+    """
+    if snapshot.magic_state is None:
+        return []
+
+    promotions: list[StatusChangePromotion] = []
+    bars_by_id = {b.id: b for b in snapshot.magic_state.config.ledger_bars}
+
+    for crossing in result.crossings:
+        spec = bars_by_id.get(crossing.bar_key.bar_id)
+        if spec is None or spec.promote_to_status is None:
+            # Architect §5.3: silent skip is correct — not every bar
+            # promotes. ``spec is None`` would be a config inconsistency
+            # (crossing references a bar id not in the config), but the
+            # crossing itself was emitted by ``apply_working`` reading
+            # the same config, so this branch is structurally
+            # unreachable for in-config bars. Keep it defensive without
+            # raising — Task 3.5 will add an OTEL span if it ever fires.
+            continue
+        promotions.append(
+            StatusChangePromotion(
+                actor=crossing.bar_key.owner_id,
+                status_text=spec.promote_to_status.text,
+                severity=spec.promote_to_status.severity,
+            )
+        )
+    return promotions
 
 
 def _apply_narration_result_to_snapshot(
@@ -195,6 +525,48 @@ def _apply_narration_result_to_snapshot(
 
     if not isinstance(result, NarrationTurnResult):
         return outcome
+
+    # Magic working (Coyote Reach iter 3 — Task 3.3). Ordered ahead of
+    # the location/quest/inventory/encounter branches so the
+    # ``magic.working_applied`` OTEL span Task 3.5 will add timestamps
+    # before any downstream snapshot mutation — the GM panel reads
+    # magic-resolution as the first event of the turn, paired tightly
+    # with the prose that produced it. The parse-error path is
+    # *swallowed* below (logged + continue) by design: narration is
+    # already in the user's hands, so we never crash the apply pipeline
+    # on a malformed working — Task 3.5 will promote that log to a
+    # ``magic.parse_error`` span. Threshold-crossing → status_changes
+    # auto-promotion (Task 3.4) is wired below in the ``else`` branch;
+    # the ``magic.working_applied`` OTEL span itself (Task 3.5) is still
+    # pending — see that task for the wire-up.
+    magic_working_field = getattr(result, "magic_working", None)
+    if magic_working_field is not None:
+        try:
+            outcome.magic = apply_magic_working(
+                snapshot=snapshot, patch_field=magic_working_field
+            )
+        except MagicWorkingParseError as e:
+            # Log + continue — narration is already delivered; the parse
+            # error must not crash the apply pipeline. Task 3.5 will
+            # promote this to a ``magic.parse_error`` OTEL span so the
+            # GM panel sees it. Until then, structured logging keeps the
+            # failure auditable.
+            logger.warning(
+                "magic.parse_error player=%s reason=%s",
+                player_name,
+                e,
+            )
+        else:
+            # Task 3.4: auto-promote threshold crossings into Status.
+            # Reuses the existing Status renderer downstream — no new UI.
+            # The world's per-bar ``promote_to_status`` block decides the
+            # status text + severity (architect §5.3); bars without that
+            # block produce no promotion (silent skip is intended).
+            _apply_magic_status_promotions(
+                snapshot=snapshot,
+                magic_result=outcome.magic,
+                player_name=player_name,
+            )
 
     if result.location:
         old_loc = snapshot.location
@@ -909,9 +1281,8 @@ def _apply_narration_result_to_snapshot(
                     break
 
     if result.status_changes:
-        from sidequest.game.status import Status, StatusSeverity
+        from sidequest.game.status import StatusSeverity
         from sidequest.server.status_clear import apply_explicit_status_clears
-        from sidequest.telemetry.spans import encounter_status_added_span
         turn_num = snapshot.turn_manager.interaction
         encounter_type = (
             snapshot.encounter.encounter_type if snapshot.encounter else None
@@ -955,31 +1326,14 @@ def _apply_narration_result_to_snapshot(
                     actor_name, text,
                 )
                 continue
-            target.core.statuses.append(Status(
+            _append_status_to_actor(
+                target=target,
+                actor=actor_name,
                 text=text,
                 severity=severity,
-                absorbed_shifts=0,
-                created_turn=turn_num,
-                created_in_encounter=encounter_type,
-            ))
-            with encounter_status_added_span(
-                actor=actor_name, text=text, severity=severity.value,
                 source="narrator_extraction",
-            ):
-                pass
-            _watcher_publish(
-                "state_transition",
-                {
-                    "field": "encounter",
-                    "op": "status_added",
-                    "actor": actor_name,
-                    "text": text,
-                    "severity": severity.value,
-                    "source": "narrator_extraction",
-                    "turn": turn_num,
-                    "encounter_type": encounter_type,
-                },
-                component="encounter",
+                turn_num=turn_num,
+                encounter_type=encounter_type,
             )
 
     return outcome

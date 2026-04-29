@@ -21,6 +21,7 @@ The mutator surface lives on :class:`GameSnapshot` (see
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,10 +31,13 @@ from sidequest.game.thresholds import detect_crossings, mint_threshold_lore
 
 
 class ResourceThreshold(BaseModel):
-    """A threshold that fires an event when the pool value crosses downward.
+    """A threshold that fires an event when the pool value crosses a boundary.
 
-    Crossings are detected only on downward transitions — see
-    :func:`detect_crossings`.
+    direction = "down" (default, back-compat) — fires on downward crossing.
+    direction = "up" — fires on upward crossing.
+
+    Magic ledger bars use both directions: ``sanity`` fires down at 0.40,
+    ``notice`` fires up at 0.75.  See :func:`detect_crossings`.
     """
 
     model_config = {"extra": "forbid"}
@@ -41,6 +45,7 @@ class ResourceThreshold(BaseModel):
     at: float
     event_id: str
     narrator_hint: str
+    direction: Literal["down", "up"] = "down"
 
 
 class ResourcePatchOp(StrEnum):

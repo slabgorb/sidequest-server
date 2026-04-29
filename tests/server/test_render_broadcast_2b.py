@@ -20,6 +20,7 @@ end-to-end here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from pathlib import Path
@@ -85,10 +86,8 @@ class _FakeDaemon:
             await writer.drain()
         finally:
             writer.close()
-            try:
+            with contextlib.suppress(Exception):
                 await writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
 
     async def stop(self) -> None:
         if self._server is not None:

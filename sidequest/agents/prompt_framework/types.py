@@ -5,12 +5,12 @@ Port of sidequest-agents/src/prompt_framework/types.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class AttentionZone(str, Enum):
+class AttentionZone(StrEnum):
     """Attention zones ordered from highest-primacy to highest-recency.
 
     Maps to the proven attention pattern from ADR-009:
@@ -68,7 +68,7 @@ class AttentionZone(str, Enum):
         ]
 
 
-class SectionCategory(str, Enum):
+class SectionCategory(StrEnum):
     """Prompt section categories — extensible as new agent types are added."""
 
     Identity = "identity"
@@ -82,7 +82,7 @@ class SectionCategory(str, Enum):
     Role = "role"
 
 
-class RuleTier(str, Enum):
+class RuleTier(StrEnum):
     """Three-tier rule taxonomy for agent system prompts.
 
     Maps to the Python RuleTier / RuleTaxonomy:

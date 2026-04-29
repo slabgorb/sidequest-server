@@ -7,8 +7,6 @@ drifts the schema in a future PR, this parametrised smoke catches it.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from sidequest.agents.lethality_arbiter import LethalityArbiter
@@ -16,7 +14,7 @@ from sidequest.agents.subsystems import BankResult
 from sidequest.game.creature_core import CreatureCore, EdgePool, Inventory
 from sidequest.genre.lethality_policy_loader import load_lethality_policy
 from sidequest.protocol.dispatch import DispatchPackage, PlayerDispatch
-
+from tests._helpers.genre_paths import find_pack_path
 
 SHIPPED_PACKS = [
     "caverns_and_claudes",
@@ -26,10 +24,6 @@ SHIPPED_PACKS = [
     "space_opera",
     "spaghetti_western",
 ]
-
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
 
 
 def _pc(current: int) -> CreatureCore:
@@ -42,7 +36,7 @@ def _pc(current: int) -> CreatureCore:
 
 @pytest.mark.parametrize("pack_name", SHIPPED_PACKS)
 def test_zero_edge_pc_produces_policy_declared_verdict(pack_name: str):
-    pack_dir = CONTENT_GENRE_PACKS / pack_name
+    pack_dir = find_pack_path(pack_name)
     policy = load_lethality_policy(pack_dir)
     arbiter = LethalityArbiter(policy=policy)
     result = arbiter.arbitrate(
@@ -70,7 +64,7 @@ def test_zero_edge_pc_produces_policy_declared_verdict(pack_name: str):
 @pytest.mark.parametrize("pack_name", SHIPPED_PACKS)
 def test_pack_policy_files_load_without_error(pack_name: str):
     """Lightweight load check — catches YAML drift before integration runs."""
-    pack_dir = CONTENT_GENRE_PACKS / pack_name
+    pack_dir = find_pack_path(pack_name)
     policy = load_lethality_policy(pack_dir)
     assert policy.genre_key == pack_name
     assert policy.must_narrate.strip()

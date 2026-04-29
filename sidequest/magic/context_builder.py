@@ -1,0 +1,72 @@
+"""Builds the magic-context block injected into narrator pre-prompt.
+
+When a world has magic.yaml loaded (snapshot.magic_state is not None),
+the block is emitted alongside other pre-prompt scaffolding. When
+absent, returns empty string and narrator pre-prompt is unchanged.
+"""
+from __future__ import annotations
+
+from sidequest.magic.state import BarKey, MagicState
+
+
+def build_magic_context_block(
+    *, magic_state: MagicState | None, actor_id: str | None
+) -> str:
+    """Return the pre-prompt magic-context block (or empty string if state absent)."""
+    if magic_state is None:
+        return ""
+
+    config = magic_state.config
+    lines: list[str] = ["ACTIVE MAGIC CONTEXT — " + config.world_slug]
+    lines.append(f"allowed_sources: {config.allowed_sources}")
+    lines.append(f"active_plugins: {config.active_plugins}")
+
+    hard_limit_ids = [h.id for h in config.hard_limits]
+    lines.append(f"hard_limits: {hard_limit_ids}")
+
+    wk = config.world_knowledge
+    wk_str = wk.primary
+    if wk.local_register:
+        wk_str = f"{wk.primary} (local register: {wk.local_register})"
+    lines.append(f"world_knowledge: {wk_str}")
+
+    if actor_id is not None:
+        lines.append(f"active_ledger_for_{actor_id}:")
+        for spec in config.ledger_bars:
+            if spec.scope == "character":
+                key = BarKey(scope="character", owner_id=actor_id, bar_id=spec.id)
+                try:
+                    bar = magic_state.get_bar(key)
+                except KeyError:
+                    continue
+                threshold_str = ""
+                if spec.direction == "down" and spec.threshold_low is not None:
+                    threshold_str = (
+                        f" (threshold_low: {spec.threshold_low:.2f} → "
+                        f"{spec.consequence_on_low_cross or '...'})"
+                    )
+                elif spec.direction == "up" and spec.threshold_high is not None:
+                    threshold_str = (
+                        f" (threshold_high: {spec.threshold_high:.2f} → "
+                        f"{spec.consequence_on_high_cross or '...'})"
+                    )
+                lines.append(f"  {spec.id}: {bar.value:.2f}{threshold_str}")
+
+    # World-scope bars (e.g. hegemony_heat)
+    for spec in config.ledger_bars:
+        if spec.scope == "world":
+            key = BarKey(scope="world", owner_id=config.world_slug, bar_id=spec.id)
+            try:
+                bar = magic_state.get_bar(key)
+            except KeyError:
+                continue
+            lines.append(f"  {spec.id} (world): {bar.value:.2f}")
+
+    lines.append("")
+    lines.append(
+        "If your narration depicts a magic working, emit a magic_working field "
+        "in your game_patch with required fields for the firing plugin. The "
+        "validator enforces hard_limits; describing a working that violates one "
+        "will surface a DEEP_RED flag in the GM panel."
+    )
+    return "\n".join(lines)

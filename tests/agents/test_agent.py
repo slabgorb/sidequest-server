@@ -6,9 +6,9 @@ Port of agent.rs concepts. Wiring test: imports from public sidequest.agents API
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.agents import Agent, AgentResponse, BaseAgent, make_agent
-from sidequest.agents.agent import BaseAgent
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import AttentionZone, SectionCategory
 
@@ -25,7 +25,7 @@ def test_agent_response_fields():
 
 def test_agent_response_is_frozen():
     resp = AgentResponse(text="Hello", raw_output="raw")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         resp.text = "Mutated"  # type: ignore[misc]
 
 

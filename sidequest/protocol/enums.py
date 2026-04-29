@@ -14,10 +14,10 @@ enums from message.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     """All WebSocket message type tags.
 
     Wire values match the serde rename strings on the Rust GameMessage enum.
@@ -71,7 +71,7 @@ class MessageType(str, Enum):
     VERDICT_OVERRIDE = "VERDICT_OVERRIDE"
 
 
-class NarratorVerbosity(str, Enum):
+class NarratorVerbosity(StrEnum):
     """Controls how verbose the narrator's prose output should be.
 
     Serializes as lowercase strings for wire compatibility with the React UI.
@@ -103,7 +103,7 @@ class NarratorVerbosity(str, Enum):
         return cls.standard
 
 
-class NarratorVocabulary(str, Enum):
+class NarratorVocabulary(StrEnum):
     """Controls the prose complexity and diction of narrator output.
 
     Works alongside NarratorVerbosity (which controls length). Vocabulary

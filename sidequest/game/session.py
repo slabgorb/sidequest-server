@@ -35,6 +35,7 @@ from sidequest.game.resource_pool import (
 from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
 from sidequest.genre.models.rules import ResourceDeclaration
+from sidequest.magic.state import MagicState
 
 # ---------------------------------------------------------------------------
 # NarrativeEntry — narrative log entries
@@ -487,6 +488,10 @@ class GameSnapshot(BaseModel):
     # Set by apply_beat when encounter resolves; read by narrator on next turn
     # to populate [ENCOUNTER RESOLVED] zone; cleared after consumption.
     pending_resolution_signal: ResolutionSignal | None = None
+
+    # Magic system state (Coyote Reach iteration 2). None on saves that
+    # predate magic or on worlds without a magic config.
+    magic_state: MagicState | None = None
 
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route

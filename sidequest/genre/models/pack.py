@@ -30,6 +30,7 @@ from sidequest.genre.models.character import (
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.models.inventory import InventoryConfig
 from sidequest.genre.models.legends import Legend
+from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
@@ -45,7 +46,6 @@ from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
 from sidequest.genre.models.tropes import TropeDefinition
-from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.visibility import VisibilityBaseline
 from sidequest.genre.models.world import CartographyConfig, WorldConfig
 

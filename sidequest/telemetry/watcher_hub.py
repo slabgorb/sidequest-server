@@ -26,6 +26,7 @@ import asyncio
 import builtins
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -176,6 +177,7 @@ _KIND_BY_OP: dict[str, str] = {
 
 
 def _maybe_persist_encounter_row(event: dict) -> None:
+    global _event_store
     if _event_store is None:
         return
     if event.get("event_type") != "state_transition":
@@ -188,11 +190,29 @@ def _maybe_persist_encounter_row(event: dict) -> None:
     if kind is None:
         return
     payload = json.dumps(fields)
-    _event_store._conn.execute(
-        "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-        (kind, payload),
-    )
-    _event_store._conn.commit()
+    try:
+        _event_store._conn.execute(
+            "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (kind, payload),
+        )
+        _event_store._conn.commit()
+    except sqlite3.ProgrammingError as exc:
+        # The bound store's connection has been closed out from under us
+        # (typical: session disconnect closed the store but never called
+        # ``bind_event_store(None)``; or tests that close the store via
+        # ``store.close()`` without unbinding first). Treat the binding
+        # as stale and clear it so the next caller doesn't hit the same
+        # dead handle. We log loudly (warning, not silent) so the GM
+        # panel / OTEL trail records the recovery — silently swallowing
+        # would mask a real lifecycle mismatch.
+        logger.warning(
+            "watcher_hub.event_store_closed — clearing stale binding "
+            "(kind=%s op=%s err=%s)",
+            kind,
+            op,
+            exc,
+        )
+        _event_store = None
 
 
 def publish_event(

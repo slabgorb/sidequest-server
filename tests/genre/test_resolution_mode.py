@@ -10,8 +10,6 @@ Reference Rust test:
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -19,8 +17,9 @@ from pydantic import ValidationError
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ConfrontationDef, ResolutionMode
+from tests._helpers.genre_paths import GENRE_PACKS_DIR, find_pack_path
 
-CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+CONTENT_ROOT = GENRE_PACKS_DIR
 
 
 def _has_real_content() -> bool:
@@ -28,7 +27,7 @@ def _has_real_content() -> bool:
 
 
 def load_pack(slug: str) -> GenrePack:
-    return load_genre_pack(CONTENT_ROOT / slug)
+    return load_genre_pack(find_pack_path(slug))
 
 
 def _conf_yaml(*, resolution_mode: str | None = None) -> str:

@@ -5,7 +5,7 @@ Port of sidequest-genre/src/models/inventory.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -47,7 +47,7 @@ class CatalogItem(BaseModel):
     resource_ticks: int | None = None
 
 
-class CarryMode(str, Enum):
+class CarryMode(StrEnum):
     """Whether inventory limits are enforced by item count or total weight."""
 
     # Note: using 'item_count' as the enum name because 'count' conflicts with str.count().

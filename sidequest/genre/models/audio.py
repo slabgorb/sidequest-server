@@ -5,7 +5,7 @@ Port of sidequest-genre/src/models/audio.rs.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -121,7 +121,7 @@ class AudioConfig(BaseModel):
     faction_themes: list[FactionThemeDef] = Field(default_factory=list)
 
 
-class TrackVariation(str, Enum):
+class TrackVariation(StrEnum):
     """Typed track variation — cinematic score cue categories."""
 
     full = "full"

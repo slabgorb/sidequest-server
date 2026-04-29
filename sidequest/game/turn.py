@@ -17,12 +17,12 @@ Persisted across sessions — loading a save restores exact counts.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class TurnPhase(str, Enum):
+class TurnPhase(StrEnum):
     """The phases of a game turn (ADR-006)."""
 
     InputCollection = "InputCollection"

@@ -10,12 +10,12 @@ produced it.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from sidequest.protocol.base import ProtocolBase
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     """Content-inheritance tier. Always walked in this order: Global, Genre, World, Culture."""
 
     global_ = "global"
@@ -37,7 +37,7 @@ class Span(ProtocolBase):
     """Last column of the range (0-based, exclusive)."""
 
 
-class ContributionKind(str, Enum):
+class ContributionKind(StrEnum):
     """How a later tier's value relates to the value introduced by an earlier tier."""
 
     initial = "initial"

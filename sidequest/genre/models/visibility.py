@@ -19,7 +19,6 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from sidequest.protocol.dispatch import PerceptionFidelity
 
-
 Tone = Literal["broadcast_heavy", "balanced", "secret_heavy"]
 AllScope = Literal["protagonists", "party_plus_guest_npcs"]
 FidelityVerb = Literal["drop", "keep", "muffle"]

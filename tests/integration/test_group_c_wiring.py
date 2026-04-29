@@ -28,10 +28,8 @@ from sidequest.game.session import GameSnapshot
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.protocol.dispatch import DispatchPackage, PlayerDispatch
-from sidequest.server.session_handler import _SessionData, _build_turn_context
-
+from sidequest.server.session_handler import _build_turn_context, _SessionData
 from tests.agents.test_orchestrator import make_spawn_fn
-
 
 pytestmark = pytest.mark.asyncio
 

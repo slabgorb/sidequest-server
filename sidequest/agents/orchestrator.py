@@ -278,6 +278,12 @@ class NarrationTurnResult:
     gold_change: int | None = None
     lore_established: list[str] | None = None
     status_changes: list[dict[str, Any]] = field(default_factory=list)
+    # Magic system (Coyote Reach iter 3 — Task 3.3). When the narrator
+    # emits a ``magic_working`` field on its game_patch, this carries the
+    # raw dict through to ``narration_apply.apply_magic_working`` for
+    # validation + ledger application. ``None`` on every turn the
+    # narrator does NOT invoke a magic working (the common case).
+    magic_working: dict[str, Any] | None = None
 
     # OTEL / telemetry
     agent_name: str | None = None
@@ -473,6 +479,12 @@ class TurnContext:
     # Typed as Any to avoid a circular import on ResolutionSignal.
     pending_resolution_signal: Any = None
 
+    # Magic state for the current world (Valley zone).
+    # When non-None, build_narrator_prompt injects the magic-context block so
+    # the narrator knows the active plugins, hard_limits, and per-actor ledger
+    # bars before composing narration for any magic working.
+    magic_state: Any = None  # runtime type: sidequest.magic.state.MagicState | None
+
     # Per-turn phase-timing accumulator (Story: phase-timing instrumentation).
     # Defaults to PhaseTimings.NULL so legacy fixtures and partial mocks
     # continue to work without provisioning a real timer. Real instances
@@ -619,6 +631,12 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "gold_change": patch.get("gold_change"),
         "lore_established": patch.get("lore_established"),
         "status_changes": patch.get("status_changes", []),
+        # Magic system (Coyote Reach iter 3 — Task 3.3). Forwarded as a
+        # raw dict; pydantic validation happens in
+        # ``narration_apply.apply_magic_working`` so the parse error is
+        # raised at the apply seam (where ``MagicWorkingParseError`` is
+        # defined) rather than during extraction.
+        "magic_working": patch.get("magic_working"),
     }
 
 
@@ -832,16 +850,19 @@ class Orchestrator:
                 return NarratorPromptTier.Full
 
             # Genre switch detection
-            if context.genre is not None and self._session_genre is not None:
-                if context.genre != self._session_genre:
-                    logger.warning(
-                        "Genre switch detected — clearing stale session and forcing Full tier "
-                        "incoming_genre=%s",
-                        context.genre,
-                    )
-                    self._narrator_session_id = None
-                    self._session_genre = None
-                    return NarratorPromptTier.Full
+            if (
+                context.genre is not None
+                and self._session_genre is not None
+                and context.genre != self._session_genre
+            ):
+                logger.warning(
+                    "Genre switch detected — clearing stale session and forcing Full tier "
+                    "incoming_genre=%s",
+                    context.genre,
+                )
+                self._narrator_session_id = None
+                self._session_genre = None
+                return NarratorPromptTier.Full
 
         return NarratorPromptTier.Delta
 
@@ -1262,6 +1283,27 @@ class Orchestrator:
                 ),
             )
 
+        # Magic context (Valley zone) — injected when a world has magic.yaml loaded.
+        # Tells the narrator which plugins are active, what the hard_limits are,
+        # and the per-actor ledger bars so it can emit magic_working correctly.
+        if context.magic_state is not None:
+            from sidequest.magic.context_builder import build_magic_context_block
+
+            magic_block = build_magic_context_block(
+                magic_state=context.magic_state,
+                actor_id=context.character_name or None,
+            )
+            if magic_block:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "magic_context",
+                        f"<magic-context>\n{magic_block}\n</magic-context>",
+                        AttentionZone.Valley,
+                        SectionCategory.State,
+                    ),
+                )
+
         # Active trope summary (Valley zone)
         if context.active_trope_summary:
             registry.register_section(
@@ -1507,7 +1549,7 @@ class Orchestrator:
 
         Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
         """
-        with orchestrator_process_action_span(action_len=len(action)) as span:
+        with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
@@ -1670,6 +1712,11 @@ class Orchestrator:
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
                 status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+                magic_working=(
+                    extraction["magic_working"]
+                    if isinstance(extraction.get("magic_working"), dict)
+                    else None
+                ),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,
@@ -1726,10 +1773,7 @@ async def run_narration_turn(
     # Resolve character name
     char_name = character_name
     if char_name is None:
-        if session.characters:
-            char_name = session.characters[0].core.name
-        else:
-            char_name = "Player"
+        char_name = session.characters[0].core.name if session.characters else "Player"
 
     # Build state summary if not provided
     if state_summary is None:
@@ -1779,6 +1823,7 @@ async def run_narration_turn(
         party_peers=party_peers,
         statuses_by_actor=statuses_by_actor,
         pending_resolution_signal=pending_signal,
+        magic_state=session.magic_state,
     )
 
     orchestrator = Orchestrator(client=client)

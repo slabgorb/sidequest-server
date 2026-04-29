@@ -6,6 +6,7 @@ Port of tests in sidequest_game::character (character.rs mod tests).
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sidequest.game.ability import AbilitySource
 from sidequest.game.character import AbilityDefinition, Character, KnownFact
@@ -136,7 +137,7 @@ def test_json_roundtrip():
 
 def test_blank_backstory_rejected():
     """Rust: blank_name_rejected_in_json — Python equivalent for backstory."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Character(
             core=CreatureCore(
                 name="X",
@@ -153,7 +154,7 @@ def test_blank_backstory_rejected():
 
 
 def test_blank_char_class_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Character(
             core=CreatureCore(
                 name="X",
@@ -177,9 +178,9 @@ def test_blank_char_class_rejected():
 def test_nonblank_fields_validated():
     """Rust: nonblank_fields_validated — core name/description/personality."""
     from sidequest.game.creature_core import CreatureCore
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CreatureCore(name="", description="y", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CreatureCore(name="x", description="   ", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
     # valid
     cc = CreatureCore(name="valid", description="desc", personality="calm", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 from sidequest.game.session import GameSnapshot
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
-from sidequest.server.session_handler import _SessionData, _build_turn_context
+from sidequest.server.session_handler import _build_turn_context, _SessionData
 
 CONTENT_GENRE_PACKS = (
     Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"

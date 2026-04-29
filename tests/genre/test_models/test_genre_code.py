@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from sidequest.genre.genre_code import GenreCode
 
@@ -59,5 +59,5 @@ def test_pydantic_rejects_invalid() -> None:
     class M(BaseModel):
         code: GenreCode
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         M(code="Bad Code")  # type: ignore[arg-type]

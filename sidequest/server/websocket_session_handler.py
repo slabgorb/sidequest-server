@@ -11,6 +11,7 @@ span-source rename.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -292,7 +293,7 @@ class WebSocketSessionHandler:
         return await handler.handle(self, msg)
 
     @classmethod
-    def _message_handler_for(cls, msg_type: str) -> "MessageHandler | None":
+    def _message_handler_for(cls, msg_type: str) -> MessageHandler | None:
         """Lazy-built registry of message-type → first-class handler singleton.
 
         Built on first call to avoid importing the handler modules at
@@ -382,10 +383,8 @@ class WebSocketSessionHandler:
                 # Legacy non-slug path (no room) still closes its
                 # per-session store here — it is owned by the session.
                 if self._room is None:
-                    try:
+                    with contextlib.suppress(Exception):
                         self._session_data.store.close()
-                    except Exception:
-                        pass
 
     # ------------------------------------------------------------------
     # PLAYER_SEAT dispatch (MP-02 Task 5)
@@ -1380,6 +1379,8 @@ class WebSocketSessionHandler:
         sd: _SessionData,
         action: str,
         turn_context: TurnContext,
+        *,
+        is_opening_turn: bool = False,
     ) -> list[object]:
         """Run one narration turn: orchestrator call, snapshot mutation,
         persistence, NARRATION + NARRATION_END message build.
@@ -1389,6 +1390,18 @@ class WebSocketSessionHandler:
         caller owns TurnContext construction so each entrypoint can
         set per-turn fields (opening_directive on turn 0, pending
         trope beats on subsequent turns) without leaking responsibility.
+
+        ``is_opening_turn`` (Story 45-5 / ADR-051): the chargen-confirmation
+        narration sets the scene at round=1 / interaction=1 rather than
+        completing a player-narrator exchange. Skipping
+        ``record_interaction()`` for this turn keeps both counters at
+        their fresh ``materialize_from_genre_pack`` defaults so post-
+        chargen state is exactly ``(round=1, interaction=1)``. The
+        narrative_log row this turn writes uses the pre-bump
+        ``interaction=1``, so the 45-11 ``round_invariant`` (round ==
+        MAX(narrative_log.round_number)) still holds. The first
+        PLAYER_ACTION turn is the first real exchange and advances both
+        counters in lockstep.
         """
         snapshot = sd.snapshot
         snapshot_before_hash = _hash_snapshot(snapshot)
@@ -1474,7 +1487,13 @@ class WebSocketSessionHandler:
                         sd.pending_opposed_player_d20 = None
                     if hasattr(sd, "pending_opposed_player_beat_id"):
                         sd.pending_opposed_player_beat_id = None
-                    snapshot.turn_manager.record_interaction()
+                    # Story 45-5 / ADR-051: chargen is round 0; gameplay
+                    # starts at round 1. The opening narration is the
+                    # round-1 scene-set, not a player-narrator exchange,
+                    # so it does not bump either counter. The first
+                    # PLAYER_ACTION turn is the first real exchange.
+                    if not is_opening_turn:
+                        snapshot.turn_manager.record_interaction()
 
                     now_encounter = snapshot.encounter
                     now_live = now_encounter is not None and not now_encounter.resolved
@@ -2238,7 +2257,9 @@ class WebSocketSessionHandler:
             },
         )
 
-        narrator_messages = await self._execute_narration_turn(sd, action, turn_context)
+        narrator_messages = await self._execute_narration_turn(
+            sd, action, turn_context, is_opening_turn=True,
+        )
         messages = cold_open_messages + list(narrator_messages)
 
         # Consume once — Rust uses `opening_directive.take()`; subsequent
