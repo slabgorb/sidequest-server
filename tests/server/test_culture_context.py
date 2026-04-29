@@ -105,7 +105,7 @@ class TestEvropiLoreOnlyNotLeaked:
 
     def test_ingurdios_tismenni_yrs_excluded_from_reference(self) -> None:
         content_root = _content_root()
-        pack = load_genre_pack(content_root / "genre_packs" / "heavy_metal")
+        pack = load_genre_pack(content_root / "genre_workshopping" / "heavy_metal")
 
         reference = resolve_culture_reference(pack, "evropi")
 
@@ -144,7 +144,7 @@ class TestSessionHandlerWiresWorldContext:
         content_root = _content_root()
         handler = WebSocketSessionHandler(
             claude_client_factory=mock_claude_client_factory(),
-            genre_pack_search_paths=[content_root / "genre_packs"],
+            genre_pack_search_paths=[content_root / "genre_workshopping"],
             save_dir=tmp_path,
         )
 
