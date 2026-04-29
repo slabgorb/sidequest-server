@@ -314,11 +314,24 @@ def _apply_narration_result_to_snapshot(
         # apply-time gate is the load-bearing block per AC #6: even when
         # the prompt-time hint is bypassed, a duplicate retrieval in the
         # same room is filtered here.
-        room_id = snapshot.location or ""
+        room_id = snapshot.location
         round_number = snapshot.turn_manager.round
         for entry in result.items_gained or []:
             container_id = str(entry.get("from_container", "") or "").strip()
-            if container_id and room_id:
+            if container_id and not room_id:
+                # No silent fallback (CLAUDE.md): the narrator emitted a
+                # container annotation but the snapshot has no canonical
+                # room. The gate is unreachable; the item still lands so
+                # play does not stall, but the GM panel must see the
+                # configuration gap. A future story may want to harden
+                # this into a hard refusal once narrator emission is
+                # stable.
+                logger.warning(
+                    "state.container_gate_unreachable player=%s "
+                    "container=%s reason=snapshot_location_empty round=%d",
+                    player_name, container_id, round_number,
+                )
+            elif container_id and room_id:
                 room_state = snapshot.room_states.get(room_id)
                 prior = (
                     room_state.containers.get(container_id)
@@ -328,7 +341,12 @@ def _apply_narration_result_to_snapshot(
                 if prior is not None and prior.retrieved:
                     # Duplicate retrieval — apply-time gate fires. Item
                     # is NOT appended, prior_retrieved_at_round is
-                    # preserved (read-only check, no clobber).
+                    # preserved (read-only check, no clobber). The
+                    # ContainerState model_validator guarantees that if
+                    # ``prior.retrieved`` is True, ``retrieved_at_round``
+                    # is a real int; the int(... or 0) cast below is
+                    # therefore a defensive belt for None — the validator
+                    # is the suspenders.
                     with container_retrieval_blocked_span(
                         room_id=room_id,
                         container_id=container_id,
@@ -341,7 +359,10 @@ def _apply_narration_result_to_snapshot(
                         genre=snapshot.genre_slug,
                         world=snapshot.world_slug,
                     ):
-                        logger.info(
+                        # warning, not info: narrator produced a known-bad
+                        # duplicate that the gate had to suppress — this
+                        # is a client-side error path per python.md #4.
+                        logger.warning(
                             "state.container_retrieval_blocked player=%s "
                             "room=%s container=%s prior_round=%s "
                             "current_round=%s",

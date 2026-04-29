@@ -338,10 +338,25 @@ def _build_turn_context(
     # lie-detector must be able to distinguish "gate engaged with
     # nothing to report" from "gate not engaged at all". The room is
     # keyed off ``snapshot.location``, the canonical "where the player
-    # is right now" string. The retrieved-container hint is also
-    # surfaced into ``state_summary`` so the narrator's <game_state>
-    # block sees the audit trail and is less likely to re-emit.
-    current_room_id = snapshot.location or ""
+    # is right now" string. The retrieved-container payload also flows
+    # into ``state_summary_payload`` automatically because line 312
+    # already serializes the full ``snapshot`` (which includes
+    # ``room_states``) into the narrator's <game_state> block.
+    current_room_id = snapshot.location
+    if not current_room_id:
+        # No silent fallback (CLAUDE.md): a turn without a canonical
+        # location renders the room-state gate unreachable — the span
+        # would fire with ``room_id=""`` and look indistinguishable from
+        # a valid empty room. Log a warning so the GM panel can spot
+        # the configuration gap. The span still fires below (so
+        # Sebastien's lie-detector keeps its no-op case) but with
+        # ``room_id=""`` AND a logged warning.
+        logger.warning(
+            "state.room_state_injected_unreachable "
+            "reason=snapshot_location_empty interaction=%d",
+            snapshot.turn_manager.interaction,
+        )
+        current_room_id = ""
     current_room_state = snapshot.room_states.get(current_room_id)
     retrieved_container_count = (
         sum(1 for c in current_room_state.containers.values() if c.retrieved)

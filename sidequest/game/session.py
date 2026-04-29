@@ -323,7 +323,10 @@ class ContainerState(BaseModel):
     container id (e.g. ``"tin_box"``). ``retrieved_at_round`` pairs
     with ``retrieved=True`` so the negative-gate's blocked-span can
     surface a concrete prior round number — the Sebastien lie-detector
-    needs the audit trail, not just a bool.
+    needs the audit trail, not just a bool. The ``retrieved=True with
+    retrieved_at_round=None`` state would let the blocked span fire
+    with ``prior_retrieved_at_round=0``, which lies about the audit
+    trail; the validator below makes that state unrepresentable.
     """
 
     model_config = {"extra": "ignore"}
@@ -331,6 +334,15 @@ class ContainerState(BaseModel):
     container_id: str
     retrieved: bool = False
     retrieved_at_round: int | None = None
+
+    @model_validator(mode="after")
+    def _round_required_when_retrieved(self) -> ContainerState:
+        if self.retrieved and self.retrieved_at_round is None:
+            raise ValueError(
+                "ContainerState.retrieved=True requires "
+                "retrieved_at_round to be set"
+            )
+        return self
 
 
 class RoomState(BaseModel):

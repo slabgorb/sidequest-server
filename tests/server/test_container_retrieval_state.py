@@ -597,56 +597,209 @@ def test_items_gained_without_from_container_pass_through_normally(
 
 
 def test_apply_path_imports_room_state_models_for_production_code() -> None:
-    """Wiring sentinel: ``narration_apply.py`` must reference the
-    ``RoomState`` / ``ContainerState`` types — at the source level, not
-    just in tests.
+    """Wiring sentinel: ``narration_apply.py`` must MUTATE
+    ``snapshot.room_states`` — not just import the contract symbols.
 
-    This guards against a green-but-unwired implementation where the
-    models exist on the snapshot but ``narration_apply.py`` never
-    actually mutates them. A passing apply-time test could in principle
-    be satisfied by a side-effect on a different code path; this static
-    check fails fast if the apply file doesn't reach for the new types.
+    Reviewer-tightened (Westley, 45-13 review): the original sentinel
+    accepted any of four symbols anywhere in the file (including dead
+    imports or bare comments). The strengthened check requires both
+    the import surface AND the actual mutation site, so a regression
+    that imports the model but never writes to ``room_states[...]``
+    fails the sentinel instead of green-washing.
     """
     from pathlib import Path
 
     apply_src = Path(
         __import__("sidequest.server.narration_apply").server.narration_apply.__file__
     ).read_text(encoding="utf-8")
-    # Either the model symbols are imported, or the field is read off
-    # the snapshot directly. Accept any of these markers.
-    has_wire = (
-        "RoomState" in apply_src
-        or "ContainerState" in apply_src
-        or "room_states" in apply_src
-        or "from_container" in apply_src
+    assert "from_container" in apply_src, (
+        "narration_apply.py does not read 'from_container' off "
+        "items_gained — the extractor seam is not wired"
     )
-    assert has_wire, (
-        "narration_apply.py does not reference any 45-13 contract symbol "
-        "(RoomState, ContainerState, room_states, from_container) — "
-        "the apply path is not wired to the new model"
+    assert "snapshot.room_states[" in apply_src, (
+        "narration_apply.py does not mutate snapshot.room_states[...] — "
+        "the applier seam is not wired (a passing import is not a write)"
+    )
+    assert "ContainerState(" in apply_src, (
+        "narration_apply.py does not construct ContainerState(...) — "
+        "the lifecycle write site is not wired"
     )
 
 
 def test_session_helpers_imports_room_state_for_prompt_build() -> None:
     """Wiring sentinel for the prompt-build seam: ``session_helpers.py``
-    must reference ``room_states`` (or read it indirectly via the
-    snapshot's already-dumped JSON). Without this, AC #4's
-    ``room.state_injected`` span has nothing to read.
+    must both READ ``snapshot.room_states`` and FIRE the
+    ``room.state_injected`` span helper.
+
+    Reviewer-tightened (Westley, 45-13 review): the original sentinel
+    accepted any of three tokens anywhere in the file. The
+    strengthened check pins both the read site and the helper call so
+    a regression that adds a stale comment doesn't pass.
     """
     from pathlib import Path
 
     helpers_src = Path(
         __import__("sidequest.server.session_helpers").server.session_helpers.__file__
     ).read_text(encoding="utf-8")
-    has_wire = (
-        "room_states" in helpers_src
-        or "room.state_injected" in helpers_src
-        or "RoomState" in helpers_src
+    assert "snapshot.room_states" in helpers_src, (
+        "session_helpers.py does not read snapshot.room_states — "
+        "the prompt-build seam is not wired"
     )
-    assert has_wire, (
-        "session_helpers.py does not reference room_states or "
-        "room.state_injected — the prompt-build seam is not wired"
+    assert "room_state_injected_span(" in helpers_src, (
+        "session_helpers.py does not call room_state_injected_span(...) — "
+        "the lie-detector span is not wired"
     )
+
+
+# ---------------------------------------------------------------------------
+# Reviewer-added (Westley, 45-13 review): no-silent-fallback edge cases.
+# Both fail the gate machinery the same way Orin's bug failed — silently —
+# unless the production code logs them and continues defensively.
+# ---------------------------------------------------------------------------
+
+
+def test_whitespace_only_from_container_does_not_create_room_state(
+    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+) -> None:
+    """Whitespace-only ``from_container`` is a narrator failure mode
+    (the LLM emitted the field but with no payload). It must NOT create
+    a RoomState entry keyed on whitespace, NOT fire the recorded span,
+    and NOT block the inventory append (the item itself is still real).
+
+    Reviewer concern: a bare-truthy gate like ``if container_id`` is
+    unsafe against ``"   "``; the apply path strips before checking.
+    """
+    result = NarrationTurnResult(
+        narration="You scoop something up from the floor — origin unclear.",
+        items_gained=[
+            {
+                "name": "Floor Bauble",
+                "description": "Provenance unknown.",
+                "category": "misc",
+                "from_container": "   ",
+            },
+        ],
+    )
+    _apply_narration_result_to_snapshot(
+        vault_snapshot, result, player_name="Rux", pack=cac_pack,
+    )
+
+    # No room_state entry created for the whitespace key.
+    assert vault_snapshot.room_states == {}
+
+    # Item still landed in inventory.
+    inv = vault_snapshot.characters[0].core.inventory.items
+    assert len(inv) == 1
+    assert inv[0]["name"] == "Floor Bauble"
+
+    # No retrieval span fires (gate was never engaged).
+    recorded = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "container.retrieval_recorded"
+    ]
+    assert len(recorded) == 0
+
+
+def test_from_container_set_but_snapshot_location_empty_logs_warning(
+    cac_pack, otel_capture: InMemorySpanExporter, caplog,
+) -> None:
+    """No silent fallback (CLAUDE.md): when the narrator emits a
+    ``from_container`` annotation but the snapshot has no canonical
+    ``location``, the gate machinery is unreachable — the apply path
+    must log a warning so the GM panel can see the configuration gap.
+
+    Reviewer concern: a bare ``room_id = snapshot.location or ""``
+    silently swallows the unset case. The fix logs and continues.
+    """
+    import logging
+
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        # location intentionally NOT set — the bug surface.
+        turn_manager=TurnManager(round=10, interaction=10),
+    )
+    char = Character(
+        core=CreatureCore(
+            name="Rux", description="x", personality="x",
+            inventory=Inventory(), statuses=[],
+        ),
+        char_class="Ranger", race="Human", backstory="x",
+    )
+    snap.characters.append(char)
+
+    result = _retrieval_result(container_id="tin_box")
+    with caplog.at_level(logging.WARNING):
+        _apply_narration_result_to_snapshot(
+            snap, result, player_name="Rux", pack=cac_pack,
+        )
+
+    # Warning logged on the apply-side gate-unreachable path.
+    apply_warnings = [
+        rec for rec in caplog.records
+        if "container_gate_unreachable" in rec.getMessage()
+    ]
+    assert len(apply_warnings) >= 1, (
+        "expected a 'container_gate_unreachable' warning when "
+        "snapshot.location is empty; got "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+    assert apply_warnings[0].levelno == logging.WARNING
+
+    # No room_state entry created (the gate had no key).
+    assert snap.room_states == {}
+
+    # Item still landed (we don't stall play; we surface the gap).
+    assert len(snap.characters[0].core.inventory.items) == 1
+
+
+def test_build_turn_context_logs_warning_when_location_empty(
+    cac_pack, otel_capture: InMemorySpanExporter, caplog,
+) -> None:
+    """Mirror of the apply-side test: the prompt-build seam must also
+    surface a warning when ``snapshot.location`` is empty. The span
+    still fires (Sebastien's lie-detector requires the no-op case)
+    but with a clear log signal so the empty-room degenerate case is
+    distinguishable from a legitimate empty room.
+    """
+    import logging
+
+    from sidequest.server.session_handler import _build_turn_context
+
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        turn_manager=TurnManager(round=1, interaction=1),
+    )
+    char = Character(
+        core=CreatureCore(
+            name="Rux", description="x", personality="x",
+            inventory=Inventory(), statuses=[],
+        ),
+        char_class="Ranger", race="Human", backstory="x",
+    )
+    snap.characters.append(char)
+
+    sd = _build_minimal_sd(snap, cac_pack)
+    with caplog.at_level(logging.WARNING):
+        _build_turn_context(sd)
+
+    unreachable = [
+        rec for rec in caplog.records
+        if "room_state_injected_unreachable" in rec.getMessage()
+    ]
+    assert len(unreachable) >= 1, (
+        "expected 'room_state_injected_unreachable' warning when "
+        "snapshot.location is empty"
+    )
+
+    # Span still fires for the lie-detector contract.
+    spans = [
+        s for s in otel_capture.get_finished_spans()
+        if s.name == "room.state_injected"
+    ]
+    assert len(spans) >= 1
+    assert (spans[-1].attributes or {})["retrieved_container_count"] == 0
 
 
 if __name__ == "__main__":  # pragma: no cover
