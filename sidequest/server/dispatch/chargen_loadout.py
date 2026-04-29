@@ -164,84 +164,75 @@ def apply_starting_loadout(
     class_name = character.char_class
     pre_dedup_count = len(character.core.inventory.items)
 
-    if inventory_config is None:
-        # Negative-confirmation path: the dedup pass was evaluated even
-        # though there was nothing to dedup. Sebastien's GM panel needs
-        # this signal so "no spans" never means "I forgot to wire it."
-        with _tracer.start_as_current_span(SPAN_CHARGEN_STARTING_KIT_DEDUP_EVALUATED) as span:
-            span.set_attribute("class_name", class_name)
-            span.set_attribute("pre_dedup_count", pre_dedup_count)
-            span.set_attribute("equipment_ids_count", 0)
-            span.set_attribute("skipped_count", 0)
-            span.set_attribute("items_added", 0)
-            span.set_attribute("items_upgraded", 0)
-            span.set_attribute("final_count", pre_dedup_count)
-            span.set_attribute("genre", genre)
-            span.set_attribute("world", world)
-            span.set_attribute("player_id", player_id)
-        return (0, 0)
-
-    equipment_key = _match_class(list(inventory_config.starting_equipment.keys()), class_name)
-    gold_key = _match_class(list(inventory_config.starting_gold.keys()), class_name)
-
-    equipment_ids: list[str] = (
-        inventory_config.starting_equipment[equipment_key] if equipment_key else []
-    )
-    gold: int = inventory_config.starting_gold[gold_key] if gold_key else 0
-
-    catalog_by_id = {item.id: item for item in inventory_config.item_catalog}
-
-    # Upgrade builder-produced item_hint dicts (from chargen scene choices
-    # like "Mystery Compass") against the catalog. Without this, those
-    # items ship to the UI with the builder's stub metadata —
-    # ``category: weapon`` + ``description: "Starting equipment: X"``.
-    items_upgraded = _upgrade_hint_items_from_catalog(character.core.inventory.items, catalog_by_id)
-
-    # Dedup pass (Story 45-12). Build the set of ids and names already
-    # present (post-upgrade) and append from ``equipment_ids`` only when
-    # neither the id nor the name collides with the existing set. The
-    # ``existing_*`` sets are mutated inside the loop so intra-batch
-    # duplicates within ``equipment_ids`` itself are also collapsed.
-    existing_ids: set[str] = {
-        str(it.get("id", "")).strip().lower()
-        for it in character.core.inventory.items
-        if it.get("id")
-    }
-    existing_names: set[str] = {
-        str(it.get("name", "")).strip().lower()
-        for it in character.core.inventory.items
-        if it.get("name")
-    }
-
-    skipped_ids: list[str] = []
+    # Defaults flow through the no-config path so the evaluated span fires
+    # with zero counts (CLAUDE.md OTEL Observability Principle —
+    # negative-confirmation contract: "no spans" must never mean "the
+    # dedup pass was forgotten").
+    equipment_ids: list[str] = []
+    gold: int = 0
+    items_upgraded = 0
     items_added = 0
-    for item_id in equipment_ids:
-        catalog_item = catalog_by_id.get(item_id)
-        candidate = (
-            _item_dict_from_catalog(catalog_item)
-            if catalog_item is not None
-            else _item_dict_minimal(item_id)
-        )
-        cand_id = str(candidate.get("id", "")).strip().lower()
-        cand_name = str(candidate.get("name", "")).strip().lower()
-        if (cand_id and cand_id in existing_ids) or (cand_name and cand_name in existing_names):
-            skipped_ids.append(cand_id or cand_name or item_id)
-            continue
-        character.core.inventory.items.append(candidate)
-        if cand_id:
-            existing_ids.add(cand_id)
-        if cand_name:
-            existing_names.add(cand_name)
-        items_added += 1
+    skipped_ids: list[str] = []
 
-    if gold:
-        character.core.inventory.gold += gold
+    if inventory_config is not None:
+        equipment_key = _match_class(list(inventory_config.starting_equipment.keys()), class_name)
+        gold_key = _match_class(list(inventory_config.starting_gold.keys()), class_name)
+        equipment_ids = inventory_config.starting_equipment[equipment_key] if equipment_key else []
+        gold = inventory_config.starting_gold[gold_key] if gold_key else 0
+        catalog_by_id = {item.id: item for item in inventory_config.item_catalog}
+
+        # Upgrade builder-produced item_hint dicts (from chargen scene
+        # choices like "Mystery Compass") against the catalog. Without
+        # this, those items ship to the UI with the builder's stub
+        # metadata — ``category: weapon`` + ``description: "Starting
+        # equipment: X"``.
+        items_upgraded = _upgrade_hint_items_from_catalog(
+            character.core.inventory.items, catalog_by_id
+        )
+
+        # Dedup pass (Story 45-12). The ``existing_*`` sets are mutated
+        # inside the loop so intra-batch duplicates within
+        # ``equipment_ids`` itself collapse alongside builder-vs-catalogue
+        # overlap.
+        existing_ids: set[str] = {
+            str(it.get("id", "")).strip().lower()
+            for it in character.core.inventory.items
+            if it.get("id")
+        }
+        existing_names: set[str] = {
+            str(it.get("name", "")).strip().lower()
+            for it in character.core.inventory.items
+            if it.get("name")
+        }
+
+        for item_id in equipment_ids:
+            catalog_item = catalog_by_id.get(item_id)
+            candidate = (
+                _item_dict_from_catalog(catalog_item)
+                if catalog_item is not None
+                else _item_dict_minimal(item_id)
+            )
+            cand_id = str(candidate.get("id", "")).strip().lower()
+            cand_name = str(candidate.get("name", "")).strip().lower()
+            if (cand_id and cand_id in existing_ids) or (cand_name and cand_name in existing_names):
+                skipped_ids.append(cand_id or cand_name or item_id)
+                continue
+            character.core.inventory.items.append(candidate)
+            if cand_id:
+                existing_ids.add(cand_id)
+            if cand_name:
+                existing_names.add(cand_name)
+            items_added += 1
+
+        if gold:
+            character.core.inventory.gold += gold
 
     final_count = len(character.core.inventory.items)
     skipped_count = len(skipped_ids)
 
-    # Every chargen-confirm path emits the evaluated span (CLAUDE.md OTEL
-    # Observability Principle — the negative-confirmation contract).
+    # Single emission point for the evaluated span — fires on every code
+    # path (None config, no class match, full overlap, partial overlap,
+    # disjoint).
     with _tracer.start_as_current_span(SPAN_CHARGEN_STARTING_KIT_DEDUP_EVALUATED) as span:
         span.set_attribute("class_name", class_name)
         span.set_attribute("pre_dedup_count", pre_dedup_count)
