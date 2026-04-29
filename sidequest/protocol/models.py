@@ -156,6 +156,9 @@ class StateDelta(ProtocolBase):
     """Active encounter id (encounter_type), or None when no encounter is live."""
     party_formation: list[PartyFormationWireEntry] | None = None
     """Per-player canonical placement — story 45-1 sealed-letter handshake."""
+    magic_state: dict | None = None
+    """Opaque magic-state payload when MagicState changed this turn (Task 2.4).
+    None when magic is inactive or unchanged. Client deserializes via TS types."""
 
 
 # ---------------------------------------------------------------------------

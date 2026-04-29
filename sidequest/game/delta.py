@@ -50,6 +50,7 @@ class StateDelta(BaseModel):
     routes: bool = False
     active_stakes: bool = False
     lore: bool = False
+    magic: bool = False
     new_location: str | None = None
 
     def is_empty(self) -> bool:
@@ -67,6 +68,7 @@ class StateDelta(BaseModel):
             or self.routes
             or self.active_stakes
             or self.lore
+            or self.magic
         )
 
     def characters_changed(self) -> bool:
@@ -111,6 +113,9 @@ class StateSnapshot:
         self.discovered_routes_json = _to_json(state.discovered_routes)
         self.active_stakes = state.active_stakes
         self.lore_established_json = _to_json(state.lore_established)
+        self.magic_state_json = (
+            state.magic_state.model_dump_json() if state.magic_state is not None else None
+        )
 
 
 def _to_json(value: object) -> str:
@@ -144,5 +149,6 @@ def compute_delta(before: StateSnapshot, after: StateSnapshot) -> StateDelta:
         routes=before.discovered_routes_json != after.discovered_routes_json,
         active_stakes=before.active_stakes != after.active_stakes,
         lore=before.lore_established_json != after.lore_established_json,
+        magic=before.magic_state_json != after.magic_state_json,
         new_location=after.location if location_changed else None,
     )
