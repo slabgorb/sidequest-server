@@ -272,3 +272,112 @@ class TestChargenPersistAndPlay:
             assert "turn" in attrs
 
         asyncio.run(body())
+
+    # -----------------------------------------------------------------
+    # Story 45-12: starting-kit dedup wire-test
+    # -----------------------------------------------------------------
+
+    def test_chargen_confirm_persists_deduped_inventory(
+        self, handler_factory
+    ) -> None:
+        """AC6 wire-test: end-to-end chargen confirms produce a
+        deduplicated inventory and the deduped result is what's
+        persisted to SQLite. The Blutka regression evidence (Playtest
+        3, 2026-04-19) was a 24-item starting kit; the
+        ``caverns_and_claudes/grimvault`` pack itself ships
+        ``starting_equipment[Delver]`` with 3 torches and 2 rations
+        intra-list — so a successful chargen-confirm must collapse those
+        before save. This catches the half-wired regression where dedup
+        runs in-memory but the persisted snapshot still has stale items.
+
+        Invariant: after confirmation, the persisted snapshot's
+        inventory MUST have no duplicate ids and no duplicate
+        (case-insensitive) names.
+        """
+
+        async def body() -> None:
+            handler = handler_factory()
+            await _connect(handler)
+            await _walk_and_confirm(handler)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            saved = sd.store.load()
+            assert saved is not None, (
+                "chargen-confirm must persist the snapshot to SQLite"
+            )
+            assert saved.snapshot.characters, (
+                "persisted snapshot must carry the built character"
+            )
+
+            items = saved.snapshot.characters[0].core.inventory.items
+
+            # The bug-evidence shape: Blutka shipped 24 items; the
+            # spec count is 13. The persisted inventory must NOT
+            # exceed the catalogue spec count + any disjoint
+            # builder-side items. The strict invariant is uniqueness.
+            seen_ids: set[str] = set()
+            for item in items:
+                iid = str(item.get("id", "")).strip().lower()
+                if not iid:
+                    continue
+                assert iid not in seen_ids, (
+                    f"Persisted inventory contains DUPLICATE id "
+                    f"{iid!r}. Items: {[i.get('id') for i in items]!r}. "
+                    f"Dedup did not run, OR ran in-memory but the "
+                    f"persisted snapshot still has stale items "
+                    f"(half-wired regression)."
+                )
+                seen_ids.add(iid)
+
+            seen_names: set[str] = set()
+            for item in items:
+                iname = str(item.get("name", "")).strip().lower()
+                if not iname:
+                    continue
+                assert iname not in seen_names, (
+                    f"Persisted inventory contains DUPLICATE name "
+                    f"{iname!r}. Names: "
+                    f"{[i.get('name') for i in items]!r}."
+                )
+                seen_names.add(iname)
+
+        asyncio.run(body())
+
+    def test_chargen_confirm_emits_starting_kit_dedup_evaluated_span(
+        self,
+        handler_factory,
+        otel_capture: InMemorySpanExporter,
+    ) -> None:
+        """AC5/AC6 wire-test: the production chargen-confirm path MUST
+        emit ``chargen.starting_kit_dedup_evaluated`` so Sebastien's GM
+        panel sees the dedup pass ran. Without this assertion, dedup
+        could be implemented in the helper but never wired into the
+        production caller — Claude winging it past CLAUDE.md OTEL
+        principle."""
+
+        async def body() -> None:
+            handler = handler_factory()
+            await _connect(handler)
+            await _walk_and_confirm(handler)
+
+            evaluated = [
+                s
+                for s in otel_capture.get_finished_spans()
+                if s.name == "chargen.starting_kit_dedup_evaluated"
+            ]
+            assert len(evaluated) >= 1, (
+                "Production chargen-confirm path must emit "
+                "chargen.starting_kit_dedup_evaluated. Zero spans means "
+                "the helper exists but the call site doesn't wire it — "
+                "the exact half-wired failure mode the wire-test guards."
+            )
+            # The span MUST carry the session identity so the GM panel
+            # can attribute the event to a player.
+            attrs = dict(evaluated[0].attributes or {})
+            assert attrs.get("genre") == "caverns_and_claudes", (
+                f"genre attribute must round-trip from session through "
+                f"to the span. Got: {attrs.get('genre')!r}."
+            )
+            assert attrs.get("world") == "grimvault"
+
+        asyncio.run(body())
