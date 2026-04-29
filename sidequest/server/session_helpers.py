@@ -38,6 +38,7 @@ from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
     npc_reinvented_span,
     orchestrator_notorious_party_gate_span,
+    room_state_injected_span,
 )
 
 if TYPE_CHECKING:
@@ -328,6 +329,35 @@ def _build_turn_context(
         entry.model_dump() for entry in handshake_delta.party_formation
     ]
     state_summary_payload["shared_world_delta"] = handshake_delta.model_dump()
+
+    # Story 45-13 — per-room container retrieved-state injection. Read
+    # the current room's RoomState (if any) and surface a count via the
+    # ``room.state_injected`` span. The span fires on EVERY narrator
+    # turn — including the no-prior-retrievals case
+    # (``retrieved_container_count=0``) — because Sebastien's
+    # lie-detector must be able to distinguish "gate engaged with
+    # nothing to report" from "gate not engaged at all". The room is
+    # keyed off ``snapshot.location``, the canonical "where the player
+    # is right now" string. The retrieved-container hint is also
+    # surfaced into ``state_summary`` so the narrator's <game_state>
+    # block sees the audit trail and is less likely to re-emit.
+    current_room_id = snapshot.location or ""
+    current_room_state = snapshot.room_states.get(current_room_id)
+    retrieved_container_count = (
+        sum(1 for c in current_room_state.containers.values() if c.retrieved)
+        if current_room_state is not None
+        else 0
+    )
+    with room_state_injected_span(
+        room_id=current_room_id,
+        retrieved_container_count=retrieved_container_count,
+        interaction=snapshot.turn_manager.interaction,
+    ):
+        logger.info(
+            "state.room_state_injected room=%s retrieved_count=%d",
+            current_room_id, retrieved_container_count,
+        )
+
     state_summary_json = json.dumps(state_summary_payload, indent=2)
 
     return TurnContext(

@@ -8,7 +8,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry
+from sidequest.game.session import (
+    ContainerState,
+    GameSnapshot,
+    NpcRegistryEntry,
+    RoomState,
+)
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
 from sidequest.server.dispatch.sealed_letter import (
@@ -19,6 +24,8 @@ from sidequest.server.session_helpers import (
     _detect_npc_identity_drift,
 )
 from sidequest.telemetry.spans import (
+    container_retrieval_blocked_span,
+    container_retrieval_recorded_span,
     inventory_narrator_extracted_span,
     lore_established_span,
     npc_auto_registered_span,
@@ -298,7 +305,76 @@ def _apply_narration_result_to_snapshot(
         unmatched_discards: list[str] = []
         consumed_names: list[str] = []
         unmatched_consumes: list[str] = []
+
+        # Story 45-13: per-room container retrieved-state. Each
+        # ``items_gained`` entry may carry an optional ``from_container``
+        # annotation pointing at a narrator-emitted container id (e.g.
+        # ``"tin_box"``). The room id is keyed off ``snapshot.location``
+        # — the canonical "where the player is right now" string. The
+        # apply-time gate is the load-bearing block per AC #6: even when
+        # the prompt-time hint is bypassed, a duplicate retrieval in the
+        # same room is filtered here.
+        room_id = snapshot.location or ""
+        round_number = snapshot.turn_manager.round
         for entry in result.items_gained or []:
+            container_id = str(entry.get("from_container", "") or "").strip()
+            if container_id and room_id:
+                room_state = snapshot.room_states.get(room_id)
+                prior = (
+                    room_state.containers.get(container_id)
+                    if room_state is not None
+                    else None
+                )
+                if prior is not None and prior.retrieved:
+                    # Duplicate retrieval — apply-time gate fires. Item
+                    # is NOT appended, prior_retrieved_at_round is
+                    # preserved (read-only check, no clobber).
+                    with container_retrieval_blocked_span(
+                        room_id=room_id,
+                        container_id=container_id,
+                        prior_retrieved_at_round=int(
+                            prior.retrieved_at_round or 0,
+                        ),
+                        current_round=round_number,
+                        interaction=turn_num,
+                        player_name=player_name,
+                        genre=snapshot.genre_slug,
+                        world=snapshot.world_slug,
+                    ):
+                        logger.info(
+                            "state.container_retrieval_blocked player=%s "
+                            "room=%s container=%s prior_round=%s "
+                            "current_round=%s",
+                            player_name, room_id, container_id,
+                            prior.retrieved_at_round, round_number,
+                        )
+                    continue  # skip the inventory append for this entry
+
+                # First retrieval — record state and fire recorded span.
+                if room_state is None:
+                    room_state = RoomState(room_id=room_id)
+                    snapshot.room_states[room_id] = room_state
+                room_state.containers[container_id] = ContainerState(
+                    container_id=container_id,
+                    retrieved=True,
+                    retrieved_at_round=round_number,
+                )
+                with container_retrieval_recorded_span(
+                    room_id=room_id,
+                    container_id=container_id,
+                    round_number=round_number,
+                    interaction=turn_num,
+                    items_gained_count=1,
+                    player_name=player_name,
+                    genre=snapshot.genre_slug,
+                    world=snapshot.world_slug,
+                ):
+                    logger.info(
+                        "state.container_retrieval_recorded player=%s "
+                        "room=%s container=%s round=%d",
+                        player_name, room_id, container_id, round_number,
+                    )
+
             item_dict = _narrator_item_dict(entry)
             character.core.inventory.items.append(item_dict)
             added_names.append(str(item_dict["name"]))

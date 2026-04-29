@@ -26,8 +26,6 @@ from ._core import (  # noqa: F401
     SpanRoute,
     _SpanLike,
 )
-from .emitter import Emitter  # noqa: F401
-from .span import Span  # noqa: F401
 
 # Domain submodules. Star-import order is registry-insertion order — keep
 # this list in sync with `tests/telemetry/test_routing_completeness.py`.
@@ -43,6 +41,7 @@ from .continuity import *  # noqa: F401, F403
 from .dice import *  # noqa: F401, F403
 from .disposition import *  # noqa: F401, F403
 from .dogfight import *  # noqa: F401, F403
+from .emitter import Emitter  # noqa: F401
 from .encounter import *  # noqa: F401, F403
 from .inventory import *  # noqa: F401, F403
 from .lobby import *  # noqa: F401, F403
@@ -59,9 +58,11 @@ from .pregen import *  # noqa: F401, F403
 from .projection import *  # noqa: F401, F403
 from .rag import *  # noqa: F401, F403
 from .reminder import *  # noqa: F401, F403
+from .room_state import *  # noqa: F401, F403
 from .scenario import *  # noqa: F401, F403
 from .scrapbook import *  # noqa: F401, F403
 from .script_tool import *  # noqa: F401, F403
+from .span import Span  # noqa: F401
 from .state_patch import *  # noqa: F401, F403
 from .trope import *  # noqa: F401, F403
 from .turn import *  # noqa: F401, F403
