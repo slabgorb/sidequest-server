@@ -1,0 +1,35 @@
+plugin_id: innate_v1
+source: innate
+delivery_mechanisms:
+  - native
+  - condition
+  - relational
+ledger_bar_templates:
+  sanity:
+    id: sanity
+    scope: character
+    direction: down
+    range: [0.0, 1.0]
+    threshold_low: 0.40
+    consequence_on_low_cross: "auto-fire The Bleeding-Through confrontation"
+    starts_at_chargen: 1.0
+  vitality:
+    id: vitality
+    scope: character
+    direction: down
+    range: [0.0, 1.0]
+    threshold_low: 0.20
+    consequence_on_low_cross: "narrator-discretion: aging visibly"
+    decay_per_session: 0.0
+    starts_at_chargen: 1.0
+narrator_register: |
+  The character IS the source. Power fires reflexively under stress, leaving
+  identity-cost residue. It cannot be reliably aimed. Practiced control is the
+  province of learned_v1; if you find yourself describing a trained discipline,
+  you've crossed plugins.
+required_span_attrs:
+  - flavor
+  - consent_state
+optional_span_attrs:
+  - lineage
+  - amplification_locus
