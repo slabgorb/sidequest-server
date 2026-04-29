@@ -51,6 +51,7 @@ from .magic import *  # noqa: F401, F403
 from .merchant import *  # noqa: F401, F403
 from .monster_manual import *  # noqa: F401, F403
 from .mp import *  # noqa: F401, F403
+from .namegen import *  # noqa: F401, F403
 from .narrator import *  # noqa: F401, F403
 from .npc import *  # noqa: F401, F403
 from .orchestrator import *  # noqa: F401, F403

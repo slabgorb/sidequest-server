@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Threshold constants — module + values
 # ---------------------------------------------------------------------------
@@ -207,15 +206,18 @@ def test_stem_collision_flags_within_long_token_pair() -> None:
 
 
 def test_stem_collision_passes_low_coverage_overlap() -> None:
-    """A 4-char common substring that is < 50% of *both* tokens passes.
+    """An LCS of length 4 that covers ≤ 50% of *both* tokens passes.
 
-    ``Veradaine Veradaire`` shares ``verad`` (5 chars). Token 1 length
-    9 → 5/9 ≈ 56%; flagged.
+    First case: short tokens, high coverage — flag. ``Veradaine
+    Veradaire`` share the 7-char prefix ``veradai``; 7/9 ≈ 78% of each
+    token is over the 50% bar.
 
-    Contrast with ``Veradaineson Veradairemax`` — shares ``verad`` (5)
-    against tokens of length 12 and 12 → 5/12 ≈ 42% on each, below
+    Second case: long tokens with a deliberately-isolated 4-char
+    overlap — pass. ``Solenneabcd Carensabcd`` share ``abcd`` (4
+    chars) only; 4/11 ≈ 36% and 4/10 = 40% on each token, both below
     the 50% bar. The predicate operates on coverage, not bare LCS
-    length, to avoid flagging culturally-coherent stem reuse.
+    length, so culturally-coherent stem reuse in long tokens does not
+    over-fire.
     """
     from sidequest.genre.names.generator import has_stem_collision
 
@@ -223,7 +225,7 @@ def test_stem_collision_passes_low_coverage_overlap() -> None:
     assert has_stem_collision("Veradaine Veradaire") is True
 
     # Second case: long tokens, low coverage — pass.
-    assert has_stem_collision("Veradaineson Veradairemax") is False
+    assert has_stem_collision("Solenneabcd Carensabcd") is False
 
 
 # ---------------------------------------------------------------------------

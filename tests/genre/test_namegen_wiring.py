@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import random
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,6 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-
 
 # ---------------------------------------------------------------------------
 # Synthetic corpus + Culture fixtures
@@ -426,10 +426,8 @@ def test_generate_npc_exhausts_collision_loop_and_emits_fail_loud_span(
     # Whether the function returns a degenerate name or raises is a
     # design decision left to Dev (logged as a Delivery Finding).
     # Either way: the fail_loud span MUST fire.
-    try:
+    with contextlib.suppress(ValueError, RuntimeError):
         namegen_cli.generate_npc(pack, genre_dir, args, rng)
-    except (ValueError, RuntimeError):
-        pass
 
     fail_spans = _spans_named(captured_spans, SPAN_NAMEGEN_FAIL_LOUD)
     assert len(fail_spans) == 1, (

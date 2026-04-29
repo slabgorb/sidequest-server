@@ -35,6 +35,12 @@ from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.genre.models.npc_traits import NpcTrait
 from sidequest.genre.names import build_from_culture
+from sidequest.genre.names.generator import has_stem_collision
+from sidequest.telemetry.spans import (
+    SPAN_NAMEGEN_FAIL_LOUD,
+    SPAN_NAMEGEN_STEM_COLLISION,
+    Span,
+)
 
 # ---------------------------------------------------------------------------
 # Output schema
@@ -587,13 +593,50 @@ def generate_npc(
 
     generator = build_from_culture(culture, corpus_dir, rng)
     name = ""
-    for _ in range(10):
+    stem_collision_count = 0
+    for attempt_index in range(10):
         candidate = generator.generate_person()
         lower = candidate.lower()
-        if candidate and not lower.startswith("of ") and not lower.startswith("the "):
-            name = candidate
-            break
+        if not candidate or lower.startswith("of ") or lower.startswith("the "):
+            continue
+        if has_stem_collision(candidate):
+            tokens = candidate.split()
+            with Span.open(
+                SPAN_NAMEGEN_STEM_COLLISION,
+                {
+                    "culture": culture.name,
+                    "candidate": candidate,
+                    "prefix_stem": tokens[0] if tokens else "",
+                    "suffix_stem": tokens[-1] if len(tokens) > 1 else "",
+                    "attempt_index": attempt_index,
+                },
+            ):
+                pass
+            stem_collision_count += 1
+            continue
+        name = candidate
+        break
     if not name:
+        # Stem-collision exhaustion (Story 45-28): fail loud rather than
+        # fall back to a degenerate name. The original "Frandrew Andrew"
+        # bug came from exactly this fallback silently winning.
+        if stem_collision_count > 0:
+            with Span.open(
+                SPAN_NAMEGEN_FAIL_LOUD,
+                {
+                    "culture": culture.name,
+                    "reason": "stem_collision_exhausted",
+                },
+            ):
+                pass
+            raise ValueError(
+                f"namegen exhausted 10 attempts for culture '{culture.name}': "
+                f"every generated name exhibited stem-collision artifacts. "
+                f"Corpus may be too thin or too uniform."
+            )
+        # of/the exhaustion (pre-existing behaviour preserved — out of
+        # scope for 45-28; if this becomes a real failure mode, surface
+        # via a separate story rather than scope-creeping this one).
         name = generator.generate_person()
 
     gender = args.gender or rng.choice(["male", "female", "nonbinary"])

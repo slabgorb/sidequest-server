@@ -8,12 +8,26 @@ assemble slots into full names.
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.names.markov import MarkovChain, generate_dictionary
+from sidequest.genre.names.thresholds import (
+    FAIL_BELOW_WORDS,
+    STEM_OVERLAP_MIN,
+    WARN_BELOW_WORDS,
+    count_words,
+)
+from sidequest.telemetry.spans import (
+    SPAN_NAMEGEN_FAIL_LOUD,
+    SPAN_NAMEGEN_THIN_CORPUS,
+    Span,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -111,6 +125,60 @@ def translate_word_list(word_list: list[str], dictionary: dict[str, str]) -> lis
     return [dictionary.get(word, word) for word in word_list]
 
 
+def _longest_common_substring(a: str, b: str) -> int:
+    """Return the length of the longest common substring of ``a`` and ``b``.
+
+    Rolling 1-D DP over the standard m×n table. Runs at O(m·n) time
+    and O(min(m, n)) space; both name tokens are bounded by the
+    Markov chain's ``max_length`` (12 chars) so the absolute cost is
+    trivial — but the rolling form keeps the algorithm presentable.
+    """
+    if not a or not b:
+        return 0
+    m, n = len(a), len(b)
+    prev = [0] * (n + 1)
+    longest = 0
+    for i in range(1, m + 1):
+        curr = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                curr[j] = prev[j - 1] + 1
+                if curr[j] > longest:
+                    longest = curr[j]
+        prev = curr
+    return longest
+
+
+def has_stem_collision(name: str) -> bool:
+    """Return True if ``name`` exhibits the "Frandrew Andrew" stem-repetition pattern.
+
+    Operational definition (per ``sprint/context/context-story-45-28.md``):
+    strip whitespace, case-fold each space-separated token, compute the
+    longest common substring of length ≥ ``STEM_OVERLAP_MIN``. If the
+    substring spans more than half of *either* token, the name is a
+    collision and should be rejected.
+
+    Tokens shorter than ``STEM_OVERLAP_MIN`` cannot contribute a
+    qualifying overlap (their LCS with anything is bounded by their
+    own length); we skip them so connector words like ``de`` / ``of``
+    / ``the`` never cause false collisions.
+
+    The predicate operates on tokens *within one name*, never across
+    separate names — culturally-coherent stem reuse like Vaal-Kesh /
+    Vaal-Tor is intentional morphological coherence (ADR-043), not a
+    bug.
+    """
+    tokens = [t.casefold() for t in name.split() if len(t) >= STEM_OVERLAP_MIN]
+    for i, t1 in enumerate(tokens):
+        for t2 in tokens[i + 1:]:
+            lcs = _longest_common_substring(t1, t2)
+            if lcs < STEM_OVERLAP_MIN:
+                continue
+            if lcs / len(t1) > 0.5 or lcs / len(t2) > 0.5:
+                return True
+    return False
+
+
 def _titlecase_name(name: str) -> str:
     """Title-case a name, keeping small words lowercase."""
     small_words = {"de", "of", "the", "and", "le", "la", "von", "van", "du", "des"}
@@ -122,6 +190,63 @@ def _titlecase_name(name: str) -> str:
         else:
             result.append(part.lower())
     return " ".join(result)
+
+
+def _check_corpus_size(
+    *,
+    text: str,
+    corpus_name: str,
+    culture_name: str,
+    slot_name: str,
+) -> None:
+    """Apply the namegen min-pool guard (Story 45-28).
+
+    Called once per corpus cache miss (before training). Below
+    ``FAIL_BELOW_WORDS`` the corpus cannot produce non-degenerate
+    Markov output — emit ``namegen.fail_loud`` and raise so the
+    caller fails loud. Below ``WARN_BELOW_WORDS`` the chain still
+    works but is at risk of stem-repetition artifacts — emit
+    ``namegen.thin_corpus`` and log a warning so Sebastien (GM panel)
+    and the operator (stderr) both see the signal.
+    """
+    word_count = count_words(text)
+    if word_count < FAIL_BELOW_WORDS:
+        with Span.open(
+            SPAN_NAMEGEN_FAIL_LOUD,
+            {
+                "corpus_name": corpus_name,
+                "word_count": word_count,
+                "culture": culture_name,
+                "slot_name": slot_name,
+                "reason": "below_floor",
+            },
+        ):
+            pass
+        raise ValueError(
+            f"Corpus '{corpus_name}' has {word_count} words; "
+            f"minimum is {FAIL_BELOW_WORDS}"
+        )
+    if word_count < WARN_BELOW_WORDS:
+        with Span.open(
+            SPAN_NAMEGEN_THIN_CORPUS,
+            {
+                "corpus_name": corpus_name,
+                "word_count": word_count,
+                "culture": culture_name,
+                "slot_name": slot_name,
+                "threshold": WARN_BELOW_WORDS,
+            },
+        ):
+            pass
+        logger.warning(
+            "namegen: corpus %s for culture %s slot %s has %d words "
+            "(threshold %d); chain may produce stem-repetition artifacts",
+            corpus_name,
+            culture_name,
+            slot_name,
+            word_count,
+            WARN_BELOW_WORDS,
+        )
 
 
 def build_from_culture(
@@ -179,7 +304,14 @@ def build_from_culture(
 
                 cache_key = (corpus_ref.corpus, lookback)
                 if cache_key not in chain_cache:
-                    chain_cache[cache_key] = corpus_path.read_text(encoding="utf-8")
+                    text = corpus_path.read_text(encoding="utf-8")
+                    _check_corpus_size(
+                        text=text,
+                        corpus_name=corpus_ref.corpus,
+                        culture_name=culture.name,
+                        slot_name=slot_name,
+                    )
+                    chain_cache[cache_key] = text
 
                 text = chain_cache[cache_key]
                 rounds = max(1, round(corpus_ref.weight))
