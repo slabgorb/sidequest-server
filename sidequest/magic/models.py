@@ -110,6 +110,21 @@ class MagicWorking(BaseModel):
 # --- Ledger bar spec ---------------------------------------------------------
 
 
+class StatusPromotion(BaseModel):
+    """Per-bar config: how a threshold crossing surfaces in the Status panel.
+
+    World-content, not engine code (architect §5.3, 2026-04-29) — different
+    worlds may map the same bar id to different status text/severity. A bar
+    that omits this block produces no auto-promoted Status; the silent skip
+    is intentional, not a fallback.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    text: str
+    severity: Literal["Scratch", "Wound", "Scar"]
+
+
 class LedgerBarSpec(BaseModel):
     """Per-bar configuration loaded from world magic.yaml."""
 
@@ -127,6 +142,12 @@ class LedgerBarSpec(BaseModel):
     consequence_on_low_cross: str | None = None
     decay_per_session: float = 0.0
     starts_at_chargen: float
+    # Per-bar status-panel mapping (Task 3.4). Optional: bars that don't
+    # surface as character statuses (world-scope hegemony_heat, etc.) leave
+    # this None. The threshold-promotion pipeline reads this directly off
+    # ``snapshot.magic_state.config.ledger_bars[bar_id].promote_to_status``
+    # so the mapping stays world-tunable without engine code changes.
+    promote_to_status: StatusPromotion | None = None
 
     @model_validator(mode="after")
     def thresholds_match_direction(self) -> LedgerBarSpec:

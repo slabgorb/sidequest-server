@@ -12,6 +12,7 @@ from sidequest.magic.models import (
     LedgerBarSpec,
     MagicWorking,
     Plugin,
+    StatusPromotion,
     WorldKnowledge,
     WorldMagicConfig,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "MagicState",
     "MagicWorking",
     "Plugin",
+    "StatusPromotion",
     "ThresholdCrossingEvent",
     "WorkingRecord",
     "WorldKnowledge",

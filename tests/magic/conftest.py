@@ -12,6 +12,7 @@ import pytest
 from sidequest.magic.models import (
     HardLimit,
     LedgerBarSpec,
+    StatusPromotion,
     WorldKnowledge,
     WorldMagicConfig,
 )
@@ -49,6 +50,9 @@ def world_config() -> WorldMagicConfig:
                 threshold_low=0.40,
                 consequence_on_low_cross="auto-fire The Bleeding-Through",
                 starts_at_chargen=1.0,
+                promote_to_status=StatusPromotion(
+                    text="Bleeding through", severity="Wound"
+                ),
             ),
             LedgerBarSpec(
                 id="notice",
@@ -58,6 +62,9 @@ def world_config() -> WorldMagicConfig:
                 threshold_high=0.75,
                 consequence_on_high_cross="auto-fire The Quiet Word",
                 starts_at_chargen=0.0,
+                promote_to_status=StatusPromotion(
+                    text="Hegemony noticed", severity="Wound"
+                ),
             ),
             LedgerBarSpec(
                 id="hegemony_heat",
@@ -68,6 +75,8 @@ def world_config() -> WorldMagicConfig:
                 consequence_on_high_cross="escalation",
                 decay_per_session=0.05,
                 starts_at_chargen=0.30,
+                # World-scope bars don't surface as character statuses;
+                # promote_to_status intentionally omitted.
             ),
         ],
         narrator_register="x",

@@ -1,5 +1,7 @@
 # World-layer magic config (test fixture).
-# promote_to_status keys deferred to Task 3.4 when LedgerBarSpec.promote_to_status field lands.
+# promote_to_status blocks landed in Task 3.4 — bars that surface as
+# character statuses (sanity, notice, vitality) carry text + severity
+# here; world-scope bars (hegemony_heat) intentionally omit it.
 world: coyote_reach
 genre: space_opera
 intensity: 0.25
@@ -21,6 +23,9 @@ ledger_bars:
     range: [0.0, 1.0]
     threshold_low: 0.40
     consequence_on_low_cross: "auto-fire The Bleeding-Through"
+    promote_to_status:
+      text: "Bleeding through"
+      severity: Wound
     starts_at_chargen: 1.0
   - id: notice
     scope: character
@@ -28,6 +33,9 @@ ledger_bars:
     range: [0.0, 1.0]
     threshold_high: 0.75
     consequence_on_high_cross: "auto-fire The Quiet Word"
+    promote_to_status:
+      text: "Hegemony noticed"
+      severity: Wound
     starts_at_chargen: 0.0
   - id: vitality
     scope: character
@@ -35,6 +43,9 @@ ledger_bars:
     range: [0.0, 1.0]
     threshold_low: 0.20
     consequence_on_low_cross: "narrator-discretion: aging visibly"
+    promote_to_status:
+      text: "Aging visibly"
+      severity: Wound
     starts_at_chargen: 1.0
   - id: hegemony_heat
     scope: world

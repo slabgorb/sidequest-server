@@ -139,6 +139,23 @@ class MagicWorkingParseError(RuntimeError):
 
 
 @dataclass
+class StatusChangePromotion:
+    """A magic threshold crossing promoted to a ``status_changes`` ADD.
+
+    The pipeline reuses the existing ``Status`` renderer downstream — this
+    dataclass is only the intermediate shape between
+    ``promote_crossings_to_status_changes`` and the snapshot mutation that
+    appends a ``Status`` to the actor's ``core.statuses``. Severity is
+    carried as a string keyed against ``StatusSeverity[...]`` (the enum's
+    member names: ``Scratch`` / ``Wound`` / ``Scar``).
+    """
+
+    actor: str
+    status_text: str
+    severity: str  # "Scratch" | "Wound" | "Scar"
+
+
+@dataclass
 class MagicApplyResult:
     """Aggregate result of applying a ``magic_working`` patch field.
 
@@ -227,6 +244,127 @@ def apply_magic_working(
     return MagicApplyResult(apply=apply_result, flags=flags)
 
 
+def _apply_magic_status_promotions(
+    *,
+    snapshot: GameSnapshot,
+    magic_result: MagicApplyResult,
+    player_name: str,
+) -> None:
+    """Apply Task 3.4 status promotions to ``snapshot.characters``.
+
+    Mirrors the side-effect shape of the manual ``result.status_changes``
+    branch below (``Status`` append + watcher publish) so the GM panel
+    sees auto-promoted statuses on the same lane as narrator-extracted
+    ones. ``source="magic_threshold_promotion"`` distinguishes them in
+    the watcher feed — Sebastien's mechanical-visibility lens demands
+    that auto-fired statuses are traceable back to the bar that fired
+    them, not blurred into "narrator said so".
+
+    Does not raise: a missing actor character (BarKey owner_id with no
+    matching ``core.name``) logs and skips. The MagicState ledger and
+    the Character roster are populated from different paths (chargen vs.
+    add_character) and a soft mismatch shouldn't crash the apply
+    pipeline mid-turn.
+    """
+    from sidequest.game.status import Status, StatusSeverity
+    from sidequest.telemetry.spans import encounter_status_added_span
+
+    promotions = promote_crossings_to_status_changes(
+        result=magic_result, snapshot=snapshot
+    )
+    if not promotions:
+        return
+
+    turn_num = snapshot.turn_manager.interaction
+    encounter_type = (
+        snapshot.encounter.encounter_type if snapshot.encounter else None
+    )
+    for promo in promotions:
+        target = next(
+            (c for c in snapshot.characters if c.core.name == promo.actor),
+            None,
+        )
+        if target is None:
+            logger.warning(
+                "magic.status_promotion_unknown_actor actor=%s text=%s "
+                "player=%s — bar fired but no matching character.core.name",
+                promo.actor, promo.status_text, player_name,
+            )
+            continue
+        severity = StatusSeverity[promo.severity]
+        target.core.statuses.append(
+            Status(
+                text=promo.status_text,
+                severity=severity,
+                absorbed_shifts=0,
+                created_turn=turn_num,
+                created_in_encounter=encounter_type,
+            )
+        )
+        with encounter_status_added_span(
+            actor=promo.actor,
+            text=promo.status_text,
+            severity=severity.value,
+            source="magic_threshold_promotion",
+        ):
+            pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "status_added",
+                "actor": promo.actor,
+                "text": promo.status_text,
+                "severity": severity.value,
+                "source": "magic_threshold_promotion",
+                "turn": turn_num,
+                "encounter_type": encounter_type,
+            },
+            component="encounter",
+        )
+
+
+def promote_crossings_to_status_changes(
+    *, result: MagicApplyResult, snapshot: GameSnapshot
+) -> list[StatusChangePromotion]:
+    """Convert ``MagicApplyResult.crossings`` into status-change promotions.
+
+    Reads the per-bar ``promote_to_status`` config from the world's
+    ``LedgerBarSpec`` — NOT a hardcoded module-level dict (architect §5.3,
+    2026-04-29). This keeps status text/severity world-tunable: a different
+    innate-using world (e.g. victoria-touched) can map ``sanity`` →
+    ``"Slipping"``, ``Scar`` without code change. A bar without
+    ``promote_to_status`` is silently skipped — the architect explicitly
+    calls this out as the right behavior, not a fallback (not every bar
+    surfaces as a Status; world-scope bars never do).
+    """
+    if snapshot.magic_state is None:
+        return []
+
+    promotions: list[StatusChangePromotion] = []
+    bars_by_id = {b.id: b for b in snapshot.magic_state.config.ledger_bars}
+
+    for crossing in result.crossings:
+        spec = bars_by_id.get(crossing.bar_key.bar_id)
+        if spec is None or spec.promote_to_status is None:
+            # Architect §5.3: silent skip is correct — not every bar
+            # promotes. ``spec is None`` would be a config inconsistency
+            # (crossing references a bar id not in the config), but the
+            # crossing itself was emitted by ``apply_working`` reading
+            # the same config, so this branch is structurally
+            # unreachable for in-config bars. Keep it defensive without
+            # raising — Task 3.5 will add an OTEL span if it ever fires.
+            continue
+        promotions.append(
+            StatusChangePromotion(
+                actor=crossing.bar_key.owner_id,
+                status_text=spec.promote_to_status.text,
+                severity=spec.promote_to_status.severity,
+            )
+        )
+    return promotions
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -285,9 +423,9 @@ def _apply_narration_result_to_snapshot(
     # already in the user's hands, so we never crash the apply pipeline
     # on a malformed working — Task 3.5 will promote that log to a
     # ``magic.parse_error`` span. Threshold-crossing → status_changes
-    # auto-promotion (Task 3.4) and the working_applied span itself
-    # (Task 3.5) are explicitly NOT done here — see those tasks for
-    # the wire-up.
+    # auto-promotion (Task 3.4) is wired below in the ``else`` branch;
+    # the ``magic.working_applied`` OTEL span itself (Task 3.5) is still
+    # pending — see that task for the wire-up.
     magic_working_field = getattr(result, "magic_working", None)
     if magic_working_field is not None:
         try:
@@ -304,6 +442,17 @@ def _apply_narration_result_to_snapshot(
                 "magic.parse_error player=%s reason=%s",
                 player_name,
                 e,
+            )
+        else:
+            # Task 3.4: auto-promote threshold crossings into Status.
+            # Reuses the existing Status renderer downstream — no new UI.
+            # The world's per-bar ``promote_to_status`` block decides the
+            # status text + severity (architect §5.3); bars without that
+            # block produce no promotion (silent skip is intended).
+            _apply_magic_status_promotions(
+                snapshot=snapshot,
+                magic_result=outcome.magic,
+                player_name=player_name,
             )
 
     if result.location:
