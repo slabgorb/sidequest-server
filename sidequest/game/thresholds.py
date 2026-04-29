@@ -62,12 +62,29 @@ def detect_crossings(
     old_value: int | float,
     new_value: int | float,
 ) -> list[T]:
-    """Return thresholds crossed by a value change (downward only).
+    """Return thresholds crossed by a value change.
 
-    A threshold ``t`` is crossed when ``old_value > t.at`` and
-    ``new_value <= t.at``. Values may be ``int`` or ``float``.
+    A threshold ``t`` is crossed when:
+
+    - ``direction == "down"`` (default): ``old_value > t.at`` and
+      ``new_value <= t.at`` — value fell through the boundary.
+    - ``direction == "up"``: ``old_value < t.at`` and
+      ``new_value >= t.at`` — value rose through the boundary.
+
+    ``direction`` is read via :func:`getattr` with a ``"down"`` default so
+    that :class:`EdgeThreshold` (which predates this field) satisfies the
+    :class:`ThresholdAt` protocol without carrying the attribute.
+
+    Values may be ``int`` or ``float``.
     """
-    return [t for t in thresholds if old_value > t.at and new_value <= t.at]
+    fired: list[T] = []
+    for t in thresholds:
+        direction = getattr(t, "direction", "down")
+        if (direction == "down" and old_value > t.at and new_value <= t.at) or (
+            direction == "up" and old_value < t.at and new_value >= t.at
+        ):
+            fired.append(t)
+    return fired
 
 
 def mint_threshold_lore(
