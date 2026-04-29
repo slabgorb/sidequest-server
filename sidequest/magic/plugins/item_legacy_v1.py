@@ -22,6 +22,8 @@ from sidequest.magic.models import (
 from sidequest.magic.plugin import MAGIC_PLUGINS
 
 _YAML_PATH = Path(__file__).with_suffix(".yaml")
+
+# Content descriptor — loaded once at import time.
 descriptor: Plugin = Plugin.model_validate(
     yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
 )
@@ -67,6 +69,8 @@ class ItemLegacyV1Plugin:
             )
 
         # Plugin-lane respect: item magic firing without an item is innate territory.
+        # Set syntax (rather than ==) so future violators can be added with one
+        # line of change as the lane vocabulary grows.
         if working.mechanism in {"native"}:
             flags.append(
                 Flag(

@@ -34,12 +34,12 @@ def test_item_legacy_v1_registered():
     assert plugin.plugin_id == "item_legacy_v1"
 
 
-def test_required_attrs():
+def test_item_legacy_v1_required_attrs():
     plugin = get_plugin("item_legacy_v1")
     assert plugin.required_attrs() == {"item_id", "alignment_with_item_nature"}
 
 
-def test_clean_working(world_config):
+def test_item_legacy_v1_clean_working_no_flags(world_config):
     plugin = get_plugin("item_legacy_v1")
     working = MagicWorking(
         plugin="item_legacy_v1",
@@ -54,7 +54,7 @@ def test_clean_working(world_config):
     assert plugin.validate_working(working, world_config) == []
 
 
-def test_missing_item_id_yellow(world_config):
+def test_item_legacy_v1_missing_item_id_yellow(world_config):
     plugin = get_plugin("item_legacy_v1")
     working = MagicWorking(
         plugin="item_legacy_v1",
@@ -69,7 +69,30 @@ def test_missing_item_id_yellow(world_config):
     assert any(f.severity == FlagSeverity.YELLOW and "item_id" in f.reason for f in flags)
 
 
-def test_alignment_out_of_range_red(world_config):
+def test_item_legacy_v1_missing_alignment_yellow(world_config):
+    """Missing alignment_with_item_nature emits a YELLOW flag (and skips the
+    range check via the elif chain in validate_working)."""
+    plugin = get_plugin("item_legacy_v1")
+    working = MagicWorking(
+        plugin="item_legacy_v1",
+        mechanism="discovery",
+        actor="Sira Mendes",
+        costs={"notice": 0.10},
+        domain="physical",
+        narrator_basis="x",
+        item_id="lassiter",
+    )
+    flags = plugin.validate_working(working, world_config)
+    assert any(
+        f.severity == FlagSeverity.YELLOW
+        and "alignment_with_item_nature" in f.reason
+        for f in flags
+    )
+    # Range RED should not also fire when alignment is None.
+    assert not any(f.reason == "alignment_out_of_range" for f in flags)
+
+
+def test_item_legacy_v1_alignment_out_of_range_red(world_config):
     """alignment_with_item_nature must be in [-1.0, 1.0]."""
     plugin = get_plugin("item_legacy_v1")
     working = MagicWorking(
@@ -105,7 +128,7 @@ def test_item_legacy_v1_native_mechanism_red_flag(world_config):
     )
 
 
-def test_descriptor_loads():
+def test_item_legacy_v1_descriptor_loads():
     from sidequest.magic.plugins.item_legacy_v1 import descriptor
 
     assert descriptor.plugin_id == "item_legacy_v1"
