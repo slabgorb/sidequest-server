@@ -307,6 +307,59 @@ class AchievementTracker(BaseModel):
     achievements: list[dict] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Story 45-13 — Per-room container retrieved-state (Playtest 3 Orin
+# regression: same tin box emptied at rounds 10 and 16 because the
+# narrator's session memory is not authoritative for mechanical state).
+# ContainerState is the explicit lifecycle that replaces "implicit
+# narrator session memory" per ADR-014 / ADR-067.
+# ---------------------------------------------------------------------------
+
+
+class ContainerState(BaseModel):
+    """Per-container retrieved-state record (Story 45-13).
+
+    Lives inside ``RoomState.containers``. Keyed by narrator-emitted
+    container id (e.g. ``"tin_box"``). ``retrieved_at_round`` pairs
+    with ``retrieved=True`` so the negative-gate's blocked-span can
+    surface a concrete prior round number — the Sebastien lie-detector
+    needs the audit trail, not just a bool. The ``retrieved=True with
+    retrieved_at_round=None`` state would let the blocked span fire
+    with ``prior_retrieved_at_round=0``, which lies about the audit
+    trail; the validator below makes that state unrepresentable.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    container_id: str
+    retrieved: bool = False
+    retrieved_at_round: int | None = None
+
+    @model_validator(mode="after")
+    def _round_required_when_retrieved(self) -> ContainerState:
+        if self.retrieved and self.retrieved_at_round is None:
+            raise ValueError(
+                "ContainerState.retrieved=True requires "
+                "retrieved_at_round to be set"
+            )
+        return self
+
+
+class RoomState(BaseModel):
+    """Per-room mechanical state (Story 45-13).
+
+    Sibling to ``GameSnapshot.discovered_rooms`` (which answers "have we
+    been here?") — this answers "what mechanical lifecycle state lives
+    here?". Currently holds container retrieval state; trap / lock /
+    stochastic-descriptor state are out of scope per the story.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    room_id: str
+    containers: dict[str, ContainerState] = Field(default_factory=dict)
+
+
 # ResourcePool lives in sidequest.game.resource_pool (ADR-033).
 # Imported at module top for use in ``GameSnapshot.resources`` and the
 # patch-application methods below.
@@ -414,6 +467,15 @@ class GameSnapshot(BaseModel):
 
     # P3-deferred: room-graph navigation (story 19-2)
     discovered_rooms: list[str] = Field(default_factory=list)
+
+    # Story 45-13 — per-room container retrieved-state. Sibling to
+    # ``discovered_rooms`` but answers a different question: "what
+    # mechanical lifecycle state lives in this room?" rather than "have
+    # we been here?". Keyed by ``snapshot.location`` at the apply site.
+    # Forward-compat: ``model_config = {"extra": "ignore"}`` plus the
+    # default-factory means old saves serialized without ``room_states``
+    # deserialize cleanly with the field empty.
+    room_states: dict[str, RoomState] = Field(default_factory=dict)
 
     # Combat state (P1-required: permadeath / death detection)
     player_dead: bool = False
@@ -547,7 +609,7 @@ class GameSnapshot(BaseModel):
     # State mutation methods
     # ------------------------------------------------------------------
 
-    def replace_with(self, other: "GameSnapshot") -> None:
+    def replace_with(self, other: GameSnapshot) -> None:
         """Copy every field of ``other`` onto this snapshot in place.
 
         Used when the chargen-complete pipeline materializes a fresh

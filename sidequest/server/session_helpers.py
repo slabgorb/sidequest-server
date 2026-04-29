@@ -38,6 +38,7 @@ from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
     npc_reinvented_span,
     orchestrator_notorious_party_gate_span,
+    room_state_injected_span,
 )
 
 if TYPE_CHECKING:
@@ -328,6 +329,50 @@ def _build_turn_context(
         entry.model_dump() for entry in handshake_delta.party_formation
     ]
     state_summary_payload["shared_world_delta"] = handshake_delta.model_dump()
+
+    # Story 45-13 — per-room container retrieved-state injection. Read
+    # the current room's RoomState (if any) and surface a count via the
+    # ``room.state_injected`` span. The span fires on EVERY narrator
+    # turn — including the no-prior-retrievals case
+    # (``retrieved_container_count=0``) — because Sebastien's
+    # lie-detector must be able to distinguish "gate engaged with
+    # nothing to report" from "gate not engaged at all". The room is
+    # keyed off ``snapshot.location``, the canonical "where the player
+    # is right now" string. The retrieved-container payload also flows
+    # into ``state_summary_payload`` automatically because line 312
+    # already serializes the full ``snapshot`` (which includes
+    # ``room_states``) into the narrator's <game_state> block.
+    current_room_id = snapshot.location
+    if not current_room_id:
+        # No silent fallback (CLAUDE.md): a turn without a canonical
+        # location renders the room-state gate unreachable — the span
+        # would fire with ``room_id=""`` and look indistinguishable from
+        # a valid empty room. Log a warning so the GM panel can spot
+        # the configuration gap. The span still fires below (so
+        # Sebastien's lie-detector keeps its no-op case) but with
+        # ``room_id=""`` AND a logged warning.
+        logger.warning(
+            "state.room_state_injected_unreachable "
+            "reason=snapshot_location_empty interaction=%d",
+            snapshot.turn_manager.interaction,
+        )
+        current_room_id = ""
+    current_room_state = snapshot.room_states.get(current_room_id)
+    retrieved_container_count = (
+        sum(1 for c in current_room_state.containers.values() if c.retrieved)
+        if current_room_state is not None
+        else 0
+    )
+    with room_state_injected_span(
+        room_id=current_room_id,
+        retrieved_container_count=retrieved_container_count,
+        interaction=snapshot.turn_manager.interaction,
+    ):
+        logger.info(
+            "state.room_state_injected room=%s retrieved_count=%d",
+            current_room_id, retrieved_container_count,
+        )
+
     state_summary_json = json.dumps(state_summary_payload, indent=2)
 
     return TurnContext(
