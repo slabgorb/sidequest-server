@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
+from sidequest.genre.error import GenreError
 from sidequest.magic.models import (
     HardLimit,
     LedgerBarSpec,
@@ -32,8 +33,14 @@ from sidequest.magic.models import (
 )
 
 
-class LoaderError(RuntimeError):
-    """Raised when magic-config loading fails for any reason."""
+class LoaderError(GenreError):
+    """Raised when magic-config loading fails for any reason.
+
+    Subclasses ``GenreError`` so callers catching the genre-module exception
+    family also catch magic-loader failures (mirrors the existing
+    ``GenreLoadError`` / ``SchemaValidationError`` pattern in
+    ``sidequest/genre/error.py``).
+    """
 
 
 def load_world_magic(
@@ -78,10 +85,16 @@ def load_world_magic(
         raise LoaderError(f"world_knowledge invalid: {e}") from e
 
     # Hard limits: genre union world_additional
-    genre_limits = [HardLimit.model_validate(h) for h in genre_data.get("hard_limits", [])]
-    world_extra = [
-        HardLimit.model_validate(h) for h in world_data.get("hard_limits_additional", [])
-    ]
+    try:
+        genre_limits = [
+            HardLimit.model_validate(h) for h in genre_data.get("hard_limits", [])
+        ]
+        world_extra = [
+            HardLimit.model_validate(h)
+            for h in world_data.get("hard_limits_additional", [])
+        ]
+    except ValidationError as e:
+        raise LoaderError(f"hard_limits invalid: {e}") from e
     hard_limits = genre_limits + world_extra
 
     # Cost types: world's active subset (must subset genre's full set)

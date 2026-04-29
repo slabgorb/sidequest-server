@@ -119,6 +119,42 @@ def test_narrator_register_genre_overrides_plugin_default():
         bare_path.unlink(missing_ok=True)
 
 
+def test_loader_error_is_genre_error_subclass():
+    """`LoaderError` integrates with the existing `GenreError` hierarchy so
+    callers catching the genre exception family pick up magic-load failures."""
+    from sidequest.genre.error import GenreError
+    from sidequest.genre.magic_loader import LoaderError as InternalLoaderError
+
+    assert issubclass(InternalLoaderError, GenreError)
+
+
+def test_loader_symbols_exported_via_genre_package():
+    """`from sidequest.genre import LoaderError, load_world_magic` works."""
+    from sidequest.genre import LoaderError as PublicLoaderError
+    from sidequest.genre import load_world_magic as public_load
+    from sidequest.genre.magic_loader import LoaderError as InternalLoaderError
+    from sidequest.genre.magic_loader import load_world_magic as internal_load
+
+    assert PublicLoaderError is InternalLoaderError
+    assert public_load is internal_load
+
+
+def test_malformed_hard_limit_raises_loader_error():
+    """A genre YAML with a hard_limit missing required `description` should
+    surface as `LoaderError`, not raw `pydantic.ValidationError`."""
+    bad_genre = GENRE_YAML.read_text(encoding="utf-8").replace(
+        '  - id: no_resurrection\n    description: "Death is permanent. No one comes back."',
+        "  - id: no_resurrection",  # description stripped
+    )
+    bad_path = FIXTURES / "_bad_hardlimit.yaml"
+    bad_path.write_text(bad_genre, encoding="utf-8")
+    try:
+        with pytest.raises(LoaderError, match="hard_limits invalid"):
+            load_world_magic(genre_yaml=bad_path, world_yaml=WORLD_YAML)
+    finally:
+        bad_path.unlink(missing_ok=True)
+
+
 def test_narrator_register_falls_through_to_plugin_default_when_neither_overrides():
     """If neither world nor genre supplies narrator_register, the plugin's
     default register surfaces. Bare-bones genre + bare-bones world — the

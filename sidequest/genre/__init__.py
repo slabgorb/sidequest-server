@@ -28,6 +28,7 @@ from sidequest.genre.loader import (
     load_genre_pack,
     load_genre_pack_cached,
 )
+from sidequest.genre.magic_loader import LoaderError, load_world_magic
 from sidequest.genre.models import (
     AdvancementEffect,
     AdvancementTier,
@@ -86,6 +87,9 @@ __all__ = [
     "find_pack_dir",
     "load_genre_pack",
     "load_genre_pack_cached",
+    # magic_loader
+    "LoaderError",
+    "load_world_magic",
     # resolve (trope inheritance)
     "resolve_trope_inheritance",
     # archetype shim
