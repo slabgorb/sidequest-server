@@ -247,6 +247,30 @@ with how seriously the prose treats the cost. CLEAR aggressively when \
 the prose resolves a condition: a status the narrator stops mentioning \
 is NOT cleared by silence.
 
+magic_working: Object. Emit when your narration depicts a character using
+magic — innate psychic touch, an item firing, an alien artifact responding,
+any working from the world's allowed magic sources. Format:
+  "magic_working": {
+    "plugin": "<one of world's active_plugins, e.g. innate_v1, item_legacy_v1>",
+    "mechanism": "<one of: faction|place|time|condition|native|discovery|relational|cosmic>",
+    "actor": "<character name>",
+    "costs": {"<cost_type>": <0.0..1.0>, ...},
+    "domain": "<one of: psychic|physical|spatial|temporal|illusory|divinatory|necromantic|elemental|transmutative|alchemical>",
+    "narrator_basis": "<one-sentence why this is a working>",
+    // Plugin-required fields:
+    //   innate_v1: flavor (acquired|born_to_it|trained_register|covenant_lineage), consent_state (involuntary|willing)
+    //   item_legacy_v1: item_id, alignment_with_item_nature (-1.0..1.0)
+  }
+
+CRITICAL MAGIC RULE — MANDATORY when your prose depicts a working:
+If any character does something that the world's magic system would track
+(psychic perception, named-gun firing with significance, alien artifact
+response, etc.), you MUST emit magic_working. The system enforces hard_limits
+and tracks costs against the visible ledger; describing magic in prose
+without emitting magic_working is the same class of error as describing an
+item changing hands without emitting items_lost — the narration diverges
+from the game state. Don't describe a working you can't account for.
+
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch
 {}

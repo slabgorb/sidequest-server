@@ -461,6 +461,12 @@ class TurnContext:
     # Typed as Any to avoid a circular import on ResolutionSignal.
     pending_resolution_signal: Any = None
 
+    # Magic state for the current world (Valley zone).
+    # When non-None, build_narrator_prompt injects the magic-context block so
+    # the narrator knows the active plugins, hard_limits, and per-actor ledger
+    # bars before composing narration for any magic working.
+    magic_state: Any = None  # runtime type: sidequest.magic.state.MagicState | None
+
     # Per-turn phase-timing accumulator (Story: phase-timing instrumentation).
     # Defaults to PhaseTimings.NULL so legacy fixtures and partial mocks
     # continue to work without provisioning a real timer. Real instances
@@ -1250,6 +1256,27 @@ class Orchestrator:
                 ),
             )
 
+        # Magic context (Valley zone) — injected when a world has magic.yaml loaded.
+        # Tells the narrator which plugins are active, what the hard_limits are,
+        # and the per-actor ledger bars so it can emit magic_working correctly.
+        if context.magic_state is not None:
+            from sidequest.magic.context_builder import build_magic_context_block
+
+            magic_block = build_magic_context_block(
+                magic_state=context.magic_state,
+                actor_id=context.character_name or None,
+            )
+            if magic_block:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "magic_context",
+                        f"<magic-context>\n{magic_block}\n</magic-context>",
+                        AttentionZone.Valley,
+                        SectionCategory.State,
+                    ),
+                )
+
         # Active trope summary (Valley zone)
         if context.active_trope_summary:
             registry.register_section(
@@ -1741,6 +1768,7 @@ async def run_narration_turn(
         party_peers=party_peers,
         statuses_by_actor=statuses_by_actor,
         pending_resolution_signal=pending_signal,
+        magic_state=session.magic_state,
     )
 
     orchestrator = Orchestrator(client=client)
