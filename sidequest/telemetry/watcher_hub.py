@@ -97,10 +97,34 @@ class WatcherHub:
     async def _broadcast(self, event: dict[str, Any]) -> None:
         async with self._lock:
             targets = list(self._subscribers)
+        if not targets:
+            return
+        # Pre-serialize once with a tolerant encoder to a JSON-safe dict.
+        # This decouples encoding errors (one bad publisher) from
+        # delivery errors (one dead subscriber). Without this, a Pydantic
+        # ``NonBlankString`` (or any other non-stdlib JSON value) hidden
+        # in an event raised ``TypeError`` inside Starlette's
+        # ``send_json``; the per-subscriber ``except`` then treated every
+        # live WebSocket as dead and evicted the GM dashboard.
+        # (Playtest 2026-04-29.)
+        try:
+            safe_event = json.loads(
+                json.dumps(event, default=_json_default, separators=(",", ":"))
+            )
+        except (TypeError, ValueError) as exc:
+            # One bad event must not kill subscribers. Log loudly so the
+            # offending publisher is fixable, then drop the event.
+            logger.warning(
+                "watcher_hub.serialize_failed event_type=%s err=%r — event dropped, subscribers preserved",
+                event.get("event_type", "?"),
+                exc,
+            )
+            self._dropped_count += 1
+            return
         dead: list[_Sendable] = []
         for ws in targets:
             try:
-                await ws.send_json(event)
+                await ws.send_json(safe_event)
             except Exception:  # noqa: BLE001 — broadcast is best-effort
                 dead.append(ws)
         if dead:
@@ -112,6 +136,34 @@ class WatcherHub:
                 len(dead),
                 len(self._subscribers),
             )
+
+
+def _json_default(obj: Any) -> Any:
+    """Tolerant JSON fallback for watcher events.
+
+    Subsystem code publishes typed values that the standard ``json``
+    module can't encode — most commonly Pydantic ``RootModel`` newtypes
+    (``NonBlankString``, ``Stat``) and ``datetime``. Coercing to ``str``
+    is the right call for the GM dashboard: the dashboard treats event
+    values as opaque labels, and a string representation preserves
+    every field that any subsystem cares to inspect.
+
+    Falls through to ``TypeError`` for anything else so a genuinely bad
+    event surfaces in the per-event ``serialize_failed`` warning rather
+    than silently degrading.
+    """
+    # Pydantic RootModel — covers NonBlankString, Stat, and any future
+    # transparent newtype.
+    root = getattr(obj, "root", None)
+    if root is not None and isinstance(root, (str, int, float, bool)):
+        return root
+    # ``datetime``/``date``/``UUID``: ``str()`` round-trips. Same for
+    # ``Path`` and ``Decimal``.
+    if isinstance(obj, (datetime, )):
+        return obj.isoformat()
+    if hasattr(obj, "__str__"):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 # Module-level singleton. FastAPI runs one app per process, so a single
