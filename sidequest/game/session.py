@@ -35,6 +35,7 @@ from sidequest.game.resource_pool import (
 from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
 from sidequest.genre.models.rules import ResourceDeclaration
+from sidequest.magic.state import MagicState
 
 # ---------------------------------------------------------------------------
 # NarrativeEntry — narrative log entries
@@ -426,6 +427,10 @@ class GameSnapshot(BaseModel):
     # to populate [ENCOUNTER RESOLVED] zone; cleared after consumption.
     pending_resolution_signal: ResolutionSignal | None = None
 
+    # Magic system state (Coyote Reach iteration 2). None on saves that
+    # predate magic or on worlds without a magic config.
+    magic_state: MagicState | None = None
+
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route
     # an unbound player_id to chargen instead of handing them the first
@@ -547,7 +552,7 @@ class GameSnapshot(BaseModel):
     # State mutation methods
     # ------------------------------------------------------------------
 
-    def replace_with(self, other: "GameSnapshot") -> None:
+    def replace_with(self, other: GameSnapshot) -> None:
         """Copy every field of ``other`` onto this snapshot in place.
 
         Used when the chargen-complete pipeline materializes a fresh

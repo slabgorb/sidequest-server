@@ -216,3 +216,35 @@ def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
     assert any(
         "magic.unrouted_cost" in r.message and "karma" in r.message for r in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Wiring tests — GameSnapshot.magic_state (Task 2.3)
+# ---------------------------------------------------------------------------
+
+
+def test_game_snapshot_magic_state_field_defaults_none():
+    """GameSnapshot.magic_state must default to None (legacy-save compat)."""
+    from sidequest.game.session import GameSnapshot
+
+    snap = GameSnapshot()
+    assert snap.magic_state is None
+    # Verify the field metadata agrees — no model_validator migration (architect Q4).
+    field_info = GameSnapshot.model_fields["magic_state"]
+    assert field_info.default is None
+
+
+def test_game_snapshot_magic_state_roundtrips(world_config):
+    """GameSnapshot round-trips MagicState through model_dump / model_validate."""
+    from sidequest.game.session import GameSnapshot
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+
+    snap = GameSnapshot(magic_state=state)
+    dumped = snap.model_dump()
+    restored = GameSnapshot.model_validate(dumped)
+
+    assert restored.magic_state is not None
+    sanity_key = BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity")
+    assert restored.magic_state.get_bar(sanity_key).value == pytest.approx(1.0)
