@@ -27,6 +27,7 @@ from sidequest.server.session_helpers import (
 from sidequest.telemetry.spans import (
     inventory_narrator_extracted_span,
     lore_established_span,
+    magic_working_span,
     npc_auto_registered_span,
     quest_update_span,
 )
@@ -241,6 +242,71 @@ def apply_magic_working(
         apply_result = snapshot.magic_state.apply_working(working)
     except KeyError as e:
         raise MagicWorkingParseError(f"unknown actor: {e}") from e
+
+    # Task 3.5: emit ``magic.working`` OTEL span + watcher publish so the
+    # GM panel sees every working land. Build the post-apply ledger
+    # snapshot from the bars touched by this working — world-scope bars
+    # (no character-scope bar for the cost type, e.g. ``vitality`` on a
+    # world that doesn't track it on the character) are tolerated via
+    # ``KeyError`` skip per architect plan §3.5: not every cost_type is
+    # surfaced as a character-scope bar; that's a config truth, not a
+    # silent fallback for a missing-data bug.
+    from sidequest.magic.state import BarKey
+
+    ledger_after: dict[str, float] = {}
+    for cost_type in working.costs:
+        try:
+            bar = snapshot.magic_state.get_bar(
+                BarKey(
+                    scope="character", owner_id=working.actor, bar_id=cost_type,
+                )
+            )
+        except KeyError:
+            continue
+        ledger_after[cost_type] = bar.value
+
+    with magic_working_span(
+        plugin=working.plugin,
+        mechanism=working.mechanism,
+        actor=working.actor,
+        domain=working.domain,
+        narrator_basis=working.narrator_basis,
+        costs_debited=dict(working.costs),
+        flags=flags,
+        ledger_after=ledger_after,
+        flavor=working.flavor,
+        consent_state=working.consent_state,
+        item_id=working.item_id,
+        alignment_with_item_nature=working.alignment_with_item_nature,
+    ):
+        # Direct watcher publish so OTEL-less paths (unit tests, headless
+        # playtest drivers without a TracerProvider) still see the
+        # working on the dashboard event feed. Mirrors the ``encounter``
+        # / ``inventory`` dual-path pattern elsewhere in this module.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "magic_state",
+                "op": "working",
+                "plugin": working.plugin,
+                "actor": working.actor,
+                "mechanism_engaged": working.mechanism,
+                "domain": working.domain,
+                "narrator_basis": working.narrator_basis,
+                "costs_debited": dict(working.costs),
+                "flags": [f.model_dump() for f in flags],
+                "ledger_after": ledger_after,
+                "flavor": working.flavor or "",
+                "consent_state": working.consent_state or "",
+                "item_id": working.item_id or "",
+                "alignment_with_item_nature": (
+                    float(working.alignment_with_item_nature)
+                    if working.alignment_with_item_nature is not None
+                    else 0.0
+                ),
+            },
+            component="magic",
+        )
 
     return MagicApplyResult(apply=apply_result, flags=flags)
 
