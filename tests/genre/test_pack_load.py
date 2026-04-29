@@ -7,14 +7,13 @@ See Task 27 — canary migration for dual-track momentum Phase 3.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models.pack import GenrePack
+from tests._helpers.genre_paths import GENRE_PACKS_DIR, find_pack_path
 
-CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+CONTENT_ROOT = GENRE_PACKS_DIR
 CC_PACK_DIR = CONTENT_ROOT / "caverns_and_claudes"
 
 
@@ -24,7 +23,7 @@ def _has_real_content() -> bool:
 
 def load_pack(slug: str) -> GenrePack:
     """Load a genre pack by slug from the sidequest-content tree."""
-    return load_genre_pack(CONTENT_ROOT / slug)
+    return load_genre_pack(find_pack_path(slug))
 
 
 @pytest.mark.skipif(not _has_real_content(), reason="sidequest-content not on disk")

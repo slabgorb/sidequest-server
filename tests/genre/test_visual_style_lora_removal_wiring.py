@@ -22,6 +22,7 @@ import yaml
 
 from sidequest.genre.loader import load_genre_pack
 from sidequest.genre.models import VisualStyle
+from tests._helpers.genre_paths import find_pack_path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVER_SRC = REPO_ROOT / "sidequest-server" / "sidequest"
@@ -76,7 +77,7 @@ class TestVisualStyleLoaderStillWorks:
         round-trip through the loader to a VisualStyle whose values match
         the on-disk pack content.
         """
-        pack = load_genre_pack(CONTENT_GENRE_PACKS / "heavy_metal")
+        pack = load_genre_pack(find_pack_path("heavy_metal"))
         visual_style = pack.visual_style
         assert isinstance(visual_style, VisualStyle), (
             f"Expected VisualStyle, got {type(visual_style).__name__}"

@@ -19,6 +19,7 @@ from sidequest.genre.models.visibility import (
     load_baseline,
     load_overrides,
 )
+from tests._helpers.genre_paths import GENRE_PACKS_DIR, find_pack_path
 
 
 SAMPLE_BASELINE = """
@@ -69,7 +70,6 @@ def test_loader_fails_loudly_on_missing_pack_file(tmp_path):
 # ---------------------------------------------------------------------------
 
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content"
-GENRE_PACKS_DIR = CONTENT_ROOT / "genre_packs"
 
 
 @pytest.mark.parametrize(
@@ -84,7 +84,7 @@ GENRE_PACKS_DIR = CONTENT_ROOT / "genre_packs"
     ],
 )
 def test_every_shipping_pack_has_valid_baseline(pack):
-    path = GENRE_PACKS_DIR / pack / "visibility_baseline.yaml"
+    path = find_pack_path(pack) / "visibility_baseline.yaml"
     assert path.exists(), f"missing: {path}"
     baseline = load_baseline(path)
     assert baseline.tone in ("broadcast_heavy", "balanced", "secret_heavy")

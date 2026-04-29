@@ -24,6 +24,7 @@ from sidequest.server.dispatch.culture_context import (
     resolve_culture_reference,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
+from tests._helpers.genre_paths import find_pack_path
 from tests.server.conftest import mock_claude_client_factory
 
 
@@ -104,8 +105,8 @@ class TestEvropiLoreOnlyNotLeaked:
     """Live-pack wiring check — evropi authored three lore-only cultures."""
 
     def test_ingurdios_tismenni_yrs_excluded_from_reference(self) -> None:
-        content_root = _content_root()
-        pack = load_genre_pack(content_root / "genre_workshopping" / "heavy_metal")
+        _content_root()  # skip if sidequest-content unavailable
+        pack = load_genre_pack(find_pack_path("heavy_metal"))
 
         reference = resolve_culture_reference(pack, "evropi")
 
@@ -141,10 +142,14 @@ class TestEvropiLoreOnlyNotLeaked:
 
 class TestSessionHandlerWiresWorldContext:
     def test_connect_to_evropi_populates_filtered_world_context(self, tmp_path: Path) -> None:
-        content_root = _content_root()
+        _content_root()  # skip if sidequest-content unavailable
+        # Use the resolved pack's parent root so the handler's pack-search
+        # logic can locate "heavy_metal" regardless of which content root
+        # currently houses it (genre_packs/ vs genre_workshopping/).
+        heavy_metal_root = find_pack_path("heavy_metal").parent
         handler = WebSocketSessionHandler(
             claude_client_factory=mock_claude_client_factory(),
-            genre_pack_search_paths=[content_root / "genre_workshopping"],
+            genre_pack_search_paths=[heavy_metal_root],
             save_dir=tmp_path,
         )
 
