@@ -160,7 +160,17 @@ def test_narrator_register_falls_through_to_plugin_default_when_neither_override
     default register surfaces. Bare-bones genre + bare-bones world — the
     plugin descriptor's narrator_register should be the result.
 
-    Implementer note: this test exercises the full three-layer fallback
-    chain. Resolve before Phase 1 cut-point.
+    Resolution: plugin-default fallback (layer 1) belongs in the narrator
+    context builder (Task 3.1), not in the YAML loader. The loader handles
+    layers (2) and (3) only — world > genre > "". The context builder
+    imports the active plugin descriptors and composes their
+    narrator_register with what this loader returns. This test will be
+    moved to the context-builder test suite in Task 3.1.
     """
-    pytest.skip("fixture-authoring TODO — see implementer note")
+    pytest.skip(
+        "Plugin-default fallback for narrator_register is handled by the "
+        "narrator context builder (Task 3.1), not the YAML loader. The "
+        "loader returns world > genre > '' as the YAML-composition layer; "
+        "the consumer composes that with descriptor.narrator_register. "
+        "This test will be moved to the context-builder test suite."
+    )

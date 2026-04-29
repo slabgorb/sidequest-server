@@ -16,6 +16,14 @@ Last-writer-wins per field. The composer walks fields independently;
 overriding `narrator_register` does not also override `ledger_bar_templates`.
 The active_plugins/permitted_plugins/allowed_sources gates are NOT
 overridable — the world MUST be a strict subset of what the genre permits.
+
+**This loader implements layers (2) and (3) only.** Plugin-default
+fallback (layer 1) is the consumer's responsibility — the narrator
+context builder (Task 3.1) imports the active plugin descriptors and
+composes their `narrator_register` with the value this loader returns.
+The split keeps the loader free of any plugin-registry dependency and
+makes the composition order observable at the call site that actually
+consumes it.
 """
 from __future__ import annotations
 
