@@ -18,7 +18,6 @@ square across the temple") crosses the threshold and resolves the encounter.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest

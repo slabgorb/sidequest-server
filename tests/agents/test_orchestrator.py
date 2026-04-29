@@ -24,8 +24,6 @@ from sidequest.agents.orchestrator import (
     _strip_json_fence,
     extract_structured_from_response,
 )
-from sidequest.agents.prompt_framework.core import PromptRegistry
-from sidequest.agents.prompt_framework.types import AttentionZone
 from sidequest.protocol.dispatch import (
     DispatchPackage,
     NarratorDirective,

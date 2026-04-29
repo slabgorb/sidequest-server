@@ -36,8 +36,6 @@ from sidequest.protocol import GameMessage
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
-    SessionEventMessage,
-    SessionEventPayload,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import LobbyState, RoomRegistry

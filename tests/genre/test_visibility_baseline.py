@@ -17,7 +17,6 @@ from sidequest.genre.models.visibility import (
     VisibilityOverrides,
     effective_visibility,
     load_baseline,
-    load_overrides,
 )
 from tests._helpers.genre_paths import GENRE_PACKS_DIR, find_pack_path
 

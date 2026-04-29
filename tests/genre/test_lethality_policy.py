@@ -118,7 +118,6 @@ def test_loader_rejects_genre_key_mismatch(tmp_path: Path):
 
 def test_genre_pack_exposes_lethality_policy():
     """Once a pack is loaded, its `lethality_policy` attribute is populated."""
-    from pathlib import Path
 
     from sidequest.genre.loader import load_genre_pack
 
@@ -136,7 +135,6 @@ def test_load_genre_pack_wraps_malformed_lethality_policy_in_genre_load_error(tm
     failure flows through GenreLoadError so callers get a unified surface.
     """
     import shutil
-    from pathlib import Path
 
     from sidequest.genre.error import GenreLoadError
     from sidequest.genre.loader import load_genre_pack

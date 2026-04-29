@@ -9,7 +9,6 @@ Scope note:
 """
 import json
 
-import pytest
 
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
 from sidequest.agents.prompt_redaction import redact_dispatch_package
