@@ -538,7 +538,10 @@ class ConnectHandler:
                 and snapshot.turn_manager.interaction == 0
             ):
                 opening = resolve_opening(
-                    genre_pack, row.world_slug, row.genre_slug
+                    genre_pack,
+                    row.world_slug,
+                    row.genre_slug,
+                    mode=GameMode(row.mode),
                 )
             opening_seed: str | None = None
             opening_directive: str | None = None

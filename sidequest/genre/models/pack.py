@@ -36,6 +36,7 @@ from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
+    MpOpening,
     OpeningHook,
     PowerTier,
     Prompts,
@@ -132,6 +133,7 @@ class World(BaseModel):
     portrait_manifest: list[PortraitManifestEntry] = Field(default_factory=list)
     archetype_funnels: ArchetypeFunnels | None = None
     openings: list[OpeningHook] = Field(default_factory=list)
+    mp_openings: list[MpOpening] = Field(default_factory=list)
     char_creation: list[CharCreationScene] = Field(default_factory=list)
 
 

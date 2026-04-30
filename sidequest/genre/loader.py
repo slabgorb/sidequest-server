@@ -37,6 +37,7 @@ from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
+    MpOpening,
     OpeningHook,
     PowerTier,
     Prompts,
@@ -392,6 +393,16 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         else []
     )
 
+    # World-tier multiplayer openings — see worlds/{slug}/mp_opening.yaml
+    # for the canonical shape (e.g., coyote_star/mp_opening.yaml). The
+    # file's top-level `mp_openings:` list is the source of truth.
+    mp_openings_raw = _load_yaml_raw_optional(world_path / "mp_opening.yaml")
+    mp_openings: list[MpOpening] = []
+    if isinstance(mp_openings_raw, dict):
+        entries = mp_openings_raw.get("mp_openings")
+        if isinstance(entries, list):
+            mp_openings = [MpOpening.model_validate(o) for o in entries]
+
     char_creation_raw = _load_yaml_raw_optional(world_path / "char_creation.yaml")
     char_creation: list[CharCreationScene] = (
         [CharCreationScene.model_validate(c) for c in char_creation_raw]
@@ -425,6 +436,7 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         portrait_manifest=portrait_manifest,
         archetype_funnels=archetype_funnels,
         openings=openings,
+        mp_openings=mp_openings,
         char_creation=char_creation,
     )
 
