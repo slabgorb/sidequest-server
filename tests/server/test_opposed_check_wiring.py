@@ -373,9 +373,19 @@ def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, 
 
 
 def test_narration_apply_opposed_check_hard_fails_without_pending_state():
-    """opposed_check is dice-throw-only — narrator-only path is
-    structurally ineligible because PC mechanical actions must trace back
-    to an explicit DICE_THROW frame. Verify the loud-failure path."""
+    """opposed_check is dice-throw-only on the explicit-action path —
+    if ``dispatch_dice_throw`` reaches us without stashing the player
+    roll, that IS a programming error and must fail loud (CLAUDE.md
+    no-silent-fallback). Verify the loud-failure path is preserved
+    for ``from_explicit_action=True``.
+
+    The narrator-prose path (``from_explicit_action=False``) has a
+    different handling — see
+    ``test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_path``
+    below. That path redirects to "wait for dice" instead of crashing,
+    because production reaches that state when a player typed text
+    in combat without rolling first.
+    """
     enc = _make_encounter()
     pack = _make_pack(_opposed_cdef())
     snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
@@ -393,6 +403,75 @@ def test_narration_apply_opposed_check_hard_fails_without_pending_state():
             snapshot, result, player_name="p1", pack=pack,
             from_explicit_action=True,
         )
+
+
+def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_path():
+    """Playtest 2026-04-30 4-player MP regression. Production reaches
+    a state where:
+
+    1. An opposed_check encounter is active (Firefight in The Pit).
+    2. The player submits a text PLAYER_ACTION (no DICE_THROW yet).
+    3. The narrator returns beats including opponent-side selections.
+    4. ``_filter_inferred_pc_beats`` drops the PC-side beats but
+       keeps opponent ones (NPCs don't need the consent contract).
+    5. ``_apply_narration_result_to_snapshot`` enters the
+       opposed_check branch with no ``pending_player_d20``.
+    6. Pre-fix: ``_resolve_opposed_check_branch`` raised ValueError
+       on every NPC beat — the WS handler caught it as
+       ``ws.unexpected_error`` and disconnected the session.
+
+    The fix redirects: when ``from_explicit_action=False`` AND
+    ``opposed_player_d20`` is None, drop the opponent selections,
+    log the awaiting-dice state, and short-circuit the resolver.
+    The narrator's prose still applies, the encounter persists, and
+    a subsequent DICE_THROW completes the round.
+
+    Asserts:
+
+    - No ValueError raised.
+    - Encounter is NOT marked resolved.
+    - Both player/opponent dials remain at starting values.
+    - Encounter actors and roles are untouched.
+    """
+    enc = _make_encounter()
+    pack = _make_pack(_opposed_cdef())
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+
+    result = NarrationTurnResult(
+        narration="The Knife-Hand circles, watching where your weight goes.",
+        beat_selections=[
+            BeatSelection(actor="Wolf", beat_id="attack", outcome=RollOutcome.Success),
+        ],
+    )
+
+    # No exception expected — the awaiting-dice branch handles the
+    # absent stash cleanly on the narrator-prose path.
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        opposed_player_d20=None,
+        opposed_player_beat_id=None,
+        opposed_player_actor=None,
+        from_explicit_action=False,
+    )
+
+    assert not enc.resolved, (
+        "encounter must NOT be resolved on the awaiting-dice path — "
+        "no resolution can fire without a paired player d20"
+    )
+    assert enc.player_metric.current == 0, (
+        "player dial must not advance on the awaiting-dice path"
+    )
+    assert enc.opponent_metric.current == 0, (
+        "opponent dial must not advance on the awaiting-dice path — "
+        "the opponent beat selection was dropped, not applied"
+    )
+    assert snapshot.pending_resolution_signal is None, (
+        "no resolution signal should fire on the awaiting-dice path"
+    )
 
 
 # ---------------------------------------------------------------------------
