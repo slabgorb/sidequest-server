@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.game.builder import CharacterBuilder
+from sidequest.game.chassis import init_chassis_registry
 from sidequest.game.event_log import EventLog
 from sidequest.game.persistence import (
     SaveSchemaIncompatibleError,
@@ -928,6 +929,7 @@ class ConnectHandler:
                 location="Unknown",
             )
             store.init_session(genre_slug, world_slug)
+            init_chassis_registry(snapshot, genre_pack)
             has_character = False
             logger.info(
                 "session.new_session genre=%s world=%s player=%s",

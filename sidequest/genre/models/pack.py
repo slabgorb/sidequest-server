@@ -27,6 +27,7 @@ from sidequest.genre.models.character import (
     NpcArchetype,
     VisualStyle,
 )
+from sidequest.genre.models.chassis import ChassisClassesConfig
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.models.inventory import InventoryConfig
 from sidequest.genre.models.legends import Legend
@@ -157,6 +158,7 @@ class GenrePack(BaseModel):
     prompts: Prompts
     tropes: list[TropeDefinition] = Field(default_factory=list)
     beat_vocabulary: BeatVocabulary | None = None
+    chassis_classes: ChassisClassesConfig | None = None
     achievements: list[Achievement] = Field(default_factory=list)
     voice_presets: VoicePresets | None = None
     power_tiers: dict[str, list[PowerTier]] = Field(default_factory=dict)

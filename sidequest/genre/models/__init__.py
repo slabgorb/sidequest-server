@@ -64,6 +64,19 @@ from sidequest.genre.models.character import (
     NpcArchetype,
     VisualStyle,
 )
+from sidequest.genre.models.chassis import (
+    BondTier,
+    ChassisClass,
+    ChassisClassesConfig,
+    ChassisVoiceSpec,
+    CrewAwareness,
+    CrewModel,
+    CrewRoleSpec,
+    EmbodimentModel,
+    InteriorRoomSpec,
+    PsiResonanceSpec,
+    ScaleBand,
+)
 from sidequest.genre.models.culture import CorpusRef, Culture, CultureSlot
 from sidequest.genre.models.inventory import (
     CarryMode,
@@ -107,6 +120,12 @@ from sidequest.genre.models.progression import (
     LevelBonuses,
     ProgressionConfig,
     WealthTier,
+)
+from sidequest.genre.models.rigs_world import (
+    BondSeed,
+    ChassisInstanceConfig,
+    OceanScores,
+    RigsWorldConfig,
 )
 from sidequest.genre.models.rules import (
     BeatDef,
@@ -219,6 +238,18 @@ __all__ = [
     "AxesConfig",
     "AxisDefinition",
     "AxisPreset",
+    # chassis (rig framework — slice scope)
+    "BondTier",
+    "ChassisClass",
+    "ChassisClassesConfig",
+    "ChassisVoiceSpec",
+    "CrewAwareness",
+    "CrewModel",
+    "CrewRoleSpec",
+    "EmbodimentModel",
+    "InteriorRoomSpec",
+    "PsiResonanceSpec",
+    "ScaleBand",
     # character
     "BackstoryTables",
     "CharCreationChoice",
@@ -277,6 +308,11 @@ __all__ = [
     "LevelBonuses",
     "ProgressionConfig",
     "WealthTier",
+    # rigs_world (rig framework — slice scope)
+    "BondSeed",
+    "ChassisInstanceConfig",
+    "OceanScores",
+    "RigsWorldConfig",
     # rules
     "BeatDef",
     "ConfrontationDef",

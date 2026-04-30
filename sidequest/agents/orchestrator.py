@@ -43,6 +43,7 @@ from sidequest.agents.prompt_framework.types import (
     PromptSection,
     SectionCategory,
 )
+from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
@@ -387,6 +388,11 @@ class TurnContext:
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
     npcs: list[Npc] = field(default_factory=list)
+
+    # Chassis registry — chassis-as-speaker voice data (register, vocal tics,
+    # bond-tier address-form). Defensive copy from session.chassis_registry
+    # since TurnContext is a snapshot. Empty for non-rig genres.
+    chassis_registry: dict[str, ChassisInstance] = field(default_factory=dict)
 
     # Party peer identity packets (Story 37-36). Canonical name/pronouns/
     # race/class/level for every non-self PC in the session. Empty on
@@ -1223,6 +1229,18 @@ class Orchestrator:
                 agent_name, context.npc_registry
             )
 
+        # Chassis voices — chassis as named speakers with bond-tier name-form.
+        # See register_chassis_voice_section docstring; mirrors npc_roster
+        # discipline. Slice scope: addresses-form derived from the active
+        # character's name; bond_seed placeholder id "player_character"
+        # rebinds to real player_id at chargen wiring (follow-up).
+        if context.chassis_registry:
+            registry.register_chassis_voice_section(
+                agent_name,
+                context.chassis_registry,
+                context.character_name,
+            )
+
         # Party-peer roster — canonical identity anchor for other PCs.
         # Story 37-36 (port-drift reopen). In sealed-letter multiplayer,
         # Player A's narrator turn needs ground truth about Players B/C/...
@@ -1820,6 +1838,7 @@ async def run_narration_turn(
         available_sfx=available_sfx,
         npc_registry=list(session.npc_registry),
         npcs=list(session.npcs),
+        chassis_registry=dict(session.chassis_registry),
         party_peers=party_peers,
         statuses_by_actor=statuses_by_actor,
         pending_resolution_signal=pending_signal,

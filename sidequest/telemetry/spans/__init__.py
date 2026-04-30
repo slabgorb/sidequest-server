@@ -61,6 +61,7 @@ from .projection import *  # noqa: F401, F403
 from .rag import *  # noqa: F401, F403
 from .region_state import *  # noqa: F401, F403
 from .reminder import *  # noqa: F401, F403
+from .rig import *  # noqa: F401, F403
 from .room_state import *  # noqa: F401, F403
 from .scenario import *  # noqa: F401, F403
 from .scrapbook import *  # noqa: F401, F403
