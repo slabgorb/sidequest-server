@@ -26,6 +26,7 @@ import asyncio
 import builtins
 import json
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -33,6 +34,16 @@ from typing import Any, Protocol
 logger = logging.getLogger(__name__)
 
 _BUILTINS_HUB_ATTR = "_sidequest_watcher_hub_singleton"
+
+# When set, every ``publish_event`` call also opens-and-closes a tiny OTEL
+# span so the OTLP exporter (e.g. local Jaeger) sees the semantic event
+# stream — not just spans started via ``tracer().start_as_current_span``.
+# Default off to keep test event counts stable; opt-in via the env var.
+# ``WatcherSpanProcessor`` recognizes the synthetic marker attribute and
+# skips re-publishing them as ``agent_span_close`` events, so the GM
+# dashboard is unaffected.
+_WATCHER_AS_SPANS_ENABLED = os.environ.get("SIDEQUEST_WATCHER_AS_SPANS") == "1"
+WATCHER_SYNTHETIC_ATTR = "sidequest.watcher_synthetic"
 
 
 class _Sendable(Protocol):
@@ -267,6 +278,57 @@ def _maybe_persist_encounter_row(event: dict) -> None:
         _event_store = None
 
 
+def _coerce_attr_value(value: Any) -> Any:
+    """Coerce a watcher field value to an OTEL-attribute-safe primitive.
+
+    OTEL accepts ``str | bool | int | float`` and homogeneous sequences
+    of those — those pass through so Jaeger renders them as native arrays.
+    Anything else gets JSON-stringified using the same tolerant encoder
+    the WebSocket broadcast uses, so Pydantic newtypes, datetimes, etc.
+    round-trip the same way the dashboard sees them.
+    """
+    if isinstance(value, (str, bool, int, float)):
+        return value
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)) and value:
+        first_type = type(value[0])
+        if first_type in (str, int, float) and all(
+            type(x) is first_type for x in value
+        ):
+            return list(value)
+    try:
+        return json.dumps(value, default=_json_default, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _emit_watcher_span(
+    event_type: str,
+    fields: dict[str, Any],
+    component: str,
+    severity: str,
+) -> None:
+    """Mint a zero-duration OTEL span describing this watcher event.
+
+    Attaches as a child of any active span, so traces in Jaeger group
+    semantic events under the operation that triggered them.
+    """
+    # Local import keeps watcher_hub fastapi/uvicorn-free at module load
+    # (the import-cycle reason this module exists separately from
+    # ``sidequest.server.watcher`` — see module docstring).
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("sidequest-server.watcher")
+    with tracer.start_as_current_span(f"watcher.{event_type}") as span:
+        span.set_attribute(WATCHER_SYNTHETIC_ATTR, "1")
+        span.set_attribute("watcher.event_type", event_type)
+        span.set_attribute("watcher.component", component)
+        span.set_attribute("watcher.severity", severity)
+        for k, v in fields.items():
+            span.set_attribute(f"field.{k}", _coerce_attr_value(v))
+
+
 def publish_event(
     event_type: str,
     fields: dict[str, Any],
@@ -280,6 +342,11 @@ def publish_event(
     ``sidequest-ui/src/types/watcher.ts``). Safe to call from any thread;
     drops silently if the hub has no bound event loop yet (process
     startup race) or no subscribers (dashboard closed).
+
+    When ``SIDEQUEST_WATCHER_AS_SPANS=1`` also mints a synthetic OTEL
+    span so OTLP exporters (Jaeger) can see semantic events alongside
+    real spans. The dashboard is unaffected: ``WatcherSpanProcessor``
+    skips synthetic spans rather than double-publishing them.
 
     :param event_type: One of the ``WatcherEventType`` union members
         (``turn_complete``, ``state_transition``, ``game_state_snapshot``,
@@ -301,3 +368,5 @@ def publish_event(
         }
     )
     _maybe_persist_encounter_row({"event_type": event_type, "fields": fields})
+    if _WATCHER_AS_SPANS_ENABLED:
+        _emit_watcher_span(event_type, fields, component, severity)
