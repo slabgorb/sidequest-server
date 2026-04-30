@@ -420,6 +420,41 @@ class Validator:
                 self._queue.task_done()
 
     async def _validate(self, record: TurnRecord) -> None:
+        # Build the Timeline `spans` array from `phase_durations_ms`.
+        # Pre-fix the dashboard fell back to a single `agent_llm` bar
+        # filling the row at full width, so a reader couldn't tell
+        # what fraction of the turn was spent in prompt assembly /
+        # narrator subprocess / state apply / persistence / broadcast
+        # (playtest 2026-04-30 #7). Phases are laid out monotonically
+        # in dict iteration order — the timings collector
+        # (`sidequest/telemetry/turn_timings.py`) inserts them in
+        # observed order, so the bars line up with the actual
+        # pipeline sequence.
+        phase_spans: list[dict] = []
+        running = 0
+        for phase_name, duration_ms in record.phase_durations_ms.items():
+            phase_spans.append(
+                {
+                    "name": phase_name,
+                    "component": "pipeline",
+                    "start_ms": running,
+                    "duration_ms": int(duration_ms),
+                }
+            )
+            running += int(duration_ms)
+        # Tail-add `agent_llm` if it isn't already broken out into
+        # phases (e.g. degraded turns missing per-phase data) so the
+        # Timeline always has at least one bar.
+        if not phase_spans:
+            phase_spans.append(
+                {
+                    "name": "agent_llm",
+                    "component": record.agent_name or "narrator",
+                    "start_ms": 0,
+                    "duration_ms": int(record.agent_duration_ms),
+                }
+            )
+
         publish_event(
             "turn_complete",
             {
@@ -442,6 +477,10 @@ class Validator:
                 "token_count_out": record.token_count_out,
                 "extraction_tier": record.extraction_tier,  # int
                 "is_degraded": record.is_degraded,
+                # Timeline flame chart input — one bar per pipeline phase
+                # so the GM panel sees the actual sequence rather than a
+                # single agent_llm bar (playtest 2026-04-30 #7).
+                "spans": phase_spans,
                 # Mechanical detail
                 "patches": [
                     {"patch_type": p.patch_type, "fields_changed": list(p.fields_changed)}
@@ -451,7 +490,19 @@ class Validator:
                 "beats_fired": [
                     {"trope": t, "threshold": th} for t, th in record.beats_fired
                 ],
-                "delta_empty": not record.patches_applied and not record.beats_fired,
+                # Knowledge entries surfaced as footnotes this turn. The
+                # narrator's footnote pipeline is independent of the
+                # `patch.discovered_facts` path, so a turn that introduces
+                # new Knowledge Gained chips on the UI but no
+                # location/quest/lore patches used to read as
+                # `delta_empty: true` on the dashboard — the lie-detector
+                # missed real subsystem activity (playtest 2026-04-30 #8).
+                "footnotes_count": record.footnotes_count,
+                "delta_empty": (
+                    not record.patches_applied
+                    and not record.beats_fired
+                    and record.footnotes_count == 0
+                ),
             },
             component="validator",
             severity="warning" if record.is_degraded else "info",

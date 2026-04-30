@@ -288,12 +288,16 @@ function dispatch(ev) {
   if (ev.event_type === 'prompt_assembled') {
     S.promptEvents.push(ev);
     document.getElementById('tab5-badge').textContent = S.promptEvents.length;
-    // Update turn selector
+    // Update turn selector. Server emits both `agent_name` (canonical)
+    // and `agent` (alias) per playtest 2026-04-30 #1A — read either so
+    // an older daemon reflowing through this dashboard still labels
+    // entries correctly.
     const sel = document.getElementById('prompt-turn-select');
     const f = ev.fields || {};
     const opt = document.createElement('option');
     opt.value = S.promptEvents.length - 1;
-    opt.textContent = `T${f.turn_number||'?'} · ${f.agent||'?'} · ${f.total_tokens||0} tokens`;
+    const agentLabel = f.agent_name || f.agent || '?';
+    opt.textContent = `T${f.turn_number||'?'} · ${agentLabel} · ${f.total_tokens||0} tokens`;
     sel.appendChild(opt);
     if (S.activeTab === 5) renderPrompt();
   }
@@ -371,6 +375,7 @@ function selectTurn(i) {
     <br>· <b>Tokens:</b> ${f.token_count_in||0} in / ${f.token_count_out||0} out &nbsp; <b>Tier:</b> ${f.extraction_tier||'?'} &nbsp; <b>Degraded:</b> ${f.is_degraded?'<span style="color:var(--red)">YES</span>':'no'}
     <br>· <b>Patches:</b> ${esc(patches)}
     <br>· <b>Beats:</b> ${esc(beats)}
+    <br>· <b>Knowledge:</b> ${f.footnotes_count||0} ${(f.footnotes_count||0) > 0 ? 'new entries' : ''}
     <br>· <b>Delta empty:</b> ${f.delta_empty}
     </div>`;
 }

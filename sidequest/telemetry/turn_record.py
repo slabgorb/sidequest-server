@@ -53,3 +53,12 @@ class TurnRecord:
     phase_durations_ms: dict[str, int] = field(default_factory=dict)
     phase_call_counts: dict[str, int] = field(default_factory=dict)
     total_duration_ms: int = 0
+    # Count of footnote knowledge entries emitted by the narrator this turn.
+    # Footnotes are the "Knowledge Gained" entries that surface in the UI
+    # chip and as `state_transition field=footnotes` watcher events. They
+    # do NOT go through the `patch.discovered_facts` path today, so the
+    # validator's `delta_empty` computation must include them explicitly
+    # — otherwise a turn that introduces 3 new knowledge entries but
+    # no location/quest/lore patches reads as `Patches: none, Delta empty:
+    # true` on the dashboard (playtest 2026-04-30).
+    footnotes_count: int = 0
