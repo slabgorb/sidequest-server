@@ -106,6 +106,7 @@ from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.narration_apply import (
     _apply_narration_result_to_snapshot,
+    _handshake_resolved_tropes,
 )
 from sidequest.server.session_handler import (
     _AUDIO_INTERPRETER,
@@ -1439,6 +1440,15 @@ class WebSocketSessionHandler:
         timings = PhaseTimings(action_received_monotonic=time.monotonic())
         turn_context.phase_timings = timings
         submitted = False
+        # Story 45-20: capture trope-status baseline BEFORE any apply step
+        # mutates statuses. The handshake fires post-record_interaction and
+        # diffs this baseline against the live snapshot to detect any trope
+        # whose status flipped to "resolved" — chapter promotion (today),
+        # narrator extraction or engine tick (future). Capturing late
+        # would mask the diff.
+        trope_status_baseline: dict[str, str] = {
+            t.id: t.status for t in snapshot.active_tropes
+        }
         # Capture the watcher→OTLP synthetic-span counter at turn start so the
         # finally-block can log the per-turn delta. With this in the server
         # log a `grep turn.bridge_diagnostic /tmp/sidequest-server.log` reveals
@@ -1547,6 +1557,24 @@ class WebSocketSessionHandler:
                         recompute_arc_history(
                             snapshot, sd.cached_history_chapters
                         )
+
+                    # Story 45-20: trope-resolution handshake. Diffs the
+                    # baseline captured at the top of this method against
+                    # the post-recompute snapshot to detect any trope that
+                    # flipped to "resolved" this turn (chapter-promotion
+                    # path today; engine/narrator-extraction future).
+                    # Writes the durable record (quest_log entry +
+                    # active_stakes marker) and emits the handshake span
+                    # so the GM panel sees the path engaged. Idempotent
+                    # re-detect (already-resolved last turn) emits a span
+                    # with active_stakes_appended=False but does not
+                    # rewrite — the lie-detector signal Sebastien needs.
+                    _handshake_resolved_tropes(
+                        snapshot,
+                        trope_status_baseline,
+                        player_name=sd.player_name,
+                        source="chapter_promotion",
+                    )
 
                     now_encounter = snapshot.encounter
                     now_live = now_encounter is not None and not now_encounter.resolved
