@@ -1425,6 +1425,14 @@ class WebSocketSessionHandler:
         timings = PhaseTimings(action_received_monotonic=time.monotonic())
         turn_context.phase_timings = timings
         submitted = False
+        # Capture the watcher→OTLP synthetic-span counter at turn start so the
+        # finally-block can log the per-turn delta. With this in the server
+        # log a `grep turn.bridge_diagnostic /tmp/sidequest-server.log` reveals
+        # whether the bridge minted any spans for this turn — Jaeger-empty
+        # turns now have a hard, grep-able truth-value rather than a "did the
+        # bridge fire?" guessing game (playtest 2026-04-30 #Jaeger-bridge).
+        from sidequest.telemetry.watcher_hub import synthetic_spans_count  # noqa: PLC0415
+        bridge_minted_at_start = synthetic_spans_count()
         try:
             with turn_span(
                 turn_id=snapshot.turn_manager.interaction,
@@ -2162,6 +2170,38 @@ class WebSocketSessionHandler:
 
             with contextlib.suppress(Exception):  # finally must never re-raise
                 timings.mark_done()
+
+            # Per-turn watcher→OTLP bridge diagnostic + flush. Two birds:
+            # (1) prove the bridge fired during this turn — a non-zero
+            # ``minted`` value is hard evidence that publish_event saw the
+            # ``SIDEQUEST_WATCHER_AS_SPANS`` flag and minted synthetic spans,
+            # closing the "is the bridge live during gameplay?" question that
+            # the resume-only Jaeger output kept open. (2) force a tracer
+            # flush so the BatchSpanProcessor (default 2 s schedule) doesn't
+            # hide turn-level spans from a live Jaeger viewer for the next
+            # batch window. Both actions are wrapped in suppress() because
+            # diagnostics must NEVER fail a turn.
+            with contextlib.suppress(Exception):
+                minted = synthetic_spans_count() - bridge_minted_at_start
+                logger.info(
+                    "turn.bridge_diagnostic minted=%d turn=%d player=%s "
+                    "genre=%s world=%s",
+                    minted,
+                    snapshot.turn_manager.interaction,
+                    sd.player_id,
+                    sd.genre_slug,
+                    sd.world_slug,
+                )
+            with contextlib.suppress(Exception):
+                provider = trace.get_tracer_provider()
+                # ``force_flush`` is on the SDK ``TracerProvider``; the proxy
+                # provider used in tests / pre-init paths doesn't have it. A
+                # hasattr check avoids importing the SDK class here just to
+                # isinstance-check it.
+                flush = getattr(provider, "force_flush", None)
+                if callable(flush):
+                    flush(timeout_millis=200)
+
             if not submitted and self._validator is not None:
                 try:
                     degraded_record = TurnRecord(
