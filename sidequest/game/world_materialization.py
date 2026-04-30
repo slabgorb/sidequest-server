@@ -519,6 +519,127 @@ class WorldBuilder:
 
 
 # ---------------------------------------------------------------------------
+# Story 45-19 — arc-recompute cadence
+#
+# Felix's Playtest 3 (2026-04-19) reached turn 72 with a snapshot that
+# was still reporting ``campaign_maturity="Fresh"`` and four chapters
+# covering turns 1-30 only. The chargen path materialized once and no
+# subsequent caller ever invoked ``materialize_world`` again — so the
+# bug is the cadence, not the formula.
+#
+# ``ARC_RECOMPUTE_INTERVAL`` is the module-level tunable that the
+# dispatch loop consults via ``should_recompute_arc``. Default 5 means
+# a cadence tick every five interactions; the recompute is idempotent
+# on stable maturity so ticking past Veteran is a cheap confirmation
+# rather than a regression.
+# ---------------------------------------------------------------------------
+
+ARC_RECOMPUTE_INTERVAL: int = 5
+
+
+def should_recompute_arc(interaction: int) -> bool:
+    """Return True when the just-completed interaction is a tick turn.
+
+    Called by ``_execute_narration_turn`` after ``record_interaction``,
+    so ``interaction`` is the post-bump value. Interaction 0 is the
+    chargen materialization site — we never tick there because the
+    chargen path has already done a fresh ``materialize_from_genre_pack``
+    call. Negative values are defensive (a programming bug, not a
+    legitimate call), but they must not trip a recompute.
+    """
+    if interaction <= 0:
+        return False
+    return interaction % ARC_RECOMPUTE_INTERVAL == 0
+
+
+def recompute_arc_history(
+    snapshot: Any, chapters: list[HistoryChapter]
+) -> None:
+    """Recompute ``world_history`` / ``campaign_maturity`` and emit the
+    arc-tick OTEL spans.
+
+    The wrapper around ``materialize_world`` that the dispatch loop
+    calls on the cadence. Two spans always fire one of:
+
+    - ``world_history.arc_tick`` — every call (the lie-detector signal
+      Sebastien needs on the GM panel; a stable-tier no-op is still
+      observable).
+    - ``world_history.arc_promoted`` — only when the maturity tier
+      crosses upward, scoped for filtered views of the meaningful
+      transitions (Fresh→Early, Early→Mid, Mid→Veteran).
+
+    ``materialize_world`` keeps its own ``world.materialized`` span,
+    so the existing chargen-time materialization remains observable.
+    """
+    from sidequest.telemetry.spans import (
+        SPAN_WORLD_HISTORY_ARC_PROMOTED,
+        SPAN_WORLD_HISTORY_ARC_TICK,
+        Span,
+    )
+
+    interaction = int(
+        getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0
+    )
+    round_value = int(
+        getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0
+    )
+
+    chapters_before_ids = [getattr(ch, "id", "") for ch in snapshot.world_history]
+    chapters_before = len(chapters_before_ids)
+    # ``from_maturity`` is the maturity STRING the snapshot was last
+    # written with (chargen wrote ``Fresh``; subsequent ticks update the
+    # field). Comparing the stored string against the freshly-derived
+    # maturity is what makes the promotion observable — the formula
+    # itself is stable across a single recompute call (it depends only
+    # on turn_manager.round + total_beats_fired, neither of which the
+    # recompute touches), so deriving "from" from the snapshot would
+    # always equal "to".
+    from_maturity_str = str(getattr(snapshot, "campaign_maturity", "") or "")
+
+    materialize_world(snapshot, chapters)
+
+    chapters_after_ids = [getattr(ch, "id", "") for ch in snapshot.world_history]
+    chapters_after = len(chapters_after_ids)
+    to_maturity = CampaignMaturity.from_snapshot(snapshot)
+    if not from_maturity_str:
+        # First-tick fallback: snapshot has never been materialized, so
+        # the stored string is empty. Treat that as Fresh — anything
+        # other than Fresh on the new side is a real promotion.
+        from_maturity_str = CampaignMaturity.Fresh.value
+    tier_changed = from_maturity_str != to_maturity.value
+
+    with Span.open(
+        SPAN_WORLD_HISTORY_ARC_TICK,
+        {
+            "interaction": interaction,
+            "round": round_value,
+            "from_maturity": from_maturity_str,
+            "to_maturity": to_maturity.value,
+            "chapters_before": chapters_before,
+            "chapters_after": chapters_after,
+            "tier_changed": tier_changed,
+            "cadence_interval": ARC_RECOMPUTE_INTERVAL,
+        },
+    ):
+        pass
+
+    if tier_changed:
+        added_ids = [
+            ch_id for ch_id in chapters_after_ids if ch_id not in chapters_before_ids
+        ]
+        with Span.open(
+            SPAN_WORLD_HISTORY_ARC_PROMOTED,
+            {
+                "interaction": interaction,
+                "from_maturity": from_maturity_str,
+                "to_maturity": to_maturity.value,
+                "chapters_added": added_ids,
+            },
+        ):
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Stateless materialize API — the Story 6-6 shape
 # ---------------------------------------------------------------------------
 

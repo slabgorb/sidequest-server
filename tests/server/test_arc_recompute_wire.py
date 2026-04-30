@@ -32,7 +32,6 @@ from sidequest.game.world_materialization import (
     ARC_RECOMPUTE_INTERVAL,
     CampaignMaturity,
 )
-from sidequest.server.session_handler import _SessionData
 from sidequest.telemetry.setup import init_tracer
 from tests.server.conftest import _build_turn_context_for_test
 

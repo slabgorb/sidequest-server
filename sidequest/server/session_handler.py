@@ -36,6 +36,7 @@ from sidequest.audio.library_backend import LibraryBackend
 from sidequest.game.builder import (
     CharacterBuilder,
 )
+from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import LoreStore
 from sidequest.game.persistence import (
     SqliteStore,
@@ -510,6 +511,15 @@ class _SessionData:
     # NOTE: per-process state. Multi-worker uvicorn would split the throttle
     # across workers; revisit with a shared backing store if we go there.
     image_pacing_throttle: ImagePacingThrottle = field(default_factory=ImagePacingThrottle.for_solo)
+    # Story 45-19: parsed history chapters cached at chargen so the
+    # arc-recompute tick doesn't re-parse history.yaml on every turn.
+    # Populated alongside the chargen-time materialization in
+    # ``_handle_character_creation`` (websocket_session_handler.py); the
+    # post-``record_interaction`` recompute call in
+    # ``_execute_narration_turn`` reads it. Default empty list so
+    # sessions whose pack ships no history still construct cleanly —
+    # the recompute helper is a graceful no-op on an empty chapter list.
+    cached_history_chapters: list[HistoryChapter] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

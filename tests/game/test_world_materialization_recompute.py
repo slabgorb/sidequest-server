@@ -27,14 +27,13 @@ behaviour.
 
 from __future__ import annotations
 
+import pytest
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-
-import pytest
 
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.session import GameSnapshot
