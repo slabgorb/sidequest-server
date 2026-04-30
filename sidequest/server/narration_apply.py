@@ -163,12 +163,12 @@ class StatusChangePromotion:
     ``promote_crossings_to_status_changes`` and the snapshot mutation that
     appends a ``Status`` to the actor's ``core.statuses``. Severity is
     carried as a string keyed against ``StatusSeverity[...]`` (the enum's
-    member names: ``Scratch`` / ``Wound`` / ``Scar``).
+    member names: ``Scratch`` / ``Wound`` / ``Scar`` / ``Boon``).
     """
 
     actor: str
     status_text: str
-    severity: Literal["Scratch", "Wound", "Scar"]
+    severity: Literal["Scratch", "Wound", "Scar", "Boon"]
 
 
 @dataclass

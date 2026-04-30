@@ -16,8 +16,24 @@ def test_prompt_documents_beat_outcome_tiers():
 
 def test_prompt_documents_status_changes_field():
     assert "status_changes" in NARRATOR_OUTPUT_ONLY
-    for sev in ("Scratch", "Wound", "Scar"):
+    for sev in ("Scratch", "Wound", "Scar", "Boon"):
         assert sev in NARRATOR_OUTPUT_ONLY
+
+
+def test_prompt_documents_boon_for_temporary_buffs():
+    """Boon was added 2026-04-30 — give the narrator a slot for prose-described
+    magical effects from consumables/scrolls/potions/artifacts (Mira pouch
+    playtest gap). Without an explicit rule, the narrator silently dropped
+    "the torchlight gets clearer" (a real perception buff) into prose with
+    no schema slot.
+    """
+    # Boon severity is documented and contextualized.
+    assert "Boon" in NARRATOR_OUTPUT_ONLY
+    # The CRITICAL MAGIC EFFECT RULE wires the Boon-emit obligation to the
+    # prose patterns the narrator was previously dropping silently.
+    assert "CRITICAL MAGIC EFFECT RULE" in NARRATOR_OUTPUT_ONLY
+    # Boon is described as scene-bounded (matches status_clear.py wiring).
+    assert "scene end" in NARRATOR_OUTPUT_ONLY.lower() or "scene-bounded" in NARRATOR_OUTPUT_ONLY.lower()
 
 
 def test_active_encounter_zone_renders_both_dials_and_tags(monkeypatch, build_registry):

@@ -233,29 +233,50 @@ actual roll.
 
 status_changes: Array. Two entry shapes — ADD a status, or CLEAR one.
 
-ADD shape (new lingering injury, shaken nerve, social mark, or other \
-actor-level cost):
-  {"actor": "<actor name>", "status": {"text": "<short prose label>", "severity": "Scratch|Wound|Scar"}}
+ADD shape (new lingering injury, shaken nerve, social mark, temporary buff, \
+or other actor-level effect):
+  {"actor": "<actor name>", "status": {"text": "<short prose label>", "severity": "Scratch|Wound|Scar|Boon"}}
 - Scratch: clears at scene end (a graze, a lost composure beat).
 - Wound: clears at session end or with rest (a real injury, a notable shake).
 - Scar: persists until a milestone or healing event (a permanent mark — \
   reputation, broken bone, lost trust).
+- Boon: temporary BENEFICIAL effect from a working, consumable, scroll, \
+  potion, alien artifact, or environmental boost. Clears at scene end \
+  alongside Scratch (scene-bounded by design — buffs don't trail a party \
+  between encounters). Use for "Heightened Perception (3 rounds)", \
+  "Steady Hand", "Vigor Surge", "Wind at our backs", any time prose \
+  depicts a character GAINING something temporary rather than LOSING it. \
+  Include duration in the text when prose names one ("Heightened \
+  Perception (3 rounds)"); omit when prose is vague ("a moment of clarity").
+
+CRITICAL MAGIC EFFECT RULE — MANDATORY when prose depicts a temporary \
+effect taking hold from a working/consumable/scroll/potion/artifact:
+If your prose says "the torchlight gets clearer", "her hands stop shaking", \
+"vision sharpens", "fatigue lifts", "the air seems to thin around him", or \
+any other depiction of a character's senses/body/will being temporarily \
+altered by a magical or alchemical source, you MUST emit a status_changes \
+ADD with severity=Boon (for beneficial alterations) or Scratch/Wound (for \
+costs — a backlash, a dizzy spell). Same class of error as describing an \
+item changing hands without items_lost: the prose creates an effect the \
+ledger has no record of. The Boon severity is specifically for this — \
+without it the player sees the prose but the system has no idea anything \
+happened, and a future turn can't reference the buff coherently.
 
 CLEAR shape (resolve / heal / escape from an existing status — emit when \
 the prose explicitly describes a lingering condition lifting):
   {"actor": "<actor name>", "clear": "<status text or substring>"}
 Use this when the prose says the character escapes a hold ("she wriggles \
 free of the Captured grip"), recovers ("the bandage stops the Twisted \
-wrist throbbing"), or shrugs off a Scratch/Wound/Scar narratively. \
+wrist throbbing"), or shrugs off a Scratch/Wound/Scar/Boon narratively. \
 Match by status text or a unique substring of it. Wound and Scar will \
 NEVER auto-expire — emit a clear if the prose resolves them, or they \
-persist forever and pile up on the party panel. Scratch auto-clears at \
-scene end so explicit clears are optional but allowed.
+persist forever and pile up on the party panel. Scratch and Boon \
+auto-clear at scene end so explicit clears are optional but allowed.
 
 Use ADDs sparingly — every status is narrative gravity. Align severity \
-with how seriously the prose treats the cost. CLEAR aggressively when \
-the prose resolves a condition: a status the narrator stops mentioning \
-is NOT cleared by silence.
+with how seriously the prose treats the cost (or how brightly it treats \
+the buff). CLEAR aggressively when the prose resolves a condition: a \
+status the narrator stops mentioning is NOT cleared by silence.
 
 magic_working: Object. Emit when your narration depicts a character using
 magic — innate psychic touch, an item firing, an alien artifact responding,

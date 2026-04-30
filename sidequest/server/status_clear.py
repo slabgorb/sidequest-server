@@ -10,6 +10,9 @@ The narrator can emit ``status_changes`` to add lingering costs to actors
   - Scratch: clears at scene end (graze, lost composure).
   - Wound:   clears at session end or with rest (real injury).
   - Scar:    persists until a milestone or healing event (permanent mark).
+  - Boon:    clears at scene end (temporary buff from a working/consumable;
+             scene-bounded so a potion's heightened-perception effect doesn't
+             trail the party into the next encounter).
 
 The ADD path was wired in story 41-6, but the CLEAR path was never wired.
 Result (playtest 2026-04-26 Bug #1): conditions accumulate forever — both
@@ -75,19 +78,34 @@ def _publish_clear(
     )
 
 
+_SCENE_BOUNDED_SEVERITIES: frozenset[StatusSeverity] = frozenset(
+    {StatusSeverity.Scratch, StatusSeverity.Boon}
+)
+
+
 def clear_scratch_on_scene_end(
     snapshot: GameSnapshot,
     *,
     reason: str,
     turn: int,
 ) -> int:
-    """Sweep every Scratch off every character in the snapshot.
+    """Sweep every scene-bounded status off every character in the snapshot.
+
+    Scene-bounded severities are ``Scratch`` (a graze, a lost composure
+    beat) and ``Boon`` (a temporary buff from a working/consumable). Both
+    are scene-scoped by design — they shouldn't accumulate across scenes.
+    Wound and Scar persist; the narrator clears those via explicit clears
+    or in-prose recovery beats.
 
     Returns the number of statuses cleared. ``reason`` is forwarded to the
     OTEL span — typical values are ``"scene_end"`` (encounter resolved) or
     ``"location_change"`` (PC moved to a new place). Callers MUST pass a
     specific reason so the GM panel can distinguish trigger sources — no
     silent default.
+
+    Function name kept for backward compat (callsites + telemetry references).
+    Boon was added 2026-04-30; it joins the same scene-end sweep because the
+    semantics are symmetric: temporary effect, bounded by the current scene.
 
     NPC statuses on ``snapshot.npc_registry`` are not touched here; NPCs
     don't surface a condition pill in the party panel and the bug is
@@ -98,7 +116,7 @@ def clear_scratch_on_scene_end(
     for char in snapshot.characters:
         kept: list[Status] = []
         for status in char.core.statuses:
-            if status.severity is StatusSeverity.Scratch:
+            if status.severity in _SCENE_BOUNDED_SEVERITIES:
                 _publish_clear(
                     actor=char.core.name,
                     status=status,

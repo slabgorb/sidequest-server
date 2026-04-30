@@ -122,7 +122,7 @@ class StatusPromotion(BaseModel):
     model_config = {"extra": "forbid"}
 
     text: str
-    severity: Literal["Scratch", "Wound", "Scar"]
+    severity: Literal["Scratch", "Wound", "Scar", "Boon"]
 
 
 class LedgerBarSpec(BaseModel):
