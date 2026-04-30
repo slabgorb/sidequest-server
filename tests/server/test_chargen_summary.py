@@ -241,7 +241,9 @@ class TestCoreFields:
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
         b.apply_choice(0)
         summary = (render_confirmation_summary(b, caverns_pack, "Rux", "p1").payload.summary) or ""
-        assert "Personality: brooding" in summary
+        # Personality is humanize_display'd so the surface stays TitleCase
+        # alongside Origin/Role/Equipment (playtest 2026-04-30 #casing).
+        assert "Personality: Brooding" in summary
         assert "Pronouns: she/her" in summary
 
     def test_mutation_is_humanized(self, caverns_pack: GenrePack) -> None:
@@ -275,7 +277,74 @@ class TestCoreFields:
         summary = (render_confirmation_summary(b, caverns_pack, "Rux", "p1").payload.summary) or ""
         assert "Affinity: Fire" in summary
         assert "Rig: Interceptor" in summary
-        assert "Rig Trait: armored" in summary
+        # rig_trait is humanize_display'd to keep TitleCase surface (playtest
+        # 2026-04-30 #casing) — "armored" becomes "Armored".
+        assert "Rig Trait: Armored" in summary
+
+    def test_kebab_case_personality_humanized(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        """Playtest 2026-04-30: ``personality_trait: trouble-magnet`` in
+        coyote_reach YAML rendered as the raw kebab token next to
+        TitleCase Origin/Equipment. ``humanize_display`` must split on
+        ``-`` and Title-case each token so the surface is consistent."""
+        scenes = [
+            make_scene(
+                "trait",
+                choices=[
+                    make_choice(
+                        "Trouble Magnet",
+                        personality_trait="trouble-magnet",
+                    )
+                ],
+            )
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (
+            render_confirmation_summary(b, caverns_pack, "Parsley", "p1").payload.summary
+        ) or ""
+        assert "Personality: Trouble Magnet" in summary
+        assert "trouble-magnet" not in summary
+
+    def test_kebab_case_background_humanized(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        """Same playtest: ``background: Outsystem-arrived`` (Pascal-with-
+        hyphen) leaked into the Backstory line. humanize_display must
+        normalize regardless of input casing."""
+        scenes = [
+            make_scene(
+                "origin",
+                choices=[
+                    make_choice(
+                        "Through the Gate",
+                        background="Outsystem-arrived",
+                    )
+                ],
+            )
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (
+            render_confirmation_summary(b, caverns_pack, "Parsley", "p1").payload.summary
+        ) or ""
+        assert "Backstory: Outsystem Arrived" in summary
+        assert "Outsystem-arrived" not in summary
+
+    def test_humanize_display_helper_handles_both_separators(self) -> None:
+        """Unit-level guard for the helper itself — split on ``-`` and
+        ``_``, capitalize each token, drop empties, idempotent on
+        already-Title-cased input."""
+        from sidequest.server.dispatch.chargen_summary import humanize_display
+
+        assert humanize_display("trouble-magnet") == "Trouble Magnet"
+        assert humanize_display("Outsystem-arrived") == "Outsystem Arrived"
+        assert humanize_display("ash_lung") == "Ash Lung"
+        assert humanize_display("Coreworlder") == "Coreworlder"
+        assert humanize_display("quietly grieving") == "Quietly Grieving"
+        # Empty/None-equivalent passthrough.
+        assert humanize_display("") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +534,9 @@ class TestWireShape:
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
         b.apply_choice(0)
         summary = (render_confirmation_summary(b, caverns_pack, "Rux", "p1").payload.summary) or ""
-        assert "\n\nBackstory: a bleak childhood" in summary
+        # humanize_display Title-cases the value (playtest 2026-04-30 #casing)
+        # — single canonicalization rule across the preview row.
+        assert "\n\nBackstory: A Bleak Childhood" in summary
 
     def test_message_wire_shape(self, caverns_pack: GenrePack) -> None:
         scenes = [make_scene("origin", choices=[make_choice("Human", race_hint="Human")])]
@@ -647,7 +718,9 @@ class TestChargenFieldLabels:
         # Pre-fix breakage was "Race: Colonial" — assert the new label.
         assert "Origin: Colonial" in summary
         assert "Calling: Detective" in summary
-        assert "Bearing: guarded" in summary
+        # Personality is humanize_display'd (playtest 2026-04-30 #casing) —
+        # "guarded" → "Guarded".
+        assert "Bearing: Guarded" in summary
         assert "Past: Returned" in summary
         # And the broken labels are gone.
         assert "Race:" not in summary
@@ -678,10 +751,11 @@ class TestChargenFieldLabels:
         preview = msg.payload.character_preview
         assert isinstance(preview, dict)
         # Keys are the genre-resolved display labels — UI renders them
-        # verbatim. Values are the raw field strings.
+        # verbatim. Values are humanize_display'd so YAML kebab/snake
+        # tokens land Title-cased (playtest 2026-04-30 #casing).
         assert preview["Name"] == "Lady Victoria"
         assert preview["Origin"] == "Colonial"
-        assert preview["Bearing"] == "guarded"
+        assert preview["Bearing"] == "Guarded"
         assert "Race" not in preview
         assert "Personality" not in preview
 
@@ -712,4 +786,6 @@ class TestChargenFieldLabels:
         assert isinstance(preview, dict)
         assert preview["Name"] == "Rux"
         assert preview["Race"] == "Human"
-        assert preview["Personality"] == "brooding"
+        # humanize_display title-cases single-word lowercase tokens too —
+        # canonical surface is TitleCase across the preview row.
+        assert preview["Personality"] == "Brooding"

@@ -56,6 +56,32 @@ DEFAULT_CHARGEN_FIELD_LABELS: dict[str, str] = {
 }
 
 
+def humanize_display(value: str) -> str:
+    """Title-case a chargen identifier value for player-facing display.
+
+    Pack YAML stores trait/affinity/background tokens as either snake_case
+    (``natural_armor``), kebab-case (``trouble-magnet``), or
+    Pascal-with-hyphen (``Outsystem-arrived``). Players see these on the
+    character preview row alongside TitleCase fields like ``Engineer's
+    Multitool`` — Playtest 2026-04-30 flagged the casing inconsistency
+    ("Personality: trouble-magnet" next to "Origin: Coreworlder") as a
+    "raw enum keys leaking through" smell.
+
+    Splits on both ``-`` and ``_``, capitalizes each token, joins with
+    spaces. Idempotent on already-Title-cased strings (``Coreworlder`` →
+    ``Coreworlder``); a single capitalized acronym word like ``HVAC`` gets
+    rendered as ``Hvac`` — acceptable for the chargen identifier vocab,
+    where acronyms aren't expected.
+    """
+    if not value:
+        return value
+    # Replace separators with space, then title-case each token. Preserve
+    # multi-word values that already use spaces (``quietly grieving``) by
+    # treating space as another separator — collapses runs cleanly.
+    normalized = value.replace("-", " ").replace("_", " ")
+    return " ".join(word.capitalize() for word in normalized.split() if word)
+
+
 def field_label(rules: RulesConfig, key: str) -> str:
     """Return the display label for a chargen field.
 
@@ -182,7 +208,7 @@ def render_confirmation_summary(
         _add("class", default_class)
 
     if acc.personality_trait is not None:
-        _add("personality", acc.personality_trait)
+        _add("personality", humanize_display(acc.personality_trait))
 
     if acc.pronoun_hint is not None:
         _add("pronouns", acc.pronoun_hint)
@@ -194,13 +220,13 @@ def render_confirmation_summary(
         _add("stats", stat_line)
 
     if acc.mutation_hint is not None:
-        _add("mutation", humanize_snake_case(acc.mutation_hint))
+        _add("mutation", humanize_display(acc.mutation_hint))
     if acc.affinity_hint is not None:
-        _add("affinity", acc.affinity_hint)
+        _add("affinity", humanize_display(acc.affinity_hint))
     if acc.rig_type_hint is not None:
-        _add("rig", acc.rig_type_hint)
+        _add("rig", humanize_display(acc.rig_type_hint))
     if acc.rig_trait is not None:
-        _add("rig_trait", acc.rig_trait)
+        _add("rig_trait", humanize_display(acc.rig_trait))
 
     # --- Equipment (merge scene hints with pack starting equipment) -------
     # Resolve the class used for the starting_equipment lookup the same way
@@ -244,10 +270,14 @@ def render_confirmation_summary(
     if acc.background is not None:
         # Backstory keeps its leading blank line in the joined summary
         # (visual separation from the stat block) but is added to the
-        # preview dict normally.
+        # preview dict normally. Humanize the raw token so kebab-case
+        # YAML values like "Outsystem-arrived" or "old-soldier" display
+        # as "Outsystem Arrived" / "Old Soldier" instead of leaking
+        # routing tags into the player-facing summary.
         backstory_label = field_label(rules, "backstory")
-        parts.append(f"\n{backstory_label}: {acc.background}")
-        preview[backstory_label] = acc.background
+        background_display = humanize_display(acc.background)
+        parts.append(f"\n{backstory_label}: {background_display}")
+        preview[backstory_label] = background_display
 
     summary = "\n".join(parts)
 
