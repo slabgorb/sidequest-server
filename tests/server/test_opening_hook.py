@@ -21,11 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from sidequest.game.persistence import GameMode
 from sidequest.genre.loader import GenreLoader
-from sidequest.genre.models.narrative import OpeningHook
+from sidequest.genre.models.narrative import MpOpening, OpeningHook
 from sidequest.genre.models.pack import GenrePack
 from sidequest.server.dispatch.opening_hook import (
     _render_directive,
+    _render_mp_directive,
     resolve_opening,
 )
 
@@ -256,3 +258,294 @@ def test_seeded_rng_is_deterministic(pack: GenrePack) -> None:
     assert any(different_seeds), (
         "selection appears insensitive to the RNG seed"
     )
+
+
+# ---------------------------------------------------------------------------
+# Multiplayer openings — see worlds/{slug}/mp_opening.yaml.
+#
+# MP precedence (playtest 2026-04-30 forensic on save
+# `2026-04-30-coyote_star-mp/save.db`): when the session is in
+# MULTIPLAYER mode and the world has authored ``mp_openings``, the MP
+# tier wins over both world.openings and pack.openings. Solo and MP-
+# without-mp_openings keep the legacy precedence chain. The pre-fix
+# behavior dropped John alone into a `Firefight` confrontation while
+# the other three Beatles ghosted — Agency violation across three of
+# four players.
+# ---------------------------------------------------------------------------
+
+
+def _make_mp(
+    id: str = "kestrel_galley",
+    name: str = "Galley, Jump-Rest",
+    establishing_narration: str = (
+        "The Kestrel is mid-jump-rest. The galley is warm. "
+        "The coffee is what passes for coffee."
+    ),
+    first_turn_invitation: str = "What does each of you do?",
+    setting: dict | None = None,
+    tone: dict | None = None,
+    rig_voice_seeds: list[dict] | None = None,
+    per_pc_beats: list[dict] | None = None,
+    soft_hook: dict | None = None,
+    party_framing: dict | None = None,
+) -> MpOpening:
+    return MpOpening(
+        id=id,
+        name=name,
+        establishing_narration=establishing_narration,
+        first_turn_invitation=first_turn_invitation,
+        setting=setting or {"rig": "kestrel", "room": "galley"},
+        tone=tone or {"register": "warm, lived-in, dry"},
+        rig_voice_seeds=rig_voice_seeds or [],
+        per_pc_beats=per_pc_beats or [],
+        soft_hook=soft_hook or {},
+        party_framing=party_framing or {},
+    )
+
+
+def test_mp_tier_preferred_when_mode_is_multiplayer(pack: GenrePack) -> None:
+    """When the session is MP and the world has mp_openings, the MP tier
+    wins over both world.openings and pack.openings.
+    """
+    world_slug = _first_world(pack)
+    mp = _make_mp()
+    world_hook = _make_hook(id="world-hook", archetype="world-arch")
+    genre_hook = _make_hook(id="genre-hook", archetype="genre-arch")
+
+    pack.worlds[world_slug].mp_openings = [mp]
+    pack.worlds[world_slug].openings = [world_hook]
+    pack.openings = [genre_hook]
+
+    result = resolve_opening(
+        pack,
+        world_slug,
+        "caverns_and_claudes",
+        rng=random.Random(0),
+        mode=GameMode.MULTIPLAYER,
+    )
+    assert result is not None
+    seed, directive = result
+    # Seed is the MP first_turn_invitation, not either OpeningHook seed.
+    assert seed == "What does each of you do?"
+    # Directive is rendered through the MP path (Mode: multiplayer marker).
+    assert "Mode: multiplayer" in directive
+    assert "world-arch" not in directive
+    assert "genre-arch" not in directive
+
+
+def test_solo_mode_ignores_mp_openings(pack: GenrePack) -> None:
+    """Solo sessions never see MP openings, even when the world has them
+    authored. Falls through to the legacy world-then-genre precedence.
+    """
+    world_slug = _first_world(pack)
+    pack.worlds[world_slug].mp_openings = [_make_mp()]
+    world_hook = _make_hook(id="world-hook", archetype="world-arch")
+    pack.worlds[world_slug].openings = [world_hook]
+    pack.openings = []
+
+    result = resolve_opening(
+        pack,
+        world_slug,
+        "caverns_and_claudes",
+        rng=random.Random(0),
+        mode=GameMode.SOLO,
+    )
+    assert result is not None
+    seed, directive = result
+    assert seed == world_hook.first_turn_seed
+    assert "Mode: multiplayer" not in directive
+    assert "world-arch" in directive
+
+
+def test_mp_mode_falls_back_when_world_has_no_mp_openings(pack: GenrePack) -> None:
+    """MP session against a world with no authored mp_openings falls
+    through to the standard world-then-genre OpeningHook chain — solo
+    and MP coexist when only solo content has been authored.
+    """
+    world_slug = _first_world(pack)
+    pack.worlds[world_slug].mp_openings = []
+    world_hook = _make_hook(id="world-hook", archetype="world-arch")
+    pack.worlds[world_slug].openings = [world_hook]
+    pack.openings = []
+
+    result = resolve_opening(
+        pack,
+        world_slug,
+        "caverns_and_claudes",
+        rng=random.Random(0),
+        mode=GameMode.MULTIPLAYER,
+    )
+    assert result is not None
+    seed, directive = result
+    assert seed == world_hook.first_turn_seed
+    assert "Mode: multiplayer" not in directive
+
+
+def test_mode_omitted_preserves_legacy_behavior(pack: GenrePack) -> None:
+    """Calls without ``mode=`` (legacy non-slug connect path) keep the
+    original world-then-genre precedence — never see mp_openings.
+    """
+    world_slug = _first_world(pack)
+    pack.worlds[world_slug].mp_openings = [_make_mp()]
+    world_hook = _make_hook(id="world-hook", archetype="world-arch")
+    pack.worlds[world_slug].openings = [world_hook]
+    pack.openings = []
+
+    result = resolve_opening(
+        pack, world_slug, "caverns_and_claudes", rng=random.Random(0)
+    )
+    assert result is not None
+    seed, directive = result
+    assert seed == world_hook.first_turn_seed
+    assert "Mode: multiplayer" not in directive
+
+
+def test_mp_directive_format_carries_authored_content() -> None:
+    """The MP directive renderer must carry establishing narration,
+    first turn invitation, avoid list, and party framing into the
+    narrator's prompt — that's the contract that lets the directive
+    replace solo-OpeningHook content for the chill MP opener.
+    """
+    mp = _make_mp(
+        establishing_narration="The galley is warm. The coffee is what it is.",
+        first_turn_invitation="What does each of you do?",
+        tone={
+            "register": "warm, lived-in, dry",
+            "avoid_at_all_costs": ["any confrontation", "any dice roll"],
+        },
+        rig_voice_seeds=[
+            {"context": "first PC enters", "line": "Mr. {first_name}. Coffee."},
+        ],
+        per_pc_beats=[
+            {"applies_to": {"drive": "Saw Something Past the Gas Giant"},
+             "beat": "Your nav log is still showing on the counter."},
+        ],
+        soft_hook={
+            "timing": "if conversation lulls",
+            "narration": "An inbound comm blinks once.",
+        },
+        party_framing={
+            "already_a_crew": True,
+            "bond_tier_default": "trusted",
+            "shared_history_seeds": ["muscle memory from three jumps' worth of patch kits"],
+        },
+    )
+
+    directive = _render_mp_directive(mp)
+
+    # Bracketed identically to OpeningHook directives — content audits
+    # and GM-panel regex both match on these markers.
+    assert directive.startswith("=== OPENING SCENARIO ===")
+    assert directive.endswith("=== END OPENING ===")
+    assert "Mode: multiplayer" in directive
+
+    # Establishing narration shows up under its own label, verbatim.
+    assert "ESTABLISHING NARRATION" in directive
+    assert "The galley is warm." in directive
+
+    # First turn invitation lands under its label.
+    assert "FIRST TURN INVITATION" in directive
+    assert "What does each of you do?" in directive
+
+    # Tone register and avoid list survive — narrator gets the guardrails.
+    assert "Tone: warm, lived-in, dry" in directive
+    assert "AVOID: any confrontation; any dice roll" in directive
+
+    # Party framing — at minimum the "already a crew" marker reaches
+    # the narrator so PCs aren't re-introduced to one another.
+    assert "PARTY FRAMING" in directive
+    assert "already a crew" in directive.lower()
+
+    # Per-PC beat shows up keyed to its applies_to selector.
+    assert "PER-PC BEATS" in directive
+    assert "drive=Saw Something Past the Gas Giant" in directive
+    assert "Your nav log is still showing on the counter." in directive
+
+    # Soft hook clearly marked as conditional.
+    assert "SOFT HOOK" in directive
+    assert "if conversation lulls" in directive
+
+    # Rig voice seeds show up so the narrator picks up the rig's register.
+    assert "RIG VOICE SEEDS" in directive
+    assert "Mr. {first_name}. Coffee." in directive
+
+
+def test_mp_directive_minimal_when_only_required_fields_set() -> None:
+    """An MpOpening with just id + establishing_narration still produces
+    a coherent directive — optional sections are omitted, not rendered
+    as empty stubs that confuse the narrator.
+    """
+    mp = MpOpening(
+        id="bare",
+        establishing_narration="The lights are on. Nobody's home yet.",
+    )
+    directive = _render_mp_directive(mp)
+    assert directive.startswith("=== OPENING SCENARIO ===")
+    assert "Mode: multiplayer" in directive
+    assert "ESTABLISHING NARRATION" in directive
+    # Optional sections are absent, not blank-stubbed.
+    assert "PER-PC BEATS" not in directive
+    assert "SOFT HOOK" not in directive
+    assert "RIG VOICE SEEDS" not in directive
+    assert "PARTY FRAMING" not in directive
+    assert "AVOID:" not in directive
+    assert "FIRST TURN INVITATION" not in directive
+
+
+def test_mp_seed_uses_first_turn_invitation_when_present() -> None:
+    """First turn invitation becomes the action string the narrator runs
+    on turn 1 — same wiring contract as OpeningHook.first_turn_seed.
+    Falls back to a generic establishing-scene instruction when an MP
+    opening omits the invitation field.
+    """
+    from sidequest.server.dispatch.opening_hook import _mp_opening_seed
+
+    mp = _make_mp(first_turn_invitation="What does each of you do?")
+    assert _mp_opening_seed(mp) == "What does each of you do?"
+
+    bare = MpOpening(id="bare", establishing_narration="…")
+    fallback = _mp_opening_seed(bare)
+    assert fallback  # never empty
+    assert "Open the scene" in fallback
+
+
+def test_loader_reads_real_coyote_star_mp_opening() -> None:
+    """End-to-end check against the actual authored content. The
+    loader picks up ``worlds/coyote_star/mp_opening.yaml`` and the
+    resolver returns the Kestrel galley directive for an MP session.
+    Guards against regressions where the world layer falls out of the
+    loader's filename list.
+    """
+    space_opera_root = CONTENT_ROOT / "space_opera"
+    if not space_opera_root.is_dir():
+        pytest.skip("space_opera pack not present")
+    space_pack = GenreLoader(search_paths=[CONTENT_ROOT]).load("space_opera")
+    world = space_pack.worlds.get("coyote_star")
+    if world is None:
+        pytest.skip("coyote_star world not present")
+    if not world.mp_openings:
+        pytest.skip("coyote_star/mp_opening.yaml not authored")
+
+    # The Kestrel galley opener is the first (and currently only) entry.
+    assert world.mp_openings[0].id == "kestrel_galley_jumprest"
+
+    result = resolve_opening(
+        space_pack,
+        "coyote_star",
+        "space_opera",
+        rng=random.Random(0),
+        mode=GameMode.MULTIPLAYER,
+    )
+    assert result is not None
+    seed, directive = result
+    # The Kestrel directive carries the rig name and the chill-tone
+    # guardrails — this is the load-bearing content per Keith's design
+    # directive (no turn-1 confrontation, no dice).
+    assert "kestrel" in directive.lower()
+    assert "galley" in directive.lower()
+    assert "AVOID:" in directive
+    assert "any confrontation" in directive.lower()
+    assert "any dice roll" in directive.lower()
+    # Seed is the first-turn invitation — narrator opens with the
+    # establishing scene and lands on this question.
+    assert "what does each of you do" in seed.lower()
