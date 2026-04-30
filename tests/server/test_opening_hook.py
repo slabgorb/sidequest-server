@@ -136,6 +136,105 @@ def test_directive_omits_avoid_when_empty() -> None:
     assert directive.endswith("=== END OPENING ===")
 
 
+def test_directive_with_setting_injects_world_starting_location() -> None:
+    """Playtest 2026-04-30 "Setting drift" regression.
+
+    When the world declares ``starting_location``, the directive must
+    carry a ``Setting:`` line so the narrator's first turn opens at the
+    authored location. Without this, a Coyote-Reach-style chargen close
+    that promises "Far Landing is just waking up around you" gets
+    overridden by a genre-tier opening that lands the player on an
+    unrelated orbital station — a Diamonds-and-Coal violation.
+    """
+    hook = _make_hook(
+        archetype="frontier-hook",
+        situation="A miner walks into the post with a problem.",
+        tone="weary",
+    )
+    directive = _render_directive(
+        hook,
+        setting_label="Far Landing",
+        starting_time="morning",
+    )
+    assert "Setting: Far Landing, morning (open the scene here)" in directive, (
+        f"directive missing Setting line: {directive!r}"
+    )
+    # Existing structure preserved — Setting line slots between Tone and AVOID/footer.
+    assert directive.startswith("=== OPENING SCENARIO ===")
+    assert directive.endswith("=== END OPENING ===")
+
+
+def test_directive_setting_omits_time_when_unknown() -> None:
+    """Worlds without an authored ``starting_time`` still get a clean
+    Setting line — no dangling comma, no empty parens.
+    """
+    hook = _make_hook()
+    directive = _render_directive(hook, setting_label="Far Landing", starting_time=None)
+    assert "Setting: Far Landing (open the scene here)" in directive
+    assert "Setting: Far Landing,," not in directive  # no double comma
+
+
+def test_directive_omits_setting_when_label_blank() -> None:
+    """Empty / None label → no Setting line; older worlds keep the
+    Rust-parity directive shape exactly.
+    """
+    hook = _make_hook()
+    directive_none = _render_directive(hook, setting_label=None)
+    directive_empty = _render_directive(hook, setting_label="")
+    for d in (directive_none, directive_empty):
+        assert "Setting:" not in d, f"unexpected Setting line in {d!r}"
+
+
+def test_resolve_opening_pulls_setting_from_world_config(pack: GenrePack) -> None:
+    """End-to-end: when ``world.config.starting_location`` is set and
+    cartography has the room, ``resolve_opening`` produces a directive
+    carrying the resolved display name.
+    """
+    world_slug = _first_world(pack)
+    pack.worlds[world_slug].openings = [
+        _make_hook(id="setting-test", archetype="setting-arch")
+    ]
+    # Force a known starting_location and confirm cartography resolution.
+    cart = pack.worlds[world_slug].cartography
+    rooms = getattr(cart, "rooms", None) or []
+    if not rooms:
+        pytest.skip("test pack world has no cartography rooms to resolve against")
+    target_room = rooms[0]
+    pack.worlds[world_slug].config.starting_location = target_room.id
+
+    result = resolve_opening(
+        pack, world_slug, "caverns_and_claudes", rng=random.Random(0)
+    )
+    assert result is not None
+    _, directive = result
+    assert f"Setting: {target_room.name}" in directive, (
+        f"resolve_opening did not surface starting_location into the directive: "
+        f"{directive!r}"
+    )
+
+
+def test_resolve_opening_omits_setting_when_world_has_no_starting_location(
+    pack: GenrePack,
+) -> None:
+    """Worlds that don't declare ``starting_location`` keep producing
+    the older directive shape — the Setting line is opt-in via content.
+    """
+    world_slug = _first_world(pack)
+    pack.worlds[world_slug].openings = [
+        _make_hook(id="no-setting", archetype="no-setting-arch")
+    ]
+    pack.worlds[world_slug].config.starting_location = ""
+
+    result = resolve_opening(
+        pack, world_slug, "caverns_and_claudes", rng=random.Random(0)
+    )
+    assert result is not None
+    _, directive = result
+    assert "Setting:" not in directive, (
+        f"directive grew an unexpected Setting line: {directive!r}"
+    )
+
+
 def test_seeded_rng_is_deterministic(pack: GenrePack) -> None:
     world_slug = _first_world(pack)
     hooks = [
