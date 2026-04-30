@@ -628,27 +628,50 @@ class ConnectHandler:
             session._current_player_id = player_id
             session._state = _State.Creating if not has_character else _State.Playing
 
-            # Solo auto-seat (playtest 2026-04-30 "notorious_party_gate
-            # player_count=0 race"). Solo sessions skip the explicit
-            # PLAYER_SEAT message that MP uses to bind a slot in the
-            # room's lobby state machine, so ``room._seated`` stays
-            # empty for the entire solo session. That breaks every
-            # consumer of ``room.non_abandoned_player_count()`` —
-            # most visibly ``orchestrator.notorious_party_gate`` in
-            # ``session_helpers._build_turn_context``, which fires its
-            # ``player_count=0 (<= 0) — impossible state`` warning on
-            # turn 1 of every solo session and defaults to safe-empty
-            # ``party_context_available=False``. The lobby state
-            # machine is mode-agnostic — solo IS in the lobby, the
-            # difference is only that the UI doesn't send PLAYER_SEAT.
-            # We emit the seat record here so room._seated reflects
-            # truth. Idempotent: skip when the player is already
-            # seated (returning solo via reconnect, or test fixtures
-            # that pre-seat).
+            # Connect-path auto-seat — covers two playtest regressions:
+            #
+            # (1) playtest 2026-04-30 "notorious_party_gate
+            #     player_count=0 race" (solo). Solo sessions skip the
+            #     explicit PLAYER_SEAT message that MP uses to bind a
+            #     slot in the room's lobby state machine, so
+            #     ``room._seated`` stays empty for the entire solo
+            #     session. That breaks every consumer of
+            #     ``room.non_abandoned_player_count()`` — most visibly
+            #     ``orchestrator.notorious_party_gate`` in
+            #     ``session_helpers._build_turn_context``, which fires
+            #     its ``player_count=0 (<= 0) — impossible state``
+            #     warning on turn 1.
+            #
+            # (2) playtest 2026-04-30 "MP playing_player_count=1 race"
+            #     (returning multiplayer). When 4 MP players reconnect
+            #     with ``has_character=True`` (storage clear, refresh,
+            #     etc.), the only MP promotion site
+            #     (``handlers/player_seat.py``) requires the client to
+            #     re-send PLAYER_SEAT *and* ``session._state`` to be
+            #     ``_State.Playing`` at that moment. Both conditions
+            #     don't reliably coincide on reconnect, so most MP
+            #     returning seats stay in CHARGEN, ``playing_player_
+            #     count()`` returns 1 (or 0), and the cinematic
+            #     barrier (ADR-036) fires on the first action with
+            #     ``player_count=1`` — narrating solo-style and
+            #     dropping the other three players' submissions.
+            #
+            # The lobby state machine is mode-agnostic. Auto-seat fires
+            # when EITHER the session is solo (which never sends
+            # PLAYER_SEAT) OR the player is returning with a committed
+            # character (``has_character=True``, regardless of mode) —
+            # so ``room._seated`` reflects truth. New MP players
+            # without a character still claim slots via PLAYER_SEAT
+            # explicitly so the lobby-roster flow preserves intent.
+            #
+            # Idempotent: skip when the player is already seated
+            # (reconnect arriving after a successful prior connect, or
+            # test fixtures that pre-seat).
             _seat_helper_room = session._room
+            _is_solo = GameMode(row.mode) == GameMode.SOLO
             if (
                 _seat_helper_room is not None
-                and GameMode(row.mode) == GameMode.SOLO
+                and (_is_solo or has_character)
                 and player_id not in _seat_helper_room.seated_player_ids()
             ):
                 # ``character_slot`` follows MP semantics — the slot
@@ -663,27 +686,29 @@ class ConnectHandler:
                 )
                 _seat_helper_room.seat(player_id, character_slot=_slot_label)
                 if has_character:
-                    # Returning solo player — character is already
-                    # committed, so the seat goes straight from
-                    # CHARGEN to PLAYING. Mirrors the
-                    # ``_handle_player_seat`` returning-player path
-                    # that fires for MP. New solo (state=Creating) is
-                    # promoted later by the chargen-complete flow's
-                    # existing transition_to_playing call.
+                    # Returning player (solo or MP) — character is
+                    # already committed, so the seat goes straight
+                    # from CHARGEN to PLAYING. Mirrors the
+                    # ``_handle_player_seat`` returning-player path.
+                    # New solo (state=Creating) is promoted later by
+                    # the chargen-complete flow's existing
+                    # ``transition_to_playing`` call.
                     _seat_helper_room.transition_to_playing(player_id)
                 logger.info(
-                    "session.solo_auto_seated player_id=%s slug=%s "
+                    "session.auto_seated player_id=%s slug=%s mode=%s "
                     "has_character=%s slot=%r",
                     player_id,
                     slug,
+                    row.mode,
                     has_character,
                     _slot_label,
                 )
                 _watcher_publish(
-                    "session_solo_auto_seated",
+                    "session_auto_seated",
                     {
                         "slug": slug,
                         "player_id": player_id,
+                        "mode": row.mode,
                         "has_character": has_character,
                         "character_slot": _slot_label,
                         "transitioned_to_playing": has_character,

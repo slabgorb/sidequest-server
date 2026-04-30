@@ -25,8 +25,12 @@ Fix:
   CHARGEN → PLAYING. Mirrors the ``_handle_player_seat`` returning-
   player path. New solo (state=Creating) is promoted later by the
   chargen-complete flow's existing ``transition_to_playing`` call.
-- MP connects do NOT auto-seat — they still require the explicit
-  PLAYER_SEAT message (preserves the lobby-claim flow).
+- NEW MP connects (has_character=False) do NOT auto-seat — they
+  still require the explicit PLAYER_SEAT message (preserves the
+  lobby-claim flow). Returning MP (has_character=True) auto-seats
+  AND transitions to PLAYING — see test_mp_auto_seat_on_connect.py
+  for the playtest 2026-04-30 MP regression that motivated extending
+  the gate.
 """
 
 from __future__ import annotations
@@ -232,11 +236,11 @@ async def test_solo_reconnect_does_not_reset_seat_state(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_mp_connect_does_not_auto_seat(tmp_path: Path):
-    """MP mode preserves the explicit-PLAYER_SEAT contract. Auto-seat
-    is solo-only — MP players claim a slot via the PLAYER_SEAT message
-    (handlers/player_seat.py), and changing that would break the
-    lobby-roster flow where MP slots are CHARGEN-staged before any
-    given player commits to one.
+    """NEW MP players (has_character=False) preserve the explicit-
+    PLAYER_SEAT contract — they claim a slot via the PLAYER_SEAT
+    message (handlers/player_seat.py) so the lobby-roster flow
+    preserves intent. Returning MP (has_character=True) DOES auto-
+    seat now — see test_mp_auto_seat_on_connect.py for that case.
     """
     slug = "2026-04-30-mp-no-auto-seat-test"
     save_dir = _seed_mp_game(tmp_path, slug)
