@@ -62,7 +62,20 @@ class YieldHandler:
         from sidequest.server.dispatch.yield_action import handle_yield
 
         if session._state != _State.Playing:
-            return [_error_msg("Cannot process YIELD: not in Playing state")]
+            # Playtest 2026-04-30: uvicorn reload zombies session binding.
+            # See handlers/player_action.py for the full rationale —
+            # tagging with ``session_unbound`` lets the client auto-
+            # recover by re-firing SESSION_EVENT{connect}.
+            logger.info(
+                "session.message_rejected_unbound type=YIELD state=%s",
+                session._state.name,
+            )
+            return [
+                _error_msg(
+                    "Cannot process YIELD: not in Playing state",
+                    code="session_unbound",
+                ),
+            ]
         if session._session_data is None:
             return [_error_msg("Internal error: session data missing")]
 
