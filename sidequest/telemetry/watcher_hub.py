@@ -42,8 +42,26 @@ _BUILTINS_HUB_ATTR = "_sidequest_watcher_hub_singleton"
 # ``WatcherSpanProcessor`` recognizes the synthetic marker attribute and
 # skips re-publishing them as ``agent_span_close`` events, so the GM
 # dashboard is unaffected.
-_WATCHER_AS_SPANS_ENABLED = os.environ.get("SIDEQUEST_WATCHER_AS_SPANS") == "1"
+#
+# Read live (not cached at import time) — the first incarnation cached
+# at module load, but ``watcher_hub`` is imported very early in the app
+# graph, sometimes before pytest sets the env var, sometimes before the
+# uvicorn worker shell exports it. A live read costs ~50ns and removes
+# an entire class of "the bridge silently isn't on" failures.
 WATCHER_SYNTHETIC_ATTR = "sidequest.watcher_synthetic"
+
+
+def _watcher_as_spans_enabled() -> bool:
+    return os.environ.get("SIDEQUEST_WATCHER_AS_SPANS") == "1"
+
+
+# Diagnostic counter — incremented on every successful synthetic span
+# mint. Surfaced via :meth:`WatcherHub.stats` so the GM panel and ad-hoc
+# probes can confirm the bridge is firing during gameplay (vs. only at
+# resume). The first mint also emits an INFO log so server logs show
+# unambiguous proof that the bridge is alive.
+_synthetic_spans_minted: int = 0
+_first_mint_logged: bool = False
 
 
 class _Sendable(Protocol):
@@ -98,11 +116,17 @@ class WatcherHub:
 
     def stats(self) -> dict[str, int]:
         """Snapshot of broadcast counters. Exposed so the GM dashboard
-        can confirm the bus is alive without grepping the server log."""
+        can confirm the bus is alive without grepping the server log.
+
+        ``synthetic_spans`` reflects the watcher→OTLP span bridge — useful
+        for diagnosing whether semantic events are reaching Jaeger.
+        """
         return {
             "subscribers": len(self._subscribers),
             "published": self._published_count,
             "dropped": self._dropped_count,
+            "synthetic_spans": _synthetic_spans_minted,
+            "watcher_as_spans": int(_watcher_as_spans_enabled()),
         }
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
@@ -319,6 +343,8 @@ def _emit_watcher_span(
     # ``sidequest.server.watcher`` — see module docstring).
     from opentelemetry import trace
 
+    global _synthetic_spans_minted, _first_mint_logged
+
     tracer = trace.get_tracer("sidequest-server.watcher")
     with tracer.start_as_current_span(f"watcher.{event_type}") as span:
         span.set_attribute(WATCHER_SYNTHETIC_ATTR, "1")
@@ -327,6 +353,15 @@ def _emit_watcher_span(
         span.set_attribute("watcher.severity", severity)
         for k, v in fields.items():
             span.set_attribute(f"field.{k}", _coerce_attr_value(v))
+
+    _synthetic_spans_minted += 1
+    if not _first_mint_logged:
+        _first_mint_logged = True
+        logger.info(
+            "watcher.span_bridge_first_mint event_type=%s "
+            "(watcher→OTLP bridge confirmed live during gameplay)",
+            event_type,
+        )
 
 
 def publish_event(
@@ -368,5 +403,5 @@ def publish_event(
         }
     )
     _maybe_persist_encounter_row({"event_type": event_type, "fields": fields})
-    if _WATCHER_AS_SPANS_ENABLED:
+    if _watcher_as_spans_enabled():
         _emit_watcher_span(event_type, fields, component, severity)

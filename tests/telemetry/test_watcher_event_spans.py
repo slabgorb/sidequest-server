@@ -49,7 +49,7 @@ def in_memory_exporter() -> InMemorySpanExporter:
 def test_no_span_when_flag_disabled(
     monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
 ) -> None:
-    monkeypatch.setattr(watcher_hub, "_WATCHER_AS_SPANS_ENABLED", False)
+    monkeypatch.delenv("SIDEQUEST_WATCHER_AS_SPANS", raising=False)
     watcher_hub.publish_event("turn_complete", {"turn": 1})
     assert in_memory_exporter.get_finished_spans() == ()
 
@@ -57,7 +57,7 @@ def test_no_span_when_flag_disabled(
 def test_synthetic_span_carries_event_fields_when_flag_enabled(
     monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
 ) -> None:
-    monkeypatch.setattr(watcher_hub, "_WATCHER_AS_SPANS_ENABLED", True)
+    monkeypatch.setenv("SIDEQUEST_WATCHER_AS_SPANS", "1")
 
     watcher_hub.publish_event(
         "turn_complete",
@@ -85,7 +85,7 @@ def test_synthetic_span_carries_event_fields_when_flag_enabled(
 def test_non_primitive_field_values_are_json_stringified(
     monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
 ) -> None:
-    monkeypatch.setattr(watcher_hub, "_WATCHER_AS_SPANS_ENABLED", True)
+    monkeypatch.setenv("SIDEQUEST_WATCHER_AS_SPANS", "1")
     watcher_hub.publish_event(
         "state_transition",
         {"patch": {"path": "/hp", "op": "set", "value": 7}, "tags": ["combat", "boss"]},
@@ -129,6 +129,22 @@ def test_watcher_processor_skips_synthetic_spans() -> None:
     processor.on_end(synthetic_span)
 
     hub.publish.assert_not_called()
+
+
+def test_stats_surfaces_synthetic_span_counter_and_flag(
+    monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
+) -> None:
+    """The hub's ``stats()`` exposes the bridge state so probes can
+    confirm the bridge is firing during gameplay without grepping logs."""
+    monkeypatch.setenv("SIDEQUEST_WATCHER_AS_SPANS", "1")
+    before = watcher_hub.watcher_hub.stats()["synthetic_spans"]
+
+    watcher_hub.publish_event("turn_complete", {"turn": 99})
+    watcher_hub.publish_event("turn_complete", {"turn": 100})
+
+    stats = watcher_hub.watcher_hub.stats()
+    assert stats["synthetic_spans"] == before + 2
+    assert stats["watcher_as_spans"] == 1
 
 
 def test_watcher_processor_still_publishes_real_spans() -> None:

@@ -51,9 +51,17 @@ def init_tracer(service_name: str = "sidequest-server") -> None:
             OTLPSpanExporter,
         )
 
+        # Tighter flush than the SDK default (5 s, 512 batch) so spans
+        # land in Jaeger within ~2 s of close — during gameplay a 5 s
+        # window can hide whether the bridge is firing for the current
+        # turn, which exactly defeats the point of using Jaeger as a
+        # live observability tool.
         provider.add_span_processor(
             BatchSpanProcessor(
-                OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+                OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True),
+                schedule_delay_millis=2000,
+                max_export_batch_size=128,
+                export_timeout_millis=5000,
             )
         )
         logger.info("otel.otlp_exporter_registered endpoint=%s", otlp_endpoint)
