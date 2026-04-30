@@ -603,6 +603,57 @@ class TestSliceCWorldMaterialization:
 
         run(body())
 
+    def test_coyote_reach_chargen_populates_magic_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Phase 4 wiring: chargen confirmation on Coyote Reach must
+        populate snapshot.magic_state and add the freshly built
+        character to the ledger so per-character bars (sanity / notice /
+        vitality) exist for the first turn's working to debit.
+
+        End-to-end proof of the full hook chain:
+        load_world_magic → MagicState.from_config → add_character.
+        """
+        if not (CONTENT_ROOT / "space_opera" / "worlds" / "coyote_reach").is_dir():
+            pytest.skip("space_opera/coyote_reach content not available")
+
+        handler = WebSocketSessionHandler(
+            claude_client_factory=_mock_claude_client_factory(),
+            genre_pack_search_paths=[CONTENT_ROOT],
+            save_dir=tmp_path,
+        )
+
+        async def body() -> None:
+            await _connect(handler, genre="space_opera", world="coyote_reach")
+            await _walk_to_confirmation(handler, freeform_name="Sira Mendes")
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="confirmation")
+            )
+            assert isinstance(out[0], CharacterCreationMessage)
+
+            sd = handler._session_data  # type: ignore[attr-defined]
+            snap = sd.snapshot
+
+            assert snap.magic_state is not None, (
+                "Coyote Reach chargen must populate snapshot.magic_state — "
+                "init_magic_state_for_session hook is the production wire."
+            )
+            assert snap.magic_state.config.world_slug == "coyote_reach"
+            assert snap.magic_state.config.genre_slug == "space_opera"
+
+            character = snap.characters[0]
+            char_keys = [
+                k for k in snap.magic_state.ledger
+                if k.startswith(f"character|{character.core.name}|")
+            ]
+            assert len(char_keys) > 0, (
+                f"add_character({character.core.name!r}) did not produce "
+                f"per-character bars — ledger keys: "
+                f"{list(snap.magic_state.ledger.keys())}"
+            )
+
+        run(body())
+
     def test_pack_without_history_returns_empty_materialization(
         self, handler: WebSocketSessionHandler
     ) -> None:
