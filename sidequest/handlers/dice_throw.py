@@ -83,7 +83,53 @@ class DiceThrowHandler:
             )
         except DiceDispatchError as exc:
             logger.warning("dice.dispatch_error error=%s", exc)
-            return [_error_msg(f"Dice throw failed: {exc}")]
+            # Defensive UI resync (playtest 2026-04-30 "Confrontation
+            # UI/server state desync"). When the dispatch rejects a
+            # DICE_THROW because the encounter is missing or already
+            # resolved, the UI has stale state — it's still rendering
+            # action buttons for an encounter that no longer exists
+            # server-side. Causes include: (a) natural beat-driven
+            # resolution where the prior_live → now_live emit at
+            # session_handler.py was missed (defense-in-depth path),
+            # (b) uvicorn ``--reload`` mid-session that wiped in-memory
+            # encounter state while the React store kept the action
+            # menu, (c) any future state-machine path that resolves
+            # the encounter without emitting a clear. Whatever the
+            # cause, the right user-facing recovery is the same:
+            # force-resync by emitting a clear CONFRONTATION so the
+            # overlay unmounts. The error message still flows so the
+            # player sees the rejection and the GM panel sees the
+            # span, but the UI doesn't get stuck in a state where
+            # every click bounces.
+            outbound: list[object] = [_error_msg(f"Dice throw failed: {exc}")]
+            stale_encounter_type: str | None = None
+            if encounter is not None:
+                stale_encounter_type = encounter.encounter_type
+            if stale_encounter_type and "active encounter" in str(exc):
+                from sidequest.protocol.messages import (
+                    ConfrontationMessage,
+                    ConfrontationPayload,
+                )
+                from sidequest.server.dispatch.confrontation import (
+                    build_clear_confrontation_payload,
+                )
+
+                clear_dict = build_clear_confrontation_payload(
+                    encounter_type=stale_encounter_type,
+                    genre_slug=sd.genre_slug,
+                )
+                outbound.append(
+                    ConfrontationMessage(
+                        payload=ConfrontationPayload(**clear_dict),
+                        player_id=rolling_player_id,
+                    )
+                )
+                logger.info(
+                    "dice.stale_encounter_resync encounter_type=%r reason=%s",
+                    stale_encounter_type,
+                    "active encounter" if "active encounter" in str(exc) else "missing",
+                )
+            return outbound
 
         # Encounter just resolved via dice — sweep Scratch off the party
         # (Playtest 2026-04-26 Bug #1: conditions never clear). The
