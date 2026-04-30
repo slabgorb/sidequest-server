@@ -10,6 +10,7 @@ Fragment id formats:
 - Genre pack: ``lore_genre_history`` / ``lore_genre_geography`` /
   ``lore_genre_cosmology`` / ``lore_genre_faction_<slug>``
 - Character creation: ``lore_char_creation_<scene_id>_<choice_index>``
+- Arc promotion (Story 45-23): ``lore_arc_<chapter_id>_<lore_index>``
 
 Duplicate ids are silently skipped — seeding is idempotent so a
 reconnect that re-seeds won't hard-fail.
@@ -17,6 +18,10 @@ reconnect that re-seeds won't hard-fail.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
+from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import (
     DuplicateLoreId,
     LoreCategory,
@@ -24,6 +29,7 @@ from sidequest.game.lore_store import (
     LoreSource,
     LoreStore,
 )
+from sidequest.game.session import NarrativeEntry
 from sidequest.genre.models.character import CharCreationScene
 from sidequest.genre.models.pack import GenrePack
 
@@ -124,4 +130,187 @@ def seed_lore_from_char_creation(
     return count
 
 
-__all__ = ["seed_lore_from_char_creation", "seed_lore_from_genre_pack"]
+@dataclass
+class ArcSeedResult:
+    """Aggregate counts from a :func:`seed_lore_from_arc_promotion` call.
+
+    Surfaced on the ``world_history.arc_embedding_seed`` OTEL span so
+    the GM panel can chart Lane B throughput per promotion turn (Story
+    45-23). ``content_bytes_seeded`` sums every appended-or-minted body
+    by ``len(str)`` so the chart axis reads in source-character units
+    rather than utf-8 bytes — same units the narrator's prompt budget
+    is denominated in.
+    """
+
+    narrative_entries_appended: int = 0
+    lore_fragments_minted: int = 0
+    lore_fragments_skipped_duplicate: int = 0
+    content_bytes_seeded: int = 0
+
+
+def seed_lore_from_arc_promotion(
+    snapshot: Any,
+    store: Any,
+    lore_store: LoreStore,
+    chapters: list[HistoryChapter],
+) -> ArcSeedResult:
+    """Seed runtime arc-promoted chapters into the durable narrative
+    log + the RAG-retrievable lore store.
+
+    Closes Story 45-23 — Felix's Playtest 3 gap where 71 turns of dense
+    play left ``narrative_log`` and ``lore_store`` empty of arc-sourced
+    content because the chapter-promotion path never wrote back.
+
+    For each chapter in ``chapters`` (the ``chapters_added`` diff
+    returned by 45-19's :func:`recompute_arc_history`):
+
+    1. Each ``ChapterNarrativeEntry`` becomes a ``NarrativeEntry`` row
+       on ``snapshot.narrative_log`` (so the next narrator's
+       ``state_summary`` reads it) AND a ``store.append_narrative()``
+       call (so the durable SQL log carries it for GM-panel replay).
+       Entries carry ``entry_type="arc_promotion"`` and the snapshot's
+       current ``turn_manager.round`` so the panel can anchor the
+       writeback in time.
+    2. Each ``chapter.lore`` string becomes a ``LoreFragment`` with id
+       ``lore_arc_<chapter_id>_<lore_index>``,
+       ``category=LoreCategory.History``,
+       ``source=LoreSource.GameEvent``, and
+       ``embedding_pending=True`` so the existing per-turn
+       ``_dispatch_embed_worker`` picks it up on the next turn.
+
+    Blank/whitespace lore strings are skipped before ``LoreFragment``
+    construction (the content validator at ``lore_store.py:90`` rejects
+    them, and a malformed pack must not crash the dispatch loop —
+    Felix's silent-absence bug becoming a hard crash would be a strictly
+    worse failure mode).
+
+    Duplicate fragment ids (idempotent re-seed of the same chapter
+    list) are swallowed via ``_try_add`` and counted into
+    ``lore_fragments_skipped_duplicate`` so the OTEL span can
+    distinguish a real second promotion from an idempotent re-tick.
+
+    Per-write OTEL spans (Story 45-23):
+    - ``world_history.narrative_log_writeback`` — once per chapter
+      with non-empty ``narrative_log``, attributes carry
+      ``entries_count`` and ``entry_type="arc_promotion"``.
+    - ``world_history.lore_writeback`` — once per minted fragment,
+      attributes carry the ``pending_embedding=True`` confirmation.
+
+    The outer ``world_history.arc_embedding_seed`` span is opened by
+    the caller (``_execute_narration_turn``) so the per-chapter counts
+    on the result struct can be attached to it at close time.
+    """
+    # Local import: spans → telemetry → game/session is a tighter cycle
+    # than this module needs to participate in module-load time. The
+    # registered constants are stable; importing inside the helper
+    # keeps the chargen-time seeders' import graph unchanged.
+    from sidequest.telemetry.spans import (  # noqa: PLC0415
+        SPAN_WORLD_HISTORY_LORE_WRITEBACK,
+        SPAN_WORLD_HISTORY_NARRATIVE_LOG_WRITEBACK,
+        Span,
+    )
+
+    result = ArcSeedResult()
+
+    # ``round`` is the durable-log timestamp the GM panel charts; pull
+    # it once from the snapshot's turn manager so all entries land on
+    # the same tick. Defensive ``getattr`` mirrors the recompute
+    # helper's defensive shape — a malformed snapshot must not crash
+    # the dispatch loop on a content-authoring bug.
+    round_value = int(
+        getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0
+    )
+    interaction = int(
+        getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0
+    )
+
+    for chapter in chapters:
+        chapter_id = getattr(chapter, "id", "") or ""
+
+        # ----- narrative_log writeback ---------------------------------
+        narrative_entries = list(getattr(chapter, "narrative_log", []) or [])
+        if narrative_entries:
+            entries_count = 0
+            for entry in narrative_entries:
+                speaker = getattr(entry, "speaker", "") or ""
+                text = getattr(entry, "text", "") or ""
+                if not speaker.strip():
+                    # The 45-22 NarrativeEntry validator rejects blank
+                    # authors. A chapter entry with a blank speaker is a
+                    # content-authoring bug; skip it rather than crash
+                    # the dispatch loop (No Silent Fallbacks: the loud
+                    # failure is the schema validator at construction
+                    # time — we honour it by not constructing).
+                    continue
+                snap_entry = NarrativeEntry(
+                    timestamp=0,
+                    round=round_value,
+                    author=speaker,
+                    content=text,
+                    tags=[],
+                    speaker=speaker,
+                    entry_type="arc_promotion",
+                )
+                snapshot.narrative_log.append(snap_entry)
+                store.append_narrative(snap_entry)
+                result.narrative_entries_appended += 1
+                result.content_bytes_seeded += len(text)
+                entries_count += 1
+
+            if entries_count:
+                with Span.open(
+                    SPAN_WORLD_HISTORY_NARRATIVE_LOG_WRITEBACK,
+                    {
+                        "chapter_id": chapter_id,
+                        "entries_count": entries_count,
+                        "interaction": interaction,
+                        "entry_type": "arc_promotion",
+                    },
+                ):
+                    pass
+
+        # ----- lore_store writeback ------------------------------------
+        for index, lore_text in enumerate(getattr(chapter, "lore", []) or []):
+            text = lore_text or ""
+            if not text.strip():
+                # ``LoreFragment.content`` validator rejects blank /
+                # whitespace-only strings (lore_store.py:89). Skip
+                # before construction to keep the dispatch loop alive
+                # on a malformed pack — same reasoning as the speaker
+                # guard above.
+                continue
+            fragment_id = f"lore_arc_{chapter_id}_{index}"
+            fragment = LoreFragment.new(
+                id=fragment_id,
+                category=LoreCategory.History,
+                content=text,
+                source=LoreSource.GameEvent,
+                turn_created=interaction,
+                metadata={"chapter_id": chapter_id, "lore_index": str(index)},
+            )
+            if _try_add(lore_store, fragment):
+                result.lore_fragments_minted += 1
+                result.content_bytes_seeded += len(text)
+                with Span.open(
+                    SPAN_WORLD_HISTORY_LORE_WRITEBACK,
+                    {
+                        "chapter_id": chapter_id,
+                        "fragment_id": fragment_id,
+                        "category": LoreCategory.History,
+                        "content_bytes": len(text),
+                        "pending_embedding": True,
+                    },
+                ):
+                    pass
+            else:
+                result.lore_fragments_skipped_duplicate += 1
+
+    return result
+
+
+__all__ = [
+    "ArcSeedResult",
+    "seed_lore_from_arc_promotion",
+    "seed_lore_from_char_creation",
+    "seed_lore_from_genre_pack",
+]

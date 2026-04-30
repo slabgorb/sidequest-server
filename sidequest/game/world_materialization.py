@@ -554,7 +554,7 @@ def should_recompute_arc(interaction: int) -> bool:
 
 def recompute_arc_history(
     snapshot: Any, chapters: list[HistoryChapter]
-) -> None:
+) -> list[HistoryChapter]:
     """Recompute ``world_history`` / ``campaign_maturity`` and emit the
     arc-tick OTEL spans.
 
@@ -570,6 +570,14 @@ def recompute_arc_history(
 
     ``materialize_world`` keeps its own ``world.materialized`` span,
     so the existing chargen-time materialization remains observable.
+
+    Returns the list of newly-promoted ``HistoryChapter`` objects (the
+    diff between ``chapters_before`` and ``chapters_after``). Empty list
+    when the recompute is a stable-tier no-op. The 45-23 dispatch site
+    consumes this list to drive the chapter-promotion writeback into
+    ``snapshot.narrative_log`` and the lore store; computing the diff
+    here keeps the math single-sourced rather than re-derived at the
+    call site.
     """
     from sidequest.telemetry.spans import (
         SPAN_WORLD_HISTORY_ARC_PROMOTED,
@@ -623,9 +631,20 @@ def recompute_arc_history(
     ):
         pass
 
+    added_chapters: list[HistoryChapter] = []
     if tier_changed:
         added_ids = [
             ch_id for ch_id in chapters_after_ids if ch_id not in chapters_before_ids
+        ]
+        added_set = set(added_ids)
+        # Resolve chapter-id strings back to the HistoryChapter objects
+        # the 45-23 seeding helper consumes. Walk ``snapshot.world_history``
+        # (the post-materialize list) so the order matches the panel's
+        # `chapters_added` attribute.
+        added_chapters = [
+            ch
+            for ch in snapshot.world_history
+            if getattr(ch, "id", "") in added_set
         ]
         with Span.open(
             SPAN_WORLD_HISTORY_ARC_PROMOTED,
@@ -637,6 +656,8 @@ def recompute_arc_history(
             },
         ):
             pass
+
+    return added_chapters
 
 
 # ---------------------------------------------------------------------------
