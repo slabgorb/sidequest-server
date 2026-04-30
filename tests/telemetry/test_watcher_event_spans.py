@@ -163,3 +163,39 @@ def test_watcher_processor_still_publishes_real_spans() -> None:
     event = hub.publish.call_args[0][0]
     assert event["event_type"] == "agent_span_close"
     assert event["fields"]["name"] == "test.unrouted_span"
+
+
+def test_synthetic_spans_count_increments_per_publish_when_flag_enabled(
+    monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
+) -> None:
+    """``synthetic_spans_count()`` is the per-turn diagnostic the
+    websocket dispatch handler reads at turn entry/exit. A non-zero
+    delta proves the bridge fired during the turn — closing the
+    "is the bridge live during gameplay?" question that resume-only
+    Jaeger output kept open."""
+    from sidequest.telemetry.watcher_hub import synthetic_spans_count
+
+    monkeypatch.setenv("SIDEQUEST_WATCHER_AS_SPANS", "1")
+    before = synthetic_spans_count()
+
+    watcher_hub.publish_event("turn_complete", {"turn": 1})
+    watcher_hub.publish_event("state_transition", {"field": "location"})
+    watcher_hub.publish_event("game_state_snapshot", {"reason": "turn"})
+
+    assert synthetic_spans_count() - before == 3
+
+
+def test_synthetic_spans_count_does_not_increment_when_flag_disabled(
+    monkeypatch: pytest.MonkeyPatch, in_memory_exporter: InMemorySpanExporter
+) -> None:
+    """Counter must reflect actual mint state — a 0 delta in the
+    server log unambiguously means "bridge flag was off this turn",
+    not "bridge silently failed"."""
+    from sidequest.telemetry.watcher_hub import synthetic_spans_count
+
+    monkeypatch.delenv("SIDEQUEST_WATCHER_AS_SPANS", raising=False)
+    before = synthetic_spans_count()
+
+    watcher_hub.publish_event("turn_complete", {"turn": 1})
+
+    assert synthetic_spans_count() - before == 0

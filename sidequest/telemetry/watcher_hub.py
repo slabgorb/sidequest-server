@@ -405,3 +405,13 @@ def publish_event(
     _maybe_persist_encounter_row({"event_type": event_type, "fields": fields})
     if _watcher_as_spans_enabled():
         _emit_watcher_span(event_type, fields, component, severity)
+
+
+def synthetic_spans_count() -> int:
+    """Live snapshot of the watcher→OTLP synthetic-span counter.
+
+    Lets a turn-level diagnostic capture before/after deltas and prove
+    whether the bridge is firing during gameplay (vs. only on resume).
+    Cheap (single attribute read); safe from any thread.
+    """
+    return _synthetic_spans_minted
