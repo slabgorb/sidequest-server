@@ -2540,7 +2540,21 @@ class WebSocketSessionHandler:
                 params["pc_descriptor"] = descriptor
         elif tier == "scene_illustration":
             pc_slug = _slugify_player_name(sd.player_name)
-            params["participants"] = [f"pc:{pc_slug}"]
+            # Match daemon's `build_cue_from_params` read key. The portrait
+            # branch above sets `characters`; this branch was previously
+            # setting `participants`, which the daemon never reads — so the
+            # PC ref never reached the composer's casting layer. The on-
+            # the-wire field is `characters` for both tiers; the daemon
+            # routes to portrait/illustration recipes by tier.
+            params["characters"] = [f"pc:{pc_slug}"]
+            # `sd.snapshot.location` is free-form narrator prose
+            # (e.g. "Engine Bay", "Corridor Deck Three"), not a
+            # `where:<slug>` ref. The daemon's PromptComposer rejects
+            # non-`where:` location refs at PlaceCatalog.get(). Until the
+            # server tracks slug-aware locations, send empty so
+            # _resolve_location takes its by-design "transient location"
+            # path and the action prose (subject) carries the setting.
+            params["location"] = ""
             descriptor = _build_pc_descriptor(sd, pc_slug)
             if descriptor is not None:
                 params["pc_descriptor"] = descriptor
