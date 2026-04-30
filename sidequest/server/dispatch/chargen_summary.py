@@ -268,7 +268,7 @@ def render_confirmation_summary(
         _add("equipment", ", ".join(display_items))
 
     # Backstory display source preference (added 2026-04-30, Parsley
-    # playtest BUG-LOW): genres like space_opera/coyote_reach use
+    # playtest BUG-LOW): genres like space_opera/coyote_star use
     # ``MechanicalEffects.background`` as a routing tag set by the
     # *origin* scene ("Outsystem-arrived"), not as the chosen
     # backstory hook ("Someone Went Into the Drift"). The accumulator

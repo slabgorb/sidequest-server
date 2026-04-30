@@ -285,7 +285,7 @@ class TestCoreFields:
         self, caverns_pack: GenrePack
     ) -> None:
         """Playtest 2026-04-30: ``personality_trait: trouble-magnet`` in
-        coyote_reach YAML rendered as the raw kebab token next to
+        coyote_star YAML rendered as the raw kebab token next to
         TitleCase Origin/Equipment. ``humanize_display`` must split on
         ``-`` and Title-case each token so the surface is consistent."""
         scenes = [

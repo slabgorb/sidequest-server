@@ -7,7 +7,7 @@ Pre-fix flow:
 2. Walks chargen (bone-dice stats, Delver class, opening, confirmation).
 3. Clicks Create Character. Server log shows `chargen.starting_equipment`
    → `chargen.complete` with NO `magic.init` line in between (compare
-   `space_opera`/`coyote_reach` which logs `magic.init world=...
+   `space_opera`/`coyote_star` which logs `magic.init world=...
    plugins=['innate_v1', 'item_legacy_v1'] bars=4`).
 4. Mira shows `Edge 10/10` and `No abilities.` in the UI — same surface
    as space_opera, no item-based magic differentiation.
@@ -162,18 +162,18 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
 
 def test_space_opera_magic_init_still_fires(so_pack_dir):
     """Companion: ensure the C&C migration didn't accidentally regress
-    the space_opera path. coyote_reach must still load the four
+    the space_opera path. coyote_star must still load the four
     authored bars (sanity / notice / vitality / hegemony_heat).
     """
     snapshot = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         turn_manager=TurnManager(),
     )
     result = init_magic_state_for_session(
         snapshot=snapshot,
         genre_pack_source_dir=so_pack_dir,
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         character_id="Parsley",
     )
     assert result is True
