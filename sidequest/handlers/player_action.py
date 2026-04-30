@@ -44,7 +44,25 @@ class PlayerActionHandler:
         msg: GameMessage,
     ) -> list[object]:
         if session._state not in (_State.Creating, _State.Playing):
-            return [_error_msg("Cannot process PLAYER_ACTION: not connected")]
+            # Playtest 2026-04-30: uvicorn ``--reload`` zombies session
+            # binding. The client transport reconnects automatically
+            # but the SESSION_EVENT{connect} that would re-bind the
+            # session sometimes never lands (effect timing, message
+            # drop during close-then-reopen, etc.). Tag the rejection
+            # with ``code="session_unbound"`` so the client can detect
+            # the unbound state and re-fire SESSION_EVENT{connect}
+            # from its saved slug — protocol-level recovery that works
+            # regardless of the underlying race.
+            logger.info(
+                "session.message_rejected_unbound type=PLAYER_ACTION state=%s",
+                session._state.name,
+            )
+            return [
+                _error_msg(
+                    "Cannot process PLAYER_ACTION: not connected",
+                    code="session_unbound",
+                ),
+            ]
 
         if session._session_data is None:
             return [_error_msg("Internal error: session data missing")]
