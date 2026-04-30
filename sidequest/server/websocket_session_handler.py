@@ -61,6 +61,9 @@ from sidequest.game.world_materialization import (
     CampaignMaturity,
     HistoryParseError,
     materialize_from_genre_pack,
+    parse_history_chapters,
+    recompute_arc_history,
+    should_recompute_arc,
 )
 from sidequest.genre.archetype.shim import resolve_archetype
 from sidequest.genre.error import GenreValidationError
@@ -898,9 +901,16 @@ class WebSocketSessionHandler:
             # World materialization (Story 2.3 Slice C / Rust connect.rs:1892).
             # Parse failure → empty-snapshot fallback (must not hard-fail mid-
             # commit when the character is already built).
+            history_value = _world_history_value(sd.genre_pack, sd.world_slug)
             try:
+                # Story 45-19: parse once at chargen and cache the typed
+                # chapter list on _SessionData so the per-turn arc-recompute
+                # tick doesn't re-parse history.yaml on every interaction.
+                # Same input drives ``materialize_from_genre_pack`` below;
+                # both calls share the same HistoryParseError fate.
+                sd.cached_history_chapters = parse_history_chapters(history_value)
                 materialized = materialize_from_genre_pack(
-                    _world_history_value(sd.genre_pack, sd.world_slug),
+                    history_value,
                     CampaignMaturity.Fresh,
                     sd.genre_slug,
                     sd.world_slug,
@@ -932,6 +942,10 @@ class WebSocketSessionHandler:
                     },
                 )
                 materialized = GameSnapshot(genre_slug=sd.genre_slug, world_slug=sd.world_slug)
+                # Parse failed: cache an empty chapter list so the
+                # arc-recompute tick is a graceful no-op rather than
+                # propagating the parse error per turn.
+                sd.cached_history_chapters = []
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
@@ -1519,6 +1533,20 @@ class WebSocketSessionHandler:
                     # PLAYER_ACTION turn is the first real exchange.
                     if not is_opening_turn:
                         snapshot.turn_manager.record_interaction()
+
+                    # Story 45-19: arc-recompute tick. Closes Felix's
+                    # Playtest 3 bug where world_history froze at turn 30.
+                    # The predicate is consulted with the post-bump
+                    # interaction so cadence boundaries align with the
+                    # interaction count the GM panel surfaces. Empty
+                    # cached_history_chapters (pack with no history.yaml,
+                    # or parse-failed chargen fallback) is a graceful
+                    # no-op inside ``recompute_arc_history`` — the tick
+                    # span still fires so the panel sees the empty case.
+                    if should_recompute_arc(snapshot.turn_manager.interaction):
+                        recompute_arc_history(
+                            snapshot, sd.cached_history_chapters
+                        )
 
                     now_encounter = snapshot.encounter
                     now_live = now_encounter is not None and not now_encounter.resolved
