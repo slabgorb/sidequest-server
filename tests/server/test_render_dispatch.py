@@ -217,7 +217,19 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
     assert req["params"]["tier"] == "scene_illustration"
     assert req["params"]["mood"] == "ominous"
     assert req["params"]["tags"] == ["desert", "ruin"]
-    assert req["params"]["location"] == "Tood's Dome — Nest Crack"
+    # Playtest 2026-04-30 fix: the server used to forward
+    # ``sd.snapshot.location`` here as free-form narrator prose
+    # ("Tood's Dome — Nest Crack"). The daemon's PromptComposer expects a
+    # ``where:<scope>/<slug>`` PlaceCatalog ref; ``PlaceCatalog.get`` now
+    # raises a ValueError on the scheme prefix check, which (pre-fix)
+    # bubbled out of ``_handle_client`` and EOFed the socket. Until the
+    # server tracks slug-aware locations, scene_illustration must send
+    # ``location=""`` so the daemon's by-design "transient location" path
+    # engages and the action prose carries the setting.
+    assert req["params"]["location"] == "", (
+        "scene_illustration must NOT forward free-form snapshot.location "
+        "as a place ref — daemon's PlaceCatalog rejects non-`where:` refs"
+    )
     assert req["params"]["genre"] == "mutant_wasteland"
     # Slice 1 of catalog-injected compose wiring + Bug #2a (playtest
     # 2026-04-26): server must send ``world`` so the daemon's compose path
@@ -385,6 +397,73 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
     # An apostrophe (e.g. "O'Connor") would be dropped, but here the test
     # name has only the hyphen which is preserved.
     assert "-" in descriptor["id"]
+
+
+@pytest.mark.asyncio
+async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Playtest 2026-04-30 contract drift: scene_illustration dispatch
+    used to set ``params["participants"] = [pc:<slug>]`` but the daemon's
+    ``build_cue_from_params`` only reads ``params.get("characters", [])``
+    — so the PC ref never reached the composer's casting plan and every
+    illustration rendered with no participant tokens. The portrait
+    branch already used ``characters``; both branches must use the same
+    on-the-wire field.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "scene_xyz.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 4500,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data_with_pc(player_name="Hokulea")
+    result = NarrationTurnResult(
+        narration="Hokulea pries open the sprung locker.",
+        visual_scene=VisualScene(
+            subject="a sprung exploration locker in red corridor light",
+            tier="scene_illustration",
+            mood="urgent",
+            tags=["ship-interior"],
+        ),
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["params"]
+    assert params["tier"] == "scene_illustration"
+    assert params["characters"] == ["pc:hokulea"], (
+        "scene_illustration must send PC ref under ``characters`` (the "
+        "key the daemon reads), not ``participants``. Pre-fix, the daemon "
+        "saw an empty participants list and the casting layer was empty."
+    )
+    assert "participants" not in params, (
+        "legacy ``participants`` key must not be sent — daemon doesn't "
+        "read it and leaving it in is a contract trap"
+    )
+    # And the location-fix from the same playtest: scene_illustration
+    # must NOT forward the snapshot's free-form prose location.
+    assert params["location"] == ""
+    # Descriptor still flows through so the daemon can register the PC.
+    assert params["pc_descriptor"]["id"] == "hokulea"
 
 
 @pytest.mark.asyncio
