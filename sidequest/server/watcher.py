@@ -30,6 +30,7 @@ from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanProcessor
 
 from sidequest.telemetry.watcher_hub import (
+    WATCHER_SYNTHETIC_ATTR,
     WatcherHub,
     publish_event,
     watcher_hub,
@@ -62,6 +63,14 @@ class WatcherSpanProcessor(SpanProcessor):
         return
 
     def on_end(self, span: ReadableSpan) -> None:
+        # Skip watcher-synthetic spans minted by ``publish_event`` itself —
+        # the semantic event was already broadcast through the hub directly,
+        # so re-publishing here would double every event on the dashboard.
+        # The OTLP exporter still sees these spans (it's a separate
+        # processor), so Jaeger gets the full stream.
+        if span.attributes and span.attributes.get(WATCHER_SYNTHETIC_ATTR):
+            return
+
         end_ns = span.end_time or 0
         start_ns = span.start_time or end_ns
         duration_ms = max(0, (end_ns - start_ns) // 1_000_000)

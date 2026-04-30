@@ -10,6 +10,7 @@ dependencies = [
     "pyyaml>=6.0",
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.24",
     "websockets>=12.0",
 ]
 
