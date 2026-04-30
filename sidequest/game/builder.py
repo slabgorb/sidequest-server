@@ -122,6 +122,12 @@ class SceneResult:
     ``choice_description`` stores the flavor description text from the
     chosen option so we can compose a narrative backstory instead of
     only keeping the mechanical label.
+
+    ``choice_label`` stores the short option label ("Someone Went Into the
+    Drift", "Vault Dweller", etc.) — needed by the chargen-preview to
+    display the chosen backstory hook on genres whose backstory scene
+    doesn't write to ``MechanicalEffects.background`` (e.g. space_opera,
+    victoria). ``None`` for freeform inputs that have no label.
     """
 
     input_type: SceneInputType
@@ -129,6 +135,7 @@ class SceneResult:
     hooks_added: list[NarrativeHook] = field(default_factory=list)
     anchors_added: list[LoreAnchor] = field(default_factory=list)
     choice_description: str | None = None
+    choice_label: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +163,18 @@ class AccumulatedChoices:
     item_hints: list[str] = field(default_factory=list)
     affinity_hint: str | None = None
     background: str | None = None
+    # Detected from scene effects shape — set when a scene's
+    # MechanicalEffects looks "backstory-hook-shaped" (touches
+    # relationship/goals/emotional_state, doesn't touch race/class/
+    # mutation/rig hints). Records the choice LABEL of that scene so
+    # the chargen preview can show the chosen backstory hook
+    # ("Someone Went Into the Drift") instead of the origin routing
+    # tag ("Outsystem-arrived"). Last-wins like other single-value
+    # hints. Genres without a drive-shaped scene leave this None and
+    # the preview falls back to ``background`` — matches the
+    # mutant_wasteland pattern where ``background`` IS the meaningful
+    # label ("Vault Dweller", "Heap Rat").
+    backstory_label: str | None = None
     mutation_hint: str | None = None
     training_hint: str | None = None
     emotional_state: str | None = None
@@ -774,6 +793,27 @@ class CharacterBuilder:
             if eff.reputation_bonus is not None:
                 acc.reputation_bonus = eff.reputation_bonus
 
+            # Backstory-hook detection. A scene's effects look "drive-shaped"
+            # when it touches the inner-life triplet (relationship / goals /
+            # emotional_state) WITHOUT also setting an origin/profession-shape
+            # field (race_hint / class_hint / mutation_hint / rig_type_hint).
+            # space_opera's `drive` scene and victoria's `drive` scene match;
+            # mutant_wasteland's `origins` (which sets race+background) does
+            # NOT match — that genre's `background` IS the meaningful label
+            # and stays the preview's source. Last-wins.
+            looks_like_drive = (
+                eff.relationship is not None
+                or eff.goals is not None
+                or eff.emotional_state is not None
+            ) and not (
+                eff.race_hint is not None
+                or eff.class_hint is not None
+                or eff.mutation_hint is not None
+                or eff.rig_type_hint is not None
+            )
+            if looks_like_drive and result.choice_label is not None:
+                acc.backstory_label = result.choice_label
+
             # Multi-value accumulation — item_hints skips sentinel "none"
             # and empty strings.
             if eff.item_hint is not None and eff.item_hint not in ("", "none"):
@@ -1019,6 +1059,7 @@ class CharacterBuilder:
                 hooks_added=hooks,
                 anchors_added=anchors,
                 choice_description=choice.description,
+                choice_label=choice.label,
             )
         )
 

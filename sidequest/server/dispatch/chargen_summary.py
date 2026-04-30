@@ -267,7 +267,23 @@ def render_confirmation_summary(
         display_items = [_resolve_item_display_name(pack, item_id) for item_id in equipment_ids]
         _add("equipment", ", ".join(display_items))
 
-    if acc.background is not None:
+    # Backstory display source preference (added 2026-04-30, Parsley
+    # playtest BUG-LOW): genres like space_opera/coyote_reach use
+    # ``MechanicalEffects.background`` as a routing tag set by the
+    # *origin* scene ("Outsystem-arrived"), not as the chosen
+    # backstory hook ("Someone Went Into the Drift"). The accumulator
+    # detects drive-shaped scenes (relationship/goals/emotional_state
+    # without race/class/mutation/rig hints) and records the choice
+    # label there as ``acc.backstory_label``. Prefer it when present;
+    # fall back to ``acc.background`` for genres like mutant_wasteland
+    # where ``background`` IS the meaningful label ("Vault Dweller").
+    backstory_source: str | None = None
+    if acc.backstory_label is not None:
+        backstory_source = acc.backstory_label
+    elif acc.background is not None:
+        backstory_source = acc.background
+
+    if backstory_source is not None:
         # Backstory keeps its leading blank line in the joined summary
         # (visual separation from the stat block) but is added to the
         # preview dict normally. Humanize the raw token so kebab-case
@@ -275,7 +291,7 @@ def render_confirmation_summary(
         # as "Outsystem Arrived" / "Old Soldier" instead of leaking
         # routing tags into the player-facing summary.
         backstory_label = field_label(rules, "backstory")
-        background_display = humanize_display(acc.background)
+        background_display = humanize_display(backstory_source)
         parts.append(f"\n{backstory_label}: {background_display}")
         preview[backstory_label] = background_display
 
