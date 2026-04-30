@@ -367,9 +367,57 @@ async def retrieve_lore_context(
                 len(query_embedding),
             )
 
-        hits = lore_store.query_by_similarity(query_embedding, top_k=top_k)
-        hits = [(sim, frag) for sim, frag in hits if sim >= min_similarity]
+        all_hits = lore_store.query_by_similarity(query_embedding, top_k=top_k)
+        hits = [(sim, frag) for sim, frag in all_hits if sim >= min_similarity]
+        rejected = [(sim, frag) for sim, frag in all_hits if sim < min_similarity]
         span.set_attribute("lore.hit_count", len(hits))
+
+        # Dashboard Lore tab consumer (playtest 2026-04-30 #1B). Pre-fix
+        # the panel listened for a `lore_retrieval` watcher event that
+        # was never published — only the OTEL `lore_embedding.retrieve`
+        # SPAN was emitted, which the dashboard cannot consume. Publish
+        # a structured event with selected/rejected fragments + budget
+        # so the panel can render the per-turn budget bar and fragment
+        # list. Counted token estimates use the prompt-zone heuristic
+        # (1 token ≈ 4 chars) — exact counts aren't available without
+        # a tokenizer round-trip.
+        from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+        def _frag_payload(sim: float, frag: LoreFragment) -> dict:
+            content = frag.content or ""
+            return {
+                "id": frag.id,
+                "category": frag.category,
+                "similarity": float(sim),
+                "tokens": max(1, len(content) // 4),
+                "preview": (
+                    content[:120] + "…" if len(content) > 120 else content
+                ),
+            }
+
+        selected_payload = [_frag_payload(s, f) for s, f in hits]
+        rejected_payload = [_frag_payload(s, f) for s, f in rejected]
+        tokens_used = sum(f["tokens"] for f in selected_payload)
+        _watcher_publish(
+            "lore_retrieval",
+            {
+                "selected": selected_payload,
+                "rejected": rejected_payload,
+                "selected_count": len(selected_payload),
+                "total_fragments": len(lore_store),
+                # `top_k` is the retrieval budget — number of fragments
+                # the store is allowed to return before similarity
+                # thresholding. Surfaced as `budget` so the dashboard
+                # can render a percent-used bar.
+                "budget": int(top_k),
+                "tokens_used": int(tokens_used),
+                "min_similarity": float(min_similarity),
+                "context_hint": (
+                    query_text[:80] + "…" if len(query_text) > 80 else query_text
+                ),
+            },
+            component="lore",
+        )
 
         if not hits:
             span.set_attribute("lore.outcome", "no_hits_above_threshold")

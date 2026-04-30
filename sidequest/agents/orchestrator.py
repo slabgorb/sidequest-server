@@ -340,6 +340,13 @@ class TurnContext:
     # Player character name (Recency zone — action attribution)
     character_name: str = "Player"
 
+    # Interaction count from `snapshot.turn_manager.interaction` at dispatch
+    # time. Surfaced on the `prompt_assembled` watcher event so the
+    # dashboard's Prompt tab can label the per-turn dropdown ("T3 · narrator
+    # · 11k tokens"). Pre-fix the field was unset and the dropdown read
+    # "T? · ? · 0 tokens" (playtest 2026-04-30 #1A).
+    turn_number: int = 0
+
     # Multiplayer merged-turn payload. When the per-room barrier fires and
     # multiple PCs' actions are dispatched as a single narration turn, the
     # session handler stores `(character_name, action_text)` per submitter
@@ -1531,12 +1538,22 @@ class Orchestrator:
             # reconfiguration and break every caplog-based test.
             from sidequest.telemetry.watcher_hub import publish_event as _pub
 
+            # Rough token estimate from char count (1 token ≈ 4 chars per
+            # the standard Claude tokenizer heuristic). Surfaced as
+            # `total_tokens` for the dashboard Prompt tab dropdown
+            # ("T3 · narrator · 11210 tokens"); the dashboard pre-fix
+            # read `total_tokens` and `agent` directly off the event,
+            # so we ship `agent` as an alias of `agent_name` to keep
+            # both old and new consumers happy (playtest 2026-04-30 #1A).
             _pub(
                 "prompt_assembled",
                 {
                     "agent_name": agent_name,
+                    "agent": agent_name,
+                    "turn_number": context.turn_number,
                     "section_count": section_count,
                     "prompt_len": len(prompt_text),
+                    "total_tokens": max(1, len(prompt_text) // 4),
                     "tier": str(tier),
                 },
                 component="prompt_builder",
@@ -1834,6 +1851,7 @@ async def run_narration_turn(
         genre=session.genre_slug or None,
         genre_prompts=genre.prompts,
         character_name=char_name,
+        turn_number=session.turn_manager.interaction,
         current_location=session.location or "Unknown",
         available_sfx=available_sfx,
         npc_registry=list(session.npc_registry),

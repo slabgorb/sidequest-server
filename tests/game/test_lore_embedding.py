@@ -309,6 +309,83 @@ async def test_retrieve_returns_formatted_lore_block() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieve_publishes_lore_retrieval_event_for_dashboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Playtest 2026-04-30 #1B — the dashboard's Lore tab listens for a
+    `lore_retrieval` watcher event with selected/rejected fragments and
+    a budget bar. Pre-fix only the ``lore_embedding.retrieve`` OTEL
+    SPAN was emitted (which the dashboard cannot consume), so the panel
+    badge stuck at 0 and the dropdown was empty even though retrieval
+    fired every turn.
+    """
+    captured: list[tuple[str, dict, str]] = []
+
+    def fake_publish(
+        event_type: str,
+        payload: dict,
+        *,
+        component: str = "sidequest-server",
+        severity: str = "info",  # noqa: ARG001
+    ) -> None:
+        captured.append((event_type, payload, component))
+
+    monkeypatch.setattr(
+        "sidequest.telemetry.watcher_hub.publish_event",
+        fake_publish,
+    )
+
+    store = LoreStore()
+    store.add(_frag("castle", "The ancient castle on the hill."))
+    store.add(_frag("river", "A winding river through the valley."))
+    store.update_embedding("castle", [1.0, 0.0])
+    store.update_embedding("river", [0.0, 1.0])
+
+    client = _FakeClient(
+        responses={
+            "player approaches the castle": {
+                "embedding": [0.95, 0.05],
+                "model": "m",
+                "latency_ms": 4,
+            }
+        }
+    )
+
+    section = await retrieve_lore_context(
+        store,
+        "player approaches the castle",
+        client=client,
+        top_k=2,
+        min_similarity=0.5,
+    )
+    assert section is not None  # narrator gets the lore block
+
+    # And the dashboard gets the rich event.
+    lore_events = [c for c in captured if c[0] == "lore_retrieval"]
+    assert len(lore_events) == 1
+    _, payload, component = lore_events[0]
+    assert component == "lore"
+    # `castle` cleared 0.5 (≈0.95), `river` did not (≈0.05) → one selected,
+    # one rejected. That's the per-turn detail the dashboard renders.
+    selected_ids = {f["id"] for f in payload["selected"]}
+    rejected_ids = {f["id"] for f in payload["rejected"]}
+    assert selected_ids == {"castle"}
+    assert rejected_ids == {"river"}
+    assert payload["selected_count"] == 1
+    assert payload["total_fragments"] == 2
+    assert payload["budget"] == 2  # top_k
+    assert payload["tokens_used"] >= 1  # estimate from castle's content
+    assert payload["min_similarity"] == 0.5
+    assert payload["context_hint"].startswith("player approaches")
+    # Each fragment payload carries the dashboard-facing fields.
+    castle = next(f for f in payload["selected"] if f["id"] == "castle")
+    assert castle["category"] == "history"
+    assert 0.0 <= castle["similarity"] <= 1.0
+    assert castle["tokens"] >= 1
+    assert "preview" in castle
+
+
+@pytest.mark.asyncio
 async def test_retrieve_returns_none_on_empty_store() -> None:
     store = LoreStore()
     client = _FakeClient()

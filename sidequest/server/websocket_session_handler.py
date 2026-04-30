@@ -2102,11 +2102,57 @@ class WebSocketSessionHandler:
                             phase_durations_ms=timings.to_dict(),
                             phase_call_counts=timings.phase_call_counts,
                             total_duration_ms=timings.total_ms,
+                            footnotes_count=len(result.footnotes or []),
                         )
                         await self._validator.submit(record)
                         submitted = True
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("turn_record.assemble_failed: %s", exc)
+
+                # Per-turn `game_state_snapshot` for the dashboard State tab
+                # (playtest 2026-04-30 #1C). Pre-fix this event was published
+                # only at session connect / chargen confirmation — after the
+                # initial fire the State tab read "Waiting for
+                # GameStateSnapshot event..." forever. Per ADR-031 the watcher
+                # is supposed to tick every turn so the GM panel can verify
+                # state advancement; this publish closes that gap. Wrapped in
+                # try/except so a serialization issue cannot crash the hot
+                # turn path.
+                try:
+                    _watcher_publish(
+                        "game_state_snapshot",
+                        {
+                            "reason": "turn",
+                            "genre_slug": sd.genre_slug,
+                            "world_slug": sd.world_slug,
+                            "player_name": sd.player_name,
+                            "player_id": sd.player_id,
+                            "turn_number": snapshot.turn_manager.interaction,
+                            # Full snapshot dump so the dashboard's State
+                            # panel can render characters / NPCs / inventory
+                            # / known facts / regions etc. Pre-fix the
+                            # event payload was a thin summary
+                            # (counts only) and the State panel could
+                            # not draw any of its rich UI even when the
+                            # event did fire at connect.
+                            "snapshot": snapshot.model_dump(mode="json"),
+                            # Back-compat summary fields the connect-time
+                            # publishes have always exposed.
+                            "current_location": snapshot.location or "",
+                            "discovered_regions": list(snapshot.discovered_regions),
+                            "npc_registry_count": len(snapshot.npc_registry),
+                            "quest_log_count": len(snapshot.quest_log),
+                            "lore_established_count": len(snapshot.lore_established),
+                            "character_count": len(snapshot.characters),
+                        },
+                        component="game",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "game_state_snapshot.publish_failed turn=%d error=%s",
+                        snapshot.turn_manager.interaction,
+                        exc,
+                    )
 
                 return outbound
         finally:

@@ -39,6 +39,7 @@ from sidequest.server.dispatch.char_creation_resolve import resolve_char_creatio
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
 from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.image_pacing import ImagePacingThrottle
+from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.session_handler import (
     _build_message_for_kind,
     _rename_resumed_character_if_uuid,
@@ -59,6 +60,69 @@ if TYPE_CHECKING:
 from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
+
+
+def _backfill_magic_state_on_resume(
+    *,
+    snapshot: GameSnapshot,
+    genre_pack,
+    world_slug: str,
+) -> None:
+    """Backfill ``snapshot.magic_state`` on resume if absent and the
+    world ships ``magic.yaml``.
+
+    Pre-fix (playtest 2026-04-30 #9), saves created before
+    ``init_magic_state_for_session`` was wired into chargen — or via any
+    code path that skipped the chargen branch — landed on resume with
+    ``snapshot.magic_state = None``. The ``magic_working`` pipeline then
+    silently no-op'd: server-side validation ran but had no
+    character-keyed bars to debit, so threshold-promotion → status
+    updates never landed and the LedgerPanel never surfaced bars. The
+    failure was perfectly silent — exactly the kind of half-wired feature
+    CLAUDE.md "Verify Wiring, Not Just Existence" forbids.
+
+    The helper is a no-op when:
+      - the world has no ``magic.yaml`` pair (correct: non-magic worlds
+        keep ``magic_state=None``);
+      - ``snapshot.magic_state`` is already populated (resume from a
+        post-init save);
+      - the snapshot has no ``characters`` to key the ledger by;
+      - ``init_magic_state_for_session`` returns ``False`` (loader
+        error — already logged loud at ERROR by the helper).
+
+    Emits a ``magic_state.backfilled_on_resume`` OTEL span on success so
+    the GM panel can spot when a backfill actually fired (per CLAUDE.md
+    OTEL Observability Principle: subsystem fixes must be GM-panel-
+    visible).
+    """
+    if snapshot.magic_state is not None:
+        return
+    if not snapshot.characters:
+        # No PC seated yet — nothing to add to the ledger. The
+        # chargen-bootstrap path will call init_magic_state_for_session
+        # itself once a character is materialized.
+        return
+    source_dir = getattr(genre_pack, "source_dir", None)
+    if source_dir is None:
+        return
+    character_id = snapshot.characters[0].core.name
+    tracer = trace.get_tracer("sidequest.handlers.connect")
+    with tracer.start_as_current_span("magic_state.backfill_on_resume") as span:
+        span.set_attribute("world_slug", world_slug)
+        span.set_attribute("character_id", character_id)
+        loaded = init_magic_state_for_session(
+            snapshot=snapshot,
+            genre_pack_source_dir=source_dir,
+            world_slug=world_slug,
+            character_id=character_id,
+        )
+        span.set_attribute("loaded", loaded)
+        if loaded:
+            logger.info(
+                "magic.backfilled_on_resume world=%s character=%s",
+                world_slug,
+                character_id,
+            )
 
 
 class ConnectHandler:
@@ -265,6 +329,11 @@ class ConnectHandler:
                 ]
             if saved is not None:
                 snapshot = saved.snapshot
+                _backfill_magic_state_on_resume(
+                    snapshot=snapshot,
+                    genre_pack=genre_pack,
+                    world_slug=row.world_slug,
+                )
                 # Per-player chargen gate (playtest 2026-04-25). MP: a new
                 # player_id joining a slug that already has a character must
                 # route to chargen, not auto-claim the existing PC.
@@ -904,6 +973,11 @@ class ConnectHandler:
         has_character: bool
         if saved is not None:
             snapshot = saved.snapshot
+            _backfill_magic_state_on_resume(
+                snapshot=snapshot,
+                genre_pack=genre_pack,
+                world_slug=world_slug,
+            )
             has_character = bool(snapshot.characters)
             logger.info(
                 "session.resumed genre=%s world=%s player=%s turn=%s",
