@@ -70,3 +70,37 @@ def test_empty_actor_or_text_in_status_change_is_silently_dropped(
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
     assert snap.characters[0].core.statuses == []
+
+
+# ---------------------------------------------------------------------------
+# Boon severity — added 2026-04-30 for prose-described temporary buffs
+# from workings/consumables/scrolls/potions/artifacts. Mira's pouch-of-
+# potion-glass playtest surfaced the gap: narrator wrote a real magical
+# effect ("the torchlight gets clearer") but had no schema slot for the
+# buff, so the system never recorded it. Boon is the slot.
+# ---------------------------------------------------------------------------
+
+
+def test_boon_severity_appends_to_named_actor(snapshot_with_pack, character_named_sam):
+    """Boon is a valid severity tier and lands in the actor's status list."""
+    snap, pack = snapshot_with_pack
+    snap.characters.append(character_named_sam)
+    result = NarrationTurnResult(
+        narration="Sam drinks; the torchlight gets clearer.",
+        status_changes=[
+            {
+                "actor": "Sam",
+                "status": {
+                    "text": "Heightened Perception (3 rounds)",
+                    "severity": "Boon",
+                },
+            },
+        ],
+    )
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    sam = snap.characters[0]
+    assert any(
+        s.text == "Heightened Perception (3 rounds)"
+        and s.severity is StatusSeverity.Boon
+        for s in sam.core.statuses
+    )

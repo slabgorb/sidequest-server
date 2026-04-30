@@ -35,19 +35,30 @@ def _add_status(char, text: str, severity: StatusSeverity) -> None:
     )
 
 
-def test_clear_scratch_sweeps_only_scratch(snapshot_with_pack, character_named_sam):
+def test_clear_scratch_sweeps_scratch_and_boon_only(
+    snapshot_with_pack, character_named_sam,
+):
+    """Scene-bounded severities (Scratch + Boon) sweep; Wound/Scar persist.
+
+    Boon was added 2026-04-30 — it joins Scratch in the scene-end sweep
+    because temporary buffs from a working/potion/scroll are scene-scoped
+    by design. A "Heightened Perception" buff from a potion shouldn't
+    trail the party into the next encounter.
+    """
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
     sam = snap.characters[0]
     _add_status(sam, "Choked", StatusSeverity.Scratch)
     _add_status(sam, "Bruised Ribs", StatusSeverity.Wound)
     _add_status(sam, "Marked by the Butcher", StatusSeverity.Scar)
+    _add_status(sam, "Heightened Perception (3 rounds)", StatusSeverity.Boon)
 
     cleared = clear_scratch_on_scene_end(snap, reason="scene_end", turn=3)
 
-    assert cleared == 1
+    assert cleared == 2
     remaining = [s.text for s in sam.core.statuses]
     assert "Choked" not in remaining
+    assert "Heightened Perception (3 rounds)" not in remaining
     assert "Bruised Ribs" in remaining
     assert "Marked by the Butcher" in remaining
 

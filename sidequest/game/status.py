@@ -2,10 +2,22 @@
 
 Spec: docs/superpowers/specs/2026-04-25-dual-track-momentum-design.md §Statuses.
 
-Severity tiers drive recovery cadence (Scratch clears at scene end; Wound at
-session end; Scar requires a milestone) and — in v2 — drive the absorption
-budget when an encounter dial is about to cross threshold. v1 just tracks
-the shape; the absorption mechanic ships in story 5.
+Severity tiers drive recovery cadence and (v2) drive the absorption budget
+when an encounter dial is about to cross threshold:
+
+  - Scratch: clears at scene end (graze, lost composure, momentary shake).
+  - Wound:   clears at session end or with rest (real injury, notable shake).
+  - Scar:    persists until milestone or healing event (permanent mark).
+  - Boon:    temporary BENEFICIAL effect from a working/consumable/scroll/
+             potion (heightened senses, vigor, courage, the air sharpening
+             after a draught). Clears at scene end alongside Scratch — Boons
+             are scene-bounded by design so a single buff doesn't trail a
+             party between encounters. Added 2026-04-30 to give the narrator
+             a tool for prose-described magical effects from item use that
+             previously had no schema slot (Mira / dungeon_survivor playtest).
+
+v1 tracks shape only; the absorption mechanic ships in story 5. Boons do
+NOT participate in absorption — they're flavor for the player, not mitigation.
 
 Migration: existing saves carry ``CreatureCore.statuses`` as ``list[str]``.
 ``migrate_legacy_statuses`` converts a bare string to
@@ -26,6 +38,7 @@ class StatusSeverity(str, Enum):  # noqa: UP042 — matches project convention (
     Scratch = "Scratch"
     Wound = "Wound"
     Scar = "Scar"
+    Boon = "Boon"
 
 
 class Status(BaseModel):
