@@ -825,3 +825,72 @@ async def test_dead_subscribers_are_pruned(bound_hub: WatcherHub) -> None:
     # good received the event; dead got pruned
     assert len(good.events) == 1
     assert dead not in bound_hub._subscribers  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_nonblankstring_field_does_not_kill_subscribers(
+    bound_hub: WatcherHub,
+) -> None:
+    """An event whose fields contain a Pydantic ``NonBlankString`` must
+    serialize cleanly via the hub's tolerant encoder. Both subscribers
+    must receive the (string-coerced) value, and neither must be pruned
+    as ``dead``.
+
+    Regression: playtest 2026-04-29. ``send_json`` on Starlette uses
+    plain ``json.dumps`` which raises ``TypeError`` on Pydantic
+    ``RootModel`` instances. The per-subscriber ``except`` then evicted
+    the GM dashboard, and the very next event (``turn_complete``) found
+    zero subscribers. Net effect: the dashboard rendered "Turns: 0"
+    forever despite the bus publishing every span.
+    """
+    from sidequest.protocol.types import NonBlankString
+
+    sock_a = await _capture(bound_hub)
+    sock_b = await _capture(bound_hub)
+    publish_event(
+        "state_transition",
+        {
+            "field": "location",
+            "from_": NonBlankString("Old Forge"),
+            "to": NonBlankString("Mendes Post"),
+        },
+        component="state.location",
+    )
+    await asyncio.sleep(0.05)
+    assert len(sock_a.events) == 1
+    assert len(sock_b.events) == 1
+    fields = sock_a.events[0]["fields"]
+    # NonBlankString must be coerced to plain JSON string — no
+    # round-tripping, no nested {"root": "..."} envelope.
+    assert fields["from_"] == "Old Forge"
+    assert fields["to"] == "Mendes Post"
+    # Both sockets remain subscribed — the encoder bug must not prune
+    # live subscribers.
+    assert sock_a in bound_hub._subscribers  # noqa: SLF001
+    assert sock_b in bound_hub._subscribers  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_unserializable_event_is_dropped_subscribers_preserved(
+    bound_hub: WatcherHub,
+) -> None:
+    """Some publisher will eventually emit a value the tolerant encoder
+    can't handle (e.g. a circular reference). The hub must drop the one
+    bad event without evicting any subscriber. Companion test to
+    ``test_nonblankstring_field_does_not_kill_subscribers``: that one
+    proves the happy path of the encoder; this one proves the failure
+    path doesn't break delivery for the next event.
+    """
+    sock = await _capture(bound_hub)
+
+    cyclic: dict[str, Any] = {"a": 1}
+    cyclic["self"] = cyclic  # circular — even default=str can't fix this
+
+    publish_event("state_transition", {"payload": cyclic})
+    publish_event("turn_complete", {"turn_id": 99, "agent_name": "narrator"})
+    await asyncio.sleep(0.05)
+
+    # The bad event was dropped; the good one was delivered.
+    types = [ev["event_type"] for ev in sock.events]
+    assert types == ["turn_complete"]
+    assert sock in bound_hub._subscribers  # noqa: SLF001
