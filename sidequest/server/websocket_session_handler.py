@@ -1553,10 +1553,61 @@ class WebSocketSessionHandler:
                     # or parse-failed chargen fallback) is a graceful
                     # no-op inside ``recompute_arc_history`` — the tick
                     # span still fires so the panel sees the empty case.
+                    #
+                    # Story 45-23: when the recompute reports newly-
+                    # promoted chapters, seed each chapter's narrative
+                    # log + lore strings into the durable narrative_log
+                    # and the RAG-retrievable lore store. Closes Felix's
+                    # writeback gap (71 turns, narrative_log + lore_store
+                    # empty of arc-sourced content). Per-chapter
+                    # ``arc_embedding_seed`` span carries the seeded
+                    # counts so the GM panel can chart Lane B throughput.
                     if should_recompute_arc(snapshot.turn_manager.interaction):
-                        recompute_arc_history(
+                        added_chapters = recompute_arc_history(
                             snapshot, sd.cached_history_chapters
                         )
+                        if added_chapters:
+                            from sidequest.game.lore_seeding import (  # noqa: PLC0415
+                                seed_lore_from_arc_promotion,
+                            )
+                            from sidequest.telemetry.spans import (  # noqa: PLC0415
+                                SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED,
+                                Span,
+                            )
+                            for chapter in added_chapters:
+                                # One seed-call per promoted chapter so
+                                # the OTEL span attributes can attribute
+                                # the counts to the specific chapter id
+                                # — the GM panel filters by chapter to
+                                # diagnose which content got seeded.
+                                seed_result = seed_lore_from_arc_promotion(
+                                    snapshot,
+                                    sd.store,
+                                    sd.lore_store,
+                                    [chapter],
+                                )
+                                with Span.open(
+                                    SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED,
+                                    {
+                                        "chapter_id": getattr(chapter, "id", ""),
+                                        "narrative_entries_appended": (
+                                            seed_result.narrative_entries_appended
+                                        ),
+                                        "lore_fragments_minted": (
+                                            seed_result.lore_fragments_minted
+                                        ),
+                                        "lore_fragments_skipped_duplicate": (
+                                            seed_result.lore_fragments_skipped_duplicate
+                                        ),
+                                        "content_bytes_seeded": (
+                                            seed_result.content_bytes_seeded
+                                        ),
+                                        "interaction": (
+                                            snapshot.turn_manager.interaction
+                                        ),
+                                    },
+                                ):
+                                    pass
 
                     # Story 45-20: trope-resolution handshake. Diffs the
                     # baseline captured at the top of this method against

@@ -30,7 +30,6 @@ from sidequest.telemetry.spans import (
     SPAN_WORLD_HISTORY_NARRATIVE_LOG_WRITEBACK,
 )
 
-
 # ---------------------------------------------------------------------------
 # Constant value pins — the canonical span name is what the GM panel's
 # filter rules key off. Renaming the constant must also rename the
