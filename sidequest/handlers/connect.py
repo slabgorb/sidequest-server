@@ -519,9 +519,27 @@ class ConnectHandler:
             # Opening-hook + world-context resolution (matches legacy branch).
             # Resolved once at connect time so chargen confirmation and the
             # narrator's first turn see the same directive/seed/context.
-            opening: tuple[str, str] | None = resolve_opening(
-                genre_pack, row.world_slug, row.genre_slug
-            )
+            #
+            # Fresh-session guard (playtest 2026-04-30 reconnect noise): the
+            # opening seed/directive are only consumed by the very first
+            # narrator turn (turn 1, opening narration after chargen). On
+            # reconnects after a session has begun — characters present in
+            # the snapshot, interactions advanced past 0 — they ride along
+            # uselessly in session_data and the ``opening_hook_selected``
+            # log line fires with a freshly-rolled hook_id on every connect,
+            # making it look (in the playtest pingpong) like the scene was
+            # changing across tabs. Skip the dice roll when the session
+            # state proves we're past the opening — the persisted
+            # ``current_scene`` on the snapshot is the source of truth, not
+            # a re-rolled hook.
+            opening: tuple[str, str] | None = None
+            if (
+                not snapshot.characters
+                and snapshot.turn_manager.interaction == 0
+            ):
+                opening = resolve_opening(
+                    genre_pack, row.world_slug, row.genre_slug
+                )
             opening_seed: str | None = None
             opening_directive: str | None = None
             if opening is not None:
