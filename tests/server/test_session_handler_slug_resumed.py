@@ -887,10 +887,12 @@ async def test_slug_resume_backfills_last_narration_when_replay_is_empty(
     """Fresh-browser resume: client's persisted ``last_seen_seq`` already
     covers the tail (nothing new happened while the tab was closed), so the
     normal replay loop emits zero narrations — leaving the narrative pane
-    blank. The tail backfill must re-emit the most recent NARRATION
+    blank. The tail backfill must re-emit the recent NARRATION block
     regardless of ``last_seen_seq`` so the player lands with the last
     chapter on screen. Pingpong 2026-04-24 "Slug-resume shows empty
-    Narrative pane on fresh browser session".
+    Narrative pane on fresh browser session" + 2026-04-30 "Resume
+    narration replay emits only 1 of N" (cap raised so multi-turn
+    scrollback survives a refresh).
     """
     from sidequest.protocol.enums import MessageType
 
@@ -922,13 +924,58 @@ async def test_slug_resume_backfills_last_narration_when_replay_is_empty(
     narration_msgs = [
         m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
     ]
-    assert len(narration_msgs) == 1, (
-        "Expected exactly one NARRATION from the tail backfill — the last "
-        f"one. Got {len(narration_msgs)}: types="
+    # Backfill cap is DEFAULT_TAIL_BACKFILL_LIMIT (5). With 3 prior
+    # narrations seeded, all three should come back in order.
+    assert [str(m.payload.text) for m in narration_msgs] == prior, (
+        "Tail backfill must replay the recent narration window in order. "
+        f"Got {[str(m.payload.text) for m in narration_msgs]!r}, "
+        f"expected {prior!r}. Outbound types: "
         f"{[getattr(m, 'type', None) for m in outbound]}"
     )
-    assert str(narration_msgs[0].payload.text) == prior[-1], (
-        "Tail backfill must pick the most recent narration, not the first."
+
+
+@pytest.mark.asyncio
+async def test_slug_resume_backfill_caps_at_default_limit(
+    tmp_path: Path,
+) -> None:
+    """When more narrations exist than the backfill limit, the tail
+    backfill returns only the most recent ``limit`` of them so we don't
+    dump the entire game history on every refresh. Pingpong 2026-04-30
+    "Resume narration replay emits only 1 of N" — the bug was 1, the cap
+    is now ``DEFAULT_TAIL_BACKFILL_LIMIT``.
+    """
+    from sidequest.protocol.enums import MessageType
+    from sidequest.server.views import DEFAULT_TAIL_BACKFILL_LIMIT
+
+    slug = "2026-04-30-tail-backfill-cap"
+    prior = [f"Narration line {i}" for i in range(DEFAULT_TAIL_BACKFILL_LIMIT + 3)]
+    _seed_resumable_game_with_narrations(tmp_path, slug, prior)
+    handler = _make_handler(tmp_path)
+
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="rux-player",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
+            last_seen_seq=len(prior),  # past the tail — forces backfill
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    narration_msgs = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
+    ]
+    assert len(narration_msgs) == DEFAULT_TAIL_BACKFILL_LIMIT, (
+        f"Expected {DEFAULT_TAIL_BACKFILL_LIMIT} narrations from the "
+        f"capped tail backfill, got {len(narration_msgs)}."
+    )
+    expected_tail = prior[-DEFAULT_TAIL_BACKFILL_LIMIT:]
+    assert [str(m.payload.text) for m in narration_msgs] == expected_tail, (
+        "Tail backfill must return the most recent ``limit`` narrations "
+        f"in order. Got {[str(m.payload.text) for m in narration_msgs]!r}, "
+        f"expected {expected_tail!r}."
     )
 
 
