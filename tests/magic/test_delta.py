@@ -100,3 +100,62 @@ def test_protocol_state_delta_has_magic_state_field():
     # Field must default to None (opaque dict — client deserializes via TS types).
     proto = ProtocolStateDelta()
     assert proto.magic_state is None
+
+
+def test_shared_world_delta_to_state_delta_carries_magic_state():
+    """Phase 4 wire path: the projection helper must accept a magic_state
+    payload and embed it on the returned wire StateDelta. Without this,
+    NARRATION_END never carries magic_state to the UI and bars never
+    animate even though server-side mutations land correctly.
+    """
+    from sidequest.game.shared_world_delta import SharedWorldDelta
+    from sidequest.server.session_handler import (
+        _shared_world_delta_to_state_delta,
+    )
+
+    config = _make_world_config()
+    state = MagicState.from_config(config)
+    state.add_character("sira_mendes")
+
+    delta = SharedWorldDelta(location="rusted_atrium", encounter_id=None, party_formation=[])
+    wire = _shared_world_delta_to_state_delta(
+        delta,
+        magic_state=state.model_dump(mode="json"),
+    )
+
+    assert wire.magic_state is not None, (
+        "wire StateDelta.magic_state must carry the dict payload "
+        "when the projection is given a non-None magic_state arg"
+    )
+    # Sanity: the dict round-trips the bar registry the UI needs.
+    assert "ledger" in wire.magic_state
+    assert "config" in wire.magic_state
+
+
+def test_shared_world_delta_to_state_delta_magic_state_optional():
+    """Default kwarg keeps existing call sites working — wire magic_state
+    stays None when the helper is called without the new arg.
+    """
+    from sidequest.game.shared_world_delta import SharedWorldDelta
+    from sidequest.server.session_handler import (
+        _shared_world_delta_to_state_delta,
+    )
+
+    delta = SharedWorldDelta(location="rusted_atrium", encounter_id=None, party_formation=[])
+    wire = _shared_world_delta_to_state_delta(delta)
+    assert wire.magic_state is None
+
+
+def test_websocket_session_handler_passes_magic_state_to_state_delta():
+    """Wire-first source grep: the NARRATION_END emit site must thread
+    snapshot.magic_state into the projection helper. Without this, the
+    helper's new kwarg is dead and the UI never receives bars.
+    """
+    from sidequest.server import websocket_session_handler
+
+    with open(websocket_session_handler.__file__) as fh:
+        source = fh.read()
+    assert "magic_state=" in source, (
+        "websocket_session_handler.py must pass magic_state= into "
+        "_shared_world_delta_to_state_delta — wire-first gate fails."
+    )

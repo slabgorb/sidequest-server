@@ -82,7 +82,11 @@ def _hash_snapshot(snap: object) -> str:
     return blake2b(repr(snap).encode(), digest_size=16).hexdigest()
 
 
-def _shared_world_delta_to_state_delta(delta: SharedWorldDelta) -> StateDelta:
+def _shared_world_delta_to_state_delta(
+    delta: SharedWorldDelta,
+    *,
+    magic_state: dict | None = None,
+) -> StateDelta:
     """Project a :class:`SharedWorldDelta` onto the wire :class:`StateDelta`.
 
     Story 45-1 — sealed-letter shared-world handshake. The game-side
@@ -94,6 +98,11 @@ def _shared_world_delta_to_state_delta(delta: SharedWorldDelta) -> StateDelta:
     Returns a StateDelta whose perceived-state fields (characters/quests/
     items_gained) stay None — the canonical/perceived split is enforced
     structurally here, not by ad-hoc filtering.
+
+    Magic Phase 4: ``magic_state`` is an opaque dict (already JSON-mode
+    dumped from :class:`MagicState`) that rides on every NARRATION_END so
+    the UI ledger panel mirrors the server registry. Pass ``None`` (the
+    default) when the active world has no magic configured.
     """
     return StateDelta(
         location=delta.location or None,
@@ -108,6 +117,7 @@ def _shared_world_delta_to_state_delta(delta: SharedWorldDelta) -> StateDelta:
         ]
         if delta.party_formation
         else None,
+        magic_state=magic_state,
     )
 
 

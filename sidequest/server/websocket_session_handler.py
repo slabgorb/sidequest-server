@@ -1895,12 +1895,23 @@ class WebSocketSessionHandler:
                         snapshot,
                         room=self._room,
                     )
+                    # Magic Phase 4: ride the post-resolution magic_state on the
+                    # NARRATION_END handshake. Sent every turn (not gated on the
+                    # internal StateDelta.magic flag) — the UI is stateless on
+                    # this payload and an unchanged dict is cheap; gating would
+                    # silently desync the ledger after a reconnect.
+                    magic_state_dict = (
+                        snapshot.magic_state.model_dump(mode="json")
+                        if snapshot.magic_state is not None
+                        else None
+                    )
                     outbound.append(
                         NarrationEndMessage(
                             type="NARRATION_END",  # type: ignore[arg-type]
                             payload=NarrationEndPayload(
                                 state_delta=_shared_world_delta_to_state_delta(
                                     handshake_delta,
+                                    magic_state=magic_state_dict,
                                 ),
                             ),
                             player_id=sd.player_id,
