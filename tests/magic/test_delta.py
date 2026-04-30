@@ -21,7 +21,7 @@ from sidequest.magic.state import BarKey, MagicState
 def _make_world_config() -> WorldMagicConfig:
     """Minimal WorldMagicConfig sufficient for delta tests."""
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate"],
         active_plugins=["innate_v1"],

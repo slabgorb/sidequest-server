@@ -1,7 +1,7 @@
 """Genre-layer chassis catalog pydantic models.
 
 Mirrors `chassis_classes.yaml` shape per docs/design/rig-taxonomy.md.
-Slice scope: only fields used by Coyote Reach's voidborn_freighter +
+Slice scope: only fields used by Coyote Star's voidborn_freighter +
 the_tea_brew. Hardpoints, chassis_death, full provenance vocabulary
 are deferred to follow-on specs.
 """

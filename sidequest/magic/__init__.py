@@ -1,7 +1,7 @@
 """Magic-system runtime — plugins, ledger bars, validator.
 
 See docs/design/magic-taxonomy.md for the framework.
-See docs/superpowers/specs/2026-04-28-magic-system-coyote-reach-implementation-design.md
+See docs/superpowers/specs/2026-04-28-magic-system-coyote-star-implementation-design.md
 for the v1 implementation scope.
 """
 from sidequest.magic.context_builder import build_magic_context_block

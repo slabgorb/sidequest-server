@@ -1,4 +1,4 @@
-"""Magic spans — narrator-described workings (Coyote Reach iter 3, Task 3.5).
+"""Magic spans — narrator-described workings (Coyote Star iter 3, Task 3.5).
 
 Routes to the dashboard event feed via SPAN_ROUTES with
 ``event_type=state_transition``, ``component=magic``. The OTEL span

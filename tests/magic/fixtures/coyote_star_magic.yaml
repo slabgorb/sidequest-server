@@ -2,7 +2,7 @@
 # promote_to_status blocks landed in Task 3.4 — bars that surface as
 # character statuses (sanity, notice, vitality) carry text + severity
 # here; world-scope bars (hegemony_heat) intentionally omit it.
-world: coyote_reach
+world: coyote_star
 genre: space_opera
 intensity: 0.25
 active_plugins: [innate_v1, item_legacy_v1]

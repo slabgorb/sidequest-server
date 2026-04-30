@@ -563,11 +563,11 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
         # Original Mawdeep regression (caverns_and_claudes/grimvault has
         # opening hooks, used as proxy for the same shape Mawdeep had).
         ("caverns_and_claudes", "grimvault", "Sinkhole Inn Room"),
-        # Playtest 2026-04-26 [S2-BUG] coyote_reach regression: George
+        # Playtest 2026-04-26 [S2-BUG] coyote_star regression: George
         # got a fresh ``arena_trial`` cold-open even though John was
         # already in the world. Same suppression must reach this pack
         # (and any future pack with opening hooks).
-        ("space_opera", "coyote_reach", "Trail Junction"),
+        ("space_opera", "coyote_star", "Trail Junction"),
     ],
 )
 @pytest.mark.asyncio
@@ -594,7 +594,7 @@ async def test_mp_joiner_suppresses_opening_seed(
     (ADR-067) handles as a continuation of the existing scene.
 
     Parametrized over packs so a future genre with opening hooks
-    (space_opera/coyote_reach being the prompt for parametrization)
+    (space_opera/coyote_star being the prompt for parametrization)
     can't silently regress.
     """
     import logging

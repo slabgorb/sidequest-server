@@ -516,7 +516,7 @@ class GameSnapshot(BaseModel):
     # to populate [ENCOUNTER RESOLVED] zone; cleared after consumption.
     pending_resolution_signal: ResolutionSignal | None = None
 
-    # Magic system state (Coyote Reach iteration 2). None on saves that
+    # Magic system state (Coyote Star iteration 2). None on saves that
     # predate magic or on worlds without a magic config.
     magic_state: MagicState | None = None
 

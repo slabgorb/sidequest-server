@@ -29,9 +29,9 @@ from sidequest.magic.state import BarKey, MagicState
 
 @pytest.fixture()
 def world_config() -> WorldMagicConfig:
-    """Minimal Coyote Reach config — same bars used across Tasks 2.x."""
+    """Minimal Coyote Star config — same bars used across Tasks 2.x."""
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate"],
         active_plugins=["innate_v1"],
@@ -59,7 +59,7 @@ def world_config() -> WorldMagicConfig:
 def store() -> SqliteStore:
     """Fresh in-memory SQLite store per test."""
     s = SqliteStore.open_in_memory()
-    s.init_session("space_opera", "coyote_reach")
+    s.init_session("space_opera", "coyote_star")
     return s
 
 
@@ -78,7 +78,7 @@ def test_persist_roundtrip_preserves_ledger(world_config, store) -> None:
 
     snap = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         magic_state=magic,
     )
     store.save(snap)
@@ -111,7 +111,7 @@ def test_compute_delta_after_load_detects_no_change(world_config, store) -> None
 
     snap = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         magic_state=magic,
     )
 
@@ -151,7 +151,7 @@ def test_legacy_save_loads_with_none_magic_state(store) -> None:
     import json
 
     # Build a minimal snapshot dict, deliberately omitting magic_state.
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_reach")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     raw = json.loads(snap.model_dump_json())
     raw.pop("magic_state", None)  # simulate a pre-magic save file
 

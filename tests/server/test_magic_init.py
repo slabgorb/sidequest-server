@@ -21,8 +21,8 @@ from sidequest.server.magic_init import init_magic_state_for_session
 CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 
 
-def test_init_magic_state_loads_coyote_reach_and_adds_character() -> None:
-    """Coyote Reach has both genre + world magic.yaml shipping. After
+def test_init_magic_state_loads_coyote_star_and_adds_character() -> None:
+    """Coyote Star has both genre + world magic.yaml shipping. After
     init, snapshot.magic_state is populated with the world config and
     the character has per-character bars in the ledger.
     """
@@ -35,19 +35,19 @@ def test_init_magic_state_loads_coyote_reach_and_adds_character() -> None:
             "Phase 4 magic init test cannot run without shipping content"
         )
 
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_reach")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     assert snap.magic_state is None
 
     ok = init_magic_state_for_session(
         snapshot=snap,
         genre_pack_source_dir=pack_dir,
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         character_id="Sira Mendes",
     )
 
     assert ok is True
     assert snap.magic_state is not None
-    assert snap.magic_state.config.world_slug == "coyote_reach"
+    assert snap.magic_state.config.world_slug == "coyote_star"
     assert snap.magic_state.config.genre_slug == "space_opera"
 
     # Character bars must be instantiated in the ledger so a working

@@ -26,12 +26,12 @@ CONTENT_ROOT = (
 )
 
 
-def _coyote_reach_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace]:
+def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace]:
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():
         pytest.skip("space_opera magic.yaml not present in this checkout")
 
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_reach")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     snap.characters.append(
         Character(
             core=CreatureCore(
@@ -57,15 +57,15 @@ def test_backfill_runs_when_magic_state_is_none_and_world_has_magic() -> None:
     calls ``init_magic_state_for_session``, and snapshot.magic_state is
     populated for the LedgerPanel.
     """
-    snap, pack = _coyote_reach_pack_with_character()
+    snap, pack = _coyote_star_pack_with_character()
     assert snap.magic_state is None
 
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug="coyote_reach"
+        snapshot=snap, genre_pack=pack, world_slug="coyote_star"
     )
 
     assert snap.magic_state is not None
-    assert snap.magic_state.config.world_slug == "coyote_reach"
+    assert snap.magic_state.config.world_slug == "coyote_star"
     char_keys = [
         k for k in snap.magic_state.ledger if k.startswith("character|Hokulea|")
     ]
@@ -80,7 +80,7 @@ def test_backfill_no_op_when_magic_state_already_populated() -> None:
     not overwrite it (would clobber the per-character ledger debits the
     save was tracking).
     """
-    snap, pack = _coyote_reach_pack_with_character()
+    snap, pack = _coyote_star_pack_with_character()
     # Seed magic_state via the same helper to mirror "the save already
     # had it" rather than constructing one by hand.
     from sidequest.server.magic_init import init_magic_state_for_session
@@ -88,14 +88,14 @@ def test_backfill_no_op_when_magic_state_already_populated() -> None:
     init_magic_state_for_session(
         snapshot=snap,
         genre_pack_source_dir=pack.source_dir,
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         character_id="Hokulea",
     )
     sentinel = snap.magic_state
     assert sentinel is not None
 
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug="coyote_reach"
+        snapshot=snap, genre_pack=pack, world_slug="coyote_star"
     )
 
     assert snap.magic_state is sentinel, (
@@ -133,11 +133,11 @@ def test_backfill_no_op_when_no_seated_character() -> None:
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():
         pytest.skip("space_opera magic.yaml not present")
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_reach")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     pack_stub = SimpleNamespace(source_dir=pack_dir)
 
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_reach"
+        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star"
     )
 
     assert snap.magic_state is None
@@ -148,7 +148,7 @@ def test_backfill_no_op_when_pack_source_dir_missing() -> None:
     cached objects) have no source_dir. The helper must skip rather
     than crashing — those resumes can't load YAML in the first place.
     """
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_reach")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     snap.characters.append(
         Character(
             core=CreatureCore(name="X", description=".", personality="."),
@@ -157,6 +157,6 @@ def test_backfill_no_op_when_pack_source_dir_missing() -> None:
     )
     pack_stub = SimpleNamespace(source_dir=None)
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_reach"
+        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star"
     )
     assert snap.magic_state is None

@@ -23,7 +23,7 @@ def test_initialize_for_character(world_config):
 def test_world_bar_initialized_at_world_load(world_config):
     state = MagicState.from_config(world_config)
 
-    heat_key = BarKey(scope="world", owner_id="coyote_reach", bar_id="hegemony_heat")
+    heat_key = BarKey(scope="world", owner_id="coyote_star", bar_id="hegemony_heat")
     assert state.get_bar(heat_key).value == 0.30
 
 

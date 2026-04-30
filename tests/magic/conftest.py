@@ -25,14 +25,14 @@ def _populate_magic_plugins_registry():
 
 @pytest.fixture()
 def world_config() -> WorldMagicConfig:
-    """Full Coyote Reach config — two character bars + one world bar.
+    """Full Coyote Star config — two character bars + one world bar.
 
     This is the canonical test config shared across Tasks 1.x–3.x.
     Individual test modules may define a local ``world_config`` fixture
     with a trimmed shape when they need isolation (pytest local wins).
     """
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate", "item_based"],
         active_plugins=["innate_v1", "item_legacy_v1"],

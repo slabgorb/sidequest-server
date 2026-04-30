@@ -16,7 +16,7 @@ from sidequest.magic.validator import validate
 @pytest.fixture
 def world_config() -> WorldMagicConfig:
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate", "item_based"],
         active_plugins=["innate_v1", "item_legacy_v1"],
@@ -77,7 +77,7 @@ def test_clean_innate_working(world_config):
 
 def test_unknown_plugin_deep_red(world_config):
     w = MagicWorking(
-        plugin="bargained_for_v1",  # not active in coyote_reach
+        plugin="bargained_for_v1",  # not active in coyote_star
         mechanism="relational",
         actor="Sira",
         costs={"karma": 0.2},
@@ -134,7 +134,7 @@ def test_unknown_cost_type_yellow(world_config):
         plugin="innate_v1",
         mechanism="condition",
         actor="Sira",
-        costs={"karma": 0.2},  # not in coyote_reach cost_types
+        costs={"karma": 0.2},  # not in coyote_star cost_types
         domain="psychic",
         narrator_basis="x",
         flavor="acquired",

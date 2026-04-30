@@ -12,7 +12,7 @@ def coyote_world_config(world_config: WorldMagicConfig) -> WorldMagicConfig:
 
     Derived from the canonical conftest fixture via ``model_copy`` rather
     than re-declaring every bar — that way any future change to the shared
-    Coyote Reach config in ``tests/magic/conftest.py`` flows through
+    Coyote Star config in ``tests/magic/conftest.py`` flows through
     automatically. We add ``no_resurrection`` so the validator's keyword
     detector (id → "resurrection") matches the test 2 narrator_basis
     "resurrection of the dead pilot via psychic touch"; the conftest's

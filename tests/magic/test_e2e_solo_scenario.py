@@ -78,7 +78,7 @@ def test_sira_touches_alien_panel_clean_pass(
     """Sira touches the alien panel; reflexive psychic touch fires; no flags.
 
     Mirrors the worked example in
-    docs/superpowers/specs/2026-04-28-magic-system-coyote-reach-implementation-design.md §3.
+    docs/superpowers/specs/2026-04-28-magic-system-coyote-star-implementation-design.md §3.
     """
     from sidequest.game.session import GameSnapshot
     from sidequest.magic.state import BarKey, MagicState

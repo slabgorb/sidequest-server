@@ -9,7 +9,7 @@ from sidequest.genre.models.rigs_world import RigsWorldConfig
 
 SAMPLE = textwrap.dedent("""
     version: "0.1.0"
-    world: coyote_reach
+    world: coyote_star
     genre: space_opera
     chassis_instances:
       - id: kestrel
@@ -41,7 +41,7 @@ SAMPLE = textwrap.dedent("""
 
 def test_rigs_yaml_loads() -> None:
     cfg = RigsWorldConfig.model_validate(yaml.safe_load(SAMPLE))
-    assert cfg.world == "coyote_reach"
+    assert cfg.world == "coyote_star"
     assert len(cfg.chassis_instances) == 1
     inst = cfg.chassis_instances[0]
     assert inst.id == "kestrel"

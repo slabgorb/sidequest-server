@@ -21,7 +21,7 @@ def test_kestrel_materializes_with_voice_and_bond() -> None:
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         location="Unknown",
     )
     init_chassis_registry(snap, pack)
@@ -57,7 +57,7 @@ def test_kestrel_voice_section_renders_in_narrator_prompt() -> None:
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         location="Unknown",
     )
     init_chassis_registry(snap, pack)
