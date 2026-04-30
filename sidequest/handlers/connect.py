@@ -627,6 +627,70 @@ class ConnectHandler:
             session._last_seen_seq = payload.last_seen_seq or 0
             session._current_player_id = player_id
             session._state = _State.Creating if not has_character else _State.Playing
+
+            # Solo auto-seat (playtest 2026-04-30 "notorious_party_gate
+            # player_count=0 race"). Solo sessions skip the explicit
+            # PLAYER_SEAT message that MP uses to bind a slot in the
+            # room's lobby state machine, so ``room._seated`` stays
+            # empty for the entire solo session. That breaks every
+            # consumer of ``room.non_abandoned_player_count()`` —
+            # most visibly ``orchestrator.notorious_party_gate`` in
+            # ``session_helpers._build_turn_context``, which fires its
+            # ``player_count=0 (<= 0) — impossible state`` warning on
+            # turn 1 of every solo session and defaults to safe-empty
+            # ``party_context_available=False``. The lobby state
+            # machine is mode-agnostic — solo IS in the lobby, the
+            # difference is only that the UI doesn't send PLAYER_SEAT.
+            # We emit the seat record here so room._seated reflects
+            # truth. Idempotent: skip when the player is already
+            # seated (returning solo via reconnect, or test fixtures
+            # that pre-seat).
+            _seat_helper_room = session._room
+            if (
+                _seat_helper_room is not None
+                and GameMode(row.mode) == GameMode.SOLO
+                and player_id not in _seat_helper_room.seated_player_ids()
+            ):
+                # ``character_slot`` follows MP semantics — the slot
+                # name binds the seat to a future or existing PC. For
+                # new chargen, display_name is the lobby identity. For
+                # returning, snapshot.player_seats already maps
+                # player_id → character_name; prefer that.
+                _slot_label = (
+                    snapshot.player_seats.get(player_id)
+                    if has_character and snapshot.player_seats
+                    else display_name
+                )
+                _seat_helper_room.seat(player_id, character_slot=_slot_label)
+                if has_character:
+                    # Returning solo player — character is already
+                    # committed, so the seat goes straight from
+                    # CHARGEN to PLAYING. Mirrors the
+                    # ``_handle_player_seat`` returning-player path
+                    # that fires for MP. New solo (state=Creating) is
+                    # promoted later by the chargen-complete flow's
+                    # existing transition_to_playing call.
+                    _seat_helper_room.transition_to_playing(player_id)
+                logger.info(
+                    "session.solo_auto_seated player_id=%s slug=%s "
+                    "has_character=%s slot=%r",
+                    player_id,
+                    slug,
+                    has_character,
+                    _slot_label,
+                )
+                _watcher_publish(
+                    "session_solo_auto_seated",
+                    {
+                        "slug": slug,
+                        "player_id": player_id,
+                        "has_character": has_character,
+                        "character_slot": _slot_label,
+                        "transitioned_to_playing": has_character,
+                    },
+                    component="session",
+                    severity="info",
+                )
             connected_msg = SessionEventMessage(
                 type="SESSION_EVENT",  # type: ignore[arg-type]
                 payload=SessionEventPayload(
