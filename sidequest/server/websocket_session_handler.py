@@ -100,6 +100,7 @@ from sidequest.server.audio_cue import build_audio_cue_payload
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
 from sidequest.server.dispatch.scenario_bind import bind_scenario
+from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.narration_apply import (
     _apply_narration_result_to_snapshot,
 )
@@ -957,6 +958,22 @@ class WebSocketSessionHandler:
                     "trigger": "new_player_chargen",
                     "player_id": player_id,
                 },
+            )
+
+            # Magic Phase 4: instantiate MagicState on the canonical
+            # snapshot for worlds that ship a magic.yaml pair (genre +
+            # world). This is the production hook that pairs Phase 1's
+            # loader with Phase 2's snapshot field — without it,
+            # snapshot.magic_state stays None and the LedgerPanel never
+            # surfaces bars even though the engine can apply workings
+            # correctly. ``add_character`` instantiates per-character
+            # bars (sanity / notice / vitality on Coyote Reach) keyed
+            # to the actor name the narrator emits in magic_working.
+            init_magic_state_for_session(
+                snapshot=sd.snapshot,
+                genre_pack_source_dir=sd.genre_pack.source_dir,
+                world_slug=sd.world_slug,
+                character_id=character.core.name,
             )
 
             # Scenario binding (Slice D / connect.rs:1948). No-op without
