@@ -27,9 +27,9 @@ from sidequest.magic.state import MagicState
 
 
 def _make_world_config() -> WorldMagicConfig:
-    """Minimal Coyote Reach config sufficient for context_builder tests."""
+    """Minimal Coyote Star config sufficient for context_builder tests."""
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate", "item_based"],
         active_plugins=["innate_v1", "item_legacy_v1"],

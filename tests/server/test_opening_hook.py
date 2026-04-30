@@ -141,7 +141,7 @@ def test_directive_with_setting_injects_world_starting_location() -> None:
 
     When the world declares ``starting_location``, the directive must
     carry a ``Setting:`` line so the narrator's first turn opens at the
-    authored location. Without this, a Coyote-Reach-style chargen close
+    authored location. Without this, a Coyote-Star-style chargen close
     that promises "Far Landing is just waking up around you" gets
     overridden by a genre-tier opening that lands the player on an
     unrelated orbital station — a Diamonds-and-Coal violation.

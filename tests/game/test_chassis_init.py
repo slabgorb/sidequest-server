@@ -26,7 +26,7 @@ def test_init_chassis_registry_loads_kestrel() -> None:
     from sidequest.genre.loader import load_genre_pack
 
     pack = load_genre_pack(SPACE_OPERA)
-    snap = _make_snapshot("space_opera", "coyote_reach")
+    snap = _make_snapshot("space_opera", "coyote_star")
     init_chassis_registry(snap, pack)
 
     assert "kestrel" in snap.chassis_registry
@@ -48,7 +48,7 @@ def test_init_chassis_registry_projects_to_npc_registry() -> None:
     from sidequest.genre.loader import load_genre_pack
 
     pack = load_genre_pack(SPACE_OPERA)
-    snap = _make_snapshot("space_opera", "coyote_reach")
+    snap = _make_snapshot("space_opera", "coyote_star")
     init_chassis_registry(snap, pack)
 
     # Projection: npc_registry now has a Kestrel entry so narrator prose

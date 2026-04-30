@@ -279,7 +279,7 @@ class NarrationTurnResult:
     gold_change: int | None = None
     lore_established: list[str] | None = None
     status_changes: list[dict[str, Any]] = field(default_factory=list)
-    # Magic system (Coyote Reach iter 3 — Task 3.3). When the narrator
+    # Magic system (Coyote Star iter 3 — Task 3.3). When the narrator
     # emits a ``magic_working`` field on its game_patch, this carries the
     # raw dict through to ``narration_apply.apply_magic_working`` for
     # validation + ledger application. ``None`` on every turn the
@@ -644,7 +644,7 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "gold_change": patch.get("gold_change"),
         "lore_established": patch.get("lore_established"),
         "status_changes": patch.get("status_changes", []),
-        # Magic system (Coyote Reach iter 3 — Task 3.3). Forwarded as a
+        # Magic system (Coyote Star iter 3 — Task 3.3). Forwarded as a
         # raw dict; pydantic validation happens in
         # ``narration_apply.apply_magic_working`` so the parse error is
         # raised at the apply seam (where ``MagicWorkingParseError`` is

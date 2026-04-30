@@ -29,7 +29,7 @@ class WorldKnowledge(BaseModel):
     """How aware the world is that magic is a real category.
 
     ``local_register`` is an optional sub-tag for worlds where the legal/
-    political register and the folk register diverge (Coyote Reach: Hegemony
+    political register and the folk register diverge (Coyote Star: Hegemony
     classifies; frontier folks know it folklorically).
     """
 

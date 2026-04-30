@@ -603,10 +603,10 @@ class TestSliceCWorldMaterialization:
 
         run(body())
 
-    def test_coyote_reach_chargen_populates_magic_state(
+    def test_coyote_star_chargen_populates_magic_state(
         self, tmp_path: Path
     ) -> None:
-        """Phase 4 wiring: chargen confirmation on Coyote Reach must
+        """Phase 4 wiring: chargen confirmation on Coyote Star must
         populate snapshot.magic_state and add the freshly built
         character to the ledger so per-character bars (sanity / notice /
         vitality) exist for the first turn's working to debit.
@@ -614,8 +614,8 @@ class TestSliceCWorldMaterialization:
         End-to-end proof of the full hook chain:
         load_world_magic → MagicState.from_config → add_character.
         """
-        if not (CONTENT_ROOT / "space_opera" / "worlds" / "coyote_reach").is_dir():
-            pytest.skip("space_opera/coyote_reach content not available")
+        if not (CONTENT_ROOT / "space_opera" / "worlds" / "coyote_star").is_dir():
+            pytest.skip("space_opera/coyote_star content not available")
 
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
@@ -624,7 +624,7 @@ class TestSliceCWorldMaterialization:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="space_opera", world="coyote_reach")
+            await _connect(handler, genre="space_opera", world="coyote_star")
             await _walk_to_confirmation(handler, freeform_name="Sira Mendes")
             out = await _send_chargen(
                 handler, CharacterCreationPayload(phase="confirmation")
@@ -635,10 +635,10 @@ class TestSliceCWorldMaterialization:
             snap = sd.snapshot
 
             assert snap.magic_state is not None, (
-                "Coyote Reach chargen must populate snapshot.magic_state — "
+                "Coyote Star chargen must populate snapshot.magic_state — "
                 "init_magic_state_for_session hook is the production wire."
             )
-            assert snap.magic_state.config.world_slug == "coyote_reach"
+            assert snap.magic_state.config.world_slug == "coyote_star"
             assert snap.magic_state.config.genre_slug == "space_opera"
 
             character = snap.characters[0]

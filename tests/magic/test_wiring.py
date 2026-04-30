@@ -90,13 +90,13 @@ def test_production_content_loads():
 
     genre_yaml = Path(content_root) / "space_opera" / "magic.yaml"
     world_yaml = (
-        Path(content_root) / "space_opera" / "worlds" / "coyote_reach" / "magic.yaml"
+        Path(content_root) / "space_opera" / "worlds" / "coyote_star" / "magic.yaml"
     )
     if not (genre_yaml.exists() and world_yaml.exists()):
         pytest.skip("production magic yamls not present")
 
     config = load_world_magic(genre_yaml=genre_yaml, world_yaml=world_yaml)
-    assert config.world_slug == "coyote_reach"
+    assert config.world_slug == "coyote_star"
     assert "innate_v1" in config.active_plugins
     assert "item_legacy_v1" in config.active_plugins
     assert config.intensity == 0.25

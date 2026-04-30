@@ -10,13 +10,13 @@ from sidequest.magic.models import WorldMagicConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GENRE_YAML = FIXTURES / "space_opera_magic.yaml"
-WORLD_YAML = FIXTURES / "coyote_reach_magic.yaml"
+WORLD_YAML = FIXTURES / "coyote_star_magic.yaml"
 
 
 def test_load_world_magic_returns_config():
     config = load_world_magic(genre_yaml=GENRE_YAML, world_yaml=WORLD_YAML)
     assert isinstance(config, WorldMagicConfig)
-    assert config.world_slug == "coyote_reach"
+    assert config.world_slug == "coyote_star"
     assert config.genre_slug == "space_opera"
 
 
@@ -45,7 +45,7 @@ def test_world_knowledge_subtag_loads():
 
 
 def test_four_world_load_ledger_bars():
-    """Coyote Reach v1 ships four world-load bars (3 character + 1 world).
+    """Coyote Star v1 ships four world-load bars (3 character + 1 world).
     bond + item_history are per-item, instantiated per-item not at world-load."""
     config = load_world_magic(genre_yaml=GENRE_YAML, world_yaml=WORLD_YAML)
     bar_ids = [b.id for b in config.ledger_bars]

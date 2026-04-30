@@ -327,7 +327,7 @@ class TestOpeningDirectiveInjection:
 
 
 class TestMPJoinerRaceSuppression:
-    """Playtest 2026-04-26 [S2-BUG] coyote_reach regression.
+    """Playtest 2026-04-26 [S2-BUG] coyote_star regression.
 
     The connect-time MP-joiner suppression in ``_handle_connect``
     (commit afc850a) only fires when the joiner connects AFTER the
@@ -339,7 +339,7 @@ class TestMPJoinerRaceSuppression:
     against an already-populated scene.
 
     Symptom: George (the second player) joining a fresh
-    ``space_opera/coyote_reach`` MP slug got the ``arena_trial``
+    ``space_opera/coyote_star`` MP slug got the ``arena_trial``
     cold-open ("crowd noise hits you like a wall") even though John
     was already at the Trail Junction. The fix must suppress the
     cold-open at consume-time (in ``_run_opening_turn_narration``)

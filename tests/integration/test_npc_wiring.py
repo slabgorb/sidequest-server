@@ -147,7 +147,7 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
     )
     snapshot = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         location="The Bridge of the Coyote's Tooth",
         discovered_regions=["The Bridge"],
         npc_registry=[],
@@ -234,7 +234,7 @@ async def test_pc_name_filter_is_case_insensitive(
     )
     snapshot = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         location="Bridge",
         discovered_regions=["Bridge"],
         npc_registry=[],

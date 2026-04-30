@@ -85,7 +85,7 @@ def validate(working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
 
     # 4. Hard limits — keyword match in narrator_basis (v1 simple detector).
     # Substring match is intentionally crude: false positives are possible
-    # for short keywords ("war" would match "warning"). Coyote Reach's
+    # for short keywords ("war" would match "warning"). Coyote Star's
     # hard_limits are long phrases ("resurrection", "ftl telepathy") so the
     # risk is low. Smarter detection (entity recognition, semantic match)
     # is a future iteration per spec §5d.

@@ -1,7 +1,7 @@
 """Game-state chassis registry — chassis as first-class entities, not inventory.
 
 Per docs/design/rig-taxonomy.md locked decision α (sibling framework) and
-the slice spec (docs/superpowers/specs/2026-04-29-rig-mvp-coyote-reach-design.md
+the slice spec (docs/superpowers/specs/2026-04-29-rig-mvp-coyote-star-design.md
 §2.1) chassis state lives in its own container with a projection into
 npc_registry for narrator continuity.
 

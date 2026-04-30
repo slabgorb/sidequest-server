@@ -532,7 +532,7 @@ def _apply_narration_result_to_snapshot(
     if not isinstance(result, NarrationTurnResult):
         return outcome
 
-    # Magic working (Coyote Reach iter 3 — Task 3.3). Ordered ahead of
+    # Magic working (Coyote Star iter 3 — Task 3.3). Ordered ahead of
     # the location/quest/inventory/encounter branches so the
     # ``magic.working_applied`` OTEL span Task 3.5 will add timestamps
     # before any downstream snapshot mutation — the GM panel reads

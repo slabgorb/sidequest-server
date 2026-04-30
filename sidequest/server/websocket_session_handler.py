@@ -967,7 +967,7 @@ class WebSocketSessionHandler:
             # snapshot.magic_state stays None and the LedgerPanel never
             # surfaces bars even though the engine can apply workings
             # correctly. ``add_character`` instantiates per-character
-            # bars (sanity / notice / vitality on Coyote Reach) keyed
+            # bars (sanity / notice / vitality on Coyote Star) keyed
             # to the actor name the narrator emits in magic_working.
             init_magic_state_for_session(
                 snapshot=sd.snapshot,
@@ -2213,7 +2213,7 @@ class WebSocketSessionHandler:
         Rust parity: connect.rs:2270-2529.
         """
         # Consume-time MP-joiner suppression (playtest 2026-04-26
-        # [S2-BUG] coyote_reach regression). The connect-time guard in
+        # [S2-BUG] coyote_star regression). The connect-time guard in
         # ``_handle_connect`` only fires when the joiner connects AFTER
         # the host has completed chargen — checking
         # ``len(snapshot.characters) > 0`` at connect-time. In the more

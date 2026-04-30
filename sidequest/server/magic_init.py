@@ -1,6 +1,6 @@
 """Per-session magic-state initialization.
 
-Phase 4 cut-point requires that, at chargen confirmation, a Coyote-Reach
+Phase 4 cut-point requires that, at chargen confirmation, a Coyote-Star
 session lands with ``snapshot.magic_state`` populated and the freshly
 built character already added to the ledger so per-character bars
 (sanity / notice / vitality) can mutate from the very first turn.

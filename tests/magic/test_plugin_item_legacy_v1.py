@@ -15,7 +15,7 @@ from sidequest.magic.plugin import get_plugin
 @pytest.fixture
 def world_config() -> WorldMagicConfig:
     return WorldMagicConfig(
-        world_slug="coyote_reach",
+        world_slug="coyote_star",
         genre_slug="space_opera",
         allowed_sources=["innate", "item_based"],
         active_plugins=["innate_v1", "item_legacy_v1"],
