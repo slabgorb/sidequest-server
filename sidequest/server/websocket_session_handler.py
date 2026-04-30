@@ -1991,6 +1991,33 @@ class WebSocketSessionHandler:
                         )
 
                 with timings.phase("broadcast"):
+                    # MP merged-dispatch: shared-world frames built below also
+                    # need to reach peer sockets. Without this, peers received
+                    # NARRATION (via _emit_event fan-out) but missed
+                    # NARRATION_END / CHAPTER_MARKER / PARTY_STATUS / AUDIO_CUE
+                    # because those are appended to `outbound` (which only
+                    # ships to the dispatching socket). The pingpong
+                    # 2026-04-30 [BUG] symptom was peer input bars stuck at
+                    # "Waiting on … to act" indefinitely after turn 1 — peers'
+                    # `canType` never flipped back because NARRATION_END never
+                    # arrived. Helper closes over self/sd so each call site
+                    # stays a one-liner; gated on MP+room so solo paths skip.
+                    from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
+                        GameMode as _GameMode,
+                    )
+
+                    _is_mp_dispatch = (
+                        self._room is not None
+                        and sd.mode == _GameMode.MULTIPLAYER
+                        and self._socket_id is not None
+                    )
+
+                    def _broadcast_to_peers(msg: object) -> None:
+                        if _is_mp_dispatch:
+                            self._room.broadcast(  # type: ignore[union-attr]
+                                msg, exclude_socket_id=self._socket_id
+                            )
+
                     outbound: list[object] = [narration_msg]
                     if confrontation_msg is not None:
                         outbound.append(confrontation_msg)
@@ -2006,17 +2033,17 @@ class WebSocketSessionHandler:
                     # resume" — fix is symmetric (slug-resume bootstrap also emits
                     # CHAPTER_MARKER; see the slug-connect block).
                     if result.location:
-                        outbound.append(
-                            ChapterMarkerMessage(
-                                payload=ChapterMarkerPayload(
-                                    title=None,
-                                    location=_resolve_location_display(
-                                        sd.genre_pack, sd.world_slug, snapshot.location
-                                    ),
+                        chapter_marker_msg = ChapterMarkerMessage(
+                            payload=ChapterMarkerPayload(
+                                title=None,
+                                location=_resolve_location_display(
+                                    sd.genre_pack, sd.world_slug, snapshot.location
                                 ),
-                                player_id=sd.player_id,
                             ),
+                            player_id=sd.player_id,
                         )
+                        outbound.append(chapter_marker_msg)
+                        _broadcast_to_peers(chapter_marker_msg)
                     # Story 45-1 — sealed-letter shared-world handshake.
                     # Build the canonical delta from the post-resolution
                     # snapshot and ride it on NARRATION_END so peers see
@@ -2037,18 +2064,18 @@ class WebSocketSessionHandler:
                         if snapshot.magic_state is not None
                         else None
                     )
-                    outbound.append(
-                        NarrationEndMessage(
-                            type="NARRATION_END",  # type: ignore[arg-type]
-                            payload=NarrationEndPayload(
-                                state_delta=_shared_world_delta_to_state_delta(
-                                    handshake_delta,
-                                    magic_state=magic_state_dict,
-                                ),
+                    narration_end_msg = NarrationEndMessage(
+                        type="NARRATION_END",  # type: ignore[arg-type]
+                        payload=NarrationEndPayload(
+                            state_delta=_shared_world_delta_to_state_delta(
+                                handshake_delta,
+                                magic_state=magic_state_dict,
                             ),
-                            player_id=sd.player_id,
                         ),
+                        player_id=sd.player_id,
                     )
+                    outbound.append(narration_end_msg)
+                    _broadcast_to_peers(narration_end_msg)
 
                     # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
                     # the TURN_STATUS{active} broadcast at action receipt — peers' banner
@@ -2110,6 +2137,16 @@ class WebSocketSessionHandler:
                                 self, sd, self_char, sd.player_id
                             )
                             outbound.append(party_status)
+                            # MP merged-dispatch: peers also need the post-narration
+                            # party refresh (location/HP/inventory). The dispatcher-
+                            # built payload is safe to broadcast — each peer's UI
+                            # resolves "(YOU)" via the seat_map-tagged player_id of
+                            # the member whose ``name`` matches its connectedPlayerName,
+                            # not via the dispatcher's player_id field. Without this
+                            # broadcast, peers' running headers / character sheets
+                            # stayed frozen at pre-narration values until their next
+                            # action (pingpong 2026-04-30 BUG corollary).
+                            _broadcast_to_peers(party_status)
                             logger.info(
                                 "state.party_status_emitted reason=turn_end location=%r turn=%d "
                                 "self_char=%s",
@@ -2144,10 +2181,13 @@ class WebSocketSessionHandler:
 
                 # Audio DJ dispatch. Synchronous: AUDIO_CUE (or nothing) ships
                 # with this turn's outbound frames. No placeholder + later message
-                # dance — the DJ is a local filesystem lookup.
+                # dance — the DJ is a local filesystem lookup. MP: same cue plays
+                # for every player at the table — broadcast to peers so the music
+                # bed transitions in lock-step with the shared narration.
                 audio_cue = self._maybe_dispatch_audio(sd, result)
                 if audio_cue is not None:
                     outbound.append(audio_cue)
+                    _broadcast_to_peers(audio_cue)
 
                 # turn_complete is now emitted by the validator (per ADR-089 §6.7).
                 # The TurnRecord assembled below is the single source of truth.
