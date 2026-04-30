@@ -44,6 +44,7 @@ from sidequest.telemetry.spans import (
     quest_update_span,
     region_entry_canonicalized_dedup_span,
     region_entry_rejected_span,
+    trope_resolution_handshake_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
@@ -1664,3 +1665,101 @@ def _resolve_opposed_check_branch(
             break
 
     return _OpposedBranchOutcome(encounter_resolved=encounter_resolved)
+
+
+# ---------------------------------------------------------------------------
+# Story 45-20 — trope resolution handshake.
+# ---------------------------------------------------------------------------
+
+# Guardrail length for ``active_stakes`` so runaway growth does not pollute
+# the next narrator's state_summary prompt. The field is reflected verbatim
+# into the prompt JSON; ~1024 chars is the soft cap.
+_ACTIVE_STAKES_GUARDRAIL = 1024
+
+
+def _handshake_resolved_tropes(
+    snapshot: GameSnapshot,
+    baseline_status: dict[str, str],
+    *,
+    player_name: str,
+    source: str,
+) -> None:
+    """Diff ``baseline_status`` against the snapshot's current
+    ``active_tropes`` and write the durable record for every trope whose
+    current status is ``"resolved"``.
+
+    For each detected trope:
+
+    - If the baseline status was anything other than ``"resolved"``
+      (including absent — a brand-new resolved trope from chapter
+      promotion), this is a fresh resolution: write
+      ``quest_log[f"trope_{id}"]`` (wrapped in ``quest_update_span`` so
+      the existing GM-panel ``SPAN_QUEST_UPDATE`` route surfaces the
+      entry) and append a resolution marker to ``active_stakes``,
+      trimming if the field exceeds ``_ACTIVE_STAKES_GUARDRAIL``.
+    - If the baseline status was ``"resolved"``, this is an idempotent
+      re-detect: no rewrite, but the handshake span still fires with
+      ``active_stakes_appended=False`` so the GM panel can distinguish
+      "handshake correctly idempotent" from "handshake never engaged
+      after turn N".
+
+    The lie-detector contract is that one span fires per detected
+    resolved trope, every turn. The bug Orin saw was zero spans firing
+    at all.
+    """
+
+    interaction = snapshot.turn_manager.interaction
+    fresh_writes: dict[str, str] = {}
+
+    for trope in snapshot.active_tropes:
+        if trope.status != "resolved":
+            continue
+
+        prior = baseline_status.get(trope.id, "")
+        is_fresh = prior != "resolved"
+        quest_log_key = f"trope_{trope.id}"
+
+        if is_fresh:
+            entry_text = f"Resolved at turn {interaction}"
+            fresh_writes[quest_log_key] = entry_text
+
+            marker = f"[Resolved: {trope.id} on turn {interaction}]"
+            existing = snapshot.active_stakes
+            if existing:
+                snapshot.active_stakes = f"{existing}\n{marker}"
+            else:
+                snapshot.active_stakes = marker
+            if len(snapshot.active_stakes) > _ACTIVE_STAKES_GUARDRAIL:
+                # Trim oldest content but always keep the new marker
+                # at the tail — that is the load-bearing field for the
+                # next narrator.
+                tail = marker
+                head_budget = _ACTIVE_STAKES_GUARDRAIL - len(tail) - 1
+                head = snapshot.active_stakes[:head_budget]
+                snapshot.active_stakes = f"{head}\n{tail}"
+
+        with trope_resolution_handshake_span(
+            trope_id=trope.id,
+            prior_status=prior,
+            new_status="resolved",
+            interaction=interaction,
+            quest_log_key=quest_log_key,
+            active_stakes_appended=is_fresh,
+            source=source,
+        ):
+            pass
+
+    if fresh_writes:
+        with quest_update_span(
+            updates=fresh_writes,
+            player_name=player_name,
+            turn_number=interaction,
+        ):
+            for key, status_text in fresh_writes.items():
+                snapshot.quest_log[key] = status_text
+            logger.info(
+                "trope.resolution_handshake fresh_writes=%d player=%s turn=%d",
+                len(fresh_writes),
+                player_name,
+                interaction,
+            )
