@@ -1164,21 +1164,66 @@ def _apply_narration_result_to_snapshot(
                 # opposing roll instead of the legacy roll-vs-DC tier.
                 #
                 # Spec: ``.archive/handoffs/opposed-checks-design.md``.
-                outcome_obj = _resolve_opposed_check_branch(
-                    encounter=enc,
-                    cdef=cdef,
-                    selections=gated_selections,
-                    pack_beats={b.id: b for b in cdef.beats},
-                    pending_player_d20=opposed_player_d20,
-                    pending_player_beat_id=opposed_player_beat_id,
-                    pending_player_actor=opposed_player_actor,
-                    turn=snapshot.turn_manager.interaction,
-                    snapshot=snapshot,
-                )
-                if outcome_obj.encounter_resolved:
-                    snapshot.pending_resolution_signal = (
-                        _build_resolution_signal(enc)
+                #
+                # Awaiting-dice short-circuit (playtest 2026-04-30 4-player
+                # MP): production reaches a state where the encounter is
+                # opposed_check but the player submitted text instead of
+                # rolling, so ``pending_player_d20`` is None.
+                # ``_filter_inferred_pc_beats`` above already dropped any
+                # PC beats the narrator inferred (SOUL "The Test" gate),
+                # but opponent-side beats remain — and the resolver below
+                # raises ValueError on absent stash (its loud-fail contract
+                # is correct for the dice path, see
+                # test_narration_apply_opposed_check_hard_fails_without_
+                # pending_state). For the narrator-prose path
+                # (``from_explicit_action=False``), redirect to "wait for
+                # dice": drop the opponent selections so the resolver
+                # doesn't fire, let prose apply, encounter persists, next
+                # DICE_THROW completes the round. The dice path
+                # (``from_explicit_action=True``) preserves the raise — if
+                # ``dispatch_dice_throw`` reached us without stashing, that
+                # IS a programming error and should fail loud.
+                if (
+                    opposed_player_d20 is None
+                    and not from_explicit_action
+                ):
+                    for sel in gated_selections:
+                        _watcher_publish(
+                            "state_transition",
+                            {
+                                "field": "encounter",
+                                "op": "opposed_check_awaiting_dice_drop",
+                                "actor": sel.actor,
+                                "beat_id": sel.beat_id,
+                                "encounter_type": enc.encounter_type,
+                            },
+                            component="confrontation",
+                            severity="info",
+                        )
+                    logger.info(
+                        "encounter.opposed_check_awaiting_dice "
+                        "encounter=%r dropped %d beat selection(s) — "
+                        "narrator prose applied, encounter persists, "
+                        "awaiting DICE_THROW",
+                        enc.encounter_type,
+                        len(gated_selections),
                     )
+                else:
+                    outcome_obj = _resolve_opposed_check_branch(
+                        encounter=enc,
+                        cdef=cdef,
+                        selections=gated_selections,
+                        pack_beats={b.id: b for b in cdef.beats},
+                        pending_player_d20=opposed_player_d20,
+                        pending_player_beat_id=opposed_player_beat_id,
+                        pending_player_actor=opposed_player_actor,
+                        turn=snapshot.turn_manager.interaction,
+                        snapshot=snapshot,
+                    )
+                    if outcome_obj.encounter_resolved:
+                        snapshot.pending_resolution_signal = (
+                            _build_resolution_signal(enc)
+                        )
                 _legacy_beat_path = False
             else:
                 _legacy_beat_path = True
