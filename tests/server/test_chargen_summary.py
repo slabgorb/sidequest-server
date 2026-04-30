@@ -538,6 +538,101 @@ class TestWireShape:
         # — single canonicalization rule across the preview row.
         assert "\n\nBackstory: A Bleak Childhood" in summary
 
+    def test_drive_scene_label_overrides_origin_routing_tag(
+        self, caverns_pack: GenrePack,
+    ) -> None:
+        """Parsley playtest BUG-LOW (2026-04-30): origin scene set
+        ``background: Outsystem-arrived`` as a routing tag; drive scene
+        chose "Someone Went Into the Drift" but the preview kept showing
+        the origin tag because ``acc.background`` overrode display.
+
+        Fix: when a scene's effects look "drive-shaped" (touches
+        relationship/goals/emotional_state, doesn't touch race/class/
+        mutation/rig hints), record the choice label as
+        ``acc.backstory_label`` and prefer it for display.
+        """
+        scenes = [
+            # Origin scene — sets race + background routing tag.
+            make_scene("origins", choices=[
+                make_choice(
+                    "I Came Through the Gate",
+                    race_hint="Coreworlder",
+                    background="Outsystem-arrived",
+                ),
+            ]),
+            # Drive scene — sets the inner-life triplet (relationship/
+            # goals/emotional_state) without race/class/mutation. This is
+            # the canonical "backstory hook" shape.
+            make_scene("drive", choices=[
+                make_choice(
+                    "Someone Went Into the Drift",
+                    relationship="lost_beloved",
+                    goals="find_what_was_lost",
+                    emotional_state="quietly grieving",
+                ),
+            ]),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)  # origin
+        b.apply_choice(0)  # drive
+        summary = (render_confirmation_summary(
+            b, caverns_pack, "Parsley", "p1",
+        ).payload.summary) or ""
+        # Drive scene's choice label wins; origin routing tag is hidden.
+        assert "Backstory: Someone Went Into The Drift" in summary
+        assert "Outsystem" not in summary
+
+    def test_origin_background_still_used_when_no_drive_scene(
+        self, caverns_pack: GenrePack,
+    ) -> None:
+        """Mutant_wasteland-shape: origin scene's ``background`` IS the
+        meaningful label ("Vault Dweller", "Heap Rat"). No drive scene
+        sets relationship/goals — the existing fallback to
+        ``acc.background`` must still fire.
+        """
+        scenes = [
+            make_scene("origins", choices=[
+                make_choice(
+                    "A Sealed Vault",
+                    race_hint="Pure Strain Human",
+                    background="Vault Dweller",
+                ),
+            ]),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (render_confirmation_summary(
+            b, caverns_pack, "Rux", "p1",
+        ).payload.summary) or ""
+        assert "Backstory: Vault Dweller" in summary
+
+    def test_drive_choice_with_race_hint_does_not_overwrite_label(
+        self, caverns_pack: GenrePack,
+    ) -> None:
+        """Heuristic guard: a scene that sets BOTH inner-life fields AND
+        race_hint is treated as origin/profession-shape, NOT drive-shape.
+        Avoids polluting backstory_label with the chosen origin label
+        when an unusual genre couples both.
+        """
+        scenes = [
+            make_scene("origin_with_drive_fields", choices=[
+                make_choice(
+                    "The Drifter",
+                    race_hint="Human",
+                    background="Drifter",
+                    emotional_state="restless",
+                ),
+            ]),
+        ]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (render_confirmation_summary(
+            b, caverns_pack, "Rux", "p1",
+        ).payload.summary) or ""
+        # Falls back to background — heuristic correctly didn't
+        # promote the choice label to backstory_label.
+        assert "Backstory: Drifter" in summary
+
     def test_message_wire_shape(self, caverns_pack: GenrePack) -> None:
         scenes = [make_scene("origin", choices=[make_choice("Human", race_hint="Human")])]
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
