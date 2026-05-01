@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._helpers.session_room import room_for
+
 # ---------------------------------------------------------------------------
 # Layer 1 — Unit tests on validate_region_name
 # ---------------------------------------------------------------------------
@@ -225,7 +227,7 @@ class TestNarrationApplyWiring:
             location="Tood's Dome",
         )
 
-        _apply_narration_result_to_snapshot(snap, result, player_name="Felix")
+        _apply_narration_result_to_snapshot(snap, result, player_name="Felix", room=room_for(snap))
 
         assert "Tood's Dome" in snap.discovered_regions
 
@@ -245,7 +247,7 @@ class TestNarrationApplyWiring:
             location="(aside — narrator brief)",
         )
 
-        _apply_narration_result_to_snapshot(snap, result, player_name="Felix")
+        _apply_narration_result_to_snapshot(snap, result, player_name="Felix", room=room_for(snap))
 
         assert "(aside — narrator brief)" not in snap.discovered_regions
 

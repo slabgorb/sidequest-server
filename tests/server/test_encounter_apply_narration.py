@@ -20,6 +20,7 @@ from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import load_genre_pack
 from sidequest.protocol.dice import RollOutcome
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 # Load directly from the fixture pack on disk, bypassing GenreLoader's
 # session-wide cache. The session cache keys on slug only, so another test
@@ -80,6 +81,7 @@ def test_narrator_confrontation_trigger_creates_encounter(cac_snap) -> None:
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Rux", pack=pack,
+        room=room_for(snap),
     )
     assert snap.encounter is not None
     assert snap.encounter.encounter_type == "combat"
@@ -109,6 +111,7 @@ def test_confrontation_trigger_with_empty_npcs_present_fires_empty_actor_list_sp
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Rux", pack=pack,
+        room=room_for(snap),
     )
 
     # Encounter still instantiated (with player-only combatant list)
@@ -144,6 +147,7 @@ def test_confrontation_trigger_with_populated_npcs_present_does_not_fire_span(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Rux", pack=pack,
+        room=room_for(snap),
     )
     span_names = {s.name for s in otel_capture.get_finished_spans()}
     assert "encounter.empty_actor_list" not in span_names
@@ -206,6 +210,7 @@ def test_items_gained_lands_on_character_inventory(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
     assert len(character.core.inventory.items) == 1
     item = character.core.inventory.items[0]
@@ -236,6 +241,7 @@ def test_items_gained_normalizes_unknown_category_to_misc(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
     assert character.core.inventory.items[0]["category"] == "misc"
 
@@ -273,6 +279,7 @@ def test_items_lost_removes_first_matching_name_case_insensitive(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
     assert character.core.inventory.items == []
 
@@ -318,6 +325,7 @@ def test_items_discarded_transitions_state_out_of_carried(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Blutka", pack=pack,
+        room=room_for(snap),
     )
 
     # Item is still in inventory (discard ≠ removal — narratively
@@ -356,6 +364,7 @@ def test_items_discarded_unmatched_logs_and_emits_count(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
 
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
@@ -408,6 +417,7 @@ def test_items_consumed_removes_item_and_emits_otel_span(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Felix", pack=pack,
+        room=room_for(snap),
     )
 
     # AC1: no item remains at state=Consumed (we don't set Consumed —
@@ -444,6 +454,7 @@ def test_items_consumed_unmatched_logs_and_emits_count(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
 
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
@@ -469,6 +480,7 @@ def test_items_update_tolerates_missing_characters(cac_snap) -> None:
     # Must not raise.
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Slabgorb", pack=pack,
+        room=room_for(snap),
     )
 
 
@@ -508,6 +520,7 @@ def test_narrator_player_strike_advances_player_metric(snapshot_with_pack):
     )
     _apply_narration_result_to_snapshot(
         snap, result, "Sam", pack=pack, from_explicit_action=True,
+        room=room_for(snap),
     )
     assert snap.encounter.player_metric.current == 2
     assert snap.encounter.opponent_metric.current == 0
@@ -528,7 +541,7 @@ def test_narrator_player_strike_blocked_without_explicit_action(snapshot_with_pa
         beat_selections=[BeatSelection(actor="Sam", beat_id="attack", outcome=RollOutcome.Success)],
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     assert snap.encounter.player_metric.current == 0
     assert snap.encounter.opponent_metric.current == 0
 
@@ -541,7 +554,7 @@ def test_narrator_opponent_strike_advances_opponent_metric(snapshot_with_pack):
         beat_selections=[BeatSelection(actor="Promo", beat_id="attack", outcome=RollOutcome.Success)],
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     assert snap.encounter.opponent_metric.current == 2
     assert snap.encounter.player_metric.current == 0
 
@@ -554,7 +567,7 @@ def test_unknown_actor_in_beat_selection_raises(snapshot_with_pack):
         beat_selections=[BeatSelection(actor="Ghost", beat_id="attack", outcome=RollOutcome.Success)],
     )
     with pytest.raises(ValueError, match="unknown actor"):
-        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
 
 def test_apply_encounter_updates_no_longer_exported():

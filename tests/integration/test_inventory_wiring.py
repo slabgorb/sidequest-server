@@ -33,6 +33,7 @@ from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from sidequest.server.watcher import WatcherSpanProcessor
 from sidequest.telemetry import spans as spans_module
 from sidequest.telemetry.watcher_hub import watcher_hub
+from tests._helpers.session_room import room_for
 
 
 def _make_character(name: str, *, items: list[dict] | None = None) -> Character:
@@ -108,7 +109,7 @@ async def test_items_gained_emits_state_transition_via_span_route(
              "category": "tool"},
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Snapshot must have been mutated — the new item is in the inventory.
@@ -186,7 +187,7 @@ async def test_items_lost_emits_state_transition_with_matched_names_only(
             {"name": "Phantom Dagger"},  # no match — must NOT appear in payload
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Mutation: torch removed, phantom dagger ignored.
@@ -261,7 +262,7 @@ async def test_items_discarded_emits_state_transition_via_span_route(
         narration="Blutka abandons the spear where it stands.",
         items_discarded=[{"name": "Bone Spear"}],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Blutka")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Blutka", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Mutation: spear remains in inventory but state has transitioned out
@@ -340,7 +341,7 @@ async def test_items_consumed_emits_state_transition_via_span_route(
         narration="Felix sprays the last of the patch-foam over the gash.",
         items_consumed=[{"name": "Maintenance Kit"}],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Felix")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Felix", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # AC1: kit is gone from inventory — no item left at state=Consumed
@@ -393,7 +394,7 @@ async def test_inventory_route_is_single_source_no_double_emission(
         narration="A small treasure.",
         items_gained=[{"name": "Lucky Coin", "category": "treasure"}],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     inventory_events = [

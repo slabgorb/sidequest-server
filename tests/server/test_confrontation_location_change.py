@@ -34,6 +34,7 @@ from sidequest.game.encounter import (
     StructuredEncounter,
 )
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 
 def _attach_active_negotiation(snapshot) -> StructuredEncounter:
@@ -85,6 +86,7 @@ def test_location_change_resolves_active_encounter_as_abandoned(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
 
     # Encounter is still on the snapshot (the dispatch block needs to
@@ -125,6 +127,7 @@ def test_no_location_change_leaves_active_encounter_alone(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
 
     assert snap.encounter is encounter
@@ -154,6 +157,7 @@ def test_location_set_to_same_value_does_not_resolve(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
 
     assert snap.encounter is encounter
@@ -187,6 +191,7 @@ def test_already_resolved_encounter_not_re_resolved_on_location_change(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
 
     assert snap.encounter is encounter
@@ -221,6 +226,7 @@ def test_first_location_set_does_not_attempt_deactivation(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
 
     # Location did update, but encounter must stay live — initial scene
@@ -255,6 +261,7 @@ def test_location_change_with_no_active_encounter_is_no_op(
         result=result,
         pack=pack,
         player_name="Linus",
+        room=room_for(snapshot=snap),
     )
     assert snap.location == "Vaskov Centrum — East Freight Stair"
     assert snap.encounter is None

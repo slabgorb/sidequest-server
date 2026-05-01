@@ -22,6 +22,7 @@ from sidequest.server.status_clear import (
     apply_explicit_status_clears,
     clear_scratch_on_scene_end,
 )
+from tests._helpers.session_room import room_for
 
 # ---------------------------------------------------------------------------
 # Unit tests — clear_scratch_on_scene_end
@@ -214,7 +215,7 @@ def test_wiring_narration_apply_clears_scratch_on_location_change(
     result = NarrationTurnResult(
         narration="They march on.", location="The Antechamber",
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     remaining = [s.text for s in sam.core.statuses]
     assert "Choked" not in remaining, "Scratch should clear on scene change"
@@ -238,7 +239,7 @@ def test_wiring_narration_apply_first_location_does_not_sweep(
     result = NarrationTurnResult(
         narration="They begin.", location="The Throat",
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     assert any(s.text == "Lingering doubt" for s in sam.core.statuses)
 
@@ -256,7 +257,7 @@ def test_wiring_narration_apply_handles_explicit_clear_entry(
         narration="She slips the rope.",
         status_changes=[{"actor": "Sam", "clear": "Captured"}],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     assert all("Captured" not in s.text for s in sam.core.statuses)
 
@@ -281,7 +282,7 @@ def test_wiring_narration_apply_clear_and_add_in_same_turn(
              "status": {"text": "Sliced palm", "severity": "Scratch"}},
         ],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     texts = [s.text for s in sam.core.statuses]
     assert "Captured" not in texts

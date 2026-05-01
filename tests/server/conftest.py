@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
+from tests._helpers.session_room import room_for
 
 if TYPE_CHECKING:
     from sidequest.game.persistence import GameMode
@@ -592,6 +593,12 @@ def session_handler_factory(tmp_path):
         )
         handler = WebSocketSessionHandler(save_dir=tmp_path)
         handler._session_data = sd
+        # Task E.2 wiring: every turn flowing through this handler will hit
+        # ``_apply_narration_result_to_snapshot`` which requires
+        # ``sd._room``. The MP path below replaces this with the seated
+        # SessionRoom; the legacy single-player path falls through with
+        # this binding intact.
+        sd._room = room_for(snap, slug=genre)
 
         # ---- Multiplayer room wiring (ADR-036 Task 3) ----
         if slug is not None and mode is not None and seat_players is not None:
@@ -625,6 +632,7 @@ def session_handler_factory(tmp_path):
                 )
                 sd.store.save = MagicMock()
                 sd.store.append_narrative = MagicMock()
+                sd._room = room
                 handler._session_data = sd
                 handler._room = room
                 return handler, sd, room
@@ -664,6 +672,7 @@ def session_handler_factory(tmp_path):
                 room.seat(pid, character_slot=character_slot)
                 room.transition_to_playing(pid)
             handler._room = room
+            sd._room = room
             # Silence broadcast so tests don't need a real WebSocket.
             room.broadcast = MagicMock()  # type: ignore[method-assign]
             # Silence store side-effects.
@@ -722,6 +731,13 @@ def session_fixture():
     # on sd.store.save / sd.store.append_narrative.
     sd.store.save = MagicMock()
     sd.store.append_narrative = MagicMock()
+    # Task E.2 wiring: ``_apply_narration_result_to_snapshot`` (called by
+    # ``_execute_narration_turn``) now requires ``room=sd._room``. The
+    # production slug-connect path always populates ``sd._room``; tests
+    # that drive a turn through this fixture must too. Bind a fresh
+    # SessionRoom over the fixture's snapshot so the front-door scene-end
+    # call site has a real Session to dispatch into.
+    sd._room = room_for(snap, slug="sunken_keep")
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-never-used"))
     handler._session_data = sd
@@ -1013,6 +1029,7 @@ def encounter_dispatch_helper():
                 "Sam",
                 pack=pack,
                 from_explicit_action=True,
+                room=room_for(snapshot),
             )
 
         def run_to_resolution(self, snapshot, pack, *, winner="opponent"):
@@ -1048,6 +1065,7 @@ def encounter_dispatch_helper():
                     result,
                     "Sam",
                     pack=pack,
+                    room=room_for(snapshot),
                 )
 
     return _Helper()

@@ -1594,10 +1594,18 @@ class WebSocketSessionHandler:
                         "pending_opposed_player_beat_id",
                         None,
                     )
+                    if sd._room is None:
+                        # Slug-connect branch always sets _room; this is
+                        # a programming-error path. Surface as a hard error.
+                        raise RuntimeError(
+                            "_apply_narration_result_to_snapshot: sd._room "
+                            "is None — slug-connect wiring missing"
+                        )
                     _apply_narration_result_to_snapshot(
                         snapshot,
                         result,
                         sd.player_name,
+                        room=sd._room,
                         pack=sd.genre_pack,
                         dice_failed=dice_failed,
                         dice_actor=dice_actor,

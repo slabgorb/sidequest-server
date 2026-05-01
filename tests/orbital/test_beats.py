@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 
 from sidequest.orbital.beats import (
+    DEFAULT_DURATIONS_HOURS,
     StoryBeat,
     StoryBeatKind,
-    DEFAULT_DURATIONS_HOURS,
     advance_clock_via_beat,
 )
 from sidequest.orbital.clock import Clock

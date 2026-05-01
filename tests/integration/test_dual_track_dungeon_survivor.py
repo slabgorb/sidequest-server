@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._helpers.session_room import room_for
+
 REF_SAVE = (
     Path.home() / ".sidequest" / "saves" / "games" /
     "2026-04-25-dungeon_survivor" / "save.db"
@@ -95,7 +97,7 @@ def test_dungeon_survivor_resolves_to_opponent_victory(
                 NpcMention(name="The Promo", side="opponent", role="hostile"),
             ],
         )
-        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
         if snap.encounter is None or snap.encounter.resolved:
             break
 
@@ -162,7 +164,7 @@ def test_dungeon_survivor_timeline_actors_have_side_attribution(
             ],
             npcs_present=[NpcMention(name="The Promo", side="opponent", role="hostile")],
         )
-        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     events = query_encounter_events(store)
     beat_rows = [e for e in events if e["kind"] == "ENCOUNTER_BEAT_APPLIED"]

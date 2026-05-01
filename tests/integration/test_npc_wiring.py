@@ -30,6 +30,7 @@ from sidequest.server.session_helpers import _detect_npc_identity_drift
 from sidequest.server.watcher import WatcherSpanProcessor
 from sidequest.telemetry import spans as spans_module
 from sidequest.telemetry.watcher_hub import watcher_hub
+from tests._helpers.session_room import room_for
 
 
 async def _setup(monkeypatch: pytest.MonkeyPatch, label: str) -> list[dict]:
@@ -86,7 +87,7 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
             NpcMention(name="Vex", pronouns="she/her", role="scavenger", appearance="")
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Snapshot must have been mutated inside the span.
@@ -167,7 +168,7 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
             NpcMention(name="Laverne", pronouns="she/her", role="ally", appearance=""),
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Critical: registry must NOT have been mutated.
@@ -250,7 +251,7 @@ async def test_pc_name_filter_is_case_insensitive(
             NpcMention(name="laverne", pronouns="", role="", appearance=""),
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley", room=room_for(snapshot))
     await asyncio.sleep(0.05)
     assert snapshot.npc_registry == []
     skipped = [

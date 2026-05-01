@@ -36,6 +36,7 @@ from sidequest.telemetry.watcher_hub import (
     publish_event,
     watcher_hub,
 )
+from tests._helpers.session_room import room_for
 
 
 class _FakeSocket:
@@ -112,7 +113,7 @@ async def test_state_transition_fires_on_location_update(
     result = NarrationTurnResult(
         narration="You descend.", location="Tood's Dome — Nest Crack"
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
     location_events = [
         e for e in sock.events if e["event_type"] == "state_transition"
@@ -171,7 +172,7 @@ async def test_state_transition_fires_on_npc_auto_register(
             )
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
     npc_events = [
         e for e in sock.events
