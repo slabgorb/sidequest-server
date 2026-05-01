@@ -35,7 +35,6 @@ from sidequest.protocol.messages import (
 from sidequest.server import views
 from sidequest.server.dispatch.char_creation_resolve import resolve_char_creation_scenes
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
-from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.session_handler import (
@@ -531,32 +530,13 @@ class ConnectHandler:
             # state proves we're past the opening — the persisted
             # ``current_scene`` on the snapshot is the source of truth, not
             # a re-rolled hook.
-            # Fresh-session guard: opening seed/directive are only
-            # consumed by the first narrator turn after chargen, but
-            # ``TurnManager.interaction`` defaults to 1 (not 0) on a
-            # fresh snapshot, so the prior ``interaction == 0`` check
-            # was always false and openings never resolved on slug
-            # connects. The legacy connect path resolved unconditionally
-            # and tests in ``test_chargen_dispatch.py`` /
-            # ``test_opening_turn_bootstrap.py`` enforce that contract.
-            # Gate on ``saved is None`` instead — that is the precise
-            # "this is the very first connect for this slug" signal,
-            # which is what the original comment about avoiding
-            # opening-hook re-rolls on reconnect was reaching for.
-            # Story 45-26 surfaced the bug while retargeting legacy-
-            # connect tests to slug-connect.
-            opening: tuple[str, str] | None = None
-            if saved is None and not snapshot.characters:
-                opening = resolve_opening(
-                    genre_pack,
-                    row.world_slug,
-                    row.genre_slug,
-                    mode=GameMode(row.mode),
-                )
+            # Opening-hook resolution moved to chargen-completion (Task 19).
+            # Connect time leaves opening slots empty; the websocket session
+            # handler populates them when chargen transitions Building -> Playing.
+            # Refs: docs/superpowers/specs/2026-05-01-canned-openings-design.md
+            # section 2.3
             opening_seed: str | None = None
             opening_directive: str | None = None
-            if opening is not None:
-                opening_seed, opening_directive = opening
 
             # MP-joiner cold-open suppression (playtest 2026-04-26 "Multiplayer
             # parallel-solo desynchronizes scene context entirely"). When a

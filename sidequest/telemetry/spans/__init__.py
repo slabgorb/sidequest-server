@@ -56,6 +56,7 @@ from .mp import *  # noqa: F401, F403
 from .namegen import *  # noqa: F401, F403
 from .narrator import *  # noqa: F401, F403
 from .npc import *  # noqa: F401, F403
+from .opening import *  # noqa: F401, F403
 from .orchestrator import *  # noqa: F401, F403
 from .persistence import *  # noqa: F401, F403
 from .pregen import *  # noqa: F401, F403

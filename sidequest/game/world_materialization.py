@@ -42,6 +42,7 @@ from sidequest.game.history_chapter import (
     HistoryChapter,
 )
 from sidequest.game.session import NarrativeEntry, Npc, TropeState
+from sidequest.genre.models.authored_npc import AuthoredNpc
 
 
 def _auto_description(race: str, char_class: str) -> str:
@@ -722,3 +723,94 @@ def materialize_from_genre_pack(
     snap.genre_slug = genre_slug
     snap.world_slug = world_slug
     return snap
+
+
+# ---------------------------------------------------------------------------
+# Canned-openings Phase 3 (Task 13) — AuthoredNpc pre-load
+# ---------------------------------------------------------------------------
+
+
+def preload_authored_npcs(
+    state: Any,
+    authored: list[AuthoredNpc],
+) -> None:
+    """Pre-load AuthoredNpcs into ``state.npcs`` as runtime ``Npc`` instances.
+
+    Fresh sessions only — defined as ``state.characters == []`` AND
+    ``state.turn_manager.interaction == 0``. Resumed sessions skip
+    pre-loading; their npc_registry is already populated from prior
+    turns and we do not retroactively rewrite it.
+
+    Emits ``npc.authored_loaded`` per pre-loaded NPC for GM-panel
+    visibility (CLAUDE.md "OTEL Observability Principle"). Empty
+    ``authored`` list is a hard no-op — neither the gate check nor any
+    span fires when there's nothing to load.
+
+    See ``docs/superpowers/specs/2026-05-01-canned-openings-design.md``
+    §2.2.
+    """
+    if not authored:
+        return
+
+    is_fresh = (
+        not getattr(state, "characters", None)
+        and getattr(getattr(state, "turn_manager", None), "interaction", 0) == 0
+    )
+    if not is_fresh:
+        return
+
+    from sidequest.telemetry.spans import SPAN_NPC_AUTHORED_LOADED, Span
+
+    for authored_npc in authored:
+        # CreatureCore requires non-blank description + personality
+        # (validators), so synthesize sensible defaults from the authored
+        # fields rather than passing empty strings.
+        description = (
+            authored_npc.appearance
+            or authored_npc.role
+            or f"Authored NPC {authored_npc.id}."
+        )
+        personality = authored_npc.role or "Authored."
+        core = CreatureCore(
+            name=authored_npc.name,
+            description=description,
+            personality=personality,
+            level=1,
+            xp=0,
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+            acquired_advancements=[],
+        )
+        runtime = Npc(
+            core=core,
+            voice_id=None,
+            disposition=int(authored_npc.initial_disposition),
+            location=None,
+            pronouns=authored_npc.pronouns or None,
+            appearance=authored_npc.appearance or None,
+            age=authored_npc.age or None,
+            build=None,
+            height=None,
+            distinguishing_features=list(authored_npc.distinguishing_features),
+            ocean=authored_npc.ocean,
+            resolution_tier="spawn",
+            non_transactional_interactions=0,
+            jungian_id=None,
+            rpg_role_id=None,
+            npc_role_id=None,
+            resolved_archetype=None,
+        )
+        state.npcs.append(runtime)
+        with Span.open(
+            SPAN_NPC_AUTHORED_LOADED,
+            {
+                "authored_id": authored_npc.id,
+                "npc_name": authored_npc.name,
+                "role": authored_npc.role or "",
+                "initial_disposition": int(authored_npc.initial_disposition),
+                "genre_slug": getattr(state, "genre_slug", "") or "",
+                "world_slug": getattr(state, "world_slug", "") or "",
+            },
+        ):
+            pass

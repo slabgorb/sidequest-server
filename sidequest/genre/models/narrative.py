@@ -5,9 +5,11 @@ Port of sidequest-genre/src/models/narrative.rs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from sidequest.genre.models.chassis import BondTier
 
 
 class Prompts(BaseModel):
@@ -39,53 +41,6 @@ class Prompts(BaseModel):
     debt_collection: str | None = None
     session_opener_template: str | None = None
     scene_description: str | None = None
-
-
-class OpeningHook(BaseModel):
-    """An opening scenario hook."""
-
-    model_config = {"extra": "forbid"}
-
-    id: str
-    archetype: str
-    situation: str
-    tone: str
-    avoid: list[str] = Field(default_factory=list)
-    first_turn_seed: str
-
-
-class MpOpening(BaseModel):
-    """A multiplayer-specific opening scenario.
-
-    Used in place of ``OpeningHook`` when a session is in multiplayer
-    mode and the world declares one or more entries in
-    ``worlds/{slug}/mp_opening.yaml``. MP openings land the party
-    aboard the world's flagship rig (or equivalent shared setting) in
-    a chill scene — no turn-1 confrontation, no dice, every PC gets a
-    voice slot. See ``coyote_star/mp_opening.yaml`` for the canonical
-    shape.
-
-    Only ``id`` and ``establishing_narration`` are required; the rest
-    of the rich authoring (rig voice seeds, per-PC beats, soft hook,
-    party framing) parses through via ``extra="allow"`` and is rendered
-    into the narrator directive verbatim. The renderer treats unknown
-    fields as opaque text — content can grow without changing this
-    schema.
-    """
-
-    model_config = {"extra": "allow"}
-
-    id: str
-    name: str = ""
-    establishing_narration: str
-    first_turn_invitation: str = ""
-    triggers: dict[str, Any] = Field(default_factory=dict)
-    setting: dict[str, Any] = Field(default_factory=dict)
-    tone: dict[str, Any] = Field(default_factory=dict)
-    rig_voice_seeds: list[dict[str, Any]] = Field(default_factory=list)
-    per_pc_beats: list[dict[str, Any]] = Field(default_factory=list)
-    soft_hook: dict[str, Any] = Field(default_factory=dict)
-    party_framing: dict[str, Any] = Field(default_factory=dict)
 
 
 class BeatObstacle(BaseModel):
@@ -138,3 +93,162 @@ class PowerTier(BaseModel):
     label: str
     player: str
     npc: str | None = None
+
+
+# === New unified Opening sub-models (Phase 1) ===
+
+OpeningMode = Literal["solo", "multiplayer", "either"]
+
+
+class OpeningTrigger(BaseModel):
+    """Selection rules — how the bank picks this Opening at chargen-complete."""
+
+    model_config = {"extra": "forbid"}
+
+    mode: OpeningMode = "either"
+    min_players: int = 1
+    max_players: int = 6
+    backgrounds: list[str] = Field(default_factory=list)
+
+
+class OpeningTone(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    register: str = ""
+    stakes: str = ""
+    complication: str = ""
+    sensory_layers: dict[str, str] = Field(default_factory=dict)
+    avoid_at_all_costs: list[str] = Field(default_factory=list)
+
+
+_PER_PC_BEAT_KEYS = frozenset({"background", "drive", "race", "class"})
+
+
+class PerPcBeat(BaseModel):
+    """Chargen-keyed textural moment. Validator 6 constrains applies_to keys."""
+
+    model_config = {"extra": "forbid"}
+
+    applies_to: dict[str, str]
+    beat: str
+
+    @field_validator("applies_to")
+    @classmethod
+    def _validate_keys(cls, v: dict[str, str]) -> dict[str, str]:
+        invalid = set(v.keys()) - _PER_PC_BEAT_KEYS
+        if invalid:
+            raise ValueError(
+                f"PerPcBeat.applies_to keys must be in {sorted(_PER_PC_BEAT_KEYS)}; "
+                f"got disallowed keys: {sorted(invalid)}"
+            )
+        return v
+
+
+class SoftHook(BaseModel):
+    """Pull-not-push wrinkle that surfaces when conversation lulls."""
+
+    model_config = {"extra": "forbid"}
+
+    kind: str = "pull_not_push"
+    timing: str = "surfaces if conversation lulls; otherwise wait for turn 2"
+    narration: str = ""
+    escalation_path: dict[str, str] = Field(default_factory=dict)
+
+
+class PartyFraming(BaseModel):
+    """MP-only. Omitted from directive when mode == solo."""
+
+    model_config = {"extra": "forbid"}
+
+    already_a_crew: bool = False
+    bond_tier_default: BondTier = "trusted"
+    shared_history_seeds: list[str] = Field(default_factory=list)
+    narrator_guidance: str = ""
+
+
+class MagicMicrobleed(BaseModel):
+    """Optional — Reach-bleeds-through detail at intensity 0.25."""
+
+    model_config = {"extra": "forbid"}
+
+    detail: str
+    cost_bar: str | None = None
+
+
+class OpeningSetting(BaseModel):
+    """Either ship-anchored (Coyote Star) OR location-anchored (Aureate). Exactly one."""
+
+    model_config = {"extra": "forbid"}
+
+    chassis_instance: str | None = None
+    interior_room: str | None = None
+    location_label: str | None = None
+    situation: str = ""
+    present_npcs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _exactly_one_anchor(self) -> Self:
+        ship = self.chassis_instance is not None
+        place = self.location_label is not None
+        if ship == place:
+            raise ValueError(
+                "OpeningSetting must specify exactly one of "
+                "chassis_instance (with interior_room) OR location_label"
+            )
+        if ship and not self.interior_room:
+            raise ValueError("interior_room required when chassis_instance is set")
+        if ship and self.present_npcs:
+            raise ValueError(
+                "present_npcs must be empty for chassis-anchored openings; "
+                "use chassis_instance.crew_npcs instead"
+            )
+        return self
+
+
+class Opening(BaseModel):
+    """Unified opening scenario — replaces OpeningHook (solo, sketch) and
+    MpOpening (MP, prose). One file per world: ``worlds/{slug}/openings.yaml``.
+
+    Top-level model uses ``extra='allow'`` so world authors can add
+    experimental fields without schema migrations. Inner sub-models
+    use ``extra='forbid'`` to catch typos in well-defined fields.
+    """
+
+    model_config = {"extra": "allow"}
+
+    id: str
+    name: str = ""
+    triggers: OpeningTrigger
+    setting: OpeningSetting
+    tone: OpeningTone = Field(default_factory=OpeningTone)
+    establishing_narration: str
+    first_turn_invitation: str = ""
+    rig_voice_seeds: list[dict[str, Any]] = Field(default_factory=list)
+    per_pc_beats: list[PerPcBeat] = Field(default_factory=list)
+    soft_hook: SoftHook = Field(default_factory=SoftHook)
+    party_framing: PartyFraming | None = None
+    magic_microbleed: MagicMicrobleed | None = None
+
+    @field_validator("first_turn_invitation")
+    @classmethod
+    def _no_question(cls, v: str) -> str:
+        if "?" in v:
+            raise ValueError(
+                "first_turn_invitation must not contain '?'. "
+                "Per SOUL pacing rule, turn 1 closes on a declarative; "
+                "the player should be able to sit in the breath without prompt."
+            )
+        return v
+
+    @field_validator("establishing_narration", "first_turn_invitation")
+    @classmethod
+    def _no_placeholder_text(cls, v: str) -> str:
+        forbidden = ["[authored", "[tbd", "[migrated", "[placeholder"]
+        lower = v.lower()
+        for marker in forbidden:
+            if marker in lower:
+                raise ValueError(
+                    f"Field contains placeholder marker {marker!r} — "
+                    "world-builder pass not complete"
+                )
+        return v

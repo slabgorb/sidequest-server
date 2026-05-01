@@ -19,6 +19,7 @@ from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.genre.models.audio import AudioConfig, VoicePresets
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -36,14 +37,14 @@ from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
-    MpOpening,
-    OpeningHook,
+    Opening,
     PowerTier,
     Prompts,
 )
 from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.progression import ProgressionConfig
+from sidequest.genre.models.rigs_world import ChassisInstanceConfig
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
@@ -132,9 +133,11 @@ class World(BaseModel):
     legends_raw: Any = None
     portrait_manifest: list[PortraitManifestEntry] = Field(default_factory=list)
     archetype_funnels: ArchetypeFunnels | None = None
-    openings: list[OpeningHook] = Field(default_factory=list)
-    mp_openings: list[MpOpening] = Field(default_factory=list)
+    openings: list[Opening] = Field(default_factory=list)
+    authored_npcs: list[AuthoredNpc] = Field(default_factory=list)
     char_creation: list[CharCreationScene] = Field(default_factory=list)
+    chassis_instances: list[ChassisInstanceConfig] = Field(default_factory=list)
+    magic_register: str = ""
 
 
 class GenrePack(BaseModel):
@@ -168,7 +171,7 @@ class GenrePack(BaseModel):
     scenarios: dict[str, ScenarioPack] = Field(default_factory=dict)
     drama_thresholds: DramaThresholds | None = None
     inventory: InventoryConfig | None = None
-    openings: list[OpeningHook] = Field(default_factory=list)
+    openings: list[Opening] = Field(default_factory=list)
     backstory_tables: BackstoryTables | None = None
     equipment_tables: EquipmentTables | None = None
     base_archetypes: BaseArchetypes | None = None

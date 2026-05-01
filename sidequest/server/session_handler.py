@@ -65,9 +65,6 @@ from sidequest.protocol.models import (
     PartyFormationWireEntry,
     StateDelta,
 )
-from sidequest.server.dispatch.opening_hook import (
-    resolve_opening,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
-)
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
@@ -432,7 +429,7 @@ class _SessionData:
     # satisfy dataclass field-ordering rules; the plan's "next to store"
     # placement breaks ordering since genre_pack/orchestrator have no
     # defaults.
-    _room: "SessionRoom | None" = None
+    _room: SessionRoom | None = None
     # Character builder is present only during the Creating state. Initialized
     # in _handle_connect when has_character=False; consumed (and discarded) by
     # _handle_character_creation's confirmation commit when the Character lands
@@ -446,6 +443,12 @@ class _SessionData:
     # opening-hook entries — the first turn runs without a directive.
     opening_seed: str | None = None
     opening_directive: str | None = None
+    # Canned-openings Phase 4 (Task 19): id of the Opening picked at
+    # chargen-completion. Read by ``record_opening_played`` at directive
+    # consumption so the ``opening.played`` span carries opening_id for
+    # GM-panel attribution. None until ``_populate_opening_directive_on_
+    # chargen_complete`` resolves an opening.
+    _resolved_opening_id: str | None = None
     # Narrator world context (Story 41-11 — closes the Phase 2.2 IOU
     # ``Culture.chargen`` filter). Resolved once at connect time from
     # pack/world.cultures with lore-only cultures filtered out; injected
@@ -564,6 +567,7 @@ from sidequest.server.session_helpers import (  # noqa: E402 — back-compat re-
 )
 from sidequest.server.websocket_session_handler import (  # noqa: E402 — back-compat re-export
     WebSocketSessionHandler,
+    _populate_opening_directive_on_chargen_complete,
 )
 
 __all__ = [
@@ -578,6 +582,7 @@ __all__ = [
     "_detect_npc_identity_drift",
     "_error_msg",
     "_find_confrontation_def",
+    "_populate_opening_directive_on_chargen_complete",
     "_presence_msg",
     "_render_url_from_path",
     "_resolve_acting_character_name",

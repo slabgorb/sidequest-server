@@ -23,8 +23,8 @@ CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" 
 
 def _resolve_space_opera_world_with_magic() -> tuple[Path, str]:
     """Return (pack_dir, world_slug) for the space_opera world that ships
-    a magic.yaml. The world is ``coyote_star``. Raises AssertionError if
-    the directory is missing — fail loud rather than silently fall back.
+    a magic.yaml — Coyote Star. Raises AssertionError if the directory is
+    missing — fail loud rather than silently fall back.
     """
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():
@@ -32,12 +32,12 @@ def _resolve_space_opera_world_with_magic() -> tuple[Path, str]:
             f"space_opera magic.yaml missing at {pack_dir} — "
             "Phase 4 magic init test cannot run without shipping content"
         )
-    slug = "coyote_star"
-    if not (pack_dir / "worlds" / slug / "magic.yaml").is_file():
+    world_slug = "coyote_star"
+    if not (pack_dir / "worlds" / world_slug / "magic.yaml").is_file():
         raise AssertionError(
             f"coyote_star world magic.yaml missing under {pack_dir / 'worlds'}"
         )
-    return pack_dir, slug
+    return pack_dir, world_slug
 
 
 def test_init_magic_state_loads_coyote_star_and_adds_character() -> None:

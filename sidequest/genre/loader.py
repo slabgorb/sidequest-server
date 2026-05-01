@@ -21,6 +21,7 @@ from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.genre.models.audio import AudioConfig, VoicePresets
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -37,8 +38,7 @@ from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
-    MpOpening,
-    OpeningHook,
+    Opening,
     PowerTier,
     Prompts,
 )
@@ -46,6 +46,7 @@ from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.pack import GenrePack, PackMeta, PortraitManifestEntry, World
 from sidequest.genre.models.progression import ProgressionConfig
+from sidequest.genre.models.rigs_world import ChassisInstanceConfig, RigsWorldConfig
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioNpc, ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
@@ -325,13 +326,197 @@ def _load_subdirectories(
 
 
 # ---------------------------------------------------------------------------
+# Cross-file validators (canned-openings spec §1.4)
+# ---------------------------------------------------------------------------
+
+def _validate_opening_setting_references(
+    openings: list[Opening],
+    chassis_instances: list[ChassisInstanceConfig],
+    *,
+    world_slug: str,
+) -> None:
+    """Validators 2, 3: chassis_instance + interior_room references resolve.
+
+    Skipped for location-anchored openings (which have chassis_instance is None).
+    """
+    chassis_by_id = {c.id: c for c in chassis_instances}
+    for op in openings:
+        s = op.setting
+        if s.chassis_instance is None:
+            continue
+        chassis = chassis_by_id.get(s.chassis_instance)
+        if chassis is None:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} references "
+                    f"unknown chassis_instance {s.chassis_instance!r}. "
+                    f"Known chassis: {sorted(chassis_by_id.keys())}"
+                ),
+            )
+        if s.interior_room not in chassis.interior_rooms:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} references "
+                    f"interior_room {s.interior_room!r}, which is not in "
+                    f"chassis {chassis.id!r}'s interior_rooms "
+                    f"{chassis.interior_rooms}."
+                ),
+            )
+
+
+def _validate_crew_npc_references(
+    chassis_instances: list[ChassisInstanceConfig],
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 4: every chassis_instance.crew_npcs entry must resolve to an
+    AuthoredNpc.id in worlds/{slug}/npcs.yaml.
+
+    A chassis with an empty crew_npcs list is valid.
+    """
+    npc_ids = {n.id for n in authored_npcs}
+    for chassis in chassis_instances:
+        unknown = [c for c in chassis.crew_npcs if c not in npc_ids]
+        if unknown:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/rigs.yaml",
+                detail=(
+                    f"chassis {chassis.id!r} declares crew_npcs {unknown!r} "
+                    f"that do not resolve to any AuthoredNpc.id in "
+                    f"worlds/{world_slug}/npcs.yaml. "
+                    f"Known authored NPCs: {sorted(npc_ids)}"
+                ),
+            )
+
+
+def _validate_authored_npc_uniqueness(
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 5: AuthoredNpc.id unique per world."""
+    seen: set[str] = set()
+    for npc in authored_npcs:
+        if npc.id in seen:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/npcs.yaml",
+                detail=(
+                    f"duplicate AuthoredNpc.id {npc.id!r}. "
+                    "Each NPC id must be unique within a world."
+                ),
+            )
+        seen.add(npc.id)
+
+
+def _validate_present_npcs_resolve(
+    openings: list[Opening],
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 12 part-b: every Opening.setting.present_npcs entry resolves
+    to an AuthoredNpc.id."""
+    npc_ids = {n.id for n in authored_npcs}
+    for op in openings:
+        unknown = [n for n in op.setting.present_npcs if n not in npc_ids]
+        if unknown:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} declares present_npcs {unknown!r} "
+                    f"that do not resolve to any AuthoredNpc. "
+                    f"Known: {sorted(npc_ids)}"
+                ),
+            )
+
+
+def _validate_opening_bank_coverage(
+    openings: list[Opening],
+    chargen_backgrounds: list[str],
+    *,
+    world_slug: str,
+) -> None:
+    """Validators 7 + 8 (canned-openings §1.4).
+
+    7: world ships ≥1 solo opening AND ≥1 MP opening.
+       (Mode 'either' counts toward both.)
+    8: every chargen background must be reachable by some solo-eligible
+       opening (matching ``triggers.backgrounds: [...]`` OR a fallback entry
+       with ``triggers.backgrounds: []``).
+
+    An empty ``chargen_backgrounds`` list disables Validator 8 (no constraint
+    to satisfy). World-load currently passes ``[]`` whenever a world's
+    ``char_creation.yaml`` has no scene with id ``"background"`` — see the
+    wiring site in ``_load_single_world``.
+    """
+    path = f"worlds/{world_slug}/openings.yaml"
+
+    has_solo = any(op.triggers.mode in ("solo", "either") for op in openings)
+    has_mp = any(op.triggers.mode in ("multiplayer", "either") for op in openings)
+
+    if not has_solo:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                "no solo opening declared. openings.yaml must include "
+                "at least one entry with triggers.mode in {'solo', 'either'}."
+            ),
+        )
+    if not has_mp:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                "no multiplayer opening declared. openings.yaml must include "
+                "at least one entry with triggers.mode in {'multiplayer', 'either'}."
+            ),
+        )
+
+    # Validator 8: every chargen background reachable by a solo-eligible opening.
+    solo_eligible = [op for op in openings if op.triggers.mode in ("solo", "either")]
+    has_fallback = any(not op.triggers.backgrounds for op in solo_eligible)
+    if has_fallback:
+        return  # fallback covers all backgrounds
+
+    covered: set[str] = set()
+    for op in solo_eligible:
+        covered.update(op.triggers.backgrounds)
+
+    uncovered = [bg for bg in chargen_backgrounds if bg not in covered]
+    if uncovered:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                f"chargen backgrounds {uncovered!r} are not reachable by "
+                "any solo opening. Either add a background-keyed entry per "
+                "uncovered background OR add a fallback entry with "
+                "`triggers.backgrounds: []`."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
 
-def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) -> World:
+def _load_single_world(
+    world_path: Path,
+    genre_tropes: list[TropeDefinition],
+    genre_root: Path,
+) -> World:
     """Load a single world from its directory.
 
     Port of Rust load_single_world().
+
+    Args:
+        world_path: Path to the world directory (e.g. ``.../worlds/coyote_star``).
+        genre_tropes: Genre-tier tropes used for inheritance resolution.
+        genre_root: Path to the genre pack root (e.g. ``.../space_opera``).
+            Used to locate the genre-tier ``magic.yaml`` so the magic loader
+            can compose genre+world layers — both files are required by
+            ``load_world_magic`` (see ``magic_loader.py``).
 
     Raises:
         GenreLoadError: If required files are missing or malformed.
@@ -385,23 +570,40 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         world_path / "archetype_funnels.yaml", ArchetypeFunnels
     )
 
-    # World-tier opening hooks and chargen scenes
-    openings_raw = _load_yaml_raw_optional(world_path / "openings.yaml")
-    openings: list[OpeningHook] = (
-        [OpeningHook.model_validate(o) for o in openings_raw]
-        if isinstance(openings_raw, list)
-        else []
+    # === World-tier openings.yaml — MANDATORY ===
+    # The unified Opening schema. Both solo and MP entries live here,
+    # distinguished by triggers.mode. Replaces both the old genre-tier
+    # fallback path and the per-world side file that previously held
+    # MP-only openings.
+    openings_path = world_path / "openings.yaml"
+    if not openings_path.exists():
+        raise GenreLoadError(
+            path=openings_path,
+            detail=(
+                f"World {world_path.name!r} is missing required openings.yaml. "
+                "World-tier openings became mandatory in the canned-openings story; "
+                "every world must author at least one solo and one MP opening. "
+                "See docs/superpowers/specs/2026-05-01-canned-openings-design.md §1."
+            ),
+        )
+    openings_raw = _load_yaml_raw(openings_path)
+    # openings.yaml top-level shape: { version, world, genre, openings: [...] }
+    openings_list_raw = (
+        openings_raw.get("openings", []) if isinstance(openings_raw, dict) else []
     )
+    openings: list[Opening] = [Opening.model_validate(o) for o in openings_list_raw]
 
-    # World-tier multiplayer openings — see worlds/{slug}/mp_opening.yaml
-    # for the canonical shape (e.g., coyote_star/mp_opening.yaml). The
-    # file's top-level `mp_openings:` list is the source of truth.
-    mp_openings_raw = _load_yaml_raw_optional(world_path / "mp_opening.yaml")
-    mp_openings: list[MpOpening] = []
-    if isinstance(mp_openings_raw, dict):
-        entries = mp_openings_raw.get("mp_openings")
-        if isinstance(entries, list):
-            mp_openings = [MpOpening.model_validate(o) for o in entries]
+    # === World-tier npcs.yaml — OPTIONAL ===
+    # AuthoredNpc list. If a chassis_instance references crew_npcs from
+    # this list, validator 4 (Phase 2) catches missing references.
+    npcs_path = world_path / "npcs.yaml"
+    authored_npcs: list[AuthoredNpc] = []
+    if npcs_path.exists():
+        npcs_raw = _load_yaml_raw(npcs_path)
+        npcs_list_raw = (
+            npcs_raw.get("npcs", []) if isinstance(npcs_raw, dict) else []
+        )
+        authored_npcs = [AuthoredNpc.model_validate(n) for n in npcs_list_raw]
 
     char_creation_raw = _load_yaml_raw_optional(world_path / "char_creation.yaml")
     char_creation: list[CharCreationScene] = (
@@ -409,6 +611,72 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         if isinstance(char_creation_raw, list)
         else []
     )
+
+    # === World-tier rigs.yaml — OPTIONAL ===
+    # Chassis instances. Required for cross-file validation of
+    # chassis-anchored openings (validators 2 + 3, canned-openings §1.4).
+    # Worlds that don't use the rig framework simply omit this file;
+    # any chassis-anchored openings will then fail validator 2.
+    rigs_path = world_path / "rigs.yaml"
+    chassis_instances: list[ChassisInstanceConfig] = []
+    if rigs_path.exists():
+        rigs_raw = _load_yaml_raw(rigs_path)
+        rigs_cfg = RigsWorldConfig.model_validate(rigs_raw)
+        chassis_instances = list(rigs_cfg.chassis_instances)
+
+    # Cross-file validators 2 + 3: chassis_instance + interior_room
+    # references in openings resolve against rigs.yaml.
+    _validate_opening_setting_references(
+        openings, chassis_instances, world_slug=world_path.name
+    )
+
+    # Cross-file validator 4: chassis_instance.crew_npcs entries resolve
+    # against AuthoredNpc ids in npcs.yaml.
+    _validate_crew_npc_references(
+        chassis_instances, authored_npcs, world_slug=world_path.name
+    )
+
+    # Cross-file validator 5: AuthoredNpc ids are unique within a world.
+    _validate_authored_npc_uniqueness(authored_npcs, world_slug=world_path.name)
+
+    # Cross-file validator 12 part-b: Opening.setting.present_npcs entries
+    # resolve to AuthoredNpc ids.
+    _validate_present_npcs_resolve(
+        openings, authored_npcs, world_slug=world_path.name
+    )
+
+    # Cross-file validators 7 + 8: opening bank coverage (canned-openings §1.4).
+    # Derive chargen backgrounds from the canonical "background" scene in
+    # char_creation.yaml. Worlds whose chargen uses a different scene id
+    # (e.g. coyote_star uses "origins") fall through to []; that disables
+    # Validator 8 for those worlds but Validator 7 still enforces solo+MP.
+    background_scene = next(
+        (s for s in char_creation if s.id == "background"),
+        None,
+    )
+    chargen_backgrounds: list[str] = (
+        [c.label for c in background_scene.choices] if background_scene else []
+    )
+    _validate_opening_bank_coverage(
+        openings, chargen_backgrounds, world_slug=world_path.name
+    )
+
+    # === World-tier magic.yaml — OPTIONAL (silent-skip when absent) ===
+    # The magic_loader requires BOTH genre-tier and world-tier magic.yaml.
+    # Genres without a magic system simply omit the files; that's a deliberate
+    # authoring choice (matches sidequest/server/magic_init.py behavior).
+    # Any other failure (malformed yaml, schema error) propagates as LoaderError
+    # — no silent fallbacks per project rule.
+    genre_magic_path = genre_root / "magic.yaml"
+    world_magic_path = world_path / "magic.yaml"
+    magic_register = ""
+    if genre_magic_path.exists() and world_magic_path.exists():
+        from sidequest.genre.magic_loader import load_world_magic
+
+        magic_cfg = load_world_magic(
+            genre_yaml=genre_magic_path, world_yaml=world_magic_path
+        )
+        magic_register = magic_cfg.narrator_register or ""
 
     # Portrait manifest
     portrait_raw = _load_yaml_raw_optional(world_path / "portrait_manifest.yaml")
@@ -436,8 +704,10 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         portrait_manifest=portrait_manifest,
         archetype_funnels=archetype_funnels,
         openings=openings,
-        mp_openings=mp_openings,
+        authored_npcs=authored_npcs,
         char_creation=char_creation,
+        chassis_instances=chassis_instances,
+        magic_register=magic_register,
     )
 
 
@@ -557,12 +827,12 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         path / "inventory.yaml", InventoryConfig
     )
 
-    openings_raw = _load_yaml_raw_optional(path / "openings.yaml")
-    openings: list[OpeningHook] = (
-        [OpeningHook.model_validate(o) for o in openings_raw]
-        if isinstance(openings_raw, list)
-        else []
-    )
+    # Genre-tier openings.yaml is dead. Per the canned-openings design
+    # (§1, locked decision #2), all openings now live at the world tier
+    # (worlds/{slug}/openings.yaml), and the genre-tier file is deleted.
+    # The GenrePack.openings field remains for the Opening type but is
+    # always populated empty here; callers should read worlds[slug].openings.
+    openings: list[Opening] = []
 
     backstory_tables: BackstoryTables | None = _load_yaml_optional(
         path / "backstory_tables.yaml", BackstoryTables
@@ -595,7 +865,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
 
     # Load worlds and scenarios from subdirectories
     worlds: dict[str, World] = _load_subdirectories(
-        path, "worlds", lambda p: _load_single_world(p, genre_tropes)
+        path, "worlds", lambda p: _load_single_world(p, genre_tropes, path)
     )
     scenarios: dict[str, ScenarioPack] = _load_subdirectories(
         path, "scenarios", _load_single_scenario
