@@ -62,38 +62,6 @@ class GenreMeta(BaseModel):
     worlds: list[WorldMeta] = []
 
 
-class SaveEntry(BaseModel):
-    """A single save file entry."""
-
-    genre_slug: str
-    world_slug: str
-    player_name: str
-    db_path: str
-    turn: int = 0
-    location: str = ""
-    last_saved: str = ""
-
-
-class SessionPlayer(BaseModel):
-    """A player in an active session."""
-
-    player_id: str
-    display_name: str
-
-
-class ActiveSession(BaseModel):
-    """An active session (Phase 1: always empty — multiplayer deferred)."""
-
-    session_key: str
-    genre: str
-    world: str
-    session_id: str
-    players: list[SessionPlayer] = []
-    current_turn: int = 0
-    current_location: str = ""
-    turn_mode: str = "free_play"
-
-
 class CreateGameRequest(BaseModel):
     genre_slug: str
     world_slug: str

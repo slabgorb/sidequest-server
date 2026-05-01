@@ -2,7 +2,7 @@
 
 GameSnapshot is serialized as JSON TEXT in the ``game_state`` table.
 
-ADR-006: One .db file per genre/world/player session.
+ADR-006 / MP-03: One .db file per game slug (slug-keyed save model).
 ADR-023: Auto-save after every turn, atomic writes via SQLite transactions.
 """
 
