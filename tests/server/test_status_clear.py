@@ -332,15 +332,23 @@ def test_wiring_session_handler_imports_status_clear():
 
 
 def test_wiring_yield_action_imports_status_clear():
-    """The YIELD path resolves an encounter too — must clear Scratch."""
+    """The YIELD path resolves an encounter too — must clear Scratch.
+
+    Post Task E.1 (session-aggregate strangler): yield_action.py no
+    longer calls ``clear_scratch_on_scene_end`` directly. It calls
+    ``room.session.end_scene(...)`` which runs the scratch sweep (and
+    advances the orbital clock) inside ``Session.end_scene``. The
+    front-door wiring is what we're guarding against regression here.
+    """
     import importlib
     import inspect
 
     ya = importlib.import_module("sidequest.server.dispatch.yield_action")
     text = inspect.getsource(ya)
-    assert "clear_scratch_on_scene_end" in text, (
-        "yield_action.py must call clear_scratch_on_scene_end when the "
-        "encounter resolves via yield, or Bug #1 regresses on yields"
+    assert "room.session.end_scene" in text, (
+        "yield_action.py must route scene-end through Session.end_scene "
+        "(which sweeps Scratch and advances the clock); otherwise Bug #1 "
+        "regresses on yields"
     )
 
 
