@@ -1538,6 +1538,40 @@ class Orchestrator:
             # reconfiguration and break every caplog-based test.
             from sidequest.telemetry.watcher_hub import publish_event as _pub
 
+            # Build per-zone breakdown for the Prompt tab Zone Breakdown
+            # bars. The dashboard expects `zones: [{zone, total_tokens,
+            # sections: [{name, token_estimate, category}]}]` keyed by the
+            # PascalCase zone names that match the dashboard's ZONE_COLORS
+            # map (Primacy/Early/Valley/Late/Recency). Per playtest
+            # 2026-04-30 #1B the publish shipped only flat aggregates and
+            # the dashboard rendered an empty Zone Breakdown body even
+            # though the registry had everything needed.
+            sections = registry.registry(agent_name)
+            _zone_buckets: dict[str, list] = {}
+            for s in sections:
+                _zone_buckets.setdefault(s.zone.value, []).append(s)
+            zones_payload = []
+            for zone_name in ("primacy", "early", "valley", "late", "recency"):
+                bucket = _zone_buckets.get(zone_name, [])
+                if not bucket:
+                    continue
+                zones_payload.append(
+                    {
+                        # Title-case to match the dashboard's ZONE_COLORS
+                        # keys (Primacy/Early/Valley/Late/Recency).
+                        "zone": zone_name.title(),
+                        "total_tokens": sum(s.token_estimate() for s in bucket),
+                        "sections": [
+                            {
+                                "name": s.name,
+                                "token_estimate": s.token_estimate(),
+                                "category": s.category.value,
+                            }
+                            for s in bucket
+                        ],
+                    }
+                )
+
             # Rough token estimate from char count (1 token ≈ 4 chars per
             # the standard Claude tokenizer heuristic). Surfaced as
             # `total_tokens` for the dashboard Prompt tab dropdown
@@ -1555,6 +1589,7 @@ class Orchestrator:
                     "prompt_len": len(prompt_text),
                     "total_tokens": max(1, len(prompt_text) // 4),
                     "tier": str(tier),
+                    "zones": zones_payload,
                 },
                 component="prompt_builder",
             )

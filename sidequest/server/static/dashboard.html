@@ -303,7 +303,9 @@ function dispatch(ev) {
     const opt = document.createElement('option');
     opt.value = S.promptEvents.length - 1;
     const agentLabel = f.agent_name || f.agent || '?';
-    opt.textContent = `T${f.turn_number||'?'} · ${agentLabel} · ${f.total_tokens||0} tokens`;
+    // Nullish-coalesce on turn_number so a legitimate first-turn `0`
+    // doesn't render as `T?` (playtest 2026-04-30 #1B Bug B).
+    opt.textContent = `T${f.turn_number ?? '?'} · ${agentLabel} · ${f.total_tokens||0} tokens`;
     sel.appendChild(opt);
     if (S.activeTab === 5) renderPrompt();
   }
