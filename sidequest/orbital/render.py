@@ -29,6 +29,7 @@ from sidequest.orbital.models import (
     ChartConfig,
     OrbitsConfig,
 )
+from sidequest.telemetry.spans.chart import emit_chart_render
 
 # svgwrite's built-in validators reject `data-*` attributes that we use for
 # click-routing on rendered bodies. Allow them by patching the name check.
@@ -138,7 +139,15 @@ def render_chart(
     dwg.add(_render_engraved_layer(orbits, center_id, viewport, t_hours))
     dwg.add(_render_flavor_layer(chart, viewport))
     dwg.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
-    return dwg.tostring()
+    output = dwg.tostring()
+    emit_chart_render(
+        scope_center=center_id,
+        t_hours=t_hours,
+        party_at=party_at,
+        body_count=len(orbits.bodies),
+        output_size_bytes=len(output.encode("utf-8")),
+    )
+    return output
 
 
 @dataclass(frozen=True)

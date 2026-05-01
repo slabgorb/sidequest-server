@@ -144,3 +144,25 @@ def test_party_marker_absent_when_party_at_none(world_minimal):
         party_at=None,
     )
     assert "data-party-at=" not in svg
+
+
+def test_render_emits_chart_render_span(world_minimal, otel_capture):
+    """Per spec §7.3 — every render emits chart.render with scope/t/party/size."""
+    render_chart(
+        orbits=world_minimal.orbits,
+        chart=world_minimal.chart,
+        scope=Scope.system_root(),
+        t_hours=24.0,
+        party_at="turning_hub",
+    )
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "chart.render"]
+    assert len(spans) == 1, (
+        f"expected 1 chart.render span, got {len(spans)}; "
+        f"all spans: {[s.name for s in otel_capture.get_finished_spans()]}"
+    )
+    s = spans[0]
+    assert s.attributes["scope_center"] == "coyote"
+    assert s.attributes["t_hours"] == 24.0
+    assert s.attributes["party_at"] == "turning_hub"
+    assert s.attributes["body_count"] == 3
+    assert s.attributes["output_size_bytes"] > 0
