@@ -19,6 +19,7 @@ from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.genre.models.audio import AudioConfig, VoicePresets
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -33,7 +34,6 @@ from sidequest.genre.models.inventory import InventoryConfig
 from sidequest.genre.models.legends import Legend
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.lore import Lore, WorldLore
-from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
@@ -44,6 +44,7 @@ from sidequest.genre.models.narrative import (
 from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.progression import ProgressionConfig
+from sidequest.genre.models.rigs_world import ChassisInstanceConfig
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
@@ -135,6 +136,8 @@ class World(BaseModel):
     openings: list[Opening] = Field(default_factory=list)
     authored_npcs: list[AuthoredNpc] = Field(default_factory=list)
     char_creation: list[CharCreationScene] = Field(default_factory=list)
+    chassis_instances: list[ChassisInstanceConfig] = Field(default_factory=list)
+    magic_register: str = ""
 
 
 class GenrePack(BaseModel):

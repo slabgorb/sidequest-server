@@ -501,10 +501,22 @@ def _validate_opening_bank_coverage(
 # World loader
 # ---------------------------------------------------------------------------
 
-def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) -> World:
+def _load_single_world(
+    world_path: Path,
+    genre_tropes: list[TropeDefinition],
+    genre_root: Path,
+) -> World:
     """Load a single world from its directory.
 
     Port of Rust load_single_world().
+
+    Args:
+        world_path: Path to the world directory (e.g. ``.../worlds/coyote_reach``).
+        genre_tropes: Genre-tier tropes used for inheritance resolution.
+        genre_root: Path to the genre pack root (e.g. ``.../space_opera``).
+            Used to locate the genre-tier ``magic.yaml`` so the magic loader
+            can compose genre+world layers — both files are required by
+            ``load_world_magic`` (see ``magic_loader.py``).
 
     Raises:
         GenreLoadError: If required files are missing or malformed.
@@ -649,6 +661,23 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         openings, chargen_backgrounds, world_slug=world_path.name
     )
 
+    # === World-tier magic.yaml — OPTIONAL (silent-skip when absent) ===
+    # The magic_loader requires BOTH genre-tier and world-tier magic.yaml.
+    # Genres without a magic system simply omit the files; that's a deliberate
+    # authoring choice (matches sidequest/server/magic_init.py behavior).
+    # Any other failure (malformed yaml, schema error) propagates as LoaderError
+    # — no silent fallbacks per project rule.
+    genre_magic_path = genre_root / "magic.yaml"
+    world_magic_path = world_path / "magic.yaml"
+    magic_register = ""
+    if genre_magic_path.exists() and world_magic_path.exists():
+        from sidequest.genre.magic_loader import load_world_magic
+
+        magic_cfg = load_world_magic(
+            genre_yaml=genre_magic_path, world_yaml=world_magic_path
+        )
+        magic_register = magic_cfg.narrator_register or ""
+
     # Portrait manifest
     portrait_raw = _load_yaml_raw_optional(world_path / "portrait_manifest.yaml")
     portrait_manifest: list[PortraitManifestEntry] = []
@@ -677,6 +706,8 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         openings=openings,
         authored_npcs=authored_npcs,
         char_creation=char_creation,
+        chassis_instances=chassis_instances,
+        magic_register=magic_register,
     )
 
 
@@ -834,7 +865,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
 
     # Load worlds and scenarios from subdirectories
     worlds: dict[str, World] = _load_subdirectories(
-        path, "worlds", lambda p: _load_single_world(p, genre_tropes)
+        path, "worlds", lambda p: _load_single_world(p, genre_tropes, path)
     )
     scenarios: dict[str, ScenarioPack] = _load_subdirectories(
         path, "scenarios", _load_single_scenario
