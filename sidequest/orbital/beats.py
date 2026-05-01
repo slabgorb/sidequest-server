@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from sidequest.orbital.clock import Clock
+from sidequest.telemetry.spans.clock import emit_clock_advance
 
 
 class BeatKind(Enum):
@@ -56,7 +57,15 @@ def advance_clock_via_beat(clock: Clock, beat: Beat) -> float:
     kind (e.g. REST with a non-default duration; TRAVEL without duration).
     """
     duration = _resolve_duration(beat)
+    t_before = clock.t_hours
     clock.advance(duration)
+    emit_clock_advance(
+        beat_kind=beat.kind.value,
+        duration_hours=duration,
+        t_before_h=t_before,
+        t_after_h=clock.t_hours,
+        trigger=beat.trigger,
+    )
     return duration
 
 

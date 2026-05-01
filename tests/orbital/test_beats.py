@@ -79,3 +79,34 @@ def test_downtime_advances_provided_duration():
         clock, Beat(kind=BeatKind.DOWNTIME, duration_hours=72.0, trigger="player-wait")
     )
     assert clock.t_hours == 72.0
+
+
+def _spans_named(otel_capture, name: str):
+    return [s for s in otel_capture.get_finished_spans() if s.name == name]
+
+
+def test_advance_emits_clock_advance_span(otel_capture):
+    """clock.advance span fires with the right attributes on every beat."""
+    clock = Clock(t_hours=10.0)
+    advance_clock_via_beat(
+        clock, Beat(kind=BeatKind.TRAVEL, duration_hours=24.0, trigger="route-xy")
+    )
+
+    spans = _spans_named(otel_capture, "clock.advance")
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes["beat_kind"] == "travel"
+    assert span.attributes["duration_hours"] == 24.0
+    assert span.attributes["t_before_h"] == 10.0
+    assert span.attributes["t_after_h"] == 34.0
+    assert span.attributes["trigger"] == "route-xy"
+
+
+def test_advance_emits_for_default_durations(otel_capture):
+    clock = Clock()
+    advance_clock_via_beat(clock, Beat(kind=BeatKind.ENCOUNTER, trigger="scene-1"))
+
+    spans = _spans_named(otel_capture, "clock.advance")
+    assert len(spans) == 1
+    assert spans[0].attributes["duration_hours"] == 1.0
+    assert spans[0].attributes["beat_kind"] == "encounter"
