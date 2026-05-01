@@ -1,0 +1,9 @@
+version: "0.1.0"
+annotations:
+  - kind: engraved_label
+    text: "the Last Drift"
+    curve_along: orbit_outermost
+  - kind: glyph
+    text: "?"
+    at: { ra_deg: 135, au: 5.0 }
+    caption: "absent gate"
