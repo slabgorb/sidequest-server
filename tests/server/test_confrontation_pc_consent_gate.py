@@ -60,6 +60,7 @@ from sidequest.game.encounter import (
 from sidequest.game.session import GameSnapshot
 from sidequest.game.turn import TurnManager
 from sidequest.protocol.dice import RollOutcome
+from tests._helpers.session_room import room_for
 
 
 def _make_snapshot() -> GameSnapshot:
@@ -153,6 +154,7 @@ def test_inferred_pc_beat_from_peer_narration_is_rejected(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="George", pack=pack,
+        room=room_for(snap),
     )
 
     # Player dial untouched — Paul's beat was rejected.
@@ -213,6 +215,7 @@ def test_inferred_own_pc_beat_from_narration_is_rejected(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="George", pack=pack,
+        room=room_for(snap),
     )
 
     assert snap.encounter is not None
@@ -266,6 +269,7 @@ def test_npc_beat_from_narration_still_fires(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="George", pack=pack,
+        room=room_for(snap),
     )
 
     # Opponent dial advanced — NPC beat applied normally.

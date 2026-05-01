@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from sidequest.server.session_handler import _State
 from sidequest.server.session_helpers import _build_turn_context, _error_msg
+from sidequest.telemetry.phase_timing import PhaseTimings
 
 if TYPE_CHECKING:
     from sidequest.protocol import GameMessage
@@ -39,6 +41,12 @@ class DiceThrowHandler:
             DiceDispatchError,
             dispatch_dice_throw,
         )
+
+        # Handler-entry phase timer — same rationale as player_action:
+        # the dice replay path also runs lore_retrieval + turn_context
+        # build before invoking the narrator, and that pre-narrator work
+        # is invisible without a timer that starts here.
+        timings = PhaseTimings(action_received_monotonic=time.monotonic())
 
         if session._state != _State.Playing:
             # Playtest 2026-04-30: uvicorn reload zombies session binding.
@@ -144,16 +152,24 @@ class DiceThrowHandler:
                 )
             return outbound
 
-        # Encounter just resolved via dice — sweep Scratch off the party
-        # (Playtest 2026-04-26 Bug #1: conditions never clear). The
-        # narrator-beat resolution path in narration_apply.py does the
-        # same sweep; both call sites must stay in sync.
+        # Encounter just resolved via dice — front-door scene-end through
+        # Session.end_scene (Task E.3 of session-aggregate strangler).
+        # end_scene runs the Scratch sweep (Playtest 2026-04-26 Bug #1)
+        # and advances the orbital clock by one ENCOUNTER beat, emitting
+        # both encounter.status_cleared (per cleared status) and
+        # clock.advance spans. Matches the front-door pattern used by the
+        # narrator-beat resolution path in narration_apply.py and the
+        # YIELD path in dispatch/yield_action.py.
         if outcome.encounter_resolved:
-            from sidequest.server.status_clear import clear_scratch_on_scene_end
-
-            clear_scratch_on_scene_end(
-                snapshot,
-                reason="scene_end",
+            if sd._room is None:
+                # Slug-connect branch always sets _room; this is a
+                # programming-error path. Surface as a hard error.
+                raise RuntimeError(
+                    "DiceThrowHandler: sd._room is None — slug-connect "
+                    "wiring missing"
+                )
+            sd._room.session.end_scene(
+                "scene_end",
                 turn=snapshot.turn_manager.interaction,
             )
 
@@ -176,8 +192,15 @@ class DiceThrowHandler:
         # Matches the Rust deferred-narrator intent end-to-end, collapsed to
         # a single server tick since Python's handler is sync w.r.t. the
         # read loop.
-        lore_context = await session._retrieve_lore_for_turn(sd, outcome.replay_action_text)
-        turn_context = _build_turn_context(sd, lore_context=lore_context, room=session._room)
+        with timings.phase("lore_retrieval"):
+            lore_context = await session._retrieve_lore_for_turn(
+                sd, outcome.replay_action_text,
+            )
+        with timings.phase("turn_context_build"):
+            turn_context = _build_turn_context(
+                sd, lore_context=lore_context, room=session._room,
+            )
+        turn_context.phase_timings = timings
         return await session._execute_narration_turn(
             sd,
             outcome.replay_action_text,

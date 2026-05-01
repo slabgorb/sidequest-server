@@ -1,0 +1,27 @@
+version: "0.1.0"
+clock:
+  epoch_days: 0
+travel:
+  realism: orbital
+  travel_speed_factor: 1.0
+  danger_density: 0.012
+  hazard_arc_density: 0.10
+bodies:
+  coyote:
+    type: star
+    label: COYOTE
+    label_color: red
+  red_prospect:
+    type: companion
+    parent: coyote
+    semi_major_au: 1.2
+    period_days: 380
+    epoch_phase_deg: 270
+    label: "RED PROSPECT"
+    label_color: red
+  turning_hub:
+    type: habitat
+    parent: red_prospect
+    semi_major_au: 0.04
+    period_days: 6
+    epoch_phase_deg: 0

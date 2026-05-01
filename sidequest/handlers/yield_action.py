@@ -98,8 +98,11 @@ class YieldHandler:
             encounter_type,
         )
 
+        if sd._room is None:
+            # Slug-connect branch always sets _room; this path is defensive.
+            return [_error_msg("Internal error: session not bound to a room")]
         try:
-            handle_yield(sd.snapshot, player_id=player_id, player_name=player_name)
+            handle_yield(sd.snapshot, room=sd._room, player_id=player_id, player_name=player_name)
         except ValueError as exc:
             logger.warning(
                 "session.yield_rejected player_id=%s player_name=%s reason=%s",

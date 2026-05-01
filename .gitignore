@@ -59,6 +59,9 @@ logs/
 .session/
 .envrc.local
 
+# Test scratch (pf solo / benchmark write-out targets)
+tests/server/_tmp_solo_new/
+
 # Secrets
 .env
 .env.local

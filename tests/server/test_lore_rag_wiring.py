@@ -53,9 +53,7 @@ from tests.server.conftest import (
     mock_claude_client_factory,
 )
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 # ---------------------------------------------------------------------------
@@ -117,13 +115,16 @@ def handler(tmp_path: Path, mock_claude: Any) -> WebSocketSessionHandler:
 
 async def _connect_and_confirm(handler: WebSocketSessionHandler) -> None:
     """Walk the shortest chargen path to Playing state."""
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world="grimvault")
+    attach_default_room_context(handler)
     await handler.handle_message(
         SessionEventMessage(
             payload=SessionEventPayload(
                 event="connect",
                 player_name="WiringTester",
-                genre="caverns_and_claudes",
-                world="grimvault",
+                game_slug=slug,
             ),
             player_id="",
         )
@@ -211,9 +212,7 @@ class TestLoreRagWiring:
         # the retrieve + worker helpers both see our fake. This is the
         # exact site production code reaches via ``if client is None:
         # client = DaemonClient()`` in both helpers.
-        monkeypatch.setattr(
-            "sidequest.game.lore_embedding.DaemonClient", lambda: fake_client
-        )
+        monkeypatch.setattr("sidequest.game.lore_embedding.DaemonClient", lambda: fake_client)
 
         async def body() -> None:
             await _connect_and_confirm(handler)
@@ -246,7 +245,7 @@ class TestLoreRagWiring:
             assert result, "player action must produce outbound messages"
 
             # (1) The retrieve path called embed() with the action text.
-            new_calls = fake_client.calls[len(pre_action_calls):]
+            new_calls = fake_client.calls[len(pre_action_calls) :]
             assert action_text in new_calls, (
                 f"retrieve_lore_context must embed the player action; "
                 f"post-action calls seen: {new_calls}"
@@ -431,7 +430,8 @@ class TestLoreRagWiring:
             # The skip path must emit a watcher event so the GM panel
             # state_transition stream sees the backpressure signal.
             skip_events = [
-                p for kind, p in watcher_calls
+                p
+                for kind, p in watcher_calls
                 if kind == "state_transition"
                 and p.get("op") == "skipped"
                 and p.get("reason") == "worker_still_running"

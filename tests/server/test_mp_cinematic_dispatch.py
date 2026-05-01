@@ -49,6 +49,44 @@ def test_record_same_player_twice_is_last_write_wins() -> None:
     assert drained[0][1].action == "I really changed my mind"
 
 
+def test_first_pending_at_monotonic_starts_none() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    assert room.first_pending_at_monotonic() is None
+
+
+def test_first_pending_at_monotonic_set_on_first_submission() -> None:
+    """Stamp is set on first submission, stays stable across additions."""
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    room.record_pending_action("p1", "Gladstone", "act1")
+    first = room.first_pending_at_monotonic()
+    assert first is not None
+    room.record_pending_action("p2", "Zanzibar", "act2")
+    assert room.first_pending_at_monotonic() == first
+
+
+def test_first_pending_at_monotonic_cleared_on_drain() -> None:
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    room.record_pending_action("p1", "G", "act1")
+    assert room.first_pending_at_monotonic() is not None
+    room.drain_pending_actions()
+    assert room.first_pending_at_monotonic() is None
+
+
+def test_first_pending_restamped_after_drain() -> None:
+    """Round N+1 gets a fresh stamp after round N drained."""
+    import time
+    room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
+    room.record_pending_action("p1", "G", "act1")
+    first = room.first_pending_at_monotonic()
+    room.drain_pending_actions()
+    time.sleep(0.001)  # ensure monotonic has advanced
+    room.record_pending_action("p1", "G", "act2")
+    second = room.first_pending_at_monotonic()
+    assert second is not None
+    assert first is not None
+    assert second > first
+
+
 def test_dispatch_lock_is_an_asyncio_lock() -> None:
     room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
     assert isinstance(room.dispatch_lock, asyncio.Lock)

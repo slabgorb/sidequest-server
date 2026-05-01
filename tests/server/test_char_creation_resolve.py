@@ -246,14 +246,18 @@ class TestConnectHandlerWiresWorldOverride:
             save_dir=tmp_path / "saves",
         )
 
+        from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+        slug = seed_slug_for_test(tmp_path / "saves", genre=self.GENRE_SLUG, world=self.WORLD_SLUG)
+        attach_default_room_context(handler)
+
         async def body() -> None:
             await handler.handle_message(
                 SessionEventMessage(
                     payload=SessionEventPayload(
                         event="connect",
                         player_name="WiringProbe",
-                        genre=self.GENRE_SLUG,
-                        world=self.WORLD_SLUG,
+                        game_slug=slug,
                     ),
                     player_id="",
                 )

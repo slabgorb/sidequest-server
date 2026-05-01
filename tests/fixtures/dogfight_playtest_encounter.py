@@ -39,6 +39,7 @@ from sidequest.genre.models.rules import ConfrontationDef
 from sidequest.server.dispatch.confrontation import find_confrontation_def
 from sidequest.server.dispatch.sealed_letter import SealedLetterOutcome
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 # Default location of sidequest-content alongside sidequest-server. Mirrors
 # the path-walk in test_sealed_letter_dispatch_integration.py so that
@@ -136,6 +137,7 @@ def make_dogfight_playtest_state(
         ),
         player_name=player_pilot_name,
         pack=pack,
+        room=room_for(snap),
     )
 
     enc = snap.encounter
@@ -247,6 +249,7 @@ def drive_dogfight_turn(
         ),
         player_name=red_actor.name,
         pack=pack,
+        room=room_for(snapshot),
     )
 
     # The dispatch path now returns the SealedLetterOutcome it built

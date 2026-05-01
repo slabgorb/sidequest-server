@@ -26,6 +26,7 @@ from opentelemetry import trace
 
 if TYPE_CHECKING:
     from sidequest.game.persistence import GameMode
+    from sidequest.server.session_room import SessionRoom
 
 from sidequest.agents.claude_client import (
     ClaudeClient,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
@@ -420,6 +421,15 @@ class _SessionData:
     store: SqliteStore
     genre_pack: GenrePack
     orchestrator: Orchestrator
+    # Back-reference to the per-slug SessionRoom. Populated by the connect
+    # handler at construction time so any function with `sd` in scope can
+    # reach `sd._room.session`. Optional only because pre-slug-connect
+    # paths construct _SessionData without a room — the slug-connect path
+    # always sets this. Placed here (after the last non-default field) to
+    # satisfy dataclass field-ordering rules; the plan's "next to store"
+    # placement breaks ordering since genre_pack/orchestrator have no
+    # defaults.
+    _room: SessionRoom | None = None
     # Character builder is present only during the Creating state. Initialized
     # in _handle_connect when has_character=False; consumed (and discarded) by
     # _handle_character_creation's confirmation commit when the Character lands

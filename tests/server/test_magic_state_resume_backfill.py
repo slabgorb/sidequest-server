@@ -27,11 +27,8 @@ CONTENT_ROOT = (
 
 
 def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace, str]:
-    """Returns (snapshot, pack_stub, world_slug). World slug resolved at
-    call time — Coyote Reach was renamed → Coyote Star on the content
-    repo's ``develop`` branch (commit adb8e91); ``main`` checkouts may
-    still see the old name. Try both so the suite passes regardless of
-    which content branch is checked out.
+    """Returns (snapshot, pack_stub, world_slug) for the Coyote Star
+    space_opera world.
     """
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():
@@ -39,7 +36,7 @@ def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace, s
 
     world_slug = "coyote_star"
     if not (pack_dir / "worlds" / world_slug / "magic.yaml").is_file():
-        pytest.skip("coyote_star magic.yaml not found in this checkout")
+        pytest.skip("coyote_star magic.yaml not present in this checkout")
 
     snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
     snap.characters.append(

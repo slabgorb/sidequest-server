@@ -153,14 +153,18 @@ class TestSessionHandlerWiresWorldContext:
             save_dir=tmp_path,
         )
 
+        from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+        slug = seed_slug_for_test(tmp_path, genre="heavy_metal", world="evropi")
+        attach_default_room_context(handler)
+
         async def body() -> None:
             await handler.handle_message(
                 SessionEventMessage(
                     payload=SessionEventPayload(
                         event="connect",
                         player_name="WiringProbe",
-                        genre="heavy_metal",
-                        world="evropi",
+                        game_slug=slug,
                     ),
                     player_id="",
                 )

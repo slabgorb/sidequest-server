@@ -31,11 +31,16 @@ guard intentionally and must handle their own content-not-found skips.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
+from tests._helpers.session_room import room_for
+
+if TYPE_CHECKING:
+    from sidequest.game.persistence import GameMode
 
 # Absolute path to the frozen fixture pack directory.
 # Structure: tests/fixtures/packs/{test_genre,caverns_and_claudes,...} where
@@ -43,6 +48,72 @@ from sidequest.agents.claude_client import ClaudeResponse
 _FIXTURE_PACKS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
 
+def seed_slug_for_test(
+    save_dir: Path,
+    *,
+    genre: str,
+    world: str,
+    slug: str = "test-slug",
+    mode: GameMode | None = None,
+) -> str:
+    """Story 45-26: pre-populate a slug-keyed games-table row for tests.
+
+    The legacy ``(genre, world, player_name)``-tuple connect path was
+    deleted; tests that previously sent ``payload.genre`` /
+    ``payload.world`` must now send ``payload.game_slug``. This helper
+    creates the on-disk save directory and ``games`` row so the slug
+    resolves on connect.
+
+    Returns the slug to thread into the connect envelope.
+    """
+    from sidequest.game.persistence import (
+        GameMode,
+        SqliteStore,
+        db_path_for_slug,
+        upsert_game,
+    )
+
+    resolved_mode = mode if mode is not None else GameMode.SOLO
+
+    db = db_path_for_slug(save_dir, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(
+        store,
+        slug=slug,
+        mode=resolved_mode,
+        genre_slug=genre,
+        world_slug=world,
+    )
+    store.close()
+    return slug
+
+
+def attach_default_room_context(handler) -> None:
+    """Attach a fresh RoomRegistry + socket id + out queue to a test
+    handler so the slug-connect branch can register the room.
+
+    Story 45-26: the slug-connect path raises if ``attach_room_context``
+    was not called (production: ws_endpoint calls it after accept()).
+    Tests that drive ``handler.handle_message`` directly must do the
+    same wiring; this helper is the equivalent of the WebSocket
+    lifecycle hook.
+
+    Idempotent: bails out if the handler already has the room
+    registry attached, so callers can sprinkle it liberally.
+    """
+    import asyncio
+
+    from sidequest.server.session_room import RoomRegistry
+
+    if getattr(handler, "_room_registry", None) is not None:
+        return
+    handler.attach_room_context(
+        registry=RoomRegistry(),
+        socket_id="test-socket",
+        out_queue=asyncio.Queue(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +324,7 @@ def _default_archetype_hints(monkeypatch):
             False,
         )
         pack = sd.genre_pack
-        pack_has_axes = (
-            pack.base_archetypes is not None
-            and pack.archetype_constraints is not None
-        )
+        pack_has_axes = pack.base_archetypes is not None and pack.archetype_constraints is not None
         if (
             ours
             and not pack_has_axes
@@ -266,9 +334,7 @@ def _default_archetype_hints(monkeypatch):
             character.resolved_archetype = None
         return real_gate(self, character, sd, player_id, span)
 
-    monkeypatch.setattr(
-        WebSocketSessionHandler, "_gate_archetype_resolution", fake_gate
-    )
+    monkeypatch.setattr(WebSocketSessionHandler, "_gate_archetype_resolution", fake_gate)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +388,9 @@ class _FakeClaudeClient:
         )
 
     async def send_with_model(
-        self, prompt: str, model: str,  # noqa: ARG002
+        self,
+        prompt: str,
+        model: str,  # noqa: ARG002
     ) -> ClaudeResponse:
         return self._respond_for_model(model)
 
@@ -336,11 +404,14 @@ class _FakeClaudeClient:
         env_vars: dict[str, str] | None = None,  # noqa: ARG002
     ) -> ClaudeResponse:
         return self._respond_for_model(
-            model, session_id=session_id or self._session_id,
+            model,
+            session_id=session_id or self._session_id,
         )
 
     def _respond_for_model(
-        self, model: str, session_id: str | None = None,
+        self,
+        model: str,
+        session_id: str | None = None,
     ) -> ClaudeResponse:
         text = _fake_dispatch_package_json() if model == "haiku" else _FAKE_NARRATION_TEXT
         return ClaudeResponse(
@@ -371,13 +442,16 @@ def _mock_claude_client(monkeypatch):
     this guard for the duration of that test and teardown unwinds in LIFO.
     """
     monkeypatch.setattr(
-        "sidequest.agents.orchestrator.ClaudeClient", _FakeClaudeClient,
+        "sidequest.agents.orchestrator.ClaudeClient",
+        _FakeClaudeClient,
     )
     monkeypatch.setattr(
-        "sidequest.agents.local_dm.ClaudeClient", _FakeClaudeClient,
+        "sidequest.agents.local_dm.ClaudeClient",
+        _FakeClaudeClient,
     )
     monkeypatch.setattr(
-        "sidequest.server.session_handler.ClaudeClient", _FakeClaudeClient,
+        "sidequest.server.session_handler.ClaudeClient",
+        _FakeClaudeClient,
     )
 
 
@@ -462,7 +536,7 @@ def session_handler_factory(tmp_path):
     from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
-    from sidequest.game.persistence import GameMode, SqliteStore
+    from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import GenreLoader
     from sidequest.server.session_handler import (
@@ -519,6 +593,12 @@ def session_handler_factory(tmp_path):
         )
         handler = WebSocketSessionHandler(save_dir=tmp_path)
         handler._session_data = sd
+        # Task E.2 wiring: every turn flowing through this handler will hit
+        # ``_apply_narration_result_to_snapshot`` which requires
+        # ``sd._room``. The MP path below replaces this with the seated
+        # SessionRoom; the legacy single-player path falls through with
+        # this binding intact.
+        sd._room = room_for(snap, slug=genre)
 
         # ---- Multiplayer room wiring (ADR-036 Task 3) ----
         if slug is not None and mode is not None and seat_players is not None:
@@ -552,6 +632,7 @@ def session_handler_factory(tmp_path):
                 )
                 sd.store.save = MagicMock()
                 sd.store.append_narrative = MagicMock()
+                sd._room = room
                 handler._session_data = sd
                 handler._room = room
                 return handler, sd, room
@@ -591,6 +672,7 @@ def session_handler_factory(tmp_path):
                 room.seat(pid, character_slot=character_slot)
                 room.transition_to_playing(pid)
             handler._room = room
+            sd._room = room
             # Silence broadcast so tests don't need a real WebSocket.
             room.broadcast = MagicMock()  # type: ignore[method-assign]
             # Silence store side-effects.
@@ -649,6 +731,13 @@ def session_fixture():
     # on sd.store.save / sd.store.append_narrative.
     sd.store.save = MagicMock()
     sd.store.append_narrative = MagicMock()
+    # Task E.2 wiring: ``_apply_narration_result_to_snapshot`` (called by
+    # ``_execute_narration_turn``) now requires ``room=sd._room``. The
+    # production slug-connect path always populates ``sd._room``; tests
+    # that drive a turn through this fixture must too. Bind a fresh
+    # SessionRoom over the fixture's snapshot so the front-door scene-end
+    # call site has a real Session to dispatch into.
+    sd._room = room_for(snap, slug="sunken_keep")
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-never-used"))
     handler._session_data = sd
@@ -705,28 +794,49 @@ def synthetic_two_dial_pack():
         player_metric=MetricDef(name="momentum", starting=0, threshold=10),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef.model_validate({
-                "id": "attack", "label": "Attack", "kind": "strike",
-                "base": 2, "stat_check": "STR",
-            }),
-            BeatDef.model_validate({
-                "id": "defend", "label": "Defend", "kind": "brace",
-                "base": 1, "stat_check": "CON",
-            }),
-            BeatDef.model_validate({
-                "id": "flee", "label": "Flee", "kind": "push",
-                "base": 1, "stat_check": "DEX",
-            }),
-            BeatDef.model_validate({
-                "id": "feint", "label": "Feint", "kind": "angle",
-                "target_tag": "Off-Balance", "stat_check": "DEX",
-            }),
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            ),
+            BeatDef.model_validate(
+                {
+                    "id": "defend",
+                    "label": "Defend",
+                    "kind": "brace",
+                    "base": 1,
+                    "stat_check": "CON",
+                }
+            ),
+            BeatDef.model_validate(
+                {
+                    "id": "flee",
+                    "label": "Flee",
+                    "kind": "push",
+                    "base": 1,
+                    "stat_check": "DEX",
+                }
+            ),
+            BeatDef.model_validate(
+                {
+                    "id": "feint",
+                    "label": "Feint",
+                    "kind": "angle",
+                    "target_tag": "Off-Balance",
+                    "stat_check": "DEX",
+                }
+            ),
         ],
     )
     # GenrePack requires many fields; use MagicMock for everything except
     # rules so the encounter engine can look up confrontation defs without
     # loading a full pack from disk.
     from unittest.mock import MagicMock
+
     pack = MagicMock(spec=GenrePack)
     pack.rules = RulesConfig(confrontations=[cdef])
     return pack
@@ -760,6 +870,7 @@ def dual_dial_test_setup(synthetic_two_dial_pack):
             )
             from sidequest.game.session import GameSnapshot
             from sidequest.game.turn import TurnManager
+
             snapshot = GameSnapshot(
                 genre_slug="test",
                 world_slug="test",
@@ -858,7 +969,10 @@ def store_bound_to_hub(synthetic_two_dial_pack):
         inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Rogue", race="Human", backstory="A wandering survivor.",
+        core=core,
+        char_class="Rogue",
+        race="Human",
+        backstory="A wandering survivor.",
     )
     snap.characters.append(char)
 
@@ -891,14 +1005,17 @@ def encounter_dispatch_helper():
     from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 
     class _Helper:
-        def run_player_attack(self, snapshot, pack, *, beat_id="attack",
-                              outcome="Success"):
+        def run_player_attack(self, snapshot, pack, *, beat_id="attack", outcome="Success"):
             outcome_enum = RollOutcome(outcome)
             result = NarrationTurnResult(
                 narration="Sam swings.",
-                beat_selections=[BeatSelection(
-                    actor="Sam", beat_id=beat_id, outcome=outcome_enum,
-                )],
+                beat_selections=[
+                    BeatSelection(
+                        actor="Sam",
+                        beat_id=beat_id,
+                        outcome=outcome_enum,
+                    )
+                ],
                 npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
             )
             # ``from_explicit_action=True`` simulates the dice-dispatch
@@ -907,8 +1024,12 @@ def encounter_dispatch_helper():
             # never sets this flag — it always treats narrator-extracted
             # beats as inferred and rejects PC-side selections.
             _apply_narration_result_to_snapshot(
-                snapshot, result, "Sam", pack=pack,
+                snapshot,
+                result,
+                "Sam",
+                pack=pack,
                 from_explicit_action=True,
+                room=room_for(snapshot),
             )
 
         def run_to_resolution(self, snapshot, pack, *, winner="opponent"):
@@ -924,15 +1045,27 @@ def encounter_dispatch_helper():
                 actor_name = "Promo" if winner == "opponent" else "Sam"
                 result = NarrationTurnResult(
                     narration=f"{actor_name} strikes.",
-                    beat_selections=[BeatSelection(
-                        actor=actor_name, beat_id="attack", outcome=outcome_enum,
-                    )],
-                    npcs_present=[NpcMention(
-                        name="Promo", side="opponent", role="hostile",
-                    )],
+                    beat_selections=[
+                        BeatSelection(
+                            actor=actor_name,
+                            beat_id="attack",
+                            outcome=outcome_enum,
+                        )
+                    ],
+                    npcs_present=[
+                        NpcMention(
+                            name="Promo",
+                            side="opponent",
+                            role="hostile",
+                        )
+                    ],
                 )
                 _apply_narration_result_to_snapshot(
-                    snapshot, result, "Sam", pack=pack,
+                    snapshot,
+                    result,
+                    "Sam",
+                    pack=pack,
+                    room=room_for(snapshot),
                 )
 
     return _Helper()

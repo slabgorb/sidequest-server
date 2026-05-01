@@ -23,7 +23,8 @@ CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" 
 
 def _resolve_space_opera_world_with_magic() -> tuple[Path, str]:
     """Return (pack_dir, world_slug) for the space_opera world that ships
-    a magic.yaml — Coyote Star.
+    a magic.yaml — Coyote Star. Raises AssertionError if the directory is
+    missing — fail loud rather than silently fall back.
     """
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():

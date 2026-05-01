@@ -52,6 +52,7 @@ from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.protocol.dice import RollOutcome
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 # Frozen fixture pack — same trick used in test_encounter_apply_narration.py
 # to dodge the session-wide GenreLoader cache.
@@ -150,6 +151,7 @@ def test_handshake_registers_npc_from_registry_when_npcs_present_empty(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
 
     enc = snap.encounter
@@ -183,6 +185,7 @@ def test_handshake_registers_multiple_npcs_from_registry(playtest3_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -212,6 +215,7 @@ def test_handshake_skips_registry_npcs_at_other_locations(playtest3_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -241,6 +245,7 @@ def test_handshake_prefers_explicit_npcs_present_when_provided(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -271,6 +276,7 @@ def test_per_actor_state_isolated_for_player_and_opponent_after_handshake(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -312,6 +318,7 @@ def test_opponent_beat_advances_opponent_metric_after_handshake(
     )
     _apply_narration_result_to_snapshot(
         snap, start, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     assert snap.encounter is not None
 
@@ -331,6 +338,7 @@ def test_opponent_beat_advances_opponent_metric_after_handshake(
     )
     _apply_narration_result_to_snapshot(
         snap, opp_turn, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
 
     enc = snap.encounter
@@ -359,6 +367,7 @@ def test_per_side_metrics_track_player_and_opponent_independently(
     )
     _apply_narration_result_to_snapshot(
         snap, start, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     assert snap.encounter is not None
 
@@ -375,6 +384,7 @@ def test_per_side_metrics_track_player_and_opponent_independently(
     _apply_narration_result_to_snapshot(
         snap, player_turn, player_name="Orin", pack=pack,
         from_explicit_action=True,
+        room=room_for(snap),
     )
     player_after = snap.encounter.player_metric.current
     opp_baseline = snap.encounter.opponent_metric.current
@@ -397,6 +407,7 @@ def test_per_side_metrics_track_player_and_opponent_independently(
     )
     _apply_narration_result_to_snapshot(
         snap, opp_turn, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     opp_after = snap.encounter.opponent_metric.current
 
@@ -437,6 +448,7 @@ def test_encounter_init_span_carries_actor_count_and_combatant_names(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
 
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
@@ -491,6 +503,7 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, start, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     assert snap.encounter is not None
     enc = snap.encounter
@@ -515,6 +528,7 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
             ),
             player_name="Orin", pack=pack,
             from_explicit_action=True,
+            room=room_for(snap),
         )
         if enc.resolved:
             break
@@ -532,6 +546,7 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
                 npcs_present=[],
             ),
             player_name="Orin", pack=pack,
+            room=room_for(snap),
         )
 
         # The bug: by some round, actors regressed to [Orin]. Assert here.

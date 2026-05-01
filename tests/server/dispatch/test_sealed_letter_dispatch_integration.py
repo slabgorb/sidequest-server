@@ -53,6 +53,7 @@ from sidequest.server.narration_apply import (
     NarrationApplyOutcome,
     _apply_narration_result_to_snapshot,
 )
+from tests._helpers.session_room import room_for
 
 # Real space_opera content carries the sealed_letter dogfight ConfrontationDef
 # and the loaded InteractionTable. The fixture pack at tests/fixtures/packs
@@ -143,6 +144,7 @@ def test_dogfight_instantiation_assigns_red_blue_roles(
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Maverick", pack=pack,
+        room=room_for(snap),
     )
 
     enc = snap.encounter
@@ -177,6 +179,7 @@ def test_dogfight_instantiation_rejects_zero_npcs(
     with pytest.raises(ValueError, match="exactly one opponent"):
         _apply_narration_result_to_snapshot(
             snap, result, player_name="Maverick", pack=pack,
+            room=room_for(snap),
         )
 
 
@@ -197,6 +200,7 @@ def test_dogfight_instantiation_rejects_two_npcs(
     with pytest.raises(ValueError, match="exactly one opponent"):
         _apply_narration_result_to_snapshot(
             snap, result, player_name="Maverick", pack=pack,
+            room=room_for(snap),
         )
 
 
@@ -231,6 +235,7 @@ def test_dogfight_turn_resolves_through_sealed_letter_dispatch(
         ),
         player_name="Vega",
         pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -259,6 +264,7 @@ def test_dogfight_turn_resolves_through_sealed_letter_dispatch(
         ),
         player_name="Vega",
         pack=pack,
+        room=room_for(snap),
     )
 
     # per_actor_state was mutated — both pilots have a gun_solution
@@ -315,6 +321,7 @@ def test_dogfight_dispatch_does_not_invoke_apply_beat(
         ),
         player_name="Pilot",
         pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -332,6 +339,7 @@ def test_dogfight_dispatch_does_not_invoke_apply_beat(
         ),
         player_name="Pilot",
         pack=pack,
+        room=room_for(snap),
     )
 
     # Sealed-letter does not advance dual-track dials directly — it
@@ -369,6 +377,7 @@ def test_per_actor_state_round_trip_after_dispatch(
         ),
         player_name="Lance",
         pack=pack,
+        room=room_for(snap),
     )
     _apply_narration_result_to_snapshot(
         snap,
@@ -381,6 +390,7 @@ def test_per_actor_state_round_trip_after_dispatch(
         ),
         player_name="Lance",
         pack=pack,
+        room=room_for(snap),
     )
 
     enc_before = snap.encounter
@@ -431,6 +441,7 @@ def test_legacy_beat_selection_path_still_works(
         ),
         player_name="Rux",
         pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -470,6 +481,7 @@ def test_legacy_beat_selection_path_still_works(
         ),
         player_name="Rux",
         pack=pack,
+        room=room_for(snap),
     )
     # If sealed_letter dispatch had hijacked this turn, the opponent
     # dial would have stayed flat AND the resolver would have raised
@@ -509,6 +521,7 @@ def test_legacy_beat_path_returns_narration_apply_outcome(
         ),
         player_name="Rux",
         pack=pack,
+        room=room_for(snap),
     )
     assert isinstance(inst_outcome, NarrationApplyOutcome), (
         f"instantiation turn must return NarrationApplyOutcome, "
@@ -534,6 +547,7 @@ def test_legacy_beat_path_returns_narration_apply_outcome(
         ),
         player_name="Rux",
         pack=pack,
+        room=room_for(snap),
     )
     assert isinstance(apply_outcome, NarrationApplyOutcome), (
         f"legacy beat path must return NarrationApplyOutcome, "
@@ -576,6 +590,7 @@ def test_narrator_hints_does_not_accumulate_across_dogfight_turns(
         ),
         player_name="Saber",
         pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None
@@ -601,6 +616,7 @@ def test_narrator_hints_does_not_accumulate_across_dogfight_turns(
             ),
             player_name="Saber",
             pack=pack,
+            room=room_for(snap),
         )
         # After each turn, exactly one hint — never accumulating.
         assert len(enc.narrator_hints) == 1, (
@@ -644,6 +660,7 @@ def test_unknown_maneuver_in_sealed_letter_raises(
         ),
         player_name="Apex",
         pack=pack,
+        room=room_for(snap),
     )
 
     with pytest.raises(ValueError, match="not in maneuvers_consumed"):
@@ -658,4 +675,5 @@ def test_unknown_maneuver_in_sealed_letter_raises(
             ),
             player_name="Apex",
             pack=pack,
+            room=room_for(snap),
         )

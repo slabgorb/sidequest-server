@@ -49,6 +49,7 @@ from sidequest.game.session import GameSnapshot
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 CONTENT_GENRE_PACKS = (
     __import__("pathlib").Path(__file__).resolve().parents[3]
@@ -157,6 +158,7 @@ def test_first_retrieval_records_room_state_and_fires_recorded_span(
     result = _retrieval_result(container_id="tin_box")
     _apply_narration_result_to_snapshot(
         vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Snapshot mutation
@@ -210,6 +212,7 @@ def test_second_retrieval_same_room_same_container_is_blocked(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
     inv_after_first = list(vault_snapshot.characters[0].core.inventory.items)
     assert len(inv_after_first) == 1
@@ -225,6 +228,7 @@ def test_second_retrieval_same_room_same_container_is_blocked(
     )
     _apply_narration_result_to_snapshot(
         vault_snapshot, second_result, player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Inventory MUST NOT grow — the apply-time gate filtered the dup.
@@ -274,6 +278,7 @@ def test_negative_gate_is_room_scoped_not_global(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
     assert vault_snapshot.room_states["mawdeep:vault"].containers["tin_box"].retrieved is True
 
@@ -288,6 +293,7 @@ def test_negative_gate_is_room_scoped_not_global(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Both rooms now carry retrieved tin_box state — NOT one global flag.
@@ -385,6 +391,7 @@ def test_room_state_injected_span_count_reflects_prior_retrievals(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Drain prior spans so the assertion below targets the next build.
@@ -418,6 +425,7 @@ def test_room_state_injected_resets_count_on_room_change(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Move to a fresh room.
@@ -453,6 +461,7 @@ def test_room_states_round_trip_via_sqlite_store(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     store = SqliteStore.open_in_memory()
@@ -512,6 +521,7 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
     inv_after_first = list(vault_snapshot.characters[0].core.inventory.items)
     assert len(inv_after_first) == 1
@@ -529,6 +539,7 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
         player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # Inventory MUST NOT grow.
@@ -576,6 +587,7 @@ def test_items_gained_without_from_container_pass_through_normally(
     )
     _apply_narration_result_to_snapshot(
         vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
     inv = vault_snapshot.characters[0].core.inventory.items
     assert len(inv) == 1
@@ -682,6 +694,7 @@ def test_whitespace_only_from_container_does_not_create_room_state(
     )
     _apply_narration_result_to_snapshot(
         vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        room=room_for(vault_snapshot),
     )
 
     # No room_state entry created for the whitespace key.
@@ -732,6 +745,7 @@ def test_from_container_set_but_snapshot_location_empty_logs_warning(
     with caplog.at_level(logging.WARNING):
         _apply_narration_result_to_snapshot(
             snap, result, player_name="Rux", pack=cac_pack,
+            room=room_for(snap),
         )
 
     # Warning logged on the apply-side gate-unreachable path.

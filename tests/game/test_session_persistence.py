@@ -15,7 +15,6 @@ from sidequest.game.persistence import (
     SavedSession,
     SaveSchemaIncompatibleError,
     SqliteStore,
-    db_path_for_session,
 )
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from tests.game.test_character import make_test_character
@@ -188,11 +187,13 @@ def test_append_and_retrieve_narrative():
 def test_recent_narrative_ordered_oldest_first():
     store = SqliteStore.open_in_memory()
     for i in range(5):
-        store.append_narrative(NarrativeEntry(
-            round=i + 1,
-            author="narrator",
-            content=f"Entry {i + 1}",
-        ))
+        store.append_narrative(
+            NarrativeEntry(
+                round=i + 1,
+                author="narrator",
+                content=f"Entry {i + 1}",
+            )
+        )
     entries = store.recent_narrative(3)
     assert len(entries) == 3
     # Should be oldest-first (entries 3, 4, 5)
@@ -210,11 +211,13 @@ def test_generate_recap_empty():
 
 def test_generate_recap_with_entries():
     store = SqliteStore.open_in_memory()
-    store.append_narrative(NarrativeEntry(
-        round=1,
-        author="narrator",
-        content="The party fought the goblin king.",
-    ))
+    store.append_narrative(
+        NarrativeEntry(
+            round=1,
+            author="narrator",
+            content="The party fought the goblin king.",
+        )
+    )
     recap = store.generate_recap()
     assert recap is not None
     assert "Previously" in recap
@@ -229,11 +232,13 @@ def test_generate_recap_with_entries():
 def test_load_includes_recap():
     store = SqliteStore.open_in_memory()
     store.init_session("test", "world")
-    store.append_narrative(NarrativeEntry(
-        round=1,
-        author="narrator",
-        content="The party discovered the old map.",
-    ))
+    store.append_narrative(
+        NarrativeEntry(
+            round=1,
+            author="narrator",
+            content="The party discovered the old map.",
+        )
+    )
     store.save(_make_snapshot())
 
     saved = store.load()
@@ -265,28 +270,6 @@ def test_file_backed_store_roundtrip():
         assert saved.snapshot.genre_slug == "caverns_and_claudes"
         assert saved.snapshot.location == "The Upper Gallery"
         store2.close()
-
-
-# ---------------------------------------------------------------------------
-# db_path_for_session helper
-# ---------------------------------------------------------------------------
-
-
-def test_db_path_for_session():
-    path = db_path_for_session(Path("/saves"), "caverns", "mines", "Keith")
-    assert path == Path("/saves/caverns/mines/keith/save.db")
-
-
-def test_db_path_sanitizes_player_name():
-    path = db_path_for_session(Path("/saves"), "genre", "world", "Player Name!")
-    # spaces and ! become _, result is lowercase
-    assert " " not in str(path)
-    assert "!" not in str(path)
-
-
-def test_db_path_empty_player_name_becomes_default():
-    path = db_path_for_session(Path("/saves"), "genre", "world", "")
-    assert "default" in str(path)
 
 
 # ---------------------------------------------------------------------------

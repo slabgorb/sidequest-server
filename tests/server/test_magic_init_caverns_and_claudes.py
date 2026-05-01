@@ -162,12 +162,12 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
 
 def test_space_opera_magic_init_still_fires(so_pack_dir):
     """Companion: ensure the C&C migration didn't accidentally regress
-    the space_opera path. Coyote Star must still load the four authored
-    bars (sanity / notice / vitality / hegemony_heat).
+    the space_opera path. The Coyote Star world must load the four
+    authored bars (sanity / notice / vitality / hegemony_heat).
     """
     world_slug = "coyote_star"
     assert (so_pack_dir / "worlds" / world_slug / "magic.yaml").is_file(), (
-        f"coyote_star magic.yaml not found under {so_pack_dir / 'worlds'}"
+        f"coyote_star magic.yaml missing under {so_pack_dir / 'worlds'}"
     )
     snapshot = GameSnapshot(
         genre_slug="space_opera",
@@ -182,6 +182,6 @@ def test_space_opera_magic_init_still_fires(so_pack_dir):
     )
     assert result is True
     assert snapshot.magic_state is not None
-    # Coyote Reach/Star: 1 world-scope bar (hegemony_heat) + 3 character-
+    # Coyote Star: 1 world-scope bar (hegemony_heat) + 3 character-
     # scope bars (sanity/notice/vitality) seeded for Parsley.
     assert len(snapshot.magic_state.ledger) == 4

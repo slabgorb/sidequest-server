@@ -22,6 +22,7 @@ from sidequest.server.status_clear import (
     apply_explicit_status_clears,
     clear_scratch_on_scene_end,
 )
+from tests._helpers.session_room import room_for
 
 # ---------------------------------------------------------------------------
 # Unit tests — clear_scratch_on_scene_end
@@ -214,7 +215,7 @@ def test_wiring_narration_apply_clears_scratch_on_location_change(
     result = NarrationTurnResult(
         narration="They march on.", location="The Antechamber",
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     remaining = [s.text for s in sam.core.statuses]
     assert "Choked" not in remaining, "Scratch should clear on scene change"
@@ -238,7 +239,7 @@ def test_wiring_narration_apply_first_location_does_not_sweep(
     result = NarrationTurnResult(
         narration="They begin.", location="The Throat",
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     assert any(s.text == "Lingering doubt" for s in sam.core.statuses)
 
@@ -256,7 +257,7 @@ def test_wiring_narration_apply_handles_explicit_clear_entry(
         narration="She slips the rope.",
         status_changes=[{"actor": "Sam", "clear": "Captured"}],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     assert all("Captured" not in s.text for s in sam.core.statuses)
 
@@ -281,7 +282,7 @@ def test_wiring_narration_apply_clear_and_add_in_same_turn(
              "status": {"text": "Sliced palm", "severity": "Scratch"}},
         ],
     )
-    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack)
+    _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     texts = [s.text for s in sam.core.statuses]
     assert "Captured" not in texts
@@ -304,43 +305,46 @@ def test_wiring_status_clear_module_imports():
 
 
 def test_wiring_session_handler_imports_status_clear():
-    """The dice-resolved branch must keep the import path valid
-    (lazy-imported inside the handler — a stale path would crash
-    mid-encounter, not at startup).
+    """The dice-resolved branch must route scene-end through Session.end_scene.
 
-    The dice-resolve callsite was extracted from
-    ``WebSocketSessionHandler._handle_dice_throw`` to its own
-    first-class handler at ``sidequest.handlers.dice_throw`` — this
-    test now greps the handler module's source.
+    Post Task E.3 (session-aggregate strangler): handlers/dice_throw.py
+    no longer imports ``clear_scratch_on_scene_end`` directly. It calls
+    ``sd._room.session.end_scene(...)`` which runs the scratch sweep
+    (and advances the orbital clock) inside ``Session.end_scene``. The
+    front-door wiring is what we're guarding against regression here —
+    if this regresses, Bug #1 (Scratch never clears post-dice-resolve)
+    re-surfaces along with the loss of the clock.advance span.
     """
     import importlib
+    import inspect
 
     dh = importlib.import_module("sidequest.handlers.dice_throw")
-    src = importlib.util.find_spec(  # type: ignore[attr-defined]
-        "sidequest.server.status_clear"
-    )
-    assert src is not None
-    # Lightweight string-grep: the call site exists in the handler
-    # source. Stronger than a bare import — proves wiring, not just
-    # presence.
-    import inspect
     text = inspect.getsource(dh)
-    assert "clear_scratch_on_scene_end" in text, (
-        "dice_throw handler must call clear_scratch_on_scene_end after "
-        "dice-resolved encounters or Bug #1 regresses"
+    assert "sd._room.session.end_scene" in text, (
+        "dice_throw handler must route scene-end through Session.end_scene "
+        "(which sweeps Scratch and advances the clock); otherwise Bug #1 "
+        "regresses on dice-resolved encounters"
     )
 
 
 def test_wiring_yield_action_imports_status_clear():
-    """The YIELD path resolves an encounter too — must clear Scratch."""
+    """The YIELD path resolves an encounter too — must clear Scratch.
+
+    Post Task E.1 (session-aggregate strangler): yield_action.py no
+    longer calls ``clear_scratch_on_scene_end`` directly. It calls
+    ``room.session.end_scene(...)`` which runs the scratch sweep (and
+    advances the orbital clock) inside ``Session.end_scene``. The
+    front-door wiring is what we're guarding against regression here.
+    """
     import importlib
     import inspect
 
     ya = importlib.import_module("sidequest.server.dispatch.yield_action")
     text = inspect.getsource(ya)
-    assert "clear_scratch_on_scene_end" in text, (
-        "yield_action.py must call clear_scratch_on_scene_end when the "
-        "encounter resolves via yield, or Bug #1 regresses on yields"
+    assert "room.session.end_scene" in text, (
+        "yield_action.py must route scene-end through Session.end_scene "
+        "(which sweeps Scratch and advances the clock); otherwise Bug #1 "
+        "regresses on yields"
     )
 
 

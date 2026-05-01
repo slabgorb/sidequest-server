@@ -1,15 +1,14 @@
-"""REST API endpoints for sidequest-server Phase 1.
+"""REST API endpoints for sidequest-server.
 
 Endpoints:
   GET /api/genres    — list available genre packs with world metadata (lobby picker)
-  GET /api/saves     — list saves for a genre/world/player
-  POST /api/saves/new — create a new save slot (init empty session)
-  DELETE /api/saves/{genre}/{world}/{player} — delete a save file
+  POST /api/games    — mint a new game slug (slug-keyed save model, MP-03)
   GET /api/sessions  — list active sessions (Phase 1: always empty; multiplayer is Phase N)
+  GET /api/debug/state — GM dashboard projection over persisted sessions
 
-Port of lib.rs list_genres() + persistence REST surface.
-Wire format matches the Rust server's response shapes exactly — the existing
-React UI reads these endpoints.
+The legacy ``/api/saves/*`` triple (list/create/delete) and the matching
+``(genre, world, player_name)``-tuple save-path helper were removed in
+Story 45-26 once UI confirmed exclusive use of ``game_slug``.
 """
 
 from __future__ import annotations
@@ -28,12 +27,10 @@ from sidequest.game.game_slug import generate_slug
 from sidequest.game.persistence import (
     GameMode,
     SqliteStore,
-    db_path_for_session,
     db_path_for_slug,
     get_game,
     upsert_game,
 )
-from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 
 logger = logging.getLogger(__name__)
@@ -63,38 +60,6 @@ class GenreMeta(BaseModel):
     name: str
     description: str
     worlds: list[WorldMeta] = []
-
-
-class SaveEntry(BaseModel):
-    """A single save file entry."""
-
-    genre_slug: str
-    world_slug: str
-    player_name: str
-    db_path: str
-    turn: int = 0
-    location: str = ""
-    last_saved: str = ""
-
-
-class SessionPlayer(BaseModel):
-    """A player in an active session."""
-
-    player_id: str
-    display_name: str
-
-
-class ActiveSession(BaseModel):
-    """An active session (Phase 1: always empty — multiplayer deferred)."""
-
-    session_key: str
-    genre: str
-    world: str
-    session_id: str
-    players: list[SessionPlayer] = []
-    current_turn: int = 0
-    current_location: str = ""
-    turn_mode: str = "free_play"
 
 
 class CreateGameRequest(BaseModel):
@@ -280,187 +245,6 @@ def create_rest_router() -> APIRouter:
 
         return genres
 
-    @router.get("/api/saves", deprecated=True)
-    async def list_saves(request: Request) -> dict[str, Any]:
-        """List save files matching optional genre/world/player filters.
-
-        Query params: ?genre=..., ?world=..., ?player=...
-        Returns { saves: [SaveEntry, ...] }.
-        """
-        logger.warning("legacy GET /api/saves called — prefer POST /api/games")
-        save_dir: Path = getattr(
-            request.app.state,
-            "save_dir",
-            Path.home() / ".sidequest" / "saves",
-        )
-        genre_filter = request.query_params.get("genre")
-        world_filter = request.query_params.get("world")
-        player_filter = request.query_params.get("player")
-
-        if not save_dir.exists():
-            return {"saves": []}
-
-        saves: list[dict[str, Any]] = []
-
-        # Walk save_dir/{genre}/{world}/{player}/save.db
-        for genre_dir in sorted(save_dir.iterdir()):
-            if not genre_dir.is_dir():
-                continue
-            genre_slug = genre_dir.name
-            if genre_filter and genre_slug != genre_filter:
-                continue
-
-            for world_dir in sorted(genre_dir.iterdir()):
-                if not world_dir.is_dir():
-                    continue
-                world_slug = world_dir.name
-                if world_filter and world_slug != world_filter:
-                    continue
-
-                for player_dir in sorted(world_dir.iterdir()):
-                    if not player_dir.is_dir():
-                        continue
-                    player_name = player_dir.name
-                    if player_filter and player_name != player_filter:
-                        continue
-
-                    db_file = player_dir / "save.db"
-                    if not db_file.exists():
-                        continue
-
-                    # Read minimal metadata from the save
-                    turn = 0
-                    location = ""
-                    last_saved = ""
-                    try:
-                        store = SqliteStore.open(str(db_file))
-                        saved = store.load()
-                        store.close()
-                        if saved is not None:
-                            turn = saved.snapshot.turn_manager.interaction
-                            location = saved.snapshot.location or ""
-                            if saved.meta.last_played:
-                                last_saved = saved.meta.last_played.isoformat()
-                    except Exception as exc:
-                        logger.warning(
-                            "list_saves: could not read %s: %s",
-                            db_file,
-                            exc,
-                        )
-
-                    saves.append(
-                        {
-                            "genre_slug": genre_slug,
-                            "world_slug": world_slug,
-                            "player_name": player_name,
-                            "db_path": str(db_file),
-                            "turn": turn,
-                            "location": location,
-                            "last_saved": last_saved,
-                        }
-                    )
-
-        return {"saves": saves}
-
-    @router.post("/api/saves/new", deprecated=True)
-    async def create_save(request: Request) -> dict[str, Any]:
-        """Create a new save slot (initialize empty session).
-
-        Body JSON: { genre_slug, world_slug, player_name }
-        Returns { db_path: "..." }.
-        """
-        logger.warning("legacy POST /api/saves/new called — prefer POST /api/games")
-        save_dir: Path = getattr(
-            request.app.state,
-            "save_dir",
-            Path.home() / ".sidequest" / "saves",
-        )
-        try:
-            body = await request.json()
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
-
-        genre_slug = body.get("genre_slug", "")
-        world_slug = body.get("world_slug", "")
-        player_name = body.get("player_name", "player")
-
-        if not genre_slug:
-            raise HTTPException(status_code=400, detail="genre_slug is required")
-        if not world_slug:
-            raise HTTPException(status_code=400, detail="world_slug is required")
-
-        db_path = db_path_for_session(save_dir, genre_slug, world_slug, player_name)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            store = SqliteStore.open(str(db_path))
-            store.init_session(genre_slug, world_slug)
-            initial_snapshot = GameSnapshot(
-                genre_slug=genre_slug,
-                world_slug=world_slug,
-                location="",
-            )
-            store.save(initial_snapshot)
-            store.close()
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to create save: {exc}"
-            ) from exc
-
-        logger.info(
-            "rest.save_created genre=%s world=%s player=%s",
-            genre_slug,
-            world_slug,
-            player_name,
-        )
-        return {"db_path": str(db_path), "genre_slug": genre_slug, "world_slug": world_slug, "player_name": player_name}
-
-    @router.delete("/api/saves/{genre_slug}/{world_slug}/{player_name}", deprecated=True)
-    async def delete_save(
-        genre_slug: str,
-        world_slug: str,
-        player_name: str,
-        request: Request,
-    ) -> dict[str, Any]:
-        """Delete a save file.
-
-        Raises 404 if the save does not exist.
-        """
-        logger.warning("legacy DELETE /api/saves/{%s}/{%s}/{%s} called — prefer POST /api/games", genre_slug, world_slug, player_name)
-        save_dir: Path = getattr(
-            request.app.state,
-            "save_dir",
-            Path.home() / ".sidequest" / "saves",
-        )
-        db_path = db_path_for_session(save_dir, genre_slug, world_slug, player_name)
-
-        if not db_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Save not found: {genre_slug}/{world_slug}/{player_name}",
-            )
-
-        try:
-            db_path.unlink()
-            # Remove empty parent directories (player/ world/ genre/)
-            for parent in (db_path.parent, db_path.parent.parent, db_path.parent.parent.parent):
-                try:
-                    parent.rmdir()  # only removes if empty
-                except OSError:
-                    break
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete save: {exc}"
-            ) from exc
-
-        logger.info(
-            "rest.save_deleted genre=%s world=%s player=%s",
-            genre_slug,
-            world_slug,
-            player_name,
-        )
-        return {"deleted": True, "genre_slug": genre_slug, "world_slug": world_slug, "player_name": player_name}
-
     @router.get("/api/sessions")
     async def list_sessions(request: Request) -> dict[str, Any]:
         """List active sessions.
@@ -554,9 +338,7 @@ def create_rest_router() -> APIRouter:
                         # contract is unchanged; the entry itself preserves
                         # the None-vs-0 distinction for HP-check subsystems.
                         "hp": int(entry.hp) if entry.hp is not None else 0,
-                        "max_hp": (
-                            int(entry.max_hp) if entry.max_hp is not None else 0
-                        ),
+                        "max_hp": (int(entry.max_hp) if entry.max_hp is not None else 0),
                     }
                 )
             trope_states: list[dict[str, Any]] = []
@@ -705,7 +487,9 @@ def create_rest_router() -> APIRouter:
                             final_slug=slug,
                             attempts=attempts,
                             player_name=req.player_name or "",
-                            mode=str(req.mode.value) if hasattr(req.mode, "value") else str(req.mode),
+                            mode=str(req.mode.value)
+                            if hasattr(req.mode, "value")
+                            else str(req.mode),
                             genre_slug=req.genre_slug,
                             world_slug=req.world_slug,
                         ):
@@ -726,7 +510,9 @@ def create_rest_router() -> APIRouter:
             if mp_join_existing:
                 with lobby_session_join_existing_span(
                     slug=slug,
-                    mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
+                    mode=str(existing.mode.value)
+                    if hasattr(existing.mode, "value")
+                    else str(existing.mode),
                     genre_slug=existing.genre_slug,
                     world_slug=existing.world_slug,
                     player_name=req.player_name or "",
@@ -735,14 +521,18 @@ def create_rest_router() -> APIRouter:
                     pass
             with mp_game_created_span(
                 slug=slug,
-                mode=str(existing.mode.value) if hasattr(existing.mode, "value") else str(existing.mode),
+                mode=str(existing.mode.value)
+                if hasattr(existing.mode, "value")
+                else str(existing.mode),
                 genre_slug=existing.genre_slug,
                 world_slug=existing.world_slug,
                 resumed=True,
             ):
                 payload = GameResponse(
-                    slug=slug, mode=existing.mode,
-                    genre_slug=existing.genre_slug, world_slug=existing.world_slug,
+                    slug=slug,
+                    mode=existing.mode,
+                    genre_slug=existing.genre_slug,
+                    world_slug=existing.world_slug,
                     resumed=True,
                     player_name=req.player_name,
                 )
@@ -757,11 +547,18 @@ def create_rest_router() -> APIRouter:
             player_name=req.player_name or "",
             force_new=req.force_new,
         ):
-            upsert_game(store, slug=slug, mode=req.mode,
-                        genre_slug=req.genre_slug, world_slug=req.world_slug)
+            upsert_game(
+                store,
+                slug=slug,
+                mode=req.mode,
+                genre_slug=req.genre_slug,
+                world_slug=req.world_slug,
+            )
             return GameResponse(
-                slug=slug, mode=req.mode,
-                genre_slug=req.genre_slug, world_slug=req.world_slug,
+                slug=slug,
+                mode=req.mode,
+                genre_slug=req.genre_slug,
+                world_slug=req.world_slug,
                 resumed=False,
                 player_name=req.player_name,
             )
@@ -780,6 +577,7 @@ def create_rest_router() -> APIRouter:
         store = SqliteStore(db)
         store.initialize()
         from sidequest.game.persistence import query_encounter_events
+
         return query_encounter_events(store)
 
     @router.get("/api/games/{slug}")
@@ -798,8 +596,10 @@ def create_rest_router() -> APIRouter:
         if row is None:
             raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
         return GameResponse(
-            slug=row.slug, mode=row.mode,
-            genre_slug=row.genre_slug, world_slug=row.world_slug,
+            slug=row.slug,
+            mode=row.mode,
+            genre_slug=row.genre_slug,
+            world_slug=row.world_slug,
             resumed=True,
         )
 

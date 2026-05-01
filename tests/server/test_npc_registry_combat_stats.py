@@ -44,6 +44,7 @@ from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 _FIXTURE_PACK = (
     Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
@@ -144,6 +145,7 @@ def test_combat_handshake_writes_hp_into_registry_entry(combat_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
 
     assert entry.max_hp is not None and entry.max_hp > 0, (
@@ -186,6 +188,7 @@ def test_combat_handshake_writes_hp_for_explicit_npcs_present(combat_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     goblin = next(e for e in snap.npc_registry if e.name == "Goblin")
     assert goblin.hp is not None and goblin.hp > 0
@@ -217,6 +220,7 @@ def test_non_combat_handshake_does_not_write_hp(combat_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     halrik = snap.npc_registry[0]
     assert halrik.hp is None, (
@@ -244,6 +248,7 @@ def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
 
     spans = [
@@ -288,6 +293,7 @@ def test_handshake_still_registers_actors_after_hp_write(combat_snapshot):
     )
     _apply_narration_result_to_snapshot(
         snap, result, player_name="Orin", pack=pack,
+        room=room_for(snap),
     )
     enc = snap.encounter
     assert enc is not None

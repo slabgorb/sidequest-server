@@ -43,6 +43,22 @@ class PhaseTimings:
             self._totals_ms[name] = self._totals_ms.get(name, 0) + elapsed_ms
             self._call_counts[name] = self._call_counts.get(name, 0) + 1
 
+    def record_phase(self, name: str, elapsed_ms: int) -> None:
+        """Record a phase whose duration was measured outside this timer.
+
+        Used for pre-handler waits (MP barrier, network queue) where the
+        clock started before the PhaseTimings instance existed. Behaves
+        like phase() did wrap the work — accumulates additively, bumps
+        call count — but takes a precomputed elapsed_ms instead of
+        timing a context block.
+        """
+        if self._finalized:
+            raise RuntimeError("PhaseTimings already finalized")
+        if elapsed_ms < 0:
+            raise ValueError(f"elapsed_ms must be >= 0, got {elapsed_ms}")
+        self._totals_ms[name] = self._totals_ms.get(name, 0) + elapsed_ms
+        self._call_counts[name] = self._call_counts.get(name, 0) + 1
+
     def mark_done(self) -> None:
         if self._finalized:
             return
@@ -90,6 +106,9 @@ class _NullPhaseTimings(PhaseTimings):
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:
         yield
+
+    def record_phase(self, name: str, elapsed_ms: int) -> None:
+        return
 
     def mark_done(self) -> None:
         return

@@ -6,12 +6,21 @@ from sidequest.game.encounter import (
     EncounterMetric,
     StructuredEncounter,
 )
+from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.status import Status, StatusSeverity
 from sidequest.server.dispatch.yield_action import handle_yield
+from sidequest.server.session_room import SessionRoom
 
 
 def test_recovery_trigger_on_yield_constant():
     assert RecoveryTrigger.OnYield == "OnYield"
+
+
+def _room_for(snap, tmp_path):
+    """Bind the snapshot to a fresh SessionRoom for handle_yield wiring."""
+    room = SessionRoom(slug="test_world", mode=GameMode.SOLO)
+    room.bind_world(snapshot=snap, store=SqliteStore(tmp_path / "yield-test.db"))
+    return room
 
 
 def _enc(*, p_metric=4, o_metric=7):
@@ -26,18 +35,19 @@ def _enc(*, p_metric=4, o_metric=7):
     )
 
 
-def test_yield_solo_pc_resolves_encounter_immediately(snapshot_with_pack, character_named_sam):
+def test_yield_solo_pc_resolves_encounter_immediately(snapshot_with_pack, character_named_sam, tmp_path):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     snap.characters.append(character_named_sam)
-    handle_yield(snap, player_id="p1", player_name="Sam")
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     assert snap.encounter.resolved is True
     assert snap.encounter.outcome == "yielded"
     assert snap.pending_resolution_signal.outcome == "yielded"
     assert snap.pending_resolution_signal.yielded_actors == ("Sam",)
 
 
-def test_yield_refunds_edge_one_plus_status_count(snapshot_with_pack, character_named_sam):
+def test_yield_refunds_edge_one_plus_status_count(snapshot_with_pack, character_named_sam, tmp_path):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     sam = character_named_sam
@@ -50,13 +60,14 @@ def test_yield_refunds_edge_one_plus_status_count(snapshot_with_pack, character_
     sam.core.edge.current = 0
     sam.core.edge.max = 5
     snap.characters.append(sam)
-    handle_yield(snap, player_id="p1", player_name="Sam")
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     # Both statuses created in this encounter → refund 1 + 2 = 3
     assert sam.core.edge.current == 3
     assert snap.pending_resolution_signal.edge_refreshed == 3
 
 
-def test_yield_does_not_count_pre_existing_statuses(snapshot_with_pack, character_named_sam):
+def test_yield_does_not_count_pre_existing_statuses(snapshot_with_pack, character_named_sam, tmp_path):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     sam = character_named_sam
@@ -67,31 +78,34 @@ def test_yield_does_not_count_pre_existing_statuses(snapshot_with_pack, characte
     sam.core.edge.current = 0
     sam.core.edge.max = 5
     snap.characters.append(sam)
-    handle_yield(snap, player_id="p1", player_name="Sam")
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     # Pre-existing status not in this encounter → refund 1 + 0 = 1
     assert sam.core.edge.current == 1
 
 
-def test_yield_caps_at_edge_max(snapshot_with_pack, character_named_sam):
+def test_yield_caps_at_edge_max(snapshot_with_pack, character_named_sam, tmp_path):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     sam = character_named_sam
     sam.core.edge.current = 4
     sam.core.edge.max = 5
     snap.characters.append(sam)
-    handle_yield(snap, player_id="p1", player_name="Sam")
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     assert sam.core.edge.current == 5  # capped at max
 
 
-def test_yield_with_no_active_encounter_raises(snapshot_with_pack, character_named_sam):
+def test_yield_with_no_active_encounter_raises(snapshot_with_pack, character_named_sam, tmp_path):
     snap, _ = snapshot_with_pack
     snap.encounter = None
     snap.characters.append(character_named_sam)
+    room = _room_for(snap, tmp_path)
     with pytest.raises(ValueError, match="no active encounter"):
-        handle_yield(snap, player_id="p1", player_name="Sam")
+        handle_yield(snap, room=room, player_id="p1", player_name="Sam")
 
 
-def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pack):
+def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pack, tmp_path):
     snap, _ = snapshot_with_pack
     enc = _enc()
     enc.actors.append(EncounterActor(name="Alex", role="combatant", side="player"))
@@ -109,23 +123,23 @@ def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pac
                           edge=placeholder_edge_pool()),
         backstory="x", char_class="Warrior", race="Elf",
     ))
-    handle_yield(snap, player_id="p1", player_name="Sam")
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     # Sam withdrawn; Alex still active → encounter not resolved
     assert snap.encounter.resolved is False
     assert next(a for a in snap.encounter.actors if a.name == "Sam").withdrawn is True
     assert next(a for a in snap.encounter.actors if a.name == "Alex").withdrawn is False
 
     # Alex yields too → resolves
-    handle_yield(snap, player_id="p2", player_name="Alex")
+    handle_yield(snap, room=room, player_id="p2", player_name="Alex")
     assert snap.encounter.resolved is True
     assert snap.encounter.outcome == "yielded"
     assert set(snap.pending_resolution_signal.yielded_actors) == {"Sam", "Alex"}
 
 
-def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, character_named_sam):
+def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, character_named_sam, tmp_path):
     """Watcher events fire in row order: yield_received → yield_resolved → resolved.
     The kinds[-1] == ENCOUNTER_RESOLVED invariant must hold for solo yield."""
-    from sidequest.game.persistence import SqliteStore
     from sidequest.telemetry.watcher_hub import bind_event_store
 
     snap, _ = snapshot_with_pack
@@ -135,7 +149,8 @@ def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, chara
     store = SqliteStore.open_in_memory()
     bind_event_store(store)
     try:
-        handle_yield(snap, player_id="p1", player_name="Sam")
+        room = _room_for(snap, tmp_path)
+        handle_yield(snap, room=room, player_id="p1", player_name="Sam")
         rows = list(store._conn.execute(
             "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
         ).fetchall())

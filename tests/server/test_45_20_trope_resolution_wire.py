@@ -46,6 +46,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.session import TropeState
 from sidequest.telemetry.setup import init_tracer
+from tests._helpers.session_room import room_for
 from tests.server.conftest import _build_turn_context_for_test
 
 
@@ -509,6 +510,11 @@ class TestSaveReloadDurability:
         )
         new_handler = WebSocketSessionHandler(save_dir=tmp_path)
         new_handler._session_data = new_sd
+        # Task E.2 wiring: ``_apply_narration_result_to_snapshot``
+        # requires ``sd._room``. Bind a fresh room over the reloaded
+        # snapshot — this mirrors what the slug-connect path would do
+        # post-reload in production.
+        new_sd._room = room_for(reloaded_snap)
         new_sd.orchestrator.run_narration_turn = AsyncMock(
             return_value=NarrationTurnResult(
                 narration="The dust settles further.",

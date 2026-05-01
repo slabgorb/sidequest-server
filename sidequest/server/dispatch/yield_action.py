@@ -7,6 +7,8 @@ actor is marked ``withdrawn``; the encounter resolves when every
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sidequest.game.resolution_signal import ResolutionSignal
 from sidequest.game.session import GameSnapshot
 from sidequest.game.status import Status
@@ -16,6 +18,9 @@ from sidequest.telemetry.spans import (
     encounter_yield_resolved_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+if TYPE_CHECKING:
+    from sidequest.server.session_room import SessionRoom
 
 
 def _statuses_taken_in_encounter(
@@ -43,6 +48,7 @@ def _refund_edge_for_yielders(
 def handle_yield(
     snapshot: GameSnapshot,
     *,
+    room: SessionRoom,
     player_id: str,
     player_name: str,
 ) -> None:
@@ -103,10 +109,8 @@ def handle_yield(
     # Yielded out of the encounter — scene ended for the party. Sweep
     # Scratch (Playtest 2026-04-26 Bug #1). Wound/Scar persist; this is
     # the same trigger as narrator-beat / dice-beat resolution.
-    from sidequest.server.status_clear import clear_scratch_on_scene_end
-    clear_scratch_on_scene_end(
-        snapshot,
-        reason="scene_end",
+    room.session.end_scene(
+        "scene_end",
         turn=snapshot.turn_manager.interaction,
     )
 
