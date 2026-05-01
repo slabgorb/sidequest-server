@@ -943,6 +943,9 @@ class ConnectHandler:
                 )
                 # Snapshot the resumed session so the dashboard State tab and
                 # Subsystems "session" component light up on reconnect.
+                # Include the full snapshot dump so the dashboard State panel
+                # can paint immediately on reconnect rather than waiting for
+                # the next per-turn snapshot to arrive.
                 _watcher_publish(
                     "game_state_snapshot",
                     {
@@ -952,6 +955,7 @@ class ConnectHandler:
                         "player_name": display_name,
                         "player_id": player_id,
                         "turn_number": snapshot.turn_manager.interaction,
+                        "snapshot": snapshot.model_dump(mode="json"),
                         "current_location": snapshot.location or "",
                         "discovered_regions": list(snapshot.discovered_regions),
                         "npc_registry_count": len(snapshot.npc_registry),
@@ -1236,7 +1240,11 @@ class ConnectHandler:
             )
             # Snapshot the resumed session so the dashboard State tab and
             # Subsystems "session" component light up on reconnect without
-            # waiting for the next narration turn.
+            # waiting for the next narration turn. Include the full snapshot
+            # dump so the State panel can paint immediately rather than
+            # falling back to the thin summary fields (which lack `location`
+            # under the dashboard's expected key — it reads `s.location`,
+            # not `s.current_location`).
             _watcher_publish(
                 "game_state_snapshot",
                 {
@@ -1246,6 +1254,7 @@ class ConnectHandler:
                     "player_name": player_name,
                     "player_id": player_id,
                     "turn_number": snapshot.turn_manager.interaction,
+                    "snapshot": snapshot.model_dump(mode="json"),
                     "current_location": snapshot.location or "",
                     "discovered_regions": list(snapshot.discovered_regions),
                     "npc_registry_count": len(snapshot.npc_registry),

@@ -246,6 +246,12 @@ function switchTab(i) {
   document.querySelectorAll('.tab').forEach((t,j) => t.classList.toggle('active', j===i));
   document.querySelectorAll('.tab-content').forEach((t,j) => t.classList.toggle('active', j===i));
   S.activeTab = i;
+  // Render the just-activated tab from cached state. dispatch() only repaints
+  // a tab when it's already active at event time — without these calls,
+  // switching INTO Timeline / State leaves stale "Waiting..." placeholders
+  // even when S.turns / S.latestSnapshot have been populated for many turns.
+  if (i===0) renderTurnList();
+  if (i===1) renderState();
   if (i===2) renderHealth();
   if (i===3) renderTiming();
   if (i===5) renderPrompt();
