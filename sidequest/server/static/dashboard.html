@@ -583,12 +583,26 @@ function renderHealth() {
   const turnIds = S.turns.map(t => t.fields?.turn_id || 0);
   const last20 = turnIds.slice(-20);
 
-  // Build per-component per-turn severity map
+  // Build per-component per-turn severity map. Walk events in arrival
+  // order so we can attribute un-tagged events to the most recent
+  // observed turn — many subsystems (session, room_state, multiplayer,
+  // turn_manager init) emit events without `turn_number`/`turn_id`,
+  // and falling back to 0 misclassifies them as "stuck at turn 0
+  // forever" against a current-turn marker that has advanced (playtest
+  // 2026-04-30 #1D — Activity Grid said SILENT 13t while Component
+  // Summary said Events>0 / Last Seen T#0, both lying in different
+  // directions about the same gap). Architect's structural fix is to
+  // thread turn_id through every server publish; this is the
+  // dashboard-side workaround that unblocks the GM panel today.
   const grid = {};
   comps.forEach(c => { grid[c] = {}; });
+  let _latestTurnSoFar = 0;
   S.allEvents.forEach(ev => {
+    const eventTurn = Number(ev.fields?.turn_number ?? ev.fields?.turn_id ?? 0) || 0;
+    if (eventTurn > 0) _latestTurnSoFar = eventTurn;
+    const tid = eventTurn || _latestTurnSoFar;
+    if (!tid) return;  // No turn observed yet — nothing to bucket against
     const c = ev.component || 'unknown';
-    const tid = ev.fields?.turn_number || ev.fields?.turn_id || 0;
     if (!grid[c]) grid[c] = {};
     const cur = grid[c][tid] || 'info';
     const sev = ev.severity || 'info';
@@ -624,11 +638,27 @@ function renderHealth() {
   // Summary table
   const tbl = document.getElementById('health-table');
   let t = '<table style="width:100%;font-size:11px;border-collapse:collapse"><tr style="color:var(--muted)"><th style="text-align:left;padding:4px">Component</th><th>Events</th><th>Errors</th><th>Warns</th><th>Last Seen</th></tr>';
+  // Mirror the grid attribution: walk events in arrival order so an
+  // un-tagged event inherits the most recent observed turn rather than
+  // collapsing to T#0. Without this the Component Summary "Last Seen"
+  // column shows T#0 for every subsystem that emits without an explicit
+  // turn_number, which is the lie that contradicts the SILENT badges in
+  // the grid above (playtest 2026-04-30 #1D).
+  const _lastTurnByComp = {};
+  let _summaryLatestTurn = 0;
+  S.allEvents.forEach(ev => {
+    const c = ev.component || 'unknown';
+    const eventTurn = Number(ev.fields?.turn_number ?? ev.fields?.turn_id ?? 0) || 0;
+    if (eventTurn > 0) _summaryLatestTurn = eventTurn;
+    const tid = eventTurn || _summaryLatestTurn;
+    if (!tid) return;
+    if (!_lastTurnByComp[c] || tid > _lastTurnByComp[c]) _lastTurnByComp[c] = tid;
+  });
   comps.forEach(c => {
     const evts = S.componentMap[c] || [];
     const errs = evts.filter(e=>(e.severity||'info')==='error').length;
     const warns = evts.filter(e=>(e.severity||'info')==='warn').length;
-    const last = Math.max(...evts.map(e=>e.fields?.turn_number||e.fields?.turn_id||0).filter(n=>n>0), 0);
+    const last = _lastTurnByComp[c] || 0;
     t += `<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="showCompDetail('${esc(c)}')"><td style="padding:4px">${esc(c)}</td><td style="text-align:center">${evts.length}</td><td style="text-align:center;color:${errs?'var(--red)':'inherit'}">${errs}</td><td style="text-align:center;color:${warns?'var(--amber)':'inherit'}">${warns}</td><td style="text-align:center">T#${last}</td></tr>`;
   });
   t += '</table>';
