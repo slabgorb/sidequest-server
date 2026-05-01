@@ -64,9 +64,6 @@ from sidequest.protocol.models import (
     PartyFormationWireEntry,
     StateDelta,
 )
-from sidequest.server.dispatch.opening_hook import (
-    resolve_opening,  # noqa: F401 — back-compat re-export; tests monkeypatch via this module
-)
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.telemetry.spans import (
     SPAN_ORCHESTRATOR_PROCESS_ACTION,  # noqa: F401 — re-exported for OTEL catalog consumers
