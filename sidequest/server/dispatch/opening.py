@@ -181,3 +181,82 @@ def _render_directive_chassis(
     parts.append("")
     parts.append("=== END OPENING ===")
     return "\n".join(parts)
+
+
+def _render_directive_location(
+    *,
+    opening: Opening,
+    present_npcs: list[AuthoredNpc],
+    magic_register: str,
+    per_pc_beat: PerPcBeat | None,
+) -> str:
+    """Render a location-anchored opening directive (Aureate Span path)."""
+    parts: list[str] = ["=== OPENING SCENARIO ==="]
+    parts.append(f"Mode: {opening.triggers.mode}")
+    if opening.name:
+        parts.append(f"Title: {opening.name}")
+
+    parts.append(f"Setting: at {opening.setting.location_label}")
+    if opening.setting.situation:
+        parts.append(f"Situation: {opening.setting.situation}")
+
+    parts.append("")
+    parts.append("ESTABLISHING NARRATION (play this scene):")
+    parts.append(opening.establishing_narration)
+
+    if magic_register:
+        parts.append("")
+        parts.append("MAGIC REGISTER:")
+        parts.append(magic_register)
+
+    if opening.magic_microbleed is not None:
+        parts.append("")
+        parts.append("MICROBLEED (one quiet uncanny detail to weave in once):")
+        parts.append(opening.magic_microbleed.detail)
+
+    if present_npcs:
+        parts.append("")
+        parts.append("PRE-LOADED NPCS PRESENT (already in registry — do NOT auto-register):")
+        for npc in present_npcs:
+            attitude = _disposition_attitude(npc.initial_disposition)
+            parts.append(f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}")
+            if npc.history_seeds:
+                parts.append(f"  History: {npc.history_seeds[0]}")
+
+    if per_pc_beat is not None:
+        parts.append("")
+        parts.append("PER-PC BEAT (textural moment for this PC's chargen):")
+        parts.append(per_pc_beat.beat)
+
+    if opening.tone.register or opening.tone.avoid_at_all_costs:
+        parts.append("")
+        parts.append("TONE:")
+        if opening.tone.register:
+            parts.append(f"- Register: {opening.tone.register}")
+        if opening.tone.stakes:
+            parts.append(f"- Stakes: {opening.tone.stakes}")
+        if opening.tone.avoid_at_all_costs:
+            parts.append("- AVOID: " + "; ".join(opening.tone.avoid_at_all_costs))
+
+    if opening.soft_hook.narration:
+        parts.append("")
+        parts.append("SOFT HOOK (only when conversation lulls; otherwise wait turn 2 or 3):")
+        parts.append(opening.soft_hook.narration)
+
+    if opening.party_framing is not None:
+        parts.append("")
+        parts.append("PARTY FRAMING:")
+        if opening.party_framing.already_a_crew:
+            parts.append("- The PCs are already a crew. Do not re-introduce them.")
+        parts.append(f"- Default bond tier: {opening.party_framing.bond_tier_default}")
+        if opening.party_framing.narrator_guidance:
+            parts.append(f"- {opening.party_framing.narrator_guidance}")
+
+    if opening.first_turn_invitation:
+        parts.append("")
+        parts.append("FIRST TURN INVITATION (close the scene on this — NO closing question):")
+        parts.append(opening.first_turn_invitation)
+
+    parts.append("")
+    parts.append("=== END OPENING ===")
+    return "\n".join(parts)
