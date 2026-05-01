@@ -66,6 +66,7 @@ from sidequest.game.world_materialization import (
     HistoryParseError,
     materialize_from_genre_pack,
     parse_history_chapters,
+    preload_authored_npcs,
     recompute_arc_history,
     should_recompute_arc,
 )
@@ -951,6 +952,18 @@ class WebSocketSessionHandler:
                 # arc-recompute tick is a graceful no-op rather than
                 # propagating the parse error per turn.
                 sd.cached_history_chapters = []
+            # Canned-openings Phase 3 (Task 13): pre-load authored NPCs
+            # before the chargen character is attached. Gate inside
+            # ``preload_authored_npcs`` checks
+            # ``state.characters == [] AND turn_manager.interaction == 0``;
+            # the materialized snapshot satisfies both at this seam (the
+            # PC is appended on the next line). Resumed sessions never
+            # reach this branch — ``is_first_commit`` is False.
+            world_for_authored = sd.genre_pack.worlds.get(sd.world_slug)
+            if world_for_authored is not None:
+                preload_authored_npcs(
+                    materialized, list(world_for_authored.authored_npcs)
+                )
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
