@@ -31,6 +31,7 @@ from sidequest.game.lore_store import (
 )
 from sidequest.game.session import NarrativeEntry
 from sidequest.genre.models.character import CharCreationScene
+from sidequest.genre.models.lore import WorldLore
 from sidequest.genre.models.pack import GenrePack
 
 
@@ -95,6 +96,85 @@ def seed_lore_from_genre_pack(store: LoreStore, pack: GenrePack) -> int:
                 content=f"{faction.name}: {faction.description}",
                 source=LoreSource.GenrePack,
                 metadata={"faction_name": faction.name},
+            ),
+        ):
+            count += 1
+
+    return count
+
+
+def seed_lore_from_world(store: LoreStore, world_lore: WorldLore, world_slug: str) -> int:
+    """Seed ``store`` with fragments derived from a world's ``lore.yaml``.
+
+    Returns the number of fragments successfully added (duplicates skipped).
+    Fragment ids are scoped by ``world_slug`` (``lore_world_<slug>_history``
+    etc.) so a player who switches worlds within a genre pack doesn't see
+    the prior world's lore leaking into the new world's RAG retrieval.
+
+    Pingpong 2026-04-30 ("Lore RAG returns empty_query_or_store for all 4
+    PCs every turn"): pre-fix the genre pack's ``Lore`` and the world's
+    ``WorldLore`` were never seeded into the per-session lore store —
+    only chargen-choice fragments via :func:`seed_lore_from_char_creation`
+    were added, and chargen choices are short snippets that do not cover
+    the genre's history/geography/cosmology/factions. The narrator was
+    therefore composing every turn with zero hits from the genre lore
+    corpus. SOUL-violation territory: the narrator improvises faction
+    references that the world cosmology never sanctions.
+    """
+    count = 0
+    slug = world_slug.strip().lower().replace(" ", "_") or "unknown_world"
+
+    if world_lore.history and _try_add(
+        store,
+        LoreFragment.new(
+            id=f"lore_world_{slug}_history",
+            category=LoreCategory.History,
+            content=world_lore.history,
+            source=LoreSource.GenrePack,
+            metadata={"world_slug": world_slug},
+        ),
+    ):
+        count += 1
+
+    if world_lore.geography and _try_add(
+        store,
+        LoreFragment.new(
+            id=f"lore_world_{slug}_geography",
+            category=LoreCategory.Geography,
+            content=world_lore.geography,
+            source=LoreSource.GenrePack,
+            metadata={"world_slug": world_slug},
+        ),
+    ):
+        count += 1
+
+    if world_lore.cosmology and _try_add(
+        store,
+        LoreFragment.new(
+            id=f"lore_world_{slug}_cosmology",
+            # Cosmology fragments bucket into the History category
+            # (matches seed_lore_from_genre_pack precedent).
+            category=LoreCategory.History,
+            content=world_lore.cosmology,
+            source=LoreSource.GenrePack,
+            metadata={"world_slug": world_slug},
+        ),
+    ):
+        count += 1
+
+    for faction in world_lore.factions:
+        faction_slug = faction.name.lower().replace(" ", "_")
+        if _try_add(
+            store,
+            LoreFragment.new(
+                id=f"lore_world_{slug}_faction_{faction_slug}",
+                category=LoreCategory.Faction,
+                content=f"{faction.name}: {faction.description}",
+                source=LoreSource.GenrePack,
+                metadata={
+                    "faction_name": faction.name,
+                    "world_slug": world_slug,
+                },
             ),
         ):
             count += 1
@@ -313,4 +393,5 @@ __all__ = [
     "seed_lore_from_arc_promotion",
     "seed_lore_from_char_creation",
     "seed_lore_from_genre_pack",
+    "seed_lore_from_world",
 ]

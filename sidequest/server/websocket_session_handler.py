@@ -42,7 +42,11 @@ from sidequest.game.builder import (
 )
 from sidequest.game.character import Character
 from sidequest.game.event_log import EventLog
-from sidequest.game.lore_seeding import seed_lore_from_char_creation
+from sidequest.game.lore_seeding import (
+    seed_lore_from_char_creation,
+    seed_lore_from_genre_pack,
+    seed_lore_from_world,
+)
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection_filter import ProjectionFilter
 from sidequest.game.region_init import RegionInitError, init_region_location
@@ -1134,6 +1138,65 @@ class WebSocketSessionHandler:
                 character.core.name,
                 len(sd.snapshot.characters),
             )
+
+        # Pingpong 2026-04-30 ("Lore RAG returns empty_query_or_store
+        # for all 4 PCs every turn — no genre lore reaching narration"):
+        # the genre pack's ``Lore`` corpus and the world's ``WorldLore``
+        # were never seeded into the per-session lore store — only
+        # chargen-choice fragments via ``seed_lore_from_char_creation``.
+        # Result: every ``lore_embedding.retrieve`` came back with
+        # ``store_size=0 outcome=empty_query_or_store`` and the narrator
+        # composed every turn with zero hits from the genre lore corpus.
+        # Pure wiring fix: ``seed_lore_from_genre_pack`` already existed
+        # (sidequest/game/lore_seeding.py:46) and was unit-tested but
+        # had zero production callers — exactly the
+        # "Don't Reinvent — Wire Up What Exists" gap CLAUDE.md warns
+        # about. Added a sibling ``seed_lore_from_world`` to cover the
+        # world-level lore.yaml (overrides the genre pack's defaults
+        # for that specific world; e.g. ``coyote_star`` has its own
+        # history/geography/factions distinct from ``space_opera``'s).
+        # Both run BEFORE ``seed_lore_from_char_creation`` so the
+        # genre/world fragments land first; chargen choices layer on
+        # top with ``Character`` category so they're scoped distinctly
+        # in the LoreStore index. Idempotent: re-seeding on a reconnect
+        # silently skips duplicate ids (``DuplicateLoreId`` guard).
+        genre_lore_added = seed_lore_from_genre_pack(sd.lore_store, sd.genre_pack)
+        world_lore_added = 0
+        world_obj = sd.genre_pack.worlds.get(sd.world_slug) if sd.world_slug else None
+        if world_obj is not None:
+            world_lore_added = seed_lore_from_world(
+                sd.lore_store, world_obj.lore, sd.world_slug,
+            )
+
+        # OTEL lie-detector: per the user's pingpong note request, expose
+        # ``lore.store_loaded count=N world=X`` so the GM panel can
+        # distinguish "lore is empty by design for this scenario" from
+        # "lore was supposed to load and didn't" — both pre-fix manifest
+        # as ``outcome=empty_query_or_store`` at retrieve time. Sebastien's
+        # State / Subsystems tabs read this watcher event.
+        logger.info(
+            "lore.store_loaded genre=%s world=%s genre_fragments=%d "
+            "world_fragments=%d total=%d total_tokens=%d",
+            sd.genre_slug,
+            sd.world_slug,
+            genre_lore_added,
+            world_lore_added,
+            len(sd.lore_store),
+            sd.lore_store.total_tokens(),
+        )
+        _watcher_publish(
+            "lore_store_loaded",
+            {
+                "genre_slug": sd.genre_slug,
+                "world_slug": sd.world_slug,
+                "genre_fragments_added": genre_lore_added,
+                "world_fragments_added": world_lore_added,
+                "total_fragments": len(sd.lore_store),
+                "total_tokens": sd.lore_store.total_tokens(),
+                "player_id": player_id,
+            },
+            component="rag",
+        )
 
         # Lore seeding (Slice F / connect.rs:2196). Must run BEFORE
         # clearing the builder — the seeder reads scene choices to

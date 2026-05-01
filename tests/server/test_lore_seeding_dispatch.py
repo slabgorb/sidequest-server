@@ -134,12 +134,54 @@ class TestLoreSeedingDispatch:
             assert out[0].payload.phase == "complete"
 
             # Post-confirmation: lore store has fragments from every
-            # chargen scene's choices.
+            # chargen scene's choices PLUS the genre pack's lore corpus
+            # (history/geography/cosmology/factions) — added by the
+            # pingpong 2026-04-30 fix that wired ``seed_lore_from_genre_pack``
+            # and ``seed_lore_from_world`` into chargen-confirm. Pre-fix
+            # only ``seed_lore_from_char_creation`` ran, leaving the
+            # narrator's RAG retrieval to query an effectively-empty
+            # store and improvise lore on every turn.
             assert not sd.lore_store.is_empty()
+
+            # Partition: every fragment must carry one of the expected
+            # source flags. Char-creation fragments still keep their
+            # ``lore_char_creation_`` id prefix; genre-pack fragments
+            # carry ``lore_genre_`` / ``lore_world_`` prefixes.
+            char_creation_frags = []
+            genre_pack_frags = []
             for frag in sd.lore_store.fragments_iter():
-                assert frag.source == LoreSource.CharacterCreation
-                assert frag.id.startswith("lore_char_creation_")
-                assert frag.content  # label + ": " + description
+                if frag.source == LoreSource.CharacterCreation:
+                    assert frag.id.startswith("lore_char_creation_")
+                    char_creation_frags.append(frag)
+                elif frag.source == LoreSource.GenrePack:
+                    assert frag.id.startswith("lore_genre_") or frag.id.startswith(
+                        "lore_world_",
+                    ), (
+                        f"Genre-pack fragment {frag.id!r} must use "
+                        "lore_genre_*/lore_world_* prefix; got %s" % frag.id
+                    )
+                    genre_pack_frags.append(frag)
+                else:
+                    raise AssertionError(
+                        f"Unexpected lore source {frag.source!r} for "
+                        f"fragment {frag.id!r}"
+                    )
+                assert frag.content  # all fragments must have body text
+
+            # Both seeders must have contributed something. Pingpong
+            # 2026-04-30 root cause was zero genre_pack_frags — the
+            # genre lore corpus wasn't being seeded at all.
+            assert len(char_creation_frags) > 0, (
+                "Char-creation seeder must add at least one fragment "
+                "(grimvault has populated chargen scenes)."
+            )
+            assert len(genre_pack_frags) > 0, (
+                "Genre-pack seeder must add at least one fragment after "
+                "the pingpong 2026-04-30 wiring fix — caverns_and_claudes "
+                "ships populated history/geography/cosmology/factions. "
+                "Zero genre fragments means the genre seeder was un-wired "
+                "again (the regression this test guards against)."
+            )
 
         asyncio.run(body())
 
@@ -167,8 +209,22 @@ class TestLoreSeedingDispatch:
             assert len(events) == 1
             attrs = dict(events[0].attributes or {})
             assert attrs["event"] == "char_creation_lore_seeded"
-            assert attrs["fragments_added"] == len(sd.lore_store)
+            # Pingpong 2026-04-30 wiring change: the genre/world seeders
+            # run BEFORE char-creation, so by the time the
+            # ``lore.char_creation_seeded`` event fires, the store
+            # already contains genre/world fragments and
+            # ``total_fragments`` reflects all three layers. The
+            # ``fragments_added`` field is the char-creation delta only,
+            # so it is now strictly LESS THAN ``total_fragments`` rather
+            # than equal. Assertion updates capture this contract.
+            assert attrs["fragments_added"] > 0
             assert attrs["total_fragments"] == len(sd.lore_store)
+            assert attrs["fragments_added"] <= attrs["total_fragments"], (
+                "fragments_added (char-creation only) must be ≤ "
+                "total_fragments (post-genre+world+char layers); "
+                "an inversion would imply the genre/world seeders "
+                "ran AFTER char-creation, breaking the wiring order."
+            )
             assert attrs["total_tokens"] == sd.lore_store.total_tokens()
             assert attrs["genre"] == "caverns_and_claudes"
             assert attrs["world"] == "grimvault"
