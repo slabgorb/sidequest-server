@@ -58,11 +58,14 @@ async def _connect(
     world: str = "flickering_reach",
     player_name: str = "TestPlayer",
 ) -> SessionEventMessage:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre=genre, world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name=player_name,
-        genre=genre,
-        world=world,
+        game_slug=slug,
     )
     msg = SessionEventMessage(payload=payload, player_id="")
     out = await handler.handle_message(msg)
@@ -98,9 +101,7 @@ def run(coro):
 
 
 class TestConnectInitBuilder:
-    def test_connect_to_caverns_creates_builder(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_connect_to_caverns_creates_builder(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             connected = await _connect(handler)
             assert connected.payload.has_character is False
@@ -111,9 +112,7 @@ class TestConnectInitBuilder:
 
         run(body())
 
-    def test_connect_without_chargen_leaves_builder_none(
-        self, tmp_path: Path
-    ) -> None:
+    def test_connect_without_chargen_leaves_builder_none(self, tmp_path: Path) -> None:
         # A pack with no char_creation scenes shouldn't construct a builder.
         # We simulate by pointing at the real path but the pack will have
         # scenes — so we stub via a handler that overrides the genre loader.
@@ -179,7 +178,10 @@ class TestPhaseScene:
             )
             assert len(out) == 1
             assert isinstance(out[0], ErrorMessage)
-            assert "Invalid choice" in str(out[0].payload.message) or "invalid" in str(out[0].payload.message).lower()
+            assert (
+                "Invalid choice" in str(out[0].payload.message)
+                or "invalid" in str(out[0].payload.message).lower()
+            )
 
         run(body())
 
@@ -195,9 +197,7 @@ class TestPhaseScene:
 
         async def body() -> None:
             await _connect(handler, genre="elemental_harmony", world="burning_peace")
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="scene")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="scene"))
             assert len(out) == 1
             assert not isinstance(out[0], ErrorMessage)
 
@@ -238,16 +238,12 @@ class TestPhaseScene:
 
 
 class TestPhaseContinue:
-    def test_continue_advances_display_only_scene(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_continue_advances_display_only_scene(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             # caverns scene 0 (the_roll) is auto-advance / display-only — the
             # expected UI flow sends phase=continue.
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="continue")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="continue"))
             assert len(out) == 1
             assert not isinstance(out[0], ErrorMessage)
 
@@ -273,18 +269,14 @@ async def _walk_to_confirmation(
             raise AssertionError(f"unexpected phase: {builder._phase!r}")
         scene = builder.current_scene()
         if scene.choices:
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="scene", choice="1")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="scene", choice="1"))
         elif scene.allows_freeform:
             out = await _send_chargen(
                 handler,
                 CharacterCreationPayload(phase="scene", choice=freeform_name),
             )
         else:
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="continue")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="continue"))
         if isinstance(out[0], ErrorMessage):
             raise AssertionError(
                 f"unexpected error at scene {builder.current_scene_index()}: "
@@ -316,9 +308,7 @@ class TestPhaseConfirmation:
                         if scene.allows_freeform:
                             out = await _send_chargen(
                                 handler,
-                                CharacterCreationPayload(
-                                    phase="scene", choice="Rux"
-                                ),
+                                CharacterCreationPayload(phase="scene", choice="Rux"),
                             )
                         else:
                             out = await _send_chargen(
@@ -336,9 +326,7 @@ class TestPhaseConfirmation:
             # + PARTY_STATUS snapshot through confirmation, so the
             # return list is CHARACTER_CREATION{complete} followed by
             # PARTY_STATUS then NARRATION + NARRATION_END.
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert len(out) >= 1
             msg = out[0]
             assert isinstance(msg, CharacterCreationMessage)
@@ -364,9 +352,7 @@ class TestSliceBOpeningHook:
     openings, and that both are ``None`` when no openings exist.
     """
 
-    def test_caverns_connect_resolves_opening_hook(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_caverns_connect_resolves_opening_hook(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             # caverns_and_claudes ships openings only at the world tier
             # (grimvault/horden/mawdeep), not at the genre tier. Connect
@@ -374,8 +360,7 @@ class TestSliceBOpeningHook:
             await _connect(handler, genre="caverns_and_claudes", world="grimvault")
             sd = handler._session_data  # type: ignore[attr-defined]
             assert sd.opening_seed is not None, (
-                "opening_seed should be populated after connect for a "
-                "world that declares openings"
+                "opening_seed should be populated after connect for a world that declares openings"
             )
             assert sd.opening_directive is not None, (
                 "opening_directive should be populated alongside the seed"
@@ -397,9 +382,7 @@ class TestSliceBOpeningHook:
         def _no_openings(*_args, **_kwargs):
             return None
 
-        monkeypatch.setattr(
-            "sidequest.server.session_handler.resolve_opening", _no_openings
-        )
+        monkeypatch.setattr("sidequest.server.session_handler.resolve_opening", _no_openings)
 
         async def body() -> None:
             await _connect(handler)
@@ -423,9 +406,7 @@ class TestSliceAWiring:
             await _connect(handler)
             await _walk_to_confirmation(handler, freeform_name="Rux")
 
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
@@ -460,9 +441,7 @@ class TestSliceAWiring:
             assert item_ids.count("torch") >= 3, (
                 "Delver loadout carries three torches (builder hints may add more)"
             )
-            assert char.core.inventory.gold >= 10, (
-                "Delver loadout adds 10 starting gold"
-            )
+            assert char.core.inventory.gold >= 10, "Delver loadout adds 10 starting gold"
 
             # Every wired item has the Rust-parity shape — pick the torch
             # (a real catalog entry) and verify the required keys.
@@ -503,14 +482,10 @@ class TestSliceAWiring:
             pytest.skip("spaghetti_western/the_real_mccoy not available")
 
         async def body() -> None:
-            await _connect(
-                handler, genre="spaghetti_western", world="the_real_mccoy"
-            )
+            await _connect(handler, genre="spaghetti_western", world="the_real_mccoy")
             await _walk_to_confirmation(handler, freeform_name="McCoy")
 
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
@@ -560,9 +535,7 @@ class TestSliceCWorldMaterialization:
             await _connect(handler, genre="caverns_and_claudes", world="grimvault")
             await _walk_to_confirmation(handler, freeform_name="Rux")
 
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert len(out) >= 1
             assert isinstance(out[0], CharacterCreationMessage)
 
@@ -590,8 +563,7 @@ class TestSliceCWorldMaterialization:
 
             # Lore from the chapter is in lore_established.
             assert any("Ashgate" in entry for entry in snap.lore_established), (
-                f"grimvault fresh-tier lore not in snapshot: "
-                f"{snap.lore_established[:2]}"
+                f"grimvault fresh-tier lore not in snapshot: {snap.lore_established[:2]}"
             )
 
             # Character slot holds exactly the built character (not an
@@ -603,9 +575,7 @@ class TestSliceCWorldMaterialization:
 
         run(body())
 
-    def test_coyote_star_chargen_populates_magic_state(
-        self, tmp_path: Path
-    ) -> None:
+    def test_coyote_star_chargen_populates_magic_state(self, tmp_path: Path) -> None:
         """Phase 4 wiring: chargen confirmation on Coyote Star must
         populate snapshot.magic_state and add the freshly built
         character to the ledger so per-character bars (sanity / notice /
@@ -626,9 +596,7 @@ class TestSliceCWorldMaterialization:
         async def body() -> None:
             await _connect(handler, genre="space_opera", world="coyote_star")
             await _walk_to_confirmation(handler, freeform_name="Sira Mendes")
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert isinstance(out[0], CharacterCreationMessage)
 
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -643,7 +611,8 @@ class TestSliceCWorldMaterialization:
 
             character = snap.characters[0]
             char_keys = [
-                k for k in snap.magic_state.ledger
+                k
+                for k in snap.magic_state.ledger
                 if k.startswith(f"character|{character.core.name}|")
             ]
             assert len(char_keys) > 0, (
@@ -666,13 +635,9 @@ class TestSliceCWorldMaterialization:
             # Use spaghetti_western/dust_and_lead — confirm pack loads
             # and the chargen confirmation runs without blowing up even
             # when history is present but slim.
-            await _connect(
-                handler, genre="spaghetti_western", world="dust_and_lead"
-            )
+            await _connect(handler, genre="spaghetti_western", world="dust_and_lead")
             await _walk_to_confirmation(handler, freeform_name="McCoy")
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="confirmation")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
             assert isinstance(out[0], CharacterCreationMessage)
 
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -684,9 +649,7 @@ class TestSliceCWorldMaterialization:
 
 
 class TestActions:
-    def test_back_from_first_scene_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_back_from_first_scene_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             out = await _send_chargen(
@@ -697,9 +660,7 @@ class TestActions:
 
         run(body())
 
-    def test_edit_without_target_step_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_edit_without_target_step_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             out = await _send_chargen(
@@ -710,24 +671,18 @@ class TestActions:
 
         run(body())
 
-    def test_edit_out_of_range_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_edit_out_of_range_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             out = await _send_chargen(
                 handler,
-                CharacterCreationPayload(
-                    phase="scene", action="edit", target_step=999
-                ),
+                CharacterCreationPayload(phase="scene", action="edit", target_step=999),
             )
             assert isinstance(out[0], ErrorMessage)
 
         run(body())
 
-    def test_unknown_action_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_unknown_action_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             out = await _send_chargen(
@@ -739,9 +694,7 @@ class TestActions:
 
         run(body())
 
-    def test_back_after_advance_reverts_to_previous_scene(
-        self, tmp_path: Path
-    ) -> None:
+    def test_back_after_advance_reverts_to_previous_scene(self, tmp_path: Path) -> None:
         noir = CONTENT_ROOT / "elemental_harmony"
         if not noir.is_dir():
             pytest.skip("elemental_harmony content not found")
@@ -758,9 +711,7 @@ class TestActions:
             assert sd is not None and sd.builder is not None
             if not sd.builder.current_scene().choices:
                 pytest.skip("elemental_harmony scene 0 has no choices")
-            await _send_chargen(
-                handler, CharacterCreationPayload(phase="scene", choice="1")
-            )
+            await _send_chargen(handler, CharacterCreationPayload(phase="scene", choice="1"))
             # Might have transitioned to AwaitingFollowup or advanced scene;
             # either way, scene-walking should be able to go_back.
             out = await _send_chargen(
@@ -780,26 +731,18 @@ class TestActions:
 
 
 class TestStateGuards:
-    def test_chargen_before_connect_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_chargen_before_connect_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="scene", choice="1")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="scene", choice="1"))
             assert isinstance(out[0], ErrorMessage)
             assert "AwaitingConnect" in str(out[0].payload.message)
 
         run(body())
 
-    def test_unknown_phase_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_unknown_phase_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="mystery")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="mystery"))
             assert isinstance(out[0], ErrorMessage)
             assert "Unknown chargen phase" in str(out[0].payload.message)
 

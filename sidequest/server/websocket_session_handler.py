@@ -41,6 +41,7 @@ from sidequest.game.builder import (
     CharacterBuilder,
 )
 from sidequest.game.character import Character
+from sidequest.game.chassis import init_chassis_registry
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import (
     seed_lore_from_char_creation,
@@ -966,6 +967,7 @@ class WebSocketSessionHandler:
             # same authoritative object — including any peer session
             # already bound to this slug.
             sd.snapshot.replace_with(materialized)
+            init_chassis_registry(sd.snapshot, sd.genre_pack)
             span.add_event(
                 "character_creation.world_materialized",
                 {
@@ -1165,7 +1167,9 @@ class WebSocketSessionHandler:
         world_obj = sd.genre_pack.worlds.get(sd.world_slug) if sd.world_slug else None
         if world_obj is not None:
             world_lore_added = seed_lore_from_world(
-                sd.lore_store, world_obj.lore, sd.world_slug,
+                sd.lore_store,
+                world_obj.lore,
+                sd.world_slug,
             )
 
         # OTEL lie-detector: per the user's pingpong note request, expose
@@ -1509,9 +1513,7 @@ class WebSocketSessionHandler:
         # whose status flipped to "resolved" — chapter promotion (today),
         # narrator extraction or engine tick (future). Capturing late
         # would mask the diff.
-        trope_status_baseline: dict[str, str] = {
-            t.id: t.status for t in snapshot.active_tropes
-        }
+        trope_status_baseline: dict[str, str] = {t.id: t.status for t in snapshot.active_tropes}
         # Capture the watcher→OTLP synthetic-span counter at turn start so the
         # finally-block can log the per-turn delta. With this in the server
         # log a `grep turn.bridge_diagnostic /tmp/sidequest-server.log` reveals
@@ -1519,6 +1521,7 @@ class WebSocketSessionHandler:
         # turns now have a hard, grep-able truth-value rather than a "did the
         # bridge fire?" guessing game (playtest 2026-04-30 #Jaeger-bridge).
         from sidequest.telemetry.watcher_hub import synthetic_spans_count  # noqa: PLC0415
+
         bridge_minted_at_start = synthetic_spans_count()
         try:
             with turn_span(
@@ -1626,9 +1629,7 @@ class WebSocketSessionHandler:
                     # ``arc_embedding_seed`` span carries the seeded
                     # counts so the GM panel can chart Lane B throughput.
                     if should_recompute_arc(snapshot.turn_manager.interaction):
-                        added_chapters = recompute_arc_history(
-                            snapshot, sd.cached_history_chapters
-                        )
+                        added_chapters = recompute_arc_history(snapshot, sd.cached_history_chapters)
                         if added_chapters:
                             from sidequest.game.lore_seeding import (  # noqa: PLC0415
                                 seed_lore_from_arc_promotion,
@@ -1637,6 +1638,7 @@ class WebSocketSessionHandler:
                                 SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED,
                                 Span,
                             )
+
                             for chapter in added_chapters:
                                 # One seed-call per promoted chapter so
                                 # the OTEL span attributes can attribute
@@ -1662,12 +1664,8 @@ class WebSocketSessionHandler:
                                         "lore_fragments_skipped_duplicate": (
                                             seed_result.lore_fragments_skipped_duplicate
                                         ),
-                                        "content_bytes_seeded": (
-                                            seed_result.content_bytes_seeded
-                                        ),
-                                        "interaction": (
-                                            snapshot.turn_manager.interaction
-                                        ),
+                                        "content_bytes_seeded": (seed_result.content_bytes_seeded),
+                                        "interaction": (snapshot.turn_manager.interaction),
                                     },
                                 ):
                                     pass
@@ -1746,7 +1744,8 @@ class WebSocketSessionHandler:
                         # seeds the action programmatically).
                         if not is_opening_turn:
                             acting_name = _resolve_acting_character_name(
-                                sd, self._room,
+                                sd,
+                                self._room,
                             )
                             player_entry = NarrativeEntry(
                                 timestamp=0,
@@ -2091,6 +2090,7 @@ class WebSocketSessionHandler:
                     # to outbound.append so test fixtures without a room
                     # registry continue to work.
                     _has_room = self._room is not None
+
                     # OTEL lie-detector: emit one watcher event per shared-
                     # world frame that records every recipient socket_id
                     # plus the resolved player_id. The GM panel can verify
@@ -2171,17 +2171,25 @@ class WebSocketSessionHandler:
                         # full SessionRoom API — fall back to outbound
                         # so those tests continue to exercise the
                         # actor-receives-via-return-value contract.
-                        socket_for_player = getattr(
-                            self._room, "socket_for_player", None,
-                        ) if _has_room else None
-                        queue_for_socket = getattr(
-                            self._room, "queue_for_socket", None,
-                        ) if _has_room else None
-                        if (
-                            _has_room
-                            and callable(socket_for_player)
-                            and callable(queue_for_socket)
-                        ):
+                        socket_for_player = (
+                            getattr(
+                                self._room,
+                                "socket_for_player",
+                                None,
+                            )
+                            if _has_room
+                            else None
+                        )
+                        queue_for_socket = (
+                            getattr(
+                                self._room,
+                                "queue_for_socket",
+                                None,
+                            )
+                            if _has_room
+                            else None
+                        )
+                        if _has_room and callable(socket_for_player) and callable(queue_for_socket):
                             room = self._room
                             assert room is not None  # noqa: S101 — narrowed by _has_room
                             dispatcher_socket = socket_for_player(sd.player_id)
@@ -2539,8 +2547,7 @@ class WebSocketSessionHandler:
             with contextlib.suppress(Exception):
                 minted = synthetic_spans_count() - bridge_minted_at_start
                 logger.info(
-                    "turn.bridge_diagnostic minted=%d turn=%d player=%s "
-                    "genre=%s world=%s",
+                    "turn.bridge_diagnostic minted=%d turn=%d player=%s genre=%s world=%s",
                     minted,
                     snapshot.turn_manager.interaction,
                     sd.player_id,
@@ -2770,7 +2777,10 @@ class WebSocketSessionHandler:
         )
 
         narrator_messages = await self._execute_narration_turn(
-            sd, action, turn_context, is_opening_turn=True,
+            sd,
+            action,
+            turn_context,
+            is_opening_turn=True,
         )
         messages = cold_open_messages + list(narrator_messages)
 
@@ -3433,9 +3443,7 @@ class WebSocketSessionHandler:
             recipients_count = len(delivered_recipients)
             connected_count = len(room.connected_player_ids())
             recipient_socket_ids = [sid for sid, _pid in delivered_recipients]
-            recipient_player_ids = [
-                pid for _sid, pid in delivered_recipients if pid is not None
-            ]
+            recipient_player_ids = [pid for _sid, pid in delivered_recipients if pid is not None]
             try:
                 _watcher_publish(
                     "scrapbook_image_broadcast",
@@ -3452,9 +3460,7 @@ class WebSocketSessionHandler:
                         "recipient_player_ids": recipient_player_ids,
                     },
                     component="render",
-                    severity="warning"
-                    if connected_count != recipients_count
-                    else "info",
+                    severity="warning" if connected_count != recipients_count else "info",
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry must never crash a broadcast
                 logger.warning(

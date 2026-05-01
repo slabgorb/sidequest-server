@@ -85,14 +85,20 @@ async def _connect(
     *,
     player_name: str = "Persistent",
     world: str = "grimvault",
+    player_id: str = "pid",
 ) -> SessionEventMessage:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name=player_name,
-        genre="caverns_and_claudes",
-        world=world,
+        game_slug=slug,
     )
-    out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
+    # Story 45-26: slug-connect's per-player gate matches by player_id, so
+    # tests that simulate reconnect-as-same-player must pass a stable id.
+    out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=player_id))
     assert isinstance(out[0], SessionEventMessage)
     return out[0]
 

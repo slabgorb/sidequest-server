@@ -61,9 +61,9 @@ class SaveSchemaIncompatibleError(Exception):
         self.save_path = save_path
         self.underlying = underlying
         super().__init__(
-            f"saved snapshot at {save_path} fails current GameSnapshot "
-            f"schema: {underlying}"
+            f"saved snapshot at {save_path} fails current GameSnapshot schema: {underlying}"
         )
+
 
 # ---------------------------------------------------------------------------
 # GameMode
@@ -291,12 +291,10 @@ class SqliteStore:
         confirmation that reinit ran (zero priors) as well as the positive
         one (non-zero priors).
         """
-        prior_narrative_count = self._conn.execute(
-            "SELECT COUNT(*) FROM narrative_log"
-        ).fetchone()[0]
-        prior_event_count = self._conn.execute(
-            "SELECT COUNT(*) FROM events"
-        ).fetchone()[0]
+        prior_narrative_count = self._conn.execute("SELECT COUNT(*) FROM narrative_log").fetchone()[
+            0
+        ]
+        prior_event_count = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
         with self._conn:
             for tbl in _PER_SLOT_TABLES:
@@ -354,9 +352,7 @@ class SqliteStore:
         to the WebSocket layer (which closes the socket without
         explanation, trapping the user in an infinite reconnect loop).
         """
-        row = self._conn.execute(
-            "SELECT snapshot_json FROM game_state WHERE id = 1"
-        ).fetchone()
+        row = self._conn.execute("SELECT snapshot_json FROM game_state WHERE id = 1").fetchone()
         if row is None:
             return None
 
@@ -382,6 +378,7 @@ class SqliteStore:
     def append_narrative(self, entry: NarrativeEntry) -> None:
         """Append a narrative entry to the log."""
         import json
+
         tags_json = json.dumps(entry.tags)
         self._conn.execute(
             """INSERT INTO narrative_log (round_number, author, content, tags)
@@ -398,9 +395,7 @@ class SqliteStore:
         does not raise) on an empty log so the GM-panel chart axis is
         always plottable on the first tick of a new session.
         """
-        row = self._conn.execute(
-            "SELECT MAX(round_number) FROM narrative_log"
-        ).fetchone()
+        row = self._conn.execute("SELECT MAX(round_number) FROM narrative_log").fetchone()
         if row is None or row[0] is None:
             return 0
         return int(row[0])
@@ -408,6 +403,7 @@ class SqliteStore:
     def recent_narrative(self, limit: int) -> list[NarrativeEntry]:
         """Get the most recent narrative entries, ordered oldest-first."""
         import json
+
         rows = self._conn.execute(
             """SELECT round_number, author, content, tags
                FROM (SELECT * FROM narrative_log ORDER BY id DESC LIMIT ?)
@@ -467,19 +463,6 @@ class SqliteStore:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def db_path_for_session(
-    save_dir: Path,
-    genre_slug: str,
-    world_slug: str,
-    player_name: str,
-) -> Path:
-    """Compute the .db file path for a genre/world/player triple."""
-    safe = "".join(
-        c if c.isalnum() or c in ("-", "_") else "_" for c in player_name
-    ).lower() or "default"
-    return save_dir / genre_slug / world_slug / safe / "save.db"
 
 
 def _now_rfc3339() -> str:
@@ -555,18 +538,21 @@ def query_encounter_events(store: SqliteStore) -> list[dict]:
     2026-04-25-dual-track-momentum-design.md §"GM panel verification").
     """
     import json
+
     rows = store._conn.execute(
         "SELECT seq, kind, payload_json, created_at FROM events "
         "WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
     ).fetchall()
     out: list[dict] = []
     for r in rows:
-        out.append({
-            "seq": r[0],
-            "kind": r[1],
-            "payload": json.loads(r[2]),
-            "created_at": r[3],
-        })
+        out.append(
+            {
+                "seq": r[0],
+                "kind": r[1],
+                "payload": json.loads(r[2]),
+                "created_at": r[3],
+            }
+        )
     return out
 
 

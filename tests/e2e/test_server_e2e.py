@@ -91,6 +91,40 @@ def _make_e2e_app(tmp_path: Path) -> tuple[TestClient, MagicMock, MagicMock]:
     return client, mock_client, mock_pack
 
 
+def _mint_slug(
+    client: TestClient,
+    *,
+    genre_slug: str = "caverns_and_claudes",
+    world_slug: str = "flickering_reach",
+    mode: str = "solo",
+) -> str:
+    """Mint a game slug via ``POST /api/games`` and return it.
+
+    Story 45-26: WS connect requires ``payload.game_slug``; the legacy
+    ``(genre, world, player_name)`` connect path was deleted. Tests must
+    mint a slug here, then connect with ``game_slug``.
+    """
+    r = client.post(
+        "/api/games",
+        json={"genre_slug": genre_slug, "world_slug": world_slug, "mode": mode},
+    )
+    assert r.status_code == 201, f"Failed to mint slug: {r.text}"
+    return r.json()["slug"]
+
+
+def _connect_payload(slug: str, player_name: str = "tester") -> dict:
+    """Build a slug-keyed connect envelope for ``/ws`` send_json."""
+    return {
+        "type": "SESSION_EVENT",
+        "payload": {
+            "event": "connect",
+            "player_name": player_name,
+            "game_slug": slug,
+        },
+        "player_id": "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # E2E: full narration round-trip
 # ---------------------------------------------------------------------------
@@ -115,32 +149,29 @@ def test_e2e_narration_turn_full_roundtrip(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
             # Step 1: connect
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {
-                    "event": "connect",
-                    "player_name": "Alex",
-                    "genre": "caverns_and_claudes",
-                    "world": "flickering_reach",
-                },
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="Alex"))
             connected = json.loads(ws.receive_text())
             assert connected["type"] == "SESSION_EVENT", f"Expected SESSION_EVENT, got: {connected}"
             assert connected["payload"]["event"] == "connected"
             assert connected["payload"]["genre"] == "caverns_and_claudes"
 
             # Step 2: send a player action
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I cautiously move forward and examine the glyphs.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {
+                        "action": "I cautiously move forward and examine the glyphs.",
+                        "aside": False,
+                    },
+                    "player_id": "",
+                }
+            )
 
             # Step 3: receive NARRATION
             narration_raw = ws.receive_text()
@@ -168,22 +199,21 @@ def test_e2e_narration_text_is_nonempty(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "James", "genre": "caverns_and_claudes", "world": "flickering_reach"},
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="James"))
             ws.receive_text()  # connected
 
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I search the room for traps.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "I search the room for traps.", "aside": False},
+                    "player_id": "",
+                }
+            )
 
             narration = json.loads(ws.receive_text())
             assert narration["type"] == "NARRATION"
@@ -204,29 +234,29 @@ def test_e2e_session_is_persisted_after_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "keith", "genre": "caverns_and_claudes", "world": "flickering_reach"},
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="keith"))
             ws.receive_text()  # connected
 
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I head deeper into the dungeon.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "I head deeper into the dungeon.", "aside": False},
+                    "player_id": "",
+                }
+            )
             ws.receive_text()  # NARRATION
             ws.receive_text()  # NARRATION_END
 
-    # After context manager exits (disconnect), save should exist
-    expected_db = (
-        saves_dir / "caverns_and_claudes" / "flickering_reach" / "keith" / "save.db"
-    )
+    # After context manager exits (disconnect), save should exist at the
+    # slug-keyed path (Story 45-26: legacy /genre/world/player layout gone).
+    from sidequest.game.persistence import db_path_for_slug
+
+    expected_db = db_path_for_slug(saves_dir, slug)
     assert expected_db.exists(), f"Save file not found at {expected_db}"
 
 
@@ -249,32 +279,33 @@ def test_e2e_second_action_calls_client_twice(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "sebastien", "genre": "caverns_and_claudes", "world": "flickering_reach"},
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="sebastien"))
             ws.receive_text()  # connected
 
             # First action
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I look around.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "I look around.", "aside": False},
+                    "player_id": "",
+                }
+            )
             ws.receive_text()  # NARRATION
             ws.receive_text()  # NARRATION_END
 
             # Second action
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I pick up the torch.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "I pick up the torch.", "aside": False},
+                    "player_id": "",
+                }
+            )
             narration2 = json.loads(ws.receive_text())
             ws.receive_text()  # NARRATION_END
 
@@ -292,13 +323,14 @@ def test_e2e_app_routes_registered(tmp_path):
         save_dir=saves_dir,
     )
     route_paths = sorted(
-        r.path for r in app.routes if hasattr(r, "path")  # type: ignore[attr-defined]
+        r.path
+        for r in app.routes
+        if hasattr(r, "path")  # type: ignore[attr-defined]
     )
 
     assert "/health" in route_paths
     assert "/api/genres" in route_paths
-    assert "/api/saves" in route_paths
-    assert "/api/saves/new" in route_paths
+    assert "/api/games" in route_paths
     assert "/api/sessions" in route_paths
     assert "/ws" in route_paths
 
@@ -316,22 +348,21 @@ def test_e2e_sanitize_applied_to_player_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "tester", "genre": "caverns_and_claudes", "world": "flickering_reach"},
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="tester"))
             ws.receive_text()
 
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "  I look around the room.  ", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "  I look around the room.  ", "aside": False},
+                    "player_id": "",
+                }
+            )
             narration = json.loads(ws.receive_text())
             ws.receive_text()
 
@@ -340,10 +371,12 @@ def test_e2e_sanitize_applied_to_player_action(tmp_path):
 
 
 def test_e2e_genre_not_found_returns_error(tmp_path):
-    """SESSION_EVENT{connect} with unknown genre returns ERROR (not 500).
+    """Slug-connect for a slug whose genre pack is missing returns ERROR
+    (not 500).
 
-    The genre search path is an empty tmp_path directory so no genre packs
-    are found — GenreLoader raises GenreNotFoundError which becomes ERROR.
+    The genre search path is an empty directory so the slug's stored
+    genre_slug does not resolve — GenreLoader raises GenreNotFoundError
+    which the connect handler surfaces as a typed ERROR.
     """
     saves_dir = tmp_path / "saves"
     saves_dir.mkdir()
@@ -355,12 +388,16 @@ def test_e2e_genre_not_found_returns_error(tmp_path):
     )
     client = TestClient(app)
 
+    # Mint a slug that points at a non-existent genre pack. POST /api/games
+    # does not validate the genre — failure surfaces at connect-time.
+    slug = _mint_slug(
+        client,
+        genre_slug="no_such_genre",
+        world_slug="no_such_world",
+    )
+
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "payload": {"event": "connect", "player_name": "ghost", "genre": "no_such_genre", "world": "no_such_world"},
-            "player_id": "",
-        })
+        ws.send_json(_connect_payload(slug, player_name="ghost"))
         raw = ws.receive_text()
         msg = json.loads(raw)
         assert msg["type"] == "ERROR"
@@ -381,29 +418,28 @@ def test_e2e_npc_registry_populated_after_action(tmp_path):
     )
     client = TestClient(app)
 
-    with patch("sidequest.server.websocket_session_handler.GenreLoader") as MockLoader:
+    slug = _mint_slug(client)
+    with patch("sidequest.handlers.connect.GenreLoader") as MockLoader:
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "npc_tester", "genre": "caverns_and_claudes", "world": "flickering_reach"},
-                "player_id": "",
-            })
+            ws.send_json(_connect_payload(slug, player_name="npc_tester"))
             ws.receive_text()
 
-            ws.send_json({
-                "type": "PLAYER_ACTION",
-                "payload": {"action": "I speak to the guardian.", "aside": False},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "PLAYER_ACTION",
+                    "payload": {"action": "I speak to the guardian.", "aside": False},
+                    "player_id": "",
+                }
+            )
             ws.receive_text()  # NARRATION
             ws.receive_text()  # NARRATION_END
 
-    # Load the save and verify NPC registry
-    from sidequest.game.persistence import SqliteStore, db_path_for_session
+    # Load the save (slug-keyed layout) and verify NPC registry.
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
 
-    db = db_path_for_session(saves_dir, "caverns_and_claudes", "flickering_reach", "npc_tester")
+    db = db_path_for_slug(saves_dir, slug)
     assert db.exists()
     store = SqliteStore.open(str(db))
     saved = store.load()

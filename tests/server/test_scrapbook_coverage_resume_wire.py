@@ -38,12 +38,7 @@ import pytest
 # Static-source location of the two resume seams
 # ---------------------------------------------------------------------------
 
-_CONNECT_PY = (
-    Path(__file__).resolve().parents[2]
-    / "sidequest"
-    / "handlers"
-    / "connect.py"
-)
+_CONNECT_PY = Path(__file__).resolve().parents[2] / "sidequest" / "handlers" / "connect.py"
 
 
 @pytest.fixture(scope="module")
@@ -64,18 +59,16 @@ def resume_branches(connect_source: str) -> dict[str, tuple[int, int]]:
         if line.strip() == "if saved is not None:":
             branches.append(i)
 
-    assert len(branches) >= 2, (
-        f"Expected at least two ``if saved is not None:`` branches in "
-        f"connect.py (slug-keyed + legacy non-slug). Found {len(branches)} "
+    assert len(branches) >= 1, (
+        f"Expected at least one ``if saved is not None:`` branch in "
+        f"connect.py (slug-keyed). Found {len(branches)} "
         f"at lines {branches}. If the count drops, the resume topology "
         f"changed — re-locate the seams before fixing this test."
     )
 
-    # Slug branch is the first occurrence (within ``_handle_connect_slug`` or
-    # whichever is first in file order). Legacy branch is the second.
+    # Slug branch is the only branch (Story 45-26 removed legacy non-slug path).
     return {
         "slug": (branches[0], branches[0] + 200),
-        "legacy": (branches[1], branches[1] + 200),
     }
 
 
@@ -119,9 +112,7 @@ class TestSlugResumeWiring:
     invoke ``detect_scrapbook_coverage_gaps`` after the snapshot is loaded
     and before the connect-ready cascade runs."""
 
-    def test_slug_branch_calls_detector(
-        self, connect_source: str, resume_branches: dict
-    ) -> None:
+    def test_slug_branch_calls_detector(self, connect_source: str, resume_branches: dict) -> None:
         start, end = resume_branches["slug"]
         snippet = "\n".join(connect_source.splitlines()[start - 1 : end])
         invocation_patterns = [
@@ -173,59 +164,6 @@ class TestSlugResumeWiring:
         )
 
 
-class TestLegacyResumeWiring:
-    """AC4 (legacy branch): the non-slug resume must wire the detector
-    too. This is the path Felix's solo sessions still hit — without
-    coverage on this branch, the Orin regression silently re-emerges
-    on legacy save shapes."""
-
-    def test_legacy_branch_calls_detector(
-        self, connect_source: str, resume_branches: dict
-    ) -> None:
-        start, end = resume_branches["legacy"]
-        snippet = "\n".join(connect_source.splitlines()[start - 1 : end])
-        invocation_patterns = [
-            "detect_scrapbook_coverage_gaps(",
-            "scrapbook_coverage.detect_scrapbook_coverage_gaps(",
-        ]
-        matches = [p for p in invocation_patterns if p in snippet]
-        assert matches, (
-            "Legacy non-slug resume branch (connect.py around line "
-            f"{start}) must invoke the scrapbook coverage detector. "
-            "AC4 explicitly names this — a slug-only fix leaves Felix's "
-            "saves uncovered."
-        )
-
-    def test_legacy_branch_invokes_after_snapshot_load(
-        self, connect_source: str, resume_branches: dict
-    ) -> None:
-        start, end = resume_branches["legacy"]
-        lines = connect_source.splitlines()[start - 1 : end]
-
-        snapshot_line = next(
-            (i for i, ln in enumerate(lines) if "snapshot = saved.snapshot" in ln),
-            None,
-        )
-        detector_line = next(
-            (i for i, ln in enumerate(lines) if "detect_scrapbook_coverage_gaps" in ln),
-            None,
-        )
-        assert snapshot_line is not None, (
-            "Legacy branch missing `snapshot = saved.snapshot` — branch "
-            "shape may have changed; relocate before fixing this test."
-        )
-        assert detector_line is not None
-        assert detector_line > snapshot_line, (
-            f"Detector must run AFTER snapshot load on legacy branch too "
-            f"(line {snapshot_line} < {detector_line} required)."
-        )
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: drive a real resume through the slug-keyed path
-# ---------------------------------------------------------------------------
-
-
 class TestSlugResumeEndToEnd:
     """Drives a populated SqliteStore through the actual slug-resume code
     path and asserts the OTEL spans + watcher event fire. This is the
@@ -255,7 +193,11 @@ class TestSlugResumeEndToEnd:
         store = SqliteStore(db)
         store.initialize()
         upsert_game(
-            store, slug=slug, mode=GameMode.SOLO, genre_slug=genre, world_slug=world,
+            store,
+            slug=slug,
+            mode=GameMode.SOLO,
+            genre_slug=genre,
+            world_slug=world,
         )
         store.init_session(genre, world)
 
@@ -263,9 +205,7 @@ class TestSlugResumeEndToEnd:
         from sidequest.game.character import Character
         from sidequest.game.creature_core import CreatureCore, Inventory
 
-        snap = GameSnapshot(
-            genre_slug=genre, world_slug=world, location="Crypt Threshold"
-        )
+        snap = GameSnapshot(genre_slug=genre, world_slug=world, location="Crypt Threshold")
         snap.characters = [
             Character(
                 core=CreatureCore(
@@ -292,6 +232,7 @@ class TestSlugResumeEndToEnd:
         store.save(snap)
         # 10 scrapbook rows for rounds 1-10.
         import json as _json
+
         with store._conn:
             for r in range(1, 11):
                 store._conn.execute(
@@ -346,16 +287,17 @@ class TestSlugResumeEndToEnd:
 
         save_dir: Path = populated_slug_save["save_dir"]
         slug: str = populated_slug_save["slug"]
-        fixture_packs = (
-            Path(__file__).resolve().parents[1] / "fixtures" / "packs"
-        )
+        fixture_packs = Path(__file__).resolve().parents[1] / "fixtures" / "packs"
 
         handler = WebSocketSessionHandler(
-            save_dir=save_dir, genre_pack_search_paths=[fixture_packs],
+            save_dir=save_dir,
+            genre_pack_search_paths=[fixture_packs],
         )
         queue: asyncio.Queue[object] = asyncio.Queue()
         handler.attach_room_context(
-            registry=RoomRegistry(), socket_id="sock-orin", out_queue=queue,
+            registry=RoomRegistry(),
+            socket_id="sock-orin",
+            out_queue=queue,
         )
 
         connect = GameMessage.model_validate(
