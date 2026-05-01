@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing_extensions import Self
 
 from sidequest.genre.models.chassis import BondTier
 
@@ -220,3 +221,33 @@ class MagicMicrobleed(BaseModel):
 
     detail: str
     cost_bar: str | None = None
+
+
+class OpeningSetting(BaseModel):
+    """Either ship-anchored (Coyote Star) OR location-anchored (Aureate). Exactly one."""
+
+    model_config = {"extra": "forbid"}
+
+    chassis_instance: str | None = None
+    interior_room: str | None = None
+    location_label: str | None = None
+    situation: str = ""
+    present_npcs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _exactly_one_anchor(self) -> Self:
+        ship = self.chassis_instance is not None
+        place = self.location_label is not None
+        if ship == place:
+            raise ValueError(
+                "OpeningSetting must specify exactly one of "
+                "chassis_instance (with interior_room) OR location_label"
+            )
+        if ship and not self.interior_room:
+            raise ValueError("interior_room required when chassis_instance is set")
+        if ship and self.present_npcs:
+            raise ValueError(
+                "present_npcs must be empty for chassis-anchored openings; "
+                "use chassis_instance.crew_npcs instead"
+            )
+        return self
