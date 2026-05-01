@@ -1,7 +1,6 @@
 """Unit tests for sidequest.server.rest endpoints.
 
-Tests /api/genres, /api/saves, /api/saves/new, DELETE /api/saves/...,
-and /api/sessions.
+Tests /api/genres, /api/sessions, and /api/debug/state.
 
 No real genre pack files needed — tests use tmp_path fixtures and minimal
 YAML stubs.
@@ -138,9 +137,7 @@ def test_list_genres_skips_symlinked_world_aliases(tmp_path):
 
     # Create a backwards-compat symlink alias: primetime → dungeon_survivor
     worlds_dir = packs_dir / "caverns_and_claudes" / "worlds"
-    (worlds_dir / "primetime").symlink_to(
-        worlds_dir / "dungeon_survivor", target_is_directory=True
-    )
+    (worlds_dir / "primetime").symlink_to(worlds_dir / "dungeon_survivor", target_is_directory=True)
 
     saves_dir = tmp_path / "saves"
     saves_dir.mkdir()
@@ -151,9 +148,7 @@ def test_list_genres_skips_symlinked_world_aliases(tmp_path):
     client = TestClient(app)
     worlds = client.get("/api/genres").json()["caverns_and_claudes"]["worlds"]
     slugs = [w["slug"] for w in worlds]
-    assert slugs == ["dungeon_survivor"], (
-        f"symlinked alias must be skipped; got {slugs}"
-    )
+    assert slugs == ["dungeon_survivor"], f"symlinked alias must be skipped; got {slugs}"
 
 
 def test_list_genres_empty_when_no_packs_dir(tmp_path):
@@ -202,127 +197,6 @@ def test_list_genres_axis_snapshot_format(tmp_path):
     for k, v in snapshot.items():
         assert isinstance(k, str)
         assert isinstance(v, (int, float))
-
-
-# ---------------------------------------------------------------------------
-# GET /api/saves
-# ---------------------------------------------------------------------------
-
-
-def test_list_saves_empty_when_no_saves(tmp_path):
-    """GET /api/saves returns empty list when save dir is empty."""
-    client = _make_app(tmp_path)
-    resp = client.get("/api/saves")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["saves"] == []
-
-
-def test_list_saves_finds_created_save(tmp_path):
-    """A save created via POST /api/saves/new appears in GET /api/saves."""
-    client = _make_app(tmp_path)
-
-    # Create a save
-    body = {
-        "genre_slug": "spaghetti_western",
-        "world_slug": "dust_and_lead",
-        "player_name": "rex",
-    }
-    post_resp = client.post("/api/saves/new", json=body)
-    assert post_resp.status_code == 200
-
-    # List saves
-    list_resp = client.get("/api/saves")
-    data = list_resp.json()
-    saves = data["saves"]
-    assert len(saves) == 1
-    assert saves[0]["genre_slug"] == "spaghetti_western"
-    assert saves[0]["world_slug"] == "dust_and_lead"
-    assert saves[0]["player_name"] == "rex"
-
-
-def test_list_saves_genre_filter(tmp_path):
-    """GET /api/saves?genre=... filters by genre."""
-    client = _make_app(tmp_path)
-
-    # Create two saves in different genres
-    client.post("/api/saves/new", json={"genre_slug": "spaghetti_western", "world_slug": "dust_and_lead", "player_name": "p1"})
-    client.post("/api/saves/new", json={"genre_slug": "caverns_and_claudes", "world_slug": "flickering_reach", "player_name": "p2"})
-
-    data = client.get("/api/saves?genre=spaghetti_western").json()
-    saves = data["saves"]
-    assert all(s["genre_slug"] == "spaghetti_western" for s in saves)
-    assert len(saves) == 1
-
-
-# ---------------------------------------------------------------------------
-# POST /api/saves/new
-# ---------------------------------------------------------------------------
-
-
-def test_create_save_returns_db_path(tmp_path):
-    """POST /api/saves/new returns db_path."""
-    client = _make_app(tmp_path)
-    resp = client.post(
-        "/api/saves/new",
-        json={"genre_slug": "spaghetti_western", "world_slug": "dust_and_lead", "player_name": "cowboy"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "db_path" in data
-    assert Path(data["db_path"]).suffix == ".db"
-
-
-def test_create_save_missing_genre_returns_400(tmp_path):
-    """POST /api/saves/new without genre_slug returns 400."""
-    client = _make_app(tmp_path)
-    resp = client.post("/api/saves/new", json={"world_slug": "dust_and_lead", "player_name": "cowboy"})
-    assert resp.status_code == 400
-
-
-def test_create_save_missing_world_returns_400(tmp_path):
-    """POST /api/saves/new without world_slug returns 400."""
-    client = _make_app(tmp_path)
-    resp = client.post("/api/saves/new", json={"genre_slug": "spaghetti_western", "player_name": "cowboy"})
-    assert resp.status_code == 400
-
-
-def test_create_save_creates_db_file(tmp_path):
-    """POST /api/saves/new actually writes a .db file to disk."""
-    client = _make_app(tmp_path)
-    resp = client.post(
-        "/api/saves/new",
-        json={"genre_slug": "spaghetti_western", "world_slug": "dust_and_lead", "player_name": "cowboy"},
-    )
-    db_path = Path(resp.json()["db_path"])
-    assert db_path.exists()
-    assert db_path.is_file()
-
-
-# ---------------------------------------------------------------------------
-# DELETE /api/saves/{genre}/{world}/{player}
-# ---------------------------------------------------------------------------
-
-
-def test_delete_save_removes_file(tmp_path):
-    """DELETE /api/saves/... removes the save file."""
-    client = _make_app(tmp_path)
-    client.post(
-        "/api/saves/new",
-        json={"genre_slug": "spaghetti_western", "world_slug": "dust_and_lead", "player_name": "cowboy"},
-    )
-
-    del_resp = client.delete("/api/saves/spaghetti_western/dust_and_lead/cowboy")
-    assert del_resp.status_code == 200
-    data = del_resp.json()
-    assert data["deleted"] is True
-
-
-def test_delete_nonexistent_save_returns_404(tmp_path):
-    """DELETE /api/saves/... for missing save returns 404."""
-    client = _make_app(tmp_path)
-    resp = client.delete("/api/saves/no_genre/no_world/nobody")
-    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +386,9 @@ def test_debug_state_sorts_newest_first_and_filters_by_session_key(tmp_path):
 
     # Newer save — leave its mtime at "now".
     new_slug = _write_snapshot(
-        "flickering_reach", _date(2026, 4, 24), "The Filtration Warren",
+        "flickering_reach",
+        _date(2026, 4, 24),
+        "The Filtration Warren",
     )
 
     resp = client.get("/api/debug/state")

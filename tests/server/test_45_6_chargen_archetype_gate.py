@@ -103,9 +103,7 @@ def handler_factory(save_dir: Path):
     # CONTENT_ROOT lives inside the fixture so the conftest import above
     # can stay at the top of the module (drops a noqa: E402 and matches
     # the pattern used by the adjacent test_chargen_*.py files).
-    content_root = (
-        Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-    )
+    content_root = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
     if not (content_root / "caverns_and_claudes").is_dir():
         pytest.skip("caverns_and_claudes content not found")
 
@@ -148,11 +146,14 @@ async def _connect(
     world: str = "grimvault",
 ) -> SessionEventMessage:
     """Send SESSION_EVENT.connect and confirm the handler entered Creating."""
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name=player_name,
-        genre="caverns_and_claudes",
-        world=world,
+        game_slug=slug,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
     assert isinstance(out[0], SessionEventMessage)
@@ -262,9 +263,7 @@ class TestArchetypeGateOkResolved:
                 )
 
             sd = handler._session_data  # type: ignore[attr-defined]
-            assert sd.snapshot.characters, (
-                "OK_RESOLVED must persist the character to the snapshot"
-            )
+            assert sd.snapshot.characters, "OK_RESOLVED must persist the character to the snapshot"
             character = sd.snapshot.characters[0]
             assert character.resolved_archetype is not None, (
                 "OK_RESOLVED must leave a non-None resolved_archetype"
@@ -298,9 +297,7 @@ class TestArchetypeGateOkResolved:
             # bypassed it). Without this assertion, the test passes
             # today with NO gate present (the existing resolver already
             # produces the right state) — which would be vacuous.
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
             assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_RESOLVED branch — without this span, the test "
@@ -350,8 +347,7 @@ class TestArchetypeGateBlockedPartial:
             out = await _send_confirmation(handler)
             assert out, "confirmation must produce a frame"
             assert isinstance(out[0], ErrorMessage), (
-                "BLOCKED_PARTIAL must return an ERROR frame, got "
-                f"{out[0]!r}"
+                f"BLOCKED_PARTIAL must return an ERROR frame, got {out[0]!r}"
             )
             err = out[0].payload
             assert err.code == "chargen_archetype_unresolved", (
@@ -362,12 +358,9 @@ class TestArchetypeGateBlockedPartial:
             # Human-readable message must exist (NonBlankString
             # constructor enforces non-blank — we just confirm the field
             # is populated and unwraps to a non-empty string).
-            assert err.message is not None, (
-                "BLOCKED_PARTIAL must include a message field"
-            )
+            assert err.message is not None, "BLOCKED_PARTIAL must include a message field"
             assert str(err.message).strip(), (
-                "BLOCKED_PARTIAL message must unwrap to a non-empty "
-                "string"
+                "BLOCKED_PARTIAL message must unwrap to a non-empty string"
             )
 
             # Negative regression (Reviewer-flagged): the legacy
@@ -423,8 +416,7 @@ class TestArchetypeGateBlockedPartial:
             )
             # Handler state must not flip — chargen is not done.
             assert handler._state == _State.Creating, (  # type: ignore[attr-defined]
-                "BLOCKED_PARTIAL must keep the handler in Creating; got "
-                f"{handler._state!r}"
+                f"BLOCKED_PARTIAL must keep the handler in Creating; got {handler._state!r}"
             )
 
         asyncio.run(body())
@@ -487,8 +479,7 @@ class TestArchetypeGateRawPairUnresolved:
             out = await _send_confirmation(handler)
             assert out, "confirmation must produce a frame"
             assert isinstance(out[0], ErrorMessage), (
-                "raw_pair_unresolved branch must return an ERROR frame, "
-                f"got {out[0]!r}"
+                f"raw_pair_unresolved branch must return an ERROR frame, got {out[0]!r}"
             )
             assert out[0].payload.code == "chargen_archetype_unresolved", (
                 "raw_pair_unresolved ERROR must carry the documented "
@@ -498,8 +489,7 @@ class TestArchetypeGateRawPairUnresolved:
 
             # Character must NOT be persisted.
             assert not sd.snapshot.characters, (
-                "raw_pair_unresolved must NOT append the character to "
-                "sd.snapshot.characters"
+                "raw_pair_unresolved must NOT append the character to sd.snapshot.characters"
             )
 
             # The blocked span fires with block_reason='raw_pair_unresolved'
@@ -507,12 +497,9 @@ class TestArchetypeGateRawPairUnresolved:
             # distinguish this branch from missing_axes_with_pack_axes
             # at the OTEL surface; if the discriminator regresses, this
             # test catches it.
-            blocked = _spans_named(
-                otel_capture, "chargen.archetype_gate_blocked"
-            )
+            blocked = _spans_named(otel_capture, "chargen.archetype_gate_blocked")
             assert len(blocked) >= 1, (
-                "chargen.archetype_gate_blocked must fire on the "
-                "raw_pair_unresolved branch"
+                "chargen.archetype_gate_blocked must fire on the raw_pair_unresolved branch"
             )
             bl_attrs = dict(blocked[-1].attributes or {})
             assert bl_attrs.get("block_reason") == "raw_pair_unresolved", (
@@ -583,13 +570,10 @@ class TestArchetypeGateOkNoAxes:
             assert out, "confirmation must produce a frame"
             for msg in out:
                 assert not isinstance(msg, ErrorMessage), (
-                    "OK_NO_AXES must not error; pack opted out — "
-                    f"got {msg!r}"
+                    f"OK_NO_AXES must not error; pack opted out — got {msg!r}"
                 )
 
-            assert sd.snapshot.characters, (
-                "OK_NO_AXES must persist the character"
-            )
+            assert sd.snapshot.characters, "OK_NO_AXES must persist the character"
             assert sd.snapshot.characters[0].resolved_archetype is None, (
                 "OK_NO_AXES is allowed to leave resolved_archetype=None"
             )
@@ -600,9 +584,7 @@ class TestArchetypeGateOkNoAxes:
             # chose the pack-opted-out branch deliberately, vs. the
             # silent skip that shipped pumblestone. Without this
             # assertion the test passes today with no gate present.
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
             assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_NO_AXES branch — without this span the test would "
@@ -637,9 +619,7 @@ class TestArchetypeGateOtel:
             _inject_hints(monkeypatch, jungian="hero", rpg_role="tank")
             await _send_confirmation(handler)
 
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
             assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on every "
                 "confirm — Sebastien's GM panel needs the negative "
@@ -647,16 +627,12 @@ class TestArchetypeGateOtel:
             )
             attrs = dict(evaluated[-1].attributes or {})
             assert attrs.get("state") == "ok_resolved", (
-                f"OK_RESOLVED span state must be 'ok_resolved'; got "
-                f"{attrs.get('state')!r}"
+                f"OK_RESOLVED span state must be 'ok_resolved'; got {attrs.get('state')!r}"
             )
             # No blocked span on the success path.
-            blocked = _spans_named(
-                otel_capture, "chargen.archetype_gate_blocked"
-            )
+            blocked = _spans_named(otel_capture, "chargen.archetype_gate_blocked")
             assert not blocked, (
-                "chargen.archetype_gate_blocked must NOT fire on the "
-                "OK_RESOLVED branch"
+                "chargen.archetype_gate_blocked must NOT fire on the OK_RESOLVED branch"
             )
 
         asyncio.run(body())
@@ -682,24 +658,18 @@ class TestArchetypeGateOtel:
 
             await _send_confirmation(handler)
 
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
             assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "OK_NO_AXES branch — every confirm path emits"
             )
             attrs = dict(evaluated[-1].attributes or {})
             assert attrs.get("state") == "ok_no_axes", (
-                f"OK_NO_AXES span state must be 'ok_no_axes'; got "
-                f"{attrs.get('state')!r}"
+                f"OK_NO_AXES span state must be 'ok_no_axes'; got {attrs.get('state')!r}"
             )
-            blocked = _spans_named(
-                otel_capture, "chargen.archetype_gate_blocked"
-            )
+            blocked = _spans_named(otel_capture, "chargen.archetype_gate_blocked")
             assert not blocked, (
-                "chargen.archetype_gate_blocked must NOT fire on the "
-                "OK_NO_AXES branch"
+                "chargen.archetype_gate_blocked must NOT fire on the OK_NO_AXES branch"
             )
 
         asyncio.run(body())
@@ -720,9 +690,7 @@ class TestArchetypeGateOtel:
 
             await _send_confirmation(handler)
 
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
             assert len(evaluated) >= 1, (
                 "chargen.archetype_gate_evaluated must fire on the "
                 "BLOCKED_PARTIAL branch too — Sebastien needs the "
@@ -734,9 +702,7 @@ class TestArchetypeGateOtel:
                 f"'blocked_partial'; got {ev_attrs.get('state')!r}"
             )
 
-            blocked = _spans_named(
-                otel_capture, "chargen.archetype_gate_blocked"
-            )
+            blocked = _spans_named(otel_capture, "chargen.archetype_gate_blocked")
             assert len(blocked) >= 1, (
                 "chargen.archetype_gate_blocked is the explicit "
                 "lie-detector entry — it must fire when chargen would "
@@ -779,8 +745,7 @@ class TestArchetypeGateOtel:
             # Per story context, both spans drive a state_transition
             # event tagged to a chargen / character_creation component.
             assert route.event_type == "state_transition", (
-                f"{name} route must emit state_transition events; got "
-                f"{route.event_type!r}"
+                f"{name} route must emit state_transition events; got {route.event_type!r}"
             )
 
 
@@ -819,9 +784,7 @@ class TestArchetypeGateResolverRaised:
             # logs and emits archetype_resolution_failed, then returns
             # — the raw pair stays on the character.
             def _raise(*args, **kwargs):
-                raise GenreValidationError(
-                    message="test-forced resolver raise"
-                )
+                raise GenreValidationError(message="test-forced resolver raise")
 
             monkeypatch.setattr(
                 "sidequest.server.websocket_session_handler.resolve_archetype",
@@ -838,9 +801,7 @@ class TestArchetypeGateResolverRaised:
             )
 
             sd = handler._session_data  # type: ignore[attr-defined]
-            assert not sd.snapshot.characters, (
-                "Resolver-raised path must not persist the character"
-            )
+            assert not sd.snapshot.characters, "Resolver-raised path must not persist the character"
 
             # Legacy resolver-failed event still fires (no regression).
             legacy_events = [
@@ -856,12 +817,9 @@ class TestArchetypeGateResolverRaised:
             )
 
             # New blocked span fires with block_reason='resolver_raised'.
-            blocked = _spans_named(
-                otel_capture, "chargen.archetype_gate_blocked"
-            )
+            blocked = _spans_named(otel_capture, "chargen.archetype_gate_blocked")
             assert len(blocked) >= 1, (
-                "chargen.archetype_gate_blocked must fire on the "
-                "resolver-raised branch"
+                "chargen.archetype_gate_blocked must fire on the resolver-raised branch"
             )
             bl_attrs = dict(blocked[-1].attributes or {})
             assert bl_attrs.get("block_reason") == "resolver_raised", (
@@ -942,10 +900,7 @@ class TestArchetypeGateLogging:
                 rec
                 for rec in caplog.records
                 if rec.levelno >= logging.WARNING
-                and (
-                    "archetype_gate" in rec.getMessage()
-                    or "archetype_gate" in (rec.name or "")
-                )
+                and ("archetype_gate" in rec.getMessage() or "archetype_gate" in (rec.name or ""))
             ]
             assert relevant, (
                 "BLOCKED_PARTIAL gate path must emit a WARNING-level "
@@ -1047,12 +1002,8 @@ class TestArchetypeGateDiscriminatorRobustness:
 
             # Evaluator span MUST report state='ok_resolved' (not
             # 'blocked_partial').
-            evaluated = _spans_named(
-                otel_capture, "chargen.archetype_gate_evaluated"
-            )
-            assert len(evaluated) >= 1, (
-                "Evaluator span must fire even on slash-in-name path"
-            )
+            evaluated = _spans_named(otel_capture, "chargen.archetype_gate_evaluated")
+            assert len(evaluated) >= 1, "Evaluator span must fire even on slash-in-name path"
             attrs = dict(evaluated[-1].attributes or {})
             assert attrs.get("state") == "ok_resolved", (
                 f"Slash-in-display-name must produce state='ok_resolved'; "
@@ -1085,9 +1036,7 @@ class TestArchetypeGateWiring:
 
         from sidequest.server.session_handler import WebSocketSessionHandler
 
-        body = inspect.getsource(
-            WebSocketSessionHandler._chargen_confirmation
-        )
+        body = inspect.getsource(WebSocketSessionHandler._chargen_confirmation)
         # Acceptable invocation patterns — at least ONE must appear
         # inside the method body. The first is the canonical extracted
         # helper; the other two cover an inline-gate alternative where
@@ -1117,9 +1066,7 @@ class TestArchetypeGateWiring:
         called — covering both halves of the wiring contract."""
         from sidequest.server.session_handler import WebSocketSessionHandler
 
-        assert hasattr(
-            WebSocketSessionHandler, "_gate_archetype_resolution"
-        ), (
+        assert hasattr(WebSocketSessionHandler, "_gate_archetype_resolution"), (
             "WebSocketSessionHandler must define _gate_archetype_resolution. "
             "If Dev renamed the method, update this assertion AND the "
             "call-site test above to match."

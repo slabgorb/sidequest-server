@@ -134,9 +134,7 @@ def caverns_pack() -> GenrePack:
 
 
 class TestBindScenarioUnit:
-    def test_returns_none_when_pack_has_no_scenarios(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_returns_none_when_pack_has_no_scenarios(self, caverns_pack: GenrePack) -> None:
         # caverns ships without scenarios — copy and ensure it stays empty.
         import copy as _copy
 
@@ -149,9 +147,7 @@ class TestBindScenarioUnit:
         assert result is None
         assert snap.scenario_state is None
 
-    def test_seeds_matching_npc_beliefs_and_emits_event(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_seeds_matching_npc_beliefs_and_emits_event(self, caverns_pack: GenrePack) -> None:
         import copy as _copy
 
         snap = GameSnapshot(
@@ -267,11 +263,18 @@ def handler(tmp_path: Path) -> WebSocketSessionHandler:
 
 
 async def _connect(handler: WebSocketSessionHandler) -> None:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(
+        handler._save_dir,
+        genre="caverns_and_claudes",
+        world="flickering_reach",
+    )
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name="Tester",
-        genre="caverns_and_claudes",
-        world="flickering_reach",
+        game_slug=slug,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
     assert isinstance(out[0], SessionEventMessage)
@@ -305,9 +308,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
 
 class TestDispatchIntegration:
-    def test_confirmation_binds_injected_scenario(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_confirmation_binds_injected_scenario(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -320,9 +321,7 @@ class TestDispatchIntegration:
                         "A Person Not In The World",
                     )
                 ],
-                suspects=[
-                    Suspect(id="suspect", archetype_ref="r", can_be_guilty=True)
-                ],
+                suspects=[Suspect(id="suspect", archetype_ref="r", can_be_guilty=True)],
             )
 
             out = await _walk_and_confirm(handler)

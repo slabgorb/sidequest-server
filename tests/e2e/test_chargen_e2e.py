@@ -42,14 +42,30 @@ def _make_client(tmp_path: Path) -> TestClient:
     return TestClient(app)
 
 
-def _connect_payload(genre: str, world: str, player_name: str = "Rux") -> dict:
+def _connect_payload(
+    client: TestClient,
+    genre: str,
+    world: str,
+    player_name: str = "Rux",
+) -> dict:
+    """Mint a game slug then build a slug-keyed connect envelope.
+
+    Story 45-26: WS connect requires ``payload.game_slug``; the legacy
+    ``(genre, world, player_name)`` connect path was deleted alongside
+    the legacy ``/api/saves/*`` REST routes. Tests must mint a slug via
+    ``POST /api/games`` and connect with ``game_slug``.
+    """
+    r = client.post(
+        "/api/games",
+        json={"genre_slug": genre, "world_slug": world, "mode": "solo"},
+    )
+    assert r.status_code == 201, f"Failed to mint slug: {r.text}"
     return {
         "type": "SESSION_EVENT",
         "payload": {
             "event": "connect",
             "player_name": player_name,
-            "genre": genre,
-            "world": world,
+            "game_slug": r.json()["slug"],
         },
         "player_id": "",
     }
@@ -92,7 +108,7 @@ class TestCavernsAndClaudesFlow:
 
         with client.websocket_connect("/ws") as ws:
             # ---- Connect ---------------------------------------------------
-            ws.send_json(_connect_payload("caverns_and_claudes", "flickering_reach"))
+            ws.send_json(_connect_payload(client, "caverns_and_claudes", "flickering_reach"))
             connected = _recv(ws)
             assert connected["type"] == "SESSION_EVENT"
             assert connected["payload"]["event"] == "connected"
@@ -106,11 +122,13 @@ class TestCavernsAndClaudesFlow:
             assert initial["payload"]["scene_index"] == 0
 
             # ---- Scene 0 (the_roll): display-only, phase=continue ---------
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "continue"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "continue"},
+                    "player_id": "",
+                }
+            )
             msg = _recv(ws)
             assert msg["type"] == "CHARACTER_CREATION"
             assert msg["payload"]["phase"] == "scene"
@@ -133,21 +151,25 @@ class TestCavernsAndClaudesFlow:
             assert msg["payload"]["scene_index"] == 2  # the_kit
 
             # ---- Scene 2 (the_kit): display-only -------------------------
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "continue"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "continue"},
+                    "player_id": "",
+                }
+            )
             msg = _recv(ws)
             assert msg["payload"]["phase"] == "scene"
             assert msg["payload"]["scene_index"] == 3  # the_mouth
 
             # ---- Scene 3 (the_mouth): display-only, advances to Confirmation
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "continue"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "continue"},
+                    "player_id": "",
+                }
+            )
             summary_msg = _recv(ws)
             assert summary_msg["type"] == "CHARACTER_CREATION"
             assert summary_msg["payload"]["phase"] == "confirmation"
@@ -163,11 +185,13 @@ class TestCavernsAndClaudesFlow:
             assert "Delver" in summary
 
             # ---- Confirmation commit → complete ---------------------------
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "confirmation"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "confirmation"},
+                    "player_id": "",
+                }
+            )
             complete = _recv(ws)
             assert complete["type"] == "CHARACTER_CREATION"
             assert complete["payload"]["phase"] == "complete"
@@ -196,7 +220,7 @@ class TestElementalHarmonyFlow:
         client = _make_client(tmp_path)
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(_connect_payload("elemental_harmony", "burning_peace"))
+            ws.send_json(_connect_payload(client, "elemental_harmony", "burning_peace"))
             connected = _recv(ws)
             assert connected["payload"]["event"] == "connected"
             assert connected["payload"]["has_character"] is False
@@ -211,15 +235,13 @@ class TestElementalHarmonyFlow:
             # AwaitingFollowup).
             assert msg["payload"]["phase"] in ("scene", "confirmation")
 
-    def test_invalid_choice_returns_error_does_not_disconnect(
-        self, tmp_path: Path
-    ) -> None:
+    def test_invalid_choice_returns_error_does_not_disconnect(self, tmp_path: Path) -> None:
         if not (CONTENT_ROOT / "elemental_harmony").is_dir():
             pytest.skip("elemental_harmony content not found")
         client = _make_client(tmp_path)
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(_connect_payload("elemental_harmony", "burning_peace"))
+            ws.send_json(_connect_payload(client, "elemental_harmony", "burning_peace"))
             _recv(ws)  # connected
             _recv(ws)  # initial chargen scene 0 kickoff
 
@@ -253,7 +275,7 @@ class TestBackActionFlow:
         client = _make_client(tmp_path)
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(_connect_payload("elemental_harmony", "burning_peace"))
+            ws.send_json(_connect_payload(client, "elemental_harmony", "burning_peace"))
             _recv(ws)  # connected
             _recv(ws)  # initial chargen scene 0 kickoff
 
@@ -268,11 +290,13 @@ class TestBackActionFlow:
             scene_after = after_choice["payload"]["scene_index"]
 
             # Go back.
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "scene", "action": "back"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "scene", "action": "back"},
+                    "player_id": "",
+                }
+            )
             back = _recv(ws)
             assert back["type"] == "CHARACTER_CREATION"
             assert back["payload"]["phase"] == "scene"
@@ -304,15 +328,17 @@ class TestStructuredErrors:
             pytest.skip("caverns_and_claudes content not found")
         client = _make_client(tmp_path)
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(_connect_payload("caverns_and_claudes", "flickering_reach"))
+            ws.send_json(_connect_payload(client, "caverns_and_claudes", "flickering_reach"))
             _recv(ws)
             _recv(ws)  # initial chargen scene 0 kickoff
 
-            ws.send_json({
-                "type": "CHARACTER_CREATION",
-                "payload": {"phase": "scene", "action": "bogus"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "scene", "action": "bogus"},
+                    "player_id": "",
+                }
+            )
             err = _recv(ws)
             assert err["type"] == "ERROR"
             assert "Unknown chargen action" in err["payload"]["message"]

@@ -90,11 +90,14 @@ async def _connect(
     player_name: str = "Sebastien",
     world: str = "grimvault",
 ) -> SessionEventMessage:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name=player_name,
-        genre="caverns_and_claudes",
-        world=world,
+        game_slug=slug,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
     assert isinstance(out[0], SessionEventMessage)
@@ -131,12 +134,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
 
 def _events(exporter: InMemorySpanExporter, name: str) -> list:
-    return [
-        e
-        for span in exporter.get_finished_spans()
-        for e in span.events
-        if e.name == name
-    ]
+    return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
 class TestChargenCompleteNoHpLeak:
@@ -158,24 +156,24 @@ class TestChargenCompleteNoHpLeak:
 
             # Must carry the ADR-014 schema marker so future regressions are
             # grep-able in the playtest log corpus.
-            assert any(
-                "schema=adr-014" in line for line in chargen_lines
-            ), f"chargen.complete missing schema=adr-014: {chargen_lines!r}"
+            assert any("schema=adr-014" in line for line in chargen_lines), (
+                f"chargen.complete missing schema=adr-014: {chargen_lines!r}"
+            )
 
             # No bare `hp=N` token (ADR-014 removed the HP field). We
             # specifically guard against the legacy `hp=10` template the
             # log used to render. A trailing `hp=` would be an
             # equally-bad regression.
             for line in chargen_lines:
-                assert not re.search(
-                    r"\bhp=\d", line
-                ), f"chargen.complete leaks legacy hp= field: {line!r}"
+                assert not re.search(r"\bhp=\d", line), (
+                    f"chargen.complete leaks legacy hp= field: {line!r}"
+                )
 
             # Edge mechanical state must be present in some form (Sebastien
             # axis: mechanical visibility on completion).
-            assert any(
-                re.search(r"\bedge=\d+/\d+", line) for line in chargen_lines
-            ), f"chargen.complete missing edge=N/M: {chargen_lines!r}"
+            assert any(re.search(r"\bedge=\d+/\d+", line) for line in chargen_lines), (
+                f"chargen.complete missing edge=N/M: {chargen_lines!r}"
+            )
 
         asyncio.run(body())
 
@@ -187,26 +185,18 @@ class TestChargenCompleteNoHpLeak:
             await _connect(handler)
             await _walk_and_confirm(handler)
 
-            built_events = _events(
-                otel_capture, "character_creation.character_built"
-            )
-            assert built_events, (
-                "expected at least one character_creation.character_built event"
-            )
+            built_events = _events(otel_capture, "character_creation.character_built")
+            assert built_events, "expected at least one character_creation.character_built event"
 
             for ev in built_events:
                 attrs = dict(ev.attributes or {})
-                assert "hp" not in attrs, (
-                    f"character_built event leaks legacy `hp` key: {attrs!r}"
-                )
+                assert "hp" not in attrs, f"character_built event leaks legacy `hp` key: {attrs!r}"
                 # ADR-014 fields must be present so the dashboard can show
                 # the actual schema.
                 assert "edge_current" in attrs, (
                     f"character_built event missing edge_current: {attrs!r}"
                 )
-                assert "edge_max" in attrs, (
-                    f"character_built event missing edge_max: {attrs!r}"
-                )
+                assert "edge_max" in attrs, f"character_built event missing edge_max: {attrs!r}"
                 assert attrs.get("schema") == "adr-014"
 
         asyncio.run(body())

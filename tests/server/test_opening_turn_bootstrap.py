@@ -87,16 +87,17 @@ def otel_capture():
         processor.shutdown()
 
 
-async def _connect(
-    handler: WebSocketSessionHandler, *, world: str = "grimvault"
-) -> None:
+async def _connect(handler: WebSocketSessionHandler, *, world: str = "grimvault") -> None:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
+    attach_default_room_context(handler)
     await handler.handle_message(
         SessionEventMessage(
             payload=SessionEventPayload(
                 event="connect",
                 player_name="Tester",
-                genre="caverns_and_claudes",
-                world=world,
+                game_slug=slug,
             ),
             player_id="",
         )
@@ -194,9 +195,7 @@ class TestOpeningTurnFrames:
 
         asyncio.run(body())
 
-    def test_narration_carries_opening_text(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_narration_carries_opening_text(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             out = await _walk_and_confirm(handler)
@@ -226,6 +225,7 @@ class TestOpeningTurnFrames:
         would leak as player-facing prose, when it's actually the
         engine's implicit action.
         """
+
         async def body() -> None:
             await _connect(handler)
             sd = handler._session_data  # type: ignore[attr-defined]
@@ -270,9 +270,7 @@ class TestOpeningDirectiveInjection:
             assert claude_mock.send_with_session.called
             call_args = claude_mock.send_with_session.call_args
             # Scan both args and kwargs for the rendered prompt.
-            blob = " ".join(
-                [*map(str, call_args.args), *map(str, call_args.kwargs.values())]
-            )
+            blob = " ".join([*map(str, call_args.args), *map(str, call_args.kwargs.values())])
             # The directive must have been injected into the prompt.
             # Substring match on a stable phrase from the directive keeps
             # this resilient to template tweaks around the edges.
@@ -347,12 +345,15 @@ class TestMPJoinerRaceSuppression:
     """
 
     def test_second_committer_skips_cold_open_seed(
-        self, handler: WebSocketSessionHandler, otel_capture: InMemorySpanExporter,
+        self,
+        handler: WebSocketSessionHandler,
+        otel_capture: InMemorySpanExporter,
     ) -> None:
         """Second player to complete chargen on a shared snapshot must
         NOT receive a fresh cold-open NARRATION frame, even when their
         ``sd.opening_seed`` was populated at connect time (race: joiner
         connected before host seated)."""
+
         async def body() -> None:
             from sidequest.game.character import Character
             from sidequest.game.creature_core import CreatureCore, Inventory
@@ -366,11 +367,15 @@ class TestMPJoinerRaceSuppression:
             # player's PC is appended. This mirrors the room-shared-
             # snapshot reality at consume-time on the joiner's socket.
             host_core = CreatureCore(
-                name="HostPC", description="d", personality="p",
+                name="HostPC",
+                description="d",
+                personality="p",
                 inventory=Inventory(),
             )
             host = Character(
-                core=host_core, char_class="Fighter", race="Human",
+                core=host_core,
+                char_class="Fighter",
+                race="Human",
                 backstory="b",
             )
             sd.snapshot.characters.append(host)
@@ -402,13 +407,8 @@ class TestMPJoinerRaceSuppression:
             )
 
             # OTEL: opening_turn.dispatched must report cold_open_emitted=False
-            events = [
-                e for span in otel_capture.get_finished_spans()
-                for e in span.events
-            ]
-            dispatched = [
-                e for e in events if e.name == "opening_turn.dispatched"
-            ]
+            events = [e for span in otel_capture.get_finished_spans() for e in span.events]
+            dispatched = [e for e in events if e.name == "opening_turn.dispatched"]
             assert dispatched, "opening_turn.dispatched span event must fire"
             attrs = dict(dispatched[-1].attributes or {})
             assert attrs["cold_open_emitted"] is False, (
@@ -417,10 +417,7 @@ class TestMPJoinerRaceSuppression:
             )
             # New OTEL: dedicated suppression event must name pack/world
             # so the GM panel can confirm the fix reaches each pack.
-            suppressed = [
-                e for e in events
-                if e.name == "mp_joiner_opening_suppressed_at_consume"
-            ]
+            suppressed = [e for e in events if e.name == "mp_joiner_opening_suppressed_at_consume"]
             assert suppressed, (
                 "Consume-time suppression must emit "
                 "mp_joiner_opening_suppressed_at_consume span event"
@@ -465,11 +462,7 @@ class TestOtelEvents:
             await _connect(handler)
             await _walk_and_confirm(handler)
 
-            events = [
-                e
-                for span in otel_capture.get_finished_spans()
-                for e in span.events
-            ]
+            events = [e for span in otel_capture.get_finished_spans() for e in span.events]
             names = {e.name for e in events}
             assert "opening_turn.dispatched" in names
             assert "session.start.character_snapshot_emitted" in names

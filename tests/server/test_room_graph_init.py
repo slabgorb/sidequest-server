@@ -84,11 +84,14 @@ async def _connect(
     *,
     world: str = "grimvault",
 ) -> None:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name="Tester",
-        genre="caverns_and_claudes",
-        world=world,
+        game_slug=slug,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
     assert isinstance(out[0], SessionEventMessage)
@@ -131,12 +134,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
 
 def _events(exporter: InMemorySpanExporter, name: str) -> list:
-    return [
-        e
-        for span in exporter.get_finished_spans()
-        for e in span.events
-        if e.name == name
-    ]
+    return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
 class TestRoomGraphInit:
@@ -163,9 +161,7 @@ class TestRoomGraphInit:
             # Entrance room id populated on the snapshot.
             assert sd.snapshot.location
             entrance_id = sd.snapshot.location
-            entrance_room = next(
-                r for r in world.cartography.rooms if r.id == entrance_id
-            )
+            entrance_room = next(r for r in world.cartography.rooms if r.id == entrance_id)
             assert entrance_room.room_type == "entrance"
             assert entrance_id in sd.snapshot.discovered_rooms
 

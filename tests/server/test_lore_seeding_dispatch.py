@@ -101,12 +101,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
 
 def _events(exporter: InMemorySpanExporter, name: str) -> list:
-    return [
-        e
-        for span in exporter.get_finished_spans()
-        for e in span.events
-        if e.name == name
-    ]
+    return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
 class TestLoreSeedingDispatch:
@@ -114,13 +109,20 @@ class TestLoreSeedingDispatch:
         self, handler: WebSocketSessionHandler
     ) -> None:
         async def body() -> None:
+            from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+            slug = seed_slug_for_test(
+                handler._save_dir,
+                genre="caverns_and_claudes",
+                world="grimvault",
+            )
+            attach_default_room_context(handler)
             await handler.handle_message(
                 SessionEventMessage(
                     payload=SessionEventPayload(
                         event="connect",
                         player_name="Tester",
-                        genre="caverns_and_claudes",
-                        world="grimvault",
+                        game_slug=slug,
                     ),
                     player_id="",
                 )
@@ -163,8 +165,7 @@ class TestLoreSeedingDispatch:
                     genre_pack_frags.append(frag)
                 else:
                     raise AssertionError(
-                        f"Unexpected lore source {frag.source!r} for "
-                        f"fragment {frag.id!r}"
+                        f"Unexpected lore source {frag.source!r} for fragment {frag.id!r}"
                     )
                 assert frag.content  # all fragments must have body text
 
@@ -191,13 +192,23 @@ class TestLoreSeedingDispatch:
         otel_capture: InMemorySpanExporter,
     ) -> None:
         async def body() -> None:
+            from tests.server.conftest import (
+                attach_default_room_context,
+                seed_slug_for_test,
+            )
+
+            slug = seed_slug_for_test(
+                handler._save_dir,
+                genre="caverns_and_claudes",
+                world="grimvault",
+            )
+            attach_default_room_context(handler)
             await handler.handle_message(
                 SessionEventMessage(
                     payload=SessionEventPayload(
                         event="connect",
                         player_name="Tester",
-                        genre="caverns_and_claudes",
-                        world="grimvault",
+                        game_slug=slug,
                     ),
                     player_id="",
                 )

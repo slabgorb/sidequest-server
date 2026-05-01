@@ -13,6 +13,7 @@ import the helper. They turn GREEN once Dev deletes the routes (rest.py
 
 Spec: ``sprint/context/context-story-45-26.md`` ACs 1–3.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,13 +37,11 @@ def test_legacy_save_routes_are_not_registered(tmp_path: Path) -> None:
         f"Legacy GET /api/saves still registered. Routes: {route_paths}"
     )
     assert "/api/saves/new" not in route_paths, (
-        f"Legacy POST /api/saves/new still registered. "
-        f"Routes: {route_paths}"
+        f"Legacy POST /api/saves/new still registered. Routes: {route_paths}"
     )
     legacy_dynamic = [p for p in route_paths if p.startswith("/api/saves/")]
     assert not legacy_dynamic, (
-        f"Legacy DELETE /api/saves/{{...}} still registered. "
-        f"Found: {legacy_dynamic}"
+        f"Legacy DELETE /api/saves/{{...}} still registered. Found: {legacy_dynamic}"
     )
 
 
@@ -54,8 +53,7 @@ def test_legacy_db_path_for_session_helper_removed() -> None:
     import sidequest.game.persistence as p
 
     assert not hasattr(p, "db_path_for_session"), (
-        "db_path_for_session was scheduled for removal in 45-26 — "
-        "use db_path_for_slug instead."
+        "db_path_for_session was scheduled for removal in 45-26 — use db_path_for_slug instead."
     )
     assert hasattr(p, "db_path_for_slug"), (
         "db_path_for_slug is the canonical save-path helper post-MP-03 "

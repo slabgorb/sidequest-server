@@ -14,12 +14,10 @@ from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.game.builder import CharacterBuilder
-from sidequest.game.chassis import init_chassis_registry
 from sidequest.game.event_log import EventLog
 from sidequest.game.persistence import (
     SaveSchemaIncompatibleError,
     SqliteStore,
-    db_path_for_session,
 )
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection.composed import ComposedFilter
@@ -139,7 +137,8 @@ class ConnectHandler:
         payload: SessionEventPayload,
         player_id: str,
     ) -> list[object]:
-        # New slug-based path (preferred). Legacy genre+world path below remains for now.
+        # Slug-keyed connect is the only supported path (Story 45-26).
+        # Falsy game_slug returns a typed error below.
         if getattr(payload, "game_slug", None):
             from sidequest.game.persistence import (
                 GameMode,
@@ -532,11 +531,22 @@ class ConnectHandler:
             # state proves we're past the opening — the persisted
             # ``current_scene`` on the snapshot is the source of truth, not
             # a re-rolled hook.
+            # Fresh-session guard: opening seed/directive are only
+            # consumed by the first narrator turn after chargen, but
+            # ``TurnManager.interaction`` defaults to 1 (not 0) on a
+            # fresh snapshot, so the prior ``interaction == 0`` check
+            # was always false and openings never resolved on slug
+            # connects. The legacy connect path resolved unconditionally
+            # and tests in ``test_chargen_dispatch.py`` /
+            # ``test_opening_turn_bootstrap.py`` enforce that contract.
+            # Gate on ``saved is None`` instead — that is the precise
+            # "this is the very first connect for this slug" signal,
+            # which is what the original comment about avoiding
+            # opening-hook re-rolls on reconnect was reaching for.
+            # Story 45-26 surfaced the bug while retargeting legacy-
+            # connect tests to slug-connect.
             opening: tuple[str, str] | None = None
-            if (
-                not snapshot.characters
-                and snapshot.turn_manager.interaction == 0
-            ):
+            if saved is None and not snapshot.characters:
                 opening = resolve_opening(
                     genre_pack,
                     row.world_slug,
@@ -716,8 +726,7 @@ class ConnectHandler:
                     # ``transition_to_playing`` call.
                     _seat_helper_room.transition_to_playing(player_id)
                 logger.info(
-                    "session.auto_seated player_id=%s slug=%s mode=%s "
-                    "has_character=%s slot=%r",
+                    "session.auto_seated player_id=%s slug=%s mode=%s has_character=%s slot=%r",
                     player_id,
                     slug,
                     row.mode,
@@ -1012,278 +1021,17 @@ class ConnectHandler:
 
             return [connected_msg, *bootstrap_msgs, *replay_msgs]
 
-        genre_slug = payload.genre or ""
-        world_slug = payload.world or ""
-        player_name = payload.player_name or "player"
-
-        if not genre_slug:
-            return [_error_msg("SESSION_EVENT{connect} missing genre slug")]
-        if not world_slug:
-            return [_error_msg("SESSION_EVENT{connect} missing world slug")]
-
-        logger.info(
-            "session.connect genre=%s world=%s player=%s",
-            genre_slug,
-            world_slug,
-            player_name,
-        )
-
-        # Generate a stable player_id if not provided by client
-        if not player_id:
-            player_id = str(uuid.uuid4())
-
-        # Load genre pack
-        try:
-            loader = GenreLoader(search_paths=session._search_paths)
-            genre_pack = loader.load(genre_slug)
-        except Exception as exc:
-            logger.error("session.genre_load_failed genre=%s error=%s", genre_slug, exc)
-            return [_error_msg(f"Failed to load genre pack '{genre_slug}': {exc}")]
-
-        # Open or create SQLite save
-        db_path = db_path_for_session(session._save_dir, genre_slug, world_slug, player_name)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        store = SqliteStore.open(str(db_path))
-        from sidequest.telemetry.watcher_hub import bind_event_store as _bind_event_store
-
-        _bind_event_store(store)
-
-        # Load existing session or start fresh. Schema-incompatible saves
-        # (legacy snapshots that fail current GameSnapshot validation)
-        # surface as a typed ERROR with code=save_schema_invalid; see the
-        # `_handle_connect` slug branch for the rationale.
-        try:
-            saved = store.load()
-        except SaveSchemaIncompatibleError as exc:
-            logger.warning(
-                "session.save_schema_invalid genre=%s world=%s player=%s path=%s error=%s",
-                genre_slug,
-                world_slug,
-                player_name,
-                exc.save_path,
-                exc.underlying,
+        # Story 45-26: legacy (genre, world, player_name) connect path
+        # was deleted alongside the legacy /api/saves/* REST routes.
+        # Clients must mint a slug via POST /api/games and connect with
+        # ``payload.game_slug``. UI has done this exclusively since MP-03.
+        return [
+            _error_msg(
+                "SESSION_EVENT{connect} requires payload.game_slug — "
+                "the legacy genre+world+player_name connect path was "
+                "removed in 45-26. Mint a slug via POST /api/games."
             )
-            _watcher_publish(
-                "save_schema_invalid",
-                {
-                    "genre_slug": genre_slug,
-                    "world_slug": world_slug,
-                    "player_name": player_name,
-                    "save_path": str(exc.save_path),
-                    "validation_error": str(exc.underlying),
-                },
-                component="session",
-                severity="error",
-            )
-            return [
-                _error_msg(
-                    f"This save predates the current schema and cannot be "
-                    f"loaded. Start a new adventure or move the save aside: "
-                    f"{exc.save_path}",
-                    reconnect_required=False,
-                    code="save_schema_invalid",
-                )
-            ]
-        has_character: bool
-        if saved is not None:
-            snapshot = saved.snapshot
-            _backfill_magic_state_on_resume(
-                snapshot=snapshot,
-                genre_pack=genre_pack,
-                world_slug=world_slug,
-            )
-            has_character = bool(snapshot.characters)
-            logger.info(
-                "session.resumed genre=%s world=%s player=%s turn=%s",
-                genre_slug,
-                world_slug,
-                player_name,
-                snapshot.turn_manager.interaction,
-            )
-            # Story 45-10: read-side hygiene for the scrapbook subsystem.
-            # Mirrors the slug-resume call site above so legacy non-slug
-            # saves (Felix's solo sessions) get the same coverage check.
-            # AC4 explicitly names this — a slug-only fix would leave
-            # legacy saves silent.
-            detect_scrapbook_coverage_gaps(
-                store=store,
-                snapshot=snapshot,
-                slug="",
-            )
-        else:
-            snapshot = GameSnapshot(
-                genre_slug=genre_slug,
-                world_slug=world_slug,
-                location="Unknown",
-            )
-            store.init_session(genre_slug, world_slug)
-            init_chassis_registry(snapshot, genre_pack)
-            has_character = False
-            logger.info(
-                "session.new_session genre=%s world=%s player=%s",
-                genre_slug,
-                world_slug,
-                player_name,
-            )
-
-        # Build orchestrator (one per session, persistent session ADR-066)
-        orchestrator = Orchestrator(client=session._client_factory())
-
-        # Initialize chargen builder when entering Creating state. The lobby
-        # name is the fallback the Name line uses when the genre has no
-        # name-entry scene (caverns_and_claudes, etc.).
-        builder: CharacterBuilder | None = None
-        chargen_scenes = resolve_char_creation_scenes(genre_pack, world_slug)
-        if not has_character and chargen_scenes:
-            builder = CharacterBuilder(
-                scenes=chargen_scenes,
-                rules=genre_pack.rules,
-                backstory_tables=genre_pack.backstory_tables,
-            ).with_lobby_name(player_name)
-            if genre_pack.equipment_tables is not None:
-                builder = builder.with_equipment_tables(genre_pack.equipment_tables)
-
-        # Opening-hook resolution (Story 2.3 Slice B). Pick one hook per
-        # connection from world.openings (preferred) or pack.openings, so
-        # the first narrator turn has an ``opening_directive`` to inject
-        # and an ``opening_seed`` to run as the first action. ``None`` on
-        # both when the pack has no openings configured — first turn
-        # runs without a directive. Returning-player reconnects (has_
-        # character=True) skip chargen, so the directive/seed are dead
-        # weight for them, but resolving here anyway keeps the seat
-        # uniform and costs nothing.
-        opening: tuple[str, str] | None = resolve_opening(genre_pack, world_slug, genre_slug)
-        opening_seed: str | None = None
-        opening_directive: str | None = None
-        if opening is not None:
-            opening_seed, opening_directive = opening
-
-        # World context (Story 41-11): resolve once at connect time so
-        # the filter engages consistently across every turn. Empty
-        # reference → ``None`` so the orchestrator skips the section
-        # instead of registering an empty block.
-        culture_ref = resolve_culture_reference(genre_pack, world_slug)
-        world_context: str | None = culture_ref if culture_ref else None
-        audio_backend = session._build_audio_backend(genre_slug, genre_pack)
-
-        session._session_data = _SessionData(
-            genre_slug=genre_slug,
-            world_slug=world_slug,
-            player_name=player_name,
-            player_id=player_id,
-            snapshot=snapshot,
-            store=store,
-            genre_pack=genre_pack,
-            orchestrator=orchestrator,
-            builder=builder,
-            opening_seed=opening_seed,
-            opening_directive=opening_directive,
-            world_context=world_context,
-            audio_backend=audio_backend,
-        )
-        session._state = _State.Creating if not has_character else _State.Playing
-
-        connected_msg = SessionEventMessage(
-            type="SESSION_EVENT",  # type: ignore[arg-type]
-            payload=SessionEventPayload(
-                event="connected",
-                player_name=player_name,
-                genre=genre_slug,
-                world=world_slug,
-                has_character=has_character,
-                initial_state=None,
-                css=None,
-                narrator_verbosity=None,
-                narrator_vocabulary=None,
-                image_cooldown_seconds=None,
-            ),
-            player_id=player_id,
-        )
-
-        # Kick off chargen by emitting the first scene alongside the
-        # connected event when we're entering Creating state. Without
-        # this the client lands on an empty <CharacterCreation/> and
-        # has no way to advance — there is no client-side kickoff.
-        outbound: list[object] = [connected_msg]
-        if session._state is _State.Creating and builder is not None:
-            outbound.append(builder.to_scene_message(player_id))
-
-        # Resume path: when has_character=True the client needs a
-        # `SESSION_EVENT{event:"ready"}` to flip sessionPhase from
-        # "connect" to "game". Without this the returning player stays
-        # on the ConnectScreen forever even though the server has
-        # resumed their save (playtest 2026-04-22). App.tsx handles
-        # chargen-complete → "game" directly, so the ready event is
-        # only needed on the resume branch.
-        if session._state is _State.Playing:
-            ready_msg = SessionEventMessage(
-                type="SESSION_EVENT",  # type: ignore[arg-type]
-                payload=SessionEventPayload(
-                    event="ready",
-                    player_name=player_name,
-                    genre=genre_slug,
-                    world=world_slug,
-                    has_character=True,
-                    initial_state=None,
-                    css=None,
-                    narrator_verbosity=None,
-                    narrator_vocabulary=None,
-                    image_cooldown_seconds=None,
-                ),
-                player_id=player_id,
-            )
-            outbound.append(ready_msg)
-            logger.info(
-                "session.ready_emitted reason=resume player=%s turn=%d",
-                player_name,
-                snapshot.turn_manager.interaction,
-            )
-            # Snapshot the resumed session so the dashboard State tab and
-            # Subsystems "session" component light up on reconnect without
-            # waiting for the next narration turn. Include the full snapshot
-            # dump so the State panel can paint immediately rather than
-            # falling back to the thin summary fields (which lack `location`
-            # under the dashboard's expected key — it reads `s.location`,
-            # not `s.current_location`).
-            _watcher_publish(
-                "game_state_snapshot",
-                {
-                    "reason": "resume",
-                    "genre_slug": genre_slug,
-                    "world_slug": world_slug,
-                    "player_name": player_name,
-                    "player_id": player_id,
-                    "turn_number": snapshot.turn_manager.interaction,
-                    "snapshot": snapshot.model_dump(mode="json"),
-                    "current_location": snapshot.location or "",
-                    "discovered_regions": list(snapshot.discovered_regions),
-                    "npc_registry_count": len(snapshot.npc_registry),
-                    "quest_log_count": len(snapshot.quest_log),
-                    "lore_established_count": len(snapshot.lore_established),
-                    "character_count": len(snapshot.characters),
-                },
-                component="session",
-            )
-            # Also refresh PARTY_STATUS so the resumed client's header /
-            # sheet / location update from the saved snapshot. Without
-            # this the UI has no character data until the next narration
-            # turn fires. MP: resolve self by player_id (see notes at the
-            # other call site, ~line 1640).
-            if snapshot.characters:
-                try:
-                    self_char = (
-                        views.resolve_self_character(session, session._session_data)
-                        or snapshot.characters[0]
-                    )
-                    outbound.append(
-                        views.build_session_start_party_status(
-                            session, session._session_data, self_char, player_id
-                        )
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("session.resume_party_status_failed error=%s", exc)
-
-        return outbound
+        ]
 
 
 HANDLER = ConnectHandler()

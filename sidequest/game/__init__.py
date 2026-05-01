@@ -70,7 +70,6 @@ from sidequest.game.persistence import (
     SerializationError,
     SessionMeta,
     SqliteStore,
-    db_path_for_session,
 )
 from sidequest.game.resource_pool import (
     NotVoluntary,
@@ -151,7 +150,6 @@ __all__ = [
     "SerializationError",
     "SessionMeta",
     "SqliteStore",
-    "db_path_for_session",
     # resource_pool (ADR-033)
     "NotVoluntary",
     "ResourcePatch",

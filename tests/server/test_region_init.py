@@ -84,11 +84,14 @@ async def _connect(
     genre: str,
     world: str,
 ) -> None:
+    from tests.server.conftest import attach_default_room_context, seed_slug_for_test
+
+    slug = seed_slug_for_test(handler._save_dir, genre=genre, world=world)
+    attach_default_room_context(handler)
     payload = SessionEventPayload(
         event="connect",
         player_name="Tester",
-        genre=genre,
-        world=world,
+        game_slug=slug,
     )
     out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
     assert isinstance(out[0], SessionEventMessage)
@@ -124,12 +127,7 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list[Any]:
 
 
 def _events(exporter: InMemorySpanExporter, name: str) -> list[Any]:
-    return [
-        e
-        for span in exporter.get_finished_spans()
-        for e in span.events
-        if e.name == name
-    ]
+    return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
 class TestRegionInitUnit:
@@ -149,12 +147,8 @@ class TestRegionInitUnit:
         cartography = CartographyConfig(
             starting_region="ashgate_square",
             regions={
-                "ashgate_square": Region(
-                    name="Ashgate Square", summary="", description=""
-                ),
-                "ledger_row": Region(
-                    name="Ledger Row", summary="", description=""
-                ),
+                "ashgate_square": Region(name="Ashgate Square", summary="", description=""),
+                "ledger_row": Region(name="Ledger Row", summary="", description=""),
             },
         )
 
