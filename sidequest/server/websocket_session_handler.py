@@ -107,6 +107,12 @@ from sidequest.server import views
 from sidequest.server.audio_cue import build_audio_cue_payload
 from sidequest.server.dispatch.chargen_loadout import apply_starting_loadout
 from sidequest.server.dispatch.chargen_summary import render_confirmation_summary
+from sidequest.server.dispatch.opening import (
+    OpeningResolutionError,
+    _resolve_opening_post_chargen,
+    build_directive,
+    record_opening_played,
+)
 from sidequest.server.dispatch.scenario_bind import bind_scenario
 from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.narration_apply import (
@@ -153,6 +159,133 @@ logger = logging.getLogger(__name__)
 # Preserve the original tracer name so OTEL span sources do not rename when
 # this class moved out of session_handler.py. Phase-3 plan principle.
 tracer = trace.get_tracer("sidequest.server.session_handler")
+
+
+def _populate_opening_directive_on_chargen_complete(
+    session_data: _SessionData,
+    snapshot: GameSnapshot,
+    pack: GenrePack,
+    world_slug: str,
+    mode: object,
+) -> None:
+    """Resolve and stash an Opening directive at chargen-completion time.
+
+    Called from the ``is_first_commit`` branch of
+    :meth:`WebSocketSessionHandler._handle_character_creation` after
+    authored NPCs have been pre-loaded but before persistence and the
+    first narrator turn fires. Picks one Opening from the world's bank
+    via :func:`_resolve_opening_post_chargen`, builds a directive via
+    :func:`build_directive`, and stashes both the seed and directive on
+    ``session_data`` so :meth:`_run_opening_turn_narration` can consume
+    them on the very next call.
+
+    Side effects:
+    - sets ``session_data.opening_seed`` to the chosen Opening's
+      first_turn_invitation
+    - sets ``session_data.opening_directive`` to the rendered directive
+    - sets ``session_data._resolved_opening_id`` for the played-span
+
+    No-ops gracefully when:
+    - ``opening_directive`` is already populated (idempotency for
+      double-confirmation guards)
+    - the snapshot has no characters (defensive — chargen should have
+      appended one already)
+    - the world has no openings authored (Validator 7 should have
+      caught this at world load)
+    - resolution fails (Validators 7+8 should make this unreachable)
+
+    The MP-joiner case is handled by the *caller*: this helper is only
+    invoked from the ``is_first_commit`` branch, so a peer joining a
+    snapshot that already has characters never reaches this code path.
+
+    See ``docs/superpowers/specs/2026-05-01-canned-openings-design.md``
+    §2.4 + §2.6.
+    """
+    if getattr(session_data, "opening_directive", None) is not None:
+        return  # already populated — idempotent
+
+    if not snapshot.characters:
+        return  # defensive — chargen should have appended one
+
+    pc = snapshot.characters[0]
+    pc_background = getattr(pc, "background", "") or ""
+
+    world = pack.worlds.get(world_slug)
+    if world is None or not world.openings:
+        return  # validator-7 should make this unreachable
+
+    mode_str = mode.value if hasattr(mode, "value") else str(mode)
+    try:
+        opening = _resolve_opening_post_chargen(
+            world.openings,
+            mode=mode_str,
+            player_count=len(snapshot.characters),
+            pc_background=pc_background,
+            world_slug=world_slug,
+        )
+    except OpeningResolutionError:
+        return  # validator-7+8 should prevent — span already emitted by resolver
+
+    # Chassis lookup — World may not store chassis_instances directly
+    # (loader populates them as a sibling structure for validators).
+    # Use getattr to fall through gracefully when the field is absent;
+    # location-anchored Openings won't need it anyway.
+    chassis = None
+    authored_crew: list = []
+    bond_tier: str = "neutral"
+    if opening.setting.chassis_instance is not None:
+        chassis_instances = getattr(world, "chassis_instances", []) or []
+        chassis = next(
+            (c for c in chassis_instances if c.id == opening.setting.chassis_instance),
+            None,
+        )
+        if chassis is not None:
+            npc_by_id = {n.id: n for n in world.authored_npcs}
+            authored_crew = [
+                npc_by_id[i] for i in chassis.crew_npcs if i in npc_by_id
+            ]
+            for seed in chassis.bond_seeds:
+                if seed.character_role == "player_character":
+                    bond_tier = seed.bond_tier_chassis
+                    break
+
+    present_npcs: list = []
+    if opening.setting.chassis_instance is None:
+        npc_by_id = {n.id: n for n in world.authored_npcs}
+        present_npcs = [
+            npc_by_id[i] for i in opening.setting.present_npcs if i in npc_by_id
+        ]
+
+    per_pc_beat = None
+    pc_drive = getattr(pc, "drive", "") or ""
+    for beat in opening.per_pc_beats:
+        applies = beat.applies_to
+        if applies.get("background") == pc_background:
+            per_pc_beat = beat
+            break
+        if applies.get("drive") == pc_drive:
+            per_pc_beat = beat
+            break
+
+    magic_register = getattr(world, "magic_register", "") or ""
+
+    pc_name_parts = pc.core.name.split() if hasattr(pc, "core") else [""]
+    directive = build_directive(
+        opening=opening,
+        chassis=chassis,
+        authored_crew=authored_crew,
+        magic_register=magic_register,
+        bond_tier_for_pc=bond_tier,
+        per_pc_beat=per_pc_beat,
+        pc_first_name=getattr(pc, "first_name", None) or pc_name_parts[0],
+        pc_last_name=getattr(pc, "last_name", "") or "",
+        pc_nickname=getattr(pc, "nickname", "") or "",
+        present_npcs=present_npcs,
+    )
+
+    session_data.opening_seed = opening.first_turn_invitation
+    session_data.opening_directive = directive
+    session_data._resolved_opening_id = opening.id
 
 
 class WebSocketSessionHandler:
@@ -1440,6 +1573,23 @@ class WebSocketSessionHandler:
                     "error": str(exc),
                     "player_id": player_id,
                 },
+            )
+
+        # Canned-openings Phase 4 (Task 19): resolve + stash the
+        # opening directive at chargen-completion. First-commit only —
+        # MP joiners (a peer's PC already on the snapshot) skip this,
+        # which makes the consume-time MP-joiner suppression in
+        # ``_run_opening_turn_narration`` a defense-in-depth fallback
+        # rather than the primary guard. The seed/directive populated
+        # here are consumed by ``_run_opening_turn_narration`` on the
+        # very next call.
+        if is_first_commit:
+            _populate_opening_directive_on_chargen_complete(
+                session_data=sd,
+                snapshot=sd.snapshot,
+                pack=sd.genre_pack,
+                world_slug=sd.world_slug,
+                mode=sd.mode,
             )
 
         # Opening-turn bootstrap (Slice H / connect.rs:2270). Fires
@@ -2786,6 +2936,21 @@ class WebSocketSessionHandler:
             sd, action, turn_context, is_opening_turn=True,
         )
         messages = cold_open_messages + list(narrator_messages)
+
+        # Canned-openings Phase 4 (Task 19): emit opening.played span at
+        # consumption so the GM panel can verify the canned opening
+        # actually reached the narrator's first turn rather than being
+        # silently dropped. Only fires when a directive was actually
+        # rendered (skips MP-joiner / no-opening / fallback paths).
+        if sd.opening_directive is not None:
+            record_opening_played(
+                opening_id=getattr(sd, "_resolved_opening_id", None) or "<unknown>",
+                narrator_session_id=getattr(
+                    sd.orchestrator, "_narrator_session_id", None
+                )
+                or "<unknown>",
+                turn_id=sd.snapshot.turn_manager.interaction,
+            )
 
         # Consume once — Rust uses `opening_directive.take()`; subsequent
         # turns must run directive-free. Same for the seed: it's a
