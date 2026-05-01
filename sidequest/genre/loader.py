@@ -21,6 +21,7 @@ from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
 from sidequest.genre.models.archetype_funnels import ArchetypeFunnels
 from sidequest.genre.models.audio import AudioConfig, VoicePresets
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -384,23 +385,40 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         world_path / "archetype_funnels.yaml", ArchetypeFunnels
     )
 
-    # World-tier opening hooks and chargen scenes
-    openings_raw = _load_yaml_raw_optional(world_path / "openings.yaml")
-    openings: list[OpeningHook] = (
-        [OpeningHook.model_validate(o) for o in openings_raw]
-        if isinstance(openings_raw, list)
-        else []
+    # === World-tier openings.yaml — MANDATORY ===
+    # The unified Opening schema. Both solo and MP entries live here,
+    # distinguished by triggers.mode. Replaces both the old genre-tier
+    # space_opera/openings.yaml fallback path and the per-world
+    # mp_opening.yaml side file.
+    openings_path = world_path / "openings.yaml"
+    if not openings_path.exists():
+        raise GenreLoadError(
+            path=openings_path,
+            detail=(
+                f"World {world_path.name!r} is missing required openings.yaml. "
+                "World-tier openings became mandatory in the canned-openings story; "
+                "every world must author at least one solo and one MP opening. "
+                "See docs/superpowers/specs/2026-05-01-canned-openings-design.md §1."
+            ),
+        )
+    openings_raw = _load_yaml_raw(openings_path)
+    # openings.yaml top-level shape: { version, world, genre, openings: [...] }
+    openings_list_raw = (
+        openings_raw.get("openings", []) if isinstance(openings_raw, dict) else []
     )
+    openings: list[Opening] = [Opening.model_validate(o) for o in openings_list_raw]
 
-    # World-tier multiplayer openings — see worlds/{slug}/mp_opening.yaml
-    # for the canonical shape (e.g., coyote_star/mp_opening.yaml). The
-    # file's top-level `mp_openings:` list is the source of truth.
-    mp_openings_raw = _load_yaml_raw_optional(world_path / "mp_opening.yaml")
-    mp_openings: list[MpOpening] = []
-    if isinstance(mp_openings_raw, dict):
-        entries = mp_openings_raw.get("mp_openings")
-        if isinstance(entries, list):
-            mp_openings = [MpOpening.model_validate(o) for o in entries]
+    # === World-tier npcs.yaml — OPTIONAL ===
+    # AuthoredNpc list. If a chassis_instance references crew_npcs from
+    # this list, validator 4 (Phase 2) catches missing references.
+    npcs_path = world_path / "npcs.yaml"
+    authored_npcs: list[AuthoredNpc] = []
+    if npcs_path.exists():
+        npcs_raw = _load_yaml_raw(npcs_path)
+        npcs_list_raw = (
+            npcs_raw.get("npcs", []) if isinstance(npcs_raw, dict) else []
+        )
+        authored_npcs = [AuthoredNpc.model_validate(n) for n in npcs_list_raw]
 
     char_creation_raw = _load_yaml_raw_optional(world_path / "char_creation.yaml")
     char_creation: list[CharCreationScene] = (
@@ -435,7 +453,7 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         portrait_manifest=portrait_manifest,
         archetype_funnels=archetype_funnels,
         openings=openings,
-        mp_openings=mp_openings,
+        authored_npcs=authored_npcs,
         char_creation=char_creation,
     )
 
@@ -556,12 +574,12 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         path / "inventory.yaml", InventoryConfig
     )
 
-    openings_raw = _load_yaml_raw_optional(path / "openings.yaml")
-    openings: list[OpeningHook] = (
-        [OpeningHook.model_validate(o) for o in openings_raw]
-        if isinstance(openings_raw, list)
-        else []
-    )
+    # Genre-tier openings.yaml is dead. Per the canned-openings design
+    # (§1, locked decision #2), all openings now live at the world tier
+    # (worlds/{slug}/openings.yaml), and the genre-tier file is deleted.
+    # The GenrePack.openings field remains for the Opening type but is
+    # always populated empty here; callers should read worlds[slug].openings.
+    openings: list[Opening] = []
 
     backstory_tables: BackstoryTables | None = _load_yaml_optional(
         path / "backstory_tables.yaml", BackstoryTables
