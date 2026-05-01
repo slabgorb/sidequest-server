@@ -162,25 +162,12 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
 
 def test_space_opera_magic_init_still_fires(so_pack_dir):
     """Companion: ensure the C&C migration didn't accidentally regress
-    the space_opera path. The world (renamed Coyote Reach → Coyote
-    Star on the content repo's ``develop`` branch, commit adb8e91)
-    must still load the four authored bars (sanity / notice / vitality
-    / hegemony_heat). Resilient to content branch state — try
-    ``coyote_star`` first, fall back to ``coyote_reach`` (the pre-
-    rename slug still on ``main``).
+    the space_opera path. Coyote Star must still load the four authored
+    bars (sanity / notice / vitality / hegemony_heat).
     """
-    world_slug = next(
-        (
-            slug
-            for slug in ("coyote_star", "coyote_reach")
-            if (so_pack_dir / "worlds" / slug / "magic.yaml").is_file()
-        ),
-        None,
-    )
-    assert world_slug is not None, (
-        f"Neither coyote_star nor coyote_reach magic.yaml found under "
-        f"{so_pack_dir / 'worlds'} — content checkout missing both pre- "
-        "and post-rename world directories."
+    world_slug = "coyote_star"
+    assert (so_pack_dir / "worlds" / world_slug / "magic.yaml").is_file(), (
+        f"coyote_star magic.yaml not found under {so_pack_dir / 'worlds'}"
     )
     snapshot = GameSnapshot(
         genre_slug="space_opera",

@@ -37,18 +37,9 @@ def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace, s
     if not (pack_dir / "magic.yaml").is_file():
         pytest.skip("space_opera magic.yaml not present in this checkout")
 
-    world_slug = next(
-        (
-            slug
-            for slug in ("coyote_star", "coyote_reach")
-            if (pack_dir / "worlds" / slug / "magic.yaml").is_file()
-        ),
-        None,
-    )
-    if world_slug is None:
-        pytest.skip(
-            "Neither coyote_star nor coyote_reach magic.yaml found in this checkout"
-        )
+    world_slug = "coyote_star"
+    if not (pack_dir / "worlds" / world_slug / "magic.yaml").is_file():
+        pytest.skip("coyote_star magic.yaml not found in this checkout")
 
     snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
     snap.characters.append(

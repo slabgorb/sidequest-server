@@ -511,7 +511,7 @@ def _load_single_world(
     Port of Rust load_single_world().
 
     Args:
-        world_path: Path to the world directory (e.g. ``.../worlds/coyote_reach``).
+        world_path: Path to the world directory (e.g. ``.../worlds/coyote_star``).
         genre_tropes: Genre-tier tropes used for inheritance resolution.
         genre_root: Path to the genre pack root (e.g. ``.../space_opera``).
             Used to locate the genre-tier ``magic.yaml`` so the magic loader
@@ -648,7 +648,7 @@ def _load_single_world(
     # Cross-file validators 7 + 8: opening bank coverage (canned-openings §1.4).
     # Derive chargen backgrounds from the canonical "background" scene in
     # char_creation.yaml. Worlds whose chargen uses a different scene id
-    # (e.g. coyote_reach uses "origins") fall through to []; that disables
+    # (e.g. coyote_star uses "origins") fall through to []; that disables
     # Validator 8 for those worlds but Validator 7 still enforces solo+MP.
     background_scene = next(
         (s for s in char_creation if s.id == "background"),
