@@ -87,13 +87,21 @@ from sidequest.genre.models.inventory import (
 )
 from sidequest.genre.models.legends import FactionGrudge, Legend, TerrainScar
 from sidequest.genre.models.lore import Faction, Lore, WorldLore
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatObstacle,
     BeatVocabulary,
-    OpeningHook,
+    MagicMicrobleed,
+    Opening,
+    OpeningSetting,
+    OpeningTone,
+    OpeningTrigger,
+    PartyFraming,
+    PerPcBeat,
     PowerTier,
     Prompts,
+    SoftHook,
 )
 from sidequest.genre.models.npc_traits import NpcTrait, NpcTraitsDatabase
 from sidequest.genre.models.ocean import (
@@ -276,13 +284,22 @@ __all__ = [
     "Faction",
     "Lore",
     "WorldLore",
+    # authored_npc
+    "AuthoredNpc",
     # narrative
     "Achievement",
     "BeatObstacle",
     "BeatVocabulary",
-    "OpeningHook",
+    "MagicMicrobleed",
+    "Opening",
+    "OpeningSetting",
+    "OpeningTone",
+    "OpeningTrigger",
+    "PartyFraming",
+    "PerPcBeat",
     "PowerTier",
     "Prompts",
+    "SoftHook",
     # npc_traits
     "NpcTrait",
     "NpcTraitsDatabase",

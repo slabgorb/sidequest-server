@@ -37,8 +37,7 @@ from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
-    MpOpening,
-    OpeningHook,
+    Opening,
     PowerTier,
     Prompts,
 )

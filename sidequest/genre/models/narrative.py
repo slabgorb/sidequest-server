@@ -44,53 +44,6 @@ class Prompts(BaseModel):
     scene_description: str | None = None
 
 
-class OpeningHook(BaseModel):
-    """An opening scenario hook."""
-
-    model_config = {"extra": "forbid"}
-
-    id: str
-    archetype: str
-    situation: str
-    tone: str
-    avoid: list[str] = Field(default_factory=list)
-    first_turn_seed: str
-
-
-class MpOpening(BaseModel):
-    """A multiplayer-specific opening scenario.
-
-    Used in place of ``OpeningHook`` when a session is in multiplayer
-    mode and the world declares one or more entries in
-    ``worlds/{slug}/mp_opening.yaml``. MP openings land the party
-    aboard the world's flagship rig (or equivalent shared setting) in
-    a chill scene — no turn-1 confrontation, no dice, every PC gets a
-    voice slot. See ``coyote_star/mp_opening.yaml`` for the canonical
-    shape.
-
-    Only ``id`` and ``establishing_narration`` are required; the rest
-    of the rich authoring (rig voice seeds, per-PC beats, soft hook,
-    party framing) parses through via ``extra="allow"`` and is rendered
-    into the narrator directive verbatim. The renderer treats unknown
-    fields as opaque text — content can grow without changing this
-    schema.
-    """
-
-    model_config = {"extra": "allow"}
-
-    id: str
-    name: str = ""
-    establishing_narration: str
-    first_turn_invitation: str = ""
-    triggers: dict[str, Any] = Field(default_factory=dict)
-    setting: dict[str, Any] = Field(default_factory=dict)
-    tone: dict[str, Any] = Field(default_factory=dict)
-    rig_voice_seeds: list[dict[str, Any]] = Field(default_factory=list)
-    per_pc_beats: list[dict[str, Any]] = Field(default_factory=list)
-    soft_hook: dict[str, Any] = Field(default_factory=dict)
-    party_framing: dict[str, Any] = Field(default_factory=dict)
-
-
 class BeatObstacle(BaseModel):
     """A chase obstacle."""
 

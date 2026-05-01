@@ -15,7 +15,6 @@ from sidequest.genre.models import (
     Legend,
     NpcTrait,
     NpcTraitsDatabase,
-    OpeningHook,
     Prompts,
 )
 
@@ -115,22 +114,6 @@ class TestNpcTraits:
             behavioral=[],
         )
         assert len(db.personality) == 1
-
-
-class TestOpeningHook:
-    def test_valid(self) -> None:
-        o = OpeningHook(
-            id="arena", archetype="challenge", situation="Fight!",
-            tone="tense", first_turn_seed="You enter the arena.",
-        )
-        assert o.id == "arena"
-
-    def test_extra_forbidden(self) -> None:
-        with pytest.raises(ValidationError):
-            OpeningHook.model_validate({
-                "id": "x", "archetype": "a", "situation": "s",
-                "tone": "t", "first_turn_seed": "f", "bogus": True,
-            })
 
 
 class TestLegend:

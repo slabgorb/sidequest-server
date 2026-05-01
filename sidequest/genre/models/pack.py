@@ -33,11 +33,11 @@ from sidequest.genre.models.inventory import InventoryConfig
 from sidequest.genre.models.legends import Legend
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.lore import Lore, WorldLore
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatVocabulary,
-    MpOpening,
-    OpeningHook,
+    Opening,
     PowerTier,
     Prompts,
 )
@@ -132,8 +132,8 @@ class World(BaseModel):
     legends_raw: Any = None
     portrait_manifest: list[PortraitManifestEntry] = Field(default_factory=list)
     archetype_funnels: ArchetypeFunnels | None = None
-    openings: list[OpeningHook] = Field(default_factory=list)
-    mp_openings: list[MpOpening] = Field(default_factory=list)
+    openings: list[Opening] = Field(default_factory=list)
+    authored_npcs: list[AuthoredNpc] = Field(default_factory=list)
     char_creation: list[CharCreationScene] = Field(default_factory=list)
 
 
@@ -168,7 +168,7 @@ class GenrePack(BaseModel):
     scenarios: dict[str, ScenarioPack] = Field(default_factory=dict)
     drama_thresholds: DramaThresholds | None = None
     inventory: InventoryConfig | None = None
-    openings: list[OpeningHook] = Field(default_factory=list)
+    openings: list[Opening] = Field(default_factory=list)
     backstory_tables: BackstoryTables | None = None
     equipment_tables: EquipmentTables | None = None
     base_archetypes: BaseArchetypes | None = None
