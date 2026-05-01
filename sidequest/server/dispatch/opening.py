@@ -22,6 +22,11 @@ from sidequest.genre.models.narrative import (
     PerPcBeat,
 )
 from sidequest.genre.models.rigs_world import ChassisInstanceConfig
+from sidequest.telemetry.spans import (
+    SPAN_OPENING_DIRECTIVE_RENDERED,
+    SPAN_OPENING_PLAYED,
+    Span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,3 +372,87 @@ def _render_directive_location(
     parts.append("")
     parts.append("=== END OPENING ===")
     return "\n".join(parts)
+
+
+def build_directive(
+    *,
+    opening: Opening,
+    chassis: ChassisInstanceConfig | None,
+    authored_crew: list[AuthoredNpc],
+    magic_register: str,
+    bond_tier_for_pc: BondTier,
+    per_pc_beat: PerPcBeat | None,
+    pc_first_name: str,
+    pc_last_name: str,
+    pc_nickname: str,
+    present_npcs: list[AuthoredNpc],
+) -> str:
+    """Top-level renderer dispatch — picks chassis or location path
+    based on the Opening's setting anchor.
+
+    Emits ``opening.directive_rendered`` with anchor + content metrics
+    so the GM panel can verify the directive made it to the narrator
+    (CLAUDE.md "OTEL Observability Principle").
+
+    See ``docs/superpowers/specs/2026-05-01-canned-openings-design.md``
+    §3.3.
+    """
+    if opening.setting.chassis_instance is not None and chassis is not None:
+        directive = _render_directive_chassis(
+            opening=opening,
+            chassis=chassis,
+            authored_crew=authored_crew,
+            magic_register=magic_register,
+            bond_tier_for_pc=bond_tier_for_pc,
+            per_pc_beat=per_pc_beat,
+            pc_first_name=pc_first_name,
+            pc_last_name=pc_last_name,
+            pc_nickname=pc_nickname,
+        )
+    else:
+        directive = _render_directive_location(
+            opening=opening,
+            present_npcs=present_npcs,
+            magic_register=magic_register,
+            per_pc_beat=per_pc_beat,
+        )
+
+    with Span.open(
+        SPAN_OPENING_DIRECTIVE_RENDERED,
+        {
+            "opening_id": opening.id,
+            "char_count": len(directive),
+            "anchor": "chassis" if opening.setting.chassis_instance else "location",
+            "has_microbleed": opening.magic_microbleed is not None,
+            "has_party_framing": opening.party_framing is not None,
+            "crew_count": len(authored_crew),
+            "present_npc_count": len(present_npcs),
+        },
+    ):
+        pass
+
+    return directive
+
+
+def record_opening_played(
+    *,
+    opening_id: str,
+    narrator_session_id: str,
+    turn_id: int,
+) -> None:
+    """Emit ``opening.played`` at first-turn consumption.
+
+    Caller (websocket_session_handler) invokes this after the directive
+    is consumed and cleared from session_data, so the GM panel can
+    confirm the canned opening actually reached the narrator's first
+    turn rather than being silently dropped.
+    """
+    with Span.open(
+        SPAN_OPENING_PLAYED,
+        {
+            "opening_id": opening_id,
+            "narrator_session_id": narrator_session_id,
+            "turn_id": turn_id,
+        },
+    ):
+        pass
