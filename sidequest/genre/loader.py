@@ -561,8 +561,8 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
     # === World-tier openings.yaml — MANDATORY ===
     # The unified Opening schema. Both solo and MP entries live here,
     # distinguished by triggers.mode. Replaces both the old genre-tier
-    # space_opera/openings.yaml fallback path and the per-world
-    # mp_opening.yaml side file.
+    # fallback path and the per-world side file that previously held
+    # MP-only openings.
     openings_path = world_path / "openings.yaml"
     if not openings_path.exists():
         raise GenreLoadError(
