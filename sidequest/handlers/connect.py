@@ -37,7 +37,6 @@ from sidequest.protocol.messages import (
 from sidequest.server import views
 from sidequest.server.dispatch.char_creation_resolve import resolve_char_creation_scenes
 from sidequest.server.dispatch.culture_context import resolve_culture_reference
-from sidequest.server.dispatch.opening_hook import resolve_opening
 from sidequest.server.image_pacing import ImagePacingThrottle
 from sidequest.server.magic_init import init_magic_state_for_session
 from sidequest.server.session_handler import (
@@ -532,21 +531,13 @@ class ConnectHandler:
             # state proves we're past the opening — the persisted
             # ``current_scene`` on the snapshot is the source of truth, not
             # a re-rolled hook.
-            opening: tuple[str, str] | None = None
-            if (
-                not snapshot.characters
-                and snapshot.turn_manager.interaction == 0
-            ):
-                opening = resolve_opening(
-                    genre_pack,
-                    row.world_slug,
-                    row.genre_slug,
-                    mode=GameMode(row.mode),
-                )
+            # Opening-hook resolution moved to chargen-completion (Task 19).
+            # Connect time leaves opening slots empty; the websocket session
+            # handler populates them when chargen transitions Building -> Playing.
+            # Refs: docs/superpowers/specs/2026-05-01-canned-openings-design.md
+            # section 2.3
             opening_seed: str | None = None
             opening_directive: str | None = None
-            if opening is not None:
-                opening_seed, opening_directive = opening
 
             # MP-joiner cold-open suppression (playtest 2026-04-26 "Multiplayer
             # parallel-solo desynchronizes scene context entirely"). When a
@@ -1143,20 +1134,13 @@ class ConnectHandler:
             if genre_pack.equipment_tables is not None:
                 builder = builder.with_equipment_tables(genre_pack.equipment_tables)
 
-        # Opening-hook resolution (Story 2.3 Slice B). Pick one hook per
-        # connection from world.openings (preferred) or pack.openings, so
-        # the first narrator turn has an ``opening_directive`` to inject
-        # and an ``opening_seed`` to run as the first action. ``None`` on
-        # both when the pack has no openings configured — first turn
-        # runs without a directive. Returning-player reconnects (has_
-        # character=True) skip chargen, so the directive/seed are dead
-        # weight for them, but resolving here anyway keeps the seat
-        # uniform and costs nothing.
-        opening: tuple[str, str] | None = resolve_opening(genre_pack, world_slug, genre_slug)
+        # Opening-hook resolution moved to chargen-completion (Task 19).
+        # Connect time leaves opening slots empty; the websocket session
+        # handler populates them when chargen transitions Building -> Playing.
+        # Refs: docs/superpowers/specs/2026-05-01-canned-openings-design.md
+        # section 2.3
         opening_seed: str | None = None
         opening_directive: str | None = None
-        if opening is not None:
-            opening_seed, opening_directive = opening
 
         # World context (Story 41-11): resolve once at connect time so
         # the filter engages consistently across every turn. Empty
