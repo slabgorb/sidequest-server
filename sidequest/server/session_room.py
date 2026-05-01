@@ -521,20 +521,34 @@ class SessionRoom:
         with self._lock:
             return self._outbound_queues.get(socket_id)
 
-    def broadcast(self, msg: Any, *, exclude_socket_id: str | None = None) -> None:
+    def broadcast(
+        self, msg: Any, *, exclude_socket_id: str | None = None
+    ) -> list[tuple[str, str | None]]:
         """Put msg into every registered outbound queue except exclude_socket_id.
 
         Thread-safe: snapshot the target list under the lock, then put_nowait
         outside (put_nowait never blocks and the queues are asyncio-safe).
+
+        Returns the list of ``(socket_id, player_id)`` pairs the message was
+        actually queued onto. ``player_id`` is ``None`` for sockets that have
+        an outbound queue registered but no current ``_sockets`` entry (a
+        transient race during reconnect; should not happen in steady state).
+        Callers can use the return value as the lie-detector ground truth —
+        ``recipients = len(_connected)`` over-reports when ``_outbound_queues``
+        and ``_connected`` diverge, and the mismatch silently strands peers.
+        Pingpong 2026-04-30 "Scrapbook only on first-connected player" was
+        caught precisely because the broadcast log claimed ``recipients=4``
+        while only the host's queue actually received the IMAGE.
         """
         with self._lock:
             targets = [
-                (sid, q)
+                (sid, self._sockets.get(sid), q)
                 for sid, q in self._outbound_queues.items()
                 if sid != exclude_socket_id
             ]
-        for _sid, q in targets:
+        for _sid, _pid, q in targets:
             q.put_nowait(msg)
+        return [(sid, pid) for sid, pid, _q in targets]
 
 
 class RoomRegistry:

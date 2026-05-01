@@ -3209,8 +3209,24 @@ class WebSocketSessionHandler:
             # Broadcast to every connected socket in the room. We do NOT
             # exclude the originating player — they need the IMAGE too,
             # mirroring the SCRAPBOOK_ENTRY/_emit_event fan-out pattern.
+            #
+            # Pingpong 2026-04-30 "Scrapbook only on first-connected
+            # player": the OTEL `recipients_count` was being computed
+            # from `connected_player_ids()` (the `_connected` map size)
+            # but the broadcast itself iterates `_outbound_queues`. When
+            # those diverge — typically because a peer's WebSocket
+            # closed without their `detach_outbound` call running yet,
+            # leaving them in `_connected` but not in `_outbound_queues`
+            # — the broadcast log over-reports recipients while peers
+            # silently miss the IMAGE. Switched to using the broadcast
+            # return value (the list of (socket_id, player_id) pairs
+            # actually queued onto) so the GM panel sees ground truth
+            # instead of a synthesized count. Also surfaces per-recipient
+            # detail so the dashboard's "scrapbook.image_received" lie-
+            # detector has the receive-side player_id list to diff
+            # against.
             try:
-                room.broadcast(msg, exclude_socket_id=None)
+                delivered_recipients = room.broadcast(msg, exclude_socket_id=None)
             except Exception as exc:  # noqa: BLE001 — broadcast failure must surface
                 logger.warning(
                     "render.broadcast_failed render_id=%s error=%s",
@@ -3233,10 +3249,42 @@ class WebSocketSessionHandler:
                 )
                 return
             broadcast_used = True
-            # Approximate recipient count for OTEL (lie-detector) — this
-            # is the set of sockets that had a live outbound queue at
-            # broadcast time.
-            recipients_count = len(room.connected_player_ids())
+            # Lie-detector: ground-truth recipient count from the
+            # broadcast itself, plus the connect-map count for the
+            # divergence check. If these differ, the GM panel surfaces
+            # the gap directly instead of the prior over-report.
+            recipients_count = len(delivered_recipients)
+            connected_count = len(room.connected_player_ids())
+            recipient_socket_ids = [sid for sid, _pid in delivered_recipients]
+            recipient_player_ids = [
+                pid for _sid, pid in delivered_recipients if pid is not None
+            ]
+            try:
+                _watcher_publish(
+                    "scrapbook_image_broadcast",
+                    {
+                        "render_id": render_id,
+                        "slug": room_slug,
+                        "originating_player_id": player_id,
+                        "url": served_url,
+                        "tier": str(params.get("tier") or ""),
+                        "recipients_count": recipients_count,
+                        "connected_count": connected_count,
+                        "queue_connect_divergence": connected_count != recipients_count,
+                        "recipient_socket_ids": recipient_socket_ids,
+                        "recipient_player_ids": recipient_player_ids,
+                    },
+                    component="render",
+                    severity="warning"
+                    if connected_count != recipients_count
+                    else "info",
+                )
+            except Exception as exc:  # noqa: BLE001 — telemetry must never crash a broadcast
+                logger.warning(
+                    "scrapbook_image_broadcast.watcher_publish_failed render_id=%s error=%s",
+                    render_id,
+                    exc,
+                )
             if recipients_count == 0:
                 logger.warning(
                     "render.broadcast_no_recipients render_id=%s room=%s",

@@ -241,3 +241,104 @@ async def test_cleanup_closes_per_session_store_when_no_room(tmp_path):
     import sqlite3
     with pytest.raises(sqlite3.ProgrammingError):
         store.save(_fresh_snapshot())
+
+
+# ---------------------------------------------------------------------------
+# broadcast() return value — pingpong 2026-04-30 "Scrapbook only on host"
+# regression. Prior code computed `recipients_count = len(connected_player_ids)`
+# which over-reports whenever `_outbound_queues` and `_connected` diverge
+# (peer's WebSocket closed without `detach_outbound` running yet, or
+# `attach_outbound` hasn't fired post-connect). The IMAGE broadcast log
+# claimed `recipients=4` while only the host's queue actually received the
+# message; peers silently missed the IMAGE. broadcast() now returns the
+# list of (socket_id, player_id) pairs actually queued onto so the GM panel
+# can diff that ground truth against `_connected` and surface the gap.
+# ---------------------------------------------------------------------------
+
+
+def test_broadcast_returns_only_sockets_with_attached_outbound_queues():
+    """`_outbound_queues` is the ground truth for delivery. If a peer is in
+    `_connected` (via `room.connect`) but their `attach_outbound` hasn't
+    fired yet (race) or `detach_outbound` already ran (disconnect cleanup),
+    they MUST NOT appear in the broadcast return value — and `len()` of the
+    return must be the lie-detector recipient count, not `len(_connected)`.
+    """
+    import asyncio
+
+    room = SessionRoom(slug="slug-broadcast", mode=GameMode.MULTIPLAYER)
+    # Four players in `_connected` — but only three have attached queues.
+    # Mirrors the production race where a peer's WebSocket dropped after
+    # `room.connect` but before/around `attach_outbound`.
+    room.connect("charlie", socket_id="sock-charlie")
+    room.connect("snoopy", socket_id="sock-snoopy")
+    room.connect("linus", socket_id="sock-linus")
+    room.connect("lucy", socket_id="sock-lucy")
+    queues: dict[str, asyncio.Queue[object]] = {
+        sid: asyncio.Queue() for sid in ("sock-charlie", "sock-snoopy", "sock-linus")
+    }
+    for sid, q in queues.items():
+        room.attach_outbound(sid, q)
+
+    delivered = room.broadcast({"type": "IMAGE"}, exclude_socket_id=None)
+
+    assert len(delivered) == 3, (
+        f"Expected exactly 3 delivered recipients (only sockets with attached "
+        f"outbound queues); got {len(delivered)}. `connected_player_ids()` = "
+        f"{room.connected_player_ids()} should NOT be the source of truth — "
+        f"this is the divergence the pingpong 2026-04-30 IMAGE bug exploited."
+    )
+    delivered_socket_ids = {sid for sid, _pid in delivered}
+    assert delivered_socket_ids == {"sock-charlie", "sock-snoopy", "sock-linus"}, (
+        f"Delivered socket ids must match `_outbound_queues` keys, not "
+        f"`_connected` values; got {delivered_socket_ids}."
+    )
+    delivered_player_ids = {pid for _sid, pid in delivered if pid is not None}
+    assert delivered_player_ids == {"charlie", "snoopy", "linus"}, (
+        f"Per-recipient player_id resolution must come from `_sockets`; got "
+        f"{delivered_player_ids}."
+    )
+
+    # Lucy was in `_connected` but had no outbound queue — she got nothing.
+    # `connected_player_ids` over-reports compared to actual delivery; this
+    # is the gap the new OTEL `scrapbook_image_broadcast.queue_connect_divergence`
+    # field surfaces to the GM panel.
+    assert "lucy" not in delivered_player_ids
+    assert "lucy" in room.connected_player_ids()
+
+
+def test_broadcast_excludes_socket_returns_remaining_recipients():
+    """`exclude_socket_id` filtering applies to the return value too —
+    callers using the return value as the recipient ledger see the same
+    list the queues received."""
+    import asyncio
+
+    room = SessionRoom(slug="slug-exclude", mode=GameMode.MULTIPLAYER)
+    room.connect("alice", socket_id="sock-alice")
+    room.connect("bob", socket_id="sock-bob")
+    qa: asyncio.Queue[object] = asyncio.Queue()
+    qb: asyncio.Queue[object] = asyncio.Queue()
+    room.attach_outbound("sock-alice", qa)
+    room.attach_outbound("sock-bob", qb)
+
+    delivered = room.broadcast({"x": 1}, exclude_socket_id="sock-alice")
+    assert len(delivered) == 1
+    assert delivered[0][0] == "sock-bob"
+    assert delivered[0][1] == "bob"
+    # Alice's queue must stay empty.
+    assert qa.empty()
+    # Bob's queue got the frame.
+    assert qb.qsize() == 1
+
+
+def test_broadcast_returns_empty_list_when_no_sockets_attached():
+    """No outbound queues attached → no recipients. Prior code logged
+    `recipients=N` (== `len(_connected)`) even when zero queues received the
+    message; new return-value path makes the empty case explicit."""
+    room = SessionRoom(slug="slug-empty", mode=GameMode.MULTIPLAYER)
+    room.connect("alice", socket_id="sock-alice")
+    # No attach_outbound call — alice is in `_connected` but no queue.
+
+    delivered = room.broadcast({"x": 1}, exclude_socket_id=None)
+    assert delivered == []
+    assert room.connected_player_ids() == ["alice"]  # _connected still says 1
+
