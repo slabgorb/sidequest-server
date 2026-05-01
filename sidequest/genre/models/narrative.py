@@ -5,9 +5,11 @@ Port of sidequest-genre/src/models/narrative.rs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from sidequest.genre.models.chassis import BondTier
 
 
 class Prompts(BaseModel):
@@ -138,3 +140,83 @@ class PowerTier(BaseModel):
     label: str
     player: str
     npc: str | None = None
+
+
+# === New unified Opening sub-models (Phase 1) ===
+
+OpeningMode = Literal["solo", "multiplayer", "either"]
+
+
+class OpeningTrigger(BaseModel):
+    """Selection rules — how the bank picks this Opening at chargen-complete."""
+
+    model_config = {"extra": "forbid"}
+
+    mode: OpeningMode = "either"
+    min_players: int = 1
+    max_players: int = 6
+    backgrounds: list[str] = Field(default_factory=list)
+
+
+class OpeningTone(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    register: str = ""
+    stakes: str = ""
+    complication: str = ""
+    sensory_layers: dict[str, str] = Field(default_factory=dict)
+    avoid_at_all_costs: list[str] = Field(default_factory=list)
+
+
+_PER_PC_BEAT_KEYS = frozenset({"background", "drive", "race", "class"})
+
+
+class PerPcBeat(BaseModel):
+    """Chargen-keyed textural moment. Validator 6 constrains applies_to keys."""
+
+    model_config = {"extra": "forbid"}
+
+    applies_to: dict[str, str]
+    beat: str
+
+    @field_validator("applies_to")
+    @classmethod
+    def _validate_keys(cls, v: dict[str, str]) -> dict[str, str]:
+        invalid = set(v.keys()) - _PER_PC_BEAT_KEYS
+        if invalid:
+            raise ValueError(
+                f"PerPcBeat.applies_to keys must be in {sorted(_PER_PC_BEAT_KEYS)}; "
+                f"got disallowed keys: {sorted(invalid)}"
+            )
+        return v
+
+
+class SoftHook(BaseModel):
+    """Pull-not-push wrinkle that surfaces when conversation lulls."""
+
+    model_config = {"extra": "forbid"}
+
+    kind: str = "pull_not_push"
+    timing: str = "surfaces if conversation lulls; otherwise wait for turn 2"
+    narration: str = ""
+    escalation_path: dict[str, str] = Field(default_factory=dict)
+
+
+class PartyFraming(BaseModel):
+    """MP-only. Omitted from directive when mode == solo."""
+
+    model_config = {"extra": "forbid"}
+
+    already_a_crew: bool = False
+    bond_tier_default: BondTier = "trusted"
+    shared_history_seeds: list[str] = Field(default_factory=list)
+    narrator_guidance: str = ""
+
+
+class MagicMicrobleed(BaseModel):
+    """Optional — Reach-bleeds-through detail at intensity 0.25."""
+
+    model_config = {"extra": "forbid"}
+
+    detail: str
+    cost_bar: str | None = None
