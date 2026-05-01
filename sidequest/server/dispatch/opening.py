@@ -183,6 +183,113 @@ def _render_directive_chassis(
     return "\n".join(parts)
 
 
+class OpeningResolutionError(Exception):
+    """No opening in the world's bank matched the session's filters.
+
+    Should be unreachable in practice — Validator 7+8 at world load
+    guarantee at least one matching entry per (mode, background) tuple.
+    Raised defensively when invariants are violated mid-flight.
+    """
+
+
+def _matches_mode(op_mode: str, requested: str) -> bool:
+    if op_mode == "either":
+        return True
+    return op_mode == requested
+
+
+def _matches_player_count(op: Opening, count: int) -> bool:
+    return op.triggers.min_players <= count <= op.triggers.max_players
+
+
+def _resolve_opening_post_chargen(
+    bank: list[Opening],
+    *,
+    mode: str,
+    player_count: int,
+    pc_background: str,
+    rng: random.Random | None = None,
+    world_slug: str = "<unknown>",
+) -> Opening:
+    """Pick one Opening from the world's bank.
+
+    Selection layers (in order):
+    1. mode filter (solo/multiplayer + 'either' wildcard)
+    2. player_count filter (min <= count <= max)
+    3. background filter — keyed entries preferred over fallback
+       (backgrounds=[] = fallback)
+    4. seeded RNG choice among remaining candidates
+
+    Raises ``OpeningResolutionError`` if no candidate matches —
+    Validator 7+8 should make this unreachable.
+
+    Emits ``opening.resolved`` on success, or ``opening.no_match``
+    defensively when no candidate is available (CLAUDE.md "OTEL
+    Observability Principle").
+
+    See ``docs/superpowers/specs/2026-05-01-canned-openings-design.md``
+    §2.4.
+    """
+    from sidequest.telemetry.spans import (
+        SPAN_OPENING_NO_MATCH,
+        SPAN_OPENING_RESOLVED,
+        Span,
+    )
+
+    rng = rng if rng is not None else random.Random()
+
+    # Layers 1-2: mode + player_count
+    pool = [op for op in bank if _matches_mode(op.triggers.mode, mode)]
+    pool = [op for op in pool if _matches_player_count(op, player_count)]
+
+    # Layer 3a: prefer background-keyed matches; 3b fall back to
+    # backgrounds=[] entries when no keyed entry matches.
+    keyed = [
+        op
+        for op in pool
+        if op.triggers.backgrounds and pc_background in op.triggers.backgrounds
+    ]
+    candidates = keyed or [op for op in pool if not op.triggers.backgrounds]
+
+    if not candidates:
+        with Span.open(
+            SPAN_OPENING_NO_MATCH,
+            {
+                "world_slug": world_slug,
+                "mode": mode,
+                "pc_background": pc_background,
+                "player_count": player_count,
+                "candidate_count": 0,
+                "bank_size": len(bank),
+            },
+        ):
+            pass
+        raise OpeningResolutionError(
+            f"World {world_slug!r}: no opening matches "
+            f"(mode={mode}, player_count={player_count}, "
+            f"pc_background={pc_background!r}). "
+            "Validator 7+8 should have caught this at world load."
+        )
+
+    chosen = rng.choice(candidates)
+
+    with Span.open(
+        SPAN_OPENING_RESOLVED,
+        {
+            "world_slug": world_slug,
+            "opening_id": chosen.id,
+            "mode": mode,
+            "player_count": player_count,
+            "pc_background": pc_background,
+            "candidates_count": len(candidates),
+            "bank_size": len(bank),
+        },
+    ):
+        pass
+
+    return chosen
+
+
 def _render_directive_location(
     *,
     opening: Opening,
