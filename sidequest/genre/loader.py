@@ -366,6 +366,32 @@ def _validate_opening_setting_references(
             )
 
 
+def _validate_crew_npc_references(
+    chassis_instances: list[ChassisInstanceConfig],
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 4: every chassis_instance.crew_npcs entry must resolve to an
+    AuthoredNpc.id in worlds/{slug}/npcs.yaml.
+
+    A chassis with an empty crew_npcs list is valid.
+    """
+    npc_ids = {n.id for n in authored_npcs}
+    for chassis in chassis_instances:
+        unknown = [c for c in chassis.crew_npcs if c not in npc_ids]
+        if unknown:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/rigs.yaml",
+                detail=(
+                    f"chassis {chassis.id!r} declares crew_npcs {unknown!r} "
+                    f"that do not resolve to any AuthoredNpc.id in "
+                    f"worlds/{world_slug}/npcs.yaml. "
+                    f"Known authored NPCs: {sorted(npc_ids)}"
+                ),
+            )
+
+
 # ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
@@ -485,6 +511,12 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
     # references in openings resolve against rigs.yaml.
     _validate_opening_setting_references(
         openings, chassis_instances, world_slug=world_path.name
+    )
+
+    # Cross-file validator 4: chassis_instance.crew_npcs entries resolve
+    # against AuthoredNpc ids in npcs.yaml.
+    _validate_crew_npc_references(
+        chassis_instances, authored_npcs, world_slug=world_path.name
     )
 
     # Portrait manifest
