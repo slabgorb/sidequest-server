@@ -128,20 +128,26 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
         sd, "I open negotiations with Veriti Onua.", _build_turn_context(sd),
     )
 
-    # Actor branch — Paul's outbound list still contains the
-    # ConfrontationMessage (via the _emit_event return value).
-    actor_conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
-    assert len(actor_conf) == 1, (
-        f"Actor (Paul) should still receive the CONFRONTATION frame in "
-        f"the returned outbound list; got message types "
-        f"{[type(m).__name__ for m in msgs]}"
+    # Pingpong 2026-04-30 follow-on (sibling of f0b40c7): CONFRONTATION
+    # delivery to the dispatcher was migrated off ``outbound.append`` —
+    # the closure-captured outbound is the dispatcher's PRE-await socket
+    # queue, which is dead when the WS cycles mid-narration. The
+    # dispatcher now receives CONFRONTATION via a current-socket lookup
+    # at delivery time (room.queue_for_socket(socket_for_player(...)))
+    # so reconnected sockets pick up the frame. Mirrors the f0b40c7
+    # pattern for NARRATION_END/CHAPTER_MARKER/PARTY_STATUS/AUDIO_CUE.
+    outbound_kinds = [type(m).__name__ for m in msgs]
+    assert ConfrontationMessage.__name__ not in outbound_kinds, (
+        f"Actor's `outbound` list must NOT contain CONFRONTATION anymore — "
+        f"it's delivered to the dispatcher's current socket queue at "
+        f"delivery time so a reconnected dispatcher's NEW socket gets it. "
+        f"Got outbound: {outbound_kinds}"
     )
-    assert actor_conf[0].payload.active is True
-    assert actor_conf[0].payload.type == "combat"
 
     # Peer branch — every non-acting socket queue must have received
-    # exactly one CONFRONTATION frame. Pre-fix, these queues were empty
-    # (the bug repro: peer tabs froze with no NPC card / no buttons).
+    # exactly one CONFRONTATION frame via ``_emit_event`` peer fan-out.
+    # The new dispatcher-current-socket delivery does NOT broadcast to
+    # peers (avoids double-delivery), so peer count stays at 1.
     for peer_pid in ("john", "george", "ringo"):
         peer_frames: list[object] = []
         while not queues[peer_pid].empty():
@@ -159,18 +165,142 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
         assert peer_conf[0].payload.active is True
         assert peer_conf[0].payload.type == "combat"
 
-    # Paul's own queue should NOT have received a fan-out copy — the
-    # emitter receives the canonical (raw) frame via the function return
-    # value, not via their socket queue. The projection loop excludes the
-    # emitter from the fan-out recipients (see _emit_event line ~871).
+    # Pingpong 2026-04-30 follow-on: Paul's queue MUST contain exactly
+    # one CONFRONTATION frame, delivered via the dispatcher-current-socket
+    # lookup. Pre-fix this queue was empty (frame went to ``outbound``);
+    # if the dispatcher's WS cycled mid-narration, ``outbound`` landed
+    # on a dead queue and the encounter dial never activated.
     paul_frames: list[object] = []
     while not queues["paul"].empty():
         paul_frames.append(queues["paul"].get_nowait())
     paul_conf_via_queue = [
         f for f in paul_frames if isinstance(f, ConfrontationMessage)
     ]
-    assert paul_conf_via_queue == [], (
-        "Emitter (Paul) should not receive a fan-out copy via their "
-        "socket queue; they receive the canonical frame as the "
-        "_emit_event return value (already verified above)."
+    assert len(paul_conf_via_queue) == 1, (
+        f"Dispatcher (Paul) must receive exactly one CONFRONTATION frame "
+        f"on their CURRENT socket queue (post pingpong 2026-04-30 fix); "
+        f"got {len(paul_conf_via_queue)} (frames on queue: "
+        f"{[type(f).__name__ for f in paul_frames]}). "
+        "If 0, the dispatcher's reconnected socket would miss the encounter "
+        "activation — the bug this fix addresses."
+    )
+    assert paul_conf_via_queue[0].payload.active is True
+    assert paul_conf_via_queue[0].payload.type == "combat"
+
+
+@pytest.mark.asyncio
+async def test_confrontation_reaches_dispatcher_after_socket_cycle(
+    session_handler_factory, tmp_path: Path,
+) -> None:
+    """Pingpong 2026-04-30 follow-on regression: dispatcher's WS cycles
+    mid-narration and the NEW socket receives CONFRONTATION.
+
+    Repro: 4P MP, Linus is the dispatch winner. During the 30-60s
+    Claude narration await, Linus's browser refreshes — old socket
+    detaches, new socket attaches with a different socket_id. Pre-fix,
+    ``outbound.append(confrontation_msg)`` landed on the closure-
+    captured pre-await queue (now dead, writer task cancelled); the
+    new socket's queue was empty, encounter dial never activated.
+    Post-fix: the dispatcher-current-socket lookup runs at delivery
+    time so the new queue receives the frame.
+    """
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    sd.player_id = "linus"
+    sd.player_name = "Linus"
+    sd.mode = GameMode.MULTIPLAYER
+    sd.game_slug = _SLUG + "-cycle"
+
+    store = _seed_game_row(tmp_path)
+    handler._event_log = EventLog(store)
+    handler._projection_filter = ComposedFilter.with_no_genre_rules()
+    handler._projection_cache = ProjectionCache(store)
+
+    registry = RoomRegistry()
+    room = registry.get_or_create(slug=sd.game_slug, mode=GameMode.MULTIPLAYER)
+
+    # Linus first connects on the PRE-await socket — this is the socket
+    # the merged-dispatch closure captures. Charlie/Snoopy/Lucy connect
+    # as peers.
+    pre_socket_id = "sock-linus-pre"
+    pre_queue: asyncio.Queue[object] = asyncio.Queue()
+    room.connect("linus", socket_id=pre_socket_id)
+    room.attach_outbound(pre_socket_id, pre_queue)
+    handler._socket_id = pre_socket_id  # Closure captures THIS
+
+    peer_queues: dict[str, asyncio.Queue[object]] = {}
+    for peer_pid, peer_sid in (
+        ("charlie", "sock-charlie"),
+        ("snoopy", "sock-snoopy"),
+        ("lucy", "sock-lucy"),
+    ):
+        q: asyncio.Queue[object] = asyncio.Queue()
+        peer_queues[peer_pid] = q
+        room.connect(peer_pid, socket_id=peer_sid)
+        room.attach_outbound(peer_sid, q)
+
+    handler._room = room
+
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=NarrationTurnResult(
+            narration="Linus opens negotiations with Inspector Karenina.",
+            confrontation="negotiation",
+        ),
+    )
+
+    # Simulate the WS cycle: between handler attach and the dispatch
+    # delivery, Linus's browser refreshes. The old socket detaches
+    # (writer task cancelled), a new socket attaches with a different
+    # socket_id and a fresh queue. The handler's closure-captured
+    # `_socket_id` still points at the OLD socket — this is the exact
+    # production race.
+    room.detach_outbound(pre_socket_id)
+    post_socket_id = "sock-linus-post"
+    post_queue: asyncio.Queue[object] = asyncio.Queue()
+    room.connect("linus", socket_id=post_socket_id)
+    room.attach_outbound(post_socket_id, post_queue)
+
+    from sidequest.server.session_handler import _build_turn_context
+    msgs = await handler._execute_narration_turn(
+        sd, "I open negotiations.", _build_turn_context(sd),
+    )
+
+    # Load-bearing assertion: the NEW socket's queue receives
+    # CONFRONTATION even though the closure captured the OLD socket_id.
+    post_conf = []
+    while not post_queue.empty():
+        item = post_queue.get_nowait()
+        if isinstance(item, ConfrontationMessage):
+            post_conf.append(item)
+    assert len(post_conf) == 1, (
+        f"Dispatcher's NEW (post-reconnect) socket queue must receive "
+        f"exactly one CONFRONTATION frame; got {len(post_conf)}. "
+        "Pre-fix the frame went to the OLD socket's outbound list and "
+        "was silently dropped — encounter dial never activated on the "
+        "reconnected tab."
+    )
+    assert post_conf[0].payload.active is True
+
+    # And the old (now-detached) queue must not receive anything — the
+    # closure-captured socket_id no longer has an outbound queue
+    # registered, so the helper's `room.queue_for_socket(...)` returns
+    # None and skips delivery rather than landing on a dead queue.
+    pre_conf = []
+    while not pre_queue.empty():
+        item = pre_queue.get_nowait()
+        if isinstance(item, ConfrontationMessage):
+            pre_conf.append(item)
+    assert pre_conf == [], (
+        f"Old (detached) socket queue must not receive CONFRONTATION; "
+        f"got {len(pre_conf)} frames. If non-empty, the helper isn't "
+        "looking up the CURRENT socket at delivery time — the very "
+        "regression this test guards against."
+    )
+
+    # Outbound list returned to the caller is also free of CONFRONTATION
+    # — guards against accidentally re-introducing the dead-queue path.
+    outbound_kinds = [type(m).__name__ for m in msgs]
+    assert ConfrontationMessage.__name__ not in outbound_kinds, (
+        f"Returned outbound list must not contain CONFRONTATION post-fix; "
+        f"got {outbound_kinds}. Re-introducing outbound.append would "
+        "resurrect the dead-queue race."
     )

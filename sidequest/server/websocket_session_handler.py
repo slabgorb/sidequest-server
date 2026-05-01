@@ -2076,7 +2076,99 @@ class WebSocketSessionHandler:
 
                     outbound: list[object] = [narration_msg]
                     if confrontation_msg is not None:
-                        outbound.append(confrontation_msg)
+                        # Pingpong 2026-04-30 follow-on (sibling of f0b40c7):
+                        # CONFRONTATION goes through ``_emit_event`` for
+                        # EventLog persistence + projection-filter peer
+                        # fan-out. The dispatcher's copy was previously
+                        # added to ``outbound`` (closure-captured,
+                        # delivered to the dispatcher's PRE-await socket
+                        # queue). When the dispatcher's WS cycles during
+                        # the 30-60s Claude await — browser refresh /
+                        # network blip — the pre-await writer task is
+                        # already cancelled; ``outbound.append`` lands on
+                        # a dead queue and the encounter dial never
+                        # activates on the dispatcher's tab. Reconnect
+                        # replay can backfill via EventLog + lazy_fill,
+                        # but the race is wide (CONFRONTATION fires AFTER
+                        # the dispatcher's reconnect handler has finished
+                        # its own replay), so the dispatcher freezes on
+                        # the prior turn even though the EventLog has the
+                        # row. Fix matches f0b40c7's shape: deliver to
+                        # the dispatcher's CURRENT socket via
+                        # room.queue_for_socket(socket_for_player(...))
+                        # — the lookup runs at delivery time, so a
+                        # reconnected dispatcher's NEW socket queue gets
+                        # the frame. Peer delivery is unchanged
+                        # (``_emit_event`` peer fan-out already covered
+                        # them) — no double-delivery hazard. Falls back
+                        # to ``outbound.append`` when the room is None
+                        # (legacy non-slug test fixtures).
+                        # Stub rooms in older test fixtures (_StubRoom in
+                        # dice-throw wiring tests) may not expose the
+                        # full SessionRoom API — fall back to outbound
+                        # so those tests continue to exercise the
+                        # actor-receives-via-return-value contract.
+                        socket_for_player = getattr(
+                            self._room, "socket_for_player", None,
+                        ) if _has_room else None
+                        queue_for_socket = getattr(
+                            self._room, "queue_for_socket", None,
+                        ) if _has_room else None
+                        if (
+                            _has_room
+                            and callable(socket_for_player)
+                            and callable(queue_for_socket)
+                        ):
+                            room = self._room
+                            assert room is not None  # noqa: S101 — narrowed by _has_room
+                            dispatcher_socket = socket_for_player(sd.player_id)
+                            dispatcher_queue = (
+                                queue_for_socket(dispatcher_socket)
+                                if dispatcher_socket is not None
+                                else None
+                            )
+                            if dispatcher_queue is not None:
+                                dispatcher_queue.put_nowait(confrontation_msg)
+                            # OTEL lie-detector: per-recipient confrontation
+                            # delivery for the GM panel. Mirrors the
+                            # ``shared_world_frame_broadcast`` watcher used by
+                            # NARRATION_END / CHAPTER_MARKER / PARTY_STATUS /
+                            # AUDIO_CUE so Sebastien's panel can spot a silent
+                            # regression of this exact bug — frame_kind names
+                            # the variant so confrontation events filter
+                            # cleanly out of the broader frame stream.
+                            try:
+                                slug_attr = getattr(room, "slug", "")
+                                connected = (
+                                    room.connected_player_ids()
+                                    if callable(getattr(room, "connected_player_ids", None))
+                                    else []
+                                )
+                                _watcher_publish(
+                                    "shared_world_frame_broadcast",
+                                    {
+                                        "frame_kind": "confrontation_projection",
+                                        "slug": slug_attr,
+                                        "recipient_count": len(connected),
+                                        "recipient_player_ids": connected,
+                                        "dispatcher_player_id": sd.player_id,
+                                        "dispatcher_socket_attached": dispatcher_queue is not None,
+                                    },
+                                    component="multiplayer",
+                                )
+                            except Exception as exc:  # noqa: BLE001 — telemetry must never crash a turn
+                                logger.warning(
+                                    "shared_world_frame.watcher_publish_failed "
+                                    "kind=confrontation_projection error=%s",
+                                    exc,
+                                )
+                        else:
+                            # Legacy / stub-room fallback: append to
+                            # outbound so test fixtures without a real
+                            # SessionRoom API still see CONFRONTATION
+                            # in the function return value (the
+                            # contract pre-pingpong-2026-04-30).
+                            outbound.append(confrontation_msg)
                     # CHAPTER_MARKER — the UI's ``useRunningHeader`` hook derives the
                     # running-header chapter title from this frame. When the narrator
                     # emits a location in game_patch, the new location is already on
