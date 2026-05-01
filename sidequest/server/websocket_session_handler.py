@@ -1991,31 +1991,87 @@ class WebSocketSessionHandler:
                         )
 
                 with timings.phase("broadcast"):
-                    # MP merged-dispatch: shared-world frames built below also
-                    # need to reach peer sockets. Without this, peers received
-                    # NARRATION (via _emit_event fan-out) but missed
-                    # NARRATION_END / CHAPTER_MARKER / PARTY_STATUS / AUDIO_CUE
-                    # because those are appended to `outbound` (which only
-                    # ships to the dispatching socket). The pingpong
-                    # 2026-04-30 [BUG] symptom was peer input bars stuck at
-                    # "Waiting on … to act" indefinitely after turn 1 — peers'
-                    # `canType` never flipped back because NARRATION_END never
-                    # arrived. Helper closes over self/sd so each call site
-                    # stays a one-liner; gated on MP+room so solo paths skip.
-                    from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
-                        GameMode as _GameMode,
-                    )
-
-                    _is_mp_dispatch = (
-                        self._room is not None
-                        and sd.mode == _GameMode.MULTIPLAYER
-                        and self._socket_id is not None
-                    )
-
-                    def _broadcast_to_peers(msg: object) -> None:
-                        if _is_mp_dispatch:
-                            self._room.broadcast(  # type: ignore[union-attr]
-                                msg, exclude_socket_id=self._socket_id
+                    # MP merged-dispatch: shared-world frames need to reach
+                    # every connected socket in the room. NARRATION rides the
+                    # _emit_event/EventLog path (durable, replayed on
+                    # reconnect). The four shared-world envelopes built below
+                    # — NARRATION_END / CHAPTER_MARKER / PARTY_STATUS /
+                    # AUDIO_CUE — are NOT durable: they're built once at
+                    # turn-end and never persisted. Two pingpong cycles on
+                    # 2026-04-30 caught both halves of the broadcast bug:
+                    #   (1) commit 4b90250 — peers missed all four because
+                    #       they were only appended to ``outbound`` (which
+                    #       ships to the dispatcher socket alone). Fix added
+                    #       a peer-broadcast helper.
+                    #   (2) follow-on bug — the dispatcher's *own* socket
+                    #       missed the four envelopes whenever the dispatcher
+                    #       reconnected mid-narration (browser refresh during
+                    #       the 30-60s Claude await). The peer-broadcast
+                    #       excluded the dispatcher's pre-await socket_id;
+                    #       outbound.append delivered to the now-cancelled
+                    #       writer task on the old socket; the new socket
+                    #       got nothing because the envelopes aren't in
+                    #       EventLog to replay. Last-submitter froze every
+                    #       turn (Reproduced 3× in pingpong).
+                    #
+                    # Fix: emit shared-world frames via a single broadcast to
+                    # every CURRENT socket in the room (exclude_socket_id=
+                    # None). Picks up reconnected sockets that registered
+                    # before the broadcast fires; the original socket either
+                    # detached (clean) or is still attached (gets the frame
+                    # like everyone else). Replaces both outbound.append and
+                    # the peer-only broadcast — single delivery path, no
+                    # double-send risk.
+                    #
+                    # Legacy non-slug path (self._room is None — only legacy
+                    # genre/world connect tests reach this) still falls back
+                    # to outbound.append so test fixtures without a room
+                    # registry continue to work.
+                    _has_room = self._room is not None
+                    # OTEL lie-detector: emit one watcher event per shared-
+                    # world frame that records every recipient socket_id
+                    # plus the resolved player_id. The GM panel can verify
+                    # all 4 sockets received NARRATION_END after the merged
+                    # dispatch — the only way to catch silent regressions
+                    # of this exact bug going forward.
+                    def _emit_shared_world_frame(msg: object, frame_kind: str) -> None:
+                        if not _has_room:
+                            outbound.append(msg)
+                            return
+                        room = self._room
+                        assert room is not None  # noqa: S101 — narrowed by _has_room
+                        room.broadcast(msg, exclude_socket_id=None)
+                        # OTEL lie-detector: emit one watcher event per
+                        # shared-world frame keyed by recipient player_ids
+                        # so the GM panel can verify the dispatcher AND every
+                        # peer received the frame after the merged dispatch
+                        # — the only way to catch silent regressions of the
+                        # last-submitter-stuck bug going forward. Wrapped in
+                        # try/except: the broadcast above is the load-bearing
+                        # call; OTEL must never crash a turn (and in tests a
+                        # stub Room may not expose `connected_player_ids`).
+                        try:
+                            recipients_method = getattr(room, "connected_player_ids", None)
+                            recipient_player_ids = (
+                                recipients_method() if callable(recipients_method) else []
+                            )
+                            slug_attr = getattr(room, "slug", "")
+                            _watcher_publish(
+                                "shared_world_frame_broadcast",
+                                {
+                                    "frame_kind": frame_kind,
+                                    "slug": slug_attr,
+                                    "recipient_count": len(recipient_player_ids),
+                                    "recipient_player_ids": recipient_player_ids,
+                                    "dispatcher_player_id": sd.player_id,
+                                },
+                                component="multiplayer",
+                            )
+                        except Exception as exc:  # noqa: BLE001 — telemetry must never crash a turn
+                            logger.warning(
+                                "shared_world_frame.watcher_publish_failed kind=%s error=%s",
+                                frame_kind,
+                                exc,
                             )
 
                     outbound: list[object] = [narration_msg]
@@ -2042,8 +2098,7 @@ class WebSocketSessionHandler:
                             ),
                             player_id=sd.player_id,
                         )
-                        outbound.append(chapter_marker_msg)
-                        _broadcast_to_peers(chapter_marker_msg)
+                        _emit_shared_world_frame(chapter_marker_msg, "CHAPTER_MARKER")
                     # Story 45-1 — sealed-letter shared-world handshake.
                     # Build the canonical delta from the post-resolution
                     # snapshot and ride it on NARRATION_END so peers see
@@ -2074,8 +2129,7 @@ class WebSocketSessionHandler:
                         ),
                         player_id=sd.player_id,
                     )
-                    outbound.append(narration_end_msg)
-                    _broadcast_to_peers(narration_end_msg)
+                    _emit_shared_world_frame(narration_end_msg, "NARRATION_END")
 
                     # MP turn-ownership clear (ADR-036 sealed-letter pacing). Pair with
                     # the TURN_STATUS{active} broadcast at action receipt — peers' banner
@@ -2136,17 +2190,17 @@ class WebSocketSessionHandler:
                             party_status = views.build_session_start_party_status(
                                 self, sd, self_char, sd.player_id
                             )
-                            outbound.append(party_status)
-                            # MP merged-dispatch: peers also need the post-narration
-                            # party refresh (location/HP/inventory). The dispatcher-
-                            # built payload is safe to broadcast — each peer's UI
-                            # resolves "(YOU)" via the seat_map-tagged player_id of
-                            # the member whose ``name`` matches its connectedPlayerName,
-                            # not via the dispatcher's player_id field. Without this
-                            # broadcast, peers' running headers / character sheets
-                            # stayed frozen at pre-narration values until their next
-                            # action (pingpong 2026-04-30 BUG corollary).
-                            _broadcast_to_peers(party_status)
+                            # MP merged-dispatch: every connected socket needs the
+                            # post-narration party refresh (location/HP/inventory).
+                            # The dispatcher-built payload is safe to broadcast as-is —
+                            # each peer's UI resolves "(YOU)" via the seat_map-tagged
+                            # player_id of the member whose ``name`` matches its
+                            # connectedPlayerName, not via the dispatcher's player_id
+                            # field. Pre-fix-2 (peer-only broadcast), peers got it
+                            # but the dispatcher's reconnected socket missed it
+                            # (pingpong 2026-04-30 follow-on); single broadcast
+                            # path fixes both halves.
+                            _emit_shared_world_frame(party_status, "PARTY_STATUS")
                             logger.info(
                                 "state.party_status_emitted reason=turn_end location=%r turn=%d "
                                 "self_char=%s",
@@ -2186,8 +2240,7 @@ class WebSocketSessionHandler:
                 # bed transitions in lock-step with the shared narration.
                 audio_cue = self._maybe_dispatch_audio(sd, result)
                 if audio_cue is not None:
-                    outbound.append(audio_cue)
-                    _broadcast_to_peers(audio_cue)
+                    _emit_shared_world_frame(audio_cue, "AUDIO_CUE")
 
                 # turn_complete is now emitted by the validator (per ADR-089 §6.7).
                 # The TurnRecord assembled below is the single source of truth.
