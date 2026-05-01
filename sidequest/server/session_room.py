@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import sidequest.telemetry.watcher_hub as _hub
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
+from sidequest.server.session import Session
 
 # Imported lazily inside the typing block to avoid an import cycle —
 # Orchestrator's module imports from sidequest.game (transitively),
@@ -105,6 +106,7 @@ class SessionRoom:
     # to the room reads/writes the same in-memory snapshot reference.
     _snapshot: GameSnapshot | None = field(default=None, repr=False)
     _store: SqliteStore | None = field(default=None, repr=False)
+    _session: Session | None = field(default=None, init=False, repr=False)
     # Canonical narrator orchestrator (ADR-067 — single persistent narrator
     # session per slug). Each WS session bound to this room uses the
     # same Orchestrator so that two players acting on the same slug
@@ -158,6 +160,7 @@ class SessionRoom:
                 return
             self._snapshot = snapshot
             self._store = store
+            self._session = Session(snapshot)
 
     @property
     def snapshot(self) -> GameSnapshot | None:
@@ -168,6 +171,15 @@ class SessionRoom:
     def store(self) -> SqliteStore | None:
         """Canonical SqliteStore for the slug, or None before first bind."""
         return self._store
+
+    @property
+    def session(self) -> Session:
+        """Per-slug Session aggregate. Raises if not yet bound to a world."""
+        if self._session is None:
+            raise RuntimeError(
+                "Session not yet bound; call bind_world(snapshot, store) first."
+            )
+        return self._session
 
     def save(self) -> None:
         """Persist the canonical snapshot through the canonical store.
