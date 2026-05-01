@@ -251,3 +251,52 @@ class OpeningSetting(BaseModel):
                 "use chassis_instance.crew_npcs instead"
             )
         return self
+
+
+class Opening(BaseModel):
+    """Unified opening scenario — replaces OpeningHook (solo, sketch) and
+    MpOpening (MP, prose). One file per world: ``worlds/{slug}/openings.yaml``.
+
+    Top-level model uses ``extra='allow'`` so world authors can add
+    experimental fields without schema migrations. Inner sub-models
+    use ``extra='forbid'`` to catch typos in well-defined fields.
+    """
+
+    model_config = {"extra": "allow"}
+
+    id: str
+    name: str = ""
+    triggers: OpeningTrigger
+    setting: OpeningSetting
+    tone: OpeningTone = Field(default_factory=OpeningTone)
+    establishing_narration: str
+    first_turn_invitation: str = ""
+    rig_voice_seeds: list[dict[str, Any]] = Field(default_factory=list)
+    per_pc_beats: list[PerPcBeat] = Field(default_factory=list)
+    soft_hook: SoftHook = Field(default_factory=SoftHook)
+    party_framing: PartyFraming | None = None
+    magic_microbleed: MagicMicrobleed | None = None
+
+    @field_validator("first_turn_invitation")
+    @classmethod
+    def _no_question(cls, v: str) -> str:
+        if "?" in v:
+            raise ValueError(
+                "first_turn_invitation must not contain '?'. "
+                "Per SOUL pacing rule, turn 1 closes on a declarative; "
+                "the player should be able to sit in the breath without prompt."
+            )
+        return v
+
+    @field_validator("establishing_narration", "first_turn_invitation")
+    @classmethod
+    def _no_placeholder_text(cls, v: str) -> str:
+        forbidden = ["[authored", "[tbd", "[migrated", "[placeholder"]
+        lower = v.lower()
+        for marker in forbidden:
+            if marker in lower:
+                raise ValueError(
+                    f"Field contains placeholder marker {marker!r} — "
+                    "world-builder pass not complete"
+                )
+        return v
