@@ -31,11 +31,15 @@ guard intentionally and must handle their own content-not-found skips.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
+
+if TYPE_CHECKING:
+    from sidequest.game.persistence import GameMode
 
 # Absolute path to the frozen fixture pack directory.
 # Structure: tests/fixtures/packs/{test_genre,caverns_and_claudes,...} where
@@ -49,7 +53,7 @@ def seed_slug_for_test(
     genre: str,
     world: str,
     slug: str = "test-slug",
-    mode: object | None = None,
+    mode: GameMode | None = None,
 ) -> str:
     """Story 45-26: pre-populate a slug-keyed games-table row for tests.
 
@@ -531,7 +535,7 @@ def session_handler_factory(tmp_path):
     from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
-    from sidequest.game.persistence import GameMode, SqliteStore
+    from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import GenreLoader
     from sidequest.server.session_handler import (
