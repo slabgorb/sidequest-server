@@ -48,6 +48,10 @@ class ChassisInstanceConfig(BaseModel):
     voice: ChassisVoiceSpec | None = None
     interior_rooms: list[str] = Field(default_factory=list)
     bond_seeds: list[BondSeed] = Field(default_factory=list)
+    crew_npcs: list[str] = Field(default_factory=list)
+    # Each entry references an AuthoredNpc.id in worlds/{slug}/npcs.yaml.
+    # No wrapper class — relationship is "this NPC is aboard this ship,"
+    # nothing more. See docs/relationship-systems.md.
 
 
 class RigsWorldConfig(BaseModel):
