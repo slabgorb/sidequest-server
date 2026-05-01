@@ -433,6 +433,70 @@ def _validate_present_npcs_resolve(
             )
 
 
+def _validate_opening_bank_coverage(
+    openings: list[Opening],
+    chargen_backgrounds: list[str],
+    *,
+    world_slug: str,
+) -> None:
+    """Validators 7 + 8 (canned-openings §1.4).
+
+    7: world ships ≥1 solo opening AND ≥1 MP opening.
+       (Mode 'either' counts toward both.)
+    8: every chargen background must be reachable by some solo-eligible
+       opening (matching ``triggers.backgrounds: [...]`` OR a fallback entry
+       with ``triggers.backgrounds: []``).
+
+    An empty ``chargen_backgrounds`` list disables Validator 8 (no constraint
+    to satisfy). World-load currently passes ``[]`` whenever a world's
+    ``char_creation.yaml`` has no scene with id ``"background"`` — see the
+    wiring site in ``_load_single_world``.
+    """
+    path = f"worlds/{world_slug}/openings.yaml"
+
+    has_solo = any(op.triggers.mode in ("solo", "either") for op in openings)
+    has_mp = any(op.triggers.mode in ("multiplayer", "either") for op in openings)
+
+    if not has_solo:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                "no solo opening declared. openings.yaml must include "
+                "at least one entry with triggers.mode in {'solo', 'either'}."
+            ),
+        )
+    if not has_mp:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                "no multiplayer opening declared. openings.yaml must include "
+                "at least one entry with triggers.mode in {'multiplayer', 'either'}."
+            ),
+        )
+
+    # Validator 8: every chargen background reachable by a solo-eligible opening.
+    solo_eligible = [op for op in openings if op.triggers.mode in ("solo", "either")]
+    has_fallback = any(not op.triggers.backgrounds for op in solo_eligible)
+    if has_fallback:
+        return  # fallback covers all backgrounds
+
+    covered: set[str] = set()
+    for op in solo_eligible:
+        covered.update(op.triggers.backgrounds)
+
+    uncovered = [bg for bg in chargen_backgrounds if bg not in covered]
+    if uncovered:
+        raise GenreLoadError(
+            path=path,
+            detail=(
+                f"chargen backgrounds {uncovered!r} are not reachable by "
+                "any solo opening. Either add a background-keyed entry per "
+                "uncovered background OR add a fallback entry with "
+                "`triggers.backgrounds: []`."
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
@@ -567,6 +631,22 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
     # resolve to AuthoredNpc ids.
     _validate_present_npcs_resolve(
         openings, authored_npcs, world_slug=world_path.name
+    )
+
+    # Cross-file validators 7 + 8: opening bank coverage (canned-openings §1.4).
+    # Derive chargen backgrounds from the canonical "background" scene in
+    # char_creation.yaml. Worlds whose chargen uses a different scene id
+    # (e.g. coyote_reach uses "origins") fall through to []; that disables
+    # Validator 8 for those worlds but Validator 7 still enforces solo+MP.
+    background_scene = next(
+        (s for s in char_creation if s.id == "background"),
+        None,
+    )
+    chargen_backgrounds: list[str] = (
+        [c.label for c in background_scene.choices] if background_scene else []
+    )
+    _validate_opening_bank_coverage(
+        openings, chargen_backgrounds, world_slug=world_path.name
     )
 
     # Portrait manifest

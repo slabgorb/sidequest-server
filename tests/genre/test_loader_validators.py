@@ -8,6 +8,7 @@ from sidequest.genre.loader import (
     GenreLoadError,
     _validate_authored_npc_uniqueness,
     _validate_crew_npc_references,
+    _validate_opening_bank_coverage,
     _validate_opening_setting_references,
     _validate_present_npcs_resolve,
 )
@@ -144,3 +145,83 @@ def test_present_npcs_unknown_fails() -> None:
     npcs: list[AuthoredNpc] = []
     with pytest.raises(GenreLoadError, match="present_npcs"):
         _validate_present_npcs_resolve([op], npcs, world_slug="testworld")
+
+
+def test_bank_coverage_solo_and_mp_present() -> None:
+    """Validator 7: ≥1 solo, ≥1 MP."""
+    solo = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="solo",
+    )
+    mp = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="multiplayer",
+    )
+    chargen_backgrounds: list[str] = []  # validator 8 with empty list = no constraint
+    _validate_opening_bank_coverage(
+        [solo, mp], chargen_backgrounds, world_slug="testworld"
+    )
+
+
+def test_bank_coverage_missing_mp_fails() -> None:
+    solo = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="solo",
+    )
+    with pytest.raises(GenreLoadError, match="multiplayer"):
+        _validate_opening_bank_coverage([solo], [], world_slug="testworld")
+
+
+def test_bank_coverage_missing_solo_fails() -> None:
+    mp = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="multiplayer",
+    )
+    with pytest.raises(GenreLoadError, match="solo"):
+        _validate_opening_bank_coverage([mp], [], world_slug="testworld")
+
+
+def test_either_mode_satisfies_both() -> None:
+    """An opening with mode=either counts toward both solo and MP coverage."""
+    op = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="either",
+    )
+    _validate_opening_bank_coverage([op], [], world_slug="testworld")
+
+
+def test_chargen_background_uncovered_fails() -> None:
+    """Validator 8: every chargen background must be reachable by some opening."""
+    solo_a = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="solo",
+        backgrounds=["Far Landing Raised Me"],
+    )
+    mp = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="multiplayer",
+    )
+    with pytest.raises(GenreLoadError, match="Wirework Made Me"):
+        _validate_opening_bank_coverage(
+            [solo_a, mp],
+            chargen_backgrounds=["Far Landing Raised Me", "Wirework Made Me"],
+            world_slug="testworld",
+        )
+
+
+def test_fallback_opening_covers_all() -> None:
+    """An opening with backgrounds=[] is a fallback, satisfies validator 8 for everything."""
+    solo_fallback = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="solo",
+        backgrounds=[],  # fallback
+    )
+    mp = _make_opening(
+        OpeningSetting(chassis_instance="kestrel", interior_room="galley"),
+        mode="multiplayer",
+    )
+    _validate_opening_bank_coverage(
+        [solo_fallback, mp],
+        chargen_backgrounds=["Far Landing Raised Me", "Wirework Made Me"],
+        world_slug="testworld",
+    )
