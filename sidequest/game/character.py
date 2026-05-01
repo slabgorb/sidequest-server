@@ -109,6 +109,16 @@ class Character(BaseModel):
     resolved_archetype: str | None = None
     archetype_provenance: dict | None = None
 
+    # Chargen-derived narrative identity (canned-openings P2 — used by
+    # _populate_opening_directive_on_chargen_complete to filter Openings
+    # by triggers.backgrounds and to render PC name forms in the
+    # chassis-voice block).
+    background: str = ""
+    drive: str = ""
+    first_name: str = ""
+    last_name: str = ""
+    nickname: str = ""
+
     @field_validator("backstory")
     @classmethod
     def backstory_non_blank(cls, v: str) -> str:

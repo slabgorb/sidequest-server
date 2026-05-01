@@ -163,6 +163,13 @@ class AccumulatedChoices:
     item_hints: list[str] = field(default_factory=list)
     affinity_hint: str | None = None
     background: str | None = None
+    # Captured alongside ``background`` — the choice LABEL of the scene
+    # whose ``MechanicalEffects.background`` produced the mechanical tag.
+    # Symmetric with ``backstory_label`` below. Used by Character.background
+    # (canned-openings P2) so Opening triggers.backgrounds (which match the
+    # validator-derived ``chargen_backgrounds`` LABEL list) can filter
+    # correctly. Last-wins like other single-value hints.
+    background_label: str | None = None
     # Detected from scene effects shape — set when a scene's
     # MechanicalEffects looks "backstory-hook-shaped" (touches
     # relationship/goals/emotional_state, doesn't touch race/class/
@@ -441,6 +448,20 @@ def humanize_snake_case(s: str) -> str:
          "mystery_compass" → "Mystery Compass".
     """
     return " ".join(word.capitalize() if word else "" for word in s.split("_"))
+
+
+def _split_name(full_name: str) -> tuple[str, str]:
+    """Split 'First Middle Last' → ('First', 'Middle Last'). Empty → ('', '').
+
+    Used by ``CharacterBuilder.build`` to populate
+    ``Character.first_name`` / ``Character.last_name`` for the
+    canned-openings chassis-voice block. No nickname source today —
+    that field stays empty by design.
+    """
+    parts = full_name.strip().split()
+    if not parts:
+        return ("", "")
+    return (parts[0], " ".join(parts[1:]))
 
 
 def strip_unmatched_placeholders(s: str) -> str:
@@ -767,6 +788,8 @@ class CharacterBuilder:
                 acc.affinity_hint = eff.affinity_hint
             if eff.background is not None:
                 acc.background = eff.background
+                if result.choice_label is not None:
+                    acc.background_label = result.choice_label
             if eff.mutation_hint is not None:
                 acc.mutation_hint = eff.mutation_hint
             if eff.training_hint is not None:
@@ -1552,6 +1575,14 @@ class CharacterBuilder:
         if acc.jungian_hint is not None and acc.rpg_role_hint is not None:
             resolved_archetype = f"{acc.jungian_hint}/{acc.rpg_role_hint}"
 
+        # Canned-openings P2: split the lobby/chargen name into first/last
+        # parts and stamp the chosen background/drive choice LABELS onto
+        # the Character. Defaults to "" when a genre's chargen flow has
+        # no background- or drive-shaped scene — the helper that consumes
+        # these fields treats "" as explicit absence (not a silent
+        # fallback).
+        first_name, last_name = _split_name(name)
+
         # Compose the Character. Character / CreatureCore non-blank
         # validators will catch blank name / description / personality.
         character = Character(
@@ -1579,6 +1610,11 @@ class CharacterBuilder:
             is_friendly=True,
             resolved_archetype=resolved_archetype,
             archetype_provenance=None,
+            background=acc.background_label or "",
+            drive=acc.backstory_label or "",
+            first_name=first_name,
+            last_name=last_name,
+            nickname="",
         )
 
         return character
