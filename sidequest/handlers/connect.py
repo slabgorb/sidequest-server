@@ -628,6 +628,7 @@ class ConnectHandler:
                 store=room.store,
                 genre_pack=genre_pack,
                 orchestrator=shared_orchestrator,
+                _room=room,  # back-reference for downstream Session access (Task D)
                 builder=builder,
                 opening_seed=opening_seed,
                 opening_directive=opening_directive,
