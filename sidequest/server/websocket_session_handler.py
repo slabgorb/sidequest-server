@@ -2675,19 +2675,41 @@ class WebSocketSessionHandler:
         # so the joiner is the LAST entry in ``snapshot.characters``.
         joiner_orientation = sd.opening_seed is None and len(sd.snapshot.characters) > 1
         if joiner_orientation:
-            joiner_char_name = (
-                sd.snapshot.characters[-1].core.name
-                if sd.snapshot.characters
-                else (sd.player_name or "the new arrival")
-            )
-            action = (
-                f"{joiner_char_name} steps into the scene and orients to "
-                "the surroundings — describe their arrival from their "
-                "point of view in a brief grounding paragraph. Do not "
-                "generate dialogue, decisions, or new actions for any "
-                "other PC already present."
-            )
-            source_tier = "mp_joiner_orientation"
+            # Per-PC POV anchoring works for the 2P "P2 joins P1's
+            # in-progress game" case the original fix targeted, but
+            # produces jarring single-PC framing for fresh 3+ player
+            # openings (playtest 2026-04-30 BUG-LOW: opening narration
+            # anchored on Linus, the last/4th committer, when the four
+            # PCs all completed chargen together — Sebastien-class
+            # incoherence between "you have the floor" per-tab banners
+            # and a single-PC POV opening). For 3+ PCs use omniscient
+            # framing that introduces the party as a group rather than
+            # picking one arbitrary anchor; preserve the per-PC anchor
+            # for the original 2P case (one incumbent + one joiner).
+            if len(sd.snapshot.characters) >= 3:
+                action = (
+                    "The party has assembled in the scene — describe the "
+                    "shared surroundings in a brief grounding paragraph "
+                    "that establishes the location and mood for everyone "
+                    "present. Use omniscient/scene-wide framing, not any "
+                    "single character's point of view. Do not generate "
+                    "dialogue, decisions, or new actions for any PC."
+                )
+                source_tier = "mp_party_orientation"
+            else:
+                joiner_char_name = (
+                    sd.snapshot.characters[-1].core.name
+                    if sd.snapshot.characters
+                    else (sd.player_name or "the new arrival")
+                )
+                action = (
+                    f"{joiner_char_name} steps into the scene and orients to "
+                    "the surroundings — describe their arrival from their "
+                    "point of view in a brief grounding paragraph. Do not "
+                    "generate dialogue, decisions, or new actions for any "
+                    "other PC already present."
+                )
+                source_tier = "mp_joiner_orientation"
         else:
             action = sd.opening_seed or "I look around and take in my surroundings."
             source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
