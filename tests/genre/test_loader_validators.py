@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-import yaml
 
 from sidequest.genre.loader import (
     GenreLoadError,
+    _validate_authored_npc_uniqueness,
     _validate_crew_npc_references,
     _validate_opening_setting_references,
+    _validate_present_npcs_resolve,
 )
 from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.narrative import (
@@ -109,3 +108,39 @@ def test_empty_crew_npcs_ok() -> None:
     chassis = [_make_chassis(crew_npcs=[])]
     npcs: list[AuthoredNpc] = []
     _validate_crew_npc_references(chassis, npcs, world_slug="testworld")
+
+
+def test_authored_npc_ids_unique() -> None:
+    npcs = [_make_authored_npc("a"), _make_authored_npc("b")]
+    _validate_authored_npc_uniqueness(npcs, world_slug="testworld")
+
+
+def test_authored_npc_duplicate_id_fails() -> None:
+    """Validator 5."""
+    npcs = [_make_authored_npc("a"), _make_authored_npc("a")]
+    with pytest.raises(GenreLoadError, match="duplicate"):
+        _validate_authored_npc_uniqueness(npcs, world_slug="testworld")
+
+
+def test_present_npcs_resolve() -> None:
+    op = _make_opening(
+        OpeningSetting(
+            location_label="the Promenade",
+            present_npcs=["arena_master"],
+        )
+    )
+    npcs = [_make_authored_npc("arena_master")]
+    _validate_present_npcs_resolve([op], npcs, world_slug="testworld")
+
+
+def test_present_npcs_unknown_fails() -> None:
+    """Validator 12 part-b."""
+    op = _make_opening(
+        OpeningSetting(
+            location_label="the Promenade",
+            present_npcs=["missing_envoy"],
+        )
+    )
+    npcs: list[AuthoredNpc] = []
+    with pytest.raises(GenreLoadError, match="present_npcs"):
+        _validate_present_npcs_resolve([op], npcs, world_slug="testworld")

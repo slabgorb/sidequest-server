@@ -392,6 +392,47 @@ def _validate_crew_npc_references(
             )
 
 
+def _validate_authored_npc_uniqueness(
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 5: AuthoredNpc.id unique per world."""
+    seen: set[str] = set()
+    for npc in authored_npcs:
+        if npc.id in seen:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/npcs.yaml",
+                detail=(
+                    f"duplicate AuthoredNpc.id {npc.id!r}. "
+                    "Each NPC id must be unique within a world."
+                ),
+            )
+        seen.add(npc.id)
+
+
+def _validate_present_npcs_resolve(
+    openings: list[Opening],
+    authored_npcs: list[AuthoredNpc],
+    *,
+    world_slug: str,
+) -> None:
+    """Validator 12 part-b: every Opening.setting.present_npcs entry resolves
+    to an AuthoredNpc.id."""
+    npc_ids = {n.id for n in authored_npcs}
+    for op in openings:
+        unknown = [n for n in op.setting.present_npcs if n not in npc_ids]
+        if unknown:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} declares present_npcs {unknown!r} "
+                    f"that do not resolve to any AuthoredNpc. "
+                    f"Known: {sorted(npc_ids)}"
+                ),
+            )
+
+
 # ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
@@ -517,6 +558,15 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
     # against AuthoredNpc ids in npcs.yaml.
     _validate_crew_npc_references(
         chassis_instances, authored_npcs, world_slug=world_path.name
+    )
+
+    # Cross-file validator 5: AuthoredNpc ids are unique within a world.
+    _validate_authored_npc_uniqueness(authored_npcs, world_slug=world_path.name)
+
+    # Cross-file validator 12 part-b: Opening.setting.present_npcs entries
+    # resolve to AuthoredNpc ids.
+    _validate_present_npcs_resolve(
+        openings, authored_npcs, world_slug=world_path.name
     )
 
     # Portrait manifest
