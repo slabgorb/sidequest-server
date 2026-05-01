@@ -76,14 +76,37 @@ def init_magic_state_for_session(
         )
         return False
 
-    state = MagicState.from_config(config)
+    # Pingpong 2026-04-30 ("Magic system parse_error: unknown actor:
+    # 'Linus'; call add_character first"): in 4P MP each player's
+    # chargen confirmation calls this function; pre-fix every call did
+    # ``MagicState.from_config(config)`` which built a NEW state with
+    # only the current ``character_id`` and assigned it to
+    # ``snapshot.magic_state``, wiping prior committers. With four
+    # sequential commits Charlie → Snoopy → Linus → Lucy, only Lucy
+    # ended up in the ledger; the next turn's narrator referenced
+    # Linus by name, the magic parser tried to apply a working against
+    # actor 'Linus', the per-character bars weren't there, and the
+    # parser raised ``unknown actor: 'Linus'; call add_character first``.
+    # Fix: idempotent on the snapshot — if a magic state already
+    # exists for this slug, REUSE it and just register the new
+    # character. Build a fresh state only on the first commit (when
+    # ``snapshot.magic_state is None``). Mirrors the same MP-aware
+    # idempotence the lore seeders rely on (DuplicateLoreId guard) and
+    # the canonical-snapshot model (room-owned shared world state).
+    if snapshot.magic_state is None:
+        state = MagicState.from_config(config)
+        snapshot.magic_state = state
+        first_commit = True
+    else:
+        state = snapshot.magic_state
+        first_commit = False
     state.add_character(character_id)
-    snapshot.magic_state = state
     logger.info(
-        "magic.init world=%s actor=%s plugins=%s bars=%d",
+        "magic.init world=%s actor=%s plugins=%s bars=%d first_commit=%s",
         world_slug,
         character_id,
         list(config.active_plugins),
         len(state.ledger),
+        first_commit,
     )
     return True

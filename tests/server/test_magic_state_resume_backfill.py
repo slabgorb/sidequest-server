@@ -26,12 +26,31 @@ CONTENT_ROOT = (
 )
 
 
-def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace]:
+def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace, str]:
+    """Returns (snapshot, pack_stub, world_slug). World slug resolved at
+    call time — Coyote Reach was renamed → Coyote Star on the content
+    repo's ``develop`` branch (commit adb8e91); ``main`` checkouts may
+    still see the old name. Try both so the suite passes regardless of
+    which content branch is checked out.
+    """
     pack_dir = CONTENT_ROOT / "space_opera"
     if not (pack_dir / "magic.yaml").is_file():
         pytest.skip("space_opera magic.yaml not present in this checkout")
 
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
+    world_slug = next(
+        (
+            slug
+            for slug in ("coyote_star", "coyote_reach")
+            if (pack_dir / "worlds" / slug / "magic.yaml").is_file()
+        ),
+        None,
+    )
+    if world_slug is None:
+        pytest.skip(
+            "Neither coyote_star nor coyote_reach magic.yaml found in this checkout"
+        )
+
+    snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
     snap.characters.append(
         Character(
             core=CreatureCore(
@@ -48,7 +67,7 @@ def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace]:
     # ConnectHandler reads `genre_pack.source_dir` — mirror just enough
     # of that surface to exercise the helper.
     pack_stub = SimpleNamespace(source_dir=pack_dir)
-    return snap, pack_stub
+    return snap, pack_stub, world_slug
 
 
 def test_backfill_runs_when_magic_state_is_none_and_world_has_magic() -> None:
@@ -57,15 +76,15 @@ def test_backfill_runs_when_magic_state_is_none_and_world_has_magic() -> None:
     calls ``init_magic_state_for_session``, and snapshot.magic_state is
     populated for the LedgerPanel.
     """
-    snap, pack = _coyote_star_pack_with_character()
+    snap, pack, world_slug = _coyote_star_pack_with_character()
     assert snap.magic_state is None
 
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug="coyote_star"
+        snapshot=snap, genre_pack=pack, world_slug=world_slug
     )
 
     assert snap.magic_state is not None
-    assert snap.magic_state.config.world_slug == "coyote_star"
+    assert snap.magic_state.config.world_slug == world_slug
     char_keys = [
         k for k in snap.magic_state.ledger if k.startswith("character|Hokulea|")
     ]
@@ -80,7 +99,7 @@ def test_backfill_no_op_when_magic_state_already_populated() -> None:
     not overwrite it (would clobber the per-character ledger debits the
     save was tracking).
     """
-    snap, pack = _coyote_star_pack_with_character()
+    snap, pack, world_slug = _coyote_star_pack_with_character()
     # Seed magic_state via the same helper to mirror "the save already
     # had it" rather than constructing one by hand.
     from sidequest.server.magic_init import init_magic_state_for_session
@@ -88,14 +107,14 @@ def test_backfill_no_op_when_magic_state_already_populated() -> None:
     init_magic_state_for_session(
         snapshot=snap,
         genre_pack_source_dir=pack.source_dir,
-        world_slug="coyote_star",
+        world_slug=world_slug,
         character_id="Hokulea",
     )
     sentinel = snap.magic_state
     assert sentinel is not None
 
     _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug="coyote_star"
+        snapshot=snap, genre_pack=pack, world_slug=world_slug
     )
 
     assert snap.magic_state is sentinel, (

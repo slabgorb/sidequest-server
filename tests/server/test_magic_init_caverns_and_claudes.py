@@ -162,22 +162,39 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
 
 def test_space_opera_magic_init_still_fires(so_pack_dir):
     """Companion: ensure the C&C migration didn't accidentally regress
-    the space_opera path. coyote_star must still load the four
-    authored bars (sanity / notice / vitality / hegemony_heat).
+    the space_opera path. The world (renamed Coyote Reach → Coyote
+    Star on the content repo's ``develop`` branch, commit adb8e91)
+    must still load the four authored bars (sanity / notice / vitality
+    / hegemony_heat). Resilient to content branch state — try
+    ``coyote_star`` first, fall back to ``coyote_reach`` (the pre-
+    rename slug still on ``main``).
     """
+    world_slug = next(
+        (
+            slug
+            for slug in ("coyote_star", "coyote_reach")
+            if (so_pack_dir / "worlds" / slug / "magic.yaml").is_file()
+        ),
+        None,
+    )
+    assert world_slug is not None, (
+        f"Neither coyote_star nor coyote_reach magic.yaml found under "
+        f"{so_pack_dir / 'worlds'} — content checkout missing both pre- "
+        "and post-rename world directories."
+    )
     snapshot = GameSnapshot(
         genre_slug="space_opera",
-        world_slug="coyote_star",
+        world_slug=world_slug,
         turn_manager=TurnManager(),
     )
     result = init_magic_state_for_session(
         snapshot=snapshot,
         genre_pack_source_dir=so_pack_dir,
-        world_slug="coyote_star",
+        world_slug=world_slug,
         character_id="Parsley",
     )
     assert result is True
     assert snapshot.magic_state is not None
-    # Coyote Reach: 1 world-scope bar (hegemony_heat) + 3 character-
+    # Coyote Reach/Star: 1 world-scope bar (hegemony_heat) + 3 character-
     # scope bars (sanity/notice/vitality) seeded for Parsley.
     assert len(snapshot.magic_state.ledger) == 4

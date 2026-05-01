@@ -21,33 +21,52 @@ from sidequest.server.magic_init import init_magic_state_for_session
 CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 
 
+def _resolve_space_opera_world_with_magic() -> tuple[Path, str]:
+    """Return (pack_dir, world_slug) for a space_opera world that ships
+    a magic.yaml. The world was renamed Coyote Reach → Coyote Star
+    on the content repo's ``develop`` branch (commit adb8e91); local
+    checkouts on ``main`` may still see the old name. Try both so the
+    suite passes regardless of which content branch is checked out.
+    Raises AssertionError if neither directory exists — the genre's
+    magic.yaml itself must be present, just the world directory may be
+    under either slug.
+    """
+    pack_dir = CONTENT_ROOT / "space_opera"
+    if not (pack_dir / "magic.yaml").is_file():
+        raise AssertionError(
+            f"space_opera magic.yaml missing at {pack_dir} — "
+            "Phase 4 magic init test cannot run without shipping content"
+        )
+    for slug in ("coyote_star", "coyote_reach"):
+        if (pack_dir / "worlds" / slug / "magic.yaml").is_file():
+            return pack_dir, slug
+    raise AssertionError(
+        f"Neither coyote_star nor coyote_reach world found under "
+        f"{pack_dir / 'worlds'} — content checkout missing both pre- "
+        "and post-rename world directories."
+    )
+
+
 def test_init_magic_state_loads_coyote_star_and_adds_character() -> None:
     """Coyote Star has both genre + world magic.yaml shipping. After
     init, snapshot.magic_state is populated with the world config and
     the character has per-character bars in the ledger.
     """
-    pack_dir = CONTENT_ROOT / "space_opera"
-    if not (pack_dir / "magic.yaml").is_file():
-        # Content is part of the project; if it's missing we want to
-        # know loudly rather than silently skip.
-        raise AssertionError(
-            f"space_opera magic.yaml missing at {pack_dir} — "
-            "Phase 4 magic init test cannot run without shipping content"
-        )
+    pack_dir, world_slug = _resolve_space_opera_world_with_magic()
 
-    snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
+    snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
     assert snap.magic_state is None
 
     ok = init_magic_state_for_session(
         snapshot=snap,
         genre_pack_source_dir=pack_dir,
-        world_slug="coyote_star",
+        world_slug=world_slug,
         character_id="Sira Mendes",
     )
 
     assert ok is True
     assert snap.magic_state is not None
-    assert snap.magic_state.config.world_slug == "coyote_star"
+    assert snap.magic_state.config.world_slug == world_slug
     assert snap.magic_state.config.genre_slug == "space_opera"
 
     # Character bars must be instantiated in the ledger so a working
@@ -139,6 +158,96 @@ def test_init_magic_state_logs_loader_error_without_raising(
         )
     # Either way the snapshot is in a consistent state.
     assert snap.magic_state is None or snap.magic_state.config.world_slug == "broken_world"
+
+
+def test_init_magic_state_idempotent_on_existing_state_adds_character_only() -> None:
+    """Pingpong 2026-04-30: in 4P MP each player's chargen confirmation
+    calls ``init_magic_state_for_session`` against the SAME canonical
+    snapshot. Pre-fix every call did ``MagicState.from_config(config)``
+    which built a NEW state with only the current ``character_id`` and
+    assigned it to ``snapshot.magic_state``, wiping prior committers.
+    With four sequential commits (Charlie → Snoopy → Linus → Lucy)
+    only Lucy ended up in the ledger; the next narrator turn referenced
+    Linus by name, the magic parser raised
+    ``unknown actor: 'Linus'; call add_character first``.
+
+    Post-fix: the helper is idempotent on the snapshot — first call
+    builds the state and adds the character; subsequent calls REUSE
+    the existing state and only call ``add_character`` for the new
+    PC. All four PCs end up in the ledger.
+    """
+    pack_dir, world_slug = _resolve_space_opera_world_with_magic()
+
+    snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
+    assert snap.magic_state is None
+
+    # Simulate the 4P MP commit order from the playtest.
+    chargen_order = ["Charlie", "Snoopy", "Linus", "Lucy"]
+    for pc in chargen_order:
+        ok = init_magic_state_for_session(
+            snapshot=snap,
+            genre_pack_source_dir=pack_dir,
+            world_slug=world_slug,
+            character_id=pc,
+        )
+        assert ok is True, f"init failed for {pc!r}"
+
+    # First commit must have created the state; subsequent commits
+    # must NOT have replaced it. We can't directly observe the
+    # call-site decision, but we can verify the load-bearing outcome:
+    # ALL four PCs are registered in the ledger, not just the last one.
+    assert snap.magic_state is not None
+    for pc in chargen_order:
+        char_keys = [
+            k for k in snap.magic_state.ledger
+            if k.startswith(f"character|{pc}|")
+        ]
+        assert len(char_keys) > 0, (
+            f"PC {pc!r} not registered in magic_state.ledger after MP "
+            f"chargen sequence. Pre-fix only the last committer "
+            f"({chargen_order[-1]!r}) survived because each call "
+            f"replaced snapshot.magic_state with a fresh state. "
+            f"Ledger keys: {list(snap.magic_state.ledger.keys())}"
+        )
+
+
+def test_init_magic_state_idempotent_on_duplicate_character_id() -> None:
+    """Reconnect / re-commit safety: if the same PC's chargen confirm
+    fires twice (transient idempotence — the user accidentally
+    re-confirms, or a save-resume re-runs the chargen hook), the
+    second call must not raise. ``MagicState.add_character`` is
+    already idempotent (line 125-126: ``if serialized in ledger:
+    continue``); this test guards that contract from the init layer.
+    """
+    pack_dir, world_slug = _resolve_space_opera_world_with_magic()
+
+    snap = GameSnapshot(genre_slug="space_opera", world_slug=world_slug)
+    init_magic_state_for_session(
+        snapshot=snap,
+        genre_pack_source_dir=pack_dir,
+        world_slug=world_slug,
+        character_id="Linus",
+    )
+    state_after_first = snap.magic_state
+    assert state_after_first is not None
+    bars_after_first = dict(state_after_first.ledger)
+
+    # Second commit for the same PC — must reuse the state and not
+    # mutate the ledger.
+    init_magic_state_for_session(
+        snapshot=snap,
+        genre_pack_source_dir=pack_dir,
+        world_slug=world_slug,
+        character_id="Linus",
+    )
+    assert snap.magic_state is state_after_first, (
+        "Second init for the same PC must REUSE the existing state, "
+        "not create a new one. If the state object identity changed, "
+        "any per-player references held by callers (orchestrator, "
+        "validator) would silently dangle."
+    )
+    # Ledger contents unchanged — same bars, no duplicates.
+    assert dict(snap.magic_state.ledger) == bars_after_first
 
 
 def test_websocket_session_handler_imports_and_calls_init_magic_state() -> None:
