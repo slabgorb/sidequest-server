@@ -25,6 +25,7 @@ from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from sidequest.server.watcher import WatcherSpanProcessor
 from sidequest.telemetry import spans as spans_module
 from sidequest.telemetry.watcher_hub import watcher_hub
+from tests._helpers.session_room import room_for
 
 
 @pytest.mark.asyncio
@@ -79,7 +80,7 @@ async def test_quest_updates_emit_state_transition_via_span_route(
         narration="Vex offers a deal.",
         quest_updates={"deal_with_vex": "active"},
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
 
     # Cross-thread coroutine hop needs a tick.
     await asyncio.sleep(0.05)

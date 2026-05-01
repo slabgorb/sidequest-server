@@ -9,6 +9,7 @@ from __future__ import annotations
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.session import GameSnapshot
 from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 # ---------------------------------------------------------------------------
 # _apply_narration_result_to_snapshot unit tests
@@ -29,7 +30,7 @@ def test_apply_location_update():
     snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Old Place")
     result = _make_result(narration="You arrive.", location="New Dungeon")
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert snapshot.location == "New Dungeon"
     assert "New Dungeon" in snapshot.discovered_regions
@@ -45,7 +46,7 @@ def test_apply_location_added_to_discovered_regions_once():
     )
     result = _make_result(narration="You stay in town.", location="Town")
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert snapshot.discovered_regions.count("Town") == 1
 
@@ -55,7 +56,7 @@ def test_apply_quest_updates():
     snapshot = GameSnapshot(genre_slug="test", world_slug="test")
     result = _make_result(narration="Quest started.", quest_updates={"find_crystal": "active"})
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert snapshot.quest_log["find_crystal"] == "active"
 
@@ -72,7 +73,7 @@ def test_apply_lore_established_no_duplicates():
         lore_established=["The ruins are ancient.", "The crystal glows at night."],
     )
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert snapshot.lore_established.count("The ruins are ancient.") == 1
     assert "The crystal glows at night." in snapshot.lore_established
@@ -88,7 +89,7 @@ def test_apply_npc_registry_new_npc():
         npcs_present=[NpcMention(name="Zara", role="barkeep", pronouns="she/her")],
     )
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert len(snapshot.npc_registry) == 1
     assert snapshot.npc_registry[0].name == "Zara"
@@ -126,7 +127,7 @@ def test_apply_npc_registry_existing_is_additive_only():
         ],
     )
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     # Still 1 entry (no duplicate)
     assert len(snapshot.npc_registry) == 1
@@ -151,7 +152,7 @@ def test_apply_no_mutation_on_empty_result():
 
     result = _make_result(narration="Nothing happens.")
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player")
+    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     assert snapshot.location == original_location
     assert snapshot.quest_log == original_quest_log
@@ -160,7 +161,7 @@ def test_apply_no_mutation_on_empty_result():
 def test_apply_non_narration_result_is_noop():
     """Non-NarrationTurnResult argument is a no-op (type guard)."""
     snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="X")
-    _apply_narration_result_to_snapshot(snapshot, object(), "player")
+    _apply_narration_result_to_snapshot(snapshot, object(), "player", room=room_for(snapshot))
     assert snapshot.location == "X"
 
 

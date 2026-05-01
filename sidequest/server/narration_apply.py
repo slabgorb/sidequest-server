@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from sidequest.server.session_room import SessionRoom
 
 from sidequest.game.region_validation import (
     canonicalize_region_name,
@@ -490,6 +493,7 @@ def _apply_narration_result_to_snapshot(
     result: object,
     player_name: str,
     *,
+    room: SessionRoom,
     pack: GenrePack | None = None,
     dice_failed: bool | None = None,
     dice_actor: str | None = None,
@@ -1437,14 +1441,8 @@ def _apply_narration_result_to_snapshot(
                     # is the canonical "scene end" trigger that the Scratch
                     # severity tier promises in game/status.py — without
                     # this sweep, Scratches accumulate forever (Bug #1).
-                    from sidequest.server.status_clear import (
-                        clear_scratch_on_scene_end,
-                    )
-                    clear_scratch_on_scene_end(
-                        snapshot,
-                        reason="scene_end",
-                        turn=turn_num,
-                    )
+                    # Now also advances the story-time clock via Session.
+                    room.session.end_scene("scene_end", turn=turn_num)
                     break
 
     if result.status_changes:

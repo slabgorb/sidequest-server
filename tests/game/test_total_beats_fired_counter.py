@@ -48,6 +48,7 @@ from sidequest.genre.models.rules import (
     MetricDef,
     RulesConfig,
 )
+from tests._helpers.session_room import room_for
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -236,7 +237,8 @@ class TestLegacyNarratorBeatPathWiring:
             "Bob",
             pack=pack,
             from_explicit_action=True,  # bypass the SOUL gate; this is a
-            # mechanical wire test, not a SOUL-gate test.
+            # mechanical wire test, not a SOUL-gate test.,
+            room=room_for(snap),
         )
         # Single beat fired in the narrator path → counter ticks once.
         assert snap.total_beats_fired == 1

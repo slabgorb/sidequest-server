@@ -33,6 +33,7 @@ from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from sidequest.server.watcher import WatcherSpanProcessor
 from sidequest.telemetry import spans as spans_module
 from sidequest.telemetry.watcher_hub import watcher_hub
+from tests._helpers.session_room import room_for
 
 
 def _make_snapshot(*, lore: list[str] | None = None) -> GameSnapshot:
@@ -91,7 +92,7 @@ async def test_lore_established_emits_lore_retrieval_via_span_route(
         narration="Vex spits dust, then says it.",
         lore_established=[new_lore],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # Snapshot must have been mutated — the new lore string is canonical.
@@ -139,7 +140,7 @@ async def test_lore_established_dedupes_against_existing_snapshot_entries(
         narration="A second canonical fact lands.",
         lore_established=[pre_existing, fresh_lore],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     # No duplicate inserted; snapshot total advances by exactly one.
@@ -180,7 +181,7 @@ async def test_lore_route_is_single_source_no_double_emission(
         narration="Canonical truth.",
         lore_established=["Mira survived the second irradiation."],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
 
     lore_events = [

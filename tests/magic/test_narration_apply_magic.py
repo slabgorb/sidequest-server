@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from sidequest.magic.models import HardLimit, WorldMagicConfig
+from tests._helpers.session_room import room_for
 
 
 @pytest.fixture()
@@ -188,7 +189,8 @@ def test_narration_apply_pipeline_invokes_apply_magic_working(coyote_snapshot):
     )
 
     _apply_narration_result_to_snapshot(
-        coyote_snapshot, result, player_name="Sira"
+        coyote_snapshot, result, player_name="Sira",
+        room=room_for(coyote_snapshot),
     )
 
     # Sanity dropped by 0.05 from 1.00 → 0.95: proves apply_magic_working ran.

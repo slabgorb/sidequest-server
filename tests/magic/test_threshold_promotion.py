@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from sidequest.magic.models import HardLimit, WorldMagicConfig
+from tests._helpers.session_room import room_for
 
 
 @pytest.fixture()
@@ -242,7 +243,7 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
         },
     )
 
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Sira")
+    _apply_narration_result_to_snapshot(snapshot, result, player_name="Sira", room=room_for(snapshot))
 
     target = next(c for c in snapshot.characters if c.core.name == "sira_mendes")
     statuses = target.core.statuses

@@ -40,6 +40,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 from sidequest.game.session import GameSnapshot, NpcRegistryEntry
 from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+from tests._helpers.session_room import room_for
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -242,7 +243,7 @@ async def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
         ],
         is_degraded=False,
     )
-    _apply_narration_result_to_snapshot(snapshot, narration_n, "Felix")
+    _apply_narration_result_to_snapshot(snapshot, narration_n, "Felix", room=room_for(snapshot))
 
     # Turn N+1 — TurnContext is rebuilt from snapshot and prompt is assembled.
     # If the wire is closed, Frandrew's canonical identity must appear.
@@ -288,6 +289,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
             is_degraded=False,
         ),
         "Felix",
+        room=room_for(snapshot),
     )
     # Turn 2: introduce Vey
     _apply_narration_result_to_snapshot(
@@ -300,6 +302,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
             is_degraded=False,
         ),
         "Felix",
+        room=room_for(snapshot),
     )
     # Turn 3: narrator only re-mentions Frandrew by bare name.
     # The dossier must still carry she/her into the prompt for turn 4.
@@ -311,6 +314,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
             is_degraded=False,
         ),
         "Felix",
+        room=room_for(snapshot),
     )
 
     # Build turn-4 prompt and verify identity stability
@@ -365,6 +369,7 @@ def test_bare_name_re_mention_does_not_overwrite_canonical_fields():
             is_degraded=False,
         ),
         "Felix",
+        room=room_for(snapshot),
     )
 
     entry = snapshot.npc_registry[0]
@@ -452,6 +457,7 @@ def test_auto_register_emits_span_on_new_npc(caplog, monkeypatch):
                 is_degraded=False,
             ),
             "Felix",
+            room=room_for(snapshot),
         )
 
     all_logs = caplog.text
@@ -530,6 +536,7 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
                 is_degraded=False,
             ),
             "Felix",
+            room=room_for(snapshot),
         )
 
     all_logs = caplog.text
@@ -582,6 +589,7 @@ def test_explicit_drift_does_not_overwrite_canonical_pronouns(caplog, monkeypatc
                 is_degraded=False,
             ),
             "Felix",
+            room=room_for(snapshot),
         )
 
     # Drift detector must have fired
@@ -642,6 +650,7 @@ def test_drift_detector_fires_on_role_mismatch(caplog, monkeypatch):
                 is_degraded=False,
             ),
             "Felix",
+            room=room_for(snapshot),
         )
 
     assert "npc.reinvented" in caplog.text
@@ -756,6 +765,7 @@ def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
                 is_degraded=False,
             ),
             "Felix",
+            room=room_for(snapshot),
         )
 
     assert "npc.reinvented" not in caplog.text, (

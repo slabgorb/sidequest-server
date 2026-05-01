@@ -59,6 +59,7 @@ from sidequest.protocol.dice import (
 from sidequest.server.dispatch.dice import dispatch_dice_throw
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from sidequest.telemetry.spans import SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
+from tests._helpers.session_room import room_for
 
 
 def _make_snapshot() -> GameSnapshot:
@@ -296,7 +297,8 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
         opposed_player_d20=18,
         opposed_player_beat_id="attack",
         opposed_player_actor="Sam",
-        from_explicit_action=True,  # DICE_THROW already gated this turn
+        from_explicit_action=True,  # DICE_THROW already gated this turn,
+        room=room_for(snapshot),
     )
 
     assert apply_outcome.sealed_letter is None
@@ -361,6 +363,7 @@ def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, 
         opposed_player_d20=5, opposed_player_beat_id="attack",
         opposed_player_actor="Sam",
         from_explicit_action=True,
+        room=room_for(snapshot),
     )
 
     # Verify the resolver ran — the OTEL span carries the derived tier.
@@ -402,6 +405,7 @@ def test_narration_apply_opposed_check_hard_fails_without_pending_state():
         _apply_narration_result_to_snapshot(
             snapshot, result, player_name="p1", pack=pack,
             from_explicit_action=True,
+            room=room_for(snapshot),
         )
 
 
@@ -456,6 +460,7 @@ def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_pat
         opposed_player_beat_id=None,
         opposed_player_actor=None,
         from_explicit_action=False,
+        room=room_for(snapshot),
     )
 
     assert not enc.resolved, (

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._helpers.session_room import room_for
+
 # ---------------------------------------------------------------------------
 # Layer 1 — Unit: canonicalize_region_name
 # ---------------------------------------------------------------------------
@@ -182,11 +184,13 @@ class TestNarrationApplyDedupWiring:
             snap,
             _make_narration_result(narration="…", location="The Crew Quarters"),
             player_name="Felix",
+            room=room_for(snap),
         )
         _apply_narration_result_to_snapshot(
             snap,
             _make_narration_result(narration="…", location="the crew quarters"),
             player_name="Felix",
+            room=room_for(snap),
         )
 
         assert snap.discovered_regions == ["The Crew Quarters"], (
@@ -205,11 +209,13 @@ class TestNarrationApplyDedupWiring:
             snap,
             _make_narration_result(narration="…", location="The Crew Quarters"),
             player_name="Felix",
+            room=room_for(snap),
         )
         _apply_narration_result_to_snapshot(
             snap,
             _make_narration_result(narration="…", location="THE  CREW  QUARTERS!"),
             player_name="Felix",
+            room=room_for(snap),
         )
 
         dedup_spans = [
@@ -240,6 +246,7 @@ class TestNarrationApplyDedupWiring:
                 snap,
                 _make_narration_result(narration="…", location="The Crew Quarters"),
                 player_name="Felix",
+                room=room_for(snap),
             )
 
         dedup_spans = [
@@ -259,11 +266,13 @@ class TestNarrationApplyDedupWiring:
             snap,
             _make_narration_result(narration="…", location="The Crew Quarters"),
             player_name="Felix",
+            room=room_for(snap),
         )
         _apply_narration_result_to_snapshot(
             snap,
             _make_narration_result(narration="…", location="The Bridge"),
             player_name="Felix",
+            room=room_for(snap),
         )
 
         assert snap.discovered_regions == ["The Crew Quarters", "The Bridge"]
@@ -346,6 +355,7 @@ class TestValidationStillFiresFirst:
                 location="(aside — narrator brief)",
             ),
             player_name="Felix",
+            room=room_for(snap),
         )
 
         spans_by_name = {s.name for s in otel_capture.get_finished_spans()}

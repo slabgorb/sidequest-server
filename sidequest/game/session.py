@@ -454,6 +454,17 @@ class GameSnapshot(BaseModel):
     # Turn tracking (P1-required)
     turn_manager: TurnManager = Field(default_factory=TurnManager)
 
+    # Story-time clock (orbital map / Session aggregate strangler — Task A).
+    clock_t_hours: float = Field(
+        default=0.0,
+        description=(
+            "Story-time hours from world epoch. Advanced only via "
+            "Session.advance_via_beat (which calls advance_clock_via_beat). "
+            "See sidequest.server.session.Session and "
+            "sidequest.orbital.clock.Clock."
+        ),
+    )
+
     # Session metadata
     last_saved_at: datetime | None = None
 

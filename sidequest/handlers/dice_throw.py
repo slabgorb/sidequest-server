@@ -152,16 +152,24 @@ class DiceThrowHandler:
                 )
             return outbound
 
-        # Encounter just resolved via dice — sweep Scratch off the party
-        # (Playtest 2026-04-26 Bug #1: conditions never clear). The
-        # narrator-beat resolution path in narration_apply.py does the
-        # same sweep; both call sites must stay in sync.
+        # Encounter just resolved via dice — front-door scene-end through
+        # Session.end_scene (Task E.3 of session-aggregate strangler).
+        # end_scene runs the Scratch sweep (Playtest 2026-04-26 Bug #1)
+        # and advances the orbital clock by one ENCOUNTER beat, emitting
+        # both encounter.status_cleared (per cleared status) and
+        # clock.advance spans. Matches the front-door pattern used by the
+        # narrator-beat resolution path in narration_apply.py and the
+        # YIELD path in dispatch/yield_action.py.
         if outcome.encounter_resolved:
-            from sidequest.server.status_clear import clear_scratch_on_scene_end
-
-            clear_scratch_on_scene_end(
-                snapshot,
-                reason="scene_end",
+            if sd._room is None:
+                # Slug-connect branch always sets _room; this is a
+                # programming-error path. Surface as a hard error.
+                raise RuntimeError(
+                    "DiceThrowHandler: sd._room is None — slug-connect "
+                    "wiring missing"
+                )
+            sd._room.session.end_scene(
+                "scene_end",
                 turn=snapshot.turn_manager.interaction,
             )
 
