@@ -305,30 +305,25 @@ def test_wiring_status_clear_module_imports():
 
 
 def test_wiring_session_handler_imports_status_clear():
-    """The dice-resolved branch must keep the import path valid
-    (lazy-imported inside the handler — a stale path would crash
-    mid-encounter, not at startup).
+    """The dice-resolved branch must route scene-end through Session.end_scene.
 
-    The dice-resolve callsite was extracted from
-    ``WebSocketSessionHandler._handle_dice_throw`` to its own
-    first-class handler at ``sidequest.handlers.dice_throw`` — this
-    test now greps the handler module's source.
+    Post Task E.3 (session-aggregate strangler): handlers/dice_throw.py
+    no longer imports ``clear_scratch_on_scene_end`` directly. It calls
+    ``sd._room.session.end_scene(...)`` which runs the scratch sweep
+    (and advances the orbital clock) inside ``Session.end_scene``. The
+    front-door wiring is what we're guarding against regression here —
+    if this regresses, Bug #1 (Scratch never clears post-dice-resolve)
+    re-surfaces along with the loss of the clock.advance span.
     """
     import importlib
+    import inspect
 
     dh = importlib.import_module("sidequest.handlers.dice_throw")
-    src = importlib.util.find_spec(  # type: ignore[attr-defined]
-        "sidequest.server.status_clear"
-    )
-    assert src is not None
-    # Lightweight string-grep: the call site exists in the handler
-    # source. Stronger than a bare import — proves wiring, not just
-    # presence.
-    import inspect
     text = inspect.getsource(dh)
-    assert "clear_scratch_on_scene_end" in text, (
-        "dice_throw handler must call clear_scratch_on_scene_end after "
-        "dice-resolved encounters or Bug #1 regresses"
+    assert "sd._room.session.end_scene" in text, (
+        "dice_throw handler must route scene-end through Session.end_scene "
+        "(which sweeps Scratch and advances the clock); otherwise Bug #1 "
+        "regresses on dice-resolved encounters"
     )
 
 
