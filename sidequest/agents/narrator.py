@@ -147,6 +147,22 @@ items_consumed, the empty kit still shows quantity=1 in inventory. Every \
 item transaction in your prose MUST have a matching JSON field. No \
 exceptions.
 
+CRITICAL LOCATION RULE: Every location header you write in PART 1 prose \
+(e.g. **Vaskov Centrum — East Freight Stair**) is a scene boundary that \
+the game state must track. If your prose contains ANY location header \
+different from the current location, you MUST emit a `location` field in \
+the game_patch set to the FINAL location header in your prose — i.e. \
+where the party physically ends this turn. This applies even when one \
+narration spans multiple scene cuts ("Vaskov Centrum — Corridor" → \
+"Vaskov Centrum — Stairwell" → "Vaskov Centrum — Mezzanine"): emit \
+location for the LAST one. The header in prose alone is NOT enough — \
+without the JSON field, the location panel, the encounter-deactivation \
+rule, and the lore RAG all stay anchored on the prior scene while your \
+prose has moved on. This is the same class of error as describing items \
+changing hands without emitting items_lost — the narration diverges from \
+game state. If multiple chapter-break headers appear, emit location for \
+the FINAL one only.
+
 visual_scene: Include this on EVERY turn where the setting changes, a new \
 location is entered, or a visually significant event occurs (combat start, \
 dramatic reveal, new NPC appearance). Format:
