@@ -98,3 +98,49 @@ def test_t_hours_changes_body_position(world_minimal):
         party_at=None,
     )
     assert svg_t0 != svg_t_later
+
+
+def test_flavor_layer_present_when_annotations_exist(world_minimal):
+    svg = render_chart(
+        orbits=world_minimal.orbits,
+        chart=world_minimal.chart,
+        scope=Scope.system_root(),
+        t_hours=0.0,
+        party_at=None,
+    )
+    assert 'id="layer-flavor"' in svg
+    assert "absent gate" in svg or "?" in svg
+
+
+def test_engraved_label_text_appears(world_minimal):
+    svg = render_chart(
+        orbits=world_minimal.orbits,
+        chart=world_minimal.chart,
+        scope=Scope.system_root(),
+        t_hours=0.0,
+        party_at=None,
+    )
+    assert "the Last Drift" in svg
+
+
+def test_party_marker_renders_at_body(world_minimal):
+    svg = render_chart(
+        orbits=world_minimal.orbits,
+        chart=world_minimal.chart,
+        scope=Scope.system_root(),
+        t_hours=0.0,
+        party_at="turning_hub",
+    )
+    assert 'id="layer-party"' in svg
+    assert 'data-party-at="turning_hub"' in svg
+
+
+def test_party_marker_absent_when_party_at_none(world_minimal):
+    svg = render_chart(
+        orbits=world_minimal.orbits,
+        chart=world_minimal.chart,
+        scope=Scope.system_root(),
+        t_hours=0.0,
+        party_at=None,
+    )
+    assert "data-party-at=" not in svg

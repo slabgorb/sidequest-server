@@ -23,6 +23,7 @@ import svgwrite.text
 import svgwrite.validator2
 
 from sidequest.orbital.models import (
+    Annotation,
     BodyDef,
     BodyType,
     ChartConfig,
@@ -135,6 +136,8 @@ def render_chart(
         )
     )
     dwg.add(_render_engraved_layer(orbits, center_id, viewport, t_hours))
+    dwg.add(_render_flavor_layer(chart, viewport))
+    dwg.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
     return dwg.tostring()
 
 
@@ -263,3 +266,133 @@ def _body_glyph(
     else:
         circle = svgwrite.shapes.Circle(center=(x, y), r=3, fill="yellow")
     return _attach_body_id(circle, body_id)
+
+
+def _render_flavor_layer(
+    chart: ChartConfig, vp: _Viewport
+) -> svgwrite.container.Group:
+    g = svgwrite.container.Group(id="layer-flavor")
+    for annot in chart.annotations:
+        elem = _render_annotation(annot, vp)
+        if elem is not None:
+            g.add(elem)
+    return g
+
+
+def _render_annotation(
+    annot: Annotation, vp: _Viewport
+) -> svgwrite.base.BaseElement | None:
+    if annot.kind == "engraved_label":
+        if annot.text is None:
+            return None
+        return svgwrite.text.Text(
+            annot.text,
+            insert=(0, -vp.half + 30),
+            fill="yellow",
+            text_anchor="middle",
+            font_family="monospace",
+            font_size=12,
+            font_style="italic",
+        )
+    if annot.kind == "glyph":
+        if annot.text is None or annot.at is None:
+            return None
+        ra = float(annot.at.get("ra_deg", 0))
+        au = float(annot.at.get("au", 0))
+        x, y = _polar_to_cartesian(au, ra, vp.au_to_px)
+        group = svgwrite.container.Group()
+        group.add(
+            svgwrite.text.Text(
+                annot.text,
+                insert=(x, y),
+                fill="yellow",
+                text_anchor="middle",
+                font_family="monospace",
+                font_size=20,
+            )
+        )
+        if annot.caption:
+            group.add(
+                svgwrite.text.Text(
+                    annot.caption,
+                    insert=(x, y + 14),
+                    fill="yellow",
+                    text_anchor="middle",
+                    font_family="monospace",
+                    font_size=9,
+                    font_style="italic",
+                )
+            )
+        return group
+    if annot.kind == "scale_ruler":
+        if annot.label is None:
+            return None
+        return svgwrite.text.Text(
+            annot.label,
+            insert=(0, vp.half - 20),
+            fill="yellow",
+            text_anchor="middle",
+            font_family="monospace",
+            font_size=9,
+        )
+    return None
+
+
+def _render_party_layer(
+    orbits: OrbitsConfig,
+    center_id: str,
+    vp: _Viewport,
+    t_hours: float,
+    party_at: str | None,
+) -> svgwrite.container.Group:
+    g = svgwrite.container.Group(id="layer-party")
+    if party_at is None or party_at not in orbits.bodies:
+        return g
+    body = orbits.bodies[party_at]
+    if party_at == center_id:
+        x, y = (0.0, 0.0)
+    elif body.parent == center_id:
+        au, theta = _body_position_au_polar(body, t_hours)
+        x, y = _polar_to_cartesian(au, theta, vp.au_to_px)
+    else:
+        # Cross-scope: off-chart-edge indicator. Refined in Task 12.
+        x, y = (vp.half - 16, 0.0)
+    marker = svgwrite.container.Group()
+    marker.attribs["data-party-at"] = party_at
+    marker.add(
+        svgwrite.shapes.Circle(
+            center=(x + 10, y - 10),
+            r=4,
+            fill="none",
+            stroke="white",
+            stroke_width=1.0,
+        )
+    )
+    marker.add(
+        svgwrite.shapes.Line(
+            start=(x + 5, y - 10),
+            end=(x + 15, y - 10),
+            stroke="white",
+            stroke_width=1.0,
+        )
+    )
+    marker.add(
+        svgwrite.shapes.Line(
+            start=(x + 10, y - 15),
+            end=(x + 10, y - 5),
+            stroke="white",
+            stroke_width=1.0,
+        )
+    )
+    marker.add(
+        svgwrite.text.Text(
+            "← party",
+            insert=(x + 18, y - 8),
+            fill="white",
+            font_family="cursive, monospace",
+            font_size=9,
+            font_style="italic",
+        )
+    )
+    g.add(marker)
+    return g
