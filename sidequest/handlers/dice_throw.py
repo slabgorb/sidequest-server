@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from sidequest.server.session_handler import _State
 from sidequest.server.session_helpers import _build_turn_context, _error_msg
+from sidequest.telemetry.phase_timing import PhaseTimings
 
 if TYPE_CHECKING:
     from sidequest.protocol import GameMessage
@@ -39,6 +41,12 @@ class DiceThrowHandler:
             DiceDispatchError,
             dispatch_dice_throw,
         )
+
+        # Handler-entry phase timer — same rationale as player_action:
+        # the dice replay path also runs lore_retrieval + turn_context
+        # build before invoking the narrator, and that pre-narrator work
+        # is invisible without a timer that starts here.
+        timings = PhaseTimings(action_received_monotonic=time.monotonic())
 
         if session._state != _State.Playing:
             # Playtest 2026-04-30: uvicorn reload zombies session binding.
@@ -176,8 +184,15 @@ class DiceThrowHandler:
         # Matches the Rust deferred-narrator intent end-to-end, collapsed to
         # a single server tick since Python's handler is sync w.r.t. the
         # read loop.
-        lore_context = await session._retrieve_lore_for_turn(sd, outcome.replay_action_text)
-        turn_context = _build_turn_context(sd, lore_context=lore_context, room=session._room)
+        with timings.phase("lore_retrieval"):
+            lore_context = await session._retrieve_lore_for_turn(
+                sd, outcome.replay_action_text,
+            )
+        with timings.phase("turn_context_build"):
+            turn_context = _build_turn_context(
+                sd, lore_context=lore_context, room=session._room,
+            )
+        turn_context.phase_timings = timings
         return await session._execute_narration_turn(
             sd,
             outcome.replay_action_text,

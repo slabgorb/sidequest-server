@@ -55,10 +55,44 @@ def test_null_singleton_is_noop() -> None:
     """PhaseTimings.NULL.phase() is a no-op; to_dict() is empty."""
     with PhaseTimings.NULL.phase("anything"):
         pass
+    PhaseTimings.NULL.record_phase("anything", 999)  # no-op
     assert PhaseTimings.NULL.to_dict() == {}
     assert PhaseTimings.NULL.total_ms == 0
     assert PhaseTimings.NULL.unaccounted_ms == 0
     PhaseTimings.NULL.mark_done()  # no-op, no error
+
+
+def test_record_phase_appends_precomputed_elapsed() -> None:
+    """record_phase adds an entry without timing the call itself."""
+    timings = PhaseTimings(action_received_monotonic=0.0)
+    timings.record_phase("mp_barrier_wait", 1234)
+    assert timings.to_dict() == {"mp_barrier_wait": 1234}
+    assert timings.phase_call_counts == {"mp_barrier_wait": 1}
+
+
+def test_record_phase_accumulates_with_phase_blocks() -> None:
+    """record_phase and phase() share the same accumulator key."""
+    times = iter([0.0, 0.5])
+    with patch("sidequest.telemetry.phase_timing.time.monotonic", side_effect=lambda: next(times)):
+        timings = PhaseTimings(action_received_monotonic=0.0)
+        timings.record_phase("lore_retrieval", 100)
+        with timings.phase("lore_retrieval"):
+            pass
+        assert timings.to_dict() == {"lore_retrieval": 100 + 500}
+        assert timings.phase_call_counts == {"lore_retrieval": 2}
+
+
+def test_record_phase_after_finalize_raises() -> None:
+    timings = PhaseTimings(action_received_monotonic=0.0)
+    timings.mark_done()
+    with pytest.raises(RuntimeError, match="finalized"):
+        timings.record_phase("X", 10)
+
+
+def test_record_phase_rejects_negative() -> None:
+    timings = PhaseTimings(action_received_monotonic=0.0)
+    with pytest.raises(ValueError, match=">= 0"):
+        timings.record_phase("X", -5)
 
 
 def test_unaccounted_ms_computed() -> None:

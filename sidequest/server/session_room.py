@@ -7,6 +7,7 @@ and re-seat).
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -118,6 +119,11 @@ class SessionRoom:
     # the barrier from InputCollection to IntentRouting. See spec
     # docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
     _pending_actions: dict[str, PendingAction] = field(default_factory=dict)
+    # Monotonic timestamp of the first submission into an empty buffer, set
+    # so the dispatching player_action handler can record `mp_barrier_wait`
+    # — the elapsed time from "first player submits" to "barrier fires".
+    # Cleared on drain. None when no submissions are pending.
+    _first_pending_at_monotonic: float | None = field(default=None, repr=False)
     # Election primitives for one-dispatch-per-round (ADR-036). The lock
     # serializes elected handlers; the counter is the CAS guard so a
     # second handler that wakes after the first commits the dispatch
@@ -418,21 +424,36 @@ class SessionRoom:
         """Buffer one player's action for the current round (ADR-036).
 
         Last-write-wins on duplicate submissions for the same player_id.
+        Stamps `_first_pending_at_monotonic` on transition-from-empty so
+        the dispatcher can later compute `mp_barrier_wait`.
         """
         with self._lock:
+            if not self._pending_actions and self._first_pending_at_monotonic is None:
+                self._first_pending_at_monotonic = time.monotonic()
             self._pending_actions[player_id] = PendingAction(
                 character_name=character_name, action=action,
             )
+
+    def first_pending_at_monotonic(self) -> float | None:
+        """Read the timestamp stamped when the buffer transitioned from empty.
+
+        Returns ``None`` when no submissions are pending. Callers should
+        copy the value before draining — drain clears it.
+        """
+        with self._lock:
+            return self._first_pending_at_monotonic
 
     def drain_pending_actions(self) -> list[tuple[str, PendingAction]]:
         """Return buffered actions in submission order and clear the buffer.
 
         Returns ``[(player_id, PendingAction), ...]``. Order matters because
-        the combined-prose builder labels speakers in this order.
+        the combined-prose builder labels speakers in this order. Also
+        clears the barrier-wait timestamp so the next round starts fresh.
         """
         with self._lock:
             drained = list(self._pending_actions.items())
             self._pending_actions.clear()
+            self._first_pending_at_monotonic = None
         return drained
 
     @property

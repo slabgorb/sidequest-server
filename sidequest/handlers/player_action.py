@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from sidequest.game.turn import TurnPhase
@@ -20,6 +21,7 @@ from sidequest.server.session_helpers import (
     _error_msg,
     _resolve_acting_character_name,
 )
+from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -43,6 +45,14 @@ class PlayerActionHandler:
         session: WebSocketSessionHandler,
         msg: GameMessage,
     ) -> list[object]:
+        # Start the per-turn phase timer at handler entry so pre-narrator
+        # work — lore RAG retrieval, MP barrier wait, turn context build —
+        # is captured in the same `phase_durations_ms` the dashboard
+        # already renders. Pre-fix this clock started inside
+        # `_execute_narration_turn`, so any wait before it (especially
+        # the MP barrier when one player is slow) was invisible to the
+        # GM panel and to player-perceived-latency analysis.
+        timings = PhaseTimings(action_received_monotonic=time.monotonic())
         if session._state not in (_State.Creating, _State.Playing):
             # Playtest 2026-04-30: uvicorn ``--reload`` zombies session
             # binding. The client transport reconnects automatically
@@ -174,8 +184,15 @@ class PlayerActionHandler:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("session.turn_status_active_broadcast_failed error=%s", exc)
 
-        lore_context = await session._retrieve_lore_for_turn(sd, action)
-        turn_context = _build_turn_context(sd, lore_context=lore_context, room=session._room)
+        with timings.phase("lore_retrieval"):
+            lore_context = await session._retrieve_lore_for_turn(sd, action)
+        with timings.phase("turn_context_build"):
+            turn_context = _build_turn_context(
+                sd, lore_context=lore_context, room=session._room,
+            )
+        # Attach the handler-entry timer so `_execute_narration_turn`
+        # accumulates its in-turn phases into the same instance.
+        turn_context.phase_timings = timings
 
         # ADR-036 Cinematic mode wiring. In multiplayer, every player's
         # submission goes into the per-room buffer and calls submit_input()
@@ -255,7 +272,17 @@ class PlayerActionHandler:
                     # Lost the race; another handler already dispatched.
                     return []
                 session._room.last_dispatched_round = current_interaction
+                # Capture the barrier-wait BEFORE drain — drain clears it.
+                # The timestamp was stamped on the first submission into an
+                # empty buffer; "now minus that" is the wall-clock the
+                # dispatching player actually waited for the slowest peer.
+                barrier_wait_started_at = session._room.first_pending_at_monotonic()
                 pending = session._room.drain_pending_actions()
+            if barrier_wait_started_at is not None:
+                wait_ms = max(
+                    0, round((time.monotonic() - barrier_wait_started_at) * 1000),
+                )
+                timings.record_phase("mp_barrier_wait", wait_ms)
 
             _watcher_publish(
                 "mp.round_dispatched",

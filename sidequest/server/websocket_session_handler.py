@@ -1504,8 +1504,20 @@ class WebSocketSessionHandler:
         """
         snapshot = sd.snapshot
         snapshot_before_hash = _hash_snapshot(snapshot)
-        timings = PhaseTimings(action_received_monotonic=time.monotonic())
-        turn_context.phase_timings = timings
+        # Reuse a pre-built PhaseTimings from the calling handler when
+        # one is attached — handler-entry construction lets pre-narrator
+        # phases (lore_retrieval, mp_barrier_wait, turn_context_build)
+        # land in the same `phase_durations_ms` dict the dashboard reads.
+        # When the caller didn't attach one (test fixtures, legacy paths),
+        # fall back to constructing here so the existing in-turn phases
+        # still record.
+        if isinstance(turn_context.phase_timings, PhaseTimings) and (
+            turn_context.phase_timings is not PhaseTimings.NULL
+        ):
+            timings = turn_context.phase_timings
+        else:
+            timings = PhaseTimings(action_received_monotonic=time.monotonic())
+            turn_context.phase_timings = timings
         submitted = False
         # Story 45-20: capture trope-status baseline BEFORE any apply step
         # mutates statuses. The handshake fires post-record_interaction and

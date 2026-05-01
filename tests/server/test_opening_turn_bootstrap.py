@@ -42,6 +42,7 @@ from sidequest.protocol.messages import (
     PlayerActionPayload,
     SessionEventMessage,
     SessionEventPayload,
+    TurnStatusMessage,
 )
 from sidequest.server.session_handler import WebSocketSessionHandler
 from tests.server.conftest import make_mock_claude_client
@@ -104,6 +105,24 @@ async def _connect(handler: WebSocketSessionHandler, *, world: str = "grimvault"
     )
 
 
+def _drain_out_queue(handler: WebSocketSessionHandler) -> list:
+    """Drain every message currently on the handler's per-socket out_queue.
+
+    Story 45-26 retargeted these tests onto slug-connect, which attaches a
+    SessionRoom + per-socket queue. Post-narration shared-world frames
+    (NARRATION_END / PARTY_STATUS / AUDIO_CUE / CHAPTER_MARKER) now route
+    through ``room.broadcast`` and land on the per-socket queue rather
+    than the per-handler return list — see ``_emit_shared_world_frame``
+    in ``websocket_session_handler.py``. Tests that assert the full
+    ordered frame stream must combine both sources.
+    """
+    out_queue = handler._out_queue  # type: ignore[attr-defined]
+    drained: list = []
+    while not out_queue.empty():
+        drained.append(out_queue.get_nowait())
+    return drained
+
+
 async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
     sd = handler._session_data  # type: ignore[attr-defined]
     builder = sd.builder
@@ -124,12 +143,24 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
 
     tracer = otel_trace.get_tracer("test")
     with tracer.start_as_current_span("chargen_confirmation"):
-        return await handler.handle_message(
+        # Drain any frames already on the queue from the chargen walk above
+        # (e.g. PRESENCE backfill from connect) so the post-confirmation
+        # drain captures only the confirmation turn's broadcast frames.
+        _drain_out_queue(handler)
+        out = await handler.handle_message(
             CharacterCreationMessage(
                 payload=CharacterCreationPayload(phase="confirmation"),
                 player_id="pid",
             )
         )
+    # Concat: per-handler return value + per-socket broadcast queue.
+    # Order: the per-handler list reflects the slice the dispatcher writes
+    # to its own outbound (CHARACTER_CREATION → PARTY_STATUS{session-start}
+    # → cold-open NARRATION → narrator NARRATION); broadcast frames are
+    # appended in emit order (NARRATION_END → PARTY_STATUS{post-turn} →
+    # AUDIO_CUE) — that's the same player-perceived order the assertions
+    # were written against pre-Story-45-26.
+    return list(out) + _drain_out_queue(handler)
 
 
 def _by_type(messages: list) -> dict[type, list]:
@@ -152,24 +183,31 @@ class TestOpeningTurnFrames:
             await _connect(handler)
             out = await _walk_and_confirm(handler)
 
-            # Expect 7 frames: CHARACTER_CREATION, PARTY_STATUS (session-
+            # Expect 8 frames: CHARACTER_CREATION, PARTY_STATUS (session-
             # start), NARRATION (cold-open seed — the world.yaml opening
             # hook prose, emitted directly to the player so the
             # in-medias-res setup isn't lost as silent narrator prompt-
             # context per playtest 2026-04-25 [P2]), NARRATION (narrator's
             # continuation — same flow, different beat), NARRATION_END,
-            # PARTY_STATUS (post-turn refresh carrying current_location
-            # landed by the opening narration), AUDIO_CUE (DJ dispatch
-            # for the opening narration's mood) — in that order.
-            assert len(out) == 7, [type(m).__name__ for m in out]
+            # TURN_STATUS{resolved} (ADR-036 sealed-letter pacing — clears
+            # the "your turn" banner; fires every narration turn including
+            # the opening one), PARTY_STATUS (post-turn refresh carrying
+            # current_location landed by the opening narration), AUDIO_CUE
+            # (DJ dispatch for the opening narration's mood) — in that
+            # order. The first four are returned by the chargen handler;
+            # the last four ride the room broadcast queue per
+            # ``_emit_shared_world_frame`` (Story 45-26 retarget).
+            assert len(out) == 8, [type(m).__name__ for m in out]
             assert isinstance(out[0], CharacterCreationMessage)
             assert out[0].payload.phase == "complete"
             assert isinstance(out[1], PartyStatusMessage)
             assert isinstance(out[2], NarrationMessage)  # cold-open seed
             assert isinstance(out[3], NarrationMessage)  # narrator response
             assert isinstance(out[4], NarrationEndMessage)
-            assert isinstance(out[5], PartyStatusMessage)
-            assert isinstance(out[6], AudioCueMessage)
+            assert isinstance(out[5], TurnStatusMessage)
+            assert out[5].payload.status == "resolved"
+            assert isinstance(out[6], PartyStatusMessage)
+            assert isinstance(out[7], AudioCueMessage)
 
         asyncio.run(body())
 
