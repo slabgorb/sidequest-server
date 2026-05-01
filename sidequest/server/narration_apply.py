@@ -658,6 +658,75 @@ def _apply_narration_result_to_snapshot(
                 turn=snapshot.turn_manager.interaction,
             )
 
+            # Pingpong 2026-04-30: confrontation panel sticks open after
+            # the party physically leaves the encounter location.
+            # Repro: party negotiates with Inspector Karenina in her
+            # office, then walks out — location updates correctly to
+            # the corridor, then the freight stair — but the
+            # Confrontation tab still shows the Diplomatic Negotiation
+            # active with the four beat buttons clickable. Karenina is
+            # two floors up; clicking "Threaten" generates puppet
+            # narration of an interaction that can't physically happen
+            # (Sebastien-class GM-panel-vs-world-state divergence).
+            #
+            # Fix: a location change is a scene boundary by tabletop
+            # convention. If an encounter is still active when the
+            # party leaves the room, mark it resolved as
+            # `abandoned_on_location_change`. The existing dispatch
+            # branch in websocket_session_handler.py (`elif prior_live
+            # and not now_live:`) detects the resolved=True flip and
+            # builds a CONFRONTATION { active: false } clear payload —
+            # post my pingpong-2026-04-30-confrontation-broadcast fix
+            # this reaches every current socket including the
+            # dispatcher's reconnected one. No new wire message
+            # needed; we just trigger the existing clear path.
+            #
+            # Caveat — chase encounters legitimately move with the
+            # party (location changes WITHIN the encounter). The
+            # genre pack carries `category` metadata on each
+            # confrontation def; rather than re-look it up here on
+            # the apply path (which would mean threading the
+            # GenrePack through narration_apply just for this), we
+            # accept a simple over-resolution rule: location change
+            # always resolves the encounter. The bug repro is a
+            # negotiation, not a chase, and the user accepted this
+            # rule explicitly in the pingpong note ("location-change
+            # events should auto-resolve any active confrontations
+            # whose participants are no longer co-located"). Chase
+            # support can revisit this with a `category in {chase,
+            # mobile}` skip if the gap surfaces in playtest.
+            active_encounter = snapshot.encounter
+            if active_encounter is not None and not active_encounter.resolved:
+                abandoned_type = active_encounter.encounter_type
+                active_encounter.resolved = True
+                active_encounter.outcome = "abandoned_on_location_change"
+                logger.info(
+                    "encounter.deactivated_on_location_change "
+                    "encounter_type=%s old_location=%r new_location=%r player=%s",
+                    abandoned_type,
+                    old_loc,
+                    result.location,
+                    player_name,
+                )
+                # OTEL lie-detector (CLAUDE.md OTEL principle): the GM
+                # panel must see the deactivation fire so Sebastien can
+                # verify the engine — not the narrator's prose — is the
+                # reason the dial cleared. Without this span the
+                # subsystem is silent and a regression where the
+                # encounter stays active is invisible until the next
+                # playtest.
+                _watcher_publish(
+                    "confrontation_deactivated_on_location_change",
+                    {
+                        "encounter_type": abandoned_type,
+                        "old_location": old_loc,
+                        "new_location": result.location,
+                        "player_name": player_name,
+                        "turn_number": snapshot.turn_manager.interaction,
+                    },
+                    component="confrontation",
+                )
+
     if result.quest_updates:
         # Span emission replaces the prior direct ``_watcher_publish`` —
         # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
