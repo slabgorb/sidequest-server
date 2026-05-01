@@ -16,7 +16,7 @@ from sidequest.orbital.clock import Clock
 from sidequest.telemetry.spans.clock import emit_clock_advance
 
 
-class BeatKind(Enum):
+class StoryBeatKind(Enum):
     """The four beat kinds. The clock advances only via these."""
 
     ENCOUNTER = "encounter"
@@ -28,14 +28,14 @@ class BeatKind(Enum):
 # Beats with a static default duration. Encounter defaults to 1h but may be
 # overridden by the narrator per scene. Rest is fixed (override rejected).
 # Travel and Downtime have no default — duration is always supplied.
-DEFAULT_DURATIONS_HOURS: dict[BeatKind, float] = {
-    BeatKind.ENCOUNTER: 1.0,
-    BeatKind.REST: 8.0,
+DEFAULT_DURATIONS_HOURS: dict[StoryBeatKind, float] = {
+    StoryBeatKind.ENCOUNTER: 1.0,
+    StoryBeatKind.REST: 8.0,
 }
 
 
 @dataclass(frozen=True)
-class Beat:
+class StoryBeat:
     """One clock-advance event.
 
     `trigger` is a free-form string identifying the cause (scene id, route
@@ -44,12 +44,12 @@ class Beat:
     for kinds without a default.
     """
 
-    kind: BeatKind
+    kind: StoryBeatKind
     trigger: str
     duration_hours: float | None = None
 
 
-def advance_clock_via_beat(clock: Clock, beat: Beat) -> float:
+def advance_clock_via_beat(clock: Clock, beat: StoryBeat) -> float:
     """Advance the clock per the beat's kind and duration.
 
     Returns the actual hours advanced (handy for callers that want to log
@@ -69,15 +69,15 @@ def advance_clock_via_beat(clock: Clock, beat: Beat) -> float:
     return duration
 
 
-def _resolve_duration(beat: Beat) -> float:
-    if beat.kind == BeatKind.REST:
+def _resolve_duration(beat: StoryBeat) -> float:
+    if beat.kind == StoryBeatKind.REST:
         if beat.duration_hours is not None and beat.duration_hours != 8.0:
             raise ValueError(
                 f"REST beat duration is fixed at 8h; got {beat.duration_hours!r} "
                 f"(trigger={beat.trigger!r})"
             )
         return 8.0
-    if beat.kind == BeatKind.ENCOUNTER:
+    if beat.kind == StoryBeatKind.ENCOUNTER:
         return beat.duration_hours if beat.duration_hours is not None else 1.0
     # TRAVEL and DOWNTIME require explicit duration
     if beat.duration_hours is None:
