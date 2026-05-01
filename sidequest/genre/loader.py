@@ -46,6 +46,7 @@ from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.pack import GenrePack, PackMeta, PortraitManifestEntry, World
 from sidequest.genre.models.progression import ProgressionConfig
+from sidequest.genre.models.rigs_world import ChassisInstanceConfig, RigsWorldConfig
 from sidequest.genre.models.rules import RulesConfig
 from sidequest.genre.models.scenario import ScenarioNpc, ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
@@ -325,6 +326,47 @@ def _load_subdirectories(
 
 
 # ---------------------------------------------------------------------------
+# Cross-file validators (canned-openings spec §1.4)
+# ---------------------------------------------------------------------------
+
+def _validate_opening_setting_references(
+    openings: list[Opening],
+    chassis_instances: list[ChassisInstanceConfig],
+    *,
+    world_slug: str,
+) -> None:
+    """Validators 2, 3: chassis_instance + interior_room references resolve.
+
+    Skipped for location-anchored openings (which have chassis_instance is None).
+    """
+    chassis_by_id = {c.id: c for c in chassis_instances}
+    for op in openings:
+        s = op.setting
+        if s.chassis_instance is None:
+            continue
+        chassis = chassis_by_id.get(s.chassis_instance)
+        if chassis is None:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} references "
+                    f"unknown chassis_instance {s.chassis_instance!r}. "
+                    f"Known chassis: {sorted(chassis_by_id.keys())}"
+                ),
+            )
+        if s.interior_room not in chassis.interior_rooms:
+            raise GenreLoadError(
+                path=f"worlds/{world_slug}/openings.yaml",
+                detail=(
+                    f"opening {op.id!r} references "
+                    f"interior_room {s.interior_room!r}, which is not in "
+                    f"chassis {chassis.id!r}'s interior_rooms "
+                    f"{chassis.interior_rooms}."
+                ),
+            )
+
+
+# ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
 
@@ -425,6 +467,24 @@ def _load_single_world(world_path: Path, genre_tropes: list[TropeDefinition]) ->
         [CharCreationScene.model_validate(c) for c in char_creation_raw]
         if isinstance(char_creation_raw, list)
         else []
+    )
+
+    # === World-tier rigs.yaml — OPTIONAL ===
+    # Chassis instances. Required for cross-file validation of
+    # chassis-anchored openings (validators 2 + 3, canned-openings §1.4).
+    # Worlds that don't use the rig framework simply omit this file;
+    # any chassis-anchored openings will then fail validator 2.
+    rigs_path = world_path / "rigs.yaml"
+    chassis_instances: list[ChassisInstanceConfig] = []
+    if rigs_path.exists():
+        rigs_raw = _load_yaml_raw(rigs_path)
+        rigs_cfg = RigsWorldConfig.model_validate(rigs_raw)
+        chassis_instances = list(rigs_cfg.chassis_instances)
+
+    # Cross-file validators 2 + 3: chassis_instance + interior_room
+    # references in openings resolve against rigs.yaml.
+    _validate_opening_setting_references(
+        openings, chassis_instances, world_slug=world_path.name
     )
 
     # Portrait manifest
