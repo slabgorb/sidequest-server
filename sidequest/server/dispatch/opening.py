@@ -17,7 +17,6 @@ import random
 from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.chassis import BondTier
 from sidequest.genre.models.narrative import (
-    MagicMicrobleed,
     Opening,
     PerPcBeat,
 )

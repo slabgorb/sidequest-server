@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.chassis import (
-    BondTier,
     ChassisVoiceSpec,
 )
 from sidequest.genre.models.narrative import (

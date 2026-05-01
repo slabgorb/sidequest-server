@@ -54,6 +54,7 @@ from sidequest.genre.models.audio import (
     VoiceConfig,
     VoicePresets,
 )
+from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.axes import AxesConfig, AxisDefinition, AxisPreset
 from sidequest.genre.models.character import (
     BackstoryTables,
@@ -87,7 +88,6 @@ from sidequest.genre.models.inventory import (
 )
 from sidequest.genre.models.legends import FactionGrudge, Legend, TerrainScar
 from sidequest.genre.models.lore import Faction, Lore, WorldLore
-from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.narrative import (
     Achievement,
     BeatObstacle,
