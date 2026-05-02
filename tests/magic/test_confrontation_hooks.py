@@ -150,10 +150,10 @@ def test_notice_threshold_crossing_fires_quiet_word(
         snapshot=snapshot,
         patch_field={
             "plugin": "innate_v1",
-            "mechanism": "ritual",
+            "mechanism": "relational",
             "actor": "sira_mendes",
             "costs": {"notice": 0.15},
-            "domain": "social",
+            "domain": "divinatory",
             "narrator_basis": "the_quiet_word trigger test",
             "flavor": "loud",
             "consent_state": "voluntary",

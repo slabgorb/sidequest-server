@@ -7,7 +7,7 @@ Re-exported by session_handler for back-compat.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
@@ -189,10 +189,17 @@ class MagicApplyResult:
     so downstream tasks (3.4 status_changes auto-promotion, 3.5 OTEL span)
     can read the threshold crossings + flag severity without re-running
     validation.
+
+    ``auto_fired`` (Phase 5 / Story 47-3) carries any magic confrontations
+    whose ``auto_fire_trigger`` matched the actor's post-working bar
+    values. The session pipeline iterates this list to dispatch
+    ``CONFRONTATION_OUTCOME`` payloads through the existing confrontation
+    overlay route. Empty when no triggers fire.
     """
 
     apply: ApplyWorkingResult
     flags: list[Flag]
+    auto_fired: list[tuple] = field(default_factory=list)
 
     @property
     def crossings(self) -> list[ThresholdCrossingEvent]:
@@ -326,7 +333,40 @@ def apply_magic_working(*, snapshot: GameSnapshot, patch_field: dict) -> MagicAp
             component="magic",
         )
 
-    return MagicApplyResult(apply=apply_result, flags=flags)
+    # Phase 5 (Story 47-3): evaluate auto-fire triggers against the
+    # actor's post-working bar values. Each firing emits its own watcher
+    # event so the GM panel sees the trigger engage; the caller iterates
+    # ``result.auto_fired`` to dispatch CONFRONTATION_OUTCOME payloads
+    # through the confrontation overlay route.
+    from sidequest.magic.confrontations import evaluate_auto_fire_triggers
+
+    actor_prefix = f"character|{working.actor}|"
+    actor_bar_values: dict[str, float] = {}
+    for k, bar in snapshot.magic_state.ledger.items():
+        if k.startswith(actor_prefix):
+            _, _, bar_id = k.split("|", 2)
+            actor_bar_values[bar_id] = bar.value
+
+    auto_fired = evaluate_auto_fire_triggers(
+        confs=snapshot.magic_state.confrontations,
+        character_id=working.actor,
+        bar_values=actor_bar_values,
+    )
+
+    for conf, character_id in auto_fired:
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "magic_state",
+                "op": "confrontation_fire",
+                "confrontation_id": conf.id,
+                "actor": character_id,
+                "trigger": conf.auto_fire_trigger or "",
+            },
+            component="magic",
+        )
+
+    return MagicApplyResult(apply=apply_result, flags=flags, auto_fired=auto_fired)
 
 
 def _append_status_to_actor(
@@ -1446,6 +1486,18 @@ def _apply_narration_result_to_snapshot(
                         },
                         component="encounter",
                     )
+                    # Phase 5 (Story 47-3): when the resolved encounter
+                    # is a magic confrontation, fire its mandatory_outputs
+                    # and stash the CONFRONTATION_OUTCOME payload on the
+                    # snapshot for the room's outbound dispatcher to
+                    # forward to the UI overlay reveal panel. Non-magic
+                    # encounters return None — pass-through.
+                    _resolve_magic_confrontation_if_applicable(
+                        snapshot=snapshot,
+                        encounter_type=enc.encounter_type,
+                        outcome=enc.outcome or "",
+                        actor=actor.name,
+                    )
                     # Scratch sweep at encounter resolution. Encounter end
                     # is the canonical "scene end" trigger that the Scratch
                     # severity tier promises in game/status.py — without
@@ -1524,6 +1576,101 @@ def _build_resolution_signal(enc: object) -> object:
         final_opponent_metric=enc.opponent_metric.current,
         yielded_actors=tuple(),
         edge_refreshed=0,
+    )
+
+
+# Phase 5 (Story 47-3): map encounter ``outcome`` strings (legacy from
+# the Rust port: "win", "loss", "refused", etc.) to the four-branch
+# ConfrontationDefinition outcome names. Conservative mapping: the
+# encounter system doesn't surface a separate "pyrrhic" axis in v1, so
+# wins map to clear_win and losses to clear_loss. Future work
+# (architect addendum §6) introduces secondary metrics that would let
+# the system tell pyrrhic apart from clear; for now the magic confrontation
+# narration carries that distinction in its prose layer rather than the
+# branch enum.
+_OUTCOME_TO_BRANCH = {
+    "win": "clear_win",
+    "clear_win": "clear_win",
+    "pyrrhic_win": "pyrrhic_win",
+    "pyrrhic": "pyrrhic_win",
+    "loss": "clear_loss",
+    "clear_loss": "clear_loss",
+    "refused": "refused",
+    "yield": "refused",
+    "yielded": "refused",
+}
+
+
+def _resolve_magic_confrontation_if_applicable(
+    *,
+    snapshot: GameSnapshot,
+    encounter_type: str,
+    outcome: str,
+    actor: str,
+) -> None:
+    """Fire magic-confrontation mandatory_outputs at encounter resolution.
+
+    No-op when the resolved encounter type does not match a magic
+    confrontation id, or when ``magic_state`` is unloaded — the
+    encounter system handles a much wider catalog than just the named
+    magic confrontations, so non-matches must pass through cleanly.
+
+    Emits a ``magic`` watcher event with ``op=confrontation_outcome``
+    on success so the GM panel sees the resolved branch + outputs that
+    fired. The resolved payload is also stashed on
+    ``snapshot.pending_magic_confrontation_outcome`` for the room
+    dispatcher to forward to the UI as ``CONFRONTATION_OUTCOME``.
+    """
+    if snapshot.magic_state is None:
+        return
+    if not any(c.id == encounter_type for c in snapshot.magic_state.confrontations):
+        return
+    branch = _OUTCOME_TO_BRANCH.get(outcome.lower())
+    if branch is None:
+        # Outcome string does not map cleanly to a four-branch outcome.
+        # Log loud per CLAUDE.md no-silent-fallback so authoring can
+        # reconcile the encounter outcome catalog with the magic
+        # confrontation branch enum, but don't raise — the encounter
+        # has already resolved and the player has already lived through
+        # it; refusing to fire mandatory_outputs would orphan the
+        # confrontation more than logging the mismatch does.
+        logger.error(
+            "magic.confrontation_outcome_unmapped encounter_type=%s outcome=%s actor=%s",
+            encounter_type,
+            outcome,
+            actor,
+        )
+        return
+
+    from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
+
+    payload = resolve_magic_confrontation(
+        snapshot=snapshot,
+        confrontation_id=encounter_type,
+        branch=branch,  # type: ignore[arg-type]
+        actor=actor,
+    )
+    if payload is None:
+        return
+
+    # The watcher event is the wire-first contract for the GM panel:
+    # without it Sebastien's mechanical-visibility lens cannot tell the
+    # confrontation outcome from narrator improvisation. The
+    # CONFRONTATION_OUTCOME WebSocket dispatch lands in a follow-up
+    # story (the room-handler integration), and reads ``payload`` off
+    # the watcher feed; for v1 the OTEL emission is the system of
+    # record.
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "magic_state",
+            "op": "confrontation_outcome",
+            "confrontation_id": encounter_type,
+            "branch": branch,
+            "actor": actor,
+            "mandatory_outputs": list(payload["mandatory_outputs"]),
+        },
+        component="magic",
     )
 
 
