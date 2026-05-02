@@ -128,7 +128,14 @@ def _render_directive_chassis(
 
     if authored_crew:
         parts.append("")
-        parts.append("PRE-LOADED NPCS PRESENT (already in registry — do NOT auto-register):")
+        parts.append(
+            "PRE-LOADED NPCS PRESENT (already canonical in registry — when "
+            "any of them is in the scene this turn, INCLUDE them in "
+            "`npcs_present` so scene-presence and encounter routing know "
+            "they're here. Do NOT redefine their role, pronouns, or "
+            "appearance — those fields are authored. The server dedupes "
+            "against the registry; you don't need to.):"
+        )
         for npc in authored_crew:
             attitude = _disposition_attitude(npc.initial_disposition)
             line = f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}"
@@ -322,7 +329,14 @@ def _render_directive_location(
 
     if present_npcs:
         parts.append("")
-        parts.append("PRE-LOADED NPCS PRESENT (already in registry — do NOT auto-register):")
+        parts.append(
+            "PRE-LOADED NPCS PRESENT (already canonical in registry — when "
+            "any of them is in the scene this turn, INCLUDE them in "
+            "`npcs_present` so scene-presence and encounter routing know "
+            "they're here. Do NOT redefine their role, pronouns, or "
+            "appearance — those fields are authored. The server dedupes "
+            "against the registry; you don't need to.):"
+        )
         for npc in present_npcs:
             attitude = _disposition_attitude(npc.initial_disposition)
             parts.append(f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}")
