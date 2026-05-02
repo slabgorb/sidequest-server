@@ -1496,6 +1496,22 @@ class WebSocketSessionHandler:
         # to chargen instead of auto-claiming an existing PC.
         if sd.player_id and character.core.name:
             sd.snapshot.player_seats[sd.player_id] = character.core.name
+            # Playtest 2026-05-02 [BUG] (round 2): seed
+            # ``character_locations[char_name]`` with the current
+            # ``snapshot.location`` so a joiner whose opening narration
+            # gets suppressed (mp_joiner_opening_suppressed_at_consume) or
+            # whose opening doesn't emit ``result.location`` still has a
+            # last-known location entry. Without this, the next narration
+            # apply's pre-clobber seed loop catches them — but a
+            # PARTY_STATUS frame between chargen and the first apply would
+            # leak the global location into the joiner's header
+            # incorrectly. Belt + suspenders: seed at every entry point
+            # where a PC's location is known.
+            if (
+                sd.snapshot.location
+                and character.core.name not in sd.snapshot.character_locations
+            ):
+                sd.snapshot.character_locations[character.core.name] = sd.snapshot.location
             span.add_event(
                 "session.player_seat_bound",
                 {
@@ -1858,6 +1874,7 @@ class WebSocketSessionHandler:
                         opposed_player_d20=opposed_player_d20,
                         opposed_player_beat_id=opposed_player_beat_id,
                         opposed_player_actor=dice_actor,
+                        acting_character_name=_resolve_acting_character_name(sd, sd._room),
                     )
                     # Phase 5 (Story 47-3): drain magic-confrontation
                     # outbound queues. ``narration_apply.apply_magic_working``
@@ -2984,14 +3001,64 @@ class WebSocketSessionHandler:
                     if sd.snapshot.characters
                     else (sd.player_name or "the new arrival")
                 )
+                # Playtest 2026-05-02 [BUG-LOW]: joiner-orientation drifted
+                # off the established scene (host on the Kestrel cockpit;
+                # joiner improvised at Vaskov Centrum East Freight Stair).
+                # The chargen confirmation epilogue promises "the crew is
+                # the crew" — both PCs aboard the same chassis at session
+                # start — and the canned MP opening (mp_galley_jumprest)
+                # anchors the host aboard the Kestrel. Anchor the joiner
+                # explicitly to the location the host's prior turn already
+                # established so the narrator does not invent a new place
+                # for the second PC. Falls back to "the same scene the
+                # other player(s) are in" when ``snapshot.location`` is
+                # still empty (degenerate path, but defensible).
+                host_location = (sd.snapshot.location or "").strip()
+                where_clause = (
+                    f"into the location the prior turn established ({host_location!r})"
+                    if host_location
+                    else "into the same scene the other player(s) are already in"
+                )
                 action = (
                     f"{joiner_char_name} steps into the scene and orients to "
-                    "the surroundings — describe their arrival from their "
-                    "point of view in a brief grounding paragraph. Do not "
-                    "generate dialogue, decisions, or new actions for any "
-                    "other PC already present."
+                    f"the surroundings — describe their arrival {where_clause} "
+                    "from their point of view in a brief grounding paragraph. "
+                    "Do NOT relocate them to a new location. Do NOT generate "
+                    "dialogue, decisions, or new actions for any other PC "
+                    "already present."
                 )
                 source_tier = "mp_joiner_orientation"
+                # OTEL: surface the anchor decision so the GM panel can
+                # verify the joiner's prompt actually carried the host's
+                # location (CLAUDE.md OTEL principle — Sebastien's
+                # lie-detector). Mirror the watcher_publish payload as a
+                # span.add_event so OTLP exporters (Jaeger / in-memory
+                # test exporter) see it without needing
+                # SIDEQUEST_WATCHER_AS_SPANS=1.
+                anchor_kind = "host_location" if host_location else "fallback_same_scene"
+                _watcher_publish(
+                    "mp_joiner_orientation_anchored",
+                    {
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "joiner_char_name": joiner_char_name,
+                        "host_location": host_location or None,
+                        "anchor_kind": anchor_kind,
+                    },
+                    component="opening_hook",
+                    severity="info",
+                )
+                span.add_event(
+                    "mp_joiner_orientation_anchored",
+                    {
+                        "event": "mp_joiner_orientation_anchored",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "joiner_char_name": joiner_char_name,
+                        "host_location": host_location or "",
+                        "anchor_kind": anchor_kind,
+                    },
+                )
         else:
             action = sd.opening_seed or "I look around and take in my surroundings."
             source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"

@@ -822,3 +822,99 @@ async def test_slug_connect_without_room_context_raises(seeded_game: Path):
     )
     with pytest.raises(RuntimeError, match="attach_room_context"):
         await handler.handle_message(msg)
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_backfills_seat_confirmed_for_existing_seats(tmp_path: Path, caplog):
+    """Playtest 2026-05-02 [BUG-LOW]: roster shows peers as "creating character"
+    forever in MP. The MultiplayerSessionStatus widget mirrors per-player seat
+    state via the SEAT_CONFIRMED broadcast on every PLAYER_SEAT, but a player
+    who connects AFTER existing seats are claimed never receives those frames
+    — broadcasts only fire at seat-claim time. Fix: replay one SEAT_CONFIRMED
+    per existing ``snapshot.player_seats`` entry on slug-connect.
+
+    This wiring test seeds two existing seats on the saved snapshot, connects
+    a third player, and asserts the bootstrap reply carries one
+    SEAT_CONFIRMED frame per existing seat with matching player_id +
+    character_slot. Plus the GM-panel watcher / log line.
+    """
+    import logging
+
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    slug = "2026-05-02-seat-backfill-test"
+    db = db_path_for_slug(tmp_path, slug)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteStore(db)
+    store.initialize()
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
+
+    laverne = Character(
+        core=CreatureCore(name="Laverne", description="d", personality="p", inventory=Inventory()),
+        char_class="Fighter",
+        race="Human",
+        backstory="P1 PC",
+    )
+    shirley = Character(
+        core=CreatureCore(name="Shirley", description="d", personality="p", inventory=Inventory()),
+        char_class="Rogue",
+        race="Human",
+        backstory="P2 PC",
+    )
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap.characters = [laverne, shirley]
+    snap.player_seats = {"P1": "Laverne", "P2": "Shirley"}
+    store.init_session(_GENRE, _WORLD)
+    store.save(snap)
+    store.close()
+
+    handler = _make_handler(tmp_path, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="P3",
+        payload=SessionEventPayload(event="connect", game_slug=slug, player_name="Carol"),
+    )
+    with caplog.at_level(logging.INFO):
+        outbound = await handler.handle_message(msg)
+
+    seat_msgs = [m for m in outbound if getattr(m, "type", None) == "SEAT_CONFIRMED"]
+    out_types = [getattr(m, "type", "?") for m in outbound]
+    assert len(seat_msgs) == 2, (
+        f"Expected exactly 2 SEAT_CONFIRMED back-fill frames (one per existing seat); "
+        f"got {len(seat_msgs)} — outbound types: {out_types}"
+    )
+    seat_pairs = sorted(
+        (str(m.payload.player_id), str(m.payload.character_slot)) for m in seat_msgs
+    )
+    assert seat_pairs == [("P1", "Laverne"), ("P2", "Shirley")], (
+        f"Back-fill frames must mirror snapshot.player_seats; got: {seat_pairs}"
+    )
+
+    backfill_records = [r for r in caplog.records if "session.seat_backfill_emitted" in r.getMessage()]
+    assert backfill_records, (
+        "Seat back-fill must emit session.seat_backfill_emitted log line "
+        "(CLAUDE.md OTEL mandate)"
+    )
+    text = backfill_records[0].getMessage()
+    assert "count=2" in text, f"Log must report count=2; got: {text}"
+
+
+@pytest.mark.asyncio
+async def test_slug_connect_seat_backfill_empty_when_no_seats(seeded_game: Path):
+    """Solo-style fresh seed: no seats yet → no SEAT_CONFIRMED back-fill.
+    Regression guard against accidentally emitting empty/garbage frames
+    on first-ever connect to an empty slug.
+    """
+    handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="alice",
+        payload=SessionEventPayload(event="connect", game_slug=_SLUG, player_name="Alice"),
+    )
+    outbound = await handler.handle_message(msg)
+
+    seat_msgs = [m for m in outbound if getattr(m, "type", None) == "SEAT_CONFIRMED"]
+    assert seat_msgs == [], (
+        f"Empty-seats fresh slug must not emit any SEAT_CONFIRMED back-fill; got: {seat_msgs}"
+    )

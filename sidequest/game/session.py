@@ -519,6 +519,20 @@ class GameSnapshot(BaseModel):
     # deserialize cleanly with the field empty.
     room_states: dict[str, RoomState] = Field(default_factory=dict)
 
+    # Per-character last-known location (playtest 2026-05-02 [BUG] —
+    # multiplayer location header showed peer's scene). The party-level
+    # ``location`` is whichever player narrated most recently; in
+    # multiplayer that is wrong for any header / projection that needs
+    # "where is THIS character right now". Keyed by
+    # ``Character.core.name``; populated by
+    # ``narration_apply._apply_narration_result_to_snapshot`` whenever
+    # the acting player's narration emits a fresh ``location``. Solo
+    # sessions populate one entry equal to ``location`` after the first
+    # narration; views.py falls back to ``snapshot.location`` when an
+    # entry is absent so legacy saves and pre-first-narration MP clients
+    # keep their existing behavior.
+    character_locations: dict[str, str] = Field(default_factory=dict)
+
     # Combat state (P1-required: permadeath / death detection)
     player_dead: bool = False
 

@@ -513,3 +513,152 @@ class TestOtelEvents:
             assert attrs["world"] == "grimvault"
 
         asyncio.run(body())
+
+
+class TestMPJoinerHostLocationAnchor:
+    """Playtest 2026-05-02 [BUG-LOW] — opening narration splits party.
+
+    Repro: P1 (Itchy) commits chargen aboard the Kestrel; the
+    canned MP opening lands them in the galley. P2 (Charlie)
+    commits chargen and the joiner-orientation narrator wandered
+    off the established scene, opening Charlie at "Vaskov Centrum
+    East Freight Stair" — a different planet entirely. The
+    chargen-confirmation epilogue ("the crew is the crew —
+    galley, cockpit, the long deck-three spine — the morning is
+    yours") promises a shared starting chassis; the narrator
+    disagreed because the joiner-orientation prompt did not name
+    the host's location.
+
+    Fix: the joiner-orientation action string anchors explicitly
+    on ``snapshot.location`` so the narrator cannot relocate the
+    second PC to a fresh scene.
+    """
+
+    def test_joiner_orientation_carries_host_location_in_prompt(
+        self,
+        handler: WebSocketSessionHandler,
+        claude_mock,
+        otel_capture: InMemorySpanExporter,
+    ) -> None:
+        """When the snapshot already has a host PC AND a non-empty
+        ``location``, the joiner's narrator action prompt must
+        reference that location verbatim so the narrator cannot
+        invent a different scene for the second PC."""
+
+        async def body() -> None:
+            from sidequest.game.character import Character
+            from sidequest.game.creature_core import CreatureCore, Inventory
+
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd is not None
+            host_core = CreatureCore(
+                name="HostPC",
+                description="d",
+                personality="p",
+                inventory=Inventory(),
+            )
+            host = Character(
+                core=host_core,
+                char_class="Fighter",
+                race="Human",
+                backstory="b",
+            )
+            sd.snapshot.characters.append(host)
+            sd.snapshot.player_seats["host-id"] = "HostPC"
+            # Simulate the host's prior turn having landed a location —
+            # exactly what `narration_apply` does when the host's first
+            # turn commits ("snapshot.location = result.location").
+            sd.snapshot.location = "The Kestrel — Galley, Mid-Coast"
+
+            # Reset the mock so we only see the joiner's narrator call
+            # (the host's turn never actually fired in this fixture —
+            # we just seeded the post-turn snapshot state).
+            claude_mock.send_with_session.reset_mock()
+
+            await _walk_and_confirm(handler)
+
+            # Inspect the prompt sent to the narrator. The mock records
+            # every send_with_session call with the rendered prompt as
+            # the first positional arg.
+            calls = claude_mock.send_with_session.call_args_list
+            assert calls, (
+                "Joiner-orientation must dispatch at least one narrator "
+                "turn so we can inspect the prompt"
+            )
+            # The opening-turn prompt is the FIRST call after reset —
+            # subsequent intra-pipeline narrator calls (recap, etc.)
+            # may follow but the opening dispatch is first.
+            opening_prompt = calls[0].args[0] if calls[0].args else calls[0].kwargs.get("prompt", "")
+            assert "The Kestrel — Galley, Mid-Coast" in opening_prompt, (
+                "Joiner-orientation prompt must name the host's "
+                "location verbatim so the narrator cannot relocate the "
+                "second PC. Got prompt fragment: "
+                f"{opening_prompt[:600]!r}"
+            )
+            # And the explicit anti-relocation directive must be present.
+            assert "Do NOT relocate them to a new location" in opening_prompt, (
+                "Joiner-orientation prompt must carry the explicit "
+                "no-relocation directive"
+            )
+
+            # OTEL: the dedicated anchor event must fire so the GM panel
+            # can see which path the joiner-orientation took
+            # (CLAUDE.md OTEL principle).
+            events = [e for span in otel_capture.get_finished_spans() for e in span.events]
+            anchored = [e for e in events if e.name == "mp_joiner_orientation_anchored"]
+            assert anchored, (
+                "mp_joiner_orientation_anchored watcher event must fire "
+                "so the GM panel sees the anchor decision"
+            )
+            attrs = dict(anchored[0].attributes or {})
+            assert attrs.get("anchor_kind") == "host_location"
+            assert attrs.get("host_location") == "The Kestrel — Galley, Mid-Coast"
+
+        asyncio.run(body())
+
+    def test_joiner_orientation_falls_back_when_no_host_location(
+        self,
+        handler: WebSocketSessionHandler,
+        claude_mock,
+        otel_capture: InMemorySpanExporter,
+    ) -> None:
+        """Defensive path: if the host's narration somehow hasn't set
+        ``snapshot.location`` yet (very early MP race), the joiner
+        prompt falls back to a same-scene clause and emits the
+        ``fallback_same_scene`` anchor kind for GM-panel visibility.
+        """
+
+        async def body() -> None:
+            from sidequest.game.character import Character
+            from sidequest.game.creature_core import CreatureCore, Inventory
+
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd is not None
+            host_core = CreatureCore(
+                name="HostPC",
+                description="d",
+                personality="p",
+                inventory=Inventory(),
+            )
+            host = Character(
+                core=host_core,
+                char_class="Fighter",
+                race="Human",
+                backstory="b",
+            )
+            sd.snapshot.characters.append(host)
+            sd.snapshot.player_seats["host-id"] = "HostPC"
+            sd.snapshot.location = ""  # simulate no host narration yet
+
+            claude_mock.send_with_session.reset_mock()
+            await _walk_and_confirm(handler)
+
+            events = [e for span in otel_capture.get_finished_spans() for e in span.events]
+            anchored = [e for e in events if e.name == "mp_joiner_orientation_anchored"]
+            assert anchored, "anchor watcher event must fire on every joiner-orientation"
+            attrs = dict(anchored[0].attributes or {})
+            assert attrs.get("anchor_kind") == "fallback_same_scene"
+
+        asyncio.run(body())
