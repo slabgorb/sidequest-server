@@ -399,25 +399,33 @@ class ClaudeClient:
         base.update(extra_env)
         return base
 
-    async def _run_subprocess(
+    async def _spawn_subprocess(
         self,
         args: list[str],
         env: dict[str, str] | None,
-        span: object,
-    ) -> ClaudeResponse:
-        """Spawn the subprocess and wait for completion with timeout."""
-        start = time.monotonic()
+    ) -> Any:
+        """Spawn the claude CLI subprocess, returning the process handle.
 
+        Caller is responsible for reading stdout/stderr and calling
+        proc.wait() / proc.kill() as appropriate.
+        """
         try:
-            proc = await self._spawn(
-                self._command_path,
-                *args,
-                env=env,
-            )
+            return await self._spawn(self._command_path, *args, env=env)
         except Exception as e:
             logger.error("Failed to spawn subprocess: %s", e)
             raise SubprocessFailed(exit_code=None, stderr=str(e)) from e
 
+    async def _collect_response(
+        self,
+        proc: Any,
+        span: object,
+        start: float,
+    ) -> ClaudeResponse:
+        """Wait for proc to finish, parse the JSON envelope, return ClaudeResponse.
+
+        Used by the synchronous send_*() entry points. The streaming
+        variant uses _iterate_stream() instead.
+        """
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(),
@@ -450,7 +458,21 @@ class ClaudeClient:
         if not trimmed:
             raise EmptyResponse()
 
-        # Parse JSON envelope from --output-format json
+        # Parse JSON envelope from --output-format json (existing logic moved verbatim)
+        return self._parse_json_envelope(trimmed, elapsed, span)
+
+    def _parse_json_envelope(
+        self,
+        trimmed: str,
+        elapsed: float,
+        span: object,
+    ) -> ClaudeResponse:
+        """Parse the JSON envelope returned by claude --output-format json.
+
+        Extracts token usage, session_id, and result text. Used by the
+        synchronous path only — the streaming path produces StreamComplete
+        directly from accumulated NDJSON events.
+        """
         input_tokens: int | None = None
         output_tokens: int | None = None
         response_session_id: str | None = None
@@ -500,6 +522,17 @@ class ClaudeClient:
             session_id=response_session_id,
             backend="claude-cli",
         )
+
+    async def _run_subprocess(
+        self,
+        args: list[str],
+        env: dict[str, str] | None,
+        span: object,
+    ) -> ClaudeResponse:
+        """Spawn + collect — kept as a thin wrapper for the synchronous path."""
+        start = time.monotonic()
+        proc = await self._spawn_subprocess(args, env)
+        return await self._collect_response(proc, span, start)
 
 
 # ---------------------------------------------------------------------------
