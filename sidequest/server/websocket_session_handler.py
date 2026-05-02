@@ -451,6 +451,7 @@ class WebSocketSessionHandler:
         if registry is None:
             from sidequest.handlers.character_creation import HANDLER as CHARACTER_CREATION_HANDLER
             from sidequest.handlers.dice_throw import HANDLER as DICE_THROW_HANDLER
+            from sidequest.handlers.orbital_intent import HANDLER as ORBITAL_INTENT_HANDLER
             from sidequest.handlers.player_action import HANDLER as PLAYER_ACTION_HANDLER
             from sidequest.handlers.player_seat import HANDLER as PLAYER_SEAT_HANDLER
             from sidequest.handlers.session_event import HANDLER as SESSION_EVENT_HANDLER
@@ -463,6 +464,7 @@ class WebSocketSessionHandler:
                 "PLAYER_SEAT": PLAYER_SEAT_HANDLER,
                 "DICE_THROW": DICE_THROW_HANDLER,
                 "YIELD": YIELD_HANDLER,
+                "ORBITAL_INTENT": ORBITAL_INTENT_HANDLER,
             }
             cls._MESSAGE_HANDLERS = registry
         return registry.get(msg_type)
