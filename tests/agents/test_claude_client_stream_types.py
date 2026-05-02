@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
+
+import pytest
 
 from sidequest.agents.claude_client import (
     StreamComplete,
@@ -21,7 +22,7 @@ def test_text_delta_is_stream_event():
 
 def test_text_delta_is_frozen():
     delta = TextDelta(text="hello")
-    with pytest_raises_frozen_instance_error():
+    with pytest.raises(dataclasses.FrozenInstanceError):
         # frozen=True dataclass — assignment must raise FrozenInstanceError
         delta.text = "world"  # type: ignore[misc]
 
@@ -54,13 +55,3 @@ def test_stream_error_carries_failure_detail():
     assert isinstance(err, StreamEvent)
     assert err.kind == "timeout"
     assert err.partial_text == "prose got this far"
-
-
-@contextlib.contextmanager
-def pytest_raises_frozen_instance_error():
-    """Context manager to assert FrozenInstanceError is raised."""
-    try:
-        yield
-    except dataclasses.FrozenInstanceError:
-        return
-    raise AssertionError("expected FrozenInstanceError")
