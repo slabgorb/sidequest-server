@@ -14,9 +14,7 @@ def test_preprocessed_action_has_no_flag_fields():
         "references_location",
     ]
     present = [d for d in dead if d in field_names]
-    assert not present, (
-        f"Dead flag fields still on PreprocessedAction: {present}"
-    )
+    assert not present, f"Dead flag fields still on PreprocessedAction: {present}"
 
 
 def test_preprocessed_action_keeps_perspective_fields():
@@ -60,8 +58,7 @@ def test_record_interaction_advances_round_in_lockstep() -> None:
         tm.record_interaction()
         assert tm.interaction == expected
         assert tm.round == expected, (
-            f"after {expected - 1} interactions, "
-            f"round={tm.round} != interaction={tm.interaction}"
+            f"after {expected - 1} interactions, round={tm.round} != interaction={tm.interaction}"
         )
 
 
@@ -72,7 +69,9 @@ def test_record_interaction_preserves_phase_reset() -> None:
     existing phase-reset semantics that downstream code relies on.
     """
     tm = TurnManager(
-        round=5, interaction=5, phase=TurnPhase.AgentExecution,
+        round=5,
+        interaction=5,
+        phase=TurnPhase.AgentExecution,
     )
     tm.record_interaction()
     assert tm.phase == TurnPhase.InputCollection
@@ -87,6 +86,4 @@ def test_record_interaction_preserves_submitted_clear() -> None:
 
     tm.record_interaction()
     submitted = object.__getattribute__(tm, "_submitted")
-    assert submitted == set(), (
-        f"submitted set must clear after record_interaction, got {submitted}"
-    )
+    assert submitted == set(), f"submitted set must clear after record_interaction, got {submitted}"

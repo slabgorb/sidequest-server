@@ -8,6 +8,7 @@ skipped chargen) resumed with ``snapshot.magic_state = None``, the
 surfaced bars — exactly the half-wired feature CLAUDE.md "Verify
 Wiring, Not Just Existence" forbids.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,11 +20,7 @@ from sidequest.game.character import Character, CreatureCore
 from sidequest.game.session import GameSnapshot
 from sidequest.handlers.connect import _backfill_magic_state_on_resume
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[2].parent
-    / "sidequest-content"
-    / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 
 
 def _coyote_star_pack_with_character() -> tuple[GameSnapshot, SimpleNamespace, str]:
@@ -67,18 +64,13 @@ def test_backfill_runs_when_magic_state_is_none_and_world_has_magic() -> None:
     snap, pack, world_slug = _coyote_star_pack_with_character()
     assert snap.magic_state is None
 
-    _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug=world_slug
-    )
+    _backfill_magic_state_on_resume(snapshot=snap, genre_pack=pack, world_slug=world_slug)
 
     assert snap.magic_state is not None
     assert snap.magic_state.config.world_slug == world_slug
-    char_keys = [
-        k for k in snap.magic_state.ledger if k.startswith("character|Hokulea|")
-    ]
+    char_keys = [k for k in snap.magic_state.ledger if k.startswith("character|Hokulea|")]
     assert char_keys, (
-        "expected per-character bars after backfill; got "
-        f"{list(snap.magic_state.ledger.keys())}"
+        f"expected per-character bars after backfill; got {list(snap.magic_state.ledger.keys())}"
     )
 
 
@@ -101,9 +93,7 @@ def test_backfill_no_op_when_magic_state_already_populated() -> None:
     sentinel = snap.magic_state
     assert sentinel is not None
 
-    _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack, world_slug=world_slug
-    )
+    _backfill_magic_state_on_resume(snapshot=snap, genre_pack=pack, world_slug=world_slug)
 
     assert snap.magic_state is sentinel, (
         "backfill must NOT replace an already-populated magic_state"
@@ -119,7 +109,10 @@ def test_backfill_no_op_when_world_has_no_magic(tmp_path: Path) -> None:
     snap.characters.append(
         Character(
             core=CreatureCore(name="X", description=".", personality="."),
-            backstory=".", char_class="z", race="z", pronouns="z",
+            backstory=".",
+            char_class="z",
+            race="z",
+            pronouns="z",
         )
     )
     # tmp_path has no magic.yaml — `init_magic_state_for_session` will
@@ -143,9 +136,7 @@ def test_backfill_no_op_when_no_seated_character() -> None:
     snap = GameSnapshot(genre_slug="space_opera", world_slug="coyote_star")
     pack_stub = SimpleNamespace(source_dir=pack_dir)
 
-    _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star"
-    )
+    _backfill_magic_state_on_resume(snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star")
 
     assert snap.magic_state is None
 
@@ -159,11 +150,12 @@ def test_backfill_no_op_when_pack_source_dir_missing() -> None:
     snap.characters.append(
         Character(
             core=CreatureCore(name="X", description=".", personality="."),
-            backstory=".", char_class="z", race="z", pronouns="z",
+            backstory=".",
+            char_class="z",
+            race="z",
+            pronouns="z",
         )
     )
     pack_stub = SimpleNamespace(source_dir=None)
-    _backfill_magic_state_on_resume(
-        snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star"
-    )
+    _backfill_magic_state_on_resume(snapshot=snap, genre_pack=pack_stub, world_slug="coyote_star")
     assert snap.magic_state is None

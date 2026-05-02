@@ -3,6 +3,7 @@
 Session is constructed directly over a GameSnapshot for these unit tests.
 SessionRoom binding is covered separately in test_session_room_session_binding.
 """
+
 from __future__ import annotations
 
 import pytest

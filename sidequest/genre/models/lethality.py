@@ -11,6 +11,7 @@ The arbiter (sidequest.agents.lethality_arbiter) reads this model to
 decide what verdict shape a given genre produces when a PC or NPC hits
 zero edge, and what narrator-tone constraint envelope ships alongside.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, field_validator

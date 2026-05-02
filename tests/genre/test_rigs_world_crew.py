@@ -22,5 +22,8 @@ def test_chassis_instance_with_crew() -> None:
         crew_npcs=["kestrel_captain", "kestrel_engineer", "kestrel_doc", "kestrel_cook"],
     )
     assert cfg.crew_npcs == [
-        "kestrel_captain", "kestrel_engineer", "kestrel_doc", "kestrel_cook",
+        "kestrel_captain",
+        "kestrel_engineer",
+        "kestrel_doc",
+        "kestrel_cook",
     ]

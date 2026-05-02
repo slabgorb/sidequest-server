@@ -4,6 +4,7 @@ Per CLAUDE.md "No Silent Fallbacks" — missing required files for an
 `orbital`-tier world raise OrbitalContentMissingError with a clear path.
 chart.yaml is optional (renderer falls back to no flavor layer).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

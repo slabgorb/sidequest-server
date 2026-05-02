@@ -11,6 +11,7 @@ Invariants shipped in this stage:
       (Task 7).
     - GM-only kind — THINKING is never routed to players (Task 8).
 """
+
 from __future__ import annotations
 
 import json
@@ -33,12 +34,14 @@ TARGETED_KINDS: dict[str, str] = {
 # Kinds that echo back to the player who authored them (via
 # payload.author_player_id). GM is implicit recipient. Non-author,
 # non-GM players do not see these.
-SELF_AUTHORED_KINDS: frozenset[str] = frozenset({
-    "PLAYER_ACTION",
-    "DICE_THROW",
-    "BEAT_SELECTION",
-    "CHARACTER_CREATION",
-})
+SELF_AUTHORED_KINDS: frozenset[str] = frozenset(
+    {
+        "PLAYER_ACTION",
+        "DICE_THROW",
+        "BEAT_SELECTION",
+        "CHARACTER_CREATION",
+    }
+)
 
 # Kinds never routed to non-GM players. GM gets them via the GM invariant.
 GM_ONLY_KINDS: frozenset[str] = frozenset({"THINKING"})

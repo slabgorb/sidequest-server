@@ -16,6 +16,7 @@ adds 2+2+2+2=8 to the opponent dial — one beat short of threshold=10.
 A 5th beat (CritSuccess, matching narrative row 7's "sickle catches Sam
 square across the temple") crosses the threshold and resolves the encounter.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,8 +26,7 @@ import pytest
 from tests._helpers.session_room import room_for
 
 REF_SAVE = (
-    Path.home() / ".sidequest" / "saves" / "games" /
-    "2026-04-25-dungeon_survivor" / "save.db"
+    Path.home() / ".sidequest" / "saves" / "games" / "2026-04-25-dungeon_survivor" / "save.db"
 )
 
 
@@ -80,7 +80,7 @@ def test_dungeon_survivor_resolves_to_opponent_victory(
     # cross the threshold and resolve the encounter.
     promo_script = [
         ("CritSuccess", "Promo lunges, blade sliding under Sam's guard."),
-        ("Success",     "Steel kisses ribs. Sam staggers."),
+        ("Success", "Steel kisses ribs. Sam staggers."),
         ("CritSuccess", "The Promo presses, Sam off-balance."),
         ("CritSuccess", "Sam's knees buckle. The crowd roars."),
         ("CritSuccess", "The sickle catches Sam square across the temple. KO."),
@@ -102,16 +102,16 @@ def test_dungeon_survivor_resolves_to_opponent_victory(
             break
 
     # The encounter must have resolved.
-    assert snap.encounter is None or snap.encounter.resolved, \
+    assert snap.encounter is None or snap.encounter.resolved, (
         "encounter did not resolve after 5 promo beats"
+    )
 
     # The events table records the corrected outcome.
     events = query_encounter_events(store)
     resolved_rows = [e for e in events if e["kind"] == "ENCOUNTER_RESOLVED"]
     assert resolved_rows, "expected at least one ENCOUNTER_RESOLVED row"
     outcome = resolved_rows[-1]["payload"].get("outcome")
-    assert outcome == "opponent_victory", \
-        f"expected opponent_victory; got {outcome!r}"
+    assert outcome == "opponent_victory", f"expected opponent_victory; got {outcome!r}"
 
 
 @pytest.mark.integration
@@ -158,7 +158,8 @@ def test_dungeon_survivor_timeline_actors_have_side_attribution(
             narration="...",
             beat_selections=[
                 BeatSelection(
-                    actor="The Promo", beat_id="attack",
+                    actor="The Promo",
+                    beat_id="attack",
                     outcome=RollOutcome(tier),
                 ),
             ],
@@ -171,5 +172,6 @@ def test_dungeon_survivor_timeline_actors_have_side_attribution(
     assert beat_rows, "expected at least one ENCOUNTER_BEAT_APPLIED row"
     for event in beat_rows:
         payload = event["payload"]
-        assert payload.get("actor_side") in {"player", "opponent"}, \
+        assert payload.get("actor_side") in {"player", "opponent"}, (
             f"BEAT_APPLIED row missing actor_side: {payload}"
+        )

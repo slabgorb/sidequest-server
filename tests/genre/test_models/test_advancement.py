@@ -25,9 +25,13 @@ class TestRecoveryTrigger:
         assert t.kind == "on_resolution"
 
     def test_on_beat_success_defaults_while_strained_false(self) -> None:
-        t = RecoveryTriggerOnBeatSuccess.model_validate({
-            "kind": "on_beat_success", "beat_id": "strike", "amount": 1,
-        })
+        t = RecoveryTriggerOnBeatSuccess.model_validate(
+            {
+                "kind": "on_beat_success",
+                "beat_id": "strike",
+                "amount": 1,
+            }
+        )
         assert t.while_strained is False
 
     def test_extra_forbidden_on_resolution(self) -> None:
@@ -41,37 +45,52 @@ class TestAdvancementEffect:
         assert e.amount == 5
 
     def test_edge_recovery(self) -> None:
-        e = AdvancementEffectEdgeRecovery.model_validate({
-            "type": "edge_recovery",
-            "trigger": {"kind": "on_resolution"},
-            "amount": 3,
-        })
+        e = AdvancementEffectEdgeRecovery.model_validate(
+            {
+                "type": "edge_recovery",
+                "trigger": {"kind": "on_resolution"},
+                "amount": 3,
+            }
+        )
         assert e.amount == 3
 
     def test_beat_discount(self) -> None:
-        e = AdvancementEffectBeatDiscount.model_validate({
-            "type": "beat_discount", "beat_id": "strike", "edge_delta_mod": -1,
-        })
+        e = AdvancementEffectBeatDiscount.model_validate(
+            {
+                "type": "beat_discount",
+                "beat_id": "strike",
+                "edge_delta_mod": -1,
+            }
+        )
         assert e.edge_delta_mod == -1
         assert e.resource_mod is None
 
     def test_leverage_bonus(self) -> None:
-        e = AdvancementEffectLeverageBonus.model_validate({
-            "type": "leverage_bonus", "beat_id": "strike", "target_edge_delta_mod": 2,
-        })
+        e = AdvancementEffectLeverageBonus.model_validate(
+            {
+                "type": "leverage_bonus",
+                "beat_id": "strike",
+                "target_edge_delta_mod": 2,
+            }
+        )
         assert e.target_edge_delta_mod == 2
 
     def test_lore_reveal_bonus(self) -> None:
-        e = AdvancementEffectLoreRevealBonus.model_validate({
-            "type": "lore_reveal_bonus", "scope": "encounter_resolution",
-        })
+        e = AdvancementEffectLoreRevealBonus.model_validate(
+            {
+                "type": "lore_reveal_bonus",
+                "scope": "encounter_resolution",
+            }
+        )
         assert e.scope == LoreRevealScope.encounter_resolution
 
 
 class TestAdvancementTier:
     def test_valid(self) -> None:
         t = AdvancementTier(
-            id="iron_track_1", required_milestone="iron_track", effects=[],
+            id="iron_track_1",
+            required_milestone="iron_track",
+            effects=[],
         )
         assert t.id == "iron_track_1"
 
@@ -85,9 +104,14 @@ class TestAdvancementTier:
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            AdvancementTier.model_validate({
-                "id": "t1", "required_milestone": "m1", "effects": [], "bogus": True,
-            })
+            AdvancementTier.model_validate(
+                {
+                    "id": "t1",
+                    "required_milestone": "m1",
+                    "effects": [],
+                    "bogus": True,
+                }
+            )
 
     def test_roundtrip(self) -> None:
         t = AdvancementTier(id="t1", required_milestone="m1", class_gates=["Fighter"])
@@ -103,9 +127,11 @@ class TestAdvancementTree:
         assert tree.tiers == []
 
     def test_with_tiers(self) -> None:
-        tree = AdvancementTree(tiers=[
-            AdvancementTier(id="t1", required_milestone="m1"),
-        ])
+        tree = AdvancementTree(
+            tiers=[
+                AdvancementTier(id="t1", required_milestone="m1"),
+            ]
+        )
         assert len(tree.tiers) == 1
 
     def test_extra_forbidden(self) -> None:

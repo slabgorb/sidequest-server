@@ -5,6 +5,7 @@ Slice scope: only fields used by Coyote Star's voidborn_freighter +
 the_tea_brew. Hardpoints, chassis_death, full provenance vocabulary
 are deferred to follow-on specs.
 """
+
 from __future__ import annotations
 
 from typing import Literal
@@ -14,12 +15,15 @@ from pydantic import BaseModel, Field
 CrewModel = Literal["single_pilot", "strict_roles", "flexible_roles"]
 EmbodimentModel = Literal["singular", "crew_only", "ancillary", "swarm"]
 CrewAwareness = Literal["none", "surface", "biometric", "interior", "total"]
-ScaleBand = Literal[
-    "personal", "vehicular", "capital_ship", "station_class"
-]
+ScaleBand = Literal["personal", "vehicular", "capital_ship", "station_class"]
 BondTier = Literal[
-    "severed", "hostile", "strained", "neutral",
-    "familiar", "trusted", "fused",
+    "severed",
+    "hostile",
+    "strained",
+    "neutral",
+    "familiar",
+    "trusted",
+    "fused",
 ]
 
 

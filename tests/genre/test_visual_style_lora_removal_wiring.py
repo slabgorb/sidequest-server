@@ -29,17 +29,12 @@ SERVER_SRC = REPO_ROOT / "sidequest-server" / "sidequest"
 CONTENT_GENRE_PACKS = REPO_ROOT / "sidequest-content" / "genre_packs"
 
 
-_LORA_ATTR_PATTERN = re.compile(
-    r"\.(lora|lora_trigger|lora_scale|lora_path)\b"
-)
+_LORA_ATTR_PATTERN = re.compile(r"\.(lora|lora_trigger|lora_scale|lora_path)\b")
 
 
 def _iter_server_python_files() -> list[Path]:
     """Return every .py file under SERVER_SRC, skipping __pycache__ trees."""
-    return [
-        p for p in SERVER_SRC.rglob("*.py")
-        if "__pycache__" not in p.parts
-    ]
+    return [p for p in SERVER_SRC.rglob("*.py") if "__pycache__" not in p.parts]
 
 
 class TestNoLoraAttributeAccessInServer:
@@ -62,12 +57,9 @@ class TestNoLoraAttributeAccessInServer:
             text = path.read_text(encoding="utf-8")
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if _LORA_ATTR_PATTERN.search(line):
-                    offenders.append(
-                        f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
-                    )
-        assert offenders == [], (
-            "Found .lora* attribute access in production code:\n"
-            + "\n".join(offenders)
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+        assert offenders == [], "Found .lora* attribute access in production code:\n" + "\n".join(
+            offenders
         )
 
 
@@ -90,8 +82,7 @@ class TestVisualStyleLoaderStillWorks:
             f"(got: {visual_style.positive_suffix!r})"
         )
         assert visual_style.preferred_model == "dev", (
-            f"heavy_metal preferred_model expected 'dev', "
-            f"got {visual_style.preferred_model!r}"
+            f"heavy_metal preferred_model expected 'dev', got {visual_style.preferred_model!r}"
         )
 
     def test_no_visual_style_yaml_has_lora_keys(self) -> None:
@@ -118,8 +109,12 @@ class TestVisualStyleLoaderStillWorks:
         test.
         """
         forbidden_keys = {
-            "loras", "lora_triggers",
-            "lora", "lora_trigger", "lora_scale", "lora_path",
+            "loras",
+            "lora_triggers",
+            "lora",
+            "lora_trigger",
+            "lora_scale",
+            "lora_path",
         }
         offenders: list[str] = []
         files_checked = 0
@@ -148,12 +143,10 @@ class TestVisualStyleLoaderStillWorks:
             "CONTENT_GENRE_PACKS may be misconfigured."
         )
         assert offenders == [], (
-            "Found LoRA YAML keys still present after Epic 43 cleanup:\n"
-            + "\n".join(offenders)
+            "Found LoRA YAML keys still present after Epic 43 cleanup:\n" + "\n".join(offenders)
         )
         # Typed-field surface: nothing LoRA-shaped on the model itself.
-        for forbidden in ("lora", "lora_trigger", "lora_scale",
-                          "lora_path", "lora_triggers"):
+        for forbidden in ("lora", "lora_trigger", "lora_scale", "lora_path", "lora_triggers"):
             assert forbidden not in VisualStyle.model_fields, (
                 f"VisualStyle.{forbidden} re-introduced into model_fields"
             )

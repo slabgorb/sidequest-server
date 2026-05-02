@@ -121,7 +121,9 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
     # Identity
     assert character.core.name == "Rux"
     assert character.pronouns == "she/her"  # from the pronouns scene pick
-    assert character.char_class == pack.rules.default_class  # "Delver"  # type: ignore[attr-defined]
+    assert (
+        character.char_class == pack.rules.default_class
+    )  # "Delver"  # type: ignore[attr-defined]
 
     # Stats: every ability score name has a value in a plausible range
     # (3d6 base = 3..18, modified by any derived bonuses = widened but
@@ -138,9 +140,19 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
         # downstream consumer expects flags we don't set, this test
         # will alert us when the dispatch port starts reading them.
         required = {
-            "id", "name", "description", "category", "value", "weight",
-            "rarity", "narrative_weight", "tags", "equipped", "quantity",
-            "uses_remaining", "state",
+            "id",
+            "name",
+            "description",
+            "category",
+            "value",
+            "weight",
+            "rarity",
+            "narrative_weight",
+            "tags",
+            "equipped",
+            "quantity",
+            "uses_remaining",
+            "state",
         }
         assert required.issubset(item.keys())
 

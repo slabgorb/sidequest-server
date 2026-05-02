@@ -152,8 +152,7 @@ async def embed_pending_fragments(
             result.skipped_daemon_unavailable = True
             span.set_attribute("lore.skipped", "daemon_unavailable")
             logger.warning(
-                "lore_embedding.worker skipped reason=daemon_unavailable "
-                "pending=%d socket=%s",
+                "lore_embedding.worker skipped reason=daemon_unavailable pending=%d socket=%s",
                 len(pending),
                 client.socket_path,
             )
@@ -181,9 +180,7 @@ async def embed_pending_fragments(
                     len(pending) - result.embedded - result.failed,
                     exc,
                 )
-                span.set_attribute(
-                    "lore.early_exit", "daemon_unavailable_mid_run"
-                )
+                span.set_attribute("lore.early_exit", "daemon_unavailable_mid_run")
                 result.skipped_daemon_unavailable = True
                 break
             except DaemonRequestError as exc:
@@ -227,8 +224,7 @@ async def embed_pending_fragments(
                     },
                 )
                 logger.warning(
-                    "lore_embedding.worker text_too_large fragment=%s "
-                    "content_bytes=%d error=%s",
+                    "lore_embedding.worker text_too_large fragment=%s content_bytes=%d error=%s",
                     frag_id,
                     len(frag.content.encode("utf-8")),
                     exc,
@@ -238,9 +234,7 @@ async def embed_pending_fragments(
             embedding = response["embedding"]
             if expected_dim is None:
                 expected_dim = len(embedding)
-            written = lore_store.update_embedding(
-                frag_id, embedding, expected_dim=expected_dim
-            )
+            written = lore_store.update_embedding(frag_id, embedding, expected_dim=expected_dim)
             if not written:
                 # Dim mismatch against our session's expected dim. Either
                 # the daemon switched models mid-run (server-side hot
@@ -270,9 +264,7 @@ async def embed_pending_fragments(
         span.set_attribute("lore.embedded", result.embedded)
         span.set_attribute("lore.failed", result.failed)
         span.set_attribute("lore.failed_embed_error", result.failed_embed_error)
-        span.set_attribute(
-            "lore.failed_text_too_large", result.failed_text_too_large
-        )
+        span.set_attribute("lore.failed_text_too_large", result.failed_text_too_large)
         return result
 
 
@@ -314,9 +306,7 @@ async def retrieve_lore_context(
             client = DaemonClient()
         if not client.is_available():
             span.set_attribute("lore.outcome", "daemon_unavailable")
-            logger.warning(
-                "lore_embedding.retrieve skipped reason=daemon_unavailable"
-            )
+            logger.warning("lore_embedding.retrieve skipped reason=daemon_unavailable")
             return None
 
         try:
@@ -355,14 +345,11 @@ async def retrieve_lore_context(
         # anti-silent-orphan contract. The method's own current_dim<=0
         # guard is belt-and-braces; DaemonClient.embed already refuses
         # zero-length embeddings at the boundary.
-        requeued_count = lore_store.requeue_dimension_mismatched(
-            len(query_embedding)
-        )
+        requeued_count = lore_store.requeue_dimension_mismatched(len(query_embedding))
         span.set_attribute("lore.dimension_mismatch_count", requeued_count)
         if requeued_count:
             logger.warning(
-                "lore_embedding.retrieve dimension_mismatch requeued=%d "
-                "current_dim=%d",
+                "lore_embedding.retrieve dimension_mismatch requeued=%d current_dim=%d",
                 requeued_count,
                 len(query_embedding),
             )
@@ -390,9 +377,7 @@ async def retrieve_lore_context(
                 "category": frag.category,
                 "similarity": float(sim),
                 "tokens": max(1, len(content) // 4),
-                "preview": (
-                    content[:120] + "…" if len(content) > 120 else content
-                ),
+                "preview": (content[:120] + "…" if len(content) > 120 else content),
             }
 
         selected_payload = [_frag_payload(s, f) for s, f in hits]
@@ -412,9 +397,7 @@ async def retrieve_lore_context(
                 "budget": int(top_k),
                 "tokens_used": int(tokens_used),
                 "min_similarity": float(min_similarity),
-                "context_hint": (
-                    query_text[:80] + "…" if len(query_text) > 80 else query_text
-                ),
+                "context_hint": (query_text[:80] + "…" if len(query_text) > 80 else query_text),
             },
             component="lore",
         )
@@ -446,9 +429,7 @@ def _format_lore_section(
         preview = frag.content.strip().replace("\n", " ")
         if len(preview) > preview_chars:
             preview = preview[: preview_chars - 1].rstrip() + "…"
-        lines.append(
-            f"- [{frag.category} · id={frag.id} · similarity={sim:.2f}] {preview}"
-        )
+        lines.append(f"- [{frag.category} · id={frag.id} · similarity={sim:.2f}] {preview}")
     lines.append("</lore>")
     return "\n".join(lines)
 

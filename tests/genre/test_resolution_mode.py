@@ -8,6 +8,7 @@ without any rules.yaml change.
 Reference Rust test:
 ``sidequest-api/crates/sidequest-genre/tests/resolution_mode_story_38_1_tests.rs``.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -102,9 +103,7 @@ def test_resolution_mode_loads_explicit_beat_selection_from_yaml():
 def test_resolution_mode_unknown_value_rejected_loudly():
     """No silent fallback (CLAUDE.md): unknown mode must raise."""
     with pytest.raises(ValidationError):
-        ConfrontationDef.model_validate(
-            yaml.safe_load(_conf_yaml(resolution_mode="bogus_mode"))
-        )
+        ConfrontationDef.model_validate(yaml.safe_load(_conf_yaml(resolution_mode="bogus_mode")))
 
 
 # --- Wiring tests: real genre packs still load -----------------------------

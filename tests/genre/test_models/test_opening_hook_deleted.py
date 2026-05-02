@@ -17,4 +17,5 @@ def test_mp_opening_no_longer_exported() -> None:
 
 def test_opening_is_exported() -> None:
     from sidequest.genre.models.narrative import Opening
+
     assert Opening is not None

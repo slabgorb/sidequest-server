@@ -52,7 +52,8 @@ SPAN_ROUTES[SPAN_DOGFIGHT_CELL_RESOLVED] = SpanRoute(
         "red_maneuver": (span.attributes or {}).get("red_maneuver", ""),
         "blue_maneuver": (span.attributes or {}).get("blue_maneuver", ""),
         "extend_and_return_triggered": (span.attributes or {}).get(
-            "extend_and_return_triggered", False,
+            "extend_and_return_triggered",
+            False,
         ),
     },
 )

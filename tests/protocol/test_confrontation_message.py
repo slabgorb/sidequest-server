@@ -3,6 +3,7 @@
 Task 12 (2026-04-25): Updated for dual-dial schema — ``metric`` replaced by
 ``player_metric`` + ``opponent_metric``.
 """
+
 from __future__ import annotations
 
 from sidequest.protocol.messages import ConfrontationMessage, ConfrontationPayload
@@ -16,7 +17,9 @@ def test_confrontation_message_roundtrip() -> None:
         actors=[{"name": "Rux", "role": "combatant", "per_actor_state": {}}],
         player_metric={"name": "momentum", "current": 2, "starting": 0, "threshold": 10},
         opponent_metric={"name": "momentum", "current": 0, "starting": 0, "threshold": 10},
-        beats=[{"id": "attack", "label": "Attack", "kind": "strike", "base": 2, "stat_check": "STR"}],
+        beats=[
+            {"id": "attack", "label": "Attack", "kind": "strike", "base": 2, "stat_check": "STR"}
+        ],
         secondary_stats=None,
         genre_slug="caverns_and_claudes",
         mood="combat",
@@ -40,17 +43,35 @@ def test_confrontation_message_roundtrip() -> None:
     # _emit_event fan-out path can rebuild peer payloads via
     # ``model_validate({**filtered_data, "seq": seq})`` without tripping
     # ``extra="forbid"``. Mirrors NarrationPayload.seq / SecretNotePayload.seq.
-    ui_keys = {"type", "label", "category", "actors", "player_metric", "opponent_metric",
-               "beats", "genre_slug", "mood", "active", "seq"}
+    ui_keys = {
+        "type",
+        "label",
+        "category",
+        "actors",
+        "player_metric",
+        "opponent_metric",
+        "beats",
+        "genre_slug",
+        "mood",
+        "active",
+        "seq",
+    }
     assert set(serialized["payload"].keys()) == ui_keys
 
 
 def test_confrontation_message_supports_active_false_clear() -> None:
     payload = ConfrontationPayload(
-        type="combat", label="", category="", actors=[],
-        player_metric={}, opponent_metric={}, beats=[],
-        secondary_stats=None, genre_slug="caverns_and_claudes",
-        mood=None, active=False,
+        type="combat",
+        label="",
+        category="",
+        actors=[],
+        player_metric={},
+        opponent_metric={},
+        beats=[],
+        secondary_stats=None,
+        genre_slug="caverns_and_claudes",
+        mood=None,
+        active=False,
     )
     msg = ConfrontationMessage(payload=payload, player_id="")
     assert msg.payload.active is False
@@ -66,7 +87,8 @@ def test_confrontation_payload_accepts_clear_builder_output() -> None:
     )
 
     clear_dict = build_clear_confrontation_payload(
-        encounter_type="combat", genre_slug="caverns_and_claudes",
+        encounter_type="combat",
+        genre_slug="caverns_and_claudes",
     )
     # Must not raise pydantic ValidationError.
     payload = ConfrontationPayload(**clear_dict)
@@ -81,10 +103,17 @@ def test_game_message_roundtrips_confrontation_variant() -> None:
     raw = {
         "type": "CONFRONTATION",
         "payload": {
-            "type": "combat", "label": "Dungeon", "category": "combat",
-            "actors": [], "player_metric": {}, "opponent_metric": {},
-            "beats": [], "secondary_stats": None,
-            "genre_slug": "cac", "mood": "combat", "active": True,
+            "type": "combat",
+            "label": "Dungeon",
+            "category": "combat",
+            "actors": [],
+            "player_metric": {},
+            "opponent_metric": {},
+            "beats": [],
+            "secondary_stats": None,
+            "genre_slug": "cac",
+            "mood": "combat",
+            "active": True,
         },
         "player_id": "",
     }

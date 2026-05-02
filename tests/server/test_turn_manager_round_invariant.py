@@ -89,9 +89,7 @@ def _max_narrative_round_via_sql(sd) -> int:
     is that ``snapshot.turn_manager.round`` matches the SQL ground truth,
     not whatever the helper happens to return.
     """
-    row = sd.store._conn.execute(
-        "SELECT MAX(round_number) FROM narrative_log"
-    ).fetchone()
+    row = sd.store._conn.execute("SELECT MAX(round_number) FROM narrative_log").fetchone()
     return int(row[0]) if row and row[0] is not None else 0
 
 
@@ -110,7 +108,8 @@ def _narration_result(text: str = "ok") -> NarrationTurnResult:
 
 @pytest.mark.asyncio
 async def test_round_invariant_span_fires_once_per_narration_turn(
-    otel_capture, session_handler_factory,
+    otel_capture,
+    session_handler_factory,
 ) -> None:
     """Drive 5 narration turns; expect exactly 5 ``turn_manager.round_invariant``
     spans, each with the full attribute set the GM panel charts.
@@ -152,7 +151,8 @@ async def test_round_invariant_span_fires_once_per_narration_turn(
 
 @pytest.mark.asyncio
 async def test_round_invariant_gap_is_zero_across_10_turns(
-    otel_capture, session_handler_factory,
+    otel_capture,
+    session_handler_factory,
 ) -> None:
     """Drive 10 narration turns; assert at every tick that the span carries
     ``gap == 0`` and ``holds == True`` AND that the underlying snapshot
@@ -189,9 +189,7 @@ async def test_round_invariant_gap_is_zero_across_10_turns(
             f"tick {i}: gap={attrs.get('gap')}, expected 0 — invariant violated. "
             f"round={attrs.get('round')}, max={attrs.get('max_narrative_round')}"
         )
-        assert attrs.get("holds") is True, (
-            f"tick {i}: holds={attrs.get('holds')}, expected True"
-        )
+        assert attrs.get("holds") is True, f"tick {i}: holds={attrs.get('holds')}, expected True"
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +199,8 @@ async def test_round_invariant_gap_is_zero_across_10_turns(
 
 @pytest.mark.asyncio
 async def test_round_invariant_span_captures_synthetic_divergence(
-    otel_capture, session_handler_factory,
+    otel_capture,
+    session_handler_factory,
 ) -> None:
     """Synthesize the Felix-style gap — manually roll ``turn_manager.round``
     backward — and assert the next tick's span captures it with
@@ -232,8 +231,7 @@ async def test_round_invariant_span_captures_synthetic_divergence(
     spans = otel_capture.get_finished_spans()
     invariant = [s for s in spans if s.name == SPAN_NAME]
     assert len(invariant) == 1, (
-        f"expected exactly 1 {SPAN_NAME} span on the divergence tick, "
-        f"got {len(invariant)}"
+        f"expected exactly 1 {SPAN_NAME} span on the divergence tick, got {len(invariant)}"
     )
 
     attrs = dict(invariant[0].attributes or {})
@@ -244,9 +242,7 @@ async def test_round_invariant_span_captures_synthetic_divergence(
         f"(round={attrs.get('round')}, "
         f"max_narrative_round={attrs.get('max_narrative_round')})"
     )
-    assert holds is False, (
-        f"divergence span must report holds=False, got holds={holds!r}"
-    )
+    assert holds is False, f"divergence span must report holds=False, got holds={holds!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +252,8 @@ async def test_round_invariant_span_captures_synthetic_divergence(
 
 @pytest.mark.asyncio
 async def test_round_invariant_span_handles_empty_narrative_log(
-    otel_capture, session_handler_factory,
+    otel_capture,
+    session_handler_factory,
 ) -> None:
     """On a brand-new session the invariant span must still fire on the very
     first tick. ``max_narrative_round`` is read AFTER ``append_narrative``
@@ -341,8 +338,7 @@ async def test_round_invariant_emits_typed_watcher_event(
     typed = [
         e
         for e in sub.events
-        if e.get("event_type") == "state_transition"
-        and e.get("component") == "turn_manager"
+        if e.get("event_type") == "state_transition" and e.get("component") == "turn_manager"
     ]
     assert typed, (
         "no state_transition event for component=turn_manager reached the "
@@ -364,9 +360,7 @@ async def test_round_invariant_emits_typed_watcher_event(
     # Augment-not-replace: the firehose ``agent_span_close`` sibling must
     # also exist (same invariant the dogfight/quest/npc tests check).
     flat_names = {
-        e["fields"].get("name")
-        for e in sub.events
-        if e.get("event_type") == "agent_span_close"
+        e["fields"].get("name") for e in sub.events if e.get("event_type") == "agent_span_close"
     }
     assert SPAN_NAME in flat_names, (
         f"flat agent_span_close missing for {SPAN_NAME!r}; firehose got: "
@@ -381,7 +375,8 @@ async def test_round_invariant_emits_typed_watcher_event(
 
 @pytest.mark.asyncio
 async def test_loaded_save_with_preexisting_divergence_captures_violation(
-    otel_capture, session_handler_factory,
+    otel_capture,
+    session_handler_factory,
 ) -> None:
     """Reproduce Felix's Playtest 3 shape directly: 72 narrative_log rows
     persisted, ``turn_manager.round`` frozen at 65, drive one narration
@@ -436,8 +431,7 @@ async def test_loaded_save_with_preexisting_divergence_captures_violation(
     spans = otel_capture.get_finished_spans()
     invariant = [s for s in spans if s.name == SPAN_NAME]
     assert len(invariant) == 1, (
-        f"expected exactly 1 {SPAN_NAME} span on the post-load tick, "
-        f"got {len(invariant)}"
+        f"expected exactly 1 {SPAN_NAME} span on the post-load tick, got {len(invariant)}"
     )
 
     attrs = dict(invariant[0].attributes or {})

@@ -7,6 +7,7 @@ side effect. Nothing here is intended to be re-exported through the
 ``plugins`` package's star-import — ``__all__ = []`` keeps the namespace
 clean as more plugins are added.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,9 +28,7 @@ from sidequest.magic.plugin import MAGIC_PLUGINS
 _YAML_PATH = Path(__file__).with_suffix(".yaml")
 
 # Content descriptor — loaded once at import time.
-descriptor: Plugin = Plugin.model_validate(
-    yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
-)
+descriptor: Plugin = Plugin.model_validate(yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8")))
 
 
 # Flavor → expected consent_state mapping (innate_v1 spec).
@@ -47,9 +46,7 @@ class InnateV1Plugin:
     def required_attrs(self) -> set[str]:
         return set(descriptor.required_span_attrs)
 
-    def validate_working(
-        self, working: MagicWorking, config: WorldMagicConfig
-    ) -> list[Flag]:
+    def validate_working(self, working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
         flags: list[Flag] = []
 
         # 1. Required-attr presence

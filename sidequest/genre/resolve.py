@@ -130,7 +130,9 @@ def _merge_trope(parent: TropeDefinition, child: TropeDefinition) -> TropeDefini
         # Child category overrides if non-empty, else inherit from parent
         "category": child.category if child.category else parent.category,
         "triggers": child.triggers if child.triggers else parent.triggers,
-        "narrative_hints": child.narrative_hints if child.narrative_hints else parent.narrative_hints,
+        "narrative_hints": child.narrative_hints
+        if child.narrative_hints
+        else parent.narrative_hints,
         "tension_level": (
             child.tension_level if child.tension_level is not None else parent.tension_level
         ),

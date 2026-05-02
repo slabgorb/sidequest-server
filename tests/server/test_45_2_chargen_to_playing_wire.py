@@ -19,6 +19,7 @@ message through `handle_message`, and asserts the seat is PLAYING after
 
 If session_handler.py:2999 is removed, this test fails.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,9 +41,7 @@ from sidequest.protocol.messages import (
 from sidequest.server.session_handler import WebSocketSessionHandler
 from sidequest.server.session_room import LobbyState, RoomRegistry
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _seed_mp_save(tmp_path: Path, slug: str, genre: str, world: str) -> None:
@@ -100,7 +99,9 @@ async def test_chargen_confirmation_transitions_seat_to_playing(
     )
     out_queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id=f"sock-{player_id}", out_queue=out_queue,
+        registry=registry,
+        socket_id=f"sock-{player_id}",
+        out_queue=out_queue,
     )
 
     # 1. Slug-connect — handler enters Creating state because the save has
@@ -165,16 +166,13 @@ async def test_chargen_confirmation_transitions_seat_to_playing(
                 f"unexpected chargen phase while walking scenes: {builder._phase!r}"  # noqa: SLF001
             )
     else:
-        pytest.fail(
-            f"chargen did not reach confirmation within {max_steps} steps"
-        )
+        pytest.fail(f"chargen did not reach confirmation within {max_steps} steps")
 
     # PRE-CONDITION: builder ready, seat still CHARGEN, handler still
     # _State.Creating. The next message is the load-bearing one.
     assert builder.is_confirmation()
     assert room._seated[player_id].state == LobbyState.CHARGEN, (  # noqa: SLF001
-        "Pre-confirmation: seat must still be CHARGEN until "
-        "_chargen_confirmation fires"
+        "Pre-confirmation: seat must still be CHARGEN until _chargen_confirmation fires"
     )
 
     # 4. THE WIRE TEST — send confirmation message. _chargen_confirmation

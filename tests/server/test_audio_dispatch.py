@@ -71,7 +71,9 @@ def test_build_audio_backend_returns_library_backend_for_configured_pack(
     from sidequest.server.session_handler import WebSocketSessionHandler
 
     monkeypatch.setattr(
-        GenreLoader, "find", lambda self, code: fake_audio_pack_dir,
+        GenreLoader,
+        "find",
+        lambda self, code: fake_audio_pack_dir,
     )
     handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
     pack = MagicMock()
@@ -142,12 +144,11 @@ def test_maybe_dispatch_audio_returns_message_on_mood_hit(
     from sidequest.server.session_handler import WebSocketSessionHandler
 
     backend = LibraryBackend(
-        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+        _minimal_audio_config(),
+        base_path=fake_audio_pack_dir,
     )
     sd = _dispatcher_fixture(backend)
-    result = _narration_result(
-        "The dungeon falls silent. Tension coils through every shadow."
-    )
+    result = _narration_result("The dungeon falls silent. Tension coils through every shadow.")
     handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
 
     msg = handler._maybe_dispatch_audio(sd, result)
@@ -178,7 +179,8 @@ def test_maybe_dispatch_audio_returns_none_on_empty_narration(
     from sidequest.server.session_handler import WebSocketSessionHandler
 
     backend = LibraryBackend(
-        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+        _minimal_audio_config(),
+        base_path=fake_audio_pack_dir,
     )
     sd = _dispatcher_fixture(backend)
     result = _narration_result("   ")
@@ -193,7 +195,8 @@ def test_maybe_dispatch_audio_returns_none_when_cues_empty(
     from sidequest.server.session_handler import WebSocketSessionHandler
 
     backend = LibraryBackend(
-        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+        _minimal_audio_config(),
+        base_path=fake_audio_pack_dir,
     )
     sd = _dispatcher_fixture(backend)
     result = _narration_result("You walk along the path.")
@@ -208,7 +211,8 @@ def test_maybe_dispatch_audio_swallows_exceptions_from_interpreter(
     from sidequest.server import session_handler as sh
 
     backend = LibraryBackend(
-        _minimal_audio_config(), base_path=fake_audio_pack_dir,
+        _minimal_audio_config(),
+        base_path=fake_audio_pack_dir,
     )
     sd = _dispatcher_fixture(backend)
     result = _narration_result("Tension.")
@@ -247,19 +251,17 @@ def test_maybe_dispatch_audio_span_carries_dj_decision_attributes(
     provider.add_span_processor(processor)
     try:
         backend = LibraryBackend(
-            _minimal_audio_config(), base_path=fake_audio_pack_dir,
+            _minimal_audio_config(),
+            base_path=fake_audio_pack_dir,
         )
         sd = _dispatcher_fixture(backend)
-        result = _narration_result(
-            "The dungeon falls silent. Tension coils through every shadow."
-        )
+        result = _narration_result("The dungeon falls silent. Tension coils through every shadow.")
         handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
 
         handler._maybe_dispatch_audio(sd, result)
 
         dispatch_spans = [
-            s for s in exporter.get_finished_spans()
-            if s.name == "sidequest.audio.dispatch"
+            s for s in exporter.get_finished_spans() if s.name == "sidequest.audio.dispatch"
         ]
         assert len(dispatch_spans) == 1
         attrs = dispatch_spans[0].attributes

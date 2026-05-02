@@ -14,6 +14,7 @@ panel can see the audit fire. ``leaks_detected=0`` is the steady-state
 telemetry shape — a non-zero count means structural hiding has a hole
 and Sebastien's lie-detector just caught it.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -92,7 +93,7 @@ def audit_canonical_prose(
             idx = prose_lower.find(token.lower())
             if idx != -1:
                 leaks.append(entity_id)
-                fragments.append(prose[max(0, idx - 20):idx + len(token) + 20])
+                fragments.append(prose[max(0, idx - 20) : idx + len(token) + 20])
                 break
 
     result = LeakAuditResult(

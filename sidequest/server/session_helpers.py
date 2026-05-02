@@ -8,6 +8,7 @@ imports them under ``TYPE_CHECKING`` to avoid circular imports.
 Re-exported by ``session_handler.py`` for back-compat with tests and
 external callers that import these symbols from there.
 """
+
 from __future__ import annotations
 
 import json
@@ -79,11 +80,13 @@ def build_secret_note_events(
                 "fidelity": entry.visibility.perception_fidelity,
             },
         }
-        out.append(MessageEnvelope(
-            kind="SECRET_NOTE",
-            payload_json=json.dumps(payload),
-            origin_seq=0,
-        ))
+        out.append(
+            MessageEnvelope(
+                kind="SECRET_NOTE",
+                payload_json=json.dumps(payload),
+                origin_seq=0,
+            )
+        )
     return out
 
 
@@ -122,9 +125,7 @@ def aggregate_visibility(pkg: DispatchPackage) -> dict:
     }
 
 
-def _resolve_acting_character_name(
-    sd: _SessionData, room: SessionRoom | None
-) -> str:
+def _resolve_acting_character_name(sd: _SessionData, room: SessionRoom | None) -> str:
     """Identify the requesting socket's PC by player_id via the room seat
     map. Returning the wrong name causes the narrator's party-peer block
     to misidentify peers (the playtest "Shirley is Laverne's hireling" bug).
@@ -139,9 +140,7 @@ def _resolve_acting_character_name(
     if callable(seat_lookup) and sd.player_id:
         seat_map = seat_lookup()
         for slot, pid in seat_map.items():
-            if pid == sd.player_id and any(
-                c.core.name == slot for c in snapshot.characters
-            ):
+            if pid == sd.player_id and any(c.core.name == slot for c in snapshot.characters):
                 return slot
     for char in snapshot.characters:
         if char.core.name == sd.player_name:
@@ -208,9 +207,7 @@ def _build_turn_context(
             owner_pid = sd.player_id
         if owner_pid:
             pc_cores_by_player[owner_pid] = pc.core
-    npc_cores_by_name: dict[str, CreatureCore] = {
-        npc.core.name: npc.core for npc in snapshot.npcs
-    }
+    npc_cores_by_name: dict[str, CreatureCore] = {npc.core.name: npc.core for npc in snapshot.npcs}
 
     # Story 45-8 — Notorious-party gating on session.player_count.
     #
@@ -243,9 +240,8 @@ def _build_turn_context(
         # a seat — without requiring every peer to have transitioned to
         # PLAYING (the failing-precondition for ``playing_player_count``
         # mid-chargen). ABANDONED orphans correctly drop out.
-        count_method = (
-            getattr(room, "non_abandoned_player_count", None)
-            or getattr(room, "playing_player_count", None)
+        count_method = getattr(room, "non_abandoned_player_count", None) or getattr(
+            room, "playing_player_count", None
         )
         try:
             player_count_for_gate = int(count_method())
@@ -279,9 +275,7 @@ def _build_turn_context(
     else:
         # Story 37-36: peer-identity packets, acting PC excluded.
         party_peers = [
-            PartyPeer.from_character(pc)
-            for pc in snapshot.characters
-            if pc.core.name != char_name
+            PartyPeer.from_character(pc) for pc in snapshot.characters if pc.core.name != char_name
         ]
     party_context_available = bool(party_peers)
 
@@ -352,8 +346,7 @@ def _build_turn_context(
         # Sebastien's lie-detector keeps its no-op case) but with
         # ``room_id=""`` AND a logged warning.
         logger.warning(
-            "state.room_state_injected_unreachable "
-            "reason=snapshot_location_empty interaction=%d",
+            "state.room_state_injected_unreachable reason=snapshot_location_empty interaction=%d",
             snapshot.turn_manager.interaction,
         )
         current_room_id = ""
@@ -370,7 +363,8 @@ def _build_turn_context(
     ):
         logger.info(
             "state.room_state_injected room=%s retrieved_count=%d",
-            current_room_id, retrieved_container_count,
+            current_room_id,
+            retrieved_container_count,
         )
 
     state_summary_json = json.dumps(state_summary_payload, indent=2)
@@ -390,10 +384,7 @@ def _build_turn_context(
         genre_prompts=sd.genre_pack.prompts,
         character_name=char_name,
         current_location=(
-            _resolve_location_display(
-                sd.genre_pack, sd.world_slug, snapshot.location
-            )
-            or "Unknown"
+            _resolve_location_display(sd.genre_pack, sd.world_slug, snapshot.location) or "Unknown"
         ),
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
         npc_registry=list(snapshot.npc_registry),
@@ -514,9 +505,7 @@ def _render_url_from_path(image_path: str) -> str:
         _publish_image_unavailable(image_path, reason="output_dir_unset")
         return image_path
     try:
-        rel = _pathlib.Path(image_path).resolve().relative_to(
-            _pathlib.Path(root).resolve()
-        )
+        rel = _pathlib.Path(image_path).resolve().relative_to(_pathlib.Path(root).resolve())
     except ValueError:
         _publish_image_unavailable(image_path, reason="path_outside_output_dir")
         return image_path

@@ -3,6 +3,7 @@
 Drives ``WebSocketSessionHandler.handle_message`` with an ORBITAL_INTENT
 message and verifies the registry routes through the new handler.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,9 +53,7 @@ async def test_view_map_routes_through_handler(tmp_path: Path) -> None:
     _bind_room_with_orbital(handler, tmp_path)
 
     msg = OrbitalIntentMessage(
-        payload=OrbitalIntent.model_validate(
-            {"kind": "view_map", "scope": "system_root"}
-        ),
+        payload=OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
         player_id="P1",
     )
     outbound = await handler.handle_message(msg)
@@ -75,9 +74,7 @@ async def test_drill_in_then_drill_out_persists_scope(tmp_path: Path) -> None:
     _bind_room_with_orbital(handler, tmp_path)
 
     drill_in = OrbitalIntentMessage(
-        payload=OrbitalIntent.model_validate(
-            {"kind": "drill_in", "body_id": "red_prospect"}
-        ),
+        payload=OrbitalIntent.model_validate({"kind": "drill_in", "body_id": "red_prospect"}),
     )
     drill_out = OrbitalIntentMessage(
         payload=OrbitalIntent.model_validate({"kind": "drill_out"}),
@@ -99,9 +96,7 @@ async def test_unbound_room_returns_session_unbound_error(tmp_path: Path) -> Non
     # No room bound — _room is None.
 
     msg = OrbitalIntentMessage(
-        payload=OrbitalIntent.model_validate(
-            {"kind": "view_map", "scope": "system_root"}
-        ),
+        payload=OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
     )
     outbound = await handler.handle_message(msg)
 
@@ -124,9 +119,7 @@ async def test_world_without_orbital_tier_returns_unavailable_error(tmp_path: Pa
     handler._room = room
 
     msg = OrbitalIntentMessage(
-        payload=OrbitalIntent.model_validate(
-            {"kind": "view_map", "scope": "system_root"}
-        ),
+        payload=OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
     )
     outbound = await handler.handle_message(msg)
 

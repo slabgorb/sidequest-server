@@ -54,9 +54,7 @@ class WatcherSpanProcessor(SpanProcessor):
     def __init__(self, hub: WatcherHub) -> None:
         self._hub = hub
 
-    def on_start(
-        self, span: Any, parent_context: Any = None
-    ) -> None:  # noqa: ARG002
+    def on_start(self, span: Any, parent_context: Any = None) -> None:  # noqa: ARG002
         # No start-event broadcast for now — the dashboard renders spans
         # at close time only, and doubling the volume would just waste
         # bandwidth without adding insight.

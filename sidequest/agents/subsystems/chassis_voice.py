@@ -9,6 +9,7 @@ If the chassis has no voice block or no bond ledger entry for the
 character, return the default "Pilot" form. This is a true fallback (not
 a silent-fallback violation) — the chassis is just unfamiliar.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -39,14 +40,16 @@ def resolve_chassis_name_form(
         return _DEFAULT_FORM
 
     template = chassis.voice.name_forms_by_bond_tier.get(
-        entry.bond_tier_chassis, _DEFAULT_FORM,
+        entry.bond_tier_chassis,
+        _DEFAULT_FORM,
     )
 
     # Per spec §7 open question: {nickname} with no nickname source
     # falls back to the trusted-tier form so prose stays coherent.
     if "{nickname}" in template and not character.nickname:
         template = chassis.voice.name_forms_by_bond_tier.get(
-            "trusted", _DEFAULT_FORM,
+            "trusted",
+            _DEFAULT_FORM,
         )
 
     return template.format(

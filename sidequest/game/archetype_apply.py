@@ -13,9 +13,7 @@ from sidequest.game.character import Character
 from sidequest.genre.archetype.shim import ArchetypeResolution
 
 
-def apply_archetype_resolved(
-    character: Character, resolution: ArchetypeResolution
-) -> None:
+def apply_archetype_resolved(character: Character, resolution: ArchetypeResolution) -> None:
     """Stamp the resolved archetype's display name and provenance onto a Character.
 
     The two fields MUST be set together — they describe the same

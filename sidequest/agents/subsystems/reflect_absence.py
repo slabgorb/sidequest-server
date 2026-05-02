@@ -12,6 +12,7 @@ Unit tests for this module remain in `just check-all` so it does not
 bit-rot. If you find yourself adding a live caller, you are landing
 ADR-073 (or undoing this design); update both ends.
 """
+
 from __future__ import annotations
 
 from sidequest.agents.subsystems import SubsystemOutput

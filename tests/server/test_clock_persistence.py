@@ -3,6 +3,7 @@
 Verifies the new field rides on the existing SqliteStore save/load path
 without schema migrations. Old saves without the field load with default 0.0.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

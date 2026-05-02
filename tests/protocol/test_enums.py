@@ -207,6 +207,7 @@ def test_message_type_complete_count() -> None:
 
 # AC1: enum exists with three variants
 
+
 def test_narrator_verbosity_has_concise_variant() -> None:
     v = NarratorVerbosity.concise
     assert v == NarratorVerbosity.concise
@@ -223,6 +224,7 @@ def test_narrator_verbosity_has_verbose_variant() -> None:
 
 
 # AC2: round-trips (str enum — value IS the wire string)
+
 
 def test_narrator_verbosity_concise_round_trip() -> None:
     v = NarratorVerbosity.concise
@@ -247,11 +249,13 @@ def test_narrator_verbosity_serializes_as_lowercase() -> None:
 
 # AC3: default is Standard
 
+
 def test_narrator_verbosity_defaults_to_standard() -> None:
     assert NarratorVerbosity.default() == NarratorVerbosity.standard
 
 
 # AC6 partial: invalid value rejected
+
 
 def test_narrator_verbosity_rejects_invalid_value() -> None:
     with pytest.raises(ValueError):
@@ -259,6 +263,7 @@ def test_narrator_verbosity_rejects_invalid_value() -> None:
 
 
 # default_for_player_count helper
+
 
 def test_narrator_verbosity_solo_defaults_to_verbose() -> None:
     assert NarratorVerbosity.default_for_player_count(1) == NarratorVerbosity.verbose
@@ -282,6 +287,7 @@ def test_narrator_verbosity_multiplayer_defaults_to_standard() -> None:
 
 # AC1: enum exists with three variants
 
+
 def test_narrator_vocabulary_has_accessible_variant() -> None:
     v = NarratorVocabulary.accessible
     assert v == NarratorVocabulary.accessible
@@ -298,6 +304,7 @@ def test_narrator_vocabulary_has_epic_variant() -> None:
 
 
 # AC2: round-trips
+
 
 def test_narrator_vocabulary_accessible_round_trip() -> None:
     v = NarratorVocabulary.accessible
@@ -322,11 +329,13 @@ def test_narrator_vocabulary_serializes_as_lowercase() -> None:
 
 # AC3: default is Literary
 
+
 def test_narrator_vocabulary_defaults_to_literary() -> None:
     assert NarratorVocabulary.default() == NarratorVocabulary.literary
 
 
 # AC6 partial: invalid value rejected
+
 
 def test_narrator_vocabulary_rejects_invalid_value() -> None:
     with pytest.raises(ValueError):
@@ -348,6 +357,7 @@ def _import_session_types() -> tuple[type, type, type]:
         SessionEventMessage,
         SessionEventPayload,
     )
+
     return GameMessage, SessionEventMessage, SessionEventPayload
 
 
@@ -357,16 +367,18 @@ def _import_session_types() -> tuple[type, type, type]:
 def test_session_event_connect_with_verbosity_round_trip() -> None:
     """AC5: SessionEvent connect payload carries narrator_verbosity."""
     GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
-    msg = GameMessage(root=SessionEventMessage(
-        payload=SessionEventPayload(
-            event="connect",
-            player_name="Alice",
-            genre="mutant_wasteland",
-            world="flickering_reach",
-            narrator_verbosity=NarratorVerbosity.verbose,
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=SessionEventMessage(
+            payload=SessionEventPayload(
+                event="connect",
+                player_name="Alice",
+                genre="mutant_wasteland",
+                world="flickering_reach",
+                narrator_verbosity=NarratorVerbosity.verbose,
+            ),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = GameMessage.model_validate_json(json_str)
     assert decoded.payload.narrator_verbosity == NarratorVerbosity.verbose  # type: ignore[union-attr]
@@ -376,16 +388,19 @@ def test_session_event_without_verbosity_defaults_to_none() -> None:
     """Backward compat: old clients without narrator_verbosity → None."""
     GameMessage, _, _ = _import_session_types()
     import json as _json
-    wire = _json.dumps({
-        "type": "SESSION_EVENT",
-        "payload": {
-            "event": "connect",
-            "player_name": "Alice",
-            "genre": "mutant_wasteland",
-            "world": "flickering_reach",
-        },
-        "player_id": "",
-    })
+
+    wire = _json.dumps(
+        {
+            "type": "SESSION_EVENT",
+            "payload": {
+                "event": "connect",
+                "player_name": "Alice",
+                "genre": "mutant_wasteland",
+                "world": "flickering_reach",
+            },
+            "player_id": "",
+        }
+    )
     msg = GameMessage.model_validate_json(wire)
     assert msg.payload.narrator_verbosity is None  # type: ignore[union-attr]
 
@@ -394,17 +409,20 @@ def test_session_event_verbosity_wire_format() -> None:
     """AC6: wire key 'narrator_verbosity' with lowercase value 'concise'."""
     GameMessage, _, _ = _import_session_types()
     import json as _json
-    wire = _json.dumps({
-        "type": "SESSION_EVENT",
-        "payload": {
-            "event": "connect",
-            "player_name": "Alice",
-            "genre": "mutant_wasteland",
-            "world": "flickering_reach",
-            "narrator_verbosity": "concise",
-        },
-        "player_id": "",
-    })
+
+    wire = _json.dumps(
+        {
+            "type": "SESSION_EVENT",
+            "payload": {
+                "event": "connect",
+                "player_name": "Alice",
+                "genre": "mutant_wasteland",
+                "world": "flickering_reach",
+                "narrator_verbosity": "concise",
+            },
+            "player_id": "",
+        }
+    )
     msg = GameMessage.model_validate_json(wire)
     assert msg.payload.narrator_verbosity == NarratorVerbosity.concise  # type: ignore[union-attr]
 
@@ -415,16 +433,18 @@ def test_session_event_verbosity_wire_format() -> None:
 def test_session_event_connect_with_vocabulary_round_trip() -> None:
     """AC5: SessionEvent connect payload carries narrator_vocabulary."""
     GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
-    msg = GameMessage(root=SessionEventMessage(
-        payload=SessionEventPayload(
-            event="connect",
-            player_name="Alice",
-            genre="mutant_wasteland",
-            world="flickering_reach",
-            narrator_vocabulary=NarratorVocabulary.epic,
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=SessionEventMessage(
+            payload=SessionEventPayload(
+                event="connect",
+                player_name="Alice",
+                genre="mutant_wasteland",
+                world="flickering_reach",
+                narrator_vocabulary=NarratorVocabulary.epic,
+            ),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = GameMessage.model_validate_json(json_str)
     assert decoded.payload.narrator_vocabulary == NarratorVocabulary.epic  # type: ignore[union-attr]
@@ -434,16 +454,19 @@ def test_session_event_without_vocabulary_defaults_to_none() -> None:
     """Backward compat: old clients without narrator_vocabulary → None."""
     GameMessage, _, _ = _import_session_types()
     import json as _json
-    wire = _json.dumps({
-        "type": "SESSION_EVENT",
-        "payload": {
-            "event": "connect",
-            "player_name": "Alice",
-            "genre": "mutant_wasteland",
-            "world": "flickering_reach",
-        },
-        "player_id": "",
-    })
+
+    wire = _json.dumps(
+        {
+            "type": "SESSION_EVENT",
+            "payload": {
+                "event": "connect",
+                "player_name": "Alice",
+                "genre": "mutant_wasteland",
+                "world": "flickering_reach",
+            },
+            "player_id": "",
+        }
+    )
     msg = GameMessage.model_validate_json(wire)
     assert msg.payload.narrator_vocabulary is None  # type: ignore[union-attr]
 
@@ -452,17 +475,20 @@ def test_session_event_vocabulary_wire_format() -> None:
     """AC6: wire key 'narrator_vocabulary' with lowercase value 'accessible'."""
     GameMessage, _, _ = _import_session_types()
     import json as _json
-    wire = _json.dumps({
-        "type": "SESSION_EVENT",
-        "payload": {
-            "event": "connect",
-            "player_name": "Alice",
-            "genre": "mutant_wasteland",
-            "world": "flickering_reach",
-            "narrator_vocabulary": "accessible",
-        },
-        "player_id": "",
-    })
+
+    wire = _json.dumps(
+        {
+            "type": "SESSION_EVENT",
+            "payload": {
+                "event": "connect",
+                "player_name": "Alice",
+                "genre": "mutant_wasteland",
+                "world": "flickering_reach",
+                "narrator_vocabulary": "accessible",
+            },
+            "player_id": "",
+        }
+    )
     msg = GameMessage.model_validate_json(wire)
     assert msg.payload.narrator_vocabulary == NarratorVocabulary.accessible  # type: ignore[union-attr]
 
@@ -470,17 +496,19 @@ def test_session_event_vocabulary_wire_format() -> None:
 def test_session_event_with_both_verbosity_and_vocabulary() -> None:
     """Both vocabulary and verbosity can coexist on the same payload."""
     GameMessage, SessionEventMessage, SessionEventPayload = _import_session_types()
-    msg = GameMessage(root=SessionEventMessage(
-        payload=SessionEventPayload(
-            event="connect",
-            player_name="Alice",
-            genre="mutant_wasteland",
-            world="flickering_reach",
-            narrator_verbosity=NarratorVerbosity.concise,
-            narrator_vocabulary=NarratorVocabulary.epic,
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=SessionEventMessage(
+            payload=SessionEventPayload(
+                event="connect",
+                player_name="Alice",
+                genre="mutant_wasteland",
+                world="flickering_reach",
+                narrator_verbosity=NarratorVerbosity.concise,
+                narrator_vocabulary=NarratorVocabulary.epic,
+            ),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = GameMessage.model_validate_json(json_str)
     assert decoded.payload.narrator_verbosity == NarratorVerbosity.concise  # type: ignore[union-attr]

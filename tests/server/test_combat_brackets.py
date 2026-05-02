@@ -3,6 +3,7 @@
 Port of sidequest-api behavior for Story 3.4 Task 12: strip [combat]
 markers from aside prose before narrator dispatch.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock

@@ -1,4 +1,5 @@
 """item_legacy_v1 plugin behavior."""
+
 from __future__ import annotations
 
 import pytest
@@ -84,8 +85,7 @@ def test_item_legacy_v1_missing_alignment_yellow(world_config):
     )
     flags = plugin.validate_working(working, world_config)
     assert any(
-        f.severity == FlagSeverity.YELLOW
-        and "alignment_with_item_nature" in f.reason
+        f.severity == FlagSeverity.YELLOW and "alignment_with_item_nature" in f.reason
         for f in flags
     )
     # Range RED should not also fire when alignment is None.
@@ -123,9 +123,7 @@ def test_item_legacy_v1_native_mechanism_red_flag(world_config):
         alignment_with_item_nature=0.5,
     )
     flags = plugin.validate_working(working, world_config)
-    assert any(
-        f.severity == FlagSeverity.RED and "lane_violation" in f.reason for f in flags
-    )
+    assert any(f.severity == FlagSeverity.RED and "lane_violation" in f.reason for f in flags)
 
 
 def test_item_legacy_v1_descriptor_loads():

@@ -224,7 +224,9 @@ def test_resource_patch_add_increases_value() -> None:
     result = snap.apply_resource_patch(patch)
 
     assert isinstance(result, ResourcePatchResult), "valid add should return a ResourcePatchResult"
-    assert snap.resources["luck"].current == pytest.approx(5.0), "luck should be 5.0 after adding 2.0"
+    assert snap.resources["luck"].current == pytest.approx(5.0), (
+        "luck should be 5.0 after adding 2.0"
+    )
 
 
 def test_resource_patch_subtract_decreases_value() -> None:

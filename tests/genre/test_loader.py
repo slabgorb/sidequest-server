@@ -319,6 +319,7 @@ def test_loader_wired_into_package() -> None:
     """GenreLoader and load_genre_pack must be importable from sidequest.genre."""
     from sidequest.genre import GenreLoader as GL  # noqa: F401
     from sidequest.genre import load_genre_pack as lgp  # noqa: F401
+
     assert callable(lgp)
     assert GL is not None
 
@@ -335,12 +336,25 @@ def test_worlds_with_tropes_inherit_from_genre(tmp_path: Path) -> None:
     pack_dir = _clone_pack_with_updated_genre_key(CC_PACK_DIR, tmp_path / "cc_trope_test")
 
     # Inject a genre-level abstract trope
-    abstract_trope = [{"name": "The Eternal Dungeon", "abstract": True, "category": "recurring", "triggers": ["dark", "deep"]}]
+    abstract_trope = [
+        {
+            "name": "The Eternal Dungeon",
+            "abstract": True,
+            "category": "recurring",
+            "triggers": ["dark", "deep"],
+        }
+    ]
     (pack_dir / "tropes.yaml").write_text(yaml.dump(abstract_trope), encoding="utf-8")
 
     # Inject a world trope that extends it into grimvault
     world_dir = pack_dir / "worlds" / "grimvault"
-    world_trope = [{"name": "Grimvault Eternal", "extends": "the-eternal-dungeon", "description": "The vault version"}]
+    world_trope = [
+        {
+            "name": "Grimvault Eternal",
+            "extends": "the-eternal-dungeon",
+            "description": "The vault version",
+        }
+    ]
     (world_dir / "tropes.yaml").write_text(yaml.dump(world_trope), encoding="utf-8")
 
     pack = load_genre_pack(pack_dir)
@@ -395,6 +409,7 @@ def test_full_phase1_pack_pipeline() -> None:
     # Phase 1 chargen: archetype resolution pipeline available
     if pack.base_archetypes is not None and pack.archetype_constraints is not None:
         from sidequest.genre.archetype.shim import resolve_archetype
+
         base = pack.base_archetypes
         constraints = pack.archetype_constraints
         # Find first valid pairing from base

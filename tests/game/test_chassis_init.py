@@ -1,4 +1,5 @@
 """init_chassis_registry materializes ChassisInstance + projects to npc_registry."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,6 +13,7 @@ SPACE_OPERA = REPO_ROOT / "sidequest-content" / "genre_packs" / "space_opera"
 def _make_snapshot(genre_slug: str, world_slug: str):
     """Build a minimal GameSnapshot for chassis-init tests."""
     from sidequest.game.session import GameSnapshot
+
     return GameSnapshot(
         genre_slug=genre_slug,
         world_slug=world_slug,

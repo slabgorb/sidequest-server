@@ -18,6 +18,7 @@ module layers status-effect overrides: a blinded recipient with
 fidelity=full still has visual_only spans stripped because the status
 effect trumps.
 """
+
 from __future__ import annotations
 
 from opentelemetry import trace

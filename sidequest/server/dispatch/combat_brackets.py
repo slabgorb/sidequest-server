@@ -3,6 +3,7 @@
 Port of sidequest-api/crates/sidequest-server/src/dispatch/aside.rs
 ``strip_combat_brackets``. Story 3.4.
 """
+
 from __future__ import annotations
 
 import re

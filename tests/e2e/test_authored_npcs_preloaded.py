@@ -19,9 +19,7 @@ from typing import Any
 from sidequest.game.world_materialization import preload_authored_npcs
 from sidequest.genre.loader import GenreLoader
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 class _StubTurnManager:
@@ -60,19 +58,15 @@ def test_coyote_star_authored_npcs_preload_into_state() -> None:
     assert len(state.npcs) >= 5
 
     # Crew are firmly friendly per spec §3.2 (initial_disposition 50–60).
-    crew_dispositions = sorted(
-        npc.disposition for npc in state.npcs if npc.disposition >= 50
-    )
+    crew_dispositions = sorted(npc.disposition for npc in state.npcs if npc.disposition >= 50)
     assert len(crew_dispositions) >= 4, (
-        "All 4 Kestrel crew should ship at disposition ≥ 50 — got "
-        f"{crew_dispositions!r}"
+        f"All 4 Kestrel crew should ship at disposition ≥ 50 — got {crew_dispositions!r}"
     )
 
     # Dura Mendes is the canon pre-canon NPC referenced by cartography.yaml;
     # she ships at neutral (0) since the PC has not interacted with her yet.
     dura = next((n for n in state.npcs if n.core.name == "Dura Mendes"), None)
     assert dura is not None, (
-        f"Dura Mendes missing from preloaded npcs: "
-        f"{[n.core.name for n in state.npcs]}"
+        f"Dura Mendes missing from preloaded npcs: {[n.core.name for n in state.npcs]}"
     )
     assert dura.disposition == 0

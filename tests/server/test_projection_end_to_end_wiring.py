@@ -8,6 +8,7 @@ Asserts the single-truth invariant in executable form:
       session (via cache read, no re-filter)
     - GM canonical view is untouched by any rule
 """
+
 from __future__ import annotations
 
 import json
@@ -88,7 +89,9 @@ rules:
     assert cache_rows == 3 * 3
 
     # 2. projection.filter.decide span count equals cache-row count.
-    decide_spans = [s for s in exporter.get_finished_spans() if s.name == "projection.filter.decide"]
+    decide_spans = [
+        s for s in exporter.get_finished_spans() if s.name == "projection.filter.decide"
+    ]
     assert len(decide_spans) == 9
 
     # 3. GM sees canonical; players see "**".
@@ -157,9 +160,7 @@ rules:
     peers = ["bob", "gm"]
     for text in ["one", "two"]:
         row = log.append(kind="NARRATION", payload_json=f'{{"text":"{text}"}}')
-        env = MessageEnvelope(
-            kind=row.kind, payload_json=row.payload_json, origin_seq=row.seq
-        )
+        env = MessageEnvelope(kind=row.kind, payload_json=row.payload_json, origin_seq=row.seq)
         for pid in peers:
             decision = filt.project(envelope=env, view=view, player_id=pid)
             cache.write(event_seq=row.seq, player_id=pid, decision=decision)
@@ -168,9 +169,7 @@ rules:
     assert cache.read_since(player_id=emitter_id, since_seq=0) == []
 
     # On reconnect, lazy_fill covers the gap.
-    filled = lazy_fill(
-        event_log=log, cache=cache, filter_=filt, view=view, player_id=emitter_id
-    )
+    filled = lazy_fill(event_log=log, cache=cache, filter_=filt, view=view, player_id=emitter_id)
     assert filled == 2
 
     # Alice's now-cached projections match what bob (another non-GM) saw —

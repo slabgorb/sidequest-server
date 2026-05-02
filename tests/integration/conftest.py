@@ -4,6 +4,7 @@ Re-exports fixtures from ``tests.server.conftest`` so integration tests can
 build a real ``WebSocketSessionHandler`` + ``_SessionData`` and drive
 encounter engine paths without re-implementing the fixtures.
 """
+
 from __future__ import annotations
 
 from tests.server.conftest import (  # noqa: F401

@@ -5,6 +5,7 @@ body_count, output_size_bytes for every chart render. Validates that
 re-renders happen on the expected schedule (clock advance, drill
 in/out) and that the renderer isn't quietly producing empty SVGs.
 """
+
 from __future__ import annotations
 
 from ._core import FLAT_ONLY_SPANS

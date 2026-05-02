@@ -1,4 +1,5 @@
 """Rule validator — 7 semantic checks."""
+
 from __future__ import annotations
 
 import pytest

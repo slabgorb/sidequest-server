@@ -34,6 +34,7 @@ fired (CLAUDE.md OTEL Observability Principle — Claude is excellent at
 "winging it"; the only way to catch a stale-condition pile-up live is to
 watch the clear events stream past in the dashboard).
 """
+
 from __future__ import annotations
 
 import logging
@@ -48,7 +49,11 @@ logger = logging.getLogger(__name__)
 
 
 def _publish_clear(
-    *, actor: str, status: Status, reason: str, turn: int,
+    *,
+    actor: str,
+    status: Status,
+    reason: str,
+    turn: int,
 ) -> None:
     """Emit OTEL span + watcher event for one cleared status."""
     with encounter_status_cleared_span(
@@ -74,7 +79,11 @@ def _publish_clear(
     )
     logger.info(
         "status.cleared actor=%s text=%r severity=%s reason=%s turn=%d",
-        actor, status.text, status.severity.value, reason, turn,
+        actor,
+        status.text,
+        status.severity.value,
+        reason,
+        turn,
     )
 
 
@@ -168,7 +177,8 @@ def apply_explicit_status_clears(
         if target is None:
             logger.warning(
                 "status_clear.unknown_actor actor=%s clear=%r",
-                actor_name, clear_text,
+                actor_name,
+                clear_text,
             )
             continue
         # First case-insensitive match wins. Substring match (so the
@@ -186,7 +196,8 @@ def apply_explicit_status_clears(
         if match_idx is None:
             logger.warning(
                 "status_clear.no_match actor=%s clear=%r existing=%s",
-                actor_name, clear_text,
+                actor_name,
+                clear_text,
                 [s.text for s in target.core.statuses],
             )
             continue

@@ -14,6 +14,7 @@ All deltas are *signed* and measured against the actor's own/other dials.
 ``opponent`` delta so ``opponent.current += deltas.opponent`` is the only
 arithmetic the engine needs.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -209,7 +210,8 @@ def _phase_for_beat(beat: int) -> EncounterPhase:
 
 
 def _opposite_side_first_actor(
-    enc: StructuredEncounter, side: str,
+    enc: StructuredEncounter,
+    side: str,
 ) -> str | None:
     other = "opponent" if side == "player" else "player"
     for a in enc.actors:
@@ -274,8 +276,11 @@ def apply_beat(
         before = own_metric.current
         own_metric.current = max(0, own_metric.current + deltas.own)
         with encounter_metric_advance_span(
-            side=actor.side, delta_kind="own", delta=deltas.own,
-            before=before, after=own_metric.current,
+            side=actor.side,
+            delta_kind="own",
+            delta=deltas.own,
+            before=before,
+            after=own_metric.current,
         ):
             pass
         _watcher_publish(
@@ -300,8 +305,10 @@ def apply_beat(
         cross_side = "opponent" if actor.side == "player" else "player"
         with encounter_metric_advance_span(
             side=cross_side,
-            delta_kind="cross", delta=deltas.opponent,
-            before=before, after=other_metric.current,
+            delta_kind="cross",
+            delta=deltas.opponent,
+            before=before,
+            after=other_metric.current,
         ):
             pass
         _watcher_publish(
@@ -331,8 +338,10 @@ def apply_beat(
         )
         enc.tags.append(tag)
         with encounter_tag_backfire_span(
-            tag_text=tag.text, created_by=actor.name,
-            target=target_actor_name or "", triggering_beat=beat.id,
+            tag_text=tag.text,
+            created_by=actor.name,
+            target=target_actor_name or "",
+            triggering_beat=beat.id,
         ):
             pass
         _watcher_publish(
@@ -360,8 +369,11 @@ def apply_beat(
         )
         enc.tags.append(tag)
         with encounter_tag_created_span(
-            tag_text=tag.text, created_by=actor.name,
-            target=tag.target, leverage=tag.leverage, fleeting=False,
+            tag_text=tag.text,
+            created_by=actor.name,
+            target=tag.target,
+            leverage=tag.leverage,
+            fleeting=False,
             created_via="angle_beat",
         ):
             pass
@@ -391,8 +403,11 @@ def apply_beat(
         )
         enc.tags.append(tag)
         with encounter_tag_created_span(
-            tag_text=tag.text, created_by=actor.name,
-            target=tag.target, leverage=1, fleeting=True,
+            tag_text=tag.text,
+            created_by=actor.name,
+            target=tag.target,
+            leverage=1,
+            fleeting=True,
             created_via="extras",
         ):
             pass
@@ -425,9 +440,14 @@ def apply_beat(
     # observable — Sebastien-the-mechanics-player can see that the
     # encounter didn't progress, and Keith debugging can audit whether
     # the spec's intent matches the playtest experience.
-    if (deltas.own == 0 and deltas.opponent == 0
-            and not deltas.grants_tag and not deltas.grants_fleeting_tag
-            and not deltas.tag_backfire and not deltas.resolution):
+    if (
+        deltas.own == 0
+        and deltas.opponent == 0
+        and not deltas.grants_tag
+        and not deltas.grants_fleeting_tag
+        and not deltas.tag_backfire
+        and not deltas.resolution
+    ):
         _watcher_publish(
             "state_transition",
             {
@@ -436,7 +456,9 @@ def apply_beat(
                 "actor": actor.name,
                 "actor_side": actor.side,
                 "beat_id": getattr(beat, "id", "?"),
-                "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
+                "beat_kind": str(beat.kind.value)
+                if hasattr(beat.kind, "value")
+                else str(beat.kind),
                 "rationale": (
                     "default delta table for this kind+outcome tier "
                     "is {own=0, opponent=0} (per spec) — beat fired "

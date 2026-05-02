@@ -110,14 +110,15 @@ async def test_state_transition_fires_on_location_update(
         characters=[],
         turn_manager=TurnManager(),
     )
-    result = NarrationTurnResult(
-        narration="You descend.", location="Tood's Dome — Nest Crack"
+    result = NarrationTurnResult(narration="You descend.", location="Tood's Dome — Nest Crack")
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Rux", room=room_for(snapshot)
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
     await asyncio.sleep(0.05)
     location_events = [
-        e for e in sock.events if e["event_type"] == "state_transition"
-        and e["fields"].get("field") == "location"
+        e
+        for e in sock.events
+        if e["event_type"] == "state_transition" and e["fields"].get("field") == "location"
     ]
     assert len(location_events) == 1
     f = location_events[0]["fields"]
@@ -172,10 +173,13 @@ async def test_state_transition_fires_on_npc_auto_register(
             )
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Rux", room=room_for(snapshot)
+    )
     await asyncio.sleep(0.05)
     npc_events = [
-        e for e in sock.events
+        e
+        for e in sock.events
         if e["event_type"] == "state_transition"
         and e["fields"].get("field") == "npc_registry"
         and e["fields"].get("op") == "auto_registered"
@@ -245,8 +249,9 @@ async def test_span_processor_broadcasts_to_subscriber(
     await asyncio.sleep(0.05)
 
     close_events = [
-        e for e in sock.events if e["event_type"] == "agent_span_close"
-        and e["fields"].get("name") == "wiring.test"
+        e
+        for e in sock.events
+        if e["event_type"] == "agent_span_close" and e["fields"].get("name") == "wiring.test"
     ]
     assert len(close_events) == 1, (
         f"expected 1 span_close event, got {len(sock.events)}: {sock.events}"
@@ -341,10 +346,12 @@ async def test_on_end_emits_typed_event_for_routed_span() -> None:
     await hub.subscribe(sub)  # type: ignore[arg-type]
 
     processor = WatcherSpanProcessor(hub)
-    processor.on_end(_fake_span(
-        SPAN_PROJECTION_DECIDE,
-        {"event.kind": "narration", "decision.include": True},
-    ))
+    processor.on_end(
+        _fake_span(
+            SPAN_PROJECTION_DECIDE,
+            {"event.kind": "narration", "decision.include": True},
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in sub.events if e["event_type"] == "state_transition"]
@@ -398,15 +405,17 @@ async def test_on_end_emits_typed_event_for_quest_update_span() -> None:
     await hub.subscribe(sub)  # type: ignore[arg-type]
 
     processor = WatcherSpanProcessor(hub)
-    processor.on_end(_fake_span(
-        SPAN_QUEST_UPDATE,
-        {
-            "updates_json": '{"find_crystal": "active"}',
-            "updates_count": 1,
-            "player_name": "Rux",
-            "turn_number": 7,
-        },
-    ))
+    processor.on_end(
+        _fake_span(
+            SPAN_QUEST_UPDATE,
+            {
+                "updates_json": '{"find_crystal": "active"}',
+                "updates_count": 1,
+                "player_name": "Rux",
+                "turn_number": 7,
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in sub.events if e["event_type"] == "state_transition"]
@@ -460,16 +469,18 @@ async def test_on_end_emits_typed_event_for_npc_auto_registered_span() -> None:
     await hub.subscribe(_Sub())  # type: ignore[arg-type]
 
     processor = WatcherSpanProcessor(hub)
-    processor.on_end(_fake_span(
-        SPAN_NPC_AUTO_REGISTERED,
-        {
-            "npc_name": "Vex",
-            "pronouns": "she/her",
-            "role": "scavenger",
-            "turn_number": 4,
-            "registry_len": 1,
-        },
-    ))
+    processor.on_end(
+        _fake_span(
+            SPAN_NPC_AUTO_REGISTERED,
+            {
+                "npc_name": "Vex",
+                "pronouns": "she/her",
+                "role": "scavenger",
+                "turn_number": 4,
+                "registry_len": 1,
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -523,17 +534,19 @@ async def test_on_end_emits_typed_event_for_npc_reinvented_span_with_warning_sev
     await hub.subscribe(_Sub())  # type: ignore[arg-type]
 
     processor = WatcherSpanProcessor(hub)
-    processor.on_end(_fake_span(
-        SPAN_NPC_REINVENTED,
-        {
-            "npc_name": "Vex",
-            "drift_field": "pronouns",
-            "expected": "she/her",
-            "narrator": "they/them",
-            "turn_number": 9,
-            "severity": "warning",
-        },
-    ))
+    processor.on_end(
+        _fake_span(
+            SPAN_NPC_REINVENTED,
+            {
+                "npc_name": "Vex",
+                "drift_field": "pronouns",
+                "expected": "she/her",
+                "narrator": "they/them",
+                "turn_number": 9,
+                "severity": "warning",
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -591,24 +604,23 @@ async def test_on_end_emits_typed_event_for_inventory_narrator_extracted_span() 
     await hub.subscribe(_Sub())  # type: ignore[arg-type]
 
     processor = WatcherSpanProcessor(hub)
-    processor.on_end(_fake_span(
-        SPAN_INVENTORY_NARRATOR_EXTRACTED,
-        {
-            "gained_json": '["Rusty Spanner"]',
-            "lost_json": '["broken_torch"]',
-            "gained_count": 1,
-            "lost_count": 1,
-            "player_name": "Rux",
-            "turn_number": 5,
-        },
-    ))
+    processor.on_end(
+        _fake_span(
+            SPAN_INVENTORY_NARRATOR_EXTRACTED,
+            {
+                "gained_json": '["Rusty Spanner"]',
+                "lost_json": '["broken_torch"]',
+                "gained_count": 1,
+                "lost_count": 1,
+                "player_name": "Rux",
+                "turn_number": 5,
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
-    assert typed, (
-        "SPAN_INVENTORY_NARRATOR_EXTRACTED did not produce a "
-        "state_transition event"
-    )
+    assert typed, "SPAN_INVENTORY_NARRATOR_EXTRACTED did not produce a state_transition event"
     assert typed[0]["component"] == "inventory"
     assert typed[0]["severity"] == "info"
     assert typed[0]["fields"]["field"] == "inventory"
@@ -673,10 +685,12 @@ async def test_on_end_emits_typed_event_for_audio_backend_enabled_span() -> None
 
     fake = _audio_fake_span_factory()
     processor, captured = await _audio_processor_with_capture()
-    processor.on_end(fake(
-        SPAN_AUDIO_BACKEND_ENABLED,
-        {"genre": "mutant_wasteland", "mood_count": 4, "sfx_count": 12},
-    ))
+    processor.on_end(
+        fake(
+            SPAN_AUDIO_BACKEND_ENABLED,
+            {"genre": "mutant_wasteland", "mood_count": 4, "sfx_count": 12},
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -697,10 +711,12 @@ async def test_on_end_emits_typed_event_for_audio_backend_disabled_span() -> Non
 
     fake = _audio_fake_span_factory()
     processor, captured = await _audio_processor_with_capture()
-    processor.on_end(fake(
-        SPAN_AUDIO_BACKEND_DISABLED,
-        {"reason": "empty_config", "genre": "victoria"},
-    ))
+    processor.on_end(
+        fake(
+            SPAN_AUDIO_BACKEND_DISABLED,
+            {"reason": "empty_config", "genre": "victoria"},
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -721,14 +737,16 @@ async def test_on_end_emits_typed_event_for_audio_skipped_span() -> None:
 
     fake = _audio_fake_span_factory()
     processor, captured = await _audio_processor_with_capture()
-    processor.on_end(fake(
-        SPAN_AUDIO_SKIPPED,
-        {
-            "reason": "error",
-            "turn_number": 4,
-            "extra_json": '{"error": "RuntimeError"}',
-        },
-    ))
+    processor.on_end(
+        fake(
+            SPAN_AUDIO_SKIPPED,
+            {
+                "reason": "error",
+                "turn_number": 4,
+                "extra_json": '{"error": "RuntimeError"}',
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -749,15 +767,17 @@ async def test_on_end_emits_typed_event_for_audio_dispatched_span() -> None:
 
     fake = _audio_fake_span_factory()
     processor, captured = await _audio_processor_with_capture()
-    processor.on_end(fake(
-        SPAN_AUDIO_DISPATCHED,
-        {
-            "turn_number": 7,
-            "mood": "tense",
-            "music_track": "underground_chase",
-            "sfx_count": 2,
-        },
-    ))
+    processor.on_end(
+        fake(
+            SPAN_AUDIO_DISPATCHED,
+            {
+                "turn_number": 7,
+                "mood": "tense",
+                "music_track": "underground_chase",
+                "sfx_count": 2,
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "state_transition"]
@@ -781,16 +801,18 @@ async def test_on_end_emits_typed_event_for_lore_established_span() -> None:
 
     fake = _audio_fake_span_factory()
     processor, captured = await _audio_processor_with_capture()
-    processor.on_end(fake(
-        SPAN_LORE_ESTABLISHED,
-        {
-            "items_json": '["The reactor predates the Old Ones."]',
-            "added_count": 1,
-            "total": 5,
-            "player_name": "Rux",
-            "turn_number": 7,
-        },
-    ))
+    processor.on_end(
+        fake(
+            SPAN_LORE_ESTABLISHED,
+            {
+                "items_json": '["The reactor predates the Old Ones."]',
+                "added_count": 1,
+                "total": 5,
+                "player_name": "Rux",
+                "turn_number": 7,
+            },
+        )
+    )
     await asyncio.sleep(0.05)
 
     typed = [e for e in captured if e["event_type"] == "lore_retrieval"]
@@ -799,9 +821,7 @@ async def test_on_end_emits_typed_event_for_lore_established_span() -> None:
     assert typed[0]["fields"]["op"] == "appended"
     assert typed[0]["fields"]["reason"] == "narrator_established"
     # JSON-encoded — OTEL drops list attributes silently otherwise.
-    assert typed[0]["fields"]["items"] == (
-        '["The reactor predates the Old Ones."]'
-    )
+    assert typed[0]["fields"]["items"] == ('["The reactor predates the Old Ones."]')
     assert typed[0]["fields"]["added_count"] == 1
     assert typed[0]["fields"]["total"] == 5
     assert typed[0]["fields"]["player_name"] == "Rux"

@@ -15,11 +15,7 @@ from sidequest.telemetry.spans import FLAT_ONLY_SPANS, SPAN_ROUTES
 
 def _all_span_constants() -> set[str]:
     """Every SPAN_* attribute on the spans module that holds a string."""
-    return {
-        v
-        for name, v in vars(spans).items()
-        if name.startswith("SPAN_") and isinstance(v, str)
-    }
+    return {v for name, v in vars(spans).items() if name.startswith("SPAN_") and isinstance(v, str)}
 
 
 def test_every_span_is_routed_or_explicitly_flat() -> None:
@@ -29,9 +25,7 @@ def test_every_span_is_routed_or_explicitly_flat() -> None:
     missing = all_spans - routed - flat
     overlap = routed & flat
 
-    assert not overlap, (
-        f"Spans cannot be both routed AND flat-only: {sorted(overlap)}"
-    )
+    assert not overlap, f"Spans cannot be both routed AND flat-only: {sorted(overlap)}"
     assert not missing, (
         "Spans without a routing decision (add to SPAN_ROUTES or "
         f"FLAT_ONLY_SPANS): {sorted(missing)}"

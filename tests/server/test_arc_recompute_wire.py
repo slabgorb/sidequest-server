@@ -83,9 +83,7 @@ class TestSessionDataCachesHistoryChapters:
     confirmation.
     """
 
-    def test_session_data_has_cached_history_chapters_field(
-        self, session_fixture
-    ) -> None:
+    def test_session_data_has_cached_history_chapters_field(self, session_fixture) -> None:
         sd, _handler = session_fixture
         assert hasattr(sd, "cached_history_chapters"), (
             "_SessionData must expose cached_history_chapters so the "
@@ -93,18 +91,14 @@ class TestSessionDataCachesHistoryChapters:
             "history.yaml every turn."
         )
 
-    def test_cached_history_chapters_default_is_empty_list(
-        self, session_fixture
-    ) -> None:
+    def test_cached_history_chapters_default_is_empty_list(self, session_fixture) -> None:
         sd, _handler = session_fixture
         assert sd.cached_history_chapters == [], (
             "cached_history_chapters must default to an empty list so a "
             "session whose pack has no history.yaml still constructs cleanly."
         )
 
-    def test_cached_history_chapters_accepts_history_chapter_list(
-        self, session_fixture
-    ) -> None:
+    def test_cached_history_chapters_accepts_history_chapter_list(self, session_fixture) -> None:
         sd, _handler = session_fixture
         chapters = _three_tier_chapters()
         sd.cached_history_chapters = chapters
@@ -134,9 +128,7 @@ def _wire_session_for_recompute(sd, *, interaction_pre_call: int, round_value: i
 
 
 @pytest.mark.asyncio
-async def test_arc_tick_fires_at_cadence_boundary(
-    otel_capture, session_fixture
-) -> None:
+async def test_arc_tick_fires_at_cadence_boundary(otel_capture, session_fixture) -> None:
     """A turn that lands at a multiple of ``ARC_RECOMPUTE_INTERVAL``
     emits exactly one ``world_history.arc_tick`` span from the
     dispatch loop.
@@ -161,11 +153,7 @@ async def test_arc_tick_fires_at_cadence_boundary(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "I look around.", turn_context)
 
-    ticks = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_tick"
-    ]
+    ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
     assert len(ticks) == 1, (
         "arc_tick must fire exactly once when the post-record interaction "
         "lands at a cadence boundary. Spans seen: "
@@ -174,9 +162,7 @@ async def test_arc_tick_fires_at_cadence_boundary(
 
 
 @pytest.mark.asyncio
-async def test_arc_tick_does_not_fire_off_cadence(
-    otel_capture, session_fixture
-) -> None:
+async def test_arc_tick_does_not_fire_off_cadence(otel_capture, session_fixture) -> None:
     """A turn that lands between cadence boundaries emits no arc_tick
     span. The "bug Felix saw" — silent never-firing — is the opposite
     failure mode and is covered by ``test_arc_tick_fires_at_cadence_boundary``.
@@ -201,11 +187,7 @@ async def test_arc_tick_does_not_fire_off_cadence(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "I wait.", turn_context)
 
-    ticks = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_tick"
-    ]
+    ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
     assert ticks == [], (
         f"arc_tick fired on an off-cadence turn. Spans seen: "
         f"{[s.name for s in otel_capture.get_finished_spans()]}"
@@ -223,9 +205,7 @@ async def test_arc_tick_attributes_carry_lie_detector_payload(
 
     sd, handler = session_fixture
     sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=NarrationTurnResult(
-            narration="…", is_degraded=False, agent_duration_ms=1
-        )
+        return_value=NarrationTurnResult(narration="…", is_degraded=False, agent_duration_ms=1)
     )
 
     _wire_session_for_recompute(
@@ -238,11 +218,7 @@ async def test_arc_tick_attributes_carry_lie_detector_payload(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "again", turn_context)
 
-    ticks = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_tick"
-    ]
+    ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
     assert ticks
     attrs = ticks[0].attributes or {}
     for required in (
@@ -256,8 +232,7 @@ async def test_arc_tick_attributes_carry_lie_detector_payload(
         "cadence_interval",
     ):
         assert required in attrs, (
-            f"arc_tick span missing required attribute {required!r}; "
-            f"got {sorted(attrs)}"
+            f"arc_tick span missing required attribute {required!r}; got {sorted(attrs)}"
         )
     assert attrs["interaction"] == ARC_RECOMPUTE_INTERVAL
     assert attrs["cadence_interval"] == ARC_RECOMPUTE_INTERVAL
@@ -279,9 +254,7 @@ async def test_arc_promoted_fires_on_fresh_to_early_transition(
 
     sd, handler = session_fixture
     sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=NarrationTurnResult(
-            narration="…", is_degraded=False, agent_duration_ms=1
-        )
+        return_value=NarrationTurnResult(narration="…", is_degraded=False, agent_duration_ms=1)
     )
 
     # Round=10 (Early tier per ``CampaignMaturity.from_snapshot``);
@@ -298,9 +271,7 @@ async def test_arc_promoted_fires_on_fresh_to_early_transition(
     await handler._execute_narration_turn(sd, "transition turn", turn_context)
 
     promoted = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_promoted"
+        s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_promoted"
     ]
     assert len(promoted) == 1, (
         "arc_promoted must fire exactly once on a Fresh→Early transition. "
@@ -319,9 +290,7 @@ async def test_arc_promoted_fires_on_fresh_to_early_transition(
 
 
 @pytest.mark.asyncio
-async def test_arc_tick_at_turn_100_is_idempotent_no_op(
-    otel_capture, session_fixture
-) -> None:
+async def test_arc_tick_at_turn_100_is_idempotent_no_op(otel_capture, session_fixture) -> None:
     """Story 45-19 AC3: at turn 100 the maturity is Veteran (the top
     tier) and the recompute is a no-op confirmation. The tick still
     fires so the GM panel has continuous coverage, but
@@ -330,9 +299,7 @@ async def test_arc_tick_at_turn_100_is_idempotent_no_op(
 
     sd, handler = session_fixture
     sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=NarrationTurnResult(
-            narration="…", is_degraded=False, agent_duration_ms=1
-        )
+        return_value=NarrationTurnResult(narration="…", is_degraded=False, agent_duration_ms=1)
     )
 
     _wire_session_for_recompute(
@@ -352,11 +319,7 @@ async def test_arc_tick_at_turn_100_is_idempotent_no_op(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "patrol", turn_context)
 
-    ticks = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_tick"
-    ]
+    ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
     assert len(ticks) == 1
     attrs = ticks[0].attributes or {}
     assert attrs.get("tier_changed") is False, (
@@ -367,13 +330,9 @@ async def test_arc_tick_at_turn_100_is_idempotent_no_op(
     assert len(sd.snapshot.world_history) == chapter_count_pre
 
     promoted = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_promoted"
+        s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_promoted"
     ]
-    assert promoted == [], (
-        "arc_promoted must NOT fire on a stable-tier no-op recompute"
-    )
+    assert promoted == [], "arc_promoted must NOT fire on a stable-tier no-op recompute"
 
 
 # ---------------------------------------------------------------------------
@@ -384,9 +343,7 @@ async def test_arc_tick_at_turn_100_is_idempotent_no_op(
 
 
 @pytest.mark.asyncio
-async def test_recompute_skips_when_no_cached_chapters(
-    otel_capture, session_fixture
-) -> None:
+async def test_recompute_skips_when_no_cached_chapters(otel_capture, session_fixture) -> None:
     """A session whose pack ships no ``history.yaml`` has an empty
     ``cached_history_chapters``. The dispatch loop must still run the
     cadence check (so the OTEL panel sees a tick happened) without
@@ -398,9 +355,7 @@ async def test_recompute_skips_when_no_cached_chapters(
 
     sd, handler = session_fixture
     sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=NarrationTurnResult(
-            narration="…", is_degraded=False, agent_duration_ms=1
-        )
+        return_value=NarrationTurnResult(narration="…", is_degraded=False, agent_duration_ms=1)
     )
 
     sd.cached_history_chapters = []
@@ -412,11 +367,7 @@ async def test_recompute_skips_when_no_cached_chapters(
     # Must not raise — empty chapter list is a legitimate session shape.
     await handler._execute_narration_turn(sd, "look", turn_context)
 
-    ticks = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "world_history.arc_tick"
-    ]
+    ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
     # Either the predicate fired (one tick with zero chapters) or the
     # implementation chose to short-circuit on an empty chapter list
     # (no tick). Both are acceptable; what matters is that the call

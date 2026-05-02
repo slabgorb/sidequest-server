@@ -17,6 +17,7 @@ Drives a real DICE_THROW through the production handler:
 - Stub ``_execute_narration_turn`` so the test asserts the wiring at the
   scene-end seam, not the downstream narrator behavior.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -42,13 +43,15 @@ def _install_combat_def(sd) -> None:
         player_metric=MetricDef(name="momentum", starting=0, threshold=2),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef.model_validate({
-                "id": "attack",
-                "label": "Attack",
-                "kind": "strike",
-                "base": 2,
-                "stat_check": "STRENGTH",
-            }),
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STRENGTH",
+                }
+            ),
         ],
     )
     sd.genre_pack.rules.confrontations = [cdef]
@@ -58,10 +61,16 @@ def _install_active_encounter(sd) -> None:
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=2,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=2,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         beat=0,
         structured_phase=EncounterPhase.Setup,
@@ -89,7 +98,8 @@ def _throw(face: int = 15, beat_id: str = "attack") -> DiceThrowMessage:
 
 @pytest.mark.asyncio
 async def test_dice_throw_advances_clock_on_encounter_resolved(
-    session_handler_factory, otel_capture,
+    session_handler_factory,
+    otel_capture,
 ):
     """Encounter-resolved dice outcome -> clock advances + clock.advance span fires.
 
@@ -135,9 +145,7 @@ async def test_dice_throw_advances_clock_on_encounter_resolved(
     span_names = {s.name for s in otel_capture.get_finished_spans()}
     assert "clock.advance" in span_names
 
-    clock_span = next(
-        s for s in otel_capture.get_finished_spans() if s.name == "clock.advance"
-    )
+    clock_span = next(s for s in otel_capture.get_finished_spans() if s.name == "clock.advance")
     assert clock_span.attributes["beat_kind"] == "encounter"
     assert clock_span.attributes["trigger"] == "scene-scene_end"
 

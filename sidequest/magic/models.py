@@ -2,6 +2,7 @@
 
 All models use ``extra='forbid'`` per project no-silent-fallback rule.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

@@ -67,8 +67,7 @@ def test_synthetic_span_carries_event_fields_when_flag_enabled(
     )
 
     spans = [
-        s for s in in_memory_exporter.get_finished_spans()
-        if s.name == "watcher.turn_complete"
+        s for s in in_memory_exporter.get_finished_spans() if s.name == "watcher.turn_complete"
     ]
     assert len(spans) == 1
     span = spans[0]
@@ -91,8 +90,7 @@ def test_non_primitive_field_values_are_json_stringified(
         {"patch": {"path": "/hp", "op": "set", "value": 7}, "tags": ["combat", "boss"]},
     )
     spans = [
-        s for s in in_memory_exporter.get_finished_spans()
-        if s.name == "watcher.state_transition"
+        s for s in in_memory_exporter.get_finished_spans() if s.name == "watcher.state_transition"
     ]
     assert len(spans) == 1
     attrs = spans[0].attributes
@@ -124,7 +122,8 @@ def test_watcher_processor_skips_synthetic_spans() -> None:
     processor = WatcherSpanProcessor(hub)
 
     synthetic_span = _fake_readable_span(
-        "watcher.turn_complete", {WATCHER_SYNTHETIC_ATTR: "1", "watcher.event_type": "turn_complete"}
+        "watcher.turn_complete",
+        {WATCHER_SYNTHETIC_ATTR: "1", "watcher.event_type": "turn_complete"},
     )
     processor.on_end(synthetic_span)
 
@@ -154,9 +153,7 @@ def test_watcher_processor_still_publishes_real_spans() -> None:
     hub = MagicMock()
     processor = WatcherSpanProcessor(hub)
 
-    real_span = _fake_readable_span(
-        "test.unrouted_span", {"some_attr": "value"}
-    )
+    real_span = _fake_readable_span("test.unrouted_span", {"some_attr": "value"})
     processor.on_end(real_span)
 
     hub.publish.assert_called_once()

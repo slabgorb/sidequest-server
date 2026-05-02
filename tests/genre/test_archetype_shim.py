@@ -35,7 +35,8 @@ from sidequest.protocol.provenance import Tier
 
 
 def _base() -> BaseArchetypes:
-    return BaseArchetypes.model_validate(yaml.safe_load("""
+    return BaseArchetypes.model_validate(
+        yaml.safe_load("""
 jungian:
   - id: sage
     drive: "Seeks truth"
@@ -65,11 +66,13 @@ rpg_roles:
 npc_roles:
   - id: mentor
     narrative_function: "Guides protagonist"
-"""))
+""")
+    )
 
 
 def _constraints() -> ArchetypeConstraints:
-    return ArchetypeConstraints.model_validate(yaml.safe_load("""
+    return ArchetypeConstraints.model_validate(
+        yaml.safe_load("""
 valid_pairings:
   common:
     - [sage, healer]
@@ -85,11 +88,13 @@ genre_flavor:
     tank:
       fallback_name: "Shield-Bearer"
 npc_roles_available: [mentor]
-"""))
+""")
+    )
 
 
 def _funnels() -> ArchetypeFunnels:
-    return ArchetypeFunnels.model_validate(yaml.safe_load("""
+    return ArchetypeFunnels.model_validate(
+        yaml.safe_load("""
 funnels:
   - name: Thornwall Mender
     absorbs:
@@ -99,7 +104,8 @@ funnels:
     cultural_status: respected
 additional_constraints:
   forbidden: []
-"""))
+""")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +124,8 @@ def test_pairing_weight_not_listed_returns_none() -> None:
 
 
 def test_pairing_weight_forbidden() -> None:
-    c = ArchetypeConstraints.model_validate(yaml.safe_load("""
+    c = ArchetypeConstraints.model_validate(
+        yaml.safe_load("""
 valid_pairings:
   common: []
   uncommon: []
@@ -129,7 +136,8 @@ genre_flavor:
   jungian: {}
   rpg_roles: {}
 npc_roles_available: []
-"""))
+""")
+    )
     assert c.pairing_weight("sage", "tank") == PairingWeight.forbidden
 
 
@@ -167,12 +175,14 @@ def test_funnel_is_forbidden_false() -> None:
 
 
 def test_funnel_is_forbidden_true() -> None:
-    f = ArchetypeFunnels.model_validate(yaml.safe_load("""
+    f = ArchetypeFunnels.model_validate(
+        yaml.safe_load("""
 funnels: []
 additional_constraints:
   forbidden:
     - [sage, tank]
-"""))
+""")
+    )
     assert f.is_forbidden("sage", "tank")
     assert not f.is_forbidden("hero", "healer")
 
@@ -184,9 +194,13 @@ additional_constraints:
 
 def test_resolves_via_world_funnel() -> None:
     result = resolve_archetype(
-        "sage", "healer",
-        _base(), _constraints(), _funnels(),
-        "caverns_and_claudes", "grimvault",
+        "sage",
+        "healer",
+        _base(),
+        _constraints(),
+        _funnels(),
+        "caverns_and_claudes",
+        "grimvault",
     )
     assert result.resolved.name == "Thornwall Mender"
     assert result.resolved.faction == "Thornwall Convocation"
@@ -197,9 +211,13 @@ def test_resolves_via_world_funnel() -> None:
 
 def test_falls_back_to_genre() -> None:
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), _constraints(), None,
-        "caverns_and_claudes", None,
+        "hero",
+        "tank",
+        _base(),
+        _constraints(),
+        None,
+        "caverns_and_claudes",
+        None,
     )
     assert result.resolved.name == "Shield-Bearer"
     assert result.resolved.faction is None
@@ -209,9 +227,13 @@ def test_falls_back_to_genre() -> None:
 
 def test_falls_back_to_genre_when_funnel_no_match() -> None:
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), _constraints(), _funnels(),  # funnels has no hero+tank entry
-        "caverns_and_claudes", "grimvault",
+        "hero",
+        "tank",
+        _base(),
+        _constraints(),
+        _funnels(),  # funnels has no hero+tank entry
+        "caverns_and_claudes",
+        "grimvault",
     )
     assert result.resolved.name == "Shield-Bearer"
     assert result.source == ResolutionSource.genre_fallback
@@ -219,7 +241,8 @@ def test_falls_back_to_genre_when_funnel_no_match() -> None:
 
 def test_fallback_uses_rpg_role_id_when_no_flavor() -> None:
     """When no genre flavor fallback_name, use the rpg_role id as the name."""
-    constraints_no_flavor = ArchetypeConstraints.model_validate(yaml.safe_load("""
+    constraints_no_flavor = ArchetypeConstraints.model_validate(
+        yaml.safe_load("""
 valid_pairings:
   common:
     - [hero, tank]
@@ -230,11 +253,16 @@ genre_flavor:
   jungian: {}
   rpg_roles: {}
 npc_roles_available: []
-"""))
+""")
+    )
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), constraints_no_flavor, None,
-        "test_genre", None,
+        "hero",
+        "tank",
+        _base(),
+        constraints_no_flavor,
+        None,
+        "test_genre",
+        None,
     )
     # fallback: no genre flavor → use rpg_role id
     assert result.resolved.name == "tank"
@@ -242,7 +270,8 @@ npc_roles_available: []
 
 
 def test_rejects_forbidden_pairing_genre_level() -> None:
-    c = ArchetypeConstraints.model_validate(yaml.safe_load("""
+    c = ArchetypeConstraints.model_validate(
+        yaml.safe_load("""
 valid_pairings:
   common: []
   uncommon: []
@@ -253,25 +282,30 @@ genre_flavor:
   jungian: {}
   rpg_roles: {}
 npc_roles_available: []
-"""))
+""")
+    )
     with pytest.raises(GenreValidationError, match="Forbidden"):
         resolve_archetype("sage", "tank", _base(), c, None, "test_genre", None)
 
 
 def test_rejects_world_forbidden_pairing() -> None:
-    f = ArchetypeFunnels.model_validate(yaml.safe_load("""
+    f = ArchetypeFunnels.model_validate(
+        yaml.safe_load("""
 funnels: []
 additional_constraints:
   forbidden:
     - [sage, healer]
-"""))
+""")
+    )
     with pytest.raises(GenreValidationError, match="World-forbidden"):
         resolve_archetype("sage", "healer", _base(), _constraints(), f, "test_genre", "testworld")
 
 
 def test_rejects_unknown_jungian_axis() -> None:
     with pytest.raises(GenreValidationError, match="Unknown Jungian"):
-        resolve_archetype("nonexistent", "healer", _base(), _constraints(), None, "test_genre", None)
+        resolve_archetype(
+            "nonexistent", "healer", _base(), _constraints(), None, "test_genre", None
+        )
 
 
 def test_rejects_unknown_rpg_role_axis() -> None:
@@ -281,9 +315,13 @@ def test_rejects_unknown_rpg_role_axis() -> None:
 
 def test_resolution_carries_correct_weight_common() -> None:
     result = resolve_archetype(
-        "sage", "healer",
-        _base(), _constraints(), None,
-        "test_genre", None,
+        "sage",
+        "healer",
+        _base(),
+        _constraints(),
+        None,
+        "test_genre",
+        None,
     )
     assert result.weight == PairingWeight.common
 
@@ -291,18 +329,26 @@ def test_resolution_carries_correct_weight_common() -> None:
 def test_resolution_defaults_to_uncommon_when_not_listed() -> None:
     """Pairings not in any weight category default to uncommon."""
     result = resolve_archetype(
-        "hero", "healer",  # not listed in _constraints() valid_pairings
-        _base(), _constraints(), None,
-        "test_genre", None,
+        "hero",
+        "healer",  # not listed in _constraints() valid_pairings
+        _base(),
+        _constraints(),
+        None,
+        "test_genre",
+        None,
     )
     assert result.weight == PairingWeight.uncommon
 
 
 def test_resolution_carries_jungian_and_rpg_role() -> None:
     result = resolve_archetype(
-        "sage", "healer",
-        _base(), _constraints(), None,
-        "test_genre", None,
+        "sage",
+        "healer",
+        _base(),
+        _constraints(),
+        None,
+        "test_genre",
+        None,
     )
     assert result.resolved.jungian == "sage"
     assert result.resolved.rpg_role == "healer"
@@ -310,9 +356,13 @@ def test_resolution_carries_jungian_and_rpg_role() -> None:
 
 def test_resolution_type_is_archetype_resolution() -> None:
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), _constraints(), None,
-        "test_genre", None,
+        "hero",
+        "tank",
+        _base(),
+        _constraints(),
+        None,
+        "test_genre",
+        None,
     )
     assert isinstance(result, ArchetypeResolution)
 
@@ -325,9 +375,13 @@ def test_resolution_type_is_archetype_resolution() -> None:
 def test_provenance_genre_fallback_tier_and_file() -> None:
     """Genre fallback sets source_tier=Genre and file path ending in archetype_constraints.yaml."""
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), _constraints(), None,
-        "caverns_and_claudes", None,
+        "hero",
+        "tank",
+        _base(),
+        _constraints(),
+        None,
+        "caverns_and_claudes",
+        None,
     )
     assert result.provenance.source_tier == Tier.genre
     assert result.provenance.source_file.endswith("archetype_constraints.yaml")
@@ -338,9 +392,13 @@ def test_provenance_genre_fallback_tier_and_file() -> None:
 def test_provenance_world_funnel_tier_and_file() -> None:
     """World funnel sets source_tier=World and file path containing archetype_funnels.yaml."""
     result = resolve_archetype(
-        "sage", "healer",
-        _base(), _constraints(), _funnels(),
-        "caverns_and_claudes", "grimvault",
+        "sage",
+        "healer",
+        _base(),
+        _constraints(),
+        _funnels(),
+        "caverns_and_claudes",
+        "grimvault",
     )
     assert result.provenance.source_tier == Tier.world
     assert "archetype_funnels.yaml" in result.provenance.source_file
@@ -351,9 +409,13 @@ def test_provenance_world_funnel_tier_and_file() -> None:
 def test_provenance_world_fallback_uses_genre_tier_when_funnel_misses() -> None:
     """When funnels don't match, provenance falls back to Genre tier."""
     result = resolve_archetype(
-        "hero", "tank",
-        _base(), _constraints(), _funnels(),  # no hero+tank funnel
-        "caverns_and_claudes", "grimvault",
+        "hero",
+        "tank",
+        _base(),
+        _constraints(),
+        _funnels(),  # no hero+tank funnel
+        "caverns_and_claudes",
+        "grimvault",
     )
     assert result.provenance.source_tier == Tier.genre
 
@@ -368,6 +430,7 @@ def test_shim_wired_into_package() -> None:
     from sidequest.genre import ArchetypeResolution as AR  # noqa: F401
     from sidequest.genre import ResolutionSource as RS  # noqa: F401
     from sidequest.genre import resolve_archetype as ra  # noqa: F401
+
     assert callable(ra)
     assert issubclass(AR, AR)  # just verify import
     assert isinstance(RS.world_funnel, RS)

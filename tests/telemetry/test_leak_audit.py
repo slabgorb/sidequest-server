@@ -6,6 +6,7 @@ from an entity flagged ``redact_from_narrator_canonical`` leaked through
 structural hiding. Per SOUL.md Zork constraint, the match is
 entity-token-set vs. prose — not regex on arbitrary strings.
 """
+
 from __future__ import annotations
 
 from sidequest.protocol.dispatch import (
@@ -76,9 +77,7 @@ def test_leak_detected_when_redacted_entity_appears():
 def test_no_redacted_entries_means_no_audit_work():
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[
-            PlayerDispatch(player_id="player:Alice", raw_action="look")
-        ],
+        per_player=[PlayerDispatch(player_id="player:Alice", raw_action="look")],
         confidence_global=1.0,
     )
     result = audit_canonical_prose(

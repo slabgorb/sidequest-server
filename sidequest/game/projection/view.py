@@ -4,6 +4,7 @@ Implemented by SessionHandler (SessionGameStateView, added in Task 3).
 Filter never mutates. Every method returns None where state is unknown
 rather than raising — the filter treats unknown relationships conservatively.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -134,9 +134,7 @@ class TestPlayerTurnAuthorWiring:
         authors = [e.author for e in entries]
 
         # AC3: log shows BOTH author values
-        assert "player" in authors, (
-            f"player turn must produce author='player' entry; got {authors}"
-        )
+        assert "player" in authors, f"player turn must produce author='player' entry; got {authors}"
         assert "narrator" in authors, (
             f"narrator turn must continue producing author='narrator'; got {authors}"
         )
@@ -151,14 +149,12 @@ class TestPlayerTurnAuthorWiring:
 
         # AC2: narrator entry carries the narration prose
         narrator_entries = [e for e in entries if e.author == "narrator"]
-        assert any(
-            e.content == "The torch flickers as you approach."
-            for e in narrator_entries
-        )
+        assert any(e.content == "The torch flickers as you approach." for e in narrator_entries)
 
     @pytest.mark.asyncio
     async def test_player_entry_speaker_is_acting_character(
-        self, session_fixture,
+        self,
+        session_fixture,
     ) -> None:
         """The player entry's ``speaker`` field carries the character
         name so dashboards can attribute the line at identity granularity
@@ -189,13 +185,12 @@ class TestPlayerTurnAuthorWiring:
         # in the empty-snapshot fallback). Either way it is non-None and
         # non-empty so dashboards can group by speaker.
         speakers = [e.speaker for e in player_entries]
-        assert all(s for s in speakers), (
-            f"player entry speaker must be set; got {speakers}"
-        )
+        assert all(s for s in speakers), f"player entry speaker must be set; got {speakers}"
 
     @pytest.mark.asyncio
     async def test_player_entry_round_matches_interaction(
-        self, session_fixture,
+        self,
+        session_fixture,
     ) -> None:
         sd, handler = session_fixture
 

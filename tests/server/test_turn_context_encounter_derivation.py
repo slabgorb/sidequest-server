@@ -29,11 +29,13 @@ def sd_factory():
             genre_pack=pack,
             orchestrator=MagicMock(),
         )
+
     return _make
 
 
 def test_no_encounter_defaults_to_all_false(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
+
     sd = sd_factory(None)
     ctx = _build_turn_context(sd)
     assert ctx.in_combat is False
@@ -46,6 +48,7 @@ def test_no_encounter_defaults_to_all_false(sd_factory) -> None:
 
 def test_combat_encounter_sets_in_combat_true(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
+
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
@@ -66,6 +69,7 @@ def test_combat_encounter_sets_in_combat_true(sd_factory) -> None:
 
 def test_resolved_encounter_flags_all_false(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
+
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
@@ -86,6 +90,7 @@ def test_resolved_encounter_flags_all_false(sd_factory) -> None:
 
 def test_chase_encounter_sets_in_chase_true(sd_factory) -> None:
     from sidequest.server.session_handler import _build_turn_context
+
     enc = StructuredEncounter(
         encounter_type="chase",
         player_metric=EncounterMetric(name="separation", current=0, starting=0, threshold=20),

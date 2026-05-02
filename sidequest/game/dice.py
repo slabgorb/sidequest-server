@@ -11,6 +11,7 @@ Crit semantics (locked by Keith 2026-04-11):
 
 No I/O, no wall-clock time, no global state.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -174,8 +175,8 @@ def generate_dice_seed(session_id: str, round_number: int) -> int:
     # FNV-1a 64-bit over (session_id || ':' || round). Any stable hash
     # both ends compute the same works. We never re-hash on the client:
     # the client consumes the seed as an opaque u64 for Rapier.
-    h = 0xcbf29ce484222325
-    prime = 0x100000001b3
+    h = 0xCBF29CE484222325
+    prime = 0x100000001B3
     mask = (1 << 64) - 1
     for byte in session_id.encode("utf-8"):
         h = ((h ^ byte) * prime) & mask

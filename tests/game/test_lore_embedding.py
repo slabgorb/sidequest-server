@@ -149,9 +149,7 @@ async def test_worker_returns_early_on_empty_queue() -> None:
 async def test_worker_increments_retry_on_structured_error() -> None:
     store = LoreStore()
     store.add(_frag("a", "alpha"))
-    client = _FakeClient(
-        responses={"alpha": DaemonRequestError("EMBED_FAILED", "model offline")}
-    )
+    client = _FakeClient(responses={"alpha": DaemonRequestError("EMBED_FAILED", "model offline")})
 
     result = await embed_pending_fragments(store, client=client)
 
@@ -205,18 +203,14 @@ async def test_worker_respects_max_per_run() -> None:
     store = LoreStore()
     for i in range(5):
         store.add(_frag(f"frag{i}", f"content{i}"))
-    client = _FakeClient(
-        default_response={"embedding": [1.0], "model": "m", "latency_ms": 1}
-    )
+    client = _FakeClient(default_response={"embedding": [1.0], "model": "m", "latency_ms": 1})
 
     result = await embed_pending_fragments(store, client=client, max_per_run=2)
 
     assert result.embedded == 2
     assert len(client.calls) == 2
     # Remaining fragments still pending.
-    remaining = [
-        fid for fid, frag in store.fragments.items() if frag.embedding_pending
-    ]
+    remaining = [fid for fid, frag in store.fragments.items() if frag.embedding_pending]
     assert len(remaining) == 3
 
 
@@ -413,9 +407,7 @@ async def test_retrieve_returns_none_on_embed_request_error() -> None:
     store = LoreStore()
     store.add(_frag("a"))
     store.update_embedding("a", [1.0])
-    client = _FakeClient(
-        responses={"query": DaemonRequestError("EMBED_FAILED", "oops")}
-    )
+    client = _FakeClient(responses={"query": DaemonRequestError("EMBED_FAILED", "oops")})
 
     section = await retrieve_lore_context(store, "query", client=client)
     assert section is None
@@ -426,9 +418,7 @@ async def test_retrieve_returns_none_on_embed_unavailable_error() -> None:
     store = LoreStore()
     store.add(_frag("a"))
     store.update_embedding("a", [1.0])
-    client = _FakeClient(
-        responses={"query": DaemonUnavailableError("socket vanished")}
-    )
+    client = _FakeClient(responses={"query": DaemonUnavailableError("socket vanished")})
 
     section = await retrieve_lore_context(store, "query", client=client)
     assert section is None
@@ -453,15 +443,11 @@ async def test_retrieve_filters_below_min_similarity() -> None:
     store.add(_frag("noise", "unrelated"))
     store.update_embedding("noise", [0.0, 1.0])
     client = _FakeClient(
-        responses={
-            "query": {"embedding": [1.0, 0.0], "model": "m", "latency_ms": 1}
-        }
+        responses={"query": {"embedding": [1.0, 0.0], "model": "m", "latency_ms": 1}}
     )
 
     # Orthogonal → similarity 0 < floor 0.5 → no hits → None.
-    section = await retrieve_lore_context(
-        store, "query", client=client, min_similarity=0.5
-    )
+    section = await retrieve_lore_context(store, "query", client=client, min_similarity=0.5)
     assert section is None
 
 
@@ -472,9 +458,7 @@ async def test_retrieve_truncates_long_fragments_to_preview_chars() -> None:
     store.add(_frag("big", long_content))
     store.update_embedding("big", [1.0, 0.0])
     client = _FakeClient(
-        responses={
-            "query": {"embedding": [1.0, 0.0], "model": "m", "latency_ms": 1}
-        }
+        responses={"query": {"embedding": [1.0, 0.0], "model": "m", "latency_ms": 1}}
     )
 
     section = await retrieve_lore_context(store, "query", client=client, top_k=1)
@@ -508,9 +492,7 @@ async def test_worker_failed_embed_error_counter_matches_daemon_error_path() -> 
     """Sub-counter accounting: DaemonRequestError increments failed_embed_error only."""
     store = LoreStore()
     store.add(_frag("a", "alpha"))
-    client = _FakeClient(
-        responses={"alpha": DaemonRequestError("EMBED_FAILED", "model offline")}
-    )
+    client = _FakeClient(responses={"alpha": DaemonRequestError("EMBED_FAILED", "model offline")})
     result = await embed_pending_fragments(store, client=client)
     assert result.failed == 1
     assert result.failed_embed_error == 1
@@ -549,9 +531,7 @@ async def test_worker_mixed_error_types_split_counters_correctly() -> None:
     assert result.failed_text_too_large == 1
     # Watcher payload invariant: total always equals sum of parts.
     payload = result.as_dict()
-    assert payload["failed"] == (
-        payload["failed_embed_error"] + payload["failed_text_too_large"]
-    )
+    assert payload["failed"] == (payload["failed_embed_error"] + payload["failed_text_too_large"])
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ asserts that a TurnContext with pending_resolution_signal renders
 "[ENCOUNTER RESOLVED]" and "outcome: opponent_victory" in the narrator prompt.
 That coverage is sufficient; we do not duplicate it here.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,7 +33,8 @@ from sidequest.server.dispatch.encounter_lifecycle import instantiate_encounter_
 
 @pytest.mark.integration
 def test_full_encounter_round_trip_records_timeline_and_sets_signal(
-    store_bound_to_hub, encounter_dispatch_helper,
+    store_bound_to_hub,
+    encounter_dispatch_helper,
 ):
     store, snap, pack = store_bound_to_hub
 
@@ -60,16 +62,14 @@ def test_full_encounter_round_trip_records_timeline_and_sets_signal(
     assert snap.pending_resolution_signal.outcome == "opponent_victory"
 
     # --- Events table ---
-    rows = list(store._conn.execute(
-        "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
-    ).fetchall())
+    rows = list(
+        store._conn.execute(
+            "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
+        ).fetchall()
+    )
     kinds = [r[0] for r in rows]
 
-    assert "ENCOUNTER_STARTED" in kinds, \
-        f"ENCOUNTER_STARTED missing; got {kinds!r}"
-    assert "ENCOUNTER_BEAT_APPLIED" in kinds, \
-        f"ENCOUNTER_BEAT_APPLIED missing; got {kinds!r}"
-    assert "ENCOUNTER_METRIC_ADVANCE" in kinds, \
-        f"ENCOUNTER_METRIC_ADVANCE missing; got {kinds!r}"
-    assert kinds[-1] == "ENCOUNTER_RESOLVED", \
-        f"last row must be ENCOUNTER_RESOLVED; got {kinds!r}"
+    assert "ENCOUNTER_STARTED" in kinds, f"ENCOUNTER_STARTED missing; got {kinds!r}"
+    assert "ENCOUNTER_BEAT_APPLIED" in kinds, f"ENCOUNTER_BEAT_APPLIED missing; got {kinds!r}"
+    assert "ENCOUNTER_METRIC_ADVANCE" in kinds, f"ENCOUNTER_METRIC_ADVANCE missing; got {kinds!r}"
+    assert kinds[-1] == "ENCOUNTER_RESOLVED", f"last row must be ENCOUNTER_RESOLVED; got {kinds!r}"

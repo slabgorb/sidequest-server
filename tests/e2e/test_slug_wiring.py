@@ -49,8 +49,7 @@ def app_client(tmp_path: Path) -> TestClient:
     """
     # Find the actual genre_packs directory — should be available via DEFAULT_GENRE_PACK_SEARCH_PATHS
     genre_packs_path: Path | None = next(
-        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()),
-        None
+        (p for p in DEFAULT_GENRE_PACK_SEARCH_PATHS if p.exists()), None
     )
 
     if genre_packs_path is None:
@@ -69,22 +68,27 @@ def app_client(tmp_path: Path) -> TestClient:
 def test_create_game_then_connect_by_slug(app_client: TestClient):
     """End-to-end: POST /api/games → WS connect by slug → SESSION_EVENT{connected}."""
     # Step 1: Create a game via REST
-    r = app_client.post("/api/games", json={
-        "genre_slug": "caverns_and_claudes",
-        "world_slug": "grimvault",
-        "mode": "multiplayer",
-    })
+    r = app_client.post(
+        "/api/games",
+        json={
+            "genre_slug": "caverns_and_claudes",
+            "world_slug": "grimvault",
+            "mode": "multiplayer",
+        },
+    )
     assert r.status_code == 201, f"Failed to create game: {r.text}"
     slug = r.json()["slug"]
     assert slug == "2026-04-22-grimvault", f"Unexpected slug: {slug}"
 
     # Step 2: Connect to the game via WebSocket using the slug
     with app_client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {"event": "connect", "game_slug": slug},
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {"event": "connect", "game_slug": slug},
+            }
+        )
         msg = ws.receive_json()
 
         # Step 3: Verify we got a SESSION_EVENT{connected} message

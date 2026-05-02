@@ -5,6 +5,7 @@ Fails loud per CLAUDE.md "no silent fallbacks":
   - Schema violation → pydantic ValidationError (extra='forbid' catches typos)
   - genre_key/dirname mismatch → ValueError (prevents copy-paste drift)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,8 +44,7 @@ def load_lethality_policy(pack_dir: Path) -> LethalityPolicy:
     expected = {pack_dir.name, pack_dir.resolve().name}
     if policy.genre_key not in expected:
         raise ValueError(
-            f"genre_key mismatch: yaml says {policy.genre_key!r}, "
-            f"pack dir is {pack_dir.name!r}"
+            f"genre_key mismatch: yaml says {policy.genre_key!r}, pack dir is {pack_dir.name!r}"
         )
     return policy
 

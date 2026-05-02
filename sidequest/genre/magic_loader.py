@@ -25,6 +25,7 @@ The split keeps the loader free of any plugin-registry dependency and
 makes the composition order observable at the call site that actually
 consumes it.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,9 +52,7 @@ class LoaderError(GenreError):
     """
 
 
-def load_world_magic(
-    *, genre_yaml: Path, world_yaml: Path
-) -> WorldMagicConfig:
+def load_world_magic(*, genre_yaml: Path, world_yaml: Path) -> WorldMagicConfig:
     """Load and compose genre + world magic yamls into a WorldMagicConfig.
 
     Either path missing → LoaderError. Schema validation failures →
@@ -94,12 +93,9 @@ def load_world_magic(
 
     # Hard limits: genre union world_additional
     try:
-        genre_limits = [
-            HardLimit.model_validate(h) for h in genre_data.get("hard_limits", [])
-        ]
+        genre_limits = [HardLimit.model_validate(h) for h in genre_data.get("hard_limits", [])]
         world_extra = [
-            HardLimit.model_validate(h)
-            for h in world_data.get("hard_limits_additional", [])
+            HardLimit.model_validate(h) for h in world_data.get("hard_limits_additional", [])
         ]
     except ValidationError as e:
         raise LoaderError(f"hard_limits invalid: {e}") from e
@@ -116,9 +112,7 @@ def load_world_magic(
 
     # Ledger bars
     try:
-        ledger_bars = [
-            LedgerBarSpec.model_validate(b) for b in world_data.get("ledger_bars", [])
-        ]
+        ledger_bars = [LedgerBarSpec.model_validate(b) for b in world_data.get("ledger_bars", [])]
     except ValidationError as e:
         raise LoaderError(f"ledger_bars invalid: {e}") from e
 

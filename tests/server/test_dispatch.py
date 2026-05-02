@@ -116,15 +116,11 @@ def test_apply_npc_registry_existing_is_additive_only():
         genre_slug="test",
         world_slug="test",
         location="Tavern",
-        npc_registry=[
-            NpcRegistryEntry(name="Zara", role="stranger", last_seen_turn=1)
-        ],
+        npc_registry=[NpcRegistryEntry(name="Zara", role="stranger", last_seen_turn=1)],
     )
     result = _make_result(
         narration="Zara speaks.",
-        npcs_present=[
-            NpcMention(name="Zara", role="barkeep", pronouns="she/her")
-        ],
+        npcs_present=[NpcMention(name="Zara", role="barkeep", pronouns="she/her")],
     )
 
     _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))

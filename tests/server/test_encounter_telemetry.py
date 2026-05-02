@@ -5,6 +5,7 @@ Task 20: Persist state_transition events for encounter to the events table.
 These tests verify that watcher publish calls with field="encounter" write
 typed rows into the SQLite events table — the GM panel lie-detector contract.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,15 +14,14 @@ from sidequest.game.persistence import SqliteStore
 
 
 def _all_events(store: SqliteStore):
-    return list(store._conn.execute(
-        "SELECT kind, payload_json FROM events ORDER BY seq"
-    ).fetchall())
+    return list(
+        store._conn.execute("SELECT kind, payload_json FROM events ORDER BY seq").fetchall()
+    )
 
 
 def test_beat_applied_writes_event_row(store_bound_to_hub, encounter_dispatch_helper):
     store, snapshot, pack = store_bound_to_hub
-    encounter_dispatch_helper.run_player_attack(snapshot, pack, beat_id="attack",
-                                                outcome="Success")
+    encounter_dispatch_helper.run_player_attack(snapshot, pack, beat_id="attack", outcome="Success")
     rows = _all_events(store)
     kinds = [r[0] for r in rows]
     assert "ENCOUNTER_BEAT_APPLIED" in kinds
@@ -32,7 +32,8 @@ def test_beat_applied_writes_event_row(store_bound_to_hub, encounter_dispatch_he
 
 
 def test_resolution_writes_event_row_with_structured_outcome(
-    store_bound_to_hub, encounter_dispatch_helper,
+    store_bound_to_hub,
+    encounter_dispatch_helper,
 ):
     store, snapshot, pack = store_bound_to_hub
     encounter_dispatch_helper.run_to_resolution(snapshot, pack, winner="opponent")
@@ -43,10 +44,13 @@ def test_resolution_writes_event_row_with_structured_outcome(
     assert payload["outcome"] == "opponent_victory"
 
 
-def test_encounter_timeline_query_returns_ordered_rows(store_bound_to_hub, encounter_dispatch_helper):
+def test_encounter_timeline_query_returns_ordered_rows(
+    store_bound_to_hub, encounter_dispatch_helper
+):
     store, snapshot, pack = store_bound_to_hub
     encounter_dispatch_helper.run_to_resolution(snapshot, pack, winner="opponent")
     from sidequest.game.persistence import query_encounter_events
+
     rows = query_encounter_events(store)
     kinds = [r["kind"] for r in rows]
     assert len(kinds) > 0, "No encounter events were persisted"

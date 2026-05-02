@@ -57,9 +57,7 @@ def test_arc_promoted_is_routed_as_state_transition() -> None:
     )
     route = SPAN_ROUTES[SPAN_WORLD_HISTORY_ARC_PROMOTED]
     assert route.event_type == "state_transition"
-    assert route.component, (
-        "arc_promoted route must declare a component name"
-    )
+    assert route.component, "arc_promoted route must declare a component name"
 
 
 def test_arc_tick_extract_pulls_required_attributes() -> None:

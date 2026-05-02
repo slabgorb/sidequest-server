@@ -287,18 +287,22 @@ class Resolver[T]:
             current = val
             final_tier = Tier.global_
             final_file = str(global_path)
-            trail.append(MergeStep(
-                tier=Tier.global_,
-                file=str(global_path),
-                span=None,
-                contribution=contribution,
-            ))
+            trail.append(
+                MergeStep(
+                    tier=Tier.global_,
+                    file=str(global_path),
+                    span=None,
+                    contribution=contribution,
+                )
+            )
 
         # Genre tier
         genre_path = self._root / ctx.genre / f"{field_path}.yaml"
         if genre_path.exists():
             val = _load_tier(genre_path, self._type)
-            contribution = ContributionKind.merged if current is not None else ContributionKind.initial
+            contribution = (
+                ContributionKind.merged if current is not None else ContributionKind.initial
+            )
             if current is not None:
                 assert isinstance(current, LayeredMerge)
                 assert isinstance(val, LayeredMerge)
@@ -307,19 +311,23 @@ class Resolver[T]:
                 current = val
             final_tier = Tier.genre
             final_file = str(genre_path)
-            trail.append(MergeStep(
-                tier=Tier.genre,
-                file=str(genre_path),
-                span=None,
-                contribution=contribution,
-            ))
+            trail.append(
+                MergeStep(
+                    tier=Tier.genre,
+                    file=str(genre_path),
+                    span=None,
+                    contribution=contribution,
+                )
+            )
 
         # World tier
         if ctx.world is not None:
             world_path = self._root / ctx.genre / "worlds" / ctx.world / f"{field_path}.yaml"
             if world_path.exists():
                 val = _load_tier(world_path, self._type)
-                contribution = ContributionKind.merged if current is not None else ContributionKind.initial
+                contribution = (
+                    ContributionKind.merged if current is not None else ContributionKind.initial
+                )
                 if current is not None:
                     assert isinstance(current, LayeredMerge)
                     assert isinstance(val, LayeredMerge)
@@ -328,12 +336,14 @@ class Resolver[T]:
                     current = val
                 final_tier = Tier.world
                 final_file = str(world_path)
-                trail.append(MergeStep(
-                    tier=Tier.world,
-                    file=str(world_path),
-                    span=None,
-                    contribution=contribution,
-                ))
+                trail.append(
+                    MergeStep(
+                        tier=Tier.world,
+                        file=str(world_path),
+                        span=None,
+                        contribution=contribution,
+                    )
+                )
 
         # Culture tier
         if ctx.world is not None and ctx.culture is not None:
@@ -348,7 +358,9 @@ class Resolver[T]:
             )
             if culture_path.exists():
                 val = _load_tier(culture_path, self._type)
-                contribution = ContributionKind.merged if current is not None else ContributionKind.initial
+                contribution = (
+                    ContributionKind.merged if current is not None else ContributionKind.initial
+                )
                 if current is not None:
                     assert isinstance(current, LayeredMerge)
                     assert isinstance(val, LayeredMerge)
@@ -357,17 +369,17 @@ class Resolver[T]:
                     current = val
                 final_tier = Tier.culture
                 final_file = str(culture_path)
-                trail.append(MergeStep(
-                    tier=Tier.culture,
-                    file=str(culture_path),
-                    span=None,
-                    contribution=contribution,
-                ))
+                trail.append(
+                    MergeStep(
+                        tier=Tier.culture,
+                        file=str(culture_path),
+                        span=None,
+                        contribution=contribution,
+                    )
+                )
 
         if current is None:
-            raise GenreValidationError(
-                message=f"no tier supplied field '{field_path}'"
-            )
+            raise GenreValidationError(message=f"no tier supplied field '{field_path}'")
 
         provenance = Provenance(
             source_tier=final_tier,

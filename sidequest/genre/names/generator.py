@@ -170,7 +170,7 @@ def has_stem_collision(name: str) -> bool:
     """
     tokens = [t.casefold() for t in name.split() if len(t) >= STEM_OVERLAP_MIN]
     for i, t1 in enumerate(tokens):
-        for t2 in tokens[i + 1:]:
+        for t2 in tokens[i + 1 :]:
             lcs = _longest_common_substring(t1, t2)
             if lcs < STEM_OVERLAP_MIN:
                 continue
@@ -223,8 +223,7 @@ def _check_corpus_size(
         ):
             pass
         raise ValueError(
-            f"Corpus '{corpus_name}' has {word_count} words; "
-            f"minimum is {FAIL_BELOW_WORDS}"
+            f"Corpus '{corpus_name}' has {word_count} words; minimum is {FAIL_BELOW_WORDS}"
         )
     if word_count < WARN_BELOW_WORDS:
         with Span.open(

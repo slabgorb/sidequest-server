@@ -15,11 +15,13 @@ SPAN_DICE_REQUEST_SENT = "dice.request_sent"
 SPAN_DICE_THROW_RECEIVED = "dice.throw_received"
 SPAN_DICE_RESULT_BROADCAST = "dice.result_broadcast"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_DICE_REQUEST_SENT,
-    SPAN_DICE_THROW_RECEIVED,
-    SPAN_DICE_RESULT_BROADCAST,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_DICE_REQUEST_SENT,
+        SPAN_DICE_THROW_RECEIVED,
+        SPAN_DICE_RESULT_BROADCAST,
+    }
+)
 
 
 def emit_dice_request_sent(

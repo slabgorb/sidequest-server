@@ -236,9 +236,7 @@ class TestInterpolateSceneNarration:
 
     def test_emits_warn_severity_when_known_token_resolves_empty(self) -> None:
         # class unset — {class} resolves to "" → severity must be warn.
-        b = CharacterBuilder(
-            scenes=[make_scene("s")], rules=simple_rules()
-        ).with_lobby_name("Rux")
+        b = CharacterBuilder(scenes=[make_scene("s")], rules=simple_rules()).with_lobby_name("Rux")
         provider, _ = _fresh_otel()
         events = _capture_events(
             provider, lambda: b.interpolate_scene_narration("{name} the {class}")
@@ -276,9 +274,7 @@ class TestInterpolateSceneNarration:
     def test_no_events_on_plain_text(self) -> None:
         b = CharacterBuilder(scenes=[make_scene("s")], rules=simple_rules())
         provider, _ = _fresh_otel()
-        events = _capture_events(
-            provider, lambda: b.interpolate_scene_narration("Nothing to see.")
-        )
+        events = _capture_events(provider, lambda: b.interpolate_scene_narration("Nothing to see."))
         chargen_events = [e for e in events if e.name.startswith("chargen.")]
         assert chargen_events == []
 
@@ -294,8 +290,12 @@ class TestToSceneMessageInProgress:
             make_scene(
                 "origin",
                 choices=[
-                    make_choice("Mutant", description="A wanderer born in the ash.", race_hint="Mutant"),
-                    make_choice("Human", description="A survivor from before the fall.", race_hint="Human"),
+                    make_choice(
+                        "Mutant", description="A wanderer born in the ash.", race_hint="Mutant"
+                    ),
+                    make_choice(
+                        "Human", description="A survivor from before the fall.", race_hint="Human"
+                    ),
                 ],
                 narration="Choose your origin.",
                 loading_text="Weaving your past...",
@@ -403,9 +403,7 @@ class TestToSceneMessageInProgress:
                 narration="Pick an origin.",
             ),
         ]
-        b = CharacterBuilder(
-            scenes=scenes, rules=simple_rules(), rng=random.Random(7)
-        )
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules(), rng=random.Random(7))
         b.apply_freeform("noise")  # any freeform; scene 0 wasn't a name scene
         p = b.to_scene_message("player-1").payload
         assert p.rolled_stats is None

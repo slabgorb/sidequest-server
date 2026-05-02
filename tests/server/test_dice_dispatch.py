@@ -12,6 +12,7 @@ were narrowly coupled to the old single-dial / failure_metric_delta schema
 are individually skipped with per-test markers; a Phase-3 cleanup story
 will remove the skip annotations once the fixture pack migration lands.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -69,20 +70,24 @@ def _pack_with_combat() -> object:
         player_metric=MetricDef(name="momentum", starting=0, threshold=10),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef.model_validate({
-                "id": "kick_door",
-                "label": "Kick Door",
-                "kind": "strike",
-                "base": 2,
-                "stat_check": "STRENGTH",
-            }),
-            BeatDef.model_validate({
-                "id": "unknown_stat",
-                "label": "Unknown Stat Beat",
-                "kind": "strike",
-                "base": 1,
-                "stat_check": "   ",  # blank — used for validation test
-            }),
+            BeatDef.model_validate(
+                {
+                    "id": "kick_door",
+                    "label": "Kick Door",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STRENGTH",
+                }
+            ),
+            BeatDef.model_validate(
+                {
+                    "id": "unknown_stat",
+                    "label": "Unknown Stat Beat",
+                    "kind": "strike",
+                    "base": 1,
+                    "stat_check": "   ",  # blank — used for validation test
+                }
+            ),
         ],
     )
     rules = MagicMock(spec=RulesConfig)
@@ -367,7 +372,8 @@ class TestDiceThrowWireFormat:
             snapshot=_make_snapshot(),
         )
         wire = DiceResultMessage(
-            payload=outcome.result, player_id="server",
+            payload=outcome.result,
+            player_id="server",
         ).model_dump_json()
         # Shape-check: every field the React UI reads from DiceResultPayload.
         # Matches sidequest-ui/src/types/payloads.ts::DiceResultPayload.

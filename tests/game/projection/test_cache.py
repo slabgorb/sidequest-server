@@ -1,4 +1,5 @@
 """ProjectionCache — per-player decision cache backed by SQLite."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -14,7 +15,9 @@ def _cache(tmp_path: Path) -> tuple[ProjectionCache, SqliteStore]:
     return ProjectionCache(store), store
 
 
-def _insert_event(store: SqliteStore, seq: int, kind: str = "NARRATION", payload: str = "{}") -> None:
+def _insert_event(
+    store: SqliteStore, seq: int, kind: str = "NARRATION", payload: str = "{}"
+) -> None:
     """Insert a dummy event into the events table for foreign key constraint."""
     now = datetime.now(UTC).isoformat()
     with store._conn:

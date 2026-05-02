@@ -1,4 +1,5 @@
 """Tests for dice wire payloads — RollOutcome enum behavior."""
+
 from sidequest.protocol.dice import RollOutcome
 
 

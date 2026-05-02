@@ -134,7 +134,9 @@ def npc_pc_name_skipped_span(
         **attrs,
     }
     with Span.open(
-        SPAN_NPC_PC_NAME_SKIPPED, attributes, tracer_override=_tracer,
+        SPAN_NPC_PC_NAME_SKIPPED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span
 
@@ -165,7 +167,9 @@ def npc_registry_hp_set_span(
         **attrs,
     }
     with Span.open(
-        SPAN_NPC_REGISTRY_HP_SET, attributes, tracer_override=_tracer,
+        SPAN_NPC_REGISTRY_HP_SET,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span
 

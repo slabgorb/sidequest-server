@@ -26,13 +26,17 @@ def test_filter_protocol_allows_redaction():
     class RedactHP:
         def project(self, *, envelope: MessageEnvelope, view, player_id):
             if envelope.kind == "STATE_UPDATE" and player_id != "gm":
-                return FilterDecision(include=True, payload_json='{}')
+                return FilterDecision(include=True, payload_json="{}")
             return FilterDecision(include=True, payload_json=envelope.payload_json)
 
     f: ProjectionFilter = RedactHP()
-    dec = f.project(envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="alice")
-    assert dec.payload_json == '{}'
-    dec_gm = f.project(envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="gm")
+    dec = f.project(
+        envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="alice"
+    )
+    assert dec.payload_json == "{}"
+    dec_gm = f.project(
+        envelope=_env(kind="STATE_UPDATE", payload='{"hp":10}'), view=_view(), player_id="gm"
+    )
     assert dec_gm.payload_json == '{"hp":10}'
 
 
@@ -44,5 +48,10 @@ def test_filter_can_omit():
             return FilterDecision(include=True, payload_json=envelope.payload_json)
 
     f: ProjectionFilter = OmitSecrets()
-    assert f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="bob").include is False
-    assert f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="alice").include is True
+    assert (
+        f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="bob").include is False
+    )
+    assert (
+        f.project(envelope=_env(kind="SECRET_NOTE"), view=_view(), player_id="alice").include
+        is True
+    )

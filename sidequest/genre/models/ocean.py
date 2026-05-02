@@ -40,7 +40,14 @@ class OceanProfile(BaseModel):
     agreeableness: float = 5.0
     neuroticism: float = 5.0
 
-    @field_validator("openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism", mode="before")
+    @field_validator(
+        "openness",
+        "conscientiousness",
+        "extraversion",
+        "agreeableness",
+        "neuroticism",
+        mode="before",
+    )
     @classmethod
     def clamp_dimension(cls, v: float) -> float:
         return max(0.0, min(10.0, float(v)))

@@ -245,9 +245,7 @@ class AudioInterpreter:
         for mood, (keywords, base_intensity) in _MOOD_KEYWORDS.items():
             if mood.value not in available_moods:
                 continue
-            score = sum(
-                1 for kw in keywords if re.search(rf"\b{re.escape(kw)}\b", text)
-            )
+            score = sum(1 for kw in keywords if re.search(rf"\b{re.escape(kw)}\b", text))
             if score > best_score:
                 best_score = score
                 best_mood = mood.value
@@ -258,9 +256,7 @@ class AudioInterpreter:
         for mood_str, keywords in genre_keywords.items():
             if mood_str not in available_moods:
                 continue
-            score = sum(
-                1 for kw in keywords if re.search(rf"\b{re.escape(kw)}\b", text)
-            )
+            score = sum(1 for kw in keywords if re.search(rf"\b{re.escape(kw)}\b", text))
             if score > best_score:
                 best_score = score
                 best_mood = mood_str
@@ -275,11 +271,7 @@ class AudioInterpreter:
         if best_mood is not None:
             intensity = best_intensity
             # Boost intensity for dramatic words
-            boost = sum(
-                1
-                for b in _INTENSITY_BOOSTERS
-                if re.search(rf"\b{re.escape(b)}\b", text)
-            )
+            boost = sum(1 for b in _INTENSITY_BOOSTERS if re.search(rf"\b{re.escape(b)}\b", text))
             intensity = min(1.0, intensity + boost * 0.1)
             cues.append(
                 AudioCue(

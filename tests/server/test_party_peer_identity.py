@@ -34,6 +34,7 @@ inspects a section is not enough. An integration test must prove the
 peer dossier lands in the prompt for a real ``_build_turn_context`` →
 ``build_narrator_prompt`` flow built from ``_SessionData``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -88,9 +89,7 @@ def _make_character(
 
 def _blutka() -> Character:
     """Playtest-3 reference peer: Blutka (he/him)."""
-    return _make_character(
-        "Blutka", pronouns="he/him", race="Orc", char_class="Rogue", level=3
-    )
+    return _make_character("Blutka", pronouns="he/him", race="Orc", char_class="Rogue", level=3)
 
 
 def _orin() -> Character:
@@ -208,9 +207,7 @@ def test_party_peer_has_required_identity_fields():
             inst = cls(name="x", pronouns="x/x", race="x", char_class="x", level=1)
             field_names = set(vars(inst).keys())
         except TypeError as exc:  # pragma: no cover - diagnostic path
-            pytest.fail(
-                f"PartyPeer constructor does not accept the required fields: {exc}"
-            )
+            pytest.fail(f"PartyPeer constructor does not accept the required fields: {exc}")
     missing = required - field_names
     assert not missing, (
         f"PartyPeer missing required canonical fields: {sorted(missing)}. "
@@ -452,7 +449,8 @@ async def test_party_peer_section_uses_early_or_valley_zone():
     peer_sections = [
         s
         for s in registry.registry(agent_name)
-        if "party" in s.name.lower() and "peer" in s.name.lower()
+        if "party" in s.name.lower()
+        and "peer" in s.name.lower()
         or s.name.lower() in ("party_peer_roster", "party_peers", "party_roster")
     ]
     assert len(peer_sections) >= 1, (
@@ -500,19 +498,13 @@ async def test_multiple_peers_all_rendered_with_their_pronouns():
     cls = _find_party_peer_cls()
     peers = [
         cls.from_character(
-            _make_character(
-                "Blutka", pronouns="he/him", race="Orc", char_class="Rogue"
-            )
+            _make_character("Blutka", pronouns="he/him", race="Orc", char_class="Rogue")
         ),
         cls.from_character(
-            _make_character(
-                "Orin", pronouns="they/them", race="Human", char_class="Fighter"
-            )
+            _make_character("Orin", pronouns="they/them", race="Human", char_class="Fighter")
         ),
         cls.from_character(
-            _make_character(
-                "Vessa", pronouns="she/her", race="Elf", char_class="Ranger"
-            )
+            _make_character("Vessa", pronouns="she/her", race="Elf", char_class="Ranger")
         ),
     ]
     orch = _make_orchestrator()
@@ -548,9 +540,7 @@ async def test_party_peer_dossier_omits_perception_layer_fields():
     # from other prompt sections (e.g. a genre block mentioning "mood").
     # Look for a line containing Orin and scan the surrounding 10 lines.
     lines = prompt.splitlines()
-    orin_line = next(
-        (i for i, ln in enumerate(lines) if "Orin" in ln), None
-    )
+    orin_line = next((i for i, ln in enumerate(lines) if "Orin" in ln), None)
     assert orin_line is not None, "Orin not found in prompt — prerequisite failed"
     window = "\n".join(lines[max(0, orin_line - 2) : orin_line + 6]).lower()
     for forbidden in ("mood:", "disposition:", "stance:", "feelings:"):
@@ -580,8 +570,7 @@ def test_party_peer_injection_span_is_defined_in_catalog():
         "pronouns from guesswork."
     )
     assert (
-        spans_module.SPAN_ORCHESTRATOR_PARTY_PEER_INJECTION
-        == "orchestrator.party_peer_injection"
+        spans_module.SPAN_ORCHESTRATOR_PARTY_PEER_INJECTION == "orchestrator.party_peer_injection"
     ), (
         "Span name must be exactly 'orchestrator.party_peer_injection' for "
         "the GM panel filter to match sibling orchestrator spans."
@@ -616,9 +605,7 @@ async def test_party_peer_injection_logs_span_event(caplog, monkeypatch):
     )
 
 
-async def test_party_peer_injection_span_does_not_fire_on_empty_peers(
-    caplog, monkeypatch
-):
+async def test_party_peer_injection_span_does_not_fire_on_empty_peers(caplog, monkeypatch):
     """Zero-byte discipline also applies to OTEL: no peers → no span. A
     span per turn on every solo session would pollute the GM panel with
     vacuous events.
@@ -644,9 +631,7 @@ async def test_party_peer_injection_span_does_not_fire_on_empty_peers(
 # ---------------------------------------------------------------------------
 
 
-async def test_module_level_run_narration_turn_forwards_party_peers(
-    sd_factory, monkeypatch
-):
+async def test_module_level_run_narration_turn_forwards_party_peers(sd_factory, monkeypatch):
     """The module-level ``run_narration_turn`` helper in
     ``sidequest.agents.orchestrator`` MUST forward ``snapshot.characters``
     as ``party_peers`` on the ``TurnContext`` it builds. Without this
@@ -668,9 +653,7 @@ async def test_module_level_run_narration_turn_forwards_party_peers(
         captured["context"] = context
         return NarrationTurnResult(narration="", is_degraded=False)
 
-    monkeypatch.setattr(
-        orch_module.Orchestrator, "run_narration_turn", fake_method
-    )
+    monkeypatch.setattr(orch_module.Orchestrator, "run_narration_turn", fake_method)
 
     await orch_module.run_narration_turn(
         client=client,
@@ -742,8 +725,7 @@ async def test_wiring_sd_to_prompt_delivers_peer_identity(sd_factory):
     )
     section_body = peer_sections[0].content
     assert "Blutka" in section_body, (
-        "End-to-end wire broken: peer dossier section registered but "
-        "missing Blutka."
+        "End-to-end wire broken: peer dossier section registered but missing Blutka."
     )
     assert "he/him" in section_body, (
         "End-to-end wire broken: Blutka's canonical pronouns (he/him) did "

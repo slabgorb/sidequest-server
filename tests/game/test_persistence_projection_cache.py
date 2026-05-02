@@ -1,4 +1,5 @@
 """projection_cache table bootstrapping."""
+
 from pathlib import Path
 
 from sidequest.game.persistence import SqliteStore

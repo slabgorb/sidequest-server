@@ -55,9 +55,7 @@ _GENRE = "caverns_and_claudes"
 _WORLD = "grimvault"
 _SLUG = "2026-04-26-replay-coverage"
 
-_CONTENT_SEARCH_PATH = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+_CONTENT_SEARCH_PATH = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 # ---------------------------------------------------------------------------
@@ -97,9 +95,7 @@ def test_skip_and_register_sets_are_disjoint() -> None:
     """A kind must be either fan-out to clients OR internal telemetry —
     never both. Catches accidental double-registration."""
     overlap = set(_KIND_TO_MESSAGE_CLS.keys()) & _REPLAY_SKIP_KINDS
-    assert not overlap, (
-        f"kinds in both _KIND_TO_MESSAGE_CLS and _REPLAY_SKIP_KINDS: {overlap}"
-    )
+    assert not overlap, f"kinds in both _KIND_TO_MESSAGE_CLS and _REPLAY_SKIP_KINDS: {overlap}"
 
 
 # ---------------------------------------------------------------------------
@@ -149,14 +145,10 @@ def test_skip_and_register_sets_are_disjoint() -> None:
         ),
     ],
 )
-def test_build_message_for_kind_round_trips_journalled_kinds(
-    kind: str, payload_dict: dict
-) -> None:
+def test_build_message_for_kind_round_trips_journalled_kinds(kind: str, payload_dict: dict) -> None:
     """Each kind that production journals via ``_emit_event`` must rebuild
     cleanly. Bonus: the rebuilt message has the right ``type`` discriminator."""
-    msg = _build_message_for_kind(
-        kind=kind, payload_json=json.dumps(payload_dict), seq=42
-    )
+    msg = _build_message_for_kind(kind=kind, payload_json=json.dumps(payload_dict), seq=42)
     assert msg is not None, f"{kind} unexpectedly returned None"
     assert getattr(msg, "type", None) == kind, (
         f"{kind} message rebuilt with wrong type: {getattr(msg, 'type', None)!r}"
@@ -172,9 +164,7 @@ def test_build_message_for_kind_skips_internal_telemetry_without_crash(
     aborted the entire replay window."""
     payload_json = json.dumps({"field": "encounter", "op": "started"})
     result = _build_message_for_kind(kind=kind, payload_json=payload_json, seq=7)
-    assert result is None, (
-        f"{kind} should be skipped (returned None) but got: {result!r}"
-    )
+    assert result is None, f"{kind} should be skipped (returned None) but got: {result!r}"
 
 
 def test_build_message_for_kind_still_raises_on_truly_unknown_kind() -> None:
@@ -202,21 +192,22 @@ def seeded_game_with_encounter_journal(tmp_path: Path) -> Path:
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=_SLUG, mode=GameMode.MULTIPLAYER,
-        genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=_SLUG,
+        mode=GameMode.MULTIPLAYER,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
 
     # Inject ENCOUNTER_STARTED + ENCOUNTER_TAG_CREATED as the watcher_hub
     # would. These don't go through EventLog.append because the watcher_hub
     # writes them directly via SQL — match that behavior here.
     store._conn.execute(
-        "INSERT INTO events (kind, payload_json, created_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP)",
+        "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         ("ENCOUNTER_STARTED", json.dumps({"field": "encounter", "op": "started"})),
     )
     store._conn.execute(
-        "INSERT INTO events (kind, payload_json, created_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP)",
+        "INSERT INTO events (kind, payload_json, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
         (
             "ENCOUNTER_TAG_CREATED",
             json.dumps({"field": "encounter", "op": "tag_created"}),
@@ -271,9 +262,7 @@ async def test_reconnect_against_save_with_encounter_kinds_does_not_crash(
     outbound = await handler.handle_message(msg)
 
     types = [getattr(m, "type", None) for m in outbound]
-    assert "SESSION_EVENT" in types, (
-        f"SESSION_EVENT(connected) missing from outbound: {types}"
-    )
+    assert "SESSION_EVENT" in types, f"SESSION_EVENT(connected) missing from outbound: {types}"
     # Encounter kinds must be skipped, not surfaced as protocol messages.
     assert "ENCOUNTER_STARTED" not in types
     assert "ENCOUNTER_TAG_CREATED" not in types

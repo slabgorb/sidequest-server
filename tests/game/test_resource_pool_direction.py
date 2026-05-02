@@ -5,6 +5,7 @@ detect_crossings update that honours it.
 
 Note: detect_crossings signature is positional: (thresholds, old_value, new_value).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,9 +38,7 @@ def test_upward_threshold_fires_on_upward_crossing():
 
 
 def test_upward_threshold_does_not_fire_on_downward_crossing():
-    t = ResourceThreshold(
-        at=0.75, event_id="quiet_word", narrator_hint="x", direction="up"
-    )
+    t = ResourceThreshold(at=0.75, event_id="quiet_word", narrator_hint="x", direction="up")
     crossings = detect_crossings([t], 0.80, 0.70)
     assert crossings == []
 

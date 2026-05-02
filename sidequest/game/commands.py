@@ -144,7 +144,9 @@ class InventoryCommand(CommandHandler):
         inv = ch.core.inventory
 
         # items is list[dict] — filter by state
-        carried = [i for i in inv.items if i.get("state", "Carried") in ("Carried", {"kind": "Carried"})]
+        carried = [
+            i for i in inv.items if i.get("state", "Carried") in ("Carried", {"kind": "Carried"})
+        ]
 
         if not carried and inv.gold == 0:
             return DisplayResult("You carry nothing of note. Your pockets are empty.")

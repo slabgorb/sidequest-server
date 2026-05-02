@@ -66,16 +66,18 @@ _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 # stripped) but should act as word boundaries. Mapping them to ASCII
 # hyphen *before* the NFKD/ASCII pass means "Crew—Freighter" slugs to
 # "crew-freighter" rather than "crewfreighter".
-_UNICODE_SEPARATOR_TRANSLATION = str.maketrans({
-    "–": "-",  # en-dash
-    "—": "-",  # em-dash
-    "―": "-",  # horizontal bar
-    "‐": "-",  # hyphen
-    "‑": "-",  # non-breaking hyphen
-    "‒": "-",  # figure dash
-    " ": " ",  # non-breaking space
-    "…": " ",  # horizontal ellipsis
-})
+_UNICODE_SEPARATOR_TRANSLATION = str.maketrans(
+    {
+        "–": "-",  # en-dash
+        "—": "-",  # em-dash
+        "―": "-",  # horizontal bar
+        "‐": "-",  # hyphen
+        "‑": "-",  # non-breaking hyphen
+        "‒": "-",  # figure dash
+        " ": " ",  # non-breaking space
+        "…": " ",  # horizontal ellipsis
+    }
+)
 
 
 def validate_region_name(name: str | None) -> tuple[bool, str | None]:

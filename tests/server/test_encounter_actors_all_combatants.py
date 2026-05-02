@@ -30,6 +30,7 @@ Storage convention: tests load the frozen ``test_genre`` fixture pack
 directly from disk via ``load_genre_pack`` to bypass the session-wide
 GenreLoader cache (see test_encounter_apply_narration.py for the rationale).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,9 +57,7 @@ from tests._helpers.session_room import room_for
 
 # Frozen fixture pack — same trick used in test_encounter_apply_narration.py
 # to dodge the session-wide GenreLoader cache.
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
 
 
 def _load_pack():
@@ -150,16 +149,17 @@ def test_handshake_registers_npc_from_registry_when_npcs_present_empty(
         npcs_present=[],  # extraction dropped it; this is the bug shape
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
 
     enc = snap.encounter
     assert enc is not None, "encounter was not instantiated"
     actor_names = [a.name for a in enc.actors]
-    assert "Orin" in actor_names, (
-        f"player not registered (actors={actor_names!r})"
-    )
+    assert "Orin" in actor_names, f"player not registered (actors={actor_names!r})"
     assert "Crawling Scavenger" in actor_names, (
         "opponent NPC was not registered from the npc_registry — "
         "handshake regressed to player-only actors. "
@@ -184,7 +184,10 @@ def test_handshake_registers_multiple_npcs_from_registry(playtest3_snapshot):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     enc = snap.encounter
@@ -214,7 +217,10 @@ def test_handshake_skips_registry_npcs_at_other_locations(playtest3_snapshot):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     enc = snap.encounter
@@ -239,12 +245,17 @@ def test_handshake_prefers_explicit_npcs_present_when_provided(
         confrontation="combat",
         npcs_present=[
             NpcMention(
-                name="Goblin", side="opponent", role="hostile",
+                name="Goblin",
+                side="opponent",
+                role="hostile",
             ),
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     enc = snap.encounter
@@ -275,7 +286,10 @@ def test_per_actor_state_isolated_for_player_and_opponent_after_handshake(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     enc = snap.encounter
@@ -317,7 +331,10 @@ def test_opponent_beat_advances_opponent_metric_after_handshake(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, start, player_name="Orin", pack=pack,
+        snap,
+        start,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     assert snap.encounter is not None
@@ -337,7 +354,10 @@ def test_opponent_beat_advances_opponent_metric_after_handshake(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, opp_turn, player_name="Orin", pack=pack,
+        snap,
+        opp_turn,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -366,7 +386,10 @@ def test_per_side_metrics_track_player_and_opponent_independently(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, start, player_name="Orin", pack=pack,
+        snap,
+        start,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     assert snap.encounter is not None
@@ -376,22 +399,25 @@ def test_per_side_metrics_track_player_and_opponent_independently(
         narration="Orin swings.",
         beat_selections=[
             BeatSelection(
-                actor="Orin", beat_id="attack", outcome=RollOutcome.Success,
+                actor="Orin",
+                beat_id="attack",
+                outcome=RollOutcome.Success,
             ),
         ],
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, player_turn, player_name="Orin", pack=pack,
+        snap,
+        player_turn,
+        player_name="Orin",
+        pack=pack,
         from_explicit_action=True,
         room=room_for(snap),
     )
     player_after = snap.encounter.player_metric.current
     opp_baseline = snap.encounter.opponent_metric.current
 
-    assert player_after > 0, (
-        f"player_metric did not advance ({player_after})"
-    )
+    assert player_after > 0, f"player_metric did not advance ({player_after})"
 
     # Opponent attacks (narrator path, opponent-side beats are not gated).
     opp_turn = NarrationTurnResult(
@@ -406,7 +432,10 @@ def test_per_side_metrics_track_player_and_opponent_independently(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, opp_turn, player_name="Orin", pack=pack,
+        snap,
+        opp_turn,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     opp_after = snap.encounter.opponent_metric.current
@@ -429,7 +458,8 @@ def test_per_side_metrics_track_player_and_opponent_independently(
 
 
 def test_encounter_init_span_carries_actor_count_and_combatant_names(
-    playtest3_snapshot, otel_capture: InMemorySpanExporter,
+    playtest3_snapshot,
+    otel_capture: InMemorySpanExporter,
 ):
     """The GM panel needs to verify the fix is working by reading an OTEL
     span on encounter init. The span must include:
@@ -447,32 +477,29 @@ def test_encounter_init_span_carries_actor_count_and_combatant_names(
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
 
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
     init_span = spans_by_name.get("encounter.confrontation_initiated")
     assert init_span is not None, (
-        f"expected encounter.confrontation_initiated span; "
-        f"got {sorted(spans_by_name)!r}"
+        f"expected encounter.confrontation_initiated span; got {sorted(spans_by_name)!r}"
     )
 
     attrs = dict(init_span.attributes or {})
-    assert "actor_count" in attrs, (
-        f"span missing actor_count attribute; attrs={sorted(attrs)!r}"
-    )
+    assert "actor_count" in attrs, f"span missing actor_count attribute; attrs={sorted(attrs)!r}"
     assert int(attrs["actor_count"]) == 2, (
-        f"actor_count should be 2 (Orin + Crawling Scavenger); "
-        f"got {attrs['actor_count']!r}"
+        f"actor_count should be 2 (Orin + Crawling Scavenger); got {attrs['actor_count']!r}"
     )
 
     # combatant_names — accept list or comma-joined string for OTEL
     # serialization flexibility, but the names must both be present.
     raw_names = attrs.get("combatant_names")
-    assert raw_names is not None, (
-        f"span missing combatant_names attribute; attrs={sorted(attrs)!r}"
-    )
+    assert raw_names is not None, f"span missing combatant_names attribute; attrs={sorted(attrs)!r}"
     if isinstance(raw_names, (list, tuple)):
         names_blob = ",".join(str(n) for n in raw_names)
     else:
@@ -502,7 +529,10 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, start, player_name="Orin", pack=pack,
+        snap,
+        start,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     assert snap.encounter is not None
@@ -520,13 +550,15 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
                 narration=f"Round {round_idx}: Orin strikes.",
                 beat_selections=[
                     BeatSelection(
-                        actor="Orin", beat_id="defend",  # small base, slow
+                        actor="Orin",
+                        beat_id="defend",  # small base, slow
                         outcome=RollOutcome.Success,
                     ),
                 ],
                 npcs_present=[],
             ),
-            player_name="Orin", pack=pack,
+            player_name="Orin",
+            pack=pack,
             from_explicit_action=True,
             room=room_for(snap),
         )
@@ -539,13 +571,15 @@ def test_six_round_combat_keeps_named_npc_in_actors(playtest3_snapshot):
                 narration=f"Round {round_idx}: the scavenger lunges.",
                 beat_selections=[
                     BeatSelection(
-                        actor="Crawling Scavenger", beat_id="defend",
+                        actor="Crawling Scavenger",
+                        beat_id="defend",
                         outcome=RollOutcome.Success,
                     ),
                 ],
                 npcs_present=[],
             ),
-            player_name="Orin", pack=pack,
+            player_name="Orin",
+            pack=pack,
             room=room_for(snap),
         )
 
@@ -601,17 +635,17 @@ def test_no_orphan_actors_assignment_in_production_code():
                 continue
             func = node.func
             name = (
-                func.attr if isinstance(func, ast.Attribute)
-                else func.id if isinstance(func, ast.Name)
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else func.id
+                if isinstance(func, ast.Name)
                 else None
             )
             if name != "StructuredEncounter":
                 continue
             kw_names = {kw.arg for kw in node.keywords if kw.arg is not None}
             if "actors" in kw_names:
-                offenders.append(
-                    f"{py.relative_to(server_root.parent)}:{node.lineno}"
-                )
+                offenders.append(f"{py.relative_to(server_root.parent)}:{node.lineno}")
 
     assert not offenders, (
         "Production code constructs StructuredEncounter with an explicit "

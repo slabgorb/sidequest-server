@@ -90,23 +90,27 @@ def test_fidelity_transform_strips_visual_spans_for_blinded():
     out = json.loads(result.decision.payload_json)
     span_ids = [s["id"] for s in out["spans"]]
     assert "s1" not in span_ids  # visual_only stripped
-    assert "s2" in span_ids      # audio_only kept
+    assert "s2" in span_ids  # audio_only kept
 
 
-@pytest.mark.parametrize("pack", [
-    "caverns_and_claudes",
-    "elemental_harmony",
-    "heavy_metal",
-    "mutant_wasteland",
-    "space_opera",
-    "spaghetti_western",
-])
+@pytest.mark.parametrize(
+    "pack",
+    [
+        "caverns_and_claudes",
+        "elemental_harmony",
+        "heavy_metal",
+        "mutant_wasteland",
+        "space_opera",
+        "spaghetti_western",
+    ],
+)
 def test_every_shipping_pack_projection_has_visibility_tag_rule(pack):
     from sidequest.game.projection.rules import (
         VisibilityTagRule,
         load_rules_from_yaml_path,
     )
     from tests._helpers.genre_paths import find_pack_path
+
     path = find_pack_path(pack) / "projection.yaml"
     assert path.exists(), f"missing: {path}"
     rules = load_rules_from_yaml_path(path)
@@ -116,14 +120,17 @@ def test_every_shipping_pack_projection_has_visibility_tag_rule(pack):
     )
 
 
-@pytest.mark.parametrize("pack", [
-    "caverns_and_claudes",
-    "elemental_harmony",
-    "heavy_metal",
-    "mutant_wasteland",
-    "space_opera",
-    "spaghetti_western",
-])
+@pytest.mark.parametrize(
+    "pack",
+    [
+        "caverns_and_claudes",
+        "elemental_harmony",
+        "heavy_metal",
+        "mutant_wasteland",
+        "space_opera",
+        "spaghetti_western",
+    ],
+)
 def test_every_shipping_pack_projection_has_secret_note_rule(pack):
     """Group G Task 6 — every pack must route SECRET_NOTE through visibility_tag.
 
@@ -137,6 +144,7 @@ def test_every_shipping_pack_projection_has_secret_note_rule(pack):
         load_rules_from_yaml_path,
     )
     from tests._helpers.genre_paths import find_pack_path
+
     path = find_pack_path(pack) / "projection.yaml"
     assert path.exists(), f"missing: {path}"
     rules = load_rules_from_yaml_path(path)

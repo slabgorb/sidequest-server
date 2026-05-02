@@ -53,9 +53,7 @@ from sidequest.server.session_room import LobbyState, RoomRegistry
 
 _GENRE = "caverns_and_claudes"
 _WORLD = "grimvault"
-_CONTENT_SEARCH_PATH = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+_CONTENT_SEARCH_PATH = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _make_handler(save_dir: Path) -> WebSocketSessionHandler:
@@ -138,7 +136,9 @@ async def test_solo_new_connect_auto_seats_player_in_chargen():
         type="SESSION_EVENT",
         player_id="parsley-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Parsley",
+            event="connect",
+            game_slug=slug,
+            player_name="Parsley",
         ),
     )
     await handler.handle_message(msg)
@@ -146,8 +146,7 @@ async def test_solo_new_connect_auto_seats_player_in_chargen():
     room = handler._room
     assert room is not None, "slug-connect must bind a room"
     assert "parsley-pid" in room.seated_player_ids(), (
-        "solo connect must auto-seat the player — playtest 2026-04-30 "
-        "notorious_party_gate=0 race"
+        "solo connect must auto-seat the player — playtest 2026-04-30 notorious_party_gate=0 race"
     )
     assert room.non_abandoned_player_count() == 1, (
         "non_abandoned_player_count must reflect the seated solo player; "
@@ -155,9 +154,7 @@ async def test_solo_new_connect_auto_seats_player_in_chargen():
     )
     # New solo (no existing character) → seat starts in CHARGEN.
     # Chargen-complete will transition to PLAYING; not yet here.
-    assert room.playing_player_count() == 0, (
-        "new solo session is in CHARGEN, not yet PLAYING"
-    )
+    assert room.playing_player_count() == 0, "new solo session is in CHARGEN, not yet PLAYING"
 
 
 @pytest.mark.asyncio
@@ -174,7 +171,9 @@ async def test_solo_returning_connect_auto_seats_and_transitions_to_playing(tmp_
         type="SESSION_EVENT",
         player_id="parsley-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Parsley",
+            event="connect",
+            game_slug=slug,
+            player_name="Parsley",
         ),
     )
     await handler.handle_message(msg)
@@ -206,7 +205,9 @@ async def test_solo_reconnect_does_not_reset_seat_state(tmp_path: Path):
         type="SESSION_EVENT",
         player_id="parsley-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Parsley",
+            event="connect",
+            game_slug=slug,
+            player_name="Parsley",
         ),
     )
     await handler1.handle_message(msg)
@@ -250,7 +251,9 @@ async def test_mp_connect_does_not_auto_seat(tmp_path: Path):
         type="SESSION_EVENT",
         player_id="alice",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Alice",
+            event="connect",
+            game_slug=slug,
+            player_name="Alice",
         ),
     )
     await handler.handle_message(msg)
@@ -280,7 +283,9 @@ async def test_solo_auto_seat_uses_player_seat_character_name_when_returning(tmp
         type="SESSION_EVENT",
         player_id="parsley-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Parsley-LobbyName",
+            event="connect",
+            game_slug=slug,
+            player_name="Parsley-LobbyName",
         ),
     )
     await handler.handle_message(msg)

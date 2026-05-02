@@ -101,9 +101,7 @@ def _client_bound_to(path: Path):
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
 
 
-def _make_session_data(
-    *, player_id: str, world_slug: str = "grimvault"
-) -> _SessionData:
+def _make_session_data(*, player_id: str, world_slug: str = "grimvault") -> _SessionData:
     from sidequest.game.session import GameSnapshot, TurnManager
 
     snap = GameSnapshot(
@@ -149,9 +147,7 @@ def _make_two_player_room(
     room = registry.get_or_create(slug, mode=GameMode.MULTIPLAYER)
     actor_q: asyncio.Queue[object] = asyncio.Queue()
     peer_q: asyncio.Queue[object] = asyncio.Queue()
-    handler.attach_room_context(
-        registry=registry, socket_id=actor_socket, out_queue=actor_q
-    )
+    handler.attach_room_context(registry=registry, socket_id=actor_socket, out_queue=actor_q)
     handler._room = room  # noqa: SLF001
     handler._session_data = sd  # noqa: SLF001
     room.connect(sd.player_id, socket_id=actor_socket)
@@ -180,7 +176,9 @@ async def test_image_broadcasts_to_all_room_sockets(
     daemon = _FakeDaemon(
         reply_payload={
             "image_url": str(tmp_path / "throat.png"),
-            "width": 1024, "height": 768, "elapsed_ms": 800,
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 800,
         }
     )
     await daemon.start(sock)
@@ -196,9 +194,7 @@ async def test_image_broadcasts_to_all_room_sockets(
 
     result = NarrationTurnResult(
         narration="The Throat opens.",
-        visual_scene=VisualScene(
-            subject="a corridor of cold stone", tier="scene_illustration"
-        ),
+        visual_scene=VisualScene(subject="a corridor of cold stone", tier="scene_illustration"),
     )
     handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
 
@@ -243,7 +239,9 @@ async def test_render_completion_otel_records_broadcast_and_recipients(
     daemon = _FakeDaemon(
         reply_payload={
             "image_url": str(tmp_path / "scene.png"),
-            "width": 1024, "height": 768, "elapsed_ms": 50,
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
         }
     )
     await daemon.start(sock)
@@ -273,7 +271,8 @@ async def test_render_completion_otel_records_broadcast_and_recipients(
     await daemon.stop()
 
     completed = [
-        e for e in cap.events
+        e
+        for e in cap.events
         if e.get("event_type") == "state_transition"
         and e.get("fields", {}).get("field") == "render"
         and e.get("fields", {}).get("op") == "completed"
@@ -312,7 +311,9 @@ async def test_legacy_no_room_path_uses_single_queue(
     daemon = _FakeDaemon(
         reply_payload={
             "image_url": str(tmp_path / "legacy.png"),
-            "width": 256, "height": 256, "elapsed_ms": 5,
+            "width": 256,
+            "height": 256,
+            "elapsed_ms": 5,
         }
     )
     await daemon.start(sock)

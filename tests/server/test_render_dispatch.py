@@ -246,7 +246,9 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
 
 @pytest.mark.asyncio
 async def test_render_dispatch_otel_includes_genre_and_world(
-    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bug #2a lie-detector (CLAUDE.md OTEL Observability Principle).
 
@@ -263,7 +265,9 @@ async def test_render_dispatch_otel_includes_genre_and_world(
     daemon = _FakeDaemon(
         reply_payload={
             "image_url": str(tmp_path / "render_x.png"),
-            "width": 1024, "height": 768, "elapsed_ms": 50,
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
         }
     )
     await daemon.start(sock)
@@ -302,7 +306,8 @@ async def test_render_dispatch_otel_includes_genre_and_world(
     await daemon.stop()
 
     dispatched = [
-        e for e in cap.events
+        e
+        for e in cap.events
         if e.get("event_type") == "state_transition"
         and e.get("fields", {}).get("field") == "render"
         and e.get("fields", {}).get("op") == "dispatched"
@@ -323,7 +328,9 @@ async def test_render_dispatch_otel_includes_genre_and_world(
 
 @pytest.mark.asyncio
 async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
-    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Slice 2 of catalog-injected compose wiring (paired with sidequest-daemon
     PR registering runtime PCs from descriptor blobs).
@@ -401,7 +408,9 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
 
 @pytest.mark.asyncio
 async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
-    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Playtest 2026-04-30 contract drift: scene_illustration dispatch
     used to set ``params["participants"] = [pc:<slug>]`` but the daemon's
@@ -468,7 +477,9 @@ async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
 
 @pytest.mark.asyncio
 async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
-    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the snapshot has no character to project (e.g. an early portrait
     fired before chargen confirmation), the structured PC ref still ships —
@@ -568,7 +579,9 @@ def _client_bound_to(path: Path):
 
 @pytest.mark.asyncio
 async def test_render_dispatch_self_heals_after_daemon_restart(
-    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """S4-BUG wiring test (CLAUDE.md mandate).
 
@@ -659,8 +672,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
         client = TestClient(app)
         resp = client.get(url)
         assert resp.status_code == 200, (
-            f"GET {url} returned {resp.status_code}: "
-            f"healed mount didn't make the file reachable"
+            f"GET {url} returned {resp.status_code}: healed mount didn't make the file reachable"
         )
         assert resp.content == b"\x89PNG\r\n\x1a\nactual-bytes"
     finally:

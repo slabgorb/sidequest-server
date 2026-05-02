@@ -14,15 +14,18 @@ def _make_combat(
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=player_current, starting=0, threshold=threshold,
+            name="momentum",
+            current=player_current,
+            starting=0,
+            threshold=threshold,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=threshold,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=threshold,
         ),
-        actors=[
-            EncounterActor(name=n, role="combatant", side="player")
-            for n in actor_names
-        ],
+        actors=[EncounterActor(name=n, role="combatant", side="player") for n in actor_names],
     )
 
 
@@ -40,7 +43,7 @@ def test_render_combat_summary_lists_metric_phase_beat() -> None:
 def test_render_respects_ascending_player_metric() -> None:
     enc = _make_combat(player_current=5, threshold=20)
     out = render_encounter_summary(enc)
-    assert "5" in out   # current value rendered
+    assert "5" in out  # current value rendered
     assert "20" in out  # threshold rendered
 
 

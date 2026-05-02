@@ -11,11 +11,20 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def test_corpusdiff_surfaces_round_2_divergence(tmp_path: Path) -> None:
     out = tmp_path / "divergences.json"
     subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusdiff",
-         "--save", str(FIXTURES / "per_player_a.db"),
-         "--save", str(FIXTURES / "per_player_b.db"),
-         "--out", str(out)],
-        capture_output=True, text=True, check=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusdiff",
+            "--save",
+            str(FIXTURES / "per_player_a.db"),
+            "--save",
+            str(FIXTURES / "per_player_b.db"),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     data = json.loads(out.read_text())
     rounds = [d["round_number"] for d in data]
@@ -26,11 +35,19 @@ def test_corpusdiff_surfaces_round_2_divergence(tmp_path: Path) -> None:
 def test_corpusdiff_fails_loud_on_missing_save(tmp_path: Path) -> None:
     out = tmp_path / "divergences.json"
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusdiff",
-         "--save", str(tmp_path / "missing.db"),
-         "--save", str(FIXTURES / "per_player_b.db"),
-         "--out", str(out)],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusdiff",
+            "--save",
+            str(tmp_path / "missing.db"),
+            "--save",
+            str(FIXTURES / "per_player_b.db"),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0
     assert "not found" in result.stderr.lower()
@@ -44,10 +61,17 @@ def test_corpusdiff_requires_at_least_two_saves(tmp_path: Path) -> None:
     honour that contract loudly.
     """
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusdiff",
-         "--save", str(FIXTURES / "per_player_a.db"),
-         "--out", str(tmp_path / "x.json")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusdiff",
+            "--save",
+            str(FIXTURES / "per_player_a.db"),
+            "--out",
+            str(tmp_path / "x.json"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 2
     assert "at least twice" in result.stderr.lower()
@@ -57,11 +81,19 @@ def test_corpusdiff_fails_loud_on_non_sqlite_save(tmp_path: Path) -> None:
     not_a_db = tmp_path / "not.db"
     not_a_db.write_text("this is not a sqlite file")
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusdiff",
-         "--save", str(not_a_db),
-         "--save", str(FIXTURES / "per_player_b.db"),
-         "--out", str(tmp_path / "x.json")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusdiff",
+            "--save",
+            str(not_a_db),
+            "--save",
+            str(FIXTURES / "per_player_b.db"),
+            "--out",
+            str(tmp_path / "x.json"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 2
     combined = result.stderr.lower()

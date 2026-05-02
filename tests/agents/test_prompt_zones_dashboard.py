@@ -73,14 +73,10 @@ async def test_build_narrator_prompt_publishes_zones_for_dashboard(
         state_summary="You are in a tavern.",
         turn_number=0,
     )
-    await orch.build_narrator_prompt(
-        "look around", context, tier=NarratorPromptTier.Full
-    )
+    await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
     await asyncio.sleep(0.05)
 
-    prompt_events = [
-        e for e in sock.events if e.get("event_type") == "prompt_assembled"
-    ]
+    prompt_events = [e for e in sock.events if e.get("event_type") == "prompt_assembled"]
     assert len(prompt_events) == 1
     fields = prompt_events[0]["fields"]
 
@@ -99,8 +95,7 @@ async def test_build_narrator_prompt_publishes_zones_for_dashboard(
     for z in zones:
         assert {"zone", "total_tokens", "sections"} <= set(z)
         assert z["zone"] in pascal_zone_names, (
-            f"zone name '{z['zone']}' must be PascalCase to match the "
-            f"dashboard's ZONE_COLORS map"
+            f"zone name '{z['zone']}' must be PascalCase to match the dashboard's ZONE_COLORS map"
         )
         assert isinstance(z["total_tokens"], int)
         assert z["total_tokens"] >= 0

@@ -17,9 +17,12 @@ def test_instantiate_combat_creates_encounter(cac_pack) -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     enc = instantiate_encounter_from_trigger(
-        snapshot=snap, pack=cac_pack, encounter_type="combat",
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
         player_name="Rux",
         npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
@@ -41,11 +44,16 @@ def test_instantiate_unknown_type_raises(cac_pack) -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     with pytest.raises(ValueError, match="unknown encounter_type"):
         instantiate_encounter_from_trigger(
-            snapshot=snap, pack=cac_pack, encounter_type="spelling_bee",
-            player_name="Rux", npcs_present=[], genre_slug="caverns_and_claudes",
+            snapshot=snap,
+            pack=cac_pack,
+            encounter_type="spelling_bee",
+            player_name="Rux",
+            npcs_present=[],
+            genre_slug="caverns_and_claudes",
         )
 
 
@@ -55,6 +63,7 @@ def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     prior = StructuredEncounter(
         encounter_type="combat",
@@ -65,8 +74,12 @@ def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     prior.resolved = True
     snap.encounter = prior
     enc = instantiate_encounter_from_trigger(
-        snapshot=snap, pack=cac_pack, encounter_type="combat",
-        player_name="Rux", npcs_present=[], genre_slug="caverns_and_claudes",
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
+        player_name="Rux",
+        npcs_present=[],
+        genre_slug="caverns_and_claudes",
     )
     assert snap.encounter is enc
     assert enc is not prior
@@ -78,6 +91,7 @@ def test_instantiate_active_encounter_is_noop(cac_pack) -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     active = StructuredEncounter(
         encounter_type="combat",
@@ -87,8 +101,12 @@ def test_instantiate_active_encounter_is_noop(cac_pack) -> None:
     )
     snap.encounter = active
     result = instantiate_encounter_from_trigger(
-        snapshot=snap, pack=cac_pack, encounter_type="combat",
-        player_name="Rux", npcs_present=[], genre_slug="caverns_and_claudes",
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
+        player_name="Rux",
+        npcs_present=[],
+        genre_slug="caverns_and_claudes",
     )
     assert result is None
     assert snap.encounter is active
@@ -99,6 +117,7 @@ def test_resolve_from_trope_marks_resolved() -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         resolve_encounter_from_trope,
     )
+
     snap = GameSnapshot(genre_slug="cac")
     enc = StructuredEncounter(
         encounter_type="combat",
@@ -117,6 +136,7 @@ def test_resolve_from_trope_no_encounter_returns_none() -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         resolve_encounter_from_trope,
     )
+
     snap = GameSnapshot(genre_slug="cac")
     assert resolve_encounter_from_trope(snapshot=snap, trope_id="x") is None
 
@@ -126,6 +146,7 @@ def test_resolve_from_trope_already_resolved_returns_none() -> None:
     from sidequest.server.dispatch.encounter_lifecycle import (
         resolve_encounter_from_trope,
     )
+
     snap = GameSnapshot(genre_slug="cac")
     enc = StructuredEncounter(
         encounter_type="combat",
@@ -148,6 +169,7 @@ def test_instantiate_two_dials_from_cdef(snapshot_with_pack):
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap, pack = snapshot_with_pack
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
@@ -167,6 +189,7 @@ def test_instantiate_routes_actor_sides_from_payload(snapshot_with_pack):
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap, pack = snapshot_with_pack
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
@@ -196,6 +219,7 @@ def test_invalid_side_raises_with_span(snapshot_with_pack):
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
+
     snap, pack = snapshot_with_pack
     # Bypass NpcMention.from_value: construct the dataclass directly with a
     # bad side. Validation happens at lifecycle entry.

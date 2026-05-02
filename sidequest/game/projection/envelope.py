@@ -5,6 +5,7 @@ construct envelopes from EventLog events; tomorrow's caller may construct
 them for non-EventLog outbound messages (see spec §Out of Scope — all-outbound-
 message coverage).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

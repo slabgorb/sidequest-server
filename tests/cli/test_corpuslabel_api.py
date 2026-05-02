@@ -15,8 +15,12 @@ def _seed(tmp_path: Path) -> tuple[Path, Path]:
     corpus = tmp_path / "corpus.jsonl"
     labeled = tmp_path / "labeled.jsonl"
     pair = TrainingPair(
-        schema_version=1, genre="g", world="w", round_number=1,
-        input_text="hi", output_text="hello",
+        schema_version=1,
+        genre="g",
+        world="w",
+        round_number=1,
+        input_text="hi",
+        output_text="hello",
         provenance=MineProvenance(source_save="x.db", event_seq=None),
     )
     write_pairs(corpus, [pair])
@@ -49,8 +53,12 @@ def test_label_endpoint_appends(tmp_path: Path) -> None:
         "/api/label",
         json={
             "pair": {
-                "schema_version": 1, "genre": "g", "world": "w", "round_number": 1,
-                "input_text": "hi", "output_text": "hello",
+                "schema_version": 1,
+                "genre": "g",
+                "world": "w",
+                "round_number": 1,
+                "input_text": "hi",
+                "output_text": "hello",
                 "provenance": {"source_save": "x.db", "event_seq": None},
             },
             "disputes": ["mis_resolved_referent"],
@@ -71,8 +79,12 @@ def test_label_endpoint_appends_multiple(tmp_path: Path) -> None:
     client = TestClient(build_app(corpus=corpus, labeled_out=labeled))
     body = {
         "pair": {
-            "schema_version": 1, "genre": "g", "world": "w", "round_number": 1,
-            "input_text": "hi", "output_text": "hello",
+            "schema_version": 1,
+            "genre": "g",
+            "world": "w",
+            "round_number": 1,
+            "input_text": "hi",
+            "output_text": "hello",
             "provenance": {"source_save": "x.db", "event_seq": None},
         },
         "disputes": [],
@@ -92,8 +104,12 @@ def test_count_reflects_labeled(tmp_path: Path) -> None:
         "/api/label",
         json={
             "pair": {
-                "schema_version": 1, "genre": "g", "world": "w", "round_number": 1,
-                "input_text": "hi", "output_text": "hello",
+                "schema_version": 1,
+                "genre": "g",
+                "world": "w",
+                "round_number": 1,
+                "input_text": "hi",
+                "output_text": "hello",
                 "provenance": {"source_save": "x.db", "event_seq": None},
             },
             "disputes": [],

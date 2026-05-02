@@ -26,6 +26,7 @@ What this guards (CLAUDE.md "no silent fallbacks"):
 Skips when ``sidequest-content`` is not checked out alongside
 ``sidequest-server`` (matches the pattern in ``test_resolution_mode.py``).
 """
+
 from __future__ import annotations
 
 from itertools import product
@@ -72,9 +73,7 @@ def space_opera_pack() -> GenrePack:
 def dogfight_conf(space_opera_pack: GenrePack) -> ConfrontationDef:
     assert space_opera_pack.rules is not None, "space_opera has no rules.yaml"
     matches = [
-        c
-        for c in space_opera_pack.rules.confrontations
-        if c.confrontation_type == "dogfight"
+        c for c in space_opera_pack.rules.confrontations if c.confrontation_type == "dogfight"
     ]
     assert len(matches) == 1, (
         f"expected exactly one 'dogfight' confrontation in space_opera, "
@@ -147,8 +146,7 @@ def test_interaction_table_has_full_4x4_cross_product(
         seen_pairs.add(key)
 
     expected_pairs: set[tuple[str, str]] = {
-        (r, b)
-        for r, b in product(EXPECTED_MANEUVERS_MVP, EXPECTED_MANEUVERS_MVP)
+        (r, b) for r, b in product(EXPECTED_MANEUVERS_MVP, EXPECTED_MANEUVERS_MVP)
     }
     missing = expected_pairs - seen_pairs
     extra = seen_pairs - expected_pairs
@@ -174,8 +172,7 @@ def test_no_orphan_maneuvers_in_cell_pairs(
     for cell in dogfight_table.cells:
         for slot, maneuver in zip(("red", "blue"), cell.pair, strict=True):
             assert maneuver in legal, (
-                f"cell {cell.pair!r} {slot}={maneuver!r} not in "
-                f"maneuvers_consumed {sorted(legal)}"
+                f"cell {cell.pair!r} {slot}={maneuver!r} not in maneuvers_consumed {sorted(legal)}"
             )
 
 

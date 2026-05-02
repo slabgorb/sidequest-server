@@ -3,6 +3,7 @@
 Every narrator-originated mutation (NARRATION, STATE_UPDATE, COMBAT_EVENT, etc.)
 is appended here before fan-out. Peers catch up on reconnect via read_since.
 """
+
 from __future__ import annotations
 
 import sqlite3

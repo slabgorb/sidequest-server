@@ -4,6 +4,7 @@ Pipeline: CoreInvariantStage (GM / targeted / self-authored / gm-only)
     → GenreRuleStage (projection.yaml rules)
     → default pass-through.
 """
+
 from __future__ import annotations
 
 from sidequest.game.projection.envelope import MessageEnvelope
@@ -50,9 +51,7 @@ class ComposedFilter:
             event_seq=envelope.origin_seq,
             player_id=player_id,
         ) as span:
-            outcome = self._invariants.evaluate(
-                envelope=envelope, view=view, player_id=player_id
-            )
+            outcome = self._invariants.evaluate(envelope=envelope, view=view, player_id=player_id)
             if outcome.terminal:
                 assert outcome.decision is not None
                 assert outcome.source is not None, (
@@ -75,9 +74,7 @@ class ComposedFilter:
             span.set_attribute("rule.source", source)
             return decision
 
-    def _format_genre_source(
-        self, *, kind: str, matched_rule_index: int | None
-    ) -> str:
+    def _format_genre_source(self, *, kind: str, matched_rule_index: int | None) -> str:
         """Compose the OTEL ``rule.source`` attribute for a genre-stage result.
 
         Spec format: ``genre:<pack>/<kind>/<rule_index>``. Falls back to

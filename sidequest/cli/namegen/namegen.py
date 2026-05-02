@@ -115,14 +115,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Genre slug (e.g., mutant_wasteland). Also reads SIDEQUEST_GENRE.",
     )
     p.add_argument("--culture", help="Culture name (e.g., Scrapborn). Random if omitted.")
-    p.add_argument("--archetype", help='Archetype name (e.g., "Wasteland Trader"). Random if omitted.')
+    p.add_argument(
+        "--archetype", help='Archetype name (e.g., "Wasteland Trader"). Random if omitted.'
+    )
     p.add_argument("--gender", help="Gender: male, female, nonbinary. Random if omitted.")
     p.add_argument("--role", help="Role override. Defaults to archetype name.")
     p.add_argument("--description", help="Physical description hints to layer on top of archetype.")
-    p.add_argument("--jungian", help="Jungian archetype axis (e.g. sage, hero, outlaw). Random if omitted.")
-    p.add_argument("--rpg-role", dest="rpg_role", help="RPG role axis (e.g. healer, tank, stealth). Random if omitted.")
-    p.add_argument("--npc-role", dest="npc_role", help="NPC narrative role (e.g. mentor, mook). Random if omitted.")
-    p.add_argument("--world", help="World slug for funnel resolution. If omitted, skips world funnels.")
+    p.add_argument(
+        "--jungian", help="Jungian archetype axis (e.g. sage, hero, outlaw). Random if omitted."
+    )
+    p.add_argument(
+        "--rpg-role",
+        dest="rpg_role",
+        help="RPG role axis (e.g. healer, tank, stealth). Random if omitted.",
+    )
+    p.add_argument(
+        "--npc-role",
+        dest="npc_role",
+        help="NPC narrative role (e.g. mentor, mook). Random if omitted.",
+    )
+    p.add_argument(
+        "--world", help="World slug for funnel resolution. If omitted, skips world funnels."
+    )
     return p
 
 
@@ -232,7 +246,9 @@ def resolve_axes(
             if p[1] == args.rpg_role
         ]
         if not candidates:
-            print(f"No valid Jungian pairings found for rpg_role '{args.rpg_role}'", file=sys.stderr)
+            print(
+                f"No valid Jungian pairings found for rpg_role '{args.rpg_role}'", file=sys.stderr
+            )
             sys.exit(1)
         pair = rng.choice(candidates)
         jungian_id, rpg_role_id = pair[0], args.rpg_role
@@ -302,9 +318,7 @@ def legacy_axis_fallback(
 # ---------------------------------------------------------------------------
 
 
-def select_quirk(
-    traits: list[NpcTrait], jungian_id: str | None, rng: random.Random
-) -> str | None:
+def select_quirk(traits: list[NpcTrait], jungian_id: str | None, rng: random.Random) -> str | None:
     """Weighted random selection from a trait pool.
 
     Traits with `jungian_affinity` matching the NPC's jungian_id get 3x weight.
@@ -312,10 +326,7 @@ def select_quirk(
     if not traits:
         return None
 
-    weights = [
-        3.0 if jungian_id and jungian_id in t.jungian_affinity else 1.0
-        for t in traits
-    ]
+    weights = [3.0 if jungian_id and jungian_id in t.jungian_affinity else 1.0 for t in traits]
     total = sum(weights)
     roll = rng.random() * total
     for t, w in zip(traits, weights, strict=True):
@@ -397,11 +408,26 @@ def summarize_ocean(o: OceanValues) -> str:
         return mid
 
     parts = [
-        label(o.openness, "conventional and practical", "balanced between tradition and novelty", "curious and imaginative"),
-        label(o.conscientiousness, "spontaneous and flexible", "moderately organized", "meticulous and disciplined"),
+        label(
+            o.openness,
+            "conventional and practical",
+            "balanced between tradition and novelty",
+            "curious and imaginative",
+        ),
+        label(
+            o.conscientiousness,
+            "spontaneous and flexible",
+            "moderately organized",
+            "meticulous and disciplined",
+        ),
         label(o.extraversion, "reserved and quiet", "selectively social", "outgoing and talkative"),
         label(o.agreeableness, "blunt and competitive", "pragmatic", "warm and cooperative"),
-        label(o.neuroticism, "emotionally steady", "occasionally anxious", "easily stressed and reactive"),
+        label(
+            o.neuroticism,
+            "emotionally steady",
+            "occasionally anxious",
+            "easily stressed and reactive",
+        ),
     ]
     return ", ".join(parts)
 
@@ -444,17 +470,11 @@ HISTORY_DEEDS = [
 ]
 
 
-def generate_history(
-    faction: str, role: str, archetype: NpcArchetype, rng: random.Random
-) -> str:
+def generate_history(faction: str, role: str, archetype: NpcArchetype, rng: random.Random) -> str:
     template = rng.choice(HISTORY_TEMPLATES)
     event = rng.choice(HISTORY_EVENTS)
     deed = rng.choice(HISTORY_DEEDS)
-    alt_role = (
-        archetype.typical_classes[0].lower()
-        if archetype.typical_classes
-        else "drifter"
-    )
+    alt_role = archetype.typical_classes[0].lower() if archetype.typical_classes else "drifter"
     return (
         template.replace("{role}", role)
         .replace("{faction}", faction)
@@ -501,9 +521,7 @@ def match_tropes(
 # ---------------------------------------------------------------------------
 
 
-def _empty_pool_message(
-    kind: str, file_basename: str, genre: str, world: str | None
-) -> str:
+def _empty_pool_message(kind: str, file_basename: str, genre: str, world: str | None) -> str:
     world_clause = f" world '{world}'" if world else ""
     world_path_hint = (
         f" and, if --world is passed, genre_packs/{genre}/worlds/<slug>/{file_basename}."

@@ -50,9 +50,7 @@ from sidequest.game.turn import TurnManager
 from sidequest.genre.magic_loader import load_world_magic
 from sidequest.server.magic_init import init_magic_state_for_session
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 CC_PACK = CONTENT_ROOT / "caverns_and_claudes"
 SO_PACK = CONTENT_ROOT / "space_opera"
 

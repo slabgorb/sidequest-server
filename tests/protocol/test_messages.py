@@ -125,10 +125,12 @@ def parse_wire(json_str: str) -> GameMessage:
 
 
 def test_player_action_round_trip() -> None:
-    msg = GameMessage(root=PlayerActionMessage(
-        payload=PlayerActionPayload(action=nbs("attack the goblin"), aside=False),
-        player_id="player1",
-    ))
+    msg = GameMessage(
+        root=PlayerActionMessage(
+            payload=PlayerActionPayload(action=nbs("attack the goblin"), aside=False),
+            player_id="player1",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = GameMessage.model_validate_json(json_str)
     assert decoded.type == MessageType.PLAYER_ACTION
@@ -140,10 +142,12 @@ def test_player_action_round_trip() -> None:
 
 def test_player_action_wire_type_tag() -> None:
     """Type discriminator must appear in serialized JSON."""
-    msg = GameMessage(root=PlayerActionMessage(
-        payload=PlayerActionPayload(action=nbs("go north"), aside=False),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=PlayerActionMessage(
+            payload=PlayerActionPayload(action=nbs("go north"), aside=False),
+            player_id="",
+        )
+    )
     data = json.loads(msg.model_dump_json())
     assert data["type"] == "PLAYER_ACTION"
     assert "payload" in data
@@ -154,10 +158,12 @@ def test_player_action_wire_type_tag() -> None:
 
 
 def test_narration_round_trip() -> None:
-    msg = GameMessage(root=NarrationMessage(
-        payload=NarrationPayload(text=nbs("The orc lunges...")),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=NarrationMessage(
+            payload=NarrationPayload(text=nbs("The orc lunges...")),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.NARRATION
@@ -180,10 +186,12 @@ def test_narration_with_state_delta_round_trip() -> None:
         quests=None,
         items_gained=None,
     )
-    msg = GameMessage(root=NarrationMessage(
-        payload=NarrationPayload(text=nbs("You arrive."), state_delta=delta),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=NarrationMessage(
+            payload=NarrationPayload(text=nbs("You arrive."), state_delta=delta),
+            player_id="",
+        )
+    )
     decoded = round_trip(msg)
     payload = decoded.payload
     assert isinstance(payload, NarrationPayload)
@@ -195,10 +203,12 @@ def test_narration_with_state_delta_round_trip() -> None:
 
 
 def test_narration_end_round_trip() -> None:
-    msg = GameMessage(root=NarrationEndMessage(
-        payload=NarrationEndPayload(state_delta=None),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=NarrationEndMessage(
+            payload=NarrationEndPayload(state_delta=None),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.NARRATION_END
@@ -206,10 +216,12 @@ def test_narration_end_round_trip() -> None:
 
 
 def test_thinking_round_trip() -> None:
-    msg = GameMessage(root=ThinkingMessage(
-        payload=ThinkingPayload(),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=ThinkingMessage(
+            payload=ThinkingPayload(),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.THINKING
@@ -217,15 +229,17 @@ def test_thinking_round_trip() -> None:
 
 
 def test_session_event_connect_round_trip() -> None:
-    msg = GameMessage(root=SessionEventMessage(
-        payload=SessionEventPayload(
-            event="connect",
-            player_name="Alice",
-            genre="mutant_wasteland",
-            world="flickering_reach",
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=SessionEventMessage(
+            payload=SessionEventPayload(
+                event="connect",
+                player_name="Alice",
+                genre="mutant_wasteland",
+                world="flickering_reach",
+            ),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.SESSION_EVENT
@@ -251,10 +265,12 @@ def test_session_event_ready_with_initial_state() -> None:
         quests={},
         turn_count=0,
     )
-    msg = GameMessage(root=SessionEventMessage(
-        payload=SessionEventPayload(event="ready", initial_state=state),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=SessionEventMessage(
+            payload=SessionEventPayload(event="ready", initial_state=state),
+            player_id="",
+        )
+    )
     decoded = round_trip(msg)
     payload = decoded.payload
     assert isinstance(payload, SessionEventPayload)
@@ -263,20 +279,22 @@ def test_session_event_ready_with_initial_state() -> None:
 
 
 def test_character_creation_round_trip() -> None:
-    msg = GameMessage(root=CharacterCreationMessage(
-        payload=CharacterCreationPayload(
-            phase="scene",
-            scene_index=1,
-            total_scenes=3,
-            prompt="Describe your character...",
-            choices=[
-                CreationChoice(label=nbs("Warrior"), description=nbs("Strong fighter")),
-            ],
-            allows_freeform=True,
-            input_type="text",
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=CharacterCreationMessage(
+            payload=CharacterCreationPayload(
+                phase="scene",
+                scene_index=1,
+                total_scenes=3,
+                prompt="Describe your character...",
+                choices=[
+                    CreationChoice(label=nbs("Warrior"), description=nbs("Strong fighter")),
+                ],
+                allows_freeform=True,
+                input_type="text",
+            ),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.CHARACTER_CREATION
@@ -285,11 +303,13 @@ def test_character_creation_round_trip() -> None:
 
 def test_chargen_payload_deserializes_action_back() -> None:
     """The UI sends action:'back' when back button clicked. Must not be rejected."""
-    wire = json.dumps({
-        "type": "CHARACTER_CREATION",
-        "payload": {"phase": "scene", "action": "back"},
-        "player_id": "test-player",
-    })
+    wire = json.dumps(
+        {
+            "type": "CHARACTER_CREATION",
+            "payload": {"phase": "scene", "action": "back"},
+            "player_id": "test-player",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.CHARACTER_CREATION
     payload = msg.payload
@@ -299,11 +319,13 @@ def test_chargen_payload_deserializes_action_back() -> None:
 
 def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
     """The UI sends action:'edit' + target_step from the review screen."""
-    wire = json.dumps({
-        "type": "CHARACTER_CREATION",
-        "payload": {"phase": "confirmation", "action": "edit", "target_step": 2},
-        "player_id": "test-player",
-    })
+    wire = json.dumps(
+        {
+            "type": "CHARACTER_CREATION",
+            "payload": {"phase": "confirmation", "action": "edit", "target_step": 2},
+            "player_id": "test-player",
+        }
+    )
     msg = parse_wire(wire)
     payload = msg.payload
     assert isinstance(payload, CharacterCreationPayload)
@@ -313,11 +335,13 @@ def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
 
 def test_chargen_payload_action_back_without_phase() -> None:
     """The UI sends `{action: 'back'}` with no `phase` field — must deserialize."""
-    wire = json.dumps({
-        "type": "CHARACTER_CREATION",
-        "payload": {"action": "back"},
-        "player_id": "test-player",
-    })
+    wire = json.dumps(
+        {
+            "type": "CHARACTER_CREATION",
+            "payload": {"action": "back"},
+            "player_id": "test-player",
+        }
+    )
     msg = parse_wire(wire)
     payload = msg.payload
     assert isinstance(payload, CharacterCreationPayload)
@@ -327,11 +351,13 @@ def test_chargen_payload_action_back_without_phase() -> None:
 
 def test_chargen_payload_action_edit_without_phase() -> None:
     """The UI sends `{action: 'edit', target_step: N}` with no `phase` field."""
-    wire = json.dumps({
-        "type": "CHARACTER_CREATION",
-        "payload": {"action": "edit", "target_step": 0},
-        "player_id": "test-player",
-    })
+    wire = json.dumps(
+        {
+            "type": "CHARACTER_CREATION",
+            "payload": {"action": "edit", "target_step": 0},
+            "player_id": "test-player",
+        }
+    )
     msg = parse_wire(wire)
     payload = msg.payload
     assert isinstance(payload, CharacterCreationPayload)
@@ -342,11 +368,13 @@ def test_chargen_payload_action_edit_without_phase() -> None:
 
 def test_chargen_payload_without_action_still_deserializes() -> None:
     """Backwards compatibility: existing messages without action must still work."""
-    wire = json.dumps({
-        "type": "CHARACTER_CREATION",
-        "payload": {"phase": "scene", "choice": "1"},
-        "player_id": "test-player",
-    })
+    wire = json.dumps(
+        {
+            "type": "CHARACTER_CREATION",
+            "payload": {"phase": "scene", "choice": "1"},
+            "player_id": "test-player",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.CHARACTER_CREATION
     payload = msg.payload
@@ -355,10 +383,12 @@ def test_chargen_payload_without_action_still_deserializes() -> None:
 
 
 def test_turn_status_round_trip() -> None:
-    msg = GameMessage(root=TurnStatusMessage(
-        payload=TurnStatusPayload(player_name=nbs("Kael"), status="active"),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=TurnStatusMessage(
+            payload=TurnStatusPayload(player_name=nbs("Kael"), status="active"),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.TURN_STATUS
@@ -389,20 +419,24 @@ def test_party_status_round_trip() -> None:
             "equipment": ["Iron Sword [equipped]"],
         },
         inventory={
-            "items": [{
-                "name": "Iron Sword",
-                "type": "weapon",
-                "equipped": True,
-                "quantity": 1,
-                "description": "A sturdy blade",
-            }],
+            "items": [
+                {
+                    "name": "Iron Sword",
+                    "type": "weapon",
+                    "equipped": True,
+                    "quantity": 1,
+                    "description": "A sturdy blade",
+                }
+            ],
             "gold": 150,
         },
     )
-    msg = GameMessage(root=PartyStatusMessage(
-        payload=PartyStatusPayload(members=[member]),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=PartyStatusMessage(
+            payload=PartyStatusPayload(members=[member]),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.PARTY_STATUS
@@ -425,10 +459,12 @@ def test_party_status_round_trip() -> None:
 
 
 def test_chapter_marker_round_trip() -> None:
-    msg = GameMessage(root=ChapterMarkerMessage(
-        payload=ChapterMarkerPayload(title="Chapter 1", location="The Dark Forest"),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=ChapterMarkerMessage(
+            payload=ChapterMarkerPayload(title="Chapter 1", location="The Dark Forest"),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.CHAPTER_MARKER
@@ -436,10 +472,12 @@ def test_chapter_marker_round_trip() -> None:
 
 
 def test_action_queue_round_trip() -> None:
-    msg = GameMessage(root=ActionQueueMessage(
-        payload=ActionQueuePayload(actions=[]),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=ActionQueueMessage(
+            payload=ActionQueuePayload(actions=[]),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.ACTION_QUEUE
@@ -447,10 +485,12 @@ def test_action_queue_round_trip() -> None:
 
 
 def test_error_round_trip() -> None:
-    msg = GameMessage(root=ErrorMessage(
-        payload=ErrorPayload(message=nbs("something went wrong")),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=ErrorMessage(
+            payload=ErrorPayload(message=nbs("something went wrong")),
+            player_id="",
+        )
+    )
     json_str = msg.model_dump_json()
     decoded = round_trip(msg)
     assert decoded.type == MessageType.ERROR
@@ -468,11 +508,13 @@ def test_error_round_trip() -> None:
 
 def test_player_action_wire_format() -> None:
     """Exact JSON from api-contract.md."""
-    wire = json.dumps({
-        "type": "PLAYER_ACTION",
-        "payload": {"action": "attack the goblin", "aside": False},
-        "player_id": "",
-    })
+    wire = json.dumps(
+        {
+            "type": "PLAYER_ACTION",
+            "payload": {"action": "attack the goblin", "aside": False},
+            "player_id": "",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.PLAYER_ACTION
     payload = msg.payload
@@ -483,16 +525,18 @@ def test_player_action_wire_format() -> None:
 
 
 def test_session_event_connect_wire_format() -> None:
-    wire = json.dumps({
-        "type": "SESSION_EVENT",
-        "payload": {
-            "event": "connect",
-            "player_name": "Alice",
-            "genre": "mutant_wasteland",
-            "world": "flickering_reach",
-        },
-        "player_id": "",
-    })
+    wire = json.dumps(
+        {
+            "type": "SESSION_EVENT",
+            "payload": {
+                "event": "connect",
+                "player_name": "Alice",
+                "genre": "mutant_wasteland",
+                "world": "flickering_reach",
+            },
+            "player_id": "",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.SESSION_EVENT
     payload = msg.payload
@@ -508,20 +552,28 @@ def test_thinking_wire_format() -> None:
 
 
 def test_narration_with_delta_wire_format() -> None:
-    wire = json.dumps({
-        "type": "NARRATION",
-        "payload": {
-            "text": "The orc lunges...",
-            "state_delta": {
-                "location": "Dark Cave",
-                "characters": [
-                    {"name": "Grok", "hp": 15, "max_hp": 20, "statuses": ["poisoned"], "inventory": ["sword"]},
-                ],
-                "quests": {"Find the Gem": "in_progress"},
+    wire = json.dumps(
+        {
+            "type": "NARRATION",
+            "payload": {
+                "text": "The orc lunges...",
+                "state_delta": {
+                    "location": "Dark Cave",
+                    "characters": [
+                        {
+                            "name": "Grok",
+                            "hp": 15,
+                            "max_hp": 20,
+                            "statuses": ["poisoned"],
+                            "inventory": ["sword"],
+                        },
+                    ],
+                    "quests": {"Find the Gem": "in_progress"},
+                },
             },
-        },
-        "player_id": "",
-    })
+            "player_id": "",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.NARRATION
     payload = msg.payload
@@ -536,11 +588,13 @@ def test_narration_with_delta_wire_format() -> None:
 
 
 def test_error_wire_format() -> None:
-    wire = json.dumps({
-        "type": "ERROR",
-        "payload": {"message": "something broke"},
-        "player_id": "",
-    })
+    wire = json.dumps(
+        {
+            "type": "ERROR",
+            "payload": {"message": "something broke"},
+            "player_id": "",
+        }
+    )
     msg = parse_wire(wire)
     assert msg.type == MessageType.ERROR
     payload = msg.payload
@@ -562,21 +616,25 @@ def test_unknown_message_type_rejected() -> None:
 
 
 def test_player_action_rejects_extra_fields() -> None:
-    wire = json.dumps({
-        "type": "PLAYER_ACTION",
-        "payload": {"action": "go north", "aside": False, "hacker_field": "gotcha"},
-        "player_id": "",
-    })
+    wire = json.dumps(
+        {
+            "type": "PLAYER_ACTION",
+            "payload": {"action": "go north", "aside": False, "hacker_field": "gotcha"},
+            "player_id": "",
+        }
+    )
     with pytest.raises((ValueError, Exception)):
         parse_wire(wire)
 
 
 def test_error_payload_rejects_extra_fields() -> None:
-    wire = json.dumps({
-        "type": "ERROR",
-        "payload": {"message": "oops", "secret": "leak"},
-        "player_id": "",
-    })
+    wire = json.dumps(
+        {
+            "type": "ERROR",
+            "payload": {"message": "oops", "secret": "leak"},
+            "player_id": "",
+        }
+    )
     with pytest.raises((ValueError, Exception)):
         parse_wire(wire)
 
@@ -676,10 +734,12 @@ def test_party_status_with_multiple_locations() -> None:
             current_location="Scrapyard Gate",
         ),
     ]
-    msg = GameMessage(root=PartyStatusMessage(
-        payload=PartyStatusPayload(members=members),
-        player_id="p1",
-    ))
+    msg = GameMessage(
+        root=PartyStatusMessage(
+            payload=PartyStatusPayload(members=members),
+            player_id="p1",
+        )
+    )
     decoded = round_trip(msg)
     payload = decoded.payload
     assert isinstance(payload, PartyStatusPayload)
@@ -703,13 +763,15 @@ def test_narration_with_footnotes_round_trip() -> None:
         category=FactCategory.Person,
         is_new=True,
     )
-    msg = GameMessage(root=NarrationMessage(
-        payload=NarrationPayload(
-            text=nbs("The innkeeper nods subtly[1]."),
-            footnotes=[footnote],
-        ),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=NarrationMessage(
+            payload=NarrationPayload(
+                text=nbs("The innkeeper nods subtly[1]."),
+                footnotes=[footnote],
+            ),
+            player_id="",
+        )
+    )
     decoded = round_trip(msg)
     payload = decoded.payload
     assert isinstance(payload, NarrationPayload)
@@ -720,16 +782,20 @@ def test_narration_with_footnotes_round_trip() -> None:
 
 def test_narration_with_items_gained() -> None:
     delta = StateDelta(
-        items_gained=[ItemGained(
-            name=nbs("Rusty Key"),
-            description=nbs("A key to an unknown door"),
-            category="quest",
-        )],
+        items_gained=[
+            ItemGained(
+                name=nbs("Rusty Key"),
+                description=nbs("A key to an unknown door"),
+                category="quest",
+            )
+        ],
     )
-    msg = GameMessage(root=NarrationMessage(
-        payload=NarrationPayload(text=nbs("You find a key."), state_delta=delta),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=NarrationMessage(
+            payload=NarrationPayload(text=nbs("You find a key."), state_delta=delta),
+            player_id="",
+        )
+    )
     decoded = round_trip(msg)
     payload = decoded.payload
     assert isinstance(payload, NarrationPayload)
@@ -746,26 +812,32 @@ def test_narration_with_items_gained() -> None:
 
 
 def test_game_message_type_property() -> None:
-    msg = GameMessage(root=ErrorMessage(
-        payload=ErrorPayload(message=nbs("test")),
-        player_id="",
-    ))
+    msg = GameMessage(
+        root=ErrorMessage(
+            payload=ErrorPayload(message=nbs("test")),
+            player_id="",
+        )
+    )
     assert msg.type == MessageType.ERROR
 
 
 def test_game_message_payload_property() -> None:
-    msg = GameMessage(root=ThinkingMessage(
-        payload=ThinkingPayload(),
-        player_id="server",
-    ))
+    msg = GameMessage(
+        root=ThinkingMessage(
+            payload=ThinkingPayload(),
+            player_id="server",
+        )
+    )
     assert isinstance(msg.payload, ThinkingPayload)
 
 
 def test_game_message_player_id_property() -> None:
-    msg = GameMessage(root=PlayerActionMessage(
-        payload=PlayerActionPayload(action=nbs("look around")),
-        player_id="p1",
-    ))
+    msg = GameMessage(
+        root=PlayerActionMessage(
+            payload=PlayerActionPayload(action=nbs("look around")),
+            player_id="p1",
+        )
+    )
     assert msg.player_id == "p1"
 
 

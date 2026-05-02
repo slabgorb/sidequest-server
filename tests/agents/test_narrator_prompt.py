@@ -33,7 +33,10 @@ def test_prompt_documents_boon_for_temporary_buffs():
     # prose patterns the narrator was previously dropping silently.
     assert "CRITICAL MAGIC EFFECT RULE" in NARRATOR_OUTPUT_ONLY
     # Boon is described as scene-bounded (matches status_clear.py wiring).
-    assert "scene end" in NARRATOR_OUTPUT_ONLY.lower() or "scene-bounded" in NARRATOR_OUTPUT_ONLY.lower()
+    assert (
+        "scene end" in NARRATOR_OUTPUT_ONLY.lower()
+        or "scene-bounded" in NARRATOR_OUTPUT_ONLY.lower()
+    )
 
 
 def test_active_encounter_zone_renders_both_dials_and_tags(monkeypatch, build_registry):
@@ -59,28 +62,52 @@ def test_active_encounter_zone_renders_both_dials_and_tags(monkeypatch, build_re
             EncounterActor(name="Sam", role="combatant", side="player"),
             EncounterActor(name="Promo", role="combatant", side="opponent"),
         ],
-        tags=[EncounterTag(
-            text="Off-Balance", created_by="Sam", target="Promo",
-            leverage=1, fleeting=False, created_turn=3,
-        )],
+        tags=[
+            EncounterTag(
+                text="Off-Balance",
+                created_by="Sam",
+                target="Promo",
+                leverage=1,
+                fleeting=False,
+                created_turn=3,
+            )
+        ],
     )
     cdef = ConfrontationDef(
-        type="combat", label="Combat", category="combat",
+        type="combat",
+        label="Combat",
+        category="combat",
         player_metric=MetricDef(name="momentum", threshold=10),
         opponent_metric=MetricDef(name="momentum", threshold=10),
-        beats=[BeatDef.model_validate({
-            "id": "attack", "label": "Attack", "kind": "strike",
-            "base": 2, "stat_check": "STR",
-        })],
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            )
+        ],
     )
-    statuses_by_actor = {"Sam": [Status(
-        text="Bruised Ribs", severity=StatusSeverity.Wound,
-        absorbed_shifts=0, created_turn=2, created_in_encounter="combat",
-    )]}
+    statuses_by_actor = {
+        "Sam": [
+            Status(
+                text="Bruised Ribs",
+                severity=StatusSeverity.Wound,
+                absorbed_shifts=0,
+                created_turn=2,
+                created_in_encounter="combat",
+            )
+        ]
+    }
 
     registry = build_registry()
     NarratorAgent().build_encounter_context(
-        registry, encounter=enc, cdef=cdef,
+        registry,
+        encounter=enc,
+        cdef=cdef,
         statuses_by_actor=statuses_by_actor,
     )
 
@@ -117,13 +144,22 @@ def test_resolved_encounter_short_circuits_to_resolution_zone(build_registry):
         outcome="opponent_victory",
     )
     cdef = ConfrontationDef(
-        type="combat", label="Combat", category="combat",
+        type="combat",
+        label="Combat",
+        category="combat",
         player_metric=MetricDef(name="momentum", threshold=10),
         opponent_metric=MetricDef(name="momentum", threshold=10),
-        beats=[BeatDef.model_validate({
-            "id": "attack", "label": "Attack", "kind": "strike",
-            "base": 2, "stat_check": "STR",
-        })],
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            )
+        ],
     )
     signal = ResolutionSignal(
         encounter_type="combat",
@@ -134,7 +170,9 @@ def test_resolved_encounter_short_circuits_to_resolution_zone(build_registry):
 
     registry = build_registry()
     NarratorAgent().build_encounter_context(
-        registry, encounter=enc, cdef=cdef,
+        registry,
+        encounter=enc,
+        cdef=cdef,
         statuses_by_actor={},
         resolution_signal=signal,
     )
@@ -175,13 +213,22 @@ def test_resolved_encounter_yielded_branch_renders_actors_and_edge(build_registr
         outcome="yielded",
     )
     cdef = ConfrontationDef(
-        type="combat", label="Combat", category="combat",
+        type="combat",
+        label="Combat",
+        category="combat",
         player_metric=MetricDef(name="momentum", threshold=10),
         opponent_metric=MetricDef(name="momentum", threshold=10),
-        beats=[BeatDef.model_validate({
-            "id": "attack", "label": "Attack", "kind": "strike",
-            "base": 2, "stat_check": "STR",
-        })],
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            )
+        ],
     )
     signal = ResolutionSignal(
         encounter_type="combat",
@@ -194,7 +241,9 @@ def test_resolved_encounter_yielded_branch_renders_actors_and_edge(build_registr
 
     registry = build_registry()
     NarratorAgent().build_encounter_context(
-        registry, encounter=enc, cdef=cdef,
+        registry,
+        encounter=enc,
+        cdef=cdef,
         statuses_by_actor={},
         resolution_signal=signal,
     )

@@ -624,7 +624,10 @@ async def test_local_dm_accepts_list_valued_resolved_to() -> None:
     # Schema preserves shape — the list is intact for downstream
     # consumers that want to branch on type.
     assert referent.resolved_to == [
-        "player:Paul", "player:John", "player:George", "player:Ringo",
+        "player:Paul",
+        "player:John",
+        "player:George",
+        "player:Ringo",
     ]
     assert referent.token == "the party"
 
@@ -645,10 +648,7 @@ async def test_local_dm_records_multi_target_count_on_span(otel_capture) -> None
         state_summary="...",
     )
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "local_dm.decompose"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "local_dm.decompose"]
     assert len(spans) == 1
     attrs = dict(spans[0].attributes or {})
     assert attrs.get("resolved_to_multi_target_count") == 1, (
@@ -740,9 +740,12 @@ def test_normalize_multi_target_resolved_to_handles_empty() -> None:
 
     assert _normalize_multi_target_resolved_to({}) == 0
     assert _normalize_multi_target_resolved_to({"per_player": []}) == 0
-    assert _normalize_multi_target_resolved_to(
-        {"per_player": [{"resolved": []}]},
-    ) == 0
+    assert (
+        _normalize_multi_target_resolved_to(
+            {"per_player": [{"resolved": []}]},
+        )
+        == 0
+    )
 
 
 def test_referent_schema_accepts_list_valued_resolved_to() -> None:
@@ -767,5 +770,8 @@ def test_referent_schema_accepts_list_valued_resolved_to() -> None:
         confidence=0.9,
     )
     assert r3.resolved_to == [
-        "player:Paul", "player:John", "player:George", "player:Ringo",
+        "player:Paul",
+        "player:John",
+        "player:George",
+        "player:Ringo",
     ]

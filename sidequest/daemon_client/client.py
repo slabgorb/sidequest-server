@@ -127,9 +127,7 @@ class DaemonClient:
             applies and the GM panel records a terminal outcome.
         """
         if len(text.encode("utf-8")) > MAX_EMBED_BYTES:
-            raise ValueError(
-                f"embed() text exceeds {MAX_EMBED_BYTES}-byte UTF-8 limit"
-            )
+            raise ValueError(f"embed() text exceeds {MAX_EMBED_BYTES}-byte UTF-8 limit")
         result = await self._call("embed", {"text": text})
         # Runtime validation — EmbedResponse is a TypedDict, not a
         # pydantic model, so mypy-only shape checks don't catch a daemon
@@ -144,9 +142,7 @@ class DaemonClient:
             model = result["model"]
             latency_ms = result["latency_ms"]
         except KeyError as exc:
-            raise DaemonRequestError(
-                "INVALID_RESPONSE", f"embed reply missing key {exc}"
-            ) from exc
+            raise DaemonRequestError("INVALID_RESPONSE", f"embed reply missing key {exc}") from exc
         if not isinstance(embedding, list):
             raise DaemonRequestError(
                 "INVALID_RESPONSE",
@@ -163,10 +159,7 @@ class DaemonClient:
         # ``bool`` is a subclass of ``int`` in Python; exclude it so a
         # daemon returning ``[True, False]`` does not silently pass as
         # a valid embedding of 1.0 / 0.0 floats.
-        if not all(
-            isinstance(v, (int, float)) and not isinstance(v, bool)
-            for v in embedding
-        ):
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in embedding):
             raise DaemonRequestError(
                 "INVALID_RESPONSE",
                 "embed reply 'embedding' contains non-numeric values",
@@ -194,14 +187,10 @@ class DaemonClient:
             if "tier" in params:
                 span.set_attribute("daemon.tier", str(params["tier"]))
             if method == "embed":
-                span.set_attribute(
-                    "daemon.text_len", len(str(params.get("text", "")))
-                )
+                span.set_attribute("daemon.text_len", len(str(params.get("text", ""))))
             if not self.is_available():
                 span.set_attribute("daemon.outcome", "socket_missing")
-                raise DaemonUnavailableError(
-                    f"daemon socket not found at {self._socket_path}"
-                )
+                raise DaemonUnavailableError(f"daemon socket not found at {self._socket_path}")
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_unix_connection(path=str(self._socket_path)),
@@ -218,15 +207,11 @@ class DaemonClient:
                 ) from exc
 
             try:
-                req_line = json.dumps(
-                    {"id": request_id, "method": method, "params": params}
-                ) + "\n"
+                req_line = json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
                 writer.write(req_line.encode())
                 await writer.drain()
                 try:
-                    raw = await asyncio.wait_for(
-                        reader.readline(), timeout=self._timeout
-                    )
+                    raw = await asyncio.wait_for(reader.readline(), timeout=self._timeout)
                 except TimeoutError as exc:
                     span.set_attribute("daemon.outcome", "reply_timeout")
                     raise DaemonUnavailableError(
@@ -234,16 +219,12 @@ class DaemonClient:
                     ) from exc
                 if not raw:
                     span.set_attribute("daemon.outcome", "eof_before_reply")
-                    raise DaemonUnavailableError(
-                        "daemon closed socket before sending a reply"
-                    )
+                    raise DaemonUnavailableError("daemon closed socket before sending a reply")
                 try:
                     reply = json.loads(raw.decode().strip())
                 except json.JSONDecodeError as exc:
                     span.set_attribute("daemon.outcome", "invalid_json")
-                    raise DaemonUnavailableError(
-                        f"daemon sent non-JSON reply: {exc}"
-                    ) from exc
+                    raise DaemonUnavailableError(f"daemon sent non-JSON reply: {exc}") from exc
                 if "error" in reply and reply["error"] is not None:
                     code = str(reply["error"].get("code", "UNKNOWN"))
                     msg = str(reply["error"].get("message", ""))

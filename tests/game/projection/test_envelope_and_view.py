@@ -1,4 +1,5 @@
 """Envelope + view types."""
+
 from dataclasses import FrozenInstanceError
 
 import pytest

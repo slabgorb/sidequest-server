@@ -21,9 +21,17 @@ from sidequest.genre.models import (
 
 class TestAxesConfig:
     def test_valid(self) -> None:
-        ac = AxesConfig(definitions=[
-            AxisDefinition(id="comedy", name="Comedy", description="Tone", poles=["serious", "gonzo"], default=0.3),
-        ])
+        ac = AxesConfig(
+            definitions=[
+                AxisDefinition(
+                    id="comedy",
+                    name="Comedy",
+                    description="Tone",
+                    poles=["serious", "gonzo"],
+                    default=0.3,
+                ),
+            ]
+        )
         assert len(ac.definitions) == 1
 
     def test_extra_forbidden(self) -> None:
@@ -65,24 +73,42 @@ class TestPrompts:
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            Prompts.model_validate({
-                "narrator": "N", "combat": "C", "npc": "NPC",
-                "world_state": "WS", "bogus": True,
-            })
+            Prompts.model_validate(
+                {
+                    "narrator": "N",
+                    "combat": "C",
+                    "npc": "NPC",
+                    "world_state": "WS",
+                    "bogus": True,
+                }
+            )
 
 
 class TestCulture:
     def test_valid(self) -> None:
-        c = Culture(name="Nordic", summary="Northern", description="Cold folk", slots={}, person_patterns=[], place_patterns=[])
+        c = Culture(
+            name="Nordic",
+            summary="Northern",
+            description="Cold folk",
+            slots={},
+            person_patterns=[],
+            place_patterns=[],
+        )
         assert c.name == "Nordic"
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            Culture.model_validate({
-                "name": "X", "summary": "Y", "description": "Z",
-                "slots": {}, "person_patterns": [], "place_patterns": [],
-                "bogus": True,
-            })
+            Culture.model_validate(
+                {
+                    "name": "X",
+                    "summary": "Y",
+                    "description": "Z",
+                    "slots": {},
+                    "person_patterns": [],
+                    "place_patterns": [],
+                    "bogus": True,
+                }
+            )
 
 
 class TestInventoryConfig:
@@ -93,6 +119,7 @@ class TestInventoryConfig:
 
     def test_carry_mode_enum(self) -> None:
         from sidequest.genre.models.inventory import InventoryPhilosophy
+
         ip = InventoryPhilosophy(carry_mode=CarryMode.item_count, weight_limit=50.0)
         assert ip.carry_mode == CarryMode.item_count
 

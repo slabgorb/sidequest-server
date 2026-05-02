@@ -165,8 +165,7 @@ class DiceThrowHandler:
                 # Slug-connect branch always sets _room; this is a
                 # programming-error path. Surface as a hard error.
                 raise RuntimeError(
-                    "DiceThrowHandler: sd._room is None — slug-connect "
-                    "wiring missing"
+                    "DiceThrowHandler: sd._room is None — slug-connect wiring missing"
                 )
             sd._room.session.end_scene(
                 "scene_end",
@@ -194,11 +193,14 @@ class DiceThrowHandler:
         # read loop.
         with timings.phase("lore_retrieval"):
             lore_context = await session._retrieve_lore_for_turn(
-                sd, outcome.replay_action_text,
+                sd,
+                outcome.replay_action_text,
             )
         with timings.phase("turn_context_build"):
             turn_context = _build_turn_context(
-                sd, lore_context=lore_context, room=session._room,
+                sd,
+                lore_context=lore_context,
+                room=session._room,
             )
         turn_context.phase_timings = timings
         return await session._execute_narration_turn(

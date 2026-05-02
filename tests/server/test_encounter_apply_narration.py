@@ -28,9 +28,7 @@ from tests._helpers.session_room import room_for
 # test_opening_turn_bootstrap.py) poisons the cache with the real content
 # pack — which is missing the beats these tests need. load_genre_pack() is
 # the cache-free path.
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
 
 
 def _load_pack(_genre: str):
@@ -73,6 +71,7 @@ def otel_capture():
 
 def test_narrator_confrontation_trigger_creates_encounter(cac_snap) -> None:
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
     snap, pack = cac_snap
     result = NarrationTurnResult(
         narration="Goblins leap from the shadows.",
@@ -80,7 +79,10 @@ def test_narrator_confrontation_trigger_creates_encounter(cac_snap) -> None:
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Rux", pack=pack,
+        snap,
+        result,
+        player_name="Rux",
+        pack=pack,
         room=room_for(snap),
     )
     assert snap.encounter is not None
@@ -110,7 +112,10 @@ def test_confrontation_trigger_with_empty_npcs_present_fires_empty_actor_list_sp
         npcs_present=[],  # narrator named goblins in prose but omitted them here
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Rux", pack=pack,
+        snap,
+        result,
+        player_name="Rux",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -146,7 +151,10 @@ def test_confrontation_trigger_with_populated_npcs_present_does_not_fire_span(
         npcs_present=[NpcMention(name="Goblin pack", role="hostile", is_new=True)],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Rux", pack=pack,
+        snap,
+        result,
+        player_name="Rux",
+        pack=pack,
         room=room_for(snap),
     )
     span_names = {s.name for s in otel_capture.get_finished_spans()}
@@ -177,7 +185,10 @@ def cac_snap_with_character(cac_snap):
         statuses=[],
     )
     character = Character(
-        core=core, char_class="Ranger", race="Human", backstory="A wanderer.",
+        core=core,
+        char_class="Ranger",
+        race="Human",
+        backstory="A wanderer.",
     )
     snap.characters.append(character)
     return snap, pack, character
@@ -209,7 +220,10 @@ def test_items_gained_lands_on_character_inventory(
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
     assert len(character.core.inventory.items) == 1
@@ -240,7 +254,10 @@ def test_items_gained_normalizes_unknown_category_to_misc(
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
     assert character.core.inventory.items[0]["category"] == "misc"
@@ -263,10 +280,15 @@ def test_items_lost_removes_first_matching_name_case_insensitive(
             "name": "Rusty Compass",
             "description": "A corroded compass.",
             "category": "tool",
-            "value": 0, "weight": 0.1, "rarity": "common",
-            "narrative_weight": 0.3, "tags": [],
-            "equipped": False, "quantity": 1,
-            "uses_remaining": None, "state": "Carried",
+            "value": 0,
+            "weight": 0.1,
+            "rarity": "common",
+            "narrative_weight": 0.3,
+            "tags": [],
+            "equipped": False,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
         }
     )
     assert len(character.core.inventory.items) == 1
@@ -278,14 +300,18 @@ def test_items_lost_removes_first_matching_name_case_insensitive(
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
     assert character.core.inventory.items == []
 
 
 def test_items_discarded_transitions_state_out_of_carried(
-    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+    cac_snap_with_character,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """Story 45-14: narrator-extracted ``items_discarded`` flips a Carried
     item's state to Discarded without removing it. Regression for
@@ -307,24 +333,31 @@ def test_items_discarded_transitions_state_out_of_carried(
             "name": "Bone Spear",
             "description": "A scavenger's barbed shaft.",
             "category": "weapon",
-            "value": 0, "weight": 2.0, "rarity": "common",
-            "narrative_weight": 0.5, "tags": [],
-            "equipped": True, "quantity": 1,
-            "uses_remaining": None, "state": "Carried",
+            "value": 0,
+            "weight": 2.0,
+            "rarity": "common",
+            "narrative_weight": 0.5,
+            "tags": [],
+            "equipped": True,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
         }
     )
 
     result = NarrationTurnResult(
         narration=(
-            "Blutka abandons the spear where it stands — shaft quivering "
-            "in scavenger meat."
+            "Blutka abandons the spear where it stands — shaft quivering in scavenger meat."
         ),
         items_discarded=[
             {"name": "Bone Spear", "category": "weapon"},
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Blutka", pack=pack,
+        snap,
+        result,
+        player_name="Blutka",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -339,8 +372,7 @@ def test_items_discarded_transitions_state_out_of_carried(
     # OTEL lie-detector span fired with the discarded name.
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
     assert "inventory.narrator_extracted" in spans_by_name, (
-        f"expected inventory.narrator_extracted span; "
-        f"got {list(spans_by_name)}"
+        f"expected inventory.narrator_extracted span; got {list(spans_by_name)}"
     )
     span = spans_by_name["inventory.narrator_extracted"]
     assert span.attributes["discarded_count"] == 1
@@ -349,7 +381,8 @@ def test_items_discarded_transitions_state_out_of_carried(
 
 
 def test_items_discarded_unmatched_logs_and_emits_count(
-    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+    cac_snap_with_character,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """No-silent-fallback: when narrator hallucinates a discard for an
     item not in inventory, the span surfaces the miss via
@@ -363,7 +396,10 @@ def test_items_discarded_unmatched_logs_and_emits_count(
         items_discarded=[{"name": "Phantom Lantern"}],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -374,7 +410,8 @@ def test_items_discarded_unmatched_logs_and_emits_count(
 
 
 def test_items_consumed_removes_item_and_emits_otel_span(
-    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+    cac_snap_with_character,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """Story 45-15: narrator-extracted ``items_consumed`` removes the
     used-up consumable from inventory and fires the OTEL lie-detector
@@ -399,24 +436,29 @@ def test_items_consumed_removes_item_and_emits_otel_span(
             "name": "Maintenance Kit",
             "description": "A scuffed tin of patch-foam and foil strips.",
             "category": "consumable",
-            "value": 0, "weight": 0.5, "rarity": "common",
-            "narrative_weight": 0.4, "tags": [],
-            "equipped": False, "quantity": 1,
-            "uses_remaining": None, "state": "Carried",
+            "value": 0,
+            "weight": 0.5,
+            "rarity": "common",
+            "narrative_weight": 0.4,
+            "tags": [],
+            "equipped": False,
+            "quantity": 1,
+            "uses_remaining": None,
+            "state": "Carried",
         }
     )
 
     result = NarrationTurnResult(
-        narration=(
-            "Felix sprays the last of the patch-foam over the gash; the "
-            "kit sputters dry."
-        ),
+        narration=("Felix sprays the last of the patch-foam over the gash; the kit sputters dry."),
         items_consumed=[
             {"name": "Maintenance Kit", "category": "consumable"},
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Felix", pack=pack,
+        snap,
+        result,
+        player_name="Felix",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -427,8 +469,7 @@ def test_items_consumed_removes_item_and_emits_otel_span(
     # AC2: OTEL span fires with the consumed name.
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
     assert "inventory.narrator_extracted" in spans_by_name, (
-        f"expected inventory.narrator_extracted span; "
-        f"got {list(spans_by_name)}"
+        f"expected inventory.narrator_extracted span; got {list(spans_by_name)}"
     )
     span = spans_by_name["inventory.narrator_extracted"]
     assert span.attributes["consumed_count"] == 1
@@ -438,7 +479,8 @@ def test_items_consumed_removes_item_and_emits_otel_span(
 
 
 def test_items_consumed_unmatched_logs_and_emits_count(
-    cac_snap_with_character, otel_capture: InMemorySpanExporter,
+    cac_snap_with_character,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """No-silent-fallback (CLAUDE.md): when narrator hallucinates a
     consume for an item not in inventory, the span surfaces the miss via
@@ -453,7 +495,10 @@ def test_items_consumed_unmatched_logs_and_emits_count(
         items_consumed=[{"name": "Phantom Potion"}],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -479,7 +524,10 @@ def test_items_update_tolerates_missing_characters(cac_snap) -> None:
     )
     # Must not raise.
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Slabgorb", pack=pack,
+        snap,
+        result,
+        player_name="Slabgorb",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -519,7 +567,11 @@ def test_narrator_player_strike_advances_player_metric(snapshot_with_pack):
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, "Sam", pack=pack, from_explicit_action=True,
+        snap,
+        result,
+        "Sam",
+        pack=pack,
+        from_explicit_action=True,
         room=room_for(snap),
     )
     assert snap.encounter.player_metric.current == 2
@@ -551,7 +603,9 @@ def test_narrator_opponent_strike_advances_opponent_metric(snapshot_with_pack):
     snap.encounter = _two_dial_enc()
     result = NarrationTurnResult(
         narration="Promo lunges.",
-        beat_selections=[BeatSelection(actor="Promo", beat_id="attack", outcome=RollOutcome.Success)],
+        beat_selections=[
+            BeatSelection(actor="Promo", beat_id="attack", outcome=RollOutcome.Success)
+        ],
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
@@ -564,7 +618,9 @@ def test_unknown_actor_in_beat_selection_raises(snapshot_with_pack):
     snap.encounter = _two_dial_enc()
     result = NarrationTurnResult(
         narration="Ghost swings.",
-        beat_selections=[BeatSelection(actor="Ghost", beat_id="attack", outcome=RollOutcome.Success)],
+        beat_selections=[
+            BeatSelection(actor="Ghost", beat_id="attack", outcome=RollOutcome.Success)
+        ],
     )
     with pytest.raises(ValueError, match="unknown actor"):
         _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
@@ -572,4 +628,5 @@ def test_unknown_actor_in_beat_selection_raises(snapshot_with_pack):
 
 def test_apply_encounter_updates_no_longer_exported():
     import sidequest.server.narration_apply as mod
+
     assert not hasattr(mod, "apply_encounter_updates")

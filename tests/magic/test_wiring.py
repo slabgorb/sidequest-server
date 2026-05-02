@@ -1,4 +1,5 @@
 """Phase 1 wiring/integration: production-path reachability + plugin completeness."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,11 +44,7 @@ def test_every_plugin_py_file_registers_in_magic_plugins():
     from sidequest.magic.plugin import MAGIC_PLUGINS
 
     plugins_dir = Path(plugins_pkg.__file__).parent
-    py_files = {
-        p.stem
-        for p in plugins_dir.glob("*.py")
-        if p.stem != "__init__"
-    }
+    py_files = {p.stem for p in plugins_dir.glob("*.py") if p.stem != "__init__"}
     assert py_files == set(MAGIC_PLUGINS), (
         f"plugin file/registry mismatch — files: {sorted(py_files)}, "
         f"registered: {sorted(MAGIC_PLUGINS)}. Each .py file must register "
@@ -89,9 +86,7 @@ def test_production_content_loads():
         pytest.skip("SIDEQUEST_GENRE_PACKS not set")
 
     genre_yaml = Path(content_root) / "space_opera" / "magic.yaml"
-    world_yaml = (
-        Path(content_root) / "space_opera" / "worlds" / "coyote_star" / "magic.yaml"
-    )
+    world_yaml = Path(content_root) / "space_opera" / "worlds" / "coyote_star" / "magic.yaml"
     if not (genre_yaml.exists() and world_yaml.exists()):
         pytest.skip("production magic yamls not present")
 

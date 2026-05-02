@@ -4,6 +4,7 @@ This module defines constants and payload schemas. It does NOT emit events —
 emitter wiring belongs to the group that owns the subsystem. Group D reserves
 only; miner then picks them up automatically once Groups B/C emit.
 """
+
 from __future__ import annotations
 
 from typing import Final

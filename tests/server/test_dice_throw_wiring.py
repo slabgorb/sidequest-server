@@ -15,6 +15,7 @@ Task 12 (2026-04-25): Rewritten for dual-dial encounters. The module-level
 skip added in Task 8 (MetricDirection removed) is lifted. Helpers updated
 to use player_metric + opponent_metric.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,13 +53,15 @@ def _install_combat_def(sd) -> None:
         player_metric=MetricDef(name="momentum", starting=0, threshold=10),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef.model_validate({
-                "id": "attack",
-                "label": "Attack",
-                "kind": "strike",
-                "base": 2,
-                "stat_check": "STRENGTH",
-            }),
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STRENGTH",
+                }
+            ),
         ],
     )
     sd.genre_pack.rules.confrontations = [cdef]
@@ -183,7 +186,8 @@ async def test_dice_throw_broadcasts_request_and_result_to_room(
     # Dice messages broadcast in order: DiceRequest first (spectator overlay
     # opens), DiceResult second (everyone sees the outcome).
     dice_broadcasts = [
-        m for m, _exclude in room.broadcasts
+        m
+        for m, _exclude in room.broadcasts
         if isinstance(m, (DiceRequestMessage, DiceResultMessage))
     ]
     assert len(dice_broadcasts) == 2

@@ -22,7 +22,9 @@ class ThemeRotator:
 
     def __init__(self, cooldown_tracks: int = 3) -> None:
         self.cooldown_tracks = cooldown_tracks
-        self._history: deque[str] = deque(maxlen=max(cooldown_tracks, 1) if cooldown_tracks > 0 else 0)
+        self._history: deque[str] = deque(
+            maxlen=max(cooldown_tracks, 1) if cooldown_tracks > 0 else 0
+        )
         self._last_mood: MoodCategory | None = None
         self._resolution_trigger: bool = False
 

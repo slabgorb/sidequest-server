@@ -1,4 +1,5 @@
 """End-to-end: narrator emits magic_working → server applies."""
+
 from __future__ import annotations
 
 import pytest
@@ -81,8 +82,7 @@ def test_apply_magic_working_deep_red_flagged(coyote_snapshot):
     # f"hard_limit_violation:{limit.id}", so a future regression that
     # triggers a different DEEP_RED path won't pass this assertion.
     assert any(
-        f.severity == FlagSeverity.DEEP_RED
-        and f.reason == "hard_limit_violation:no_resurrection"
+        f.severity == FlagSeverity.DEEP_RED and f.reason == "hard_limit_violation:no_resurrection"
         for f in result.flags
     )
 
@@ -189,7 +189,9 @@ def test_narration_apply_pipeline_invokes_apply_magic_working(coyote_snapshot):
     )
 
     _apply_narration_result_to_snapshot(
-        coyote_snapshot, result, player_name="Sira",
+        coyote_snapshot,
+        result,
+        player_name="Sira",
         room=room_for(coyote_snapshot),
     )
 

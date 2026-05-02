@@ -10,6 +10,7 @@ where SPAN_ROUTES is mutated by domain submodules at import. Renames break at
 import time; tests/magic/test_plugin_registry.py enforces completeness in the
 same shape tests/telemetry/test_routing_completeness.py does for spans.
 """
+
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
@@ -26,9 +27,7 @@ class MagicPlugin(Protocol):
     def required_attrs(self) -> set[str]:
         """Plugin-specific MagicWorking fields that MUST be populated."""
 
-    def validate_working(
-        self, working: MagicWorking, config: WorldMagicConfig
-    ) -> list[Flag]:
+    def validate_working(self, working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
         """Plugin-side validation — yellow/red/deep_red flags. Empty list = clean."""
 
 
@@ -44,6 +43,5 @@ def get_plugin(plugin_id: str) -> MagicPlugin:
         return MAGIC_PLUGINS[plugin_id]
     except KeyError as e:
         raise KeyError(
-            f"plugin {plugin_id!r} is not registered; "
-            f"registered plugins: {sorted(MAGIC_PLUGINS)}"
+            f"plugin {plugin_id!r} is not registered; registered plugins: {sorted(MAGIC_PLUGINS)}"
         ) from e

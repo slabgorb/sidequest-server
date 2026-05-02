@@ -96,16 +96,11 @@ async def test_dispatch_opens_turn_span(otel_capture, session_fixture) -> None:
 
     # Only flag truly orphaned spans (parent is None) — grandchildren are fine.
     orphans = [s for s in spans if s.name != "turn" and s.parent is None]
-    assert not orphans, (
-        f"Non-turn spans without any parent (orphaned): "
-        f"{[r.name for r in orphans]}"
-    )
+    assert not orphans, f"Non-turn spans without any parent (orphaned): {[r.name for r in orphans]}"
 
 
 @pytest.mark.asyncio
-async def test_turn_span_carries_required_attributes(
-    otel_capture, session_fixture
-) -> None:
+async def test_turn_span_carries_required_attributes(otel_capture, session_fixture) -> None:
     """The turn span carries turn_id, player_id, and agent_name attributes."""
     sd, handler = session_fixture
 

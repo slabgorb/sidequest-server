@@ -34,7 +34,10 @@ def test_affinity_progress_applied_to_pool() -> None:
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     snap.resources["Luck"] = _pool(name="Luck", current=5.0)
     crossed = apply_resource_patches(
-        snap, affinity_progress=[("Luck", 3)], lore_store=LoreStore(), turn=1,
+        snap,
+        affinity_progress=[("Luck", 3)],
+        lore_store=LoreStore(),
+        turn=1,
     )
     assert snap.resources["Luck"].current == 8.0
     assert crossed == []
@@ -48,12 +51,16 @@ def test_crossing_threshold_mints_lore() -> None:
         narrator_hint="cold eyes",
     )
     snap.resources["Humanity"] = _pool(
-        name="Humanity", current=5.0, thresholds=[threshold],
+        name="Humanity",
+        current=5.0,
+        thresholds=[threshold],
     )
     store = LoreStore()
     crossed = apply_resource_patches(
-        snap, affinity_progress=[("Humanity", -3)],
-        lore_store=store, turn=2,
+        snap,
+        affinity_progress=[("Humanity", -3)],
+        lore_store=store,
+        turn=2,
     )
     # 5 → 2 crosses the 3.0 threshold (old > at and new <= at).
     assert snap.resources["Humanity"].current == 2.0
@@ -67,8 +74,10 @@ def test_unknown_pool_name_raises() -> None:
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     with pytest.raises(UnknownResource):
         apply_resource_patches(
-            snap, affinity_progress=[("Nonsense", 1)],
-            lore_store=LoreStore(), turn=1,
+            snap,
+            affinity_progress=[("Nonsense", 1)],
+            lore_store=LoreStore(),
+            turn=1,
         )
 
 
@@ -76,7 +85,10 @@ def test_empty_affinity_progress_is_noop() -> None:
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
     snap.resources["Luck"] = _pool(name="Luck", current=5.0)
     crossed = apply_resource_patches(
-        snap, affinity_progress=[], lore_store=LoreStore(), turn=1,
+        snap,
+        affinity_progress=[],
+        lore_store=LoreStore(),
+        turn=1,
     )
     assert crossed == []
     assert snap.resources["Luck"].current == 5.0

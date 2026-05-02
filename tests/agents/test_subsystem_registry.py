@@ -1,4 +1,5 @@
 """Tests for the subsystem registry and dispatch bank executor."""
+
 from __future__ import annotations
 
 import pytest
@@ -21,7 +22,9 @@ from sidequest.protocol.dispatch import (
 
 def _tag_all() -> VisibilityTag:
     return VisibilityTag(
-        visible_to="all", perception_fidelity={}, secrets_for=[],
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
         redact_from_narrator_canonical=False,
     )
 
@@ -97,16 +100,22 @@ async def test_run_dispatch_bank_directives_include_decomposer_authored():
     still reach the final directive list."""
     pkg = DispatchPackage(
         turn_id="t",
-        per_player=[PlayerDispatch(
-            player_id="player:P0",
-            raw_action="",
-            resolved=[],
-            dispatch=[],
-            lethality=[],
-            narrator_instructions=[NarratorDirective(
-                kind="must_narrate", payload="a thing", visibility=_tag_all(),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="player:P0",
+                raw_action="",
+                resolved=[],
+                dispatch=[],
+                lethality=[],
+                narrator_instructions=[
+                    NarratorDirective(
+                        kind="must_narrate",
+                        payload="a thing",
+                        visibility=_tag_all(),
+                    )
+                ],
+            )
+        ],
         cross_player=[],
         confidence_global=1.0,
         degraded=False,
@@ -130,6 +139,7 @@ async def test_run_dispatch_bank_subsystem_exception_is_caught():
     try/except infrastructure is still exercised by any subsystem
     that raises — we just need a deterministic raiser.
     """
+
     async def _always_raises(_dispatch):  # noqa: ANN001 — kw-less stub
         raise RuntimeError("test-only stub: always raises")
 
@@ -150,7 +160,8 @@ async def test_run_dispatch_bank_subsystem_exception_is_caught():
 async def test_run_dispatch_bank_threads_context_to_subsystems(minimal_npc_registry):
     """npc_agency receives npc_registry via context kwargs."""
     d = _make_dispatch(
-        "npc_agency", "k1",
+        "npc_agency",
+        "k1",
         params={"npc_name": "Harlan", "situation": "spotted"},
     )
     pkg = _make_package([[d]])
@@ -170,16 +181,19 @@ async def test_run_dispatch_bank_filters_context_per_subsystem_signature(
     ``TypeError: unexpected keyword argument 'npc_registry'``.
     """
     d_npc = _make_dispatch(
-        "npc_agency", "knpc",
+        "npc_agency",
+        "knpc",
         params={"npc_name": "Harlan", "situation": "spotted"},
     )
     d_dd = _make_dispatch(
-        "distinctive_detail_hint", "kdd",
+        "distinctive_detail_hint",
+        "kdd",
         params={"target": "npc:goblin", "hint": "broken tooth"},
     )
     pkg = _make_package([[d_npc], [d_dd]])
     res = await run_dispatch_bank(
-        pkg, context={"npc_registry": minimal_npc_registry},
+        pkg,
+        context={"npc_registry": minimal_npc_registry},
     )
     # Both subsystems ran; neither raised.
     assert res.errors == []
@@ -194,7 +208,8 @@ async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has
     subsystem invokes without TypeError and degrades cleanly to
     ``npc_not_registered``."""
     d = _make_dispatch(
-        "npc_agency", "k_empty",
+        "npc_agency",
+        "k_empty",
         params={"npc_name": "Stranger", "situation": "spotted"},
     )
     pkg = _make_package([[d]])
@@ -220,7 +235,8 @@ async def test_npc_agency_noops_on_missing_npc_name(minimal_npc_registry):
     d = _make_dispatch("npc_agency", "k_no_name", params={})  # no npc_name
     pkg = _make_package([[d]])
     res = await run_dispatch_bank(
-        pkg, context={"npc_registry": minimal_npc_registry},
+        pkg,
+        context={"npc_registry": minimal_npc_registry},
     )
     # Critical: no exceptions captured by the bank's try/except.
     assert res.errors == []
@@ -237,16 +253,22 @@ async def test_run_dispatch_bank_empty_package_still_returns_authored_directives
     """Package with zero dispatches but authored narrator_instructions — directives still flow."""
     pkg = DispatchPackage(
         turn_id="t",
-        per_player=[PlayerDispatch(
-            player_id="p",
-            raw_action="",
-            resolved=[],
-            dispatch=[],
-            lethality=[],
-            narrator_instructions=[NarratorDirective(
-                kind="must_narrate", payload="lone directive", visibility=_tag_all(),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="p",
+                raw_action="",
+                resolved=[],
+                dispatch=[],
+                lethality=[],
+                narrator_instructions=[
+                    NarratorDirective(
+                        kind="must_narrate",
+                        payload="lone directive",
+                        visibility=_tag_all(),
+                    )
+                ],
+            )
+        ],
         cross_player=[],
         confidence_global=1.0,
         degraded=False,
@@ -278,9 +300,13 @@ async def test_run_dispatch_bank_cycle_in_depends_on_records_bank_error(otel_cap
     b = _make_dispatch("reflect_absence", "B", depends_on=["A"])
     pkg = _make_package([[a, b]])
     # Add an authored directive so we can confirm it still flows.
-    pkg.per_player[0].narrator_instructions = [NarratorDirective(
-        kind="must_narrate", payload="authored despite cycle", visibility=_tag_all(),
-    )]
+    pkg.per_player[0].narrator_instructions = [
+        NarratorDirective(
+            kind="must_narrate",
+            payload="authored despite cycle",
+            visibility=_tag_all(),
+        )
+    ]
 
     res = await run_dispatch_bank(pkg)
 
@@ -296,7 +322,9 @@ async def test_run_dispatch_bank_cycle_in_depends_on_records_bank_error(otel_cap
     assert any(d.payload == "authored despite cycle" for d in res.directives)
 
     # Bank span records the cycle-abort reason so GM panel can filter it.
-    bank_spans = [s for s in otel_capture.get_finished_spans() if s.name == "local_dm.dispatch_bank"]
+    bank_spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == "local_dm.dispatch_bank"
+    ]
     assert len(bank_spans) == 1
     assert dict(bank_spans[0].attributes or {}).get("error") == "topo_sort_failure"
 
@@ -320,7 +348,8 @@ async def test_run_dispatch_bank_emits_bank_and_subsystem_spans(otel_capture):
     absent span == the subsystem never ran, no matter what the narrator says."""
     a = _make_dispatch("reflect_absence", "k1")
     b = _make_dispatch(
-        "distinctive_detail_hint", "k2",
+        "distinctive_detail_hint",
+        "k2",
         params={"target": "npc:goblin_2", "hint": "broken tooth"},
     )
     pkg = _make_package([[a, b]])
@@ -364,6 +393,7 @@ async def test_run_dispatch_bank_subsystem_span_records_error(otel_capture):
     history of why this no longer rides on ``npc_agency`` (post
     [P3-MED] no-op fix).
     """
+
     async def _always_raises(_dispatch):  # noqa: ANN001 — kw-less stub
         raise RuntimeError("test-only stub: always raises")
 

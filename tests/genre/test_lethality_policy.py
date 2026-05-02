@@ -1,4 +1,5 @@
 """LethalityPolicy — per-genre lethality tuning (Group C spec §4.4 + §10)."""
+
 from __future__ import annotations
 
 import textwrap
@@ -13,9 +14,7 @@ from sidequest.genre.lethality_policy_loader import (
 )
 from sidequest.genre.models.lethality import LethalityPolicy, VerdictsOnZeroEdge
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def test_minimal_policy_roundtrips():
@@ -71,7 +70,8 @@ def test_must_narrate_and_must_not_narrate_both_non_blank():
 def test_loader_reads_valid_yaml(tmp_path: Path):
     pack_dir = tmp_path / "caverns_and_claudes"
     pack_dir.mkdir()
-    (pack_dir / "lethality_policy.yaml").write_text(textwrap.dedent("""
+    (pack_dir / "lethality_policy.yaml").write_text(
+        textwrap.dedent("""
         genre_key: caverns_and_claudes
         default_reversibility: narrative_only
         verdicts_on_zero_edge:
@@ -80,7 +80,8 @@ def test_loader_reads_valid_yaml(tmp_path: Path):
         soul_md_constraint: "genre_truth:comedic_danger_no_permadeath"
         must_narrate: "A beat of slapstick pain. Keep it comedic."
         must_not_narrate: "graphic permadeath; somber elegy; last-rites speech"
-    """).strip())
+    """).strip()
+    )
     policy = load_lethality_policy(pack_dir)
     assert policy.genre_key == "caverns_and_claudes"
     assert policy.verdicts_on_zero_edge.pc == "humiliated"
@@ -98,7 +99,8 @@ def test_loader_rejects_genre_key_mismatch(tmp_path: Path):
     """genre_key inside the YAML must match the pack directory name."""
     pack_dir = tmp_path / "caverns_and_claudes"
     pack_dir.mkdir()
-    (pack_dir / "lethality_policy.yaml").write_text(textwrap.dedent("""
+    (pack_dir / "lethality_policy.yaml").write_text(
+        textwrap.dedent("""
         genre_key: some_other_pack
         default_reversibility: permanent
         verdicts_on_zero_edge:
@@ -107,7 +109,8 @@ def test_loader_rejects_genre_key_mismatch(tmp_path: Path):
         soul_md_constraint: x
         must_narrate: x
         must_not_narrate: x
-    """).strip())
+    """).strip()
+    )
     with pytest.raises(ValueError) as exc:
         load_lethality_policy(pack_dir)
     assert "genre_key mismatch" in str(exc.value)

@@ -8,6 +8,7 @@ The helper we test is pure:
   inputs:  event_log (accepts append), filter (project), envelope, players, view
   outputs: (canonical appended once) + (list of sent frames per include=True)
 """
+
 import pytest
 
 # Import the per-turn write-split under test. Exact name depends on where
@@ -28,12 +29,14 @@ class _FakeEventLog:
 class _FakeFilterAllowAll:
     def project(self, *, envelope, view, player_id):
         from sidequest.game.projection_filter import FilterDecision
+
         return FilterDecision(include=True, payload_json=envelope.payload_json)
 
 
 class _FakeFilterP1Only:
     def project(self, *, envelope, view, player_id):
         from sidequest.game.projection_filter import FilterDecision
+
         if player_id == "p1":
             return FilterDecision(include=True, payload_json=envelope.payload_json)
         return FilterDecision(include=False, payload_json="")
@@ -56,7 +59,8 @@ def fake_filter_p1_only():
 
 def test_canonical_save_gets_unfiltered_event(fake_event_log, fake_filter_allow_all):
     apply_turn_writes_for_test(
-        event_log=fake_event_log, filter=fake_filter_allow_all,
+        event_log=fake_event_log,
+        filter=fake_filter_allow_all,
         envelope={"kind": "NARRATION", "payload": {"text": "X"}},
         connected_players=["p1", "p2"],
     )
@@ -65,9 +69,12 @@ def test_canonical_save_gets_unfiltered_event(fake_event_log, fake_filter_allow_
 
 def test_peer_frames_sent_only_when_filter_includes(fake_event_log, fake_filter_p1_only):
     sent = apply_turn_writes_for_test(
-        event_log=fake_event_log, filter=fake_filter_p1_only,
-        envelope={"kind": "NARRATION",
-                  "payload": {"text": "X", "_visibility": {"visible_to": ["p1"]}}},
+        event_log=fake_event_log,
+        filter=fake_filter_p1_only,
+        envelope={
+            "kind": "NARRATION",
+            "payload": {"text": "X", "_visibility": {"visible_to": ["p1"]}},
+        },
         connected_players=["p1", "p2"],
     )
     assert [f.player_id for f in sent] == ["p1"]
@@ -75,7 +82,8 @@ def test_peer_frames_sent_only_when_filter_includes(fake_event_log, fake_filter_
 
 def test_allow_all_filter_sends_to_every_connected_player(fake_event_log, fake_filter_allow_all):
     sent = apply_turn_writes_for_test(
-        event_log=fake_event_log, filter=fake_filter_allow_all,
+        event_log=fake_event_log,
+        filter=fake_filter_allow_all,
         envelope={"kind": "NARRATION", "payload": {"text": "Dawn"}},
         connected_players=["p1", "p2", "p3"],
     )
@@ -84,7 +92,8 @@ def test_allow_all_filter_sends_to_every_connected_player(fake_event_log, fake_f
 
 def test_empty_connected_player_list_produces_no_frames(fake_event_log, fake_filter_allow_all):
     sent = apply_turn_writes_for_test(
-        event_log=fake_event_log, filter=fake_filter_allow_all,
+        event_log=fake_event_log,
+        filter=fake_filter_allow_all,
         envelope={"kind": "NARRATION", "payload": {"text": "X"}},
         connected_players=[],
     )

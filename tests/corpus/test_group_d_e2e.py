@@ -5,6 +5,7 @@ This is the wiring test (CLAUDE.md: "Every Test Suite Needs a Wiring Test").
 Individual units are covered in test_miner.py / test_writer.py / test_diff.py;
 this test proves their contracts line up when chained.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,9 +37,11 @@ def test_group_d_pipeline_end_to_end(tmp_path: Path) -> None:
         assert parsed == original, "JSONL round-trip changed a pair — contract drift"
 
     # Diff per-player fixtures and confirm round 2 diverges (Task 0 invariant).
-    divergences = list(diff_per_player(
-        saves=[FIXTURES / "per_player_a.db", FIXTURES / "per_player_b.db"],
-    ))
+    divergences = list(
+        diff_per_player(
+            saves=[FIXTURES / "per_player_a.db", FIXTURES / "per_player_b.db"],
+        )
+    )
     diverging_rounds = [d.round_number for d in divergences]
     assert 2 in diverging_rounds
     assert 1 not in diverging_rounds

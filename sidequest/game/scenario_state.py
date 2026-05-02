@@ -99,9 +99,7 @@ class ScenarioState(BaseModel):
         # fall back to the first scenario NPC id. The "unknown"
         # fallback is unreachable for any well-formed pack, so the
         # deterministic first-NPC choice avoids a magic string.
-        guilty_candidates = [
-            s.id for s in pack.assignment_matrix.suspects if s.can_be_guilty
-        ]
+        guilty_candidates = [s.id for s in pack.assignment_matrix.suspects if s.can_be_guilty]
         if guilty_candidates:
             guilty_npc = picker.choice(guilty_candidates)
         elif pack.npcs:
@@ -148,6 +146,7 @@ class ScenarioState(BaseModel):
     def discover_clue(self, clue_id: str) -> None:
         """Mark a clue as discovered."""
         from sidequest.telemetry.spans import SPAN_SCENARIO_ADVANCE, Span
+
         already = clue_id in self.discovered_clues
         with Span.open(
             SPAN_SCENARIO_ADVANCE,

@@ -55,7 +55,9 @@ def _make_handler(
     )
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id=socket_id, out_queue=queue,
+        registry=registry,
+        socket_id=socket_id,
+        out_queue=queue,
     )
     return handler, queue
 

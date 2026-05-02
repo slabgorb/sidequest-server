@@ -143,9 +143,7 @@ def caverns_pack() -> GenrePack:
 
 
 class TestSeedFromGenrePack:
-    def test_adds_history_geography_cosmology_and_factions(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_adds_history_geography_cosmology_and_factions(self, caverns_pack: GenrePack) -> None:
         store = LoreStore()
         added = seed_lore_from_genre_pack(store, caverns_pack)
         # caverns has non-empty history/geography/cosmology + multiple factions.
@@ -161,9 +159,7 @@ class TestSeedFromGenrePack:
         # Rust bucket cosmology → History (seeding.rs line 47).
         assert cosmology.category == LoreCategory.History
 
-    def test_faction_fragment_carries_name_metadata(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_faction_fragment_carries_name_metadata(self, caverns_pack: GenrePack) -> None:
         store = LoreStore()
         seed_lore_from_genre_pack(store, caverns_pack)
         faction_frags = store.query_by_category(LoreCategory.Faction)
@@ -173,9 +169,7 @@ class TestSeedFromGenrePack:
         assert "faction_name" in frag.metadata
         assert frag.metadata["faction_name"]
 
-    def test_idempotent_second_call_adds_nothing(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_idempotent_second_call_adds_nothing(self, caverns_pack: GenrePack) -> None:
         store = LoreStore()
         first = seed_lore_from_genre_pack(store, caverns_pack)
         second = seed_lore_from_genre_pack(store, caverns_pack)
@@ -194,9 +188,7 @@ class TestSeedFromWorld:
     from ``space_opera``'s genre-level lore). These tests exercise the
     world-scoped variant of the seeder added by pingpong 2026-04-30."""
 
-    def test_world_lore_seeded_with_world_scoped_ids(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_world_lore_seeded_with_world_scoped_ids(self, caverns_pack: GenrePack) -> None:
         worlds = caverns_pack.worlds
         if not worlds:
             pytest.skip("caverns pack has no worlds — cannot exercise world seed")
@@ -208,16 +200,12 @@ class TestSeedFromWorld:
             pytest.skip(f"world {world_slug!r} has no populated lore fields")
         # Ids must be world-scoped so a future world swap doesn't leak
         # the prior world's lore into the new world's RAG queries.
-        assert any(
-            fid.startswith(f"lore_world_{world_slug}_") for fid in store.fragments
-        ), (
+        assert any(fid.startswith(f"lore_world_{world_slug}_") for fid in store.fragments), (
             f"World seeder must scope fragment ids by world_slug "
             f"({world_slug!r}); got: {list(store.fragments)}"
         )
 
-    def test_world_lore_carries_world_slug_metadata(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_world_lore_carries_world_slug_metadata(self, caverns_pack: GenrePack) -> None:
         worlds = caverns_pack.worlds
         if not worlds:
             pytest.skip("caverns pack has no worlds")
@@ -233,9 +221,7 @@ class TestSeedFromWorld:
                 "re-parsing the fragment id."
             )
 
-    def test_world_seed_does_not_collide_with_genre_seed(
-        self, caverns_pack: GenrePack
-    ) -> None:
+    def test_world_seed_does_not_collide_with_genre_seed(self, caverns_pack: GenrePack) -> None:
         """Wiring contract: in production both seeders run against the
         same store. The genre seeder uses ``lore_genre_*`` ids; the
         world seeder uses ``lore_world_<slug>_*``. They must NOT

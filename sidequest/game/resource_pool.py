@@ -95,9 +95,7 @@ class NotVoluntary(ResourcePatchError):
     """
 
     def __init__(self, name: str) -> None:
-        super().__init__(
-            f"resource '{name}' is not voluntary — player cannot spend it"
-        )
+        super().__init__(f"resource '{name}' is not voluntary — player cannot spend it")
         self.name = name
 
 

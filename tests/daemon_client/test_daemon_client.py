@@ -73,9 +73,7 @@ class _FakeDaemon:
             self.method_entered[method] = asyncio.Event()
         return self.method_entered[method]
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             line = await reader.readline()
             if not line:
@@ -136,9 +134,7 @@ async def test_daemon_unavailable_when_socket_missing(short_sock: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_daemon_error_surfaces_structured_exception(short_sock: Path) -> None:
-    daemon = _FakeDaemon(
-        reply={"error": {"code": "GENERATION_FAILED", "message": "boom"}}
-    )
+    daemon = _FakeDaemon(reply={"error": {"code": "GENERATION_FAILED", "message": "boom"}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
@@ -209,9 +205,7 @@ async def test_embed_unavailable_when_socket_missing(short_sock: Path) -> None:
 async def test_embed_daemon_error_surfaces_structured_exception(
     short_sock: Path,
 ) -> None:
-    daemon = _FakeDaemon(
-        reply={"error": {"code": "EMBED_FAILED", "message": "model offline"}}
-    )
+    daemon = _FakeDaemon(reply={"error": {"code": "EMBED_FAILED", "message": "model offline"}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
@@ -228,9 +222,7 @@ async def test_embed_empty_text_surfaces_invalid_request(short_sock: Path) -> No
     """The daemon rejects empty text with INVALID_REQUEST; the client must
     surface that as a DaemonRequestError with the same code rather than
     swallowing it or returning a default."""
-    daemon = _FakeDaemon(
-        reply={"error": {"code": "INVALID_REQUEST", "message": "empty text"}}
-    )
+    daemon = _FakeDaemon(reply={"error": {"code": "INVALID_REQUEST", "message": "empty text"}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
@@ -349,9 +341,7 @@ async def test_embed_zero_length_embedding_surfaces_invalid_response(
 ) -> None:
     """HIGH fix: [] would otherwise propagate to requeue_dimension_mismatched(0)
     and wipe the entire store. Refuse at the client boundary."""
-    daemon = _FakeDaemon(
-        reply={"result": {"embedding": [], "model": "m", "latency_ms": 1}}
-    )
+    daemon = _FakeDaemon(reply={"result": {"embedding": [], "model": "m", "latency_ms": 1}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
@@ -367,9 +357,7 @@ async def test_embed_zero_length_embedding_surfaces_invalid_response(
 async def test_embed_non_list_embedding_surfaces_invalid_response(
     short_sock: Path,
 ) -> None:
-    daemon = _FakeDaemon(
-        reply={"result": {"embedding": "oops", "model": "m", "latency_ms": 1}}
-    )
+    daemon = _FakeDaemon(reply={"result": {"embedding": "oops", "model": "m", "latency_ms": 1}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)
@@ -404,9 +392,7 @@ async def test_embed_bool_elements_surface_invalid_response(
 async def test_embed_wrong_model_type_surfaces_invalid_response(
     short_sock: Path,
 ) -> None:
-    daemon = _FakeDaemon(
-        reply={"result": {"embedding": [0.1], "model": 42, "latency_ms": 1}}
-    )
+    daemon = _FakeDaemon(reply={"result": {"embedding": [0.1], "model": 42, "latency_ms": 1}})
     await daemon.start(short_sock)
     try:
         client = DaemonClient(socket_path=short_sock, timeout_seconds=2.0)

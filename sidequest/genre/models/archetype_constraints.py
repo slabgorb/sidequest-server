@@ -72,6 +72,7 @@ class ArchetypeConstraints(BaseModel):
         Returns None if the pairing is not listed in any weight category.
         Port of Rust ArchetypeConstraints::pairing_weight().
         """
+
         def matches(pair: list[str]) -> bool:
             return len(pair) == 2 and pair[0] == jungian and pair[1] == rpg_role
 

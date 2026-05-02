@@ -42,6 +42,6 @@ def test_read_since_zero_returns_all(store):
 def test_latest_seq(store):
     log = EventLog(store)
     assert log.latest_seq() == 0
-    log.append(kind="NARRATION", payload_json='{}')
-    log.append(kind="STATE_UPDATE", payload_json='{}')
+    log.append(kind="NARRATION", payload_json="{}")
+    log.append(kind="STATE_UPDATE", payload_json="{}")
     assert log.latest_seq() == 2

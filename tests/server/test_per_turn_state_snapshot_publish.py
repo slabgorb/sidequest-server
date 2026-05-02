@@ -9,6 +9,7 @@ so the GM panel can verify state advancement; this test pins that
 contract — and that the payload includes the rich snapshot dump the
 State panel needs to render characters/NPCs/inventory.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -55,7 +56,9 @@ async def test_execute_narration_turn_publishes_game_state_snapshot(
     from sidequest.server.session_handler import _build_turn_context
 
     await handler._execute_narration_turn(  # noqa: SLF001 — testing internal seam
-        sd, "I look around.", _build_turn_context(sd),
+        sd,
+        "I look around.",
+        _build_turn_context(sd),
     )
 
     snapshots = [c for c in captured if c[0] == "game_state_snapshot"]
@@ -106,6 +109,7 @@ async def test_publish_failure_does_not_crash_turn(
     # flowing — we're isolating the safety wrapper around the
     # game_state_snapshot publish specifically.
     from sidequest.server import websocket_session_handler as wsh
+
     real_publish = wsh._watcher_publish
 
     def selectively_explosive_publish(
@@ -133,6 +137,8 @@ async def test_publish_failure_does_not_crash_turn(
 
     # Must not raise.
     msgs = await handler._execute_narration_turn(  # noqa: SLF001
-        sd, "Sit a moment.", _build_turn_context(sd),
+        sd,
+        "Sit a moment.",
+        _build_turn_context(sd),
     )
     assert msgs is not None

@@ -25,9 +25,7 @@ def _refuse_save_overwrite(path: Path) -> None:
         resolved.relative_to(save_root)
     except (ValueError, OSError):
         return  # not under saves root, or path doesn't exist yet — safe
-    raise ValueError(
-        f"refusing to write to a path under {_SAVE_ROOT}: {path}"
-    )
+    raise ValueError(f"refusing to write to a path under {_SAVE_ROOT}: {path}")
 
 
 def write_pairs(path: Path, pairs: Iterable[TrainingPair]) -> None:

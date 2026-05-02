@@ -11,6 +11,7 @@ inside the `Span.open` context is intentional.
 Per the magic.py precedent, None-valued attributes are coerced to "" so
 OTEL doesn't drop them.
 """
+
 from __future__ import annotations
 
 from ._core import FLAT_ONLY_SPANS
@@ -20,11 +21,13 @@ SPAN_RIG_BOND_EVENT = "rig.bond_event"
 SPAN_RIG_VOICE_REGISTER_CHANGE = "rig.voice_register_change"
 SPAN_RIG_CONFRONTATION_OUTCOME = "rig.confrontation_outcome"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_RIG_BOND_EVENT,
-    SPAN_RIG_VOICE_REGISTER_CHANGE,
-    SPAN_RIG_CONFRONTATION_OUTCOME,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_RIG_BOND_EVENT,
+        SPAN_RIG_VOICE_REGISTER_CHANGE,
+        SPAN_RIG_CONFRONTATION_OUTCOME,
+    }
+)
 
 
 def emit_rig_bond_event(
@@ -41,19 +44,22 @@ def emit_rig_bond_event(
     confrontation_id: str | None,
     register: str,
 ) -> None:
-    with Span.open(SPAN_RIG_BOND_EVENT, attrs={
-        "chassis_id": chassis_id,
-        "actor_id": actor_id,
-        "side": side,
-        "delta_character": delta_character,
-        "delta_chassis": delta_chassis,
-        "tier_character_before": tier_character_before,
-        "tier_character_after": tier_character_after,
-        "tier_chassis_before": tier_chassis_before,
-        "tier_chassis_after": tier_chassis_after,
-        "confrontation_id": confrontation_id or "",
-        "register": register,
-    }):
+    with Span.open(
+        SPAN_RIG_BOND_EVENT,
+        attrs={
+            "chassis_id": chassis_id,
+            "actor_id": actor_id,
+            "side": side,
+            "delta_character": delta_character,
+            "delta_chassis": delta_chassis,
+            "tier_character_before": tier_character_before,
+            "tier_character_after": tier_character_after,
+            "tier_chassis_before": tier_chassis_before,
+            "tier_chassis_after": tier_chassis_after,
+            "confrontation_id": confrontation_id or "",
+            "register": register,
+        },
+    ):
         pass
 
 
@@ -65,13 +71,16 @@ def emit_rig_voice_register_change(
     register_after: str,
     triggering_event: str,
 ) -> None:
-    with Span.open(SPAN_RIG_VOICE_REGISTER_CHANGE, attrs={
-        "chassis_id": chassis_id,
-        "actor_id": actor_id,
-        "register_before": register_before,
-        "register_after": register_after,
-        "triggering_event": triggering_event,
-    }):
+    with Span.open(
+        SPAN_RIG_VOICE_REGISTER_CHANGE,
+        attrs={
+            "chassis_id": chassis_id,
+            "actor_id": actor_id,
+            "register_before": register_before,
+            "register_after": register_after,
+            "triggering_event": triggering_event,
+        },
+    ):
         pass
 
 
@@ -83,11 +92,14 @@ def emit_rig_confrontation_outcome(
     branch: str,
     outputs: list[str],
 ) -> None:
-    with Span.open(SPAN_RIG_CONFRONTATION_OUTCOME, attrs={
-        "chassis_id": chassis_id,
-        "confrontation_id": confrontation_id,
-        "register": register,
-        "branch": branch,
-        "outputs": list(outputs),
-    }):
+    with Span.open(
+        SPAN_RIG_CONFRONTATION_OUTCOME,
+        attrs={
+            "chassis_id": chassis_id,
+            "confrontation_id": confrontation_id,
+            "register": register,
+            "branch": branch,
+            "outputs": list(outputs),
+        },
+    ):
         pass

@@ -9,6 +9,7 @@ multiplayer of the same world on the same day are *different games* and must
 have different slugs — otherwise the second mode is silently downgraded to
 the first (CLAUDE.md "No Silent Fallbacks").
 """
+
 from __future__ import annotations
 
 import re

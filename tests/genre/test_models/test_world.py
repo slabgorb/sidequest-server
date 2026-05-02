@@ -8,11 +8,13 @@ from sidequest.genre.models import CartographyConfig, NavigationMode, Region, Wo
 class TestWorldConfig:
     def test_extra_allowed(self) -> None:
         """WorldConfig uses flatten extras — unknown fields should be accepted."""
-        wc = WorldConfig.model_validate({
-            "name": "Test World",
-            "description": "A test",
-            "custom_field": "extra value",
-        })
+        wc = WorldConfig.model_validate(
+            {
+                "name": "Test World",
+                "description": "A test",
+                "custom_field": "extra value",
+            }
+        )
         assert wc.name == "Test World"
 
     def test_roundtrip(self) -> None:
@@ -39,13 +41,17 @@ class TestCartographyConfig:
         use ``#[serde(deny_unknown_fields)]``; the Python model follows
         suit so authored flavor fields don't fail the whole pack load.
         """
-        cart = CartographyConfig.model_validate({
-            "world_name": "T", "starting_region": "s",
-            "map_style": "b", "navigation_mode": "region",
-            "bogus": True,
-            "landmarks": ["Dockside Clocktower"],
-            "train_cars": {"engine": {}},
-        })
+        cart = CartographyConfig.model_validate(
+            {
+                "world_name": "T",
+                "starting_region": "s",
+                "map_style": "b",
+                "navigation_mode": "region",
+                "bogus": True,
+                "landmarks": ["Dockside Clocktower"],
+                "train_cars": {"engine": {}},
+            }
+        )
         # Extras are accepted and dropped — no attribute on the model.
         assert not hasattr(cart, "bogus")
         assert not hasattr(cart, "train_cars")
@@ -66,12 +72,14 @@ class TestCartographyConfig:
 class TestRegion:
     def test_extra_allowed(self) -> None:
         """Region uses flatten extras — extra fields accepted."""
-        r = Region.model_validate({
-            "name": "Forest",
-            "summary": "A dense forest",
-            "description": "Trees everywhere",
-            "chase_profile": {"speed": 3},
-        })
+        r = Region.model_validate(
+            {
+                "name": "Forest",
+                "summary": "A dense forest",
+                "description": "Trees everywhere",
+                "chase_profile": {"speed": 3},
+            }
+        )
         assert r.name == "Forest"
 
     def test_roundtrip(self) -> None:

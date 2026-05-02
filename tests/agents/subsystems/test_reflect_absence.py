@@ -2,6 +2,7 @@
 
 Spec: decomposer-design.md §6.3 — unresolvable referent path.
 """
+
 from __future__ import annotations
 
 import pytest

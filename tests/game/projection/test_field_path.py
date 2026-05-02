@@ -1,4 +1,5 @@
 """Field-path read/write with dotted + [*] wildcards."""
+
 from __future__ import annotations
 
 from sidequest.game.projection.field_path import apply_mask, read_path

@@ -56,8 +56,7 @@ def test_handshake_span_is_routed_as_state_transition() -> None:
         "(it mutates quest_log/active_stakes), not a flat span."
     )
     assert route.component, (
-        "trope.resolution_handshake route must declare a component name "
-        "for GM panel grouping."
+        "trope.resolution_handshake route must declare a component name for GM panel grouping."
     )
 
 
@@ -163,9 +162,7 @@ def test_span_trope_resolve_routed_as_state_transition() -> None:
     )
     route = SPAN_ROUTES[SPAN_TROPE_RESOLVE]
     assert route.event_type == "state_transition"
-    assert route.component, (
-        "trope_resolve route must declare a component for panel grouping."
-    )
+    assert route.component, "trope_resolve route must declare a component for panel grouping."
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +181,7 @@ def test_handshake_span_does_not_break_routing_completeness() -> None:
 
     from sidequest.telemetry import spans as _spans
 
-    constants = [
-        name for name in dir(_spans)
-        if name.startswith("SPAN_") and name.isupper()
-    ]
+    constants = [name for name in dir(_spans) if name.startswith("SPAN_") and name.isupper()]
     routed = set(_spans.SPAN_ROUTES)
     flat = set(_spans.FLAT_ONLY_SPANS)
 
@@ -202,16 +196,12 @@ def test_handshake_span_does_not_break_routing_completeness() -> None:
         if value not in routed and value not in flat:
             missing.append((name, value))
 
-    assert not overlap, (
-        f"span constants in BOTH SPAN_ROUTES and FLAT_ONLY_SPANS: {overlap}"
-    )
+    assert not overlap, f"span constants in BOTH SPAN_ROUTES and FLAT_ONLY_SPANS: {overlap}"
     # Pre-existing missing entries are tracked elsewhere; assert that the
     # newly added handshake constant in particular is registered.
     from sidequest.telemetry.spans import SPAN_TROPE_RESOLUTION_HANDSHAKE
 
-    handshake_missing = [
-        (n, v) for n, v in missing if v == SPAN_TROPE_RESOLUTION_HANDSHAKE
-    ]
+    handshake_missing = [(n, v) for n, v in missing if v == SPAN_TROPE_RESOLUTION_HANDSHAKE]
     assert not handshake_missing, (
         "trope.resolution_handshake constant exists but is neither in "
         "SPAN_ROUTES nor in FLAT_ONLY_SPANS — registration was forgotten."
@@ -266,8 +256,7 @@ def test_trope_resolution_handshake_span_helper_emits_named_span() -> None:
             pass
 
         spans = [
-            s for s in exporter.get_finished_spans()
-            if s.name == SPAN_TROPE_RESOLUTION_HANDSHAKE
+            s for s in exporter.get_finished_spans() if s.name == SPAN_TROPE_RESOLUTION_HANDSHAKE
         ]
         assert len(spans) == 1, (
             "trope_resolution_handshake_span must emit exactly one span; "

@@ -7,6 +7,7 @@ deserializes via ``model_validate_json()``, so ``magic_state`` roundtrips for
 free as a declared Pydantic field.  These tests prove that claim end-to-end
 against a real in-memory SQLite store (same code path as production).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -105,9 +106,7 @@ def test_compute_delta_after_load_detects_no_change(world_config, store) -> None
     """Round-trip a snapshot, then compute_delta(before, after) must be is_empty()."""
     magic = MagicState.from_config(world_config)
     magic.add_character("sira_mendes")
-    magic.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.55
-    )
+    magic.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.55)
 
     snap = GameSnapshot(
         genre_slug="space_opera",

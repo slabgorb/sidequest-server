@@ -57,7 +57,9 @@ async def test_player_seat_claim_broadcasts_seat_confirmed(tmp_path: Path) -> No
     )
     out_queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id="sock-alice", out_queue=out_queue,
+        registry=registry,
+        socket_id="sock-alice",
+        out_queue=out_queue,
     )
 
     connect = GameMessage.model_validate(
@@ -86,9 +88,7 @@ async def test_player_seat_claim_broadcasts_seat_confirmed(tmp_path: Path) -> No
         queued: list[object] = []
         while not out_queue.empty():
             queued.append(out_queue.get_nowait())
-        confirmed = [
-            m for m in queued if getattr(m, "type", None) == MessageType.SEAT_CONFIRMED
-        ]
+        confirmed = [m for m in queued if getattr(m, "type", None) == MessageType.SEAT_CONFIRMED]
 
     assert confirmed, (
         f"PLAYER_SEAT must produce a SEAT_CONFIRMED (via handler return or "

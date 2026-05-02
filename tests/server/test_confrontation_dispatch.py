@@ -3,6 +3,7 @@
 Task 12 (2026-04-25): Rewritten for dual-dial schema — ConfrontationDef now
 requires player_metric + opponent_metric; BeatDef now uses kind + base.
 """
+
 from __future__ import annotations
 
 from sidequest.game.encounter import (
@@ -30,10 +31,17 @@ def _def(confrontation_type: str, label: str, category: str) -> ConfrontationDef
         category=category,
         player_metric=MetricDef(name="momentum", starting=0, threshold=10),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
-        beats=[BeatDef.model_validate({
-            "id": "attack", "label": "Attack",
-            "kind": "strike", "base": 1, "stat_check": "STR",
-        })],
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 1,
+                    "stat_check": "STR",
+                }
+            )
+        ],
     )
 
 
@@ -53,8 +61,10 @@ def _encounter(*, mood_override: str | None = None) -> StructuredEncounter:
 
 
 def test_find_confrontation_def_returns_match_by_type() -> None:
-    defs = [_def("combat", "Dungeon Combat", "combat"),
-            _def("chase", "Corridor Pursuit", "movement")]
+    defs = [
+        _def("combat", "Dungeon Combat", "combat"),
+        _def("chase", "Corridor Pursuit", "movement"),
+    ]
     match = find_confrontation_def(defs, "combat")
     assert match is not None
     assert match.confrontation_type == "combat"

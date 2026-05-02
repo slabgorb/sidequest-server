@@ -12,6 +12,7 @@ Per ``CLAUDE.md`` "Verify Wiring, Not Just Existence": the unit test in
 right fields from a fake span; this proves a real narration apply opens
 that span.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -80,7 +81,9 @@ async def test_quest_updates_emit_state_transition_via_span_route(
         narration="Vex offers a deal.",
         quest_updates={"deal_with_vex": "active"},
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Rux", room=room_for(snapshot)
+    )
 
     # Cross-thread coroutine hop needs a tick.
     await asyncio.sleep(0.05)
@@ -95,8 +98,7 @@ async def test_quest_updates_emit_state_transition_via_span_route(
     typed = [
         e
         for e in captured
-        if e["event_type"] == "state_transition"
-        and e["component"] == "quest_log"
+        if e["event_type"] == "state_transition" and e["component"] == "quest_log"
     ]
     assert typed, (
         "quest_update span never reached the hub as state_transition — "
@@ -117,10 +119,8 @@ async def test_quest_updates_emit_state_transition_via_span_route(
     flat_quest = [
         e
         for e in captured
-        if e["event_type"] == "state_transition"
-        and e["component"] == "quest_log"
+        if e["event_type"] == "state_transition" and e["component"] == "quest_log"
     ]
     assert len(flat_quest) == 1, (
-        "expected exactly one state_transition for quest_log "
-        f"(got {len(flat_quest)}: {flat_quest})"
+        f"expected exactly one state_transition for quest_log (got {len(flat_quest)}: {flat_quest})"
     )

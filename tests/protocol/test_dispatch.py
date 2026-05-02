@@ -1,4 +1,5 @@
 """Tests for DispatchPackage types (Group B, Local DM decomposer output contract)."""
+
 from __future__ import annotations
 
 import json
@@ -110,10 +111,20 @@ def test_dispatch_package_full_roundtrip():
 def test_visibility_tag_defaults_are_explicit():
     """Visibility tags require explicit visible_to — no implicit fallback."""
     # 'all' is a conscious choice; model should accept it.
-    tag = VisibilityTag(visible_to="all", perception_fidelity={}, secrets_for=[], redact_from_narrator_canonical=False)
+    tag = VisibilityTag(
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
+        redact_from_narrator_canonical=False,
+    )
     assert tag.visible_to == "all"
     # Player-list is also accepted.
-    tag2 = VisibilityTag(visible_to=["player:Alice"], perception_fidelity={"player:Alice": "full"}, secrets_for=[], redact_from_narrator_canonical=False)
+    tag2 = VisibilityTag(
+        visible_to=["player:Alice"],
+        perception_fidelity={"player:Alice": "full"},
+        secrets_for=[],
+        redact_from_narrator_canonical=False,
+    )
     assert tag2.visible_to == ["player:Alice"]
 
 
@@ -161,14 +172,16 @@ def test_dispatch_package_degraded_reason_required_when_degraded():
 
 def test_dispatch_package_parses_from_llm_style_json():
     """The decomposer emits raw JSON; parser must accept it."""
-    raw = json.dumps({
-        "turn_id": "turn-x",
-        "per_player": [],
-        "cross_player": [],
-        "confidence_global": 0.9,
-        "degraded": False,
-        "degraded_reason": None,
-    })
+    raw = json.dumps(
+        {
+            "turn_id": "turn-x",
+            "per_player": [],
+            "cross_player": [],
+            "confidence_global": 0.9,
+            "degraded": False,
+            "degraded_reason": None,
+        }
+    )
     pkg = DispatchPackage.model_validate_json(raw)
     assert pkg.turn_id == "turn-x"
 
@@ -186,7 +199,9 @@ def test_cross_action_rejects_participants_not_in_witnesses():
 def test_dispatch_package_rejects_duplicate_idempotency_keys_within_player():
     """Validator: idempotency_keys must be unique across per_player dispatches."""
     tag = VisibilityTag(
-        visible_to="all", perception_fidelity={}, secrets_for=[],
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
         redact_from_narrator_canonical=False,
     )
     dup = SubsystemDispatch(
@@ -198,31 +213,61 @@ def test_dispatch_package_rejects_duplicate_idempotency_keys_within_player():
     )
     with pytest.raises(ValidationError):
         DispatchPackage(
-            turn_id="t", per_player=[
-                PlayerDispatch(player_id="p", raw_action="",
-                               resolved=[], dispatch=[dup, dup],
-                               lethality=[], narrator_instructions=[]),
+            turn_id="t",
+            per_player=[
+                PlayerDispatch(
+                    player_id="p",
+                    raw_action="",
+                    resolved=[],
+                    dispatch=[dup, dup],
+                    lethality=[],
+                    narrator_instructions=[],
+                ),
             ],
-            cross_player=[], confidence_global=1.0, degraded=False, degraded_reason=None,
+            cross_player=[],
+            confidence_global=1.0,
+            degraded=False,
+            degraded_reason=None,
         )
 
 
 def test_dispatch_package_rejects_duplicate_idempotency_keys_across_per_and_cross_player():
     """Validator: same idempotency_key in per_player and cross_player must fail (Fix 2)."""
     tag = VisibilityTag(
-        visible_to="all", perception_fidelity={}, secrets_for=[],
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
         redact_from_narrator_canonical=False,
     )
-    d_per = SubsystemDispatch(subsystem="reflect_absence", params={}, depends_on=[],
-                              idempotency_key="idem:collision", visibility=tag)
-    d_cross = SubsystemDispatch(subsystem="npc_agency", params={"npc_name": "x"}, depends_on=[],
-                                idempotency_key="idem:collision", visibility=tag)
+    d_per = SubsystemDispatch(
+        subsystem="reflect_absence",
+        params={},
+        depends_on=[],
+        idempotency_key="idem:collision",
+        visibility=tag,
+    )
+    d_cross = SubsystemDispatch(
+        subsystem="npc_agency",
+        params={"npc_name": "x"},
+        depends_on=[],
+        idempotency_key="idem:collision",
+        visibility=tag,
+    )
     with pytest.raises(ValidationError):
         DispatchPackage(
             turn_id="t",
-            per_player=[PlayerDispatch(player_id="p", raw_action="",
-                                       resolved=[], dispatch=[d_per],
-                                       lethality=[], narrator_instructions=[])],
+            per_player=[
+                PlayerDispatch(
+                    player_id="p",
+                    raw_action="",
+                    resolved=[],
+                    dispatch=[d_per],
+                    lethality=[],
+                    narrator_instructions=[],
+                )
+            ],
             cross_player=[CrossAction(participants=["p"], witnesses=["p"], dispatch=[d_cross])],
-            confidence_global=1.0, degraded=False, degraded_reason=None,
+            confidence_global=1.0,
+            degraded=False,
+            degraded_reason=None,
         )

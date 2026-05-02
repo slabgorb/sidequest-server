@@ -27,7 +27,9 @@ def _enc(*, p_metric=4, o_metric=7):
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(name="momentum", current=p_metric, starting=0, threshold=10),
-        opponent_metric=EncounterMetric(name="momentum", current=o_metric, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(
+            name="momentum", current=o_metric, starting=0, threshold=10
+        ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
             EncounterActor(name="Promo", role="combatant", side="opponent"),
@@ -35,7 +37,9 @@ def _enc(*, p_metric=4, o_metric=7):
     )
 
 
-def test_yield_solo_pc_resolves_encounter_immediately(snapshot_with_pack, character_named_sam, tmp_path):
+def test_yield_solo_pc_resolves_encounter_immediately(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     snap.characters.append(character_named_sam)
@@ -47,16 +51,30 @@ def test_yield_solo_pc_resolves_encounter_immediately(snapshot_with_pack, charac
     assert snap.pending_resolution_signal.yielded_actors == ("Sam",)
 
 
-def test_yield_refunds_edge_one_plus_status_count(snapshot_with_pack, character_named_sam, tmp_path):
+def test_yield_refunds_edge_one_plus_status_count(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     sam = character_named_sam
-    sam.core.statuses.extend([
-        Status(text="Bruised Ribs", severity=StatusSeverity.Wound,
-               absorbed_shifts=0, created_turn=2, created_in_encounter="combat"),
-        Status(text="Mocked", severity=StatusSeverity.Scratch,
-               absorbed_shifts=0, created_turn=3, created_in_encounter="combat"),
-    ])
+    sam.core.statuses.extend(
+        [
+            Status(
+                text="Bruised Ribs",
+                severity=StatusSeverity.Wound,
+                absorbed_shifts=0,
+                created_turn=2,
+                created_in_encounter="combat",
+            ),
+            Status(
+                text="Mocked",
+                severity=StatusSeverity.Scratch,
+                absorbed_shifts=0,
+                created_turn=3,
+                created_in_encounter="combat",
+            ),
+        ]
+    )
     sam.core.edge.current = 0
     sam.core.edge.max = 5
     snap.characters.append(sam)
@@ -67,14 +85,21 @@ def test_yield_refunds_edge_one_plus_status_count(snapshot_with_pack, character_
     assert snap.pending_resolution_signal.edge_refreshed == 3
 
 
-def test_yield_does_not_count_pre_existing_statuses(snapshot_with_pack, character_named_sam, tmp_path):
+def test_yield_does_not_count_pre_existing_statuses(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
     snap, _ = snapshot_with_pack
     snap.encounter = _enc()
     sam = character_named_sam
-    sam.core.statuses.append(Status(
-        text="Old Scar", severity=StatusSeverity.Scar, absorbed_shifts=0,
-        created_turn=0, created_in_encounter=None,
-    ))
+    sam.core.statuses.append(
+        Status(
+            text="Old Scar",
+            severity=StatusSeverity.Scar,
+            absorbed_shifts=0,
+            created_turn=0,
+            created_in_encounter=None,
+        )
+    )
     sam.core.edge.current = 0
     sam.core.edge.max = 5
     snap.characters.append(sam)
@@ -113,16 +138,27 @@ def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pac
     # Each PC needs a Character entry
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, placeholder_edge_pool
-    snap.characters.append(Character(
-        core=CreatureCore(name="Sam", description="x", personality="x",
-                          edge=placeholder_edge_pool()),
-        backstory="x", char_class="Rogue", race="Human",
-    ))
-    snap.characters.append(Character(
-        core=CreatureCore(name="Alex", description="x", personality="x",
-                          edge=placeholder_edge_pool()),
-        backstory="x", char_class="Warrior", race="Elf",
-    ))
+
+    snap.characters.append(
+        Character(
+            core=CreatureCore(
+                name="Sam", description="x", personality="x", edge=placeholder_edge_pool()
+            ),
+            backstory="x",
+            char_class="Rogue",
+            race="Human",
+        )
+    )
+    snap.characters.append(
+        Character(
+            core=CreatureCore(
+                name="Alex", description="x", personality="x", edge=placeholder_edge_pool()
+            ),
+            backstory="x",
+            char_class="Warrior",
+            race="Elf",
+        )
+    )
     room = _room_for(snap, tmp_path)
     handle_yield(snap, room=room, player_id="p1", player_name="Sam")
     # Sam withdrawn; Alex still active → encounter not resolved
@@ -137,7 +173,9 @@ def test_yield_with_two_pcs_first_yield_keeps_encounter_active(snapshot_with_pac
     assert set(snap.pending_resolution_signal.yielded_actors) == {"Sam", "Alex"}
 
 
-def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, character_named_sam, tmp_path):
+def test_yield_emits_watcher_events_with_resolved_last(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
     """Watcher events fire in row order: yield_received → yield_resolved → resolved.
     The kinds[-1] == ENCOUNTER_RESOLVED invariant must hold for solo yield."""
     from sidequest.telemetry.watcher_hub import bind_event_store
@@ -151,12 +189,16 @@ def test_yield_emits_watcher_events_with_resolved_last(snapshot_with_pack, chara
     try:
         room = _room_for(snap, tmp_path)
         handle_yield(snap, room=room, player_id="p1", player_name="Sam")
-        rows = list(store._conn.execute(
-            "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
-        ).fetchall())
+        rows = list(
+            store._conn.execute(
+                "SELECT kind FROM events WHERE kind LIKE 'ENCOUNTER_%' ORDER BY seq"
+            ).fetchall()
+        )
         kinds = [r[0] for r in rows]
         assert "ENCOUNTER_YIELD" in kinds, f"missing ENCOUNTER_YIELD; got {kinds}"
-        assert kinds[-1] == "ENCOUNTER_RESOLVED", f"last row must be ENCOUNTER_RESOLVED; got {kinds}"
+        assert kinds[-1] == "ENCOUNTER_RESOLVED", (
+            f"last row must be ENCOUNTER_RESOLVED; got {kinds}"
+        )
     finally:
         bind_event_store(None)
         store.close()

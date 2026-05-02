@@ -362,5 +362,3 @@ class TacticalGridPayload(ProtocolBase):
     """2D grid of cell type strings (e.g., 'floor', 'wall', 'water')."""
     features: list[TacticalFeaturePayload]
     """Named features placed on the grid via legend."""
-
-

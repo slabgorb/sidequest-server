@@ -93,9 +93,7 @@ def test_turn_end_outbound_includes_audio_cue_after_narration(
 
     audio_msg = handler._maybe_dispatch_audio(sd, result)
 
-    assert audio_msg is not None, (
-        "Turn with tension + SFX keywords must produce AUDIO_CUE"
-    )
+    assert audio_msg is not None, "Turn with tension + SFX keywords must produce AUDIO_CUE"
     assert isinstance(audio_msg, AudioCueMessage)
     assert audio_msg.type == MessageType.AUDIO_CUE
     assert audio_msg.payload.mood == "tension"
@@ -103,18 +101,14 @@ def test_turn_end_outbound_includes_audio_cue_after_narration(
     # client fetches via the FastAPI static mount rather than the Vite
     # dev root (which was 404ing and surfacing as "Unable to decode
     # audio data" in the browser console every turn).
-    assert audio_msg.payload.music_track == (
-        "/genre/fixture_genre/audio/music/tension/a.ogg"
-    )
+    assert audio_msg.payload.music_track == ("/genre/fixture_genre/audio/music/tension/a.ogg")
     assert audio_msg.player_id == "p-1"
 
     # The resolved music track must actually exist on disk — proves the
     # DJ is library-backed, not hallucinating paths. Strip the mount
     # prefix to recover the pack-relative filesystem path.
     assert audio_msg.payload.music_track is not None
-    expected_rel = audio_msg.payload.music_track.removeprefix(
-        "/genre/fixture_genre/"
-    )
+    expected_rel = audio_msg.payload.music_track.removeprefix("/genre/fixture_genre/")
     full = pack_dir / expected_rel
     assert full.exists(), f"library resolved a non-existent path: {full}"
 
@@ -128,8 +122,6 @@ def test_turn_end_without_audio_backend_emits_no_audio_cue() -> None:
     sd.snapshot = MagicMock()
     sd.snapshot.turn_manager.interaction = 2
     handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
-    result = _narration_result(
-        "A door creaks open. Tension floods the chamber."
-    )
+    result = _narration_result("A door creaks open. Tension floods the chamber.")
 
     assert handler._maybe_dispatch_audio(sd, result) is None

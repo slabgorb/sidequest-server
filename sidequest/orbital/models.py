@@ -4,6 +4,7 @@ Per spec §2.1–§2.2: orbits.yaml is the plotter's only input (mechanics);
 chart.yaml is renderer-only (flavor); they live in the per-world content
 directory and are loaded by `sidequest.orbital.loader`.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -59,13 +60,9 @@ class BodyDef(BaseModel):
         if self.parent is not None:
             for fld in ("semi_major_au", "period_days", "epoch_phase_deg"):
                 if getattr(self, fld) is None:
-                    raise ValueError(
-                        f"body with parent={self.parent!r} requires {fld}; got None"
-                    )
+                    raise ValueError(f"body with parent={self.parent!r} requires {fld}; got None")
         if self.type == BodyType.ARC_BELT and self.arc_extent_deg is None:
-            raise ValueError(
-                "body with type=arc_belt requires arc_extent_deg; got None"
-            )
+            raise ValueError("body with type=arc_belt requires arc_extent_deg; got None")
         return self
 
 

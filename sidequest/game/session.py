@@ -361,10 +361,7 @@ class ContainerState(BaseModel):
     @model_validator(mode="after")
     def _round_required_when_retrieved(self) -> ContainerState:
         if self.retrieved and self.retrieved_at_round is None:
-            raise ValueError(
-                "ContainerState.retrieved=True requires "
-                "retrieved_at_round to be set"
-            )
+            raise ValueError("ContainerState.retrieved=True requires retrieved_at_round to be set")
         return self
 
 
@@ -601,9 +598,7 @@ class GameSnapshot(BaseModel):
         decls_by_name: dict[str, dict] = {}
         for d in legacy_decls:
             if not isinstance(d, dict):
-                raise ValueError(
-                    f"malformed legacy resource_declaration (expected dict): {d!r}"
-                )
+                raise ValueError(f"malformed legacy resource_declaration (expected dict): {d!r}")
             decls_by_name[d["name"]] = d
 
         def _coerce_current(pool_name: str, raw_current: object) -> float:
@@ -727,13 +722,12 @@ class GameSnapshot(BaseModel):
     def apply_world_patch(self, patch: WorldStatePatch) -> None:
         """Apply a world state patch. Only set fields are updated."""
         from sidequest.telemetry.spans import SPAN_APPLY_WORLD_PATCH, Span
+
         with Span.open(
             SPAN_APPLY_WORLD_PATCH,
             {
                 "field_count": sum(
-                    1
-                    for f in patch.model_fields_set
-                    if getattr(patch, f, None) is not None
+                    1 for f in patch.model_fields_set if getattr(patch, f, None) is not None
                 ),
             },
         ):
@@ -768,6 +762,7 @@ class GameSnapshot(BaseModel):
                 region_entry_canonicalized_dedup_span,
                 region_entry_rejected_span,
             )
+
             filtered: list[str] = []
             seen_slugs: dict[str, str] = {}  # slug → first surface form kept
             for r in patch.discovered_regions:
@@ -805,6 +800,7 @@ class GameSnapshot(BaseModel):
                 region_entry_canonicalized_dedup_span,
                 region_entry_rejected_span,
             )
+
             for r in patch.discover_regions:
                 ok, reason = validate_region_name(r)
                 if not ok:
@@ -844,6 +840,7 @@ class GameSnapshot(BaseModel):
             self.lore_established.extend(patch.lore_established)
         if patch.discovered_facts is not None:
             from sidequest.game.character import KnownFact
+
             for df in patch.discovered_facts:
                 for ch in self.characters:
                     if ch.core.name == df.character_name:
@@ -854,6 +851,7 @@ class GameSnapshot(BaseModel):
                 self._apply_hp_change(name, delta)
         if patch.npc_attitudes is not None:
             from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Emitter
+
             for name, delta in patch.npc_attitudes.items():
                 for npc in self.npcs:
                     if npc.core.name == name:
@@ -870,9 +868,7 @@ class GameSnapshot(BaseModel):
                         )
         if patch.npcs_present is not None:
             for npc_patch in patch.npcs_present:
-                existing = next(
-                    (n for n in self.npcs if n.core.name == npc_patch.name), None
-                )
+                existing = next((n for n in self.npcs if n.core.name == npc_patch.name), None)
                 if existing is not None:
                     self._merge_npc_patch(existing, npc_patch)
                 else:
@@ -959,9 +955,7 @@ class GameSnapshot(BaseModel):
             raise UnknownResource(patch.resource_name)
         return pool._apply_and_clamp(patch.operation, patch.value)
 
-    def apply_resource_patch_player(
-        self, patch: ResourcePatch
-    ) -> ResourcePatchResult:
+    def apply_resource_patch_player(self, patch: ResourcePatch) -> ResourcePatchResult:
         """Apply a resource patch as a player action.
 
         Rejects ``Subtract`` against non-voluntary pools with
@@ -996,15 +990,11 @@ class GameSnapshot(BaseModel):
         for pool in self.resources.values():
             if abs(pool.decay_per_turn) < eps:
                 continue
-            result = pool._apply_and_clamp(
-                ResourcePatchOp.Add, pool.decay_per_turn
-            )
+            result = pool._apply_and_clamp(ResourcePatchOp.Add, pool.decay_per_turn)
             all_crossings.extend(result.crossed_thresholds)
         return all_crossings
 
-    def init_resource_pools(
-        self, declarations: list[ResourceDeclaration]
-    ) -> None:
+    def init_resource_pools(self, declarations: list[ResourceDeclaration]) -> None:
         """Initialize or upsert resource pools from genre pack declarations.
 
         Upsert semantics (critical for save migration):
@@ -1040,9 +1030,7 @@ class GameSnapshot(BaseModel):
                 existing.decay_per_turn = decl.decay_per_turn
                 existing.thresholds = thresholds
                 # Re-clamp in case the new bounds invalidate the saved value.
-                existing.current = max(
-                    existing.min, min(existing.max, existing.current)
-                )
+                existing.current = max(existing.min, min(existing.max, existing.current))
             else:
                 self.resources[decl.name] = ResourcePool(
                     name=decl.name,

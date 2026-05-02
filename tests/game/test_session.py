@@ -180,7 +180,9 @@ def test_apply_patch_npc_upsert_existing():
     )
     s = _make_snapshot()
     s.npcs.append(npc)
-    s.apply_world_patch(WorldStatePatch(npcs_present=[NpcPatch(name="Mira", description="A young woman")]))
+    s.apply_world_patch(
+        WorldStatePatch(npcs_present=[NpcPatch(name="Mira", description="A young woman")])
+    )
     mira = next(n for n in s.npcs if n.core.name == "Mira")
     assert mira.core.description == "A young woman"
 

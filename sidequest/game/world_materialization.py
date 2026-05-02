@@ -65,6 +65,7 @@ def _is_auto_description(description: str, race: str, char_class: str) -> bool:
     """
     return description == _auto_description(race, char_class)
 
+
 # ---------------------------------------------------------------------------
 # CampaignMaturity
 # ---------------------------------------------------------------------------
@@ -172,9 +173,7 @@ def parse_history_chapters(value: Any) -> list[HistoryChapter]:
     if value is None:
         return []
     if not isinstance(value, dict):
-        raise HistoryParseError(
-            f"history payload must be a mapping, got {type(value).__name__}"
-        )
+        raise HistoryParseError(f"history payload must be a mapping, got {type(value).__name__}")
     chapters_raw = value.get("chapters")
     if chapters_raw is None:
         return []
@@ -397,9 +396,7 @@ class WorldBuilder:
             # comparing against the prior auto-template format and left
             # untouched. No silent fallback: only the exact prior
             # auto-template string is rewritten.
-            race_or_class_changed = (
-                char.race != prev_race or char.char_class != prev_class
-            )
+            race_or_class_changed = char.race != prev_race or char.char_class != prev_class
             if race_or_class_changed and _is_auto_description(
                 prev_description, prev_race, prev_class
             ):
@@ -436,9 +433,7 @@ class WorldBuilder:
         if not npc_data.name:
             return
 
-        existing: Npc | None = next(
-            (n for n in snap.npcs if n.core.name == npc_data.name), None
-        )
+        existing: Npc | None = next((n for n in snap.npcs if n.core.name == npc_data.name), None)
         if existing is not None:
             if npc_data.disposition is not None:
                 existing.disposition = int(npc_data.disposition)
@@ -553,9 +548,7 @@ def should_recompute_arc(interaction: int) -> bool:
     return interaction % ARC_RECOMPUTE_INTERVAL == 0
 
 
-def recompute_arc_history(
-    snapshot: Any, chapters: list[HistoryChapter]
-) -> list[HistoryChapter]:
+def recompute_arc_history(snapshot: Any, chapters: list[HistoryChapter]) -> list[HistoryChapter]:
     """Recompute ``world_history`` / ``campaign_maturity`` and emit the
     arc-tick OTEL spans.
 
@@ -586,12 +579,8 @@ def recompute_arc_history(
         Span,
     )
 
-    interaction = int(
-        getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0
-    )
-    round_value = int(
-        getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0
-    )
+    interaction = int(getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0)
+    round_value = int(getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0)
 
     chapters_before_ids = [getattr(ch, "id", "") for ch in snapshot.world_history]
     chapters_before = len(chapters_before_ids)
@@ -634,19 +623,13 @@ def recompute_arc_history(
 
     added_chapters: list[HistoryChapter] = []
     if tier_changed:
-        added_ids = [
-            ch_id for ch_id in chapters_after_ids if ch_id not in chapters_before_ids
-        ]
+        added_ids = [ch_id for ch_id in chapters_after_ids if ch_id not in chapters_before_ids]
         added_set = set(added_ids)
         # Resolve chapter-id strings back to the HistoryChapter objects
         # the 45-23 seeding helper consumes. Walk ``snapshot.world_history``
         # (the post-materialize list) so the order matches the panel's
         # `chapters_added` attribute.
-        added_chapters = [
-            ch
-            for ch in snapshot.world_history
-            if getattr(ch, "id", "") in added_set
-        ]
+        added_chapters = [ch for ch in snapshot.world_history if getattr(ch, "id", "") in added_set]
         with Span.open(
             SPAN_WORLD_HISTORY_ARC_PROMOTED,
             {
@@ -675,12 +658,12 @@ def materialize_world(snapshot: Any, chapters: list[HistoryChapter]) -> None:
     Idempotent — safe to call repeatedly.
     """
     from sidequest.telemetry.spans import SPAN_WORLD_MATERIALIZED, Span
+
     maturity = CampaignMaturity.from_snapshot(snapshot)
     applicable = [
         ch
         for ch in chapters
-        if (m := CampaignMaturity.from_chapter_id(ch.id)) is not None
-        and m <= maturity
+        if (m := CampaignMaturity.from_chapter_id(ch.id)) is not None and m <= maturity
     ]
     with Span.open(
         SPAN_WORLD_MATERIALIZED,
@@ -766,9 +749,7 @@ def preload_authored_npcs(
         # (validators), so synthesize sensible defaults from the authored
         # fields rather than passing empty strings.
         description = (
-            authored_npc.appearance
-            or authored_npc.role
-            or f"Authored NPC {authored_npc.id}."
+            authored_npc.appearance or authored_npc.role or f"Authored NPC {authored_npc.id}."
         )
         personality = authored_npc.role or "Authored."
         core = CreatureCore(

@@ -7,6 +7,7 @@ Scope note:
   Tests (c) guest-NPC inversion and (f) reconnect parity are deferred
   post-MP (Tasks G9, not in scope for this plan).
 """
+
 import json
 
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
@@ -44,24 +45,32 @@ def _view(pids: list[str], zones: dict[str, str] | None = None) -> SessionGameSt
 # (a) Assassination redaction
 # ---------------------------------------------------------------------------
 
+
 def test_a_assassination_hidden_from_non_actor_players():
     """P1 assassinates NPC in shadows. P2-P4 streams carry no bytes of the kill.
     Alice's SECRET_NOTE gets the kill detail. All players see the cover narration.
     """
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="player:Alice", raw_action="kill guard silently",
-            dispatch=[SubsystemDispatch(
-                subsystem="lethal_strike", params={"target": "guard_A"},
-                idempotency_key="k1",
-                visibility=VisibilityTag(
-                    visible_to=["player:Alice"], perception_fidelity={},
-                    secrets_for=["player:Alice"],
-                    redact_from_narrator_canonical=True,
-                ),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="kill guard silently",
+                dispatch=[
+                    SubsystemDispatch(
+                        subsystem="lethal_strike",
+                        params={"target": "guard_A"},
+                        idempotency_key="k1",
+                        visibility=VisibilityTag(
+                            visible_to=["player:Alice"],
+                            perception_fidelity={},
+                            secrets_for=["player:Alice"],
+                            redact_from_narrator_canonical=True,
+                        ),
+                    )
+                ],
+            )
+        ],
         confidence_global=1.0,
     )
     redacted_pkg, removed = redact_dispatch_package(pkg)
@@ -74,10 +83,12 @@ def test_a_assassination_hidden_from_non_actor_players():
     filter = ComposedFilter(rules=RULES)
     narration_env = MessageEnvelope(
         kind="NARRATION",
-        payload_json=json.dumps({
-            "text": canonical,
-            "_visibility": {"visible_to": "all", "fidelity": {}},
-        }),
+        payload_json=json.dumps(
+            {
+                "text": canonical,
+                "_visibility": {"visible_to": "all", "fidelity": {}},
+            }
+        ),
         origin_seq=1,
     )
     view = _view(["player:Alice", "player:Bob", "player:Cass"])
@@ -90,14 +101,16 @@ def test_a_assassination_hidden_from_non_actor_players():
     # rules. `_visibility` is still kept for symmetry with other payloads.
     secret_env = MessageEnvelope(
         kind="SECRET_NOTE",
-        payload_json=json.dumps({
-            "turn_id": "t1",
-            "idempotency_key": "k1",
-            "subsystem": "lethal_strike",
-            "params": {"target": "guard_A"},
-            "to": ["player:Alice"],
-            "_visibility": {"visible_to": ["player:Alice"], "fidelity": {}},
-        }),
+        payload_json=json.dumps(
+            {
+                "turn_id": "t1",
+                "idempotency_key": "k1",
+                "subsystem": "lethal_strike",
+                "params": {"target": "guard_A"},
+                "to": ["player:Alice"],
+                "_visibility": {"visible_to": ["player:Alice"], "fidelity": {}},
+            }
+        ),
         origin_seq=2,
     )
     assert filter.project(envelope=secret_env, view=view, player_id="player:Alice").include
@@ -108,6 +121,7 @@ def test_a_assassination_hidden_from_non_actor_players():
 # ---------------------------------------------------------------------------
 # (b) Blind fidelity
 # ---------------------------------------------------------------------------
+
 
 def test_b_blinded_recipient_receives_no_visual_spans():
     """P1 blinded. Narration to P1 has visual-tagged spans stripped."""
@@ -120,7 +134,8 @@ def test_b_blinded_recipient_receives_no_visual_spans():
         "_visibility": {"visible_to": "all", "fidelity": {}},
     }
     out = rewrite_for_recipient(
-        canonical_payload=payload, viewer_player_id="p1",
+        canonical_payload=payload,
+        viewer_player_id="p1",
         status_effects={"p1": ["blinded"]},
     )
     kinds = [s["kind"] for s in out["spans"]]
@@ -132,22 +147,30 @@ def test_b_blinded_recipient_receives_no_visual_spans():
 # (d) Structural hiding (prompt-builder unit test)
 # ---------------------------------------------------------------------------
 
+
 def test_d_structural_hiding_strips_redacted_entries():
     """Redacted dispatches never enter the DispatchPackage the prompt builder consumes."""
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="player:Alice", raw_action="sneak",
-            dispatch=[SubsystemDispatch(
-                subsystem="lethal_strike", params={"target": "guard_A"},
-                idempotency_key="k1",
-                visibility=VisibilityTag(
-                    visible_to=["player:Alice"], perception_fidelity={},
-                    secrets_for=["player:Alice"],
-                    redact_from_narrator_canonical=True,
-                ),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="sneak",
+                dispatch=[
+                    SubsystemDispatch(
+                        subsystem="lethal_strike",
+                        params={"target": "guard_A"},
+                        idempotency_key="k1",
+                        visibility=VisibilityTag(
+                            visible_to=["player:Alice"],
+                            perception_fidelity={},
+                            secrets_for=["player:Alice"],
+                            redact_from_narrator_canonical=True,
+                        ),
+                    )
+                ],
+            )
+        ],
         confidence_global=1.0,
     )
     redacted, removed = redact_dispatch_package(pkg)
@@ -159,22 +182,30 @@ def test_d_structural_hiding_strips_redacted_entries():
 # (e) Canonical-leak audit — zero leaks on clean prose
 # ---------------------------------------------------------------------------
 
+
 def test_e_leak_audit_zero_on_clean_prose():
     """Audit fires zero leaks when canonical prose is clean of redacted entity tokens."""
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="player:Alice", raw_action="sneak",
-            dispatch=[SubsystemDispatch(
-                subsystem="lethal_strike", params={"target": "guard_A"},
-                idempotency_key="k1",
-                visibility=VisibilityTag(
-                    visible_to=["player:Alice"], perception_fidelity={},
-                    secrets_for=["player:Alice"],
-                    redact_from_narrator_canonical=True,
-                ),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="sneak",
+                dispatch=[
+                    SubsystemDispatch(
+                        subsystem="lethal_strike",
+                        params={"target": "guard_A"},
+                        idempotency_key="k1",
+                        visibility=VisibilityTag(
+                            visible_to=["player:Alice"],
+                            perception_fidelity={},
+                            secrets_for=["player:Alice"],
+                            redact_from_narrator_canonical=True,
+                        ),
+                    )
+                ],
+            )
+        ],
         confidence_global=1.0,
     )
     result = audit_canonical_prose(
@@ -190,18 +221,25 @@ def test_e_leak_audit_fires_nonzero_when_leak_present():
     This is the lie-detector firing when structural hiding has a hole."""
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="player:Alice", raw_action="sneak",
-            dispatch=[SubsystemDispatch(
-                subsystem="lethal_strike", params={"target": "guard_A"},
-                idempotency_key="k1",
-                visibility=VisibilityTag(
-                    visible_to=["player:Alice"], perception_fidelity={},
-                    secrets_for=["player:Alice"],
-                    redact_from_narrator_canonical=True,
-                ),
-            )],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="player:Alice",
+                raw_action="sneak",
+                dispatch=[
+                    SubsystemDispatch(
+                        subsystem="lethal_strike",
+                        params={"target": "guard_A"},
+                        idempotency_key="k1",
+                        visibility=VisibilityTag(
+                            visible_to=["player:Alice"],
+                            perception_fidelity={},
+                            secrets_for=["player:Alice"],
+                            redact_from_narrator_canonical=True,
+                        ),
+                    )
+                ],
+            )
+        ],
         confidence_global=1.0,
     )
     result = audit_canonical_prose(
@@ -217,16 +255,19 @@ def test_e_leak_audit_fires_nonzero_when_leak_present():
 # (g) VisibilityTagFilter wiring — integration smoke
 # ---------------------------------------------------------------------------
 
+
 def test_g_visibility_tag_filter_excludes_non_recipient():
     """visibility_tag rule excludes a recipient not in visible_to."""
     filter = ComposedFilter(rules=RULES, pack_slug="test_pack")
     view = _view(["player:Alice", "player:Bob"])
     env = MessageEnvelope(
         kind="NARRATION",
-        payload_json=json.dumps({
-            "text": "secret note text",
-            "_visibility": {"visible_to": ["player:Alice"], "fidelity": {}},
-        }),
+        payload_json=json.dumps(
+            {
+                "text": "secret note text",
+                "_visibility": {"visible_to": ["player:Alice"], "fidelity": {}},
+            }
+        ),
         origin_seq=1,
     )
     d_alice = filter.project(envelope=env, view=view, player_id="player:Alice")
@@ -241,10 +282,12 @@ def test_g_visibility_tag_filter_all_means_all():
     view = _view(["player:Alice", "player:Bob", "player:Cass"])
     env = MessageEnvelope(
         kind="NARRATION",
-        payload_json=json.dumps({
-            "text": "Dawn breaks.",
-            "_visibility": {"visible_to": "all", "fidelity": {}},
-        }),
+        payload_json=json.dumps(
+            {
+                "text": "Dawn breaks.",
+                "_visibility": {"visible_to": "all", "fidelity": {}},
+            }
+        ),
         origin_seq=1,
     )
     for pid in ["player:Alice", "player:Bob", "player:Cass"]:

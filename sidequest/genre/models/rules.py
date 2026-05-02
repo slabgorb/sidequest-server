@@ -96,7 +96,9 @@ class BeatDef(BaseModel):
     stat_check: str
     risk: str | None = None  # narrator prose cue only — does not drive engine
     reveals: str | None = None
-    resolution: bool | None = None  # legacy "always-resolves" flag (still useful for declarative pushes)
+    resolution: bool | None = (
+        None  # legacy "always-resolves" flag (still useful for declarative pushes)
+    )
     effect: str | None = None
     consequence: str | None = None
     requires: str | None = None
@@ -111,18 +113,18 @@ class BeatDef(BaseModel):
         if not self.id:
             raise ValueError("beat id must not be empty")
         if self.kind is BeatKind.angle and not self.target_tag:
-            raise ValueError(
-                f"beat '{self.id}' kind=angle requires target_tag"
-            )
+            raise ValueError(f"beat '{self.id}' kind=angle requires target_tag")
         if self.deltas is not None:
             valid_tiers = {
-                "crit_fail", "fail", "tie", "success", "crit_success",
+                "crit_fail",
+                "fail",
+                "tie",
+                "success",
+                "crit_success",
             }
             for tier in self.deltas:
                 if tier not in valid_tiers:
-                    raise ValueError(
-                        f"beat '{self.id}' deltas key {tier!r} not in {valid_tiers}"
-                    )
+                    raise ValueError(f"beat '{self.id}' deltas key {tier!r} not in {valid_tiers}")
         return self
 
 
@@ -223,13 +225,9 @@ class InteractionTable(BaseModel):
             for tier in ("graze", "clean", "devastating"):
                 val = self.damage_increments.get(tier)
                 if val is None:
-                    raise ValueError(
-                        f"damage_increments missing required severity tier: '{tier}'"
-                    )
+                    raise ValueError(f"damage_increments missing required severity tier: '{tier}'")
                 if val <= 0:
-                    raise ValueError(
-                        f"damage_increments '{tier}' must be positive, got {val}"
-                    )
+                    raise ValueError(f"damage_increments '{tier}' must be positive, got {val}")
         return self
 
 

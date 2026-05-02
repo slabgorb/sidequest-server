@@ -26,6 +26,7 @@ the plan:
   ``model_copy`` in the resurrection-hard-limit, mirroring
   ``test_magic_span.py`` and ``test_narration_apply_magic.py``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -57,16 +58,18 @@ def captured_watcher_events(monkeypatch) -> Iterator[list[dict[str, Any]]]:
     """
     captured: list[dict[str, Any]] = []
 
-    def _capture(event_type, fields, *, component="sidequest-server",
-                 severity="info"):
-        captured.append({
-            "event_type": event_type,
-            "fields": fields,
-            "component": component,
-            "severity": severity,
-        })
+    def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
+        captured.append(
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
+        )
 
     from sidequest.server import narration_apply
+
     monkeypatch.setattr(narration_apply, "_watcher_publish", _capture)
     yield captured
 
@@ -104,9 +107,7 @@ def test_sira_touches_alien_panel_clean_pass(
         "consent_state": "involuntary",
     }
     result = apply_magic_working(snapshot=snapshot, patch_field=magic_working)
-    promotions = promote_crossings_to_status_changes(
-        result=result, snapshot=snapshot
-    )
+    promotions = promote_crossings_to_status_changes(result=result, snapshot=snapshot)
 
     # === Validation ===
     # 1. No flags (clean working)
@@ -125,7 +126,8 @@ def test_sira_touches_alien_panel_clean_pass(
     # 4. Span emitted (via _watcher_publish — see module docstring for the
     #    plan-vs-reality adaptation).
     matching = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["component"] == "magic"
         and e["event_type"] == "state_transition"
         and e["fields"].get("op") == "working"
@@ -177,7 +179,8 @@ def test_sira_attempts_resurrection_deep_red_flag_surfaces(
     assert any("hard_limit" in f.reason for f in deep_red)
 
     matching = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["component"] == "magic"
         and e["event_type"] == "state_transition"
         and e["fields"].get("op") == "working"
@@ -198,9 +201,7 @@ def test_sanity_crossing_promotes_status_change(world_config: WorldMagicConfig):
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
     result = apply_magic_working(
@@ -216,9 +217,7 @@ def test_sanity_crossing_promotes_status_change(world_config: WorldMagicConfig):
             "consent_state": "involuntary",
         },
     )
-    promotions = promote_crossings_to_status_changes(
-        result=result, snapshot=snapshot
-    )
+    promotions = promote_crossings_to_status_changes(result=result, snapshot=snapshot)
     assert len(promotions) == 1
     assert promotions[0].status_text == "Bleeding through"
     assert promotions[0].severity == "Wound"

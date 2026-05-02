@@ -14,6 +14,7 @@ change with the same SQL, confirming the persistence layer is
 identical.  Locks success criterion #3 of the localdm-offline-only
 spec (2026-04-28).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,12 +39,8 @@ def test_miner_extracts_action_and_narration_from_post_change_save() -> None:
     assert pairs, "miner produced zero pairs — saves no longer capture turns"
 
     for pair in pairs:
-        assert pair.input_text.strip(), (
-            f"pair at round {pair.round_number} has empty input_text"
-        )
-        assert pair.output_text.strip(), (
-            f"pair at round {pair.round_number} has empty output_text"
-        )
+        assert pair.input_text.strip(), f"pair at round {pair.round_number} has empty input_text"
+        assert pair.output_text.strip(), f"pair at round {pair.round_number} has empty output_text"
         assert pair.genre, "pair missing genre slug"
         assert pair.world, "pair missing world slug"
 

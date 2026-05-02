@@ -109,12 +109,14 @@ class TestParseHistoryChapters:
         assert parse_history_chapters({"chapters": []}) == []
 
     def test_valid_chapters_parsed(self) -> None:
-        chapters = parse_history_chapters({
-            "chapters": [
-                {"id": "fresh", "label": "Beginnings", "lore": ["a", "b"]},
-                {"id": "early", "label": "Trouble"},
-            ]
-        })
+        chapters = parse_history_chapters(
+            {
+                "chapters": [
+                    {"id": "fresh", "label": "Beginnings", "lore": ["a", "b"]},
+                    {"id": "early", "label": "Trouble"},
+                ]
+            }
+        )
         assert len(chapters) == 2
         assert chapters[0].id == "fresh"
         assert chapters[0].label == "Beginnings"
@@ -131,14 +133,16 @@ class TestParseHistoryChapters:
 
     def test_malformed_chapter_entry_raises_with_index(self) -> None:
         with pytest.raises(HistoryParseError, match="index 1"):
-            parse_history_chapters({
-                "chapters": [
-                    {"id": "fresh"},
-                    # trope status is required; a trope entry missing 'id'
-                    # triggers a validation error when pydantic builds.
-                    {"id": "early", "tropes": [{"status": "active"}]},
-                ]
-            })
+            parse_history_chapters(
+                {
+                    "chapters": [
+                        {"id": "fresh"},
+                        # trope status is required; a trope entry missing 'id'
+                        # triggers a validation error when pydantic builds.
+                        {"id": "early", "tropes": [{"status": "active"}]},
+                    ]
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +170,13 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Fresh)
-            .with_chapters([
-                _fresh_chapter(lore=["f1"]),
-                _early_chapter(lore=["e1"]),
-                HistoryChapter(id="mid", lore=["m1"]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(lore=["f1"]),
+                    _early_chapter(lore=["e1"]),
+                    HistoryChapter(id="mid", lore=["m1"]),
+                ]
+            )
             .build()
         )
         assert [ch.id for ch in snap.world_history] == ["fresh"]
@@ -180,12 +186,14 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Veteran)
-            .with_chapters([
-                _fresh_chapter(lore=["f"]),
-                _early_chapter(lore=["e"]),
-                HistoryChapter(id="mid", lore=["m"]),
-                HistoryChapter(id="veteran", lore=["v"]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(lore=["f"]),
+                    _early_chapter(lore=["e"]),
+                    HistoryChapter(id="mid", lore=["m"]),
+                    HistoryChapter(id="veteran", lore=["v"]),
+                ]
+            )
             .build()
         )
         assert [ch.id for ch in snap.world_history] == [
@@ -200,10 +208,12 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Veteran)
-            .with_chapters([
-                _fresh_chapter(),
-                HistoryChapter(id="legendary", lore=["never applied"]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(),
+                    HistoryChapter(id="legendary", lore=["never applied"]),
+                ]
+            )
             .build()
         )
         assert [ch.id for ch in snap.world_history] == ["fresh"]
@@ -213,18 +223,20 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(
-                    location="The Threshold",
-                    time_of_day="dawn",
-                    atmosphere="clinical unease",
-                    active_stakes="establish foothold",
-                ),
-                _early_chapter(
-                    location="The Spillway",
-                    atmosphere="louder, more chaotic",
-                ),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        location="The Threshold",
+                        time_of_day="dawn",
+                        atmosphere="clinical unease",
+                        active_stakes="establish foothold",
+                    ),
+                    _early_chapter(
+                        location="The Spillway",
+                        atmosphere="louder, more chaotic",
+                    ),
+                ]
+            )
             .build()
         )
         # Early overrides location + atmosphere; time_of_day keeps Fresh's
@@ -238,10 +250,12 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(lore=["shared fact", "fresh-only"]),
-                _early_chapter(lore=["shared fact", "early-only"]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(lore=["shared fact", "fresh-only"]),
+                    _early_chapter(lore=["shared fact", "early-only"]),
+                ]
+            )
             .build()
         )
         assert snap.lore_established == ["shared fact", "fresh-only", "early-only"]
@@ -250,10 +264,12 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(quests={"q1": "assigned", "q2": "in_progress"}),
-                _early_chapter(quests={"q1": "complete", "q3": "assigned"}),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(quests={"q1": "assigned", "q2": "in_progress"}),
+                    _early_chapter(quests={"q1": "complete", "q3": "assigned"}),
+                ]
+            )
             .build()
         )
         assert snap.quest_log == {
@@ -266,10 +282,12 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(notes=["a", "b"]),
-                _early_chapter(notes=["c"]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(notes=["a", "b"]),
+                    _early_chapter(notes=["c"]),
+                ]
+            )
             .build()
         )
         assert snap.notes == ["a", "b", "c"]
@@ -277,12 +295,16 @@ class TestWorldBuilderBuild:
     def test_narrative_log_converted_to_entries(self) -> None:
         snap = (
             WorldBuilder()
-            .with_chapters([
-                _fresh_chapter(narrative_log=[
-                    ChapterNarrativeEntry(speaker="narrator", text="The threshold."),
-                    ChapterNarrativeEntry(speaker="Rux", text="I enter."),
-                ]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        narrative_log=[
+                            ChapterNarrativeEntry(speaker="narrator", text="The threshold."),
+                            ChapterNarrativeEntry(speaker="Rux", text="I enter."),
+                        ]
+                    ),
+                ]
+            )
             .build()
         )
         assert len(snap.narrative_log) == 2
@@ -295,15 +317,21 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(npcs=[
-                    ChapterNpc(name="Drakul", description="A sage."),
-                ]),
-                _early_chapter(npcs=[
-                    ChapterNpc(name="Drakul", disposition=-5, location="Crypt"),
-                    ChapterNpc(name="Mira", description="A scout."),
-                ]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        npcs=[
+                            ChapterNpc(name="Drakul", description="A sage."),
+                        ]
+                    ),
+                    _early_chapter(
+                        npcs=[
+                            ChapterNpc(name="Drakul", disposition=-5, location="Crypt"),
+                            ChapterNpc(name="Mira", description="A scout."),
+                        ]
+                    ),
+                ]
+            )
             .build()
         )
         names = [n.core.name for n in snap.npcs]
@@ -317,12 +345,16 @@ class TestWorldBuilderBuild:
     def test_blank_npc_name_skipped(self) -> None:
         snap = (
             WorldBuilder()
-            .with_chapters([
-                _fresh_chapter(npcs=[
-                    ChapterNpc(name="", description="ignored"),
-                    ChapterNpc(name="Real", description="kept"),
-                ]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        npcs=[
+                            ChapterNpc(name="", description="ignored"),
+                            ChapterNpc(name="Real", description="kept"),
+                        ]
+                    ),
+                ]
+            )
             .build()
         )
         assert [n.core.name for n in snap.npcs] == ["Real"]
@@ -331,15 +363,21 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(tropes=[
-                    ChapterTrope(id="t1", status="dormant", progression=0.1),
-                ]),
-                _early_chapter(tropes=[
-                    ChapterTrope(id="t1", status="active", progression=0.6),
-                    ChapterTrope(id="t2", status="progressing"),
-                ]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        tropes=[
+                            ChapterTrope(id="t1", status="dormant", progression=0.1),
+                        ]
+                    ),
+                    _early_chapter(
+                        tropes=[
+                            ChapterTrope(id="t1", status="active", progression=0.6),
+                            ChapterTrope(id="t2", status="progressing"),
+                        ]
+                    ),
+                ]
+            )
             .build()
         )
         ids = [t.id for t in snap.active_tropes]
@@ -350,11 +388,15 @@ class TestWorldBuilderBuild:
     def test_unknown_trope_status_defaults_to_active(self) -> None:
         snap = (
             WorldBuilder()
-            .with_chapters([
-                _fresh_chapter(tropes=[
-                    ChapterTrope(id="t1", status="unknown_word"),
-                ]),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        tropes=[
+                            ChapterTrope(id="t1", status="unknown_word"),
+                        ]
+                    ),
+                ]
+            )
             .build()
         )
         assert snap.active_tropes[0].status == "active"
@@ -362,15 +404,19 @@ class TestWorldBuilderBuild:
     def test_character_created_when_snapshot_empty(self) -> None:
         snap = (
             WorldBuilder()
-            .with_chapters([
-                _fresh_chapter(character=ChapterCharacter(
-                    name="Rux",
-                    race="Gnome",
-                    **{"class": "Delver"},  # YAML alias
-                    level=3,
-                    backstory="Orphan of the Reach.",
-                )),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        character=ChapterCharacter(
+                            name="Rux",
+                            race="Gnome",
+                            **{"class": "Delver"},  # YAML alias
+                            level=3,
+                            backstory="Orphan of the Reach.",
+                        )
+                    ),
+                ]
+            )
             .build()
         )
         assert len(snap.characters) == 1
@@ -385,11 +431,7 @@ class TestWorldBuilderBuild:
         assert char.core.description == "A Gnome Delver"
 
     def test_character_created_with_defaults_when_blank(self) -> None:
-        snap = (
-            WorldBuilder()
-            .with_chapters([_fresh_chapter(character=ChapterCharacter())])
-            .build()
-        )
+        snap = WorldBuilder().with_chapters([_fresh_chapter(character=ChapterCharacter())]).build()
         assert len(snap.characters) == 1
         char = snap.characters[0]
         # Rust-parity fallbacks
@@ -415,18 +457,24 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                # First chapter — chargen-style default (race unset →
-                # falls back to "Human"). Description is the auto-template.
-                _fresh_chapter(character=ChapterCharacter(
-                    name="Prot'Thokk",
-                    **{"class": "Fighter"},
-                )),
-                # Second chapter — sets the actual race, no description.
-                _early_chapter(character=ChapterCharacter(
-                    race="Half-Orc",
-                )),
-            ])
+            .with_chapters(
+                [
+                    # First chapter — chargen-style default (race unset →
+                    # falls back to "Human"). Description is the auto-template.
+                    _fresh_chapter(
+                        character=ChapterCharacter(
+                            name="Prot'Thokk",
+                            **{"class": "Fighter"},
+                        )
+                    ),
+                    # Second chapter — sets the actual race, no description.
+                    _early_chapter(
+                        character=ChapterCharacter(
+                            race="Half-Orc",
+                        )
+                    ),
+                ]
+            )
             .build()
         )
         char = snap.characters[0]
@@ -446,15 +494,19 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(character=ChapterCharacter(
-                    name="Prot'Thokk",
-                    race="Human",
-                    **{"class": "Fighter"},
-                    description=hand_authored,
-                )),
-                _early_chapter(character=ChapterCharacter(race="Half-Orc")),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        character=ChapterCharacter(
+                            name="Prot'Thokk",
+                            race="Human",
+                            **{"class": "Fighter"},
+                            description=hand_authored,
+                        )
+                    ),
+                    _early_chapter(character=ChapterCharacter(race="Half-Orc")),
+                ]
+            )
             .build()
         )
         char = snap.characters[0]
@@ -471,20 +523,26 @@ class TestWorldBuilderBuild:
         snap = (
             WorldBuilder()
             .at_maturity(CampaignMaturity.Early)
-            .with_chapters([
-                _fresh_chapter(character=ChapterCharacter(
-                    name="Rux",
-                    race="Gnome",
-                    **{"class": "Delver"},  # YAML alias
-                    level=3,
-                    backstory="Orphan of the Reach.",
-                )),
-                _early_chapter(character=ChapterCharacter(
-                    name="",
-                    level=5,
-                    backstory="Now bears the Lantern.",
-                )),
-            ])
+            .with_chapters(
+                [
+                    _fresh_chapter(
+                        character=ChapterCharacter(
+                            name="Rux",
+                            race="Gnome",
+                            **{"class": "Delver"},  # YAML alias
+                            level=3,
+                            backstory="Orphan of the Reach.",
+                        )
+                    ),
+                    _early_chapter(
+                        character=ChapterCharacter(
+                            name="",
+                            level=5,
+                            backstory="Now bears the Lantern.",
+                        )
+                    ),
+                ]
+            )
             .build()
         )
         assert len(snap.characters) == 1
@@ -567,6 +625,4 @@ class TestMaterializeFromGenrePack:
         # Caller (dispatch) is responsible for catch-and-fallback —
         # the function itself raises rather than silently swallowing.
         with pytest.raises(HistoryParseError):
-            materialize_from_genre_pack(
-                "not a mapping", CampaignMaturity.Fresh, "g", "w"
-            )
+            materialize_from_genre_pack("not a mapping", CampaignMaturity.Fresh, "g", "w")

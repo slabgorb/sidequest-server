@@ -1,4 +1,5 @@
 """Tests for npc_agency subsystem (wraps existing NPC registry)."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,7 +12,9 @@ from sidequest.protocol.dispatch import SubsystemDispatch, VisibilityTag
 
 def _tag_all() -> VisibilityTag:
     return VisibilityTag(
-        visible_to="all", perception_fidelity={}, secrets_for=[],
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
         redact_from_narrator_canonical=False,
     )
 
@@ -85,14 +88,16 @@ async def test_npc_agency_skips_with_structured_data_when_npc_name_missing(
 @pytest.mark.asyncio
 async def test_npc_agency_handles_npc_with_null_role_and_location():
     """Directive stays grammatical when optional fields are None (fresh auto-registration)."""
-    registry = [NpcRegistryEntry(
-        name="Stranger",
-        role=None,
-        pronouns=None,
-        appearance=None,
-        last_seen_location=None,
-        last_seen_turn=0,
-    )]
+    registry = [
+        NpcRegistryEntry(
+            name="Stranger",
+            role=None,
+            pronouns=None,
+            appearance=None,
+            last_seen_location=None,
+            last_seen_turn=0,
+        )
+    ]
     dispatch = SubsystemDispatch(
         subsystem="npc_agency",
         params={"npc_name": "Stranger", "situation": "spotted"},

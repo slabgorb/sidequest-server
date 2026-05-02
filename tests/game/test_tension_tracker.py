@@ -281,9 +281,7 @@ def test_spike_clamped_to_unit_range():
 def test_action_tension_decays_on_tick():
     tracker = TensionTracker.with_values(0.8, 0.0)
     tracker.tick()
-    assert tracker.action_tension() < 0.8, (
-        "action tension should decay on tick without events"
-    )
+    assert tracker.action_tension() < 0.8, "action tension should decay on tick without events"
 
 
 def test_stakes_tension_does_not_decay_on_tick():
@@ -365,9 +363,7 @@ def test_normal_event_has_mild_effect_on_action_tension():
         tracker.record_event(CombatEvent.Boring)
     before = tracker.action_tension()
     tracker.record_event(CombatEvent.Normal)
-    assert tracker.action_tension() <= before, (
-        "normal event should not increase action tension"
-    )
+    assert tracker.action_tension() <= before, "normal event should not increase action tension"
 
 
 # =========================================================================
@@ -410,9 +406,7 @@ def test_classify_round_fixture_parity():
         expected_name = case["expected"]
         actual = classify_round(round_result, killed)
         if actual.name != expected_name:
-            failures.append(
-                f"{case['name']}: expected {expected_name}, got {actual.name}"
-            )
+            failures.append(f"{case['name']}: expected {expected_name}, got {actual.name}")
 
     assert not failures, "classify_round parity drift:\n" + "\n".join(failures)
 
@@ -435,9 +429,7 @@ def test_classify_combat_outcome_fixture_parity():
         expected = _classification_from_fixture(case["expected"])
         actual = classify_combat_outcome(round_result, killed, ratio)
         if actual != expected:
-            failures.append(
-                f"{case['name']}: expected {expected!r}, got {actual!r}"
-            )
+            failures.append(f"{case['name']}: expected {expected!r}, got {actual!r}")
 
     assert not failures, "classify_combat_outcome parity drift:\n" + "\n".join(failures)
 
@@ -457,9 +449,7 @@ def _replay_scenario(fixture_name: str) -> None:
     # Guard against an empty fixture silently passing the parity gate
     # (matches the len(cases) > 0 guard in the classify_*_fixture_parity
     # tests above).
-    assert len(fixture["steps"]) > 0, (
-        f"scenario fixture {fixture_name} has no steps"
-    )
+    assert len(fixture["steps"]) > 0, f"scenario fixture {fixture_name} has no steps"
 
     failures: list[str] = []
 

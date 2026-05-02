@@ -26,22 +26,24 @@ SPAN_TURN_PREPROCESS_PARSE = "turn.preprocess.parse"
 SPAN_TURN_PREPROCESS_WISH_CHECK = "turn.preprocess.wish_check"
 SPAN_TURN_ASSEMBLE = "turn.assemble"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_TURN,
-    SPAN_TURN_BARRIER,
-    SPAN_TURN_STATE_UPDATE,
-    SPAN_TURN_SYSTEM_TICK,
-    SPAN_TURN_SYSTEM_TICK_TROPES,
-    SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
-    SPAN_TURN_MEDIA,
-    SPAN_TURN_TROPES,
-    SPAN_TURN_PHASE_TRANSITION,
-    SPAN_TURN_SLASH_COMMAND,
-    SPAN_TURN_PREPROCESS_LLM,
-    SPAN_TURN_PREPROCESS_PARSE,
-    SPAN_TURN_PREPROCESS_WISH_CHECK,
-    SPAN_TURN_ASSEMBLE,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_TURN,
+        SPAN_TURN_BARRIER,
+        SPAN_TURN_STATE_UPDATE,
+        SPAN_TURN_SYSTEM_TICK,
+        SPAN_TURN_SYSTEM_TICK_TROPES,
+        SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
+        SPAN_TURN_MEDIA,
+        SPAN_TURN_TROPES,
+        SPAN_TURN_PHASE_TRANSITION,
+        SPAN_TURN_SLASH_COMMAND,
+        SPAN_TURN_PREPROCESS_LLM,
+        SPAN_TURN_PREPROCESS_PARSE,
+        SPAN_TURN_PREPROCESS_WISH_CHECK,
+        SPAN_TURN_ASSEMBLE,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Story 45-11 — turn_manager.round invariant span.
@@ -62,14 +64,10 @@ SPAN_ROUTES[SPAN_TURN_MANAGER_ROUND_INVARIANT] = SpanRoute(
         "field": "round_invariant",
         "round": (span.attributes or {}).get("round", 0),
         "interaction": (span.attributes or {}).get("interaction", 0),
-        "max_narrative_round": (span.attributes or {}).get(
-            "max_narrative_round", 0
-        ),
+        "max_narrative_round": (span.attributes or {}).get("max_narrative_round", 0),
         "gap": (span.attributes or {}).get("gap", 0),
         "holds": (span.attributes or {}).get("holds", True),
-        "divergence_direction": (span.attributes or {}).get(
-            "divergence_direction", "sync"
-        ),
+        "divergence_direction": (span.attributes or {}).get("divergence_direction", "sync"),
     },
 )
 

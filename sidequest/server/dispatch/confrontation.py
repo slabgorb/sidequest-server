@@ -3,6 +3,7 @@
 Port of sidequest-api/crates/sidequest-server/src/dispatch/response.rs
 confrontation-def resolution and payload construction. Story 3.4.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -54,7 +55,8 @@ def build_confrontation_payload(
         "beats": [b.model_dump(mode="json") for b in cdef.beats],
         "secondary_stats": (
             encounter.secondary_stats.model_dump(mode="json")
-            if encounter.secondary_stats is not None else None
+            if encounter.secondary_stats is not None
+            else None
         ),
         "genre_slug": genre_slug,
         "mood": mood,
@@ -63,7 +65,9 @@ def build_confrontation_payload(
 
 
 def build_clear_confrontation_payload(
-    *, encounter_type: str, genre_slug: str,
+    *,
+    encounter_type: str,
+    genre_slug: str,
 ) -> dict[str, Any]:
     """Minimal payload that tells the UI to unmount the overlay.
 

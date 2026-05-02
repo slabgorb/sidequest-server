@@ -50,7 +50,11 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=slug, mode=GameMode.SOLO, genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     core = CreatureCore(
         name="Thorn",
@@ -59,7 +63,10 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
         inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Fighter", race="Human", backstory="A wanderer.",
+        core=core,
+        char_class="Fighter",
+        race="Human",
+        backstory="A wanderer.",
     )
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [char]
@@ -79,8 +86,7 @@ def _fake_narration_result():
 
     return NarrationTurnResult(
         narration=(
-            "The dungeon echoes with your footsteps. A lantern flickers near "
-            "the rough-hewn altar."
+            "The dungeon echoes with your footsteps. A lantern flickers near the rough-hewn altar."
         ),
         location="Forgotten Crypt",
         visual_scene=VisualScene.from_dict(
@@ -109,11 +115,14 @@ async def test_scrapbook_entry_persists_and_journals(tmp_path: Path) -> None:
     row in ``events``."""
     _seed_with_character(tmp_path, _SLUG)
     handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=RoomRegistry(), socket_id="sock-alice", out_queue=queue,
+        registry=RoomRegistry(),
+        socket_id="sock-alice",
+        out_queue=queue,
     )
 
     connect = GameMessage.model_validate(
@@ -165,9 +174,7 @@ async def test_scrapbook_entry_persists_and_journals(tmp_path: Path) -> None:
         # 2. SCRAPBOOK_ENTRY row in events journal.
         events = EventLog(store).read_since(since_seq=0)
         kinds = [e.kind for e in events]
-        assert "SCRAPBOOK_ENTRY" in kinds, (
-            f"expected SCRAPBOOK_ENTRY in event journal; got {kinds}"
-        )
+        assert "SCRAPBOOK_ENTRY" in kinds, f"expected SCRAPBOOK_ENTRY in event journal; got {kinds}"
     finally:
         store.close()
 
@@ -184,11 +191,14 @@ async def test_reconnecting_client_replays_prior_scrapbook_entry(
 
     # ------- Handler A: drive a turn that emits a SCRAPBOOK_ENTRY -------
     handler_a = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue_a: asyncio.Queue[object] = asyncio.Queue()
     handler_a.attach_room_context(
-        registry=RoomRegistry(), socket_id="sock-alice-a", out_queue=queue_a,
+        registry=RoomRegistry(),
+        socket_id="sock-alice-a",
+        out_queue=queue_a,
     )
 
     connect = GameMessage.model_validate(
@@ -218,11 +228,14 @@ async def test_reconnecting_client_replays_prior_scrapbook_entry(
 
     # ------- Handler B: fresh reconnect, last_seen_seq=0 (full replay) -------
     handler_b = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue_b: asyncio.Queue[object] = asyncio.Queue()
     handler_b.attach_room_context(
-        registry=RoomRegistry(), socket_id="sock-alice-b", out_queue=queue_b,
+        registry=RoomRegistry(),
+        socket_id="sock-alice-b",
+        out_queue=queue_b,
     )
     outbound_b = await handler_b.handle_message(connect)
 

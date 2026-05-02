@@ -12,6 +12,7 @@ Unit tests for this module remain in `just check-all` so it does not
 bit-rot. If you find yourself adding a live caller, you are landing
 ADR-073 (or undoing this design); update both ends.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -35,9 +36,7 @@ logger = logging.getLogger(__name__)
 SubsystemCallable = Callable[..., Awaitable["SubsystemOutput"]]
 
 
-def _filter_context_for_callable(
-    fn: SubsystemCallable, context: dict[str, Any]
-) -> dict[str, Any]:
+def _filter_context_for_callable(fn: SubsystemCallable, context: dict[str, Any]) -> dict[str, Any]:
     """Return only the ``context`` keys that ``fn`` actually accepts.
 
     Subsystems have heterogeneous signatures — ``run_npc_agency`` requires
@@ -215,7 +214,8 @@ async def run_dispatch_bank(
                 if fn is None:
                     logger.warning(
                         "subsystems.unknown subsystem=%s key=%s",
-                        d.subsystem, d.idempotency_key,
+                        d.subsystem,
+                        d.idempotency_key,
                     )
                     sub_span.set_attribute("error", "unknown_subsystem")
                     sub_span.set_attribute("produced_directives", 0)
@@ -232,7 +232,9 @@ async def run_dispatch_bank(
                 except Exception as exc:
                     logger.warning(
                         "subsystems.dispatch_failed subsystem=%s key=%s exc=%s",
-                        d.subsystem, d.idempotency_key, exc,
+                        d.subsystem,
+                        d.idempotency_key,
+                        exc,
                     )
                     result.errors.append((d.idempotency_key, repr(exc)))
                     sub_span.set_attribute("error", type(exc).__name__)

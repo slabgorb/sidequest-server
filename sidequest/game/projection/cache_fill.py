@@ -5,6 +5,7 @@ current GameStateView for historical events — a documented softening
 of the single-truth invariant to avoid reintroducing the derived-
 snapshot store.
 """
+
 from __future__ import annotations
 
 import time

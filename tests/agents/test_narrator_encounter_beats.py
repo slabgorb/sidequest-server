@@ -16,7 +16,9 @@ from sidequest.genre.models.rules import (
 
 def _cdef() -> ConfrontationDef:
     return ConfrontationDef(
-        type="combat", label="Dungeon Combat", category="combat",
+        type="combat",
+        label="Dungeon Combat",
+        category="combat",
         player_metric=MetricDef(name="momentum", threshold=10),
         opponent_metric=MetricDef(name="momentum", threshold=10),
         beats=[
@@ -63,7 +65,10 @@ def test_build_encounter_context_without_cdef_falls_back_to_generic() -> None:
     narrator = NarratorAgent()
     reg = PromptRegistry()
     narrator.build_encounter_context(
-        reg, encounter=None, cdef=None, encounter_summary=None,
+        reg,
+        encounter=None,
+        cdef=None,
+        encounter_summary=None,
     )
     composed = reg.compose(narrator.name())
     assert "encounter-rules" in composed
@@ -84,6 +89,7 @@ def test_build_encounter_context_backward_compatible_no_kwargs() -> None:
 
 def test_turn_context_has_encounter_field() -> None:
     from sidequest.agents.orchestrator import TurnContext
+
     ctx = TurnContext()
     assert ctx.encounter is None
     sentinel = object()

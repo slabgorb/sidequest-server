@@ -17,6 +17,7 @@ when invoked through the playtest fixture API.
 Skips when sidequest-content is not checked out (matches the pattern in
 ``test_sealed_letter_dispatch_integration.py``).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -171,12 +172,8 @@ def test_three_turn_dogfight_resolves_through_production_path(
     _assert_dogfight_otel_spans_fired(otel_capture, expected_turns=1)
     # Symmetric with turns 1 and 2: per_actor_state should still hold
     # the latest cell's deltas — never empty after a resolved turn.
-    assert red.per_actor_state, (
-        "turn 3 should have left red with non-empty per_actor_state"
-    )
-    assert blue.per_actor_state, (
-        "turn 3 should have left blue with non-empty per_actor_state"
-    )
+    assert red.per_actor_state, "turn 3 should have left red with non-empty per_actor_state"
+    assert blue.per_actor_state, "turn 3 should have left blue with non-empty per_actor_state"
     # Still exactly one hint — never accumulating across three turns
     assert len(enc.narrator_hints) == 1, (
         f"narrator_hints should still have exactly 1 entry after turn 3, "
@@ -194,7 +191,9 @@ def test_three_turn_dogfight_resolves_through_production_path(
 
 
 def _assert_dogfight_otel_spans_fired(
-    exporter: InMemorySpanExporter, *, expected_turns: int,
+    exporter: InMemorySpanExporter,
+    *,
+    expected_turns: int,
 ) -> None:
     """Assert that exactly one turn's worth of dogfight.* spans fired.
 
@@ -220,6 +219,5 @@ def _assert_dogfight_otel_spans_fired(
         f"all spans: {names}"
     )
     assert len(resolved) == expected_turns, (
-        f"expected {expected_turns} cell_resolved spans, "
-        f"got {len(resolved)}; all spans: {names}"
+        f"expected {expected_turns} cell_resolved spans, got {len(resolved)}; all spans: {names}"
     )

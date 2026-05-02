@@ -4,6 +4,7 @@ Matches the production-tracer-singleton pattern in tests/agents/conftest.py's
 ``otel_capture`` fixture: install an InMemorySpanExporter on the live
 TracerProvider so we observe what production code actually emits.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -52,7 +53,9 @@ def _policy() -> LethalityPolicy:
 
 def _pc(current: int) -> CreatureCore:
     return CreatureCore(
-        name="Alice", description="d", personality="p",
+        name="Alice",
+        description="d",
+        personality="p",
         inventory=Inventory(),
         edge=EdgePool(current=current, max=10, base_max=10),
     )
@@ -67,12 +70,15 @@ def test_arbitrate_emits_span_with_verdict_count(otel_capture):
         confidence_global=1.0,
     )
     arbiter.arbitrate(
-        package=pkg, bank_result=BankResult(),
-        pc_cores_by_player={"alice": _pc(0)}, npc_cores_by_name={},
+        package=pkg,
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": _pc(0)},
+        npc_cores_by_name={},
     )
 
-    spans = [s for s in otel_capture.get_finished_spans()
-             if s.name == SPAN_LOCAL_DM_LETHALITY_ARBITRATE]
+    spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == SPAN_LOCAL_DM_LETHALITY_ARBITRATE
+    ]
     assert len(spans) == 1
     span = spans[0]
     assert span.attributes["turn_id"] == "t42"
@@ -90,10 +96,13 @@ def test_arbitrate_no_verdict_still_emits_span(otel_capture):
         confidence_global=1.0,
     )
     arbiter.arbitrate(
-        package=pkg, bank_result=BankResult(),
-        pc_cores_by_player={"alice": _pc(7)}, npc_cores_by_name={},
+        package=pkg,
+        bank_result=BankResult(),
+        pc_cores_by_player={"alice": _pc(7)},
+        npc_cores_by_name={},
     )
-    spans = [s for s in otel_capture.get_finished_spans()
-             if s.name == SPAN_LOCAL_DM_LETHALITY_ARBITRATE]
+    spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == SPAN_LOCAL_DM_LETHALITY_ARBITRATE
+    ]
     assert len(spans) == 1
     assert spans[0].attributes["verdict_count"] == 0

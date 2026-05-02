@@ -60,10 +60,7 @@ class BeliefSourceOverheard(BaseModel):
 
 
 BeliefSource = Annotated[
-    BeliefSourceWitnessed
-    | BeliefSourceToldBy
-    | BeliefSourceInferred
-    | BeliefSourceOverheard,
+    BeliefSourceWitnessed | BeliefSourceToldBy | BeliefSourceInferred | BeliefSourceOverheard,
     Field(discriminator="kind"),
 ]
 
@@ -192,9 +189,7 @@ class BeliefState(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    beliefs: list[BeliefFact | BeliefSuspicion | BeliefClaim] = Field(
-        default_factory=list
-    )
+    beliefs: list[BeliefFact | BeliefSuspicion | BeliefClaim] = Field(default_factory=list)
     credibility_scores: dict[str, Credibility] = Field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -218,9 +213,7 @@ class BeliefState(BaseModel):
             },
         )
 
-    def beliefs_about(
-        self, subject: str
-    ) -> list[BeliefFact | BeliefSuspicion | BeliefClaim]:
+    def beliefs_about(self, subject: str) -> list[BeliefFact | BeliefSuspicion | BeliefClaim]:
         """Return every belief whose ``subject`` equals ``subject`` (exact match)."""
         return [b for b in self.beliefs if b.subject == subject]
 
@@ -239,9 +232,7 @@ class BeliefState(BaseModel):
     def update_credibility(self, npc_name: str, score: float) -> None:
         """Set ``npc_name``'s credibility (clamped) and emit a watcher event."""
         previous = (
-            self.credibility_scores[npc_name].score
-            if npc_name in self.credibility_scores
-            else None
+            self.credibility_scores[npc_name].score if npc_name in self.credibility_scores else None
         )
         clamped = Credibility.new(score)
         self.credibility_scores[npc_name] = clamped

@@ -80,8 +80,7 @@ def detect_scrapbook_coverage_gaps(
     # would distort coverage_count / gap_rounds.
     if max_round > 0:
         rows = store._conn.execute(
-            "SELECT DISTINCT turn_id FROM scrapbook_entries "
-            "WHERE turn_id >= 1 AND turn_id <= ?",
+            "SELECT DISTINCT turn_id FROM scrapbook_entries WHERE turn_id >= 1 AND turn_id <= ?",
             (max_round,),
         ).fetchall()
         covered = {int(r[0]) for r in rows}

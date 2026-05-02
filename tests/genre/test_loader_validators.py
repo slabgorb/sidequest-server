@@ -50,9 +50,7 @@ def _make_opening(
 
 
 def test_chassis_anchored_resolves() -> None:
-    op = _make_opening(
-        OpeningSetting(chassis_instance="kestrel", interior_room="galley")
-    )
+    op = _make_opening(OpeningSetting(chassis_instance="kestrel", interior_room="galley"))
     chassis = [_make_chassis()]
     # Should not raise.
     _validate_opening_setting_references([op], chassis, world_slug="testworld")
@@ -60,9 +58,7 @@ def test_chassis_anchored_resolves() -> None:
 
 def test_chassis_instance_unknown_fails() -> None:
     """Validator 2."""
-    op = _make_opening(
-        OpeningSetting(chassis_instance="missing_ship", interior_room="galley")
-    )
+    op = _make_opening(OpeningSetting(chassis_instance="missing_ship", interior_room="galley"))
     chassis = [_make_chassis()]
     with pytest.raises(GenreLoadError, match="chassis_instance"):
         _validate_opening_setting_references([op], chassis, world_slug="testworld")
@@ -158,9 +154,7 @@ def test_bank_coverage_solo_and_mp_present() -> None:
         mode="multiplayer",
     )
     chargen_backgrounds: list[str] = []  # validator 8 with empty list = no constraint
-    _validate_opening_bank_coverage(
-        [solo, mp], chargen_backgrounds, world_slug="testworld"
-    )
+    _validate_opening_bank_coverage([solo, mp], chargen_backgrounds, world_slug="testworld")
 
 
 def test_bank_coverage_missing_mp_fails() -> None:

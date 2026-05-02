@@ -4,6 +4,7 @@ Stored as a pydantic field on GameSnapshot. Serializes via model_dump for
 SQLite persistence. Mutator surface: apply_working, add_character,
 set_bar_value (testing), tick_session_decay (Phase 6).
 """
+
 from __future__ import annotations
 
 import logging
@@ -108,9 +109,7 @@ class MagicState(BaseModel):
         # Eagerly instantiate world-scope bars (per spec D1 = eager).
         for spec in config.ledger_bars:
             if spec.scope == "world":
-                key = BarKey(
-                    scope="world", owner_id=config.world_slug, bar_id=spec.id
-                )
+                key = BarKey(scope="world", owner_id=config.world_slug, bar_id=spec.id)
                 state.ledger[_serialize_bar_key(key)] = LedgerBar(
                     spec=spec, value=spec.starts_at_chargen
                 )
@@ -160,9 +159,7 @@ class MagicState(BaseModel):
         # in the ledger, but startswith avoids constructing a BarKey per row.
         actor_prefix = f"character|{working.actor}|"
         if not any(k.startswith(actor_prefix) for k in self.ledger):
-            raise KeyError(
-                f"unknown actor: {working.actor!r}; call add_character first"
-            )
+            raise KeyError(f"unknown actor: {working.actor!r}; call add_character first")
 
         record = WorkingRecord(**working.model_dump())
         crossings: list[ThresholdCrossingEvent] = []
@@ -226,9 +223,7 @@ class MagicState(BaseModel):
             # land. For now, character-scope bars are monotonic up or down.
 
         self.working_log.append(record)
-        return ApplyWorkingResult(
-            working=record, crossings=crossings, bar_changes=bar_changes
-        )
+        return ApplyWorkingResult(working=record, crossings=crossings, bar_changes=bar_changes)
 
     @staticmethod
     def _clamp(value: float, spec: LedgerBarSpec) -> float:

@@ -156,9 +156,7 @@ def register_root(app: FastAPI, root: str | os.PathLike[str]) -> bool:
         if not isinstance(sf, StaticFiles):
             # Defensive — should not happen given the mount factory, but
             # never silently degrade.
-            raise RuntimeError(
-                "render_assets.register_root: mount target is not StaticFiles"
-            )
+            raise RuntimeError("render_assets.register_root: mount target is not StaticFiles")
 
         # Append; Starlette's lookup_path walks all_directories at request
         # time so this is picked up without a server restart.

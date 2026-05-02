@@ -1,4 +1,5 @@
 """python -m sidequest.cli.validate.projection_check — projection.yaml audit tool."""
+
 from __future__ import annotations
 
 import subprocess

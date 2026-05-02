@@ -9,6 +9,7 @@ Slice scope: ChassisInstance + bond ledger + lineage + bond mutation +
 tier derivation. Hardpoints, subsystems, damage_history, registration
 are deferred fields and not authored here.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -130,12 +131,8 @@ def apply_bond_event(
         min(1.0, entry.bond_strength_chassis_to_character + delta_chassis),
     )
 
-    entry.bond_tier_character = derive_bond_tier(
-        entry.bond_strength_character_to_chassis
-    )
-    entry.bond_tier_chassis = derive_bond_tier(
-        entry.bond_strength_chassis_to_character
-    )
+    entry.bond_tier_character = derive_bond_tier(entry.bond_strength_character_to_chassis)
+    entry.bond_tier_chassis = derive_bond_tier(entry.bond_strength_chassis_to_character)
 
     entry.history.append(
         BondHistoryEvent(
@@ -185,6 +182,7 @@ def _project_chassis_to_npc_entry(chassis: ChassisInstance):
     Imports happen lazily to avoid a session→chassis import cycle.
     """
     from sidequest.game.session import NpcRegistryEntry
+
     return NpcRegistryEntry(
         name=chassis.name,
         role="ship_ai",
@@ -214,12 +212,7 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     if genre_pack.source_dir is None:
         return
 
-    rigs_path = (
-        genre_pack.source_dir
-        / "worlds"
-        / snapshot.world_slug
-        / "rigs.yaml"
-    )
+    rigs_path = genre_pack.source_dir / "worlds" / snapshot.world_slug / "rigs.yaml"
     if not rigs_path.exists():
         return
 

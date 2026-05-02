@@ -5,6 +5,7 @@ Adapted from plan lines 3831-3866: the real prompt-assembly surface is
 ``build_narrator_prompt`` function. Tests use TurnContext.magic_state to
 inject state without going through the full GameSnapshot convenience wrapper.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,9 @@ def _make_world_config() -> WorldMagicConfig:
         intensity=0.25,
         world_knowledge=WorldKnowledge(primary="classified", local_register="folkloric"),
         visibility={"primary": "feared", "local_register": "dismissed"},
-        hard_limits=[HardLimit(id="psionics_never_decisive", description="no decisive psionic outcomes")],
+        hard_limits=[
+            HardLimit(id="psionics_never_decisive", description="no decisive psionic outcomes")
+        ],
         cost_types=["sanity", "notice"],
         ledger_bars=[
             LedgerBarSpec(

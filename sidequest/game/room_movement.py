@@ -38,9 +38,7 @@ def init_room_graph_location(snap: GameSnapshot, rooms: list[RoomDef]) -> str:
     """
     entrance = next((r for r in rooms if r.room_type == "entrance"), None)
     if entrance is None:
-        raise RoomGraphInitError(
-            f"room graph has no entrance room — {len(rooms)} rooms checked"
-        )
+        raise RoomGraphInitError(f"room graph has no entrance room — {len(rooms)} rooms checked")
 
     snap.location = entrance.id
     if entrance.id not in snap.discovered_rooms:

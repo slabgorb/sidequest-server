@@ -206,11 +206,7 @@ class TestRecomputeArcHistory:
         otel_capture.clear()
         recompute_arc_history(snap, chapters)
 
-        ticks = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.arc_tick"
-        ]
+        ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
         assert ticks
         attrs = ticks[0].attributes or {}
         for required in (
@@ -224,14 +220,11 @@ class TestRecomputeArcHistory:
             "cadence_interval",
         ):
             assert required in attrs, (
-                f"arc_tick span missing required attribute {required!r}; "
-                f"got {sorted(attrs)}"
+                f"arc_tick span missing required attribute {required!r}; got {sorted(attrs)}"
             )
         assert attrs["cadence_interval"] == ARC_RECOMPUTE_INTERVAL
 
-    def test_arc_promoted_fires_only_on_tier_change(
-        self, otel_capture
-    ) -> None:
+    def test_arc_promoted_fires_only_on_tier_change(self, otel_capture) -> None:
         """``world_history.arc_promoted`` is a state-transition signal.
         The first recompute on a Fresh→Early snapshot must fire it; an
         immediate second recompute (same maturity) must not.
@@ -243,9 +236,7 @@ class TestRecomputeArcHistory:
         otel_capture.clear()
         recompute_arc_history(snap, chapters)
         first_promoted = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.arc_promoted"
+            s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_promoted"
         ]
         assert len(first_promoted) == 1, (
             "arc_promoted must fire on the first recompute that crosses "
@@ -255,13 +246,9 @@ class TestRecomputeArcHistory:
         otel_capture.clear()
         recompute_arc_history(snap, chapters)
         second_promoted = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.arc_promoted"
+            s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_promoted"
         ]
-        assert second_promoted == [], (
-            "arc_promoted must NOT fire on a stable-maturity recompute"
-        )
+        assert second_promoted == [], "arc_promoted must NOT fire on a stable-maturity recompute"
 
     def test_arc_promoted_attributes(self, otel_capture) -> None:
         """The promoted span identifies the transition (from/to) and
@@ -275,9 +262,7 @@ class TestRecomputeArcHistory:
         recompute_arc_history(snap, chapters)
 
         promoted = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.arc_promoted"
+            s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_promoted"
         ]
         assert promoted
         attrs = promoted[0].attributes or {}
@@ -287,9 +272,7 @@ class TestRecomputeArcHistory:
             "to_maturity",
             "chapters_added",
         ):
-            assert required in attrs, (
-                f"arc_promoted span missing {required!r}; got {sorted(attrs)}"
-            )
+            assert required in attrs, f"arc_promoted span missing {required!r}; got {sorted(attrs)}"
         assert attrs["from_maturity"] == CampaignMaturity.Fresh.value
         assert attrs["to_maturity"] == CampaignMaturity.Early.value
 
@@ -308,11 +291,7 @@ class TestRecomputeArcHistory:
         otel_capture.clear()
         recompute_arc_history(snap, chapters)
 
-        ticks = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.arc_tick"
-        ]
+        ticks = [s for s in otel_capture.get_finished_spans() if s.name == "world_history.arc_tick"]
         assert ticks
         attrs = ticks[0].attributes or {}
         assert attrs.get("tier_changed") is False, (

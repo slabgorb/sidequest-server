@@ -148,11 +148,13 @@ def test_websocket_connect_missing_genre_returns_error(tmp_path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "payload": {"event": "connect", "player_name": "T", "genre": "", "world": "w"},
-            "player_id": "",
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "payload": {"event": "connect", "player_name": "T", "genre": "", "world": "w"},
+                "player_id": "",
+            }
+        )
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "ERROR"
 
@@ -163,11 +165,13 @@ def test_websocket_connect_missing_world_returns_error(tmp_path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "payload": {"event": "connect", "player_name": "T", "genre": "g", "world": ""},
-            "player_id": "",
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "payload": {"event": "connect", "player_name": "T", "genre": "g", "world": ""},
+                "player_id": "",
+            }
+        )
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "ERROR"
 
@@ -178,11 +182,13 @@ def test_websocket_connect_unknown_event_returns_error(tmp_path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "payload": {"event": "unknown_event"},
-            "player_id": "",
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "payload": {"event": "unknown_event"},
+                "player_id": "",
+            }
+        )
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "ERROR"
 
@@ -198,11 +204,13 @@ def test_unsupported_message_type_returns_error(tmp_path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "payload": {"event": "bogus_unsupported"},
-            "player_id": "",
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "payload": {"event": "bogus_unsupported"},
+                "player_id": "",
+            }
+        )
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "ERROR"
 
@@ -218,11 +226,13 @@ def test_player_action_before_connect_returns_error(tmp_path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "PLAYER_ACTION",
-            "payload": {"action": "I look around the room", "aside": False},
-            "player_id": "p1",
-        })
+        ws.send_json(
+            {
+                "type": "PLAYER_ACTION",
+                "payload": {"action": "I look around the room", "aside": False},
+                "player_id": "p1",
+            }
+        )
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "ERROR"
 
@@ -258,11 +268,18 @@ def test_websocket_connect_player_name_echoed(tmp_path):
         MockLoader.return_value.load.return_value = mock_pack
 
         with client.websocket_connect("/ws") as ws:
-            ws.send_json({
-                "type": "SESSION_EVENT",
-                "payload": {"event": "connect", "player_name": "Bilbo", "genre": "g", "world": "w"},
-                "player_id": "",
-            })
+            ws.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "payload": {
+                        "event": "connect",
+                        "player_name": "Bilbo",
+                        "genre": "g",
+                        "world": "w",
+                    },
+                    "player_id": "",
+                }
+            )
             msg = json.loads(ws.receive_text())
             assert msg["type"] == "SESSION_EVENT"
             assert msg["payload"]["player_name"] == "Bilbo"

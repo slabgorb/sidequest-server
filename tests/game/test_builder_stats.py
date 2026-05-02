@@ -153,17 +153,13 @@ class TestEagerRoll:
                 mechanical_effects=MechanicalEffects(stat_generation="roll_3d6_strict"),
             ),
         ]
-        b = CharacterBuilder(
-            scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(7)
-        )
+        b = CharacterBuilder(scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(7))
         # Eager roll fired during __init__.
         assert b.rolled_stats() is not None
         assert [name for name, _ in b.rolled_stats()] == ABILITY_NAMES  # type: ignore[union-attr]
 
     def test_no_scene_directive_leaves_rolled_stats_none(self) -> None:
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_standard_array()
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_standard_array())
         assert b.rolled_stats() is None
 
     def test_scene_other_directive_does_not_roll(self) -> None:
@@ -223,17 +219,13 @@ class TestAllocatePointBuy:
 
 class TestGenerateStats:
     def test_standard_array_uses_canonical_values(self) -> None:
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_standard_array()
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_standard_array())
         stats = b.generate_stats(AccumulatedChoices())
         # Canonical D&D 5e standard array.
         assert stats == {"STR": 15, "DEX": 14, "CON": 13, "INT": 12, "WIS": 10, "CHA": 8}
 
     def test_standard_array_applies_explicit_bonuses(self) -> None:
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_standard_array()
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_standard_array())
         acc = AccumulatedChoices(stat_bonuses={"STR": 2, "DEX": -1})
         stats = b.generate_stats(acc)
         assert stats["STR"] == 17
@@ -242,9 +234,7 @@ class TestGenerateStats:
     def test_standard_array_derives_bonuses_from_hints_when_no_explicit(self) -> None:
         """Rust behavior: when no explicit stat_bonuses were authored, derive
         differentiation from race/mutation/class hints."""
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_standard_array()
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_standard_array())
         acc = AccumulatedChoices(
             race_hint="Mutant",
             mutation_hint="stone skin",
@@ -257,14 +247,12 @@ class TestGenerateStats:
         assert stats["STR"] == 18  # 15 + 3
         assert stats["DEX"] == 16  # 14 + 2
         assert stats["CON"] == 15  # 13 + 2
-        assert stats["CHA"] == 7   # 8 - 1
+        assert stats["CHA"] == 7  # 8 - 1
 
     def test_standard_array_derivation_skipped_when_explicit_bonuses(self) -> None:
         """Explicit bonuses suppress the derivation path — you get what you
         authored, not what the hints imply."""
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_standard_array()
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_standard_array())
         acc = AccumulatedChoices(
             race_hint="Mutant",
             stat_bonuses={"WIS": 1},
@@ -275,9 +263,7 @@ class TestGenerateStats:
         assert stats["WIS"] == 11
 
     def test_point_buy_sums_to_budget(self) -> None:
-        b = CharacterBuilder(
-            scenes=one_choice_scene(), rules=rules_point_buy(27)
-        )
+        b = CharacterBuilder(scenes=one_choice_scene(), rules=rules_point_buy(27))
         stats = b.generate_stats(AccumulatedChoices())
         # All raised from 8 within [8, 15]
         for val in stats.values():
@@ -295,9 +281,7 @@ class TestGenerateStats:
                 mechanical_effects=MechanicalEffects(stat_generation="roll_3d6_strict"),
             ),
         ]
-        b = CharacterBuilder(
-            scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(42)
-        )
+        b = CharacterBuilder(scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(42))
         # Eager roll happened.
         rolled_before = b.rolled_stats()
         stats = b.generate_stats(AccumulatedChoices())
@@ -352,9 +336,7 @@ class TestSceneDirectiveOverride:
                 mechanical_effects=MechanicalEffects(stat_generation="roll_3d6_strict"),
             ),
         ]
-        b = CharacterBuilder(
-            scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(1)
-        )
+        b = CharacterBuilder(scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(1))
         first = b.rolled_stats()
         b.apply_choice(0)
         assert b.rolled_stats() == first  # unchanged by apply_choice
@@ -381,9 +363,7 @@ class TestSceneDirectiveOverride:
                 mechanical_effects=MechanicalEffects(stat_generation="roll_3d6_strict"),
             ),
         ]
-        b = CharacterBuilder(
-            scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(2)
-        )
+        b = CharacterBuilder(scenes=scenes, rules=rules_roll_3d6(), rng=random.Random(2))
         first = b.rolled_stats()
         b.apply_choice(0)
         b.apply_auto_advance()
@@ -407,5 +387,3 @@ class TestSceneDirectiveOverride:
         stats = b.generate_stats(AccumulatedChoices())
         # point_buy output is a spread in [8, 15], not [15, 14, 13, 12, 10, 8].
         assert max(stats.values()) <= 15
-
-

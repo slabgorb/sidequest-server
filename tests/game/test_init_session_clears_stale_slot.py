@@ -312,7 +312,8 @@ class TestInitSessionEmitsWatcherEvent:
             store.init_session("caverns_and_claudes", "grimvault")
 
         event_calls = [
-            call for call in wp.call_args_list
+            call
+            for call in wp.call_args_list
             if call.args and call.args[0] == "session.slot_reinitialized"
         ]
         assert len(event_calls) == 1, (
@@ -340,7 +341,8 @@ class TestInitSessionEmitsWatcherEvent:
             store.init_session("caverns_and_claudes", "grimvault")
 
         event_calls = [
-            call for call in wp.call_args_list
+            call
+            for call in wp.call_args_list
             if call.args and call.args[0] == "session.slot_reinitialized"
         ]
         assert event_calls, "no session.slot_reinitialized event emitted"
@@ -380,9 +382,7 @@ class TestInitSessionEmitsWatcherEvent:
                 f"cleared; missing {tbl!r}, got {cleared!r}"
             )
 
-    def test_watcher_event_fires_on_fresh_slot_with_zero_priors(
-        self, tmp_path: Path
-    ) -> None:
+    def test_watcher_event_fires_on_fresh_slot_with_zero_priors(self, tmp_path: Path) -> None:
         """**Negative confirmation** — the GM panel needs to see that
         reinit ran cleanly even when there were no stale rows. Without
         this event, Sebastien cannot tell whether a quiet reinit happened
@@ -397,7 +397,8 @@ class TestInitSessionEmitsWatcherEvent:
             store.init_session("caverns_and_claudes", "grimvault")
 
         event_calls = [
-            call for call in wp.call_args_list
+            call
+            for call in wp.call_args_list
             if call.args and call.args[0] == "session.slot_reinitialized"
         ]
         assert len(event_calls) == 1, (
@@ -423,9 +424,7 @@ class TestPostReinitInvariantPrecondition:
     lifetime) is story 45-11; this test guarantees the **post-reinit
     precondition** that story can rely on."""
 
-    def test_max_round_is_null_after_reinit_on_populated_slot(
-        self, tmp_path: Path
-    ) -> None:
+    def test_max_round_is_null_after_reinit_on_populated_slot(self, tmp_path: Path) -> None:
         db = db_path_for_slug(tmp_path, "test-invariant")
         db.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteStore(db)
@@ -478,9 +477,7 @@ def test_span_route_registered_for_session_slot_reinitialized() -> None:
     from sidequest.telemetry import spans
 
     span_name = "session.slot_reinitialized"
-    assert (
-        span_name in spans.SPAN_ROUTES or span_name in spans.FLAT_ONLY_SPANS
-    ), (
+    assert span_name in spans.SPAN_ROUTES or span_name in spans.FLAT_ONLY_SPANS, (
         f"{span_name!r} must be registered in SPAN_ROUTES (preferred — "
         "the dashboard renders the typed event) or FLAT_ONLY_SPANS (only "
         "if the dashboard truly does not need a typed row). Story 45-5 "

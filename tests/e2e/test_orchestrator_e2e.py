@@ -45,7 +45,9 @@ def _find_caverns_pack_dir() -> pathlib.Path | None:
             return candidate
 
     # Absolute fallback for the oq-1 checkout structure
-    abs_candidate = pathlib.Path("/Users/keithavery/Projects/oq-1/sidequest-content/genre_packs/caverns_and_claudes")
+    abs_candidate = pathlib.Path(
+        "/Users/keithavery/Projects/oq-1/sidequest-content/genre_packs/caverns_and_claudes"
+    )
     if abs_candidate.is_dir():
         return abs_candidate
 
@@ -177,7 +179,11 @@ async def test_narrator_turn_end_to_end_with_caverns_claudes():
     # Core narration assertions
     assert isinstance(result, NarrationTurnResult)
     assert result.narration, "narration must be non-empty"
-    assert "The Entrance Hall" in result.narration or "torchlight" in result.narration.lower() or result.narration.strip()
+    assert (
+        "The Entrance Hall" in result.narration
+        or "torchlight" in result.narration.lower()
+        or result.narration.strip()
+    )
     assert not result.is_degraded
 
     # game_patch extraction assertions

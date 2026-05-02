@@ -122,14 +122,10 @@ class TestAddBelief:
     def test_beliefs_about_is_subject_scoped(self) -> None:
         bs = BeliefState()
         bs.add_belief(
-            BeliefFact(
-                subject="A", content="c1", turn_learned=0, source=BeliefSourceWitnessed()
-            )
+            BeliefFact(subject="A", content="c1", turn_learned=0, source=BeliefSourceWitnessed())
         )
         bs.add_belief(
-            BeliefFact(
-                subject="B", content="c2", turn_learned=0, source=BeliefSourceWitnessed()
-            )
+            BeliefFact(subject="B", content="c2", turn_learned=0, source=BeliefSourceWitnessed())
         )
         assert len(bs.beliefs_about("A")) == 1
         assert len(bs.beliefs_about("C")) == 0
@@ -214,11 +210,7 @@ class TestOtelEvents:
                     source=BeliefSourceOverheard(),
                 )
             )
-        all_events = [
-            e
-            for span in exporter2.get_finished_spans()
-            for e in span.events
-        ]
+        all_events = [e for span in exporter2.get_finished_spans() for e in span.events]
         belief_events = [e for e in all_events if e.name == "belief_state.belief_added"]
         assert belief_events, f"no belief_added event in {[e.name for e in all_events]}"
         attrs = dict(belief_events[0].attributes or {})

@@ -1,4 +1,5 @@
 """Clock primitive tests — story-time storage in hours."""
+
 from __future__ import annotations
 
 import pytest

@@ -4,6 +4,7 @@ Per spec §3.1: internal unit is hours; display picks scale-appropriate
 units. Engine never returns formatted strings — formatters live here so
 callers (UI, CLI, narrator scene context framing) can convert at the edge.
 """
+
 from __future__ import annotations
 
 

@@ -17,6 +17,7 @@ Uses the same ``spans_module.tracer`` monkeypatch shape as the prior
 inventory / NPC / state-patch wiring tests — OTEL refuses to replace
 an already-installed global provider mid-suite.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -94,7 +95,9 @@ async def test_audio_skip_emits_state_transition_via_span_route(
     # Bind self to None — _audio_skip doesn't read self. Use the
     # unbound method to side-step __init__ requirements.
     WebSocketSessionHandler._audio_skip(  # type: ignore[arg-type]
-        MagicMock(), sd, "empty_cues",
+        MagicMock(),
+        sd,
+        "empty_cues",
     )
     await asyncio.sleep(0.05)
 
@@ -129,7 +132,10 @@ async def test_audio_skip_with_extra_dict_is_json_encoded(
     sd = _make_session_data()
     expected_turn = sd.snapshot.turn_manager.interaction
     WebSocketSessionHandler._audio_skip(  # type: ignore[arg-type]
-        MagicMock(), sd, "error", extra={"error": "RuntimeError"},
+        MagicMock(),
+        sd,
+        "error",
+        extra={"error": "RuntimeError"},
     )
     await asyncio.sleep(0.05)
 
@@ -167,7 +173,9 @@ async def test_audio_dispatched_emits_state_transition_via_span_route(
         sfx_triggers=["library/mutant_wasteland/sfx/whistle.ogg"],
     )
     WebSocketSessionHandler._audio_dispatched(  # type: ignore[arg-type]
-        MagicMock(), sd, payload,
+        MagicMock(),
+        sd,
+        payload,
     )
     await asyncio.sleep(0.05)
 
@@ -203,7 +211,9 @@ async def test_audio_dispatched_handles_none_mood_and_track(
     sd = _make_session_data()
     payload = AudioCuePayload(mood=None, music_track=None, sfx_triggers=[])
     WebSocketSessionHandler._audio_dispatched(  # type: ignore[arg-type]
-        MagicMock(), sd, payload,
+        MagicMock(),
+        sd,
+        payload,
     )
     await asyncio.sleep(0.05)
 
@@ -235,17 +245,15 @@ async def test_audio_route_is_single_source_no_double_emission(
     sd = _make_session_data()
     payload = AudioCuePayload(mood="calm", music_track="t.ogg", sfx_triggers=[])
     WebSocketSessionHandler._audio_dispatched(  # type: ignore[arg-type]
-        MagicMock(), sd, payload,
+        MagicMock(),
+        sd,
+        payload,
     )
     await asyncio.sleep(0.05)
 
     audio_events = [
-        e
-        for e in captured
-        if e["event_type"] == "state_transition"
-        and e["component"] == "audio"
+        e for e in captured if e["event_type"] == "state_transition" and e["component"] == "audio"
     ]
     assert len(audio_events) == 1, (
-        "expected exactly one state_transition for audio "
-        f"(got {len(audio_events)}: {audio_events})"
+        f"expected exactly one state_transition for audio (got {len(audio_events)}: {audio_events})"
     )

@@ -3,6 +3,7 @@
 Port tests of orchestrator.rs::BeatSelection and orchestrator.rs::NpcMention
 validation. Dual-track momentum (spec §Outcome declaration, §Side declaration).
 """
+
 import pytest
 
 from sidequest.agents.orchestrator import (
@@ -15,18 +16,26 @@ from sidequest.protocol.dice import RollOutcome
 
 def test_beat_selection_outcome_required():
     """BeatSelection.from_dict parses outcome to RollOutcome enum."""
-    sel = BeatSelection.from_dict({
-        "actor": "Sam", "beat_id": "attack", "outcome": "Success",
-    })
+    sel = BeatSelection.from_dict(
+        {
+            "actor": "Sam",
+            "beat_id": "attack",
+            "outcome": "Success",
+        }
+    )
     assert sel.outcome is RollOutcome.Success
 
 
 def test_beat_selection_invalid_outcome_raises():
     """BeatSelection.from_dict raises ValueError + emits OTEL span on invalid outcome."""
     with pytest.raises(ValueError, match="declared_tier"):
-        BeatSelection.from_dict({
-            "actor": "Sam", "beat_id": "attack", "outcome": "Wibble",
-        })
+        BeatSelection.from_dict(
+            {
+                "actor": "Sam",
+                "beat_id": "attack",
+                "outcome": "Wibble",
+            }
+        )
 
 
 def test_beat_selection_missing_outcome_defaults_to_success():

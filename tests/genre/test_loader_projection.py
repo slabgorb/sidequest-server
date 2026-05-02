@@ -1,4 +1,5 @@
 """Genre pack loader picks up projection.yaml when present."""
+
 from __future__ import annotations
 
 import shutil

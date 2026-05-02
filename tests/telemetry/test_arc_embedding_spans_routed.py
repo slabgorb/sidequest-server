@@ -38,17 +38,11 @@ from sidequest.telemetry.spans import (
 
 
 def test_arc_embedding_seed_span_constant_value() -> None:
-    assert (
-        SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED
-        == "world_history.arc_embedding_seed"
-    )
+    assert SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED == "world_history.arc_embedding_seed"
 
 
 def test_narrative_log_writeback_span_constant_value() -> None:
-    assert (
-        SPAN_WORLD_HISTORY_NARRATIVE_LOG_WRITEBACK
-        == "world_history.narrative_log_writeback"
-    )
+    assert SPAN_WORLD_HISTORY_NARRATIVE_LOG_WRITEBACK == "world_history.narrative_log_writeback"
 
 
 def test_lore_writeback_span_constant_value() -> None:
@@ -73,9 +67,7 @@ def test_arc_embedding_seed_is_routed_as_state_transition() -> None:
     )
     route = SPAN_ROUTES[SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED]
     assert route.event_type == "state_transition"
-    assert route.component, (
-        "arc_embedding_seed route must declare a component name"
-    )
+    assert route.component, "arc_embedding_seed route must declare a component name"
 
 
 def test_narrative_log_writeback_is_routed_as_state_transition() -> None:
@@ -128,8 +120,7 @@ def test_arc_embedding_seed_extract_pulls_seed_counts() -> None:
         "interaction",
     ):
         assert required in fields, (
-            f"arc_embedding_seed route extract() missing {required!r}; "
-            f"got {sorted(fields)}"
+            f"arc_embedding_seed route extract() missing {required!r}; got {sorted(fields)}"
         )
 
 
@@ -153,8 +144,7 @@ def test_narrative_log_writeback_extract_pulls_per_chapter_counts() -> None:
         "entry_type",
     ):
         assert required in fields, (
-            f"narrative_log_writeback extract() missing {required!r}; "
-            f"got {sorted(fields)}"
+            f"narrative_log_writeback extract() missing {required!r}; got {sorted(fields)}"
         )
 
 
@@ -186,6 +176,5 @@ def test_lore_writeback_extract_pulls_per_fragment_attributes() -> None:
         "pending_embedding",
     ):
         assert required in fields, (
-            f"lore_writeback extract() missing {required!r}; "
-            f"got {sorted(fields)}"
+            f"lore_writeback extract() missing {required!r}; got {sorted(fields)}"
         )

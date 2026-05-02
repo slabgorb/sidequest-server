@@ -3,6 +3,7 @@
 These tests mock the orchestrator — no LLM call — and assert the handler
 pushes a single ConfrontationMessage into the outbound list per transition.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,9 +18,7 @@ from sidequest.protocol.messages import ConfrontationMessage
 
 # Fixture pack on disk — cache-free reload to sidestep the session-wide
 # GenreLoader cache that other tests can poison with real-content CAC.
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
 
 
 def _result(narration: str = "ok", **kwargs) -> NarrationTurnResult:
@@ -35,8 +34,11 @@ async def test_confrontation_message_emitted_on_encounter_start(
         return_value=_result(confrontation="combat"),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "I attack the goblins!", _build_turn_context(sd),
+        sd,
+        "I attack the goblins!",
+        _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
@@ -55,6 +57,7 @@ async def test_confrontation_message_active_false_when_resolved(
         StructuredEncounter,
     )
     from sidequest.protocol.dice import RollOutcome
+
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
     # Drive the encounter to resolution via an OPPONENT-side beat so the
     # SOUL-gate (Playtest 2026-04-26 [S2-BUG]) doesn't reject it. PC-side
@@ -75,15 +78,22 @@ async def test_confrontation_message_active_false_when_resolved(
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
-            beat_selections=[BeatSelection(
-                actor="Goblin", beat_id="attack",
-                outcome=RollOutcome.Success, target=None,
-            )],
+            beat_selections=[
+                BeatSelection(
+                    actor="Goblin",
+                    beat_id="attack",
+                    outcome=RollOutcome.Success,
+                    target=None,
+                )
+            ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "Press the attack!", _build_turn_context(sd),
+        sd,
+        "Press the attack!",
+        _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
@@ -100,8 +110,11 @@ async def test_no_confrontation_message_when_state_unchanged(
         return_value=_result(narration="You take a quiet walk."),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "Walk quietly.", _build_turn_context(sd),
+        sd,
+        "Walk quietly.",
+        _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 0
@@ -119,6 +132,7 @@ async def test_confrontation_message_refreshed_on_live_to_live(
         StructuredEncounter,
     )
     from sidequest.protocol.dice import RollOutcome
+
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
     # Use an opponent-side actor so the beat advances the dial through
     # the legitimate (NPC) narrator-extraction path. PC-side beats from
@@ -135,15 +149,22 @@ async def test_confrontation_message_refreshed_on_live_to_live(
     sd.snapshot.encounter = enc
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=_result(
-            beat_selections=[BeatSelection(
-                actor="Goblin", beat_id="attack",
-                outcome=RollOutcome.Success, target=None,
-            )],
+            beat_selections=[
+                BeatSelection(
+                    actor="Goblin",
+                    beat_id="attack",
+                    outcome=RollOutcome.Success,
+                    target=None,
+                )
+            ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "Swing again.", _build_turn_context(sd),
+        sd,
+        "Swing again.",
+        _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     assert len(conf) == 1
@@ -218,15 +239,20 @@ async def test_dice_turn_filters_only_rolling_actor_beat_selection(
             beat_selections=[
                 BeatSelection(actor="Rux", beat_id="mutant_ability", target=None),
                 BeatSelection(
-                    actor="Warden", beat_id="mutant_ability",
-                    outcome=RollOutcome.Success, target=None,
+                    actor="Warden",
+                    beat_id="mutant_ability",
+                    outcome=RollOutcome.Success,
+                    target=None,
                 ),
             ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "[BEAT_RESOLVED] Use Mutation (Instinct): ...", _build_turn_context(sd),
+        sd,
+        "[BEAT_RESOLVED] Use Mutation (Instinct): ...",
+        _build_turn_context(sd),
     )
 
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
@@ -274,8 +300,11 @@ async def test_narration_with_location_emits_chapter_marker(
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "Move forward.", _build_turn_context(sd),
+        sd,
+        "Move forward.",
+        _build_turn_context(sd),
     )
 
     chapter = [m for m in msgs if isinstance(m, ChapterMarkerMessage)]
@@ -303,8 +332,11 @@ async def test_narration_without_location_skips_chapter_marker(
         return_value=_result(narration="You look around."),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "Look.", _build_turn_context(sd),
+        sd,
+        "Look.",
+        _build_turn_context(sd),
     )
     chapter = [m for m in msgs if isinstance(m, ChapterMarkerMessage)]
     assert chapter == []
@@ -345,15 +377,20 @@ async def test_dice_turn_success_applies_opponent_beat_selections(
         return_value=_result(
             beat_selections=[
                 BeatSelection(
-                    actor="Warden", beat_id="mutant_ability",
-                    outcome=RollOutcome.Success, target=None,
+                    actor="Warden",
+                    beat_id="mutant_ability",
+                    outcome=RollOutcome.Success,
+                    target=None,
                 ),
             ],
         ),
     )
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "[BEAT_RESOLVED] ...", _build_turn_context(sd),
+        sd,
+        "[BEAT_RESOLVED] ...",
+        _build_turn_context(sd),
     )
     conf = [m for m in msgs if isinstance(m, ConfrontationMessage)]
     # Player dial untouched by the narrator's beat_selections (Rux not in

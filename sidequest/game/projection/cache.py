@@ -4,6 +4,7 @@ Backed by the same SQLite DB as EventLog. Written at fan-out time; read
 at reconnect. The (event_seq, player_id) primary key means a re-fan of
 the same event to the same player is idempotent (last write wins).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -83,7 +84,4 @@ class ProjectionCache:
                 """,
                 (player_id, since_seq),
             ).fetchall()
-        return [
-            CachedDecision(event_seq=r[0], include=bool(r[1]), payload_json=r[2])
-            for r in rows
-        ]
+        return [CachedDecision(event_seq=r[0], include=bool(r[1]), payload_json=r[2]) for r in rows]

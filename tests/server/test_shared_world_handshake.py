@@ -28,6 +28,7 @@ Boundary surfaces exercised here:
 
 These tests are RED until story 45-1 lands.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,31 +71,23 @@ def test_build_shared_world_delta_carries_canonical_fields(
     room.snapshot.location = "rusted_atrium"
 
     delta = build_shared_world_delta(room.snapshot, room=room)
-    delta_dict = (
-        delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
-    )
+    delta_dict = delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
 
     assert delta_dict.get("location") == "rusted_atrium", (
         f"delta.location should reflect snapshot.location, got {delta_dict!r}"
     )
     # encounter_id key is mandatory even when None — consumers shouldn't
     # have to distinguish "missing" from "no encounter".
-    assert "encounter_id" in delta_dict, (
-        f"delta missing encounter_id key, got {delta_dict!r}"
-    )
+    assert "encounter_id" in delta_dict, f"delta missing encounter_id key, got {delta_dict!r}"
     formation = delta_dict.get("party_formation")
-    assert formation is not None, (
-        f"delta.party_formation missing, got {delta_dict!r}"
-    )
+    assert formation is not None, f"delta.party_formation missing, got {delta_dict!r}"
     formation_pids = {entry.get("player_id") for entry in formation}
     assert {"p1", "p2"}.issubset(formation_pids), (
         f"party_formation must include every seated player, got {formation_pids!r}"
     )
     # Adjacency-relevant: every entry has a location.
     for entry in formation:
-        assert entry.get("location"), (
-            f"party_formation entry missing location: {entry!r}"
-        )
+        assert entry.get("location"), f"party_formation entry missing location: {entry!r}"
 
 
 def test_shared_world_delta_excludes_perceived_state(
@@ -134,9 +127,7 @@ def test_shared_world_delta_excludes_perceived_state(
     snapshot.location = "rusted_atrium"
 
     delta = build_shared_world_delta(snapshot, room=room)
-    delta_dict = (
-        delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
-    )
+    delta_dict = delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
     serialized = json.dumps(delta_dict)
 
     for sentinel in (
@@ -252,9 +243,9 @@ def test_build_turn_context_state_summary_exposes_party_formation(
     # the narrator gets a structured adjacency signal, not inferred-from-
     # characters[]. This is what 37-37 specified and what the playtest
     # evidence demands.
-    formation = payload.get("party_formation") or payload.get(
-        "shared_world_delta", {}
-    ).get("party_formation")
+    formation = payload.get("party_formation") or payload.get("shared_world_delta", {}).get(
+        "party_formation"
+    )
     assert formation is not None, (
         "state_summary must carry an explicit party_formation array — "
         "narrator-inferred adjacency is what produced the 'collapsed corridor' "
@@ -265,9 +256,7 @@ def test_build_turn_context_state_summary_exposes_party_formation(
         f"party_formation must include every seated player, got {formation_pids!r}"
     )
     for entry in formation:
-        assert entry.get("location"), (
-            f"party_formation entry missing location: {entry!r}"
-        )
+        assert entry.get("location"), f"party_formation entry missing location: {entry!r}"
 
 
 def test_build_turn_context_emits_handshake_watcher_event(
@@ -290,13 +279,16 @@ def test_build_turn_context_emits_handshake_watcher_event(
 
     # Patch the watcher_publish at every reasonable site — Dev may emit
     # from session_helpers (apply seam) or the helper module itself.
-    with patch(
-        "sidequest.server.session_helpers._watcher_publish",
-        create=True,
-    ) as wp_helpers, patch(
-        "sidequest.game.shared_world_delta._watcher_publish",
-        create=True,
-    ) as wp_module:
+    with (
+        patch(
+            "sidequest.server.session_helpers._watcher_publish",
+            create=True,
+        ) as wp_helpers,
+        patch(
+            "sidequest.game.shared_world_delta._watcher_publish",
+            create=True,
+        ) as wp_module,
+    ):
         _build_turn_context(sd, room=room)
 
     all_calls = list(wp_helpers.call_args_list) + list(wp_module.call_args_list)
@@ -309,14 +301,11 @@ def test_build_turn_context_emits_handshake_watcher_event(
     )
     # Schema check: required attributes must be present.
     matches = [
-        call for call in all_calls
-        if call.args and call.args[0] == "game.handshake.delta_applied"
+        call for call in all_calls if call.args and call.args[0] == "game.handshake.delta_applied"
     ]
     attrs = matches[0].args[1] if len(matches[0].args) > 1 else {}
     for required in ("delta_fields", "conflict_count", "resolution_path"):
-        assert required in attrs, (
-            f"watcher event missing '{required}' attribute, got {attrs!r}"
-        )
+        assert required in attrs, f"watcher event missing '{required}' attribute, got {attrs!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -344,9 +333,7 @@ def test_span_constant_and_route_registered() -> None:
         "SPAN_GAME_HANDSHAKE_DELTA_APPLIED — completeness lint will fail"
     )
     route = spans.SPAN_ROUTES[span_name]
-    assert route.component == "game", (
-        f"route.component should be 'game', got {route.component!r}"
-    )
+    assert route.component == "game", f"route.component should be 'game', got {route.component!r}"
 
 
 # ---------------------------------------------------------------------------

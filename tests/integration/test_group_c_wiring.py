@@ -9,6 +9,7 @@ session handler) actually invoke `LethalityArbiter.arbitrate`.
 Does NOT mock the arbiter or the prompt builder. Mocks only the narrator's
 Claude subprocess (to keep the test hermetic).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,16 +34,16 @@ from tests.agents.test_orchestrator import make_spawn_fn
 
 pytestmark = pytest.mark.asyncio
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 async def test_arbiter_is_invoked_on_real_prompt_build_path():
     """Spy on LethalityArbiter.arbitrate — it must be called exactly once."""
     character = Character(
         core=CreatureCore(
-            name="Alice", description="d", personality="p",
+            name="Alice",
+            description="d",
+            personality="p",
             inventory=Inventory(),
             edge=EdgePool(current=0, max=10, base_max=10),
         ),
@@ -84,7 +85,9 @@ async def test_arbiter_is_invoked_on_real_prompt_build_path():
     orch = Orchestrator(client=ClaudeClient(spawn_fn=make_spawn_fn("narration")))
     with patch.object(LethalityArbiter, "arbitrate", _spy):
         prompt, _ = await orch.build_narrator_prompt(
-            "x", ctx, tier=NarratorPromptTier.Full,
+            "x",
+            ctx,
+            tier=NarratorPromptTier.Full,
         )
 
     assert len(calls) == 1, "arbiter was not invoked on the real prompt-build path"

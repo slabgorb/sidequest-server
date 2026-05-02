@@ -51,7 +51,9 @@ class LibraryBackend(AudioBackend):
 
         if theme_variations:
             chosen_path = self._rotator.pick(
-                theme_variations, intensity=cue.intensity, mood=cue.mood,
+                theme_variations,
+                intensity=cue.intensity,
+                mood=cue.mood,
             )
             if chosen_path is None:
                 return None

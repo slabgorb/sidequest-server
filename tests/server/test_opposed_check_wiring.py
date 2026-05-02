@@ -70,6 +70,7 @@ def _make_snapshot() -> GameSnapshot:
         turn_manager=TurnManager(),
     )
 
+
 CONTENT_ROOT = Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 MIGRATION_ROOT = Path("/Users/slabgorb/Projects/oq-2-content-migration/genre_packs")
 
@@ -77,6 +78,7 @@ MIGRATION_ROOT = Path("/Users/slabgorb/Projects/oq-2-content-migration/genre_pac
 # ---------------------------------------------------------------------------
 # OTEL exporter fixture (mirrors tests/server/dispatch/test_sealed_letter.py)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def captured_spans(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
@@ -88,6 +90,7 @@ def captured_spans(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
     or the server boot may have installed.
     """
     from sidequest.telemetry import spans as spans_module
+
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -100,44 +103,59 @@ def captured_spans(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
 # Test fixtures (lightweight pack + encounter, no real YAML)
 # ---------------------------------------------------------------------------
 
+
 def _attack_beat() -> BeatDef:
-    return BeatDef.model_validate({
-        "id": "attack", "label": "Attack", "kind": "strike", "base": 2,
-        "stat_check": "STR",
-    })
+    return BeatDef.model_validate(
+        {
+            "id": "attack",
+            "label": "Attack",
+            "kind": "strike",
+            "base": 2,
+            "stat_check": "STR",
+        }
+    )
 
 
 def _defend_beat() -> BeatDef:
-    return BeatDef.model_validate({
-        "id": "defend", "label": "Defend", "kind": "brace", "base": 1,
-        "stat_check": "STR",
-    })
+    return BeatDef.model_validate(
+        {
+            "id": "defend",
+            "label": "Defend",
+            "kind": "brace",
+            "base": 1,
+            "stat_check": "STR",
+        }
+    )
 
 
 def _opposed_cdef() -> ConfrontationDef:
-    return ConfrontationDef.model_validate({
-        "type": "combat",
-        "label": "Combat",
-        "category": "combat",
-        "resolution_mode": "opposed_check",
-        "opponent_default_stats": {"STR": 12},
-        "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
-        "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
-        "beats": [_attack_beat().model_dump(), _defend_beat().model_dump()],
-    })
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "resolution_mode": "opposed_check",
+            "opponent_default_stats": {"STR": 12},
+            "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+            "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+            "beats": [_attack_beat().model_dump(), _defend_beat().model_dump()],
+        }
+    )
 
 
 def _legacy_cdef() -> ConfrontationDef:
     """Same beats but legacy beat_selection — for negative narrator-prompt test."""
-    return ConfrontationDef.model_validate({
-        "type": "combat",
-        "label": "Combat",
-        "category": "combat",
-        "resolution_mode": "beat_selection",
-        "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
-        "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
-        "beats": [_attack_beat().model_dump(), _defend_beat().model_dump()],
-    })
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "resolution_mode": "beat_selection",
+            "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+            "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
+            "beats": [_attack_beat().model_dump(), _defend_beat().model_dump()],
+        }
+    )
 
 
 def _make_pack(cdef: ConfrontationDef) -> GenrePack:
@@ -158,11 +176,15 @@ def _make_encounter() -> StructuredEncounter:
         structured_phase=EncounterPhase.Setup,
         actors=[
             EncounterActor(
-                name="Sam", role="combatant", side="player",
+                name="Sam",
+                role="combatant",
+                side="player",
                 per_actor_state={"stats": {"STR": 14}},
             ),
             EncounterActor(
-                name="Wolf", role="combatant", side="opponent",
+                name="Wolf",
+                role="combatant",
+                side="opponent",
                 per_actor_state={"stats": {"STR": 14}},
             ),
         ],
@@ -180,6 +202,7 @@ def _throw_params() -> ThrowParams:
 # ---------------------------------------------------------------------------
 # Wiring 1: dispatch_dice_throw defers apply_beat for opposed_check
 # ---------------------------------------------------------------------------
+
 
 def test_dispatch_dice_throw_defers_apply_beat_for_opposed_check():
     enc = _make_encounter()
@@ -251,11 +274,15 @@ def test_dispatch_dice_throw_legacy_beat_selection_still_applies():
 # Wiring 2 + 3: narration_apply runs the resolver and emits the OTEL span
 # ---------------------------------------------------------------------------
 
+
 def _patched_d20(monkeypatch, value: int) -> None:
     """Monkeypatch the server-side opponent d20 to a deterministic value."""
     from sidequest.server import narration_apply
+
     monkeypatch.setattr(
-        narration_apply, "_roll_d20_server_side", lambda: value,
+        narration_apply,
+        "_roll_d20_server_side",
+        lambda: value,
     )
 
 
@@ -283,7 +310,8 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
         narration="",
         beat_selections=[
             BeatSelection(
-                actor="Wolf", beat_id="attack",
+                actor="Wolf",
+                beat_id="attack",
                 outcome=RollOutcome.Success,
             ),
         ],
@@ -315,9 +343,7 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
 
     # Wiring 3: the lie-detector span fired with full attributes.
     finished = captured_spans.get_finished_spans()
-    opposed_spans = [
-        s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
-    ]
+    opposed_spans = [s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED]
     assert len(opposed_spans) == 1, (
         f"expected exactly 1 opposed_roll_resolved span, got {len(opposed_spans)}: "
         f"finished={[s.name for s in finished]}"
@@ -359,8 +385,12 @@ def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, 
     )
 
     _apply_narration_result_to_snapshot(
-        snapshot, result, player_name="p1", pack=pack,
-        opposed_player_d20=5, opposed_player_beat_id="attack",
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        opposed_player_d20=5,
+        opposed_player_beat_id="attack",
         opposed_player_actor="Sam",
         from_explicit_action=True,
         room=room_for(snapshot),
@@ -368,7 +398,8 @@ def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, 
 
     # Verify the resolver ran — the OTEL span carries the derived tier.
     opposed_spans = [
-        s for s in captured_spans.get_finished_spans()
+        s
+        for s in captured_spans.get_finished_spans()
         if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
     ]
     assert len(opposed_spans) == 1
@@ -403,7 +434,10 @@ def test_narration_apply_opposed_check_hard_fails_without_pending_state():
 
     with pytest.raises(ValueError, match="without a pending DICE_THROW player roll"):
         _apply_narration_result_to_snapshot(
-            snapshot, result, player_name="p1", pack=pack,
+            snapshot,
+            result,
+            player_name="p1",
+            pack=pack,
             from_explicit_action=True,
             room=room_for(snapshot),
         )
@@ -467,9 +501,7 @@ def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_pat
         "encounter must NOT be resolved on the awaiting-dice path — "
         "no resolution can fire without a paired player d20"
     )
-    assert enc.player_metric.current == 0, (
-        "player dial must not advance on the awaiting-dice path"
-    )
+    assert enc.player_metric.current == 0, "player dial must not advance on the awaiting-dice path"
     assert enc.opponent_metric.current == 0, (
         "opponent dial must not advance on the awaiting-dice path — "
         "the opponent beat selection was dropped, not applied"
@@ -483,13 +515,16 @@ def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_pat
 # Wiring 4: narrator prompt gate fires on opposed_check encounters
 # ---------------------------------------------------------------------------
 
+
 def _render_prompt(cdef: ConfrontationDef) -> str:
     """Render the encounter-live prompt section text for inspection."""
     enc = _make_encounter()
     narrator = NarratorAgent()
     registry = PromptRegistry()
     narrator.build_encounter_context(
-        registry, encounter=enc, cdef=cdef,
+        registry,
+        encounter=enc,
+        cdef=cdef,
     )
     return registry.compose(narrator.name())
 
@@ -514,6 +549,7 @@ def test_narrator_prompt_omits_opposed_check_gate_when_mode_is_legacy():
 # ---------------------------------------------------------------------------
 # Wiring 5: real migrated genre packs load and declare opposed_check
 # ---------------------------------------------------------------------------
+
 
 def _migration_root_present() -> bool:
     return MIGRATION_ROOT.is_dir()

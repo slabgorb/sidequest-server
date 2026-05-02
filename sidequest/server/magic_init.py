@@ -25,6 +25,7 @@ Worlds without a ``magic.yaml`` (the common case for genres that don't
 model magic) skip silently — the absence of the file is a deliberate
 authoring decision, not a config error.
 """
+
 from __future__ import annotations
 
 import logging

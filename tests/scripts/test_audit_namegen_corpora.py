@@ -132,8 +132,7 @@ def test_audit_live_tree_no_named_corpora_left_thin_post_expansion() -> None:
     )
     out = result.stdout
     assert out.strip(), (
-        "audit produced empty stdout — cannot assert markers on a "
-        "report that doesn't exist"
+        "audit produced empty stdout — cannot assert markers on a report that doesn't exist"
     )
 
     # The audit script's output marks each corpus row with OK/THIN/FAIL.
@@ -151,8 +150,7 @@ def test_audit_live_tree_no_named_corpora_left_thin_post_expansion() -> None:
             for line in out.splitlines():
                 if corpus_name in line and status in line:
                     pytest.fail(
-                        f"{corpus_name} still flagged {status} after "
-                        f"expansion; line: {line!r}"
+                        f"{corpus_name} still flagged {status} after expansion; line: {line!r}"
                     )
 
 
@@ -269,8 +267,7 @@ def test_audit_synthetic_thin_corpus_exits_zero_with_thin_marker(
     result = _run_audit("--path", str(tmp_path / "genre_packs"))
 
     assert result.returncode == 0, (
-        f"THIN corpus is a warning, not a CI gate; expected exit 0, "
-        f"got {result.returncode}"
+        f"THIN corpus is a warning, not a CI gate; expected exit 0, got {result.returncode}"
     )
     assert "THIN" in result.stdout
     assert "synth.txt" in result.stdout

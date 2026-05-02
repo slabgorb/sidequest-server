@@ -1,4 +1,5 @@
 """Loader tests — reads orbits.yaml and chart.yaml from a world directory."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,9 +26,7 @@ def test_load_world_minimal():
 
 def test_orbital_tier_missing_file_fails_loudly(tmp_path):
     """An `orbital`-tier world must have orbits.yaml; missing = loud error."""
-    (tmp_path / "chart.yaml").write_text(
-        "version: '0.1.0'\nannotations: []\n"
-    )
+    (tmp_path / "chart.yaml").write_text("version: '0.1.0'\nannotations: []\n")
     with pytest.raises(OrbitalContentMissingError, match="orbits.yaml"):
         load_orbital_content(tmp_path)
 

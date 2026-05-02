@@ -18,31 +18,54 @@ from sidequest.genre.models import (
 class TestResourceDeclaration:
     def test_valid(self) -> None:
         r = ResourceDeclaration(
-            name="luck", label="Luck", min=0.0, max=10.0, starting=5.0,
-            voluntary=True, decay_per_turn=0.0,
+            name="luck",
+            label="Luck",
+            min=0.0,
+            max=10.0,
+            starting=5.0,
+            voluntary=True,
+            decay_per_turn=0.0,
         )
         assert r.name == "luck"
 
     def test_rejects_max_less_than_min(self) -> None:
         with pytest.raises(ValidationError, match="max.*must be.*min"):
             ResourceDeclaration(
-                name="bad", label="Bad", min=10.0, max=5.0, starting=7.0,
-                voluntary=True, decay_per_turn=0.0,
+                name="bad",
+                label="Bad",
+                min=10.0,
+                max=5.0,
+                starting=7.0,
+                voluntary=True,
+                decay_per_turn=0.0,
             )
 
     def test_rejects_starting_out_of_range(self) -> None:
         with pytest.raises(ValidationError, match="starting"):
             ResourceDeclaration(
-                name="bad", label="Bad", min=0.0, max=10.0, starting=15.0,
-                voluntary=True, decay_per_turn=0.0,
+                name="bad",
+                label="Bad",
+                min=0.0,
+                max=10.0,
+                starting=15.0,
+                voluntary=True,
+                decay_per_turn=0.0,
             )
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            ResourceDeclaration.model_validate({
-                "name": "x", "label": "X", "min": 0, "max": 10, "starting": 5,
-                "voluntary": True, "decay_per_turn": 0.0, "bogus": True,
-            })
+            ResourceDeclaration.model_validate(
+                {
+                    "name": "x",
+                    "label": "X",
+                    "min": 0,
+                    "max": 10,
+                    "starting": 5,
+                    "voluntary": True,
+                    "decay_per_turn": 0.0,
+                    "bogus": True,
+                }
+            )
 
 
 class TestMetricDef:

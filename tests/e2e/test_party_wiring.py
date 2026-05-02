@@ -62,11 +62,13 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
 
     with client.websocket_connect("/ws") as ws_a:
         # Alice connects
-        ws_a.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {"event": "connect", "game_slug": slug},
-        })
+        ws_a.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {"event": "connect", "game_slug": slug},
+            }
+        )
         alice_connected = ws_a.receive_json()
         assert alice_connected["type"] == "SESSION_EVENT"
         assert alice_connected["payload"]["event"] == "connected"
@@ -76,21 +78,25 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
         assert alice_chargen["type"] == "CHARACTER_CREATION"
 
         # Alice claims a seat
-        ws_a.send_json({
-            "type": "PLAYER_SEAT",
-            "player_id": "alice",
-            "payload": {"character_slot": "rux"},
-        })
+        ws_a.send_json(
+            {
+                "type": "PLAYER_SEAT",
+                "player_id": "alice",
+                "payload": {"character_slot": "rux"},
+            }
+        )
         alice_seat_confirmed = ws_a.receive_json()
         assert alice_seat_confirmed["type"] == "SEAT_CONFIRMED"
 
         # Bob connects and seats
         with client.websocket_connect("/ws") as ws_b:
-            ws_b.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": slug},
-            })
+            ws_b.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": slug},
+                }
+            )
             bob_connected = ws_b.receive_json()
             assert bob_connected["type"] == "SESSION_EVENT"
             assert bob_connected["payload"]["event"] == "connected"
@@ -104,11 +110,13 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
             assert alice_sees_bob_connect["payload"]["state"] == "connected"
 
             # Bob claims a seat
-            ws_b.send_json({
-                "type": "PLAYER_SEAT",
-                "player_id": "bob",
-                "payload": {"character_slot": "grimble"},
-            })
+            ws_b.send_json(
+                {
+                    "type": "PLAYER_SEAT",
+                    "player_id": "bob",
+                    "payload": {"character_slot": "grimble"},
+                }
+            )
             bob_seat_confirmed = ws_b.receive_json()
             assert bob_seat_confirmed["type"] == "SEAT_CONFIRMED"
 
@@ -125,17 +133,17 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
             if m["type"] == "GAME_PAUSED":
                 saw_pause = True
                 break
-        assert saw_pause, (
-            "Expected GAME_PAUSED after bob disconnects"
-        )
+        assert saw_pause, "Expected GAME_PAUSED after bob disconnects"
 
         # Bob reconnects
         with client.websocket_connect("/ws") as ws_b2:
-            ws_b2.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": slug},
-            })
+            ws_b2.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": slug},
+                }
+            )
             # Drain bob's reconnect messages — expected set is:
             # {SESSION_EVENT(connected), CHARACTER_CREATION (bootstrap), GAME_RESUMED}.
             # Ordering across broadcast vs handler-return is racy, so just
@@ -155,6 +163,4 @@ def test_drop_pauses_reconnect_resumes(tmp_path: Path) -> None:
                 if m["type"] == "GAME_RESUMED":
                     saw_resume = True
                     break
-            assert saw_resume, (
-                "Expected GAME_RESUMED after bob reconnects"
-            )
+            assert saw_resume, "Expected GAME_RESUMED after bob reconnects"

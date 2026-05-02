@@ -8,6 +8,7 @@ Expected state at end of Phase 1 (before Phase 2 lands): **RED**.
 Phase 2 removes the LocalDM call from ``_execute_narration_turn``; at
 that point this test goes GREEN and stays green.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch

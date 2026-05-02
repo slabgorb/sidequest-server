@@ -201,7 +201,9 @@ def test_register_pacing_section_non_narrator_ignored():
 
 def test_register_pacing_section_includes_escalation_beat():
     registry = PromptRegistry()
-    registry.register_pacing_section("narrator", "Slow down.", escalation_beat="The villain emerges.")
+    registry.register_pacing_section(
+        "narrator", "Slow down.", escalation_beat="The villain emerges."
+    )
     sections = registry.get_sections("narrator", zone=AttentionZone.Late)
     assert len(sections) == 1
     assert "The villain emerges." in sections[0].content
@@ -291,7 +293,14 @@ def test_register_resource_section_empty_declarations_no_section():
 def test_register_resource_section_with_declarations():
     registry = PromptRegistry()
     decls = [
-        {"name": "fuel", "label": "Fuel", "starting": 10.0, "max": 10.0, "voluntary": True, "decay_per_turn": 0.0},
+        {
+            "name": "fuel",
+            "label": "Fuel",
+            "starting": 10.0,
+            "max": 10.0,
+            "voluntary": True,
+            "decay_per_turn": 0.0,
+        },
     ]
     registry.register_resource_section("narrator", decls, {"fuel": 7.5})
     sections = registry.get_sections("narrator", zone=AttentionZone.Valley)
@@ -303,7 +312,14 @@ def test_register_resource_section_with_declarations():
 def test_register_resource_section_decay_shown():
     registry = PromptRegistry()
     decls = [
-        {"name": "hope", "label": "Hope", "starting": 100.0, "max": 100.0, "voluntary": False, "decay_per_turn": 2.5},
+        {
+            "name": "hope",
+            "label": "Hope",
+            "starting": 100.0,
+            "max": 100.0,
+            "voluntary": False,
+            "decay_per_turn": 2.5,
+        },
     ]
     registry.register_resource_section("narrator", decls, {})
     sections = registry.get_sections("narrator", zone=AttentionZone.Valley)

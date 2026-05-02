@@ -26,6 +26,7 @@ Coverage:
 Skips when ``sidequest-content`` is not checked out alongside
 ``sidequest-server`` (matches the pattern in ``test_dogfight_content_loading.py``).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -59,9 +60,7 @@ from tests._helpers.session_room import room_for
 # and the loaded InteractionTable. The fixture pack at tests/fixtures/packs
 # does not — these integration tests are about driving real loaded content
 # through the production code path, so we depend on the sibling repo.
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3].parent / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3].parent / "sidequest-content" / "genre_packs"
 
 pytestmark = pytest.mark.skipif(
     not CONTENT_ROOT.is_dir(),
@@ -143,7 +142,10 @@ def test_dogfight_instantiation_assigns_red_blue_roles(
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Maverick", pack=pack,
+        snap,
+        result,
+        player_name="Maverick",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -178,7 +180,10 @@ def test_dogfight_instantiation_rejects_zero_npcs(
     )
     with pytest.raises(ValueError, match="exactly one opponent"):
         _apply_narration_result_to_snapshot(
-            snap, result, player_name="Maverick", pack=pack,
+            snap,
+            result,
+            player_name="Maverick",
+            pack=pack,
             room=room_for(snap),
         )
 
@@ -199,7 +204,10 @@ def test_dogfight_instantiation_rejects_two_npcs(
     )
     with pytest.raises(ValueError, match="exactly one opponent"):
         _apply_narration_result_to_snapshot(
-            snap, result, player_name="Maverick", pack=pack,
+            snap,
+            result,
+            player_name="Maverick",
+            pack=pack,
             room=room_for(snap),
         )
 
@@ -254,10 +262,13 @@ def test_dogfight_turn_resolves_through_sealed_letter_dispatch(
             narration="You pull the loop; he counters with the kill-rotation.",
             beat_selections=[
                 BeatSelection(
-                    actor="Vega", beat_id="loop", outcome=RollOutcome.Success,
+                    actor="Vega",
+                    beat_id="loop",
+                    outcome=RollOutcome.Success,
                 ),
                 BeatSelection(
-                    actor="Iron Fang", beat_id="kill_rotation",
+                    actor="Iron Fang",
+                    beat_id="kill_rotation",
                     outcome=RollOutcome.Success,
                 ),
             ],
@@ -288,8 +299,7 @@ def test_dogfight_turn_resolves_through_sealed_letter_dispatch(
     assert "dogfight.confrontation_started" in span_names
     assert "dogfight.cell_resolved" in span_names
     maneuver_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "dogfight.maneuver_committed"
+        s for s in otel_capture.get_finished_spans() if s.name == "dogfight.maneuver_committed"
     ]
     assert len(maneuver_spans) == 2, (
         f"expected 2 maneuver_committed spans, got {len(maneuver_spans)}"
@@ -404,9 +414,10 @@ def test_per_actor_state_round_trip_after_dispatch(
     blue_after = next(a for a in enc_after.actors if a.role == "blue")
 
     assert red_after.per_actor_state == red_before.per_actor_state
-    assert blue_after.per_actor_state == next(
-        a for a in enc_before.actors if a.role == "blue"
-    ).per_actor_state
+    assert (
+        blue_after.per_actor_state
+        == next(a for a in enc_before.actors if a.role == "blue").per_actor_state
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,8 +459,10 @@ def test_legacy_beat_selection_path_still_works(
     assert enc.encounter_type == "combat"
     # CAC combat is NOT sealed_letter — actors keep the legacy role tag
     from sidequest.server.dispatch.confrontation import find_confrontation_def
+
     cdef = find_confrontation_def(
-        pack.rules.confrontations if pack.rules else [], "combat",
+        pack.rules.confrontations if pack.rules else [],
+        "combat",
     )
     assert cdef is not None
     assert cdef.resolution_mode == ResolutionMode.opposed_check
@@ -474,7 +487,8 @@ def test_legacy_beat_selection_path_still_works(
             narration="Rux strikes the goblin clean.",
             beat_selections=[
                 BeatSelection(
-                    actor="Rux", beat_id="attack",
+                    actor="Rux",
+                    beat_id="attack",
                     outcome=RollOutcome.Success,
                 ),
             ],
@@ -524,8 +538,7 @@ def test_legacy_beat_path_returns_narration_apply_outcome(
         room=room_for(snap),
     )
     assert isinstance(inst_outcome, NarrationApplyOutcome), (
-        f"instantiation turn must return NarrationApplyOutcome, "
-        f"got {type(inst_outcome).__name__}"
+        f"instantiation turn must return NarrationApplyOutcome, got {type(inst_outcome).__name__}"
     )
     assert inst_outcome.sealed_letter is None, (
         "legacy combat instantiation must not produce a sealed_letter outcome"
@@ -540,7 +553,8 @@ def test_legacy_beat_path_returns_narration_apply_outcome(
             narration="Rux strikes the goblin clean.",
             beat_selections=[
                 BeatSelection(
-                    actor="Rux", beat_id="attack",
+                    actor="Rux",
+                    beat_id="attack",
                     outcome=RollOutcome.Success,
                 ),
             ],

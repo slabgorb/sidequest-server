@@ -24,6 +24,7 @@ References:
 - AC4: no regression on existing combat stats flow
 - Wiring AC: production encounter init path actually calls the helper
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,9 +47,7 @@ from sidequest.genre.loader import load_genre_pack
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from tests._helpers.session_room import room_for
 
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
 
 
 def _load_pack():
@@ -144,7 +143,10 @@ def test_combat_handshake_writes_hp_into_registry_entry(combat_snapshot):
         npcs_present=[],  # Playtest 3 shape — extraction dropped the adversary
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -157,9 +159,7 @@ def test_combat_handshake_writes_hp_into_registry_entry(combat_snapshot):
     )
     # The combat dial in test_genre has threshold=10. A fresh encounter
     # has current=starting=0, so hp == max_hp == threshold.
-    assert entry.hp == entry.max_hp, (
-        "fresh combat: hp must equal max_hp (no damage taken yet)"
-    )
+    assert entry.hp == entry.max_hp, "fresh combat: hp must equal max_hp (no damage taken yet)"
 
 
 def test_combat_handshake_writes_hp_for_explicit_npcs_present(combat_snapshot):
@@ -187,7 +187,10 @@ def test_combat_handshake_writes_hp_for_explicit_npcs_present(combat_snapshot):
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     goblin = next(e for e in snap.npc_registry if e.name == "Goblin")
@@ -219,13 +222,14 @@ def test_non_combat_handshake_does_not_write_hp(combat_snapshot):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     halrik = snap.npc_registry[0]
-    assert halrik.hp is None, (
-        "non-combat encounter must NOT publish HP into the registry"
-    )
+    assert halrik.hp is None, "non-combat encounter must NOT publish HP into the registry"
     assert halrik.max_hp is None
 
 
@@ -247,14 +251,14 @@ def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "npc_registry.hp_set"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "npc_registry.hp_set"]
     assert spans, (
         "no npc_registry.hp_set spans emitted — the GM panel can't verify "
         "the registry-write seam fired"
@@ -264,8 +268,7 @@ def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
         None,
     )
     assert scav_span is not None, (
-        "no hp_set span for the Crawling Scavenger — actor → registry "
-        "name match regressed"
+        "no hp_set span for the Crawling Scavenger — actor → registry name match regressed"
     )
     attrs = scav_span.attributes or {}
     assert int(attrs.get("hp", 0)) > 0, (
@@ -292,7 +295,10 @@ def test_handshake_still_registers_actors_after_hp_write(combat_snapshot):
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="Orin", pack=pack,
+        snap,
+        result,
+        player_name="Orin",
+        pack=pack,
         room=room_for(snap),
     )
     enc = snap.encounter
@@ -313,9 +319,9 @@ def test_helper_is_called_from_production_handshake_path():
     """
     from sidequest.server.dispatch import encounter_lifecycle
 
-    assert hasattr(
-        encounter_lifecycle, "_publish_combat_stats_to_registry"
-    ), "registry-write helper missing from production module"
+    assert hasattr(encounter_lifecycle, "_publish_combat_stats_to_registry"), (
+        "registry-write helper missing from production module"
+    )
     src = Path(encounter_lifecycle.__file__).read_text(encoding="utf-8")
     assert "_publish_combat_stats_to_registry(" in src, (
         "helper is defined but never called — wiring regression"

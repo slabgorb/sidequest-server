@@ -183,23 +183,22 @@ class TestConstruction:
 
 class TestFluentSetters:
     def test_with_lobby_name_stores_trimmed(self) -> None:
-        b = CharacterBuilder(
-            scenes=two_choice_scenes(), rules=simple_rules()
-        ).with_lobby_name("  Kara  ")
+        b = CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules()).with_lobby_name(
+            "  Kara  "
+        )
         # Indirect check via character_name fallback semantics is post-Slice 2;
         # for Slice 2 just verify the attribute is set via internal state.
         assert b._lobby_name == "Kara"
 
     def test_with_lobby_name_blank_clears(self) -> None:
-        b = CharacterBuilder(
-            scenes=two_choice_scenes(), rules=simple_rules()
-        ).with_lobby_name("   ")
+        b = CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules()).with_lobby_name(
+            "   "
+        )
         assert b._lobby_name is None
 
     def test_fluent_chains(self) -> None:
-        b = (
-            CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules())
-            .with_lobby_name("Kara")
+        b = CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules()).with_lobby_name(
+            "Kara"
         )
         assert isinstance(b, CharacterBuilder)
 
@@ -349,10 +348,7 @@ class TestAnswerFollowup:
         results = b.scene_results()
         # First hook is the wound from the followup answer.
         assert results[0].hooks_added[0].hook_type == HookType.WOUND
-        assert (
-            results[0].hooks_added[0].text
-            == "A thin white line across her palm."
-        )
+        assert results[0].hooks_added[0].text == "A thin white line across her palm."
         # Source scene matches.
         assert results[0].hooks_added[0].source_scene == "wound"
 
@@ -738,9 +734,7 @@ class TestExtractHooks:
 
 class TestExtractAnchors:
     def test_relationship_produces_npc_anchor(self) -> None:
-        anchors = extract_anchors(
-            "rel_scene", MechanicalEffects(relationship="sister missing")
-        )
+        anchors = extract_anchors("rel_scene", MechanicalEffects(relationship="sister missing"))
         assert anchors == [
             LoreAnchor(
                 anchor_type="npc",

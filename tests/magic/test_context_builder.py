@@ -11,12 +11,8 @@ from sidequest.magic.state import BarKey, MagicState
 def world_state(world_config):
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.78
-    )
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.22
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.78)
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.22)
     return state
 
 

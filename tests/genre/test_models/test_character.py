@@ -15,19 +15,21 @@ from sidequest.genre.models import (
 class TestNpcArchetype:
     def test_extra_allowed(self) -> None:
         """NpcArchetype allows extra fields (genre packs add role, morale, etc.)"""
-        a = NpcArchetype.model_validate({
-            "name": "Merchant",
-            "description": "Sells things",
-            "personality_traits": ["greedy"],
-            "typical_classes": ["Trader"],
-            "typical_races": ["Human"],
-            "stat_ranges": {"CHA": [8, 16]},
-            "inventory_hints": ["ledger"],
-            "dialogue_quirks": ["counts coins"],
-            "disposition_default": 5,
-            "role": "merchant",  # genre-specific extra
-            "morale": 7,  # genre-specific extra
-        })
+        a = NpcArchetype.model_validate(
+            {
+                "name": "Merchant",
+                "description": "Sells things",
+                "personality_traits": ["greedy"],
+                "typical_classes": ["Trader"],
+                "typical_races": ["Human"],
+                "stat_ranges": {"CHA": [8, 16]},
+                "inventory_hints": ["ledger"],
+                "dialogue_quirks": ["counts coins"],
+                "disposition_default": 5,
+                "role": "merchant",  # genre-specific extra
+                "morale": 7,  # genre-specific extra
+            }
+        )
         assert a.name == "Merchant"
 
 
@@ -50,13 +52,15 @@ class TestMechanicalEffects:
 class TestVisualStyle:
     def test_extra_allowed(self) -> None:
         """VisualStyle accepts extra genre-specific fields."""
-        vs = VisualStyle.model_validate({
-            "positive_suffix": "grim",
-            "negative_prompt": "bright",
-            "preferred_model": "flux",
-            "base_seed": 0,
-            "extra_field": "ignored",
-        })
+        vs = VisualStyle.model_validate(
+            {
+                "positive_suffix": "grim",
+                "negative_prompt": "bright",
+                "preferred_model": "flux",
+                "base_seed": 0,
+                "extra_field": "ignored",
+            }
+        )
         assert vs.positive_suffix == "grim"
 
 
@@ -113,15 +117,17 @@ class TestVisualStyleLoraFieldsRemoved:
         change flips `extra='allow'` to `'ignore'`, legacy values would
         be silently discarded — these assertions catch that regression.
         """
-        vs = VisualStyle.model_validate({
-            "positive_suffix": "x",
-            "negative_prompt": "y",
-            "preferred_model": "flux",
-            "base_seed": 0,
-            "lora": "legacy.safetensors",
-            "lora_trigger": "legacy_trigger",
-            "lora_scale": 0.8,
-        })
+        vs = VisualStyle.model_validate(
+            {
+                "positive_suffix": "x",
+                "negative_prompt": "y",
+                "preferred_model": "flux",
+                "base_seed": 0,
+                "lora": "legacy.safetensors",
+                "lora_trigger": "legacy_trigger",
+                "lora_scale": 0.8,
+            }
+        )
         assert vs.positive_suffix == "x"
         # extra='allow' keeps the unknown keys in __pydantic_extra__,
         # but they are NOT typed fields on the model.

@@ -63,8 +63,12 @@ def test_structured_encounter_rejects_old_metric_field():
 
 def test_structured_encounter_round_trip_with_tags():
     tag = EncounterTag(
-        text="Off-Balance", created_by="Sam", target="Promo",
-        leverage=1, fleeting=False, created_turn=2,
+        text="Off-Balance",
+        created_by="Sam",
+        target="Promo",
+        leverage=1,
+        fleeting=False,
+        created_turn=2,
     )
     enc = StructuredEncounter(
         encounter_type="combat",

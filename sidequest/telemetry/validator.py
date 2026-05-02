@@ -98,8 +98,7 @@ async def inventory_check(record: TurnRecord) -> None:
     delta = record.delta
     inv_changes = getattr(delta, "inventory_changes", None) or []
     has_inventory_patch = bool(inv_changes) or any(
-        any("inventory" in f for f in p.fields_changed)
-        for p in record.patches_applied
+        any("inventory" in f for f in p.fields_changed) for p in record.patches_applied
     )
 
     grabbed_in_narration = any(v in narration for v in _GRAB_VERBS)
@@ -117,11 +116,7 @@ async def inventory_check(record: TurnRecord) -> None:
         )
 
     for change in inv_changes:
-        item = (
-            change.get("item")
-            if isinstance(change, dict)
-            else getattr(change, "item", None)
-        )
+        item = change.get("item") if isinstance(change, dict) else getattr(change, "item", None)
         if not item:
             continue
         if str(item).lower() not in narration:
@@ -198,8 +193,7 @@ async def patch_legality_check(record: TurnRecord) -> None:
     dead_npcs = {
         name
         for name, npc in _iter_owned(npc_registry)
-        if isinstance(getattr(npc, "hp", None), int)
-        and getattr(npc, "hp", 0) <= 0
+        if isinstance(getattr(npc, "hp", None), int) and getattr(npc, "hp", 0) <= 0
     }
     for patch in record.patches_applied:
         if patch.patch_type != "combat":
@@ -267,8 +261,15 @@ async def trope_alignment_check(record: TurnRecord) -> None:
 
 _SUBSYSTEM_WINDOW: deque[tuple[int, str]] = deque(maxlen=50)
 _KNOWN_SUBSYSTEMS = {
-    "narrator", "combat", "merchant", "world_builder",
-    "scenario", "encounter", "chargen", "trope", "barrier",
+    "narrator",
+    "combat",
+    "merchant",
+    "world_builder",
+    "scenario",
+    "encounter",
+    "chargen",
+    "trope",
+    "barrier",
 }
 _COVERAGE_GAP_THRESHOLD_TURNS = 10
 
@@ -319,9 +320,7 @@ class Validator:
     """Single-consumer narrative validator pipeline."""
 
     def __init__(self, queue_maxsize: int = 32) -> None:
-        self._queue: asyncio.Queue[TurnRecord] = asyncio.Queue(
-            maxsize=queue_maxsize
-        )
+        self._queue: asyncio.Queue[TurnRecord] = asyncio.Queue(maxsize=queue_maxsize)
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
         self._checks: list[CheckFn] = []
@@ -373,9 +372,7 @@ class Validator:
         if self.is_running():
             return
         self._stopping.clear()
-        self._task = asyncio.create_task(
-            self._run(), name="sidequest.validator"
-        )
+        self._task = asyncio.create_task(self._run(), name="sidequest.validator")
         self._heartbeat_task = asyncio.create_task(
             self._heartbeat(), name="sidequest.validator.heartbeat"
         )
@@ -392,9 +389,7 @@ class Validator:
             return
         # Drain remaining records up to the grace window.
         try:
-            await asyncio.wait_for(
-                self._queue.join(), timeout=grace_seconds
-            )
+            await asyncio.wait_for(self._queue.join(), timeout=grace_seconds)
         except TimeoutError:
             logger.warning(
                 "validator.shutdown_grace_exceeded queued=%d",
@@ -409,9 +404,7 @@ class Validator:
     async def _run(self) -> None:
         while not self._stopping.is_set():
             try:
-                record = await asyncio.wait_for(
-                    self._queue.get(), timeout=0.5
-                )
+                record = await asyncio.wait_for(self._queue.get(), timeout=0.5)
             except TimeoutError:
                 continue
             try:
@@ -486,10 +479,10 @@ class Validator:
                     {"patch_type": p.patch_type, "fields_changed": list(p.fields_changed)}
                     for p in record.patches_applied
                 ],
-                "patches_applied": [p.patch_type for p in record.patches_applied],  # legacy short-form
-                "beats_fired": [
-                    {"trope": t, "threshold": th} for t, th in record.beats_fired
-                ],
+                "patches_applied": [
+                    p.patch_type for p in record.patches_applied
+                ],  # legacy short-form
+                "beats_fired": [{"trope": t, "threshold": th} for t, th in record.beats_fired],
                 # Knowledge entries surfaced as footnotes this turn. The
                 # narrator's footnote pipeline is independent of the
                 # `patch.discovered_facts` path, so a turn that introduces
@@ -512,9 +505,7 @@ class Validator:
             try:
                 await check(record)
             except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "validator.check_failed check=%s", check.__name__
-                )
+                logger.exception("validator.check_failed check=%s", check.__name__)
                 publish_event(
                     "validation_warning",
                     {
@@ -526,9 +517,7 @@ class Validator:
                     severity="error",
                 )
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            self._check_durations_ms.append(
-                (check.__name__, elapsed_ms)
-            )
+            self._check_durations_ms.append((check.__name__, elapsed_ms))
 
     async def _heartbeat(self) -> None:
         while not self._stopping.is_set():

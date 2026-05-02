@@ -70,6 +70,8 @@ def inventory_narrator_extracted_span(
         **attrs,
     }
     with Span.open(
-        SPAN_INVENTORY_NARRATOR_EXTRACTED, attributes, tracer_override=_tracer,
+        SPAN_INVENTORY_NARRATOR_EXTRACTED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span

@@ -35,9 +35,7 @@ ABILITY_NAMES = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 # ---------------------------------------------------------------------------
 
 
-def make_choice(
-    label: str, description: str = "desc", **fx: object
-) -> CharCreationChoice:
+def make_choice(label: str, description: str = "desc", **fx: object) -> CharCreationChoice:
     return CharCreationChoice(
         label=label,
         description=description,

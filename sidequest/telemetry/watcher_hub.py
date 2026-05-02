@@ -143,9 +143,7 @@ class WatcherHub:
         # live WebSocket as dead and evicted the GM dashboard.
         # (Playtest 2026-04-29.)
         try:
-            safe_event = json.loads(
-                json.dumps(event, default=_json_default, separators=(",", ":"))
-            )
+            safe_event = json.loads(json.dumps(event, default=_json_default, separators=(",", ":")))
         except (TypeError, ValueError) as exc:
             # One bad event must not kill subscribers. Log loudly so the
             # offending publisher is fixable, then drop the event.
@@ -194,7 +192,7 @@ def _json_default(obj: Any) -> Any:
         return root
     # ``datetime``/``date``/``UUID``: ``str()`` round-trips. Same for
     # ``Path`` and ``Decimal``.
-    if isinstance(obj, (datetime, )):
+    if isinstance(obj, (datetime,)):
         return obj.isoformat()
     if hasattr(obj, "__str__"):
         return str(obj)
@@ -293,8 +291,7 @@ def _maybe_persist_encounter_row(event: dict) -> None:
         # panel / OTEL trail records the recovery — silently swallowing
         # would mask a real lifecycle mismatch.
         logger.warning(
-            "watcher_hub.event_store_closed — clearing stale binding "
-            "(kind=%s op=%s err=%s)",
+            "watcher_hub.event_store_closed — clearing stale binding (kind=%s op=%s err=%s)",
             kind,
             op,
             exc,
@@ -317,9 +314,7 @@ def _coerce_attr_value(value: Any) -> Any:
         return ""
     if isinstance(value, (list, tuple)) and value:
         first_type = type(value[0])
-        if first_type in (str, int, float) and all(
-            type(x) is first_type for x in value
-        ):
+        if first_type in (str, int, float) and all(type(x) is first_type for x in value):
             return list(value)
     try:
         return json.dumps(value, default=_json_default, separators=(",", ":"))

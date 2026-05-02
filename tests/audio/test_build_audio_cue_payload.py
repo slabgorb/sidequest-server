@@ -102,13 +102,9 @@ def test_genre_slug_prefixes_music_track_for_static_mount(tmp_path: Path) -> Non
     backend = _StubBackend(tmp_path, {("music", "tension"): resolved})
     cue = AudioCue(lane=AudioLane.MUSIC, mood=MoodCategory.TENSION, intensity=0.6)
 
-    payload = build_audio_cue_payload(
-        [cue], audio_backend=backend, genre_slug="spaghetti_western"
-    )
+    payload = build_audio_cue_payload([cue], audio_backend=backend, genre_slug="spaghetti_western")
 
-    assert payload.music_track == (
-        "/genre/spaghetti_western/audio/music/tension/a.ogg"
-    )
+    assert payload.music_track == ("/genre/spaghetti_western/audio/music/tension/a.ogg")
 
 
 def test_genre_slug_prefixes_sfx_triggers_for_static_mount(tmp_path: Path) -> None:
@@ -122,9 +118,7 @@ def test_genre_slug_prefixes_sfx_triggers_for_static_mount(tmp_path: Path) -> No
         [cue], audio_backend=backend, genre_slug="caverns_and_claudes"
     )
 
-    assert payload.sfx_triggers == [
-        "/genre/caverns_and_claudes/audio/sfx/door_creak.ogg"
-    ]
+    assert payload.sfx_triggers == ["/genre/caverns_and_claudes/audio/sfx/door_creak.ogg"]
 
 
 def test_absolute_url_music_track_passes_through(tmp_path: Path) -> None:
@@ -141,15 +135,11 @@ def test_absolute_url_music_track_passes_through(tmp_path: Path) -> None:
 
     # Direct pass-through path for leading '/'.
     cue = AudioCue(lane=AudioLane.SFX, sfx_id="passthrough", intensity=0.7)
-    backend = _StubBackend(
-        tmp_path, {("sfx", "passthrough"): tmp_path / "already" / "served.ogg"}
-    )
+    backend = _StubBackend(tmp_path, {("sfx", "passthrough"): tmp_path / "already" / "served.ogg"})
     # When the resolved path isn't under base, _relative_to_backend falls
     # back to str(resolved) which is an absolute filesystem path starting
     # with '/'. The prefix helper leaves it alone to avoid double-mangling.
-    payload = build_audio_cue_payload(
-        [cue], audio_backend=backend, genre_slug="heavy_metal"
-    )
+    payload = build_audio_cue_payload([cue], audio_backend=backend, genre_slug="heavy_metal")
     # Either the relative_to succeeds (prefix applied) or it falls back to
     # the absolute filesystem path (no prefix — both are correct behavior
     # for this edge case, the test asserts the prefix is NOT stacked).

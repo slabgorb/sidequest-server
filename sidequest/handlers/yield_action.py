@@ -145,11 +145,7 @@ class YieldHandler:
                 logger.info(
                     "session.yield_partial encounter_type=%r remaining_player_actors=%d",
                     post_encounter.encounter_type,
-                    sum(
-                        1
-                        for a in post_encounter.actors
-                        if a.side == "player" and not a.withdrawn
-                    ),
+                    sum(1 for a in post_encounter.actors if a.side == "player" and not a.withdrawn),
                 )
             else:
                 # Confrontation def vanished mid-session (content swap). Fail

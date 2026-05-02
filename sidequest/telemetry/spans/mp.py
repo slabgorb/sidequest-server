@@ -16,12 +16,14 @@ SPAN_MP_SLUG_CONNECT = "mp.slug_connect"
 SPAN_MP_SEAT = "mp.seat"
 SPAN_MP_PLAYER_ACTION_PAUSED = "mp.player_action_paused"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_MP_GAME_CREATED,
-    SPAN_MP_SLUG_CONNECT,
-    SPAN_MP_SEAT,
-    SPAN_MP_PLAYER_ACTION_PAUSED,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_MP_GAME_CREATED,
+        SPAN_MP_SLUG_CONNECT,
+        SPAN_MP_SEAT,
+        SPAN_MP_PLAYER_ACTION_PAUSED,
+    }
+)
 
 
 @contextmanager

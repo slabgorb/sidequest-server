@@ -49,15 +49,18 @@ def _make_record(**overrides: Any) -> TurnRecord:
             "broadcast": 10,
             "dispatch_post": 5,
         },
-        phase_call_counts={k: 1 for k in (
-            "prompt_build",
-            "narrator_subprocess",
-            "narrator_extraction",
-            "state_apply",
-            "persistence",
-            "broadcast",
-            "dispatch_post",
-        )},
+        phase_call_counts={
+            k: 1
+            for k in (
+                "prompt_build",
+                "narrator_subprocess",
+                "narrator_extraction",
+                "state_apply",
+                "persistence",
+                "broadcast",
+                "dispatch_post",
+            )
+        },
         total_duration_ms=9090,
     )
     base.update(overrides)
@@ -190,8 +193,7 @@ async def test_turn_complete_carries_footnotes_count(monkeypatch) -> None:
     payload = captured[0]
     assert payload["footnotes_count"] == 3
     assert payload["delta_empty"] is False, (
-        "delta_empty must reflect knowledge entries — three new "
-        "footnotes is not an empty turn"
+        "delta_empty must reflect knowledge entries — three new footnotes is not an empty turn"
     )
 
 

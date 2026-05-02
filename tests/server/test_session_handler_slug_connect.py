@@ -43,6 +43,7 @@ def _make_handler(save_dir: Path, search_paths: list[Path]) -> WebSocketSessionH
     )
     return handler
 
+
 # Use a genre pack that exists in the content repo.
 _GENRE = "caverns_and_claudes"
 _WORLD = "grimvault"
@@ -52,9 +53,7 @@ _SLUG = "2026-04-22-grimvault-test"
 # any working directory.
 # __file__ = oq-2/sidequest-server/tests/server/<file>.py
 # parents[3] = oq-2 (orchestrator root)
-_CONTENT_SEARCH_PATH = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+_CONTENT_SEARCH_PATH = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 @pytest.fixture
@@ -64,8 +63,7 @@ def seeded_game(tmp_path: Path) -> Path:
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
     store.close()
     return tmp_path
 
@@ -87,13 +85,12 @@ async def test_connect_by_slug_loads_existing_game(seeded_game: Path):
     )
     # Verify the connected event has event="connected"
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
-    assert connected_msgs, (
-        f"Expected SESSION_EVENT{{connected}} in outbound, got: {outbound}"
-    )
+    assert connected_msgs, f"Expected SESSION_EVENT{{connected}} in outbound, got: {outbound}"
     assert handler.session_data is not None
     assert handler.session_data.game_slug == _SLUG
     assert handler.session_data.mode == GameMode.MULTIPLAYER
@@ -135,8 +132,7 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     # Build a minimal character and save a snapshot that contains it.
     core = CreatureCore(
@@ -163,13 +159,16 @@ async def test_slug_connect_resumes_saved_snapshot(tmp_path: Path):
         # for the explicit branch assertion.
         player_id="Rux",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Rux",
+            event="connect",
+            game_slug=slug,
+            player_name="Rux",
         ),
     )
     outbound = await handler.handle_message(msg)
 
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
@@ -256,8 +255,7 @@ async def test_slug_connect_routes_new_player_to_chargen_when_seat_taken(tmp_pat
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     core = CreatureCore(
         name="Laverne",
@@ -282,7 +280,8 @@ async def test_slug_connect_routes_new_player_to_chargen_when_seat_taken(tmp_pat
     outbound = await handler.handle_message(msg)
 
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
@@ -309,8 +308,7 @@ async def test_slug_connect_resumes_seated_player_by_id(tmp_path: Path):
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     core = CreatureCore(
         name="Laverne",
@@ -335,22 +333,20 @@ async def test_slug_connect_resumes_seated_player_by_id(tmp_path: Path):
     outbound = await handler.handle_message(msg)
 
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
     assert connected_msgs, f"Expected SESSION_EVENT(connected), got: {outbound}"
     payload = connected_msgs[0].payload
     assert payload.has_character is True, (
-        "P1 reconnecting to their own seat must resume — gate reports "
-        "has_character=True"
+        "P1 reconnecting to their own seat must resume — gate reports has_character=True"
     )
 
 
 @pytest.mark.asyncio
-async def test_slug_connect_chargen_gate_logs_branch_decision(
-    tmp_path: Path, caplog
-):
+async def test_slug_connect_chargen_gate_logs_branch_decision(tmp_path: Path, caplog):
     """OTEL mandate (CLAUDE.md): the chargen-gate decision must be loggable.
 
     Without this log line, GM panel can't tell whether the per-player gate
@@ -367,11 +363,13 @@ async def test_slug_connect_chargen_gate_logs_branch_decision(
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     core = CreatureCore(
-        name="Laverne", description="d", personality="p", inventory=Inventory(),
+        name="Laverne",
+        description="d",
+        personality="p",
+        inventory=Inventory(),
     )
     char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
@@ -390,13 +388,9 @@ async def test_slug_connect_chargen_gate_logs_branch_decision(
     with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
         await handler.handle_message(msg)
 
-    gate_records = [
-        r for r in caplog.records
-        if "session.chargen_gate" in r.getMessage()
-    ]
+    gate_records = [r for r in caplog.records if "session.chargen_gate" in r.getMessage()]
     assert gate_records, (
-        "Chargen-gate must emit an info-level log line so GM panel can verify "
-        "which branch fired"
+        "Chargen-gate must emit an info-level log line so GM panel can verify which branch fired"
     )
     msg_text = gate_records[0].getMessage()
     assert "branch=player_seats" in msg_text, (
@@ -434,11 +428,13 @@ async def test_mp_legacy_save_routes_new_joiner_to_chargen(tmp_path: Path, caplo
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     core = CreatureCore(
-        name="Laverne", description="d", personality="p", inventory=Inventory(),
+        name="Laverne",
+        description="d",
+        personality="p",
+        inventory=Inventory(),
     )
     char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
@@ -456,14 +452,17 @@ async def test_mp_legacy_save_routes_new_joiner_to_chargen(tmp_path: Path, caplo
         type="SESSION_EVENT",
         player_id="Squiggy",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Squiggy",
+            event="connect",
+            game_slug=slug,
+            player_name="Squiggy",
         ),
     )
     with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
         outbound = await handler.handle_message(msg)
 
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
@@ -477,7 +476,8 @@ async def test_mp_legacy_save_routes_new_joiner_to_chargen(tmp_path: Path, caplo
     # ``ready`` events mean slug_resume fired — the bug. There must be NO
     # SESSION_EVENT(ready) on this connect.
     ready_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "ready"
     ]
@@ -486,10 +486,7 @@ async def test_mp_legacy_save_routes_new_joiner_to_chargen(tmp_path: Path, caplo
         f"chargen fork required. Got: {ready_msgs}"
     )
     # Gate-decision log must show the new MP-aware branch fired.
-    gate_records = [
-        r for r in caplog.records
-        if "session.chargen_gate" in r.getMessage()
-    ]
+    gate_records = [r for r in caplog.records if "session.chargen_gate" in r.getMessage()]
     assert gate_records, "Chargen-gate must log its decision"
     msg_text = gate_records[0].getMessage()
     assert "branch=mp_new_joiner_chargen_required" in msg_text, (
@@ -516,11 +513,13 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=_GENRE, world_slug=_WORLD)
+    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=_GENRE, world_slug=_WORLD)
 
     core = CreatureCore(
-        name="Laverne", description="d", personality="p", inventory=Inventory(),
+        name="Laverne",
+        description="d",
+        personality="p",
+        inventory=Inventory(),
     )
     char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
@@ -535,24 +534,24 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
         type="SESSION_EVENT",
         player_id="Laverne",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Laverne",
+            event="connect",
+            game_slug=slug,
+            player_name="Laverne",
         ),
     )
     with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
         outbound = await handler.handle_message(msg)
 
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
     assert connected_msgs
     assert connected_msgs[0].payload.has_character is True
     # Branch log must show backfill.
-    gate_records = [
-        r for r in caplog.records
-        if "session.chargen_gate" in r.getMessage()
-    ]
+    gate_records = [r for r in caplog.records if "session.chargen_gate" in r.getMessage()]
     assert gate_records
     assert "branch=mp_legacy_backfill" in gate_records[0].getMessage()
 
@@ -572,7 +571,11 @@ async def test_mp_legacy_save_resumes_original_player_by_name(tmp_path: Path, ca
 )
 @pytest.mark.asyncio
 async def test_mp_joiner_suppresses_opening_seed(
-    tmp_path: Path, caplog, genre_slug: str, world_slug: str, location: str,
+    tmp_path: Path,
+    caplog,
+    genre_slug: str,
+    world_slug: str,
+    location: str,
 ):
     """Wiring test: MP joiner does NOT inherit the cold-open hook.
 
@@ -607,15 +610,19 @@ async def test_mp_joiner_suppresses_opening_seed(
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.MULTIPLAYER,
-                genre_slug=genre_slug, world_slug=world_slug)
+    upsert_game(
+        store, slug=slug, mode=GameMode.MULTIPLAYER, genre_slug=genre_slug, world_slug=world_slug
+    )
 
     # Seat the host so the joiner sees a populated snapshot. player_seats
     # populated → the gate's ``player_seats`` branch fires (joiner absent
     # → has_character=False), which is the canonical MP-joiner path
     # post-MP-02.
     core = CreatureCore(
-        name="Host", description="d", personality="p", inventory=Inventory(),
+        name="Host",
+        description="d",
+        personality="p",
+        inventory=Inventory(),
     )
     char = Character(core=core, char_class="Fighter", race="Human", backstory="b")
     snap = GameSnapshot(genre_slug=genre_slug, world_slug=world_slug, location=location)
@@ -630,7 +637,9 @@ async def test_mp_joiner_suppresses_opening_seed(
         type="SESSION_EVENT",
         player_id="joiner-id",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Joiner",
+            event="connect",
+            game_slug=slug,
+            player_name="Joiner",
         ),
     )
     with caplog.at_level(logging.INFO, logger="sidequest.server.session_handler"):
@@ -651,8 +660,7 @@ async def test_mp_joiner_suppresses_opening_seed(
     # Suppression decision must be logged so a future drift can be diagnosed
     # from logs alone (not just from missing scenes).
     suppress_records = [
-        r for r in caplog.records
-        if "session.mp_joiner_opening_suppressed" in r.getMessage()
+        r for r in caplog.records if "session.mp_joiner_opening_suppressed" in r.getMessage()
     ]
     assert suppress_records, (
         "Suppression must log session.mp_joiner_opening_suppressed for "
@@ -661,9 +669,7 @@ async def test_mp_joiner_suppresses_opening_seed(
 
 
 @pytest.mark.asyncio
-async def test_slug_connect_backfills_presence_for_existing_peers(
-    seeded_game: Path, caplog
-):
+async def test_slug_connect_backfills_presence_for_existing_peers(seeded_game: Path, caplog):
     """Playtest 2026-04-26 S2-BUG: PLAYER_PRESENCE back-fill on slug_connect.
 
     The MultiplayerSessionStatus widget on the chargen screen only showed
@@ -693,7 +699,9 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
         )
         out = asyncio.Queue()
         handler.attach_room_context(
-            registry=registry, socket_id=socket_id, out_queue=out,
+            registry=registry,
+            socket_id=socket_id,
+            out_queue=out,
         )
         return handler, out
 
@@ -702,7 +710,9 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
             type="SESSION_EVENT",
             player_id=player_id,
             payload=SessionEventPayload(
-                event="connect", game_slug=_SLUG, player_name=name,
+                event="connect",
+                game_slug=_SLUG,
+                player_name=name,
             ),
         )
         await handler.handle_message(msg)
@@ -719,8 +729,7 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
     while not q1.empty():
         initial_q1_msgs.append(q1.get_nowait())
     p1_backfill_presences = [
-        m for m in initial_q1_msgs
-        if getattr(m, "type", None) == "PLAYER_PRESENCE"
+        m for m in initial_q1_msgs if getattr(m, "type", None) == "PLAYER_PRESENCE"
     ]
     assert p1_backfill_presences == [], (
         "First connection must not receive any back-fill — there were no "
@@ -735,12 +744,9 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
     q2_msgs = []
     while not q2.empty():
         q2_msgs.append(q2.get_nowait())
-    q2_presence = [
-        m for m in q2_msgs if getattr(m, "type", None) == "PLAYER_PRESENCE"
-    ]
+    q2_presence = [m for m in q2_msgs if getattr(m, "type", None) == "PLAYER_PRESENCE"]
     q2_presence_ids = [
-        m.payload.player_id for m in q2_presence
-        if getattr(m.payload, "state", None) == "connected"
+        m.payload.player_id for m in q2_presence if getattr(m.payload, "state", None) == "connected"
     ]
     assert q2_presence_ids == ["P1"], (
         f"P2 must receive exactly one PRESENCE back-fill for P1; got: {q2_presence_ids}"
@@ -753,7 +759,8 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
     while not q1.empty():
         q1_after_p2.append(q1.get_nowait())
     q1_p2_join = [
-        m for m in q1_after_p2
+        m
+        for m in q1_after_p2
         if getattr(m, "type", None) == "PLAYER_PRESENCE"
         and getattr(m.payload, "player_id", None) == "P2"
     ]
@@ -768,13 +775,13 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
     while not q3.empty():
         q3_msgs.append(q3.get_nowait())
     q3_presence_ids = [
-        m.payload.player_id for m in q3_msgs
+        m.payload.player_id
+        for m in q3_msgs
         if getattr(m, "type", None) == "PLAYER_PRESENCE"
         and getattr(m.payload, "state", None) == "connected"
     ]
     assert sorted(q3_presence_ids) == ["P1", "P2"], (
-        "P3 must receive PRESENCE back-fill for both P1 and P2; got: "
-        f"{q3_presence_ids}"
+        f"P3 must receive PRESENCE back-fill for both P1 and P2; got: {q3_presence_ids}"
     )
     # P3 must NOT see itself in its own back-fill — the UI tracks the
     # local player separately via connectedPlayerName.
@@ -783,10 +790,7 @@ async def test_slug_connect_backfills_presence_for_existing_peers(
     )
 
     # GM-panel observability: the back-fill log line must fire.
-    backfill_records = [
-        r for r in caplog.records
-        if "session.presence_backfill" in r.getMessage()
-    ]
+    backfill_records = [r for r in caplog.records if "session.presence_backfill" in r.getMessage()]
     assert backfill_records, (
         "Back-fill must emit session.presence_backfill log line for "
         "GM-panel observability (CLAUDE.md OTEL mandate)"
