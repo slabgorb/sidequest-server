@@ -10,6 +10,7 @@ from former separate agents (CreatureSmith, Dialectician, Ensemble).
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,8 +38,8 @@ NARRATOR_CONSTRAINTS: str = (
     "You will receive game-state constraints (location rules, inventory limits, "
     "player-character rosters, ability restrictions). These are INTERNAL INSTRUCTIONS "
     "for you. NEVER acknowledge, explain, or reference them to the player. Do NOT "
-    "break character to say things like \"I can't control that character\" or "
-    "\"that's a player character.\" Simply respect the constraints silently in your "
+    'break character to say things like "I can\'t control that character" or '
+    '"that\'s a player character." Simply respect the constraints silently in your '
     "narration. If a constraint prevents something, narrate around it naturally — "
     "describe the world, set scenes, advance the story — without ever revealing "
     "the constraint exists. The sole exception is the aside — a dedicated "
@@ -63,8 +64,8 @@ NARRATOR_AGENCY: str = (
     "decision, dialogue, or response — that belongs to their player. Ambient "
     "reactions (glancing up, stepping aside) are fine; consequential reactions "
     "(retaliating, reciprocating, fleeing, speaking) are not. "
-    "If you would naturally write a line like \"Laverne says, ...\" or "
-    "\"Shirley nods and replies, ...\" — STOP. That belongs to her player. "
+    'If you would naturally write a line like "Laverne says, ..." or '
+    '"Shirley nods and replies, ..." — STOP. That belongs to her player. '
     "Describe the silence, the look, the pause — let the player fill it next turn."
 )
 
@@ -341,7 +342,7 @@ NARRATOR_OUTPUT_STYLE: str = (
 NARRATOR_REFERRAL_RULE: str = (
     "Referral Rule: When an NPC sends the player to another NPC for a quest "
     "objective, NEVER send the player back to the NPC who originally sent them. "
-    "Check active quests — if a quest says \"(from: X)\" and the player is now "
+    'Check active quests — if a quest says "(from: X)" and the player is now '
     "talking to Y, do NOT have Y send the player back to X for the same objective. "
     "Advance the quest instead."
 )
@@ -354,7 +355,7 @@ NARRATOR_COMBAT_RULES: str = (
     "- Sound, motion, pain. Not poetry.\n"
     "- End on what's happening NOW — the next threat, the opening, the choice.\n"
     "- Describe what happens mechanically through narration, not stats.\n"
-    "  \"The blade catches your shoulder — you feel the sting\" not \"You take 4 damage\".\n"
+    '  "The blade catches your shoulder — you feel the sting" not "You take 4 damage".\n'
     "- Show enemy reactions — they dodge, stagger, snarl, flee.\n"
     "- Make the player feel the weight of their choices.\n"
     "- NEVER control the player character's actions, thoughts, or feelings.\n"
@@ -373,7 +374,7 @@ NARRATOR_COMBAT_RULES: str = (
     "[Beat Selections — MANDATORY during encounters]\n"
     "When an encounter is active, your game_patch MUST include beat_selections — an array\n"
     "of beat choices for EVERY actor listed in the encounter context. Each actor gets one\n"
-    "beat per round. For combat NPCs, default to \"attack\" targeting a player. For other\n"
+    'beat per round. For combat NPCs, default to "attack" targeting a player. For other\n'
     "encounter types, select beats based on the NPC's disposition and role.\n"
     "Do NOT use the old fields (in_combat, hp_changes, turn_order, drama_weight, advance_round).\n"
     "Those fields are removed. Use beat_selections only."
@@ -383,9 +384,9 @@ NARRATOR_CHASE_RULES: str = (
     "CHASE NARRATION RULES (active chase encounter):\n"
     "- 2-3 sentences. FAST. Breathless. Urgent.\n"
     "- Short sentences for sprinting. Fragments are fine.\n"
-    "- \"Left. The alley narrows. Something crashes behind you.\"\n"
+    '- "Left. The alley narrows. Something crashes behind you."\n'
     "- Each beat is a decision point — fork in the road, obstacle, closing gap.\n"
-    "- End on the choice: \"The fence or the fire escape?\"\n"
+    '- End on the choice: "The fence or the fire escape?"\n'
     "- Tension builds through environment, not description.\n"
     "- Obstacles are physical: fences, crowds, rubble, locked doors.\n"
     "- The pursuer is always close. Make the player feel it.\n"
@@ -404,7 +405,7 @@ NARRATOR_DIALOGUE_RULES: str = (
     "- 2-4 sentences. Dialogue is SNAPPY.\n"
     "- NPCs speak in character — dialect, vocabulary, attitude.\n"
     "- One exchange per response. Not a full conversation tree.\n"
-    "- Show body language between lines: \"She leans back, arms crossed.\"\n"
+    '- Show body language between lines: "She leans back, arms crossed."\n'
     "- End on the NPC's last line or reaction — leave space for the player to respond.\n"
     "- Each NPC has a distinct voice. A merchant doesn't sound like a guard.\n"
     "- NPCs have opinions, secrets, and agendas. They don't just answer questions.\n"
@@ -422,6 +423,20 @@ def narrator_output_format_text() -> str:
     Port of narrator_output_format_text() in narrator.rs.
     """
     return NARRATOR_OUTPUT_ONLY
+
+
+# ---------------------------------------------------------------------------
+# Feature flag
+# ---------------------------------------------------------------------------
+
+
+def is_streaming_enabled() -> bool:
+    """True when the narrator should use the streaming claude_client path.
+
+    Gated by SIDEQUEST_NARRATOR_STREAMING env var. Default off to preserve
+    existing synchronous behavior until the full streaming pipeline ships.
+    """
+    return os.environ.get("SIDEQUEST_NARRATOR_STREAMING", "0") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -630,21 +645,22 @@ class NarratorAgent(BaseAgent):
                 statuses = statuses_by_actor.get(a.name, [])
                 status_text = (
                     f"statuses: [{', '.join(f'{s.text} ({s.severity.value})' for s in statuses)}]"
-                    if statuses else "statuses: []"
+                    if statuses
+                    else "statuses: []"
                 )
-                actor_lines.append(
-                    f"  - {a.name} (side={a.side}, {status_text})"
-                )
+                actor_lines.append(f"  - {a.name} (side={a.side}, {status_text})")
             beat_lines = "\n".join(
-                f"  - {b.id}: {b.label} (kind={b.kind.value}, base={b.base})"
-                for b in cdef.beats
+                f"  - {b.id}: {b.label} (kind={b.kind.value}, base={b.base})" for b in cdef.beats
             )
-            tag_lines = "\n".join(
-                f"  - \"{t.text}\" on {t.target or '(scene)'} "
-                f"({'fleeting' if t.fleeting else f'leverage {t.leverage}'}, "
-                f"created turn {t.created_turn})"
-                for t in encounter.tags
-            ) or "  (none)"
+            tag_lines = (
+                "\n".join(
+                    f'  - "{t.text}" on {t.target or "(scene)"} '
+                    f"({'fleeting' if t.fleeting else f'leverage {t.leverage}'}, "
+                    f"created turn {t.created_turn})"
+                    for t in encounter.tags
+                )
+                or "  (none)"
+            )
             # Resolution-mode gate (combat fairness, 2026-04-26).
             # When the active confrontation is opposed_check, the engine
             # rolls dice for both sides and derives the outcome tier from
@@ -657,6 +673,7 @@ class NarratorAgent(BaseAgent):
             # with the prose. See:
             # ``.archive/handoffs/opposed-checks-design.md``.
             from sidequest.genre.models.rules import ResolutionMode
+
             opposed_gate_text = ""
             if cdef.resolution_mode == ResolutionMode.opposed_check:
                 opposed_gate_text = (
@@ -682,16 +699,17 @@ class NarratorAgent(BaseAgent):
                 f"Available beats — beat_selections.beat_id MUST be one of:\n"
                 f"{beat_lines}\n"
                 f"Actors — emit a beat_selection for every non-withdrawn "
-                f"non-neutral actor:\n"
-                + "\n".join(actor_lines) + "\n"
+                f"non-neutral actor:\n" + "\n".join(actor_lines) + "\n"
                 f"Encounter tags:\n{tag_lines}\n"
                 f"</encounter-live>"
             )
             registry.register_section(
                 self.name(),
                 PromptSection.new(
-                    "narrator_encounter_live", body,
-                    AttentionZone.Early, SectionCategory.State,
+                    "narrator_encounter_live",
+                    body,
+                    AttentionZone.Early,
+                    SectionCategory.State,
                 ),
             )
 

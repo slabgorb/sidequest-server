@@ -36,7 +36,7 @@ from threading import Lock
 from typing import Any
 
 from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse, LlmClient
-from sidequest.agents.narrator import NarratorAgent
+from sidequest.agents.narrator import NarratorAgent, is_streaming_enabled
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import (
     AttentionZone,
@@ -75,6 +75,7 @@ class NarratorPromptTier:
     Delta = subsequent turns on a resumed session — static context already
             in conversation history; only dynamic state + action sent.
     """
+
     Full = "full"
     Delta = "delta"
 
@@ -94,6 +95,7 @@ class BeatSelection:
 
     Port of orchestrator.rs::BeatSelection.
     """
+
     actor: str
     beat_id: str
     outcome: RollOutcome = RollOutcome.Success  # default for legacy callers
@@ -113,6 +115,7 @@ class BeatSelection:
                     from sidequest.telemetry.spans import (
                         encounter_invalid_outcome_tier_span,
                     )
+
                     with encounter_invalid_outcome_tier_span(
                         beat_id=str(d.get("beat_id", "")),
                         actor=str(d.get("actor", "")),
@@ -130,6 +133,7 @@ class BeatSelection:
                 from sidequest.telemetry.spans import (
                     encounter_invalid_outcome_tier_span,
                 )
+
                 with encounter_invalid_outcome_tier_span(
                     beat_id=str(d.get("beat_id", "")),
                     actor=str(d.get("actor", "")),
@@ -154,6 +158,7 @@ class VisualScene:
 
     Port of orchestrator.rs::VisualScene.
     """
+
     subject: str
     tier: str = ""
     mood: str = ""
@@ -178,6 +183,7 @@ class NpcMention:
 
     Port of orchestrator.rs::NpcMention.
     """
+
     name: str
     pronouns: str = ""
     role: str = ""
@@ -195,15 +201,14 @@ class NpcMention:
             side = str(value.get("side", "") or "neutral")
             if side not in valid_sides:
                 from sidequest.telemetry.spans import encounter_invalid_side_span
+
                 with encounter_invalid_side_span(
                     actor_name=str(value.get("name", "?")),
                     declared_side=side,
                     valid_set="player|opponent|neutral",
                 ):
                     pass
-                raise ValueError(
-                    f"NpcMention declared_side={side!r} not in {valid_sides}"
-                )
+                raise ValueError(f"NpcMention declared_side={side!r} not in {valid_sides}")
             return cls(
                 name=str(value.get("name", "")),
                 pronouns=str(value.get("pronouns", "")),
@@ -221,6 +226,7 @@ class ActionRewrite:
 
     Port of orchestrator.rs::ActionRewrite.
     """
+
     you: str = ""
     named: str = ""
     intent: str = ""
@@ -245,6 +251,7 @@ class NarrationTurnResult:
     Phase 1 fields: narration, game_patch extraction, OTEL telemetry.
     Phase 2+ fields are absent — dispatch must not assume their presence.
     """
+
     # Core narration output
     narration: str
     is_degraded: bool = False
@@ -319,6 +326,7 @@ class TurnContext:
 
     Port of orchestrator.rs::TurnContext (Phase 1 slice).
     """
+
     # Encounter state (Phase 1: read to inject encounter rules)
     in_combat: bool = False
     in_chase: bool = False
@@ -328,7 +336,7 @@ class TurnContext:
     state_summary: str | None = None
 
     # Verbosity / vocabulary (Recency zone)
-    narrator_verbosity: str = "standard"   # concise | standard | verbose
+    narrator_verbosity: str = "standard"  # concise | standard | verbose
     narrator_vocabulary: str = "literary"  # accessible | literary | epic
 
     # Genre identity (Primacy zone — every tier)
@@ -783,6 +791,7 @@ class Orchestrator:
             import pathlib
 
             from sidequest.agents.prompt_framework.soul import parse_soul_md
+
             soul_path = pathlib.Path("SOUL.md")
             loaded = parse_soul_md(soul_path)
             self._soul_data = loaded if loaded else None
@@ -806,9 +815,7 @@ class Orchestrator:
         Port of orchestrator.rs::Orchestrator::reset_narrator_session.
         """
         with self._session_lock:
-            logger.info(
-                "orchestrator.narrator_session_reset reason=session_lifecycle"
-            )
+            logger.info("orchestrator.narrator_session_reset reason=session_lifecycle")
             self._narrator_session_id = None
             self._session_genre = None
 
@@ -822,7 +829,8 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     def _entity_tokens_for_registry(
-        self, context: TurnContext,
+        self,
+        context: TurnContext,
     ) -> dict[str, list[str]]:
         """Build ``entity_id -> [tokens]`` from the session's NPC registry.
 
@@ -922,9 +930,7 @@ class Orchestrator:
         if context.dispatch_package is not None:
             from sidequest.agents.prompt_redaction import redact_dispatch_package
 
-            visible_dispatch_package, removed = redact_dispatch_package(
-                context.dispatch_package
-            )
+            visible_dispatch_package, removed = redact_dispatch_package(context.dispatch_package)
             self._last_secret_routes = list(removed)
         else:
             self._last_secret_routes = []
@@ -941,6 +947,7 @@ class Orchestrator:
             # SOUL principles (Early zone)
             if self._soul_data is not None:
                 from sidequest.agents.prompt_framework.soul import SoulData
+
                 if isinstance(self._soul_data, SoulData):
                     filtered = self._soul_data.as_prompt_text_for(agent_name)
                     if filtered:
@@ -1093,10 +1100,7 @@ class Orchestrator:
                     )
 
                 if gp.transition_hints:
-                    hints = [
-                        f"  {k}: \"{v}\""
-                        for k, v in gp.transition_hints.items()
-                    ]
+                    hints = [f'  {k}: "{v}"' for k, v in gp.transition_hints.items()]
                     registry.register_section(
                         agent_name,
                         PromptSection.new(
@@ -1131,8 +1135,7 @@ class Orchestrator:
             and context.pending_resolution_signal is None
         ):
             menu_lines = "\n".join(
-                f"- {cdef_type}: {cdef_label}"
-                + (f" (category={cdef_cat})" if cdef_cat else "")
+                f"- {cdef_type}: {cdef_label}" + (f" (category={cdef_cat})" if cdef_cat else "")
                 for cdef_type, cdef_label, cdef_cat in context.available_confrontations
             )
             registry.register_section(
@@ -1159,8 +1162,12 @@ class Orchestrator:
         # Also fires when only pending_resolution_signal is set — the encounter
         # flags may have been cleared by the engine on the resolution turn, but
         # the [ENCOUNTER RESOLVED] zone must still be emitted this turn.
-        if (context.in_combat or context.in_chase or context.in_encounter
-                or context.pending_resolution_signal is not None):
+        if (
+            context.in_combat
+            or context.in_chase
+            or context.in_encounter
+            or context.pending_resolution_signal is not None
+        ):
             self._narrator.build_encounter_context(
                 registry,
                 encounter=context.encounter,
@@ -1174,6 +1181,7 @@ class Orchestrator:
                     encounter_resolution_signal_consumed_span,
                 )
                 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
                 sig = context.pending_resolution_signal
                 with encounter_resolution_signal_consumed_span(
                     outcome=sig.outcome,
@@ -1218,9 +1226,7 @@ class Orchestrator:
 
         # Trope beat directives (Early zone)
         if context.pending_trope_context:
-            logger.info(
-                "orchestrator.trope_beat_injection beats_injected=1"
-            )
+            logger.info("orchestrator.trope_beat_injection beats_injected=1")
             registry.register_section(
                 agent_name,
                 PromptSection.new(
@@ -1236,9 +1242,7 @@ class Orchestrator:
         # pronouns/role each turn (playtest 3: Frandrew she/her captain →
         # he/him grease monkey in 10 turns).
         if context.npc_registry:
-            registry.register_npc_roster_section(
-                agent_name, context.npc_registry
-            )
+            registry.register_npc_roster_section(agent_name, context.npc_registry)
 
         # Chassis voices — chassis as named speakers with bond-tier name-form.
         # See register_chassis_voice_section docstring; mirrors npc_roster
@@ -1263,9 +1267,7 @@ class Orchestrator:
                 len(context.party_peers),
                 context.character_name,
             )
-            registry.register_party_peer_section(
-                agent_name, context.party_peers
-            )
+            registry.register_party_peer_section(agent_name, context.party_peers)
 
         # Game state (Valley zone)
         if context.state_summary:
@@ -1395,7 +1397,7 @@ class Orchestrator:
                         "let them explore. Under 500 characters of prose total.\n"
                         "MANDATORY: Your game_patch MUST include a visual_scene for this opening "
                         "turn — it is the first illustration the player sees. Use tier "
-                        "\"landscape\" and describe the opening vista.\n"
+                        '"landscape" and describe the opening vista.\n'
                         "</opening-scene>"
                     ),
                     AttentionZone.Recency,
@@ -1449,7 +1451,8 @@ class Orchestrator:
 
             with context.phase_timings.phase("dispatch_bank"):
                 bank_result = await run_dispatch_bank(
-                    visible_dispatch_package, context=bank_context,
+                    visible_dispatch_package,
+                    context=bank_context,
                 )
 
             # Group C — lethality arbitration runs after the bank and before
@@ -1475,9 +1478,7 @@ class Orchestrator:
             with context.phase_timings.phase("prompt_build"):
                 combined_directives = list(bank_result.directives) + arbiter_directives
                 if combined_directives:
-                    block = "\n".join(
-                        f"- [{d.kind}] {d.payload}" for d in combined_directives
-                    )
+                    block = "\n".join(f"- [{d.kind}] {d.payload}" for d in combined_directives)
                     registry.register_section(
                         agent_name,
                         PromptSection.new(
@@ -1489,7 +1490,9 @@ class Orchestrator:
                     )
                 for key, err in bank_result.errors:
                     logger.warning(
-                        "orchestrator.subsystem_error key=%s error=%s", key, err,
+                        "orchestrator.subsystem_error key=%s error=%s",
+                        key,
+                        err,
                     )
 
         with context.phase_timings.phase("prompt_build"):
@@ -1505,8 +1508,7 @@ class Orchestrator:
                 # Laverne says — Laverne's player only typed "I look at
                 # Shirley", a glance).
                 lines = "\n".join(
-                    f"- {name} declares: {act}"
-                    for name, act in context.merged_player_actions
+                    f"- {name} declares: {act}" for name, act in context.merged_player_actions
                 )
                 player_action_text = (
                     "This turn, the seated players each declared an action "
@@ -1609,6 +1611,33 @@ class Orchestrator:
         context: TurnContext,
     ) -> NarrationTurnResult:
         """Process a player action through the Phase 1 narration pipeline.
+
+        Routes to the streaming path when SIDEQUEST_NARRATOR_STREAMING=1,
+        otherwise delegates to the synchronous path (default, flag-off behavior
+        is byte-identical to prior implementation).
+
+        Streaming variant is wired in Task 12; until then it delegates to sync.
+        """
+        if is_streaming_enabled():
+            return await self._run_narration_turn_streaming(action, context)
+        return await self._run_narration_turn_synchronous(action, context)
+
+    async def _run_narration_turn_streaming(
+        self,
+        action: str,
+        context: TurnContext,
+    ) -> NarrationTurnResult:
+        """Streaming variant — wired in Task 12 (broadcast_delta + WS message).
+        For now, delegates to synchronous path so flag-on doesn't crash.
+        """
+        return await self._run_narration_turn_synchronous(action, context)
+
+    async def _run_narration_turn_synchronous(
+        self,
+        action: str,
+        context: TurnContext,
+    ) -> NarrationTurnResult:
+        """Synchronous narrator pipeline (send_with_session + extraction).
 
         This is the primary entry point for Story 41-6 server dispatch.
 
@@ -1743,10 +1772,7 @@ class Orchestrator:
                     )
 
             # Build NpcMention list
-            npc_mentions = [
-                NpcMention.from_value(v)
-                for v in extraction["npcs_present"]
-            ]
+            npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
 
             # Build BeatSelection list
             beat_selections = [
@@ -1774,18 +1800,28 @@ class Orchestrator:
                 confrontation=extraction["confrontation"],
                 beat_selections=beat_selections,
                 npcs_present=npc_mentions,
-                items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
+                items_gained=extraction["items_gained"]
+                if isinstance(extraction["items_gained"], list)
+                else [],
                 items_lost=extraction.get("items_lost", []),
                 items_discarded=extraction.get("items_discarded", []),
                 items_consumed=extraction.get("items_consumed", []),
-                footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
-                quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
-                sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],
+                footnotes=extraction["footnotes"]
+                if isinstance(extraction["footnotes"], list)
+                else [],
+                quest_updates=extraction["quest_updates"]
+                if isinstance(extraction["quest_updates"], dict)
+                else {},
+                sfx_triggers=extraction["sfx_triggers"]
+                if isinstance(extraction["sfx_triggers"], list)
+                else [],
                 action_rewrite=action_rewrite,
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
-                status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+                status_changes=extraction["status_changes"]
+                if isinstance(extraction["status_changes"], list)
+                else [],
                 magic_working=(
                     extraction["magic_working"]
                     if isinstance(extraction.get("magic_working"), dict)
@@ -1858,22 +1894,16 @@ async def run_narration_turn(
     if genre.audio and hasattr(genre.audio, "sfx_library"):
         sfx_lib = genre.audio.sfx_library
         if isinstance(sfx_lib, list):
-            available_sfx = [
-                str(getattr(s, "id", s)) for s in sfx_lib
-            ]
+            available_sfx = [str(getattr(s, "id", s)) for s in sfx_lib]
 
     # Story 37-36: canonical peer-identity packets for every non-self PC.
     party_peers = [
-        PartyPeer.from_character(pc)
-        for pc in session.characters
-        if pc.core.name != char_name
+        PartyPeer.from_character(pc) for pc in session.characters if pc.core.name != char_name
     ]
 
     # Task 18 (dual-track momentum): build per-actor status map from session
     # characters so the live encounter zone can render Status objects per actor.
-    statuses_by_actor = {
-        ch.core.name: list(ch.core.statuses) for ch in session.characters
-    }
+    statuses_by_actor = {ch.core.name: list(ch.core.statuses) for ch in session.characters}
 
     # Task 18 (dual-track momentum): capture the one-shot resolution signal
     # before building TurnContext so we can clear it from the snapshot after
