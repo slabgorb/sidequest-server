@@ -58,8 +58,13 @@ class StreamFenceParser:
     are confirmed to not be part of a fence. JSON is accumulated internally.
     """
 
-    def __init__(self, on_prose_delta: Callable[[str], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        on_prose_delta: Callable[[str], Awaitable[None]],
+        on_fence_detected: Callable[[int], Awaitable[None]] | None = None,
+    ) -> None:
         self._on_prose_delta = on_prose_delta
+        self._on_fence_detected = on_fence_detected
         self._state: _State = _State.PROSE
         self._carry: str = ""
         self._json_buffer: str = ""
@@ -104,6 +109,8 @@ class StreamFenceParser:
             self._stream_offset += match.end()
             self._carry = self._carry[match.end() :]
             self._state = _State.JSON_BUFFERING
+            if self._on_fence_detected is not None:
+                await self._on_fence_detected(len(self._prose_total))
             return True
 
         # No confirmed fence. Hold back a lookahead-sized tail.

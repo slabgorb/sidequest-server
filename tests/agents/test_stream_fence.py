@@ -164,3 +164,44 @@ async def test_trailing_garbage_after_close():
     assert result.game_patch_json is not None and '"a":1' in result.game_patch_json
     # Garbage discarded, not appended to JSON
     assert "GARBAGE" not in (result.game_patch_json or "")
+
+
+# ---------------------------------------------------------------------------
+# on_fence_detected callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_fence_detected_callback_fires_with_prose_bytes():
+    cb_prose, _ = _collector()
+    fence_calls: list[int] = []
+
+    async def on_fence(prose_bytes: int) -> None:
+        fence_calls.append(prose_bytes)
+
+    parser = StreamFenceParser(on_prose_delta=cb_prose, on_fence_detected=on_fence)
+    full = "Hello world.\n\n```game_patch\n{}\n```\n"
+    await parser.feed(full)
+    await parser.finalize()
+
+    assert len(fence_calls) == 1
+    # prose_total at transition is the prose flushed before the fence open-pattern.
+    # The open fence is "\n```game_patch\n" so the prefix includes "Hello world.\n"
+    # (the leading \n of the double-blank-line belongs to the fence match itself,
+    # but the first \n before it is part of prose).
+    assert fence_calls[0] == len("Hello world.\n")
+
+
+@pytest.mark.asyncio
+async def test_on_fence_detected_does_not_fire_when_no_fence():
+    cb_prose, _ = _collector()
+    fence_calls: list[int] = []
+
+    async def on_fence(prose_bytes: int) -> None:
+        fence_calls.append(prose_bytes)
+
+    parser = StreamFenceParser(on_prose_delta=cb_prose, on_fence_detected=on_fence)
+    await parser.feed("just prose, no fence")
+    await parser.finalize()
+
+    assert len(fence_calls) == 0

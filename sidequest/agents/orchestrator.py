@@ -1648,6 +1648,7 @@ class Orchestrator:
         Falls back to the synchronous path if the client does not support
         streaming (e.g. Ollama or a test double that only has send_with_session).
         """
+        import asyncio
         import uuid
 
         from sidequest.agents.claude_client import (
@@ -1657,6 +1658,13 @@ class Orchestrator:
         )
         from sidequest.agents.stream_fence import StreamFenceParser
         from sidequest.server.emitters import broadcast_delta
+        from sidequest.telemetry.spans import (
+            narrator_stream_complete_span,
+            narrator_stream_error_span,
+            narrator_stream_fence_detected,
+            narrator_stream_first_token,
+            narrator_stream_start_span,
+        )
 
         # Degrade to synchronous if the client doesn't support send_stream
         # (e.g. Ollama or legacy test doubles). No silent fallback — we log
@@ -1687,7 +1695,9 @@ class Orchestrator:
             turn_id: str = str(context.turn_number) if context.turn_number else str(uuid.uuid4())
 
             seq = 0
+            delta_count = 0
             prose_chunks: list[str] = []
+            first_token_time: float | None = None
 
             async def on_prose_delta(chunk: str) -> None:
                 nonlocal seq
@@ -1701,85 +1711,148 @@ class Orchestrator:
                     )
                 seq += 1
 
-            parser = StreamFenceParser(on_prose_delta=on_prose_delta)
+            call_start = time.monotonic()
+
+            async def on_fence(prose_bytes: int) -> None:
+                narrator_stream_fence_detected(
+                    turn_id=turn_id,
+                    prose_bytes_at_fence=prose_bytes,
+                    seconds_to_fence=time.monotonic() - call_start,
+                )
+
+            parser = StreamFenceParser(on_prose_delta=on_prose_delta, on_fence_detected=on_fence)
             terminal: StreamComplete | StreamError | None = None
 
-            call_start = time.monotonic()
-            try:
-                with (
-                    context.phase_timings.phase("narrator_subprocess"),
-                    turn_agent_llm_inference_span(
-                        model=NARRATOR_MODEL,
-                        prompt_len=len(send_prompt),
-                    ),
-                ):
-                    async for event in self._client.send_stream(
-                        prompt=send_prompt,
-                        model=NARRATOR_MODEL,
-                        session_id=current_session_id,
-                        system_prompt=system_prompt_for_establish,
-                        allowed_tools=[],
-                        env_vars={},
+            with narrator_stream_start_span(
+                turn_id=turn_id,
+                prompt_tokens=len(send_prompt) // 4,
+                model=NARRATOR_MODEL,
+                session_id=current_session_id,
+            ):
+                try:
+                    with (
+                        context.phase_timings.phase("narrator_subprocess"),
+                        turn_agent_llm_inference_span(
+                            model=NARRATOR_MODEL,
+                            prompt_len=len(send_prompt),
+                        ),
                     ):
-                        if isinstance(event, TextDelta):
-                            await parser.feed(event.text)
-                        elif isinstance(event, (StreamComplete, StreamError)):
-                            terminal = event
-            except Exception as e:
-                elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                logger.error(
-                    "CLAUDE CLI STREAMING FAILED — returning degraded response (ADR-005) "
-                    "agent=%s duration_ms=%d error=%s",
-                    agent_name,
-                    elapsed_ms,
-                    e,
-                )
-                return NarrationTurnResult(
-                    narration=(
-                        f"**{context.current_location}**\n\n"
-                        "The world holds its breath for a moment... "
-                        "something shifts in the distance, but the moment passes."
-                    ),
-                    is_degraded=True,
-                    agent_name=agent_name,
-                    agent_duration_ms=elapsed_ms,
-                    prompt_tier=tier,
-                    prompt_text=prompt_text,
-                    secret_routes=list(self._last_secret_routes),
-                )
+                        async for event in self._client.send_stream(
+                            prompt=send_prompt,
+                            model=NARRATOR_MODEL,
+                            session_id=current_session_id,
+                            system_prompt=system_prompt_for_establish,
+                            allowed_tools=[],
+                            env_vars={},
+                        ):
+                            if isinstance(event, TextDelta):
+                                if first_token_time is None:
+                                    first_token_time = time.monotonic() - call_start
+                                    narrator_stream_first_token(
+                                        turn_id=turn_id, ttft_seconds=first_token_time
+                                    )
+                                delta_count += 1
+                                await parser.feed(event.text)
+                            elif isinstance(event, (StreamComplete, StreamError)):
+                                terminal = event
+                except asyncio.CancelledError:
+                    elapsed_s = time.monotonic() - call_start
+                    from sidequest.telemetry.spans import narrator_stream_cancelled_span
 
-            elapsed_ms = int((time.monotonic() - call_start) * 1000)
-            result = await parser.finalize()
-
-            # On StreamError, return degraded response with whatever partial
-            # prose we collected before the failure.
-            if isinstance(terminal, StreamError):
-                logger.error(
-                    "CLAUDE CLI STREAM ERROR — returning degraded response "
-                    "agent=%s kind=%s duration_ms=%d detail=%s",
-                    agent_name,
-                    terminal.kind,
-                    elapsed_ms,
-                    terminal.detail,
-                )
-                partial_prose = (
-                    result.prose
-                    or terminal.partial_text
-                    or (
-                        f"**{context.current_location}**\n\n"
-                        "The world holds its breath for a moment... "
-                        "something shifts in the distance, but the moment passes."
+                    narrator_stream_cancelled_span(
+                        turn_id=turn_id,
+                        reason="task_cancelled",
+                        partial_prose_bytes=len("".join(prose_chunks)),
                     )
-                )
-                return NarrationTurnResult(
-                    narration=partial_prose,
-                    is_degraded=True,
-                    agent_name=agent_name,
-                    agent_duration_ms=elapsed_ms,
-                    prompt_tier=tier,
-                    prompt_text=prompt_text,
-                    secret_routes=list(self._last_secret_routes),
-                )
+                    logger.warning(
+                        "CLAUDE CLI STREAMING CANCELLED turn_id=%s elapsed_s=%.2f",
+                        turn_id,
+                        elapsed_s,
+                    )
+                    raise
+                except Exception as e:
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    narrator_stream_error_span(
+                        turn_id=turn_id,
+                        error_kind=type(e).__name__,
+                        partial_prose_bytes=len("".join(prose_chunks)),
+                        total_seconds=elapsed_ms / 1000.0,
+                        detail=str(e),
+                    )
+                    logger.error(
+                        "CLAUDE CLI STREAMING FAILED — returning degraded response (ADR-005) "
+                        "agent=%s duration_ms=%d error=%s",
+                        agent_name,
+                        elapsed_ms,
+                        e,
+                    )
+                    return NarrationTurnResult(
+                        narration=(
+                            f"**{context.current_location}**\n\n"
+                            "The world holds its breath for a moment... "
+                            "something shifts in the distance, but the moment passes."
+                        ),
+                        is_degraded=True,
+                        agent_name=agent_name,
+                        agent_duration_ms=elapsed_ms,
+                        prompt_tier=tier,
+                        prompt_text=prompt_text,
+                        secret_routes=list(self._last_secret_routes),
+                    )
+
+                elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                result = await parser.finalize()
+
+                # On StreamError, return degraded response with whatever partial
+                # prose we collected before the failure.
+                if isinstance(terminal, StreamError):
+                    narrator_stream_error_span(
+                        turn_id=turn_id,
+                        error_kind=terminal.kind,
+                        partial_prose_bytes=len(result.prose),
+                        total_seconds=elapsed_ms / 1000.0,
+                        detail=terminal.detail,
+                    )
+                    logger.error(
+                        "CLAUDE CLI STREAM ERROR — returning degraded response "
+                        "agent=%s kind=%s duration_ms=%d detail=%s",
+                        agent_name,
+                        terminal.kind,
+                        elapsed_ms,
+                        terminal.detail,
+                    )
+                    partial_prose = (
+                        result.prose
+                        or terminal.partial_text
+                        or (
+                            f"**{context.current_location}**\n\n"
+                            "The world holds its breath for a moment... "
+                            "something shifts in the distance, but the moment passes."
+                        )
+                    )
+                    return NarrationTurnResult(
+                        narration=partial_prose,
+                        is_degraded=True,
+                        agent_name=agent_name,
+                        agent_duration_ms=elapsed_ms,
+                        prompt_tier=tier,
+                        prompt_text=prompt_text,
+                        secret_routes=list(self._last_secret_routes),
+                    )
+
+            # Emit complete span for successful streaming turn.
+            input_tokens = terminal.input_tokens if isinstance(terminal, StreamComplete) else None
+            output_tokens = terminal.output_tokens if isinstance(terminal, StreamComplete) else None
+            narrator_stream_complete_span(
+                turn_id=turn_id,
+                total_seconds=elapsed_ms / 1000.0,
+                ttft_seconds=first_token_time,
+                prose_bytes=len(result.prose),
+                delta_count=delta_count,
+                json_parse_status=result.status,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
 
             # Store session ID from StreamComplete (ADR-066)
             if isinstance(terminal, StreamComplete) and terminal.session_id:
@@ -1806,9 +1879,6 @@ class Orchestrator:
                     else ""
                 )
             )
-
-            input_tokens = terminal.input_tokens if isinstance(terminal, StreamComplete) else None
-            output_tokens = terminal.output_tokens if isinstance(terminal, StreamComplete) else None
 
             logger.info(
                 "Claude CLI returned streaming narration len=%d duration_ms=%d "
