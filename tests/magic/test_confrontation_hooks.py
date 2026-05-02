@@ -297,3 +297,156 @@ def test_auto_fire_emits_otel_span(
     fields = fire_events[0]["fields"]
     assert fields.get("confrontation_id") == "the_bleeding_through"
     assert fields.get("actor") == "sira_mendes"
+
+
+def _bleeding_through_with_missing_primary_bar() -> ConfrontationDefinition:
+    """A confrontation whose resource_pool primary bar isn't in the ledger.
+
+    Trigger: ``sanity <= 0.40`` — actor HAS sanity, so the trigger
+    fires correctly.
+
+    Resource pool primary: ``willpower`` — actor does NOT have a
+    willpower bar in the ledger (no plugin shipped one). Models the
+    realistic content drift case: confrontations.yaml references a bar
+    name that diverged from the ledger schema (typo, removed bar,
+    cross-world reuse).
+    """
+    return ConfrontationDefinition(
+        id="the_bleeding_through",
+        label="The Bleeding-Through",
+        plugin_tie_ins=["innate_v1"],
+        auto_fire=True,
+        auto_fire_trigger="sanity <= 0.40",
+        rounds=1,
+        # Resource pool points at a bar the actor does NOT have.
+        # Trigger evaluates against ``sanity`` (which the actor has),
+        # so auto_fire fires; the payload builder then asks for
+        # ``willpower`` and silently returns 0.0 pre-fix.
+        resource_pool={"primary": "willpower", "secondary": "vitality"},
+        description="x",
+        outcomes={
+            "clear_win": {"mandatory_outputs": ["control_tier_advance"]},
+            "pyrrhic_win": {"mandatory_outputs": ["control_tier_advance", "status_add_scar"]},
+            "clear_loss": {"mandatory_outputs": ["status_add_scar"]},
+            "refused": {"mandatory_outputs": ["sanity_decrement"]},
+        },
+    )
+
+
+def test_missing_resource_pool_bar_emits_watcher_event_not_silent_zero(
+    world_config: WorldMagicConfig,
+    captured_watcher_events: list[dict[str, Any]],
+) -> None:
+    """Story 47-3 round-2 mandatory #4: ``_bar_value`` must NOT silently return 0.0.
+
+    Pre-fix (current code at narration_apply.py:411-419):
+        def _bar_value(bar_id: str) -> float:
+            try:
+                return magic_state.get_bar(...).value
+            except KeyError:
+                return 0.0          # ← silent fallback, no log, no watcher
+
+    Direct CLAUDE.md "No Silent Fallbacks" violation. A confrontation
+    whose ``resource_pool.primary`` references a bar the actor does not
+    have in the ledger silently produces ``player_metric.current=0`` and
+    ``player_metric.starting=0`` in the auto-fire CONFRONTATION payload.
+    The player sees a zero-bar overlay; the GM panel sees nothing wrong.
+    Sebastien debugging this on a Sunday playtest gets no signal.
+
+    Post-fix expectation (Westley re-review path forward, option b):
+        - The payload still constructs (no raise — the rest of the
+          apply pipeline doesn't tolerate one here).
+        - A watcher event is emitted to the GM panel surfacing the
+          missing bar so the gap is VISIBLE not invisible.
+        - The implementer chooses the op string; this test accepts any
+          ``op`` whose name reflects the missing-bar event ("bar_missing",
+          "bar_missing_for_payload", "missing_resource_bar", etc.).
+
+    The test triggers the silent path realistically: a confrontation
+    whose ``resource_pool.primary = "willpower"`` (a bar the actor
+    doesn't have) but whose ``auto_fire_trigger`` references ``sanity``
+    (which the actor does have). The trigger fires, the payload
+    builder asks for ``willpower``, and pre-fix returns 0.0 silently.
+    """
+    from sidequest.game.session import GameSnapshot
+    from sidequest.magic.state import BarKey, MagicState
+    from sidequest.server.narration_apply import apply_magic_working
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    # Actor has sanity (used for trigger eval), but NOT willpower
+    # (referenced by resource_pool.primary).
+    state.set_bar_value(
+        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
+    )
+    state.confrontations = [_bleeding_through_with_missing_primary_bar()]
+
+    snapshot = GameSnapshot.model_construct(magic_state=state)
+
+    # Drives the full path: working → costs apply → trigger evaluates →
+    # auto_fire → _build_magic_confrontation_payload → _bar_value("willpower")
+    # → KeyError caught.
+    apply_magic_working(
+        snapshot=snapshot,
+        patch_field={
+            "plugin": "innate_v1",
+            "mechanism": "condition",
+            "actor": "sira_mendes",
+            "costs": {"sanity": 0.10},
+            "domain": "psychic",
+            "narrator_basis": "missing-bar silent-fallback test",
+            "flavor": "reflexive",
+            "consent_state": "involuntary",
+        },
+    )
+
+    # Sanity-check that the trigger fired and the payload was built.
+    # If this assertion fails, the test setup is wrong (the trigger
+    # didn't engage), not the silent-fallback under test.
+    assert len(snapshot.pending_magic_auto_fires) == 1, (
+        "trigger should have fired (sanity 0.35 ≤ 0.40); test setup "
+        f"wrong if not — got {len(snapshot.pending_magic_auto_fires)} "
+        "auto-fires"
+    )
+    payload = snapshot.pending_magic_auto_fires[0]
+    assert payload["type"] == "the_bleeding_through"
+    # The pre-fix silent return of 0.0 produces current=0; the post-fix
+    # emit-watcher-and-continue path also produces current=0 (the bar
+    # genuinely doesn't exist). Both paths converge on the payload
+    # value — the difference is the OTEL event surfacing the gap.
+    assert payload["player_metric"]["current"] == 0
+    assert payload["player_metric"]["starting"] == 0
+
+    # The actual contract under test: a watcher event must surface the
+    # missing-bar case so the GM panel sees the gap. Pre-fix this list
+    # contains the confrontation_fire event but NO bar-missing event.
+    bar_missing_events = [
+        e
+        for e in captured_watcher_events
+        if e["component"] == "magic"
+        and "bar_missing" in str(e["fields"].get("op", "")).lower()
+    ]
+    assert bar_missing_events, (
+        "_bar_value must emit a watcher event when the requested bar is "
+        "absent from the ledger — pre-fix it returns 0.0 silently with "
+        "no GM-panel signal (CLAUDE.md No-Silent-Fallbacks violation). "
+        "Expected an event with component='magic' and op containing "
+        "'bar_missing' (exact op name implementer's choice). "
+        f"Saw events: {[(e['component'], e['fields'].get('op')) for e in captured_watcher_events]}"
+    )
+    fields = bar_missing_events[0]["fields"]
+    assert fields.get("actor") == "sira_mendes", (
+        f"watcher event must identify the actor whose bar was missing; "
+        f"got fields={fields}"
+    )
+    assert fields.get("bar_id") == "willpower", (
+        f"watcher event must identify which bar was missing so the "
+        f"author can fix the resource_pool entry; got fields={fields}"
+    )
+    # Severity should be elevated — this is a content/config gap, not
+    # routine info. WARNING or ERROR both acceptable; INFO is too quiet.
+    assert bar_missing_events[0]["severity"] in {"warning", "error"}, (
+        f"missing-bar event must be at WARNING or ERROR severity so "
+        f"the GM panel surfaces it; got severity="
+        f"{bar_missing_events[0]['severity']!r}"
+    )
