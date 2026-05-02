@@ -32,10 +32,10 @@ from sidequest.magic.confrontations import (
     BranchName,
     evaluate_auto_fire_triggers,
 )
-from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 from sidequest.magic.models import Flag, MagicWorking
 from sidequest.magic.state import ApplyWorkingResult, ThresholdCrossingEvent
 from sidequest.magic.validator import validate as magic_validate
+from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 from sidequest.server.dispatch.sealed_letter import (
     SealedLetterOutcome,
     resolve_sealed_letter_lookup,
@@ -205,7 +205,7 @@ class MagicApplyResult:
 
     apply: ApplyWorkingResult
     flags: list[Flag]
-    auto_fired: list[tuple["ConfrontationDefinition", str]] = field(  # noqa: F821 — forward ref resolved at runtime
+    auto_fired: list[tuple[ConfrontationDefinition, str]] = field(  # noqa: F821 — forward ref resolved at runtime
         default_factory=list,
     )
 
@@ -416,6 +416,34 @@ def _build_magic_confrontation_payload(
                 BarKey(scope="character", owner_id=actor, bar_id=bar_id)
             ).value
         except KeyError:
+            # Confrontation references a bar the actor's ledger does
+            # not have — content drift between confrontations.yaml's
+            # resource_pool and the world's ledger_bars schema (typo,
+            # cross-world reuse, post-migration save). The payload must
+            # still construct (refusing here would orphan the auto-fire
+            # and the apply pipeline doesn't tolerate a raise), but the
+            # gap MUST be visible to the GM panel — silent fallback to
+            # 0.0 was a CLAUDE.md ADD-1 violation Westley flagged in
+            # round 2. Surface via watcher event so Sebastien sees the
+            # ledger hole at debug time.
+            logger.warning(
+                "magic.bar_missing_for_payload actor=%s bar_id=%s confrontation_id=%s",
+                actor,
+                bar_id,
+                conf.id,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "magic_state",
+                    "op": "bar_missing_for_payload",
+                    "actor": actor,
+                    "bar_id": bar_id,
+                    "confrontation_id": conf.id,
+                },
+                component="magic",
+                severity="warning",
+            )
             return 0.0
 
     primary_value = _bar_value(primary)
@@ -1814,8 +1842,6 @@ def _resolve_magic_confrontation_if_applicable(
             actor,
         )
         return
-
-    from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 
     # ``branch`` is constrained to the four-branch literal by the .get()
     # lookup above (None-case returned earlier), so the cast is safe.

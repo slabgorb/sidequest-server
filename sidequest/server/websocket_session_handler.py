@@ -389,25 +389,72 @@ class WebSocketSessionHandler:
         """
         # CONFRONTATION starts (one per auto-fire). The payload shape
         # already matches ``ConfrontationPayload``; emit_event will
-        # dispatch it.
+        # dispatch it. Pop-as-you-go (round 2 fix) so a malformed
+        # entry's ValidationError doesn't strand previously-emitted or
+        # subsequent entries in the queue forever — pre-fix the
+        # post-loop ``= []`` was the only drain path, so a raise on
+        # entry N left entries 0..end stuck and re-fired the valid
+        # entries 0..N-1 every dispatch tick.
         if snapshot.pending_magic_auto_fires:
             from sidequest.protocol.messages import ConfrontationPayload
 
-            for raw in snapshot.pending_magic_auto_fires:
-                payload = ConfrontationPayload(**raw)
+            queue = snapshot.pending_magic_auto_fires
+            while queue:
+                raw = queue.pop(0)
+                try:
+                    payload = ConfrontationPayload(**raw)
+                except Exception:
+                    # Surface the malformed entry to the GM panel + log
+                    # loud, then continue draining the queue. The bad
+                    # entry is dropped (already popped) — fail loud, do
+                    # not silently re-emit the next tick.
+                    logger.error(
+                        "magic.dispatch_payload_invalid kind=CONFRONTATION raw=%r",
+                        raw,
+                    )
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "field": "magic_state",
+                            "op": "dispatch_payload_invalid",
+                            "kind": "CONFRONTATION",
+                            "raw": raw,
+                        },
+                        component="magic",
+                        severity="error",
+                    )
+                    continue
                 self._emit_event("CONFRONTATION", payload)
-            snapshot.pending_magic_auto_fires = []
 
         # CONFRONTATION_OUTCOME (the reveal panel — Decision #9 calls
         # this "explicit panel callout at outcome time, ALWAYS shown").
+        # Field is reset BEFORE emit so a ValidationError doesn't leave
+        # the bad payload stranded for the next dispatch tick.
         if snapshot.pending_magic_confrontation_outcome is not None:
             from sidequest.protocol.messages import ConfrontationOutcomePayload
 
-            outcome_payload = ConfrontationOutcomePayload(
-                **snapshot.pending_magic_confrontation_outcome,
-            )
-            self._emit_event("CONFRONTATION_OUTCOME", outcome_payload)
+            raw_outcome = snapshot.pending_magic_confrontation_outcome
             snapshot.pending_magic_confrontation_outcome = None
+            try:
+                outcome_payload = ConfrontationOutcomePayload(**raw_outcome)
+            except Exception:
+                logger.error(
+                    "magic.dispatch_payload_invalid kind=CONFRONTATION_OUTCOME raw=%r",
+                    raw_outcome,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "magic_state",
+                        "op": "dispatch_payload_invalid",
+                        "kind": "CONFRONTATION_OUTCOME",
+                        "raw": raw_outcome,
+                    },
+                    component="magic",
+                    severity="error",
+                )
+            else:
+                self._emit_event("CONFRONTATION_OUTCOME", outcome_payload)
 
     # ------------------------------------------------------------------
     # Scrapbook entry emission (pingpong 2026-04-26 [S3-REGRESSION])

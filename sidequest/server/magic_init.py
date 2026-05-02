@@ -126,6 +126,13 @@ def init_magic_state_for_session(
             try:
                 state.confrontations = load_confrontations(confrontations_yaml)
             except ConfrontationLoaderError as conf_exc:
+                # Explicit reset — the comment above promises
+                # ``state.confrontations = []`` on this path; defends
+                # against any future code path that pre-populates the
+                # field on ``MagicState.from_config`` (Westley round 2
+                # comment-analyzer finding: comment claimed an explicit
+                # assignment that did not exist).
+                state.confrontations = []
                 logger.error(
                     "magic.confrontations_init_failed world=%s yaml=%s error=%s",
                     world_slug,
