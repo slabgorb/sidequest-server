@@ -28,6 +28,8 @@ from sidequest.genre.loader import GenreLoader
 from sidequest.protocol.messages import (
     ChapterMarkerMessage,
     ChapterMarkerPayload,
+    ConfrontationMessage,
+    ConfrontationPayload,
     GameResumedMessage,
     SessionEventMessage,
     SessionEventPayload,
@@ -1003,6 +1005,77 @@ class ConnectHandler:
                             player_id=player_id,
                         )
                     )
+                # Confrontation re-emit on slug-resume (playtest 2026-05-02).
+                # Without this, reloading a tab mid-confrontation drops the
+                # right-pane "Confrontation" tab — the steady-state encounter
+                # is still server-side but the UI overlay only mounts on a
+                # fresh CONFRONTATION frame. The narration replay path
+                # doesn't emit one because there was no transition during
+                # the silent window. Mirror the dispatch-side build
+                # (`websocket_session_handler.py:2113-2141`) so the resuming
+                # client paints the overlay from the saved encounter.
+                encounter = snapshot.encounter
+                if (
+                    encounter is not None
+                    and not encounter.resolved
+                    and session._session_data is not None
+                    and session._session_data.genre_pack is not None
+                    and session._session_data.genre_pack.rules is not None
+                ):
+                    from sidequest.server.dispatch.confrontation import (
+                        build_confrontation_payload,
+                        find_confrontation_def,
+                    )
+
+                    cdef = find_confrontation_def(
+                        session._session_data.genre_pack.rules.confrontations,
+                        encounter.encounter_type,
+                    )
+                    if cdef is not None:
+                        try:
+                            conf_payload_dict = build_confrontation_payload(
+                                encounter=encounter,
+                                cdef=cdef,
+                                genre_slug=row.genre_slug,
+                            )
+                            bootstrap_msgs.append(
+                                ConfrontationMessage(
+                                    payload=ConfrontationPayload(
+                                        **conf_payload_dict,
+                                    ),
+                                    player_id=player_id,
+                                )
+                            )
+                            logger.info(
+                                "session.slug_resume_confrontation_emitted "
+                                "slug=%s encounter_type=%s player=%s",
+                                slug,
+                                encounter.encounter_type,
+                                player_id,
+                            )
+                            _watcher_publish(
+                                "confrontation_resume_emitted",
+                                {
+                                    "slug": slug,
+                                    "encounter_type": encounter.encounter_type,
+                                    "player_id": player_id,
+                                },
+                                component="confrontation",
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "session.slug_resume_confrontation_failed "
+                                "encounter_type=%s error=%s",
+                                encounter.encounter_type,
+                                exc,
+                            )
+                    else:
+                        logger.warning(
+                            "session.slug_resume_confrontation_def_missing "
+                            "encounter_type=%s genre=%s",
+                            encounter.encounter_type,
+                            row.genre_slug,
+                        )
 
             return [connected_msg, *bootstrap_msgs, *replay_msgs]
 
