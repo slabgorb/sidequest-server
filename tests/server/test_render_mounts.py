@@ -184,6 +184,101 @@ def test_ensure_render_mount_idempotent_for_same_dir(tmp_path: Path) -> None:
         render_mounts.reset_for_app(app)
 
 
+def test_ensure_render_mount_preserves_url_scheme_for_daemon_paths(
+    tmp_path: Path,
+) -> None:
+    """Playtest 2026-05-02: when the daemon restart path is
+    ``<tmp>/sq-daemon-NEW/zimage/render_X.png``, the heal must register
+    the daemon root (``sq-daemon-NEW``), not the immediate parent
+    (``zimage``). Otherwise the fresh mount produces URLs of the form
+    ``/renders/<file>`` while the original handshake mount produces
+    ``/renders/zimage/<file>`` — and Scrapbook URLs cached by the UI
+    against the original scheme keep 404'ing.
+    """
+    # Simulate the daemon's mkdtemp(prefix="sq-daemon-") layout exactly.
+    daemon_root = tmp_path / "sq-daemon-XYZ123"
+    zimage = daemon_root / "zimage"
+    zimage.mkdir(parents=True)
+    image_file = zimage / "render_abc.png"
+    image_file.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    # Initial handshake-time mount is at the original (different) daemon
+    # root, matching the production startup pattern.
+    initial = tmp_path / "sq-daemon-OLD000"
+    initial.mkdir()
+    app = _fresh_app(initial)
+    try:
+        url = render_mounts.ensure_render_mount(app, str(image_file))
+        assert url is not None
+        assert url == "/renders/zimage/render_abc.png", (
+            f"URL {url!r} drops the zimage/ prefix — the heal mounted "
+            f"the wrong directory level. Old client URLs of the form "
+            f"/renders/zimage/<file> will 404 against this scheme."
+        )
+
+        # And the file is actually fetchable through that URL.
+        client = TestClient(app)
+        resp = client.get(url)
+        assert resp.status_code == 200
+    finally:
+        render_mounts.reset_for_app(app)
+
+
+def test_register_daemon_temp_orphans_picks_up_all_sibling_dirs(
+    tmp_path: Path,
+) -> None:
+    """Playtest 2026-05-02: at startup, the server should scan the
+    handshake dir's parent for every ``sq-daemon-*`` sibling and
+    register each one. Old URLs from prior daemon processes then
+    continue to resolve as long as the OS hasn't reaped the temp tree.
+    """
+    # Simulate the macOS temp tree with a few orphan daemon dirs and one
+    # current dir (the handshake target).
+    current = tmp_path / "sq-daemon-current"
+    orphan1 = tmp_path / "sq-daemon-orphan1"
+    orphan2 = tmp_path / "sq-daemon-orphan2"
+    unrelated = tmp_path / "some-other-thing"
+    for d in (current, orphan1, orphan2, unrelated):
+        (d / "zimage").mkdir(parents=True)
+
+    # Drop a render into orphan1 so we can verify it serves.
+    (orphan1 / "zimage" / "render_old.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    app = _fresh_app(current)
+    try:
+        new_count = render_mounts.register_daemon_temp_orphans(app, tmp_path)
+        # current was already mounted at create time; orphan1 + orphan2
+        # are newly registered. unrelated is not a sq-daemon-* dir.
+        assert new_count == 2
+
+        # The orphan render now resolves through the original URL
+        # scheme (``/renders/zimage/<file>``).
+        client = TestClient(app)
+        resp = client.get("/renders/zimage/render_old.png")
+        assert resp.status_code == 200, (
+            f"orphan render 404'd post-scan — startup scan must register "
+            f"every sq-daemon-* sibling. status={resp.status_code}"
+        )
+    finally:
+        render_mounts.reset_for_app(app)
+
+
+def test_register_daemon_temp_orphans_idempotent(tmp_path: Path) -> None:
+    """Calling the orphan scan twice must not double-mount; second call
+    returns 0 newly-registered roots."""
+    (tmp_path / "sq-daemon-A" / "zimage").mkdir(parents=True)
+    (tmp_path / "sq-daemon-B" / "zimage").mkdir(parents=True)
+
+    app = _fresh_app(tmp_path / "seed")
+    try:
+        first = render_mounts.register_daemon_temp_orphans(app, tmp_path)
+        second = render_mounts.register_daemon_temp_orphans(app, tmp_path)
+        assert first == 2
+        assert second == 0
+    finally:
+        render_mounts.reset_for_app(app)
+
+
 def test_ensure_render_mount_returns_none_for_missing_file(tmp_path: Path) -> None:
     """If the daemon's image_url doesn't exist on disk, refuse to mount
     its parent (would just register an empty dir; the 404 stays). The
