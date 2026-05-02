@@ -3326,6 +3326,11 @@ class WebSocketSessionHandler:
         # that may have gone stale across a reconnect.
         room_slug = self._room.slug if self._room is not None else None
         player_id = sd.player_id
+        # Playtest 2026-05-02: capture the dispatch-time turn_id so the
+        # render-completed handler can backfill the matching
+        # scrapbook_entries row's image_url (the live broadcast is
+        # ephemeral; replay-on-reload misses every IMAGE without this).
+        dispatch_turn_id = int(sd.snapshot.turn_manager.interaction)
 
         logger.info(
             "render.dispatched render_id=%s tier=%s subject=%r",
@@ -3367,6 +3372,7 @@ class WebSocketSessionHandler:
                 room_slug,
                 player_id,
                 legacy_queue,
+                dispatch_turn_id,
             )
         )
         # ADR-050 — record the dispatch *after* the task is created so the
@@ -3538,6 +3544,7 @@ class WebSocketSessionHandler:
         room_slug: str | None,
         player_id: str,
         legacy_queue: asyncio.Queue[object] | None,
+        dispatch_turn_id: int,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
         enqueues an IMAGE message or logs a failure. Never raises; any
@@ -3808,6 +3815,31 @@ class WebSocketSessionHandler:
                 logger.warning("render.outbound_queue_full render_id=%s", render_id)
                 return
             recipients_count = 1
+
+        # Playtest 2026-05-02: persist the URL into the matching
+        # scrapbook_entries row so `slug_connect.replay` can JOIN it back
+        # into the SCRAPBOOK_ENTRY payload on reconnect. The IMAGE
+        # broadcast above is ephemeral; without this UPDATE every browser
+        # reload turns 1/3 of the scrapbook into placeholder cards.
+        from sidequest.server.emitters import update_scrapbook_image_url
+
+        scrapbook_updated = update_scrapbook_image_url(
+            self,
+            dispatch_turn_id,
+            served_url,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "scrapbook",
+                "op": "image_url_backfilled",
+                "render_id": render_id,
+                "turn_id": dispatch_turn_id,
+                "url": served_url,
+                "row_updated": scrapbook_updated,
+            },
+            component="scrapbook",
+        )
 
         logger.info(
             "render.completed render_id=%s url=%s elapsed_ms=%d recipients=%d broadcast=%s",

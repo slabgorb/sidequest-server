@@ -777,6 +777,29 @@ class ConnectHandler:
             _replay_kind_lookup_miss = 0
             _replay_skipped_internal = 0
             _replay_kinds: dict[str, int] = {}
+
+            # Playtest 2026-05-02 [OBS] "Scrapbook state lost on reload":
+            # SCRAPBOOK_ENTRY events were emitted with image_url=None at
+            # the time the narrator's structured output landed; the
+            # daemon's IMAGE message arrived later via a non-event-
+            # sourced broadcast and so vanished on browser reload. The
+            # render-completed handler now backfills
+            # ``scrapbook_entries.image_url`` for the matching turn_id.
+            # Build a turn_id -> image_url map here so the replay loop
+            # can JOIN it into rebuilt SCRAPBOOK_ENTRY payloads — one
+            # query per reconnect, not one per row.
+            _scrapbook_image_urls: dict[int, str] = {}
+            if session._event_log is not None:
+                try:
+                    rows = session._event_log.store._conn.execute(
+                        "SELECT turn_id, image_url FROM scrapbook_entries "
+                        "WHERE image_url IS NOT NULL"
+                    ).fetchall()
+                    for _turn_id, _url in rows:
+                        if isinstance(_turn_id, int) and isinstance(_url, str) and _url:
+                            _scrapbook_image_urls[_turn_id] = _url
+                except Exception as exc:  # noqa: BLE001 — replay must not crash on a metadata read
+                    logger.warning("scrapbook.image_url_replay_lookup_failed error=%s", exc)
             if session._projection_cache is not None:
                 cached_rows = session._projection_cache.read_since(
                     player_id=session._current_player_id,
@@ -806,6 +829,22 @@ class ConnectHandler:
                         # client-bound. Skip without crashing replay.
                         _replay_skipped_internal += 1
                         continue
+                    if (
+                        _kind == "SCRAPBOOK_ENTRY"
+                        and _scrapbook_image_urls
+                        and getattr(_built, "payload", None) is not None
+                        and getattr(_built.payload, "image_url", None) is None
+                    ):
+                        _t = getattr(_built.payload, "turn_id", None)
+                        _url = _scrapbook_image_urls.get(_t) if isinstance(_t, int) else None
+                        if _url:
+                            _built = _built.model_copy(
+                                update={
+                                    "payload": _built.payload.model_copy(
+                                        update={"image_url": _url}
+                                    )
+                                }
+                            )
                     _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
                     replay_msgs.append(_built)
             else:
@@ -832,6 +871,22 @@ class ConnectHandler:
                     if _built is None:
                         _replay_skipped_internal += 1
                         continue
+                    if (
+                        event_row.kind == "SCRAPBOOK_ENTRY"
+                        and _scrapbook_image_urls
+                        and getattr(_built, "payload", None) is not None
+                        and getattr(_built.payload, "image_url", None) is None
+                    ):
+                        _t = getattr(_built.payload, "turn_id", None)
+                        _url = _scrapbook_image_urls.get(_t) if isinstance(_t, int) else None
+                        if _url:
+                            _built = _built.model_copy(
+                                update={
+                                    "payload": _built.payload.model_copy(
+                                        update={"image_url": _url}
+                                    )
+                                }
+                            )
                     _replay_kinds[event_row.kind] = _replay_kinds.get(event_row.kind, 0) + 1
                     replay_msgs.append(_built)
 

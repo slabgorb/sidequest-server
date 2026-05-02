@@ -62,6 +62,57 @@ def persist_scrapbook_entry(
         )
 
 
+def update_scrapbook_image_url(
+    handler: WebSocketSessionHandler,
+    turn_id: int,
+    image_url: str,
+) -> bool:
+    """Backfill the ``image_url`` for the most recent scrapbook entry at
+    ``turn_id``. Returns ``True`` when a row was updated, ``False`` when
+    no matching row exists yet (rare — would mean render.completed
+    arrived before the SCRAPBOOK_ENTRY emit, which we never dispatch in
+    that order) or when the handler has no event log (legacy non-slug
+    path).
+
+    Playtest 2026-05-02: scrapbook state vanishes on browser reload
+    because the IMAGE message is broadcast live but never persisted, so
+    `slug_connect.replay` rebuilds SCRAPBOOK_ENTRY events with their
+    original ``image_url=None`` payload. Updating the table here lets
+    the replay path JOIN and inject the URL into rebuilt SCRAPBOOK_ENTRY
+    payloads (see `connect.py:_inject_scrapbook_image_urls`).
+
+    Multiple scrapbook rows can share a turn_id in principle (the table
+    has no UNIQUE constraint), but in practice the narrator emits one
+    entry per turn. We update by ``rowid DESC LIMIT 1`` for the given
+    turn — the most recent entry — since render.completed arrives
+    after that turn's emit.
+    """
+    if handler._event_log is None:
+        return False
+    if not image_url:
+        return False
+    store = handler._event_log.store
+    try:
+        with store._conn:
+            cur = store._conn.execute(
+                "UPDATE scrapbook_entries SET image_url = ? "
+                "WHERE rowid = ("
+                "  SELECT rowid FROM scrapbook_entries "
+                "  WHERE turn_id = ? AND image_url IS NULL "
+                "  ORDER BY rowid DESC LIMIT 1"
+                ")",
+                (image_url, turn_id),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:  # noqa: BLE001 — render path must not crash on a backfill miss
+        logger.warning(
+            "scrapbook.image_url_update_failed turn_id=%d error=%s",
+            turn_id,
+            exc,
+        )
+        return False
+
+
 def emit_event(
     handler: WebSocketSessionHandler,
     kind: str,
