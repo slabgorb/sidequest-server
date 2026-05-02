@@ -68,7 +68,8 @@ SPAN_ROUTES[SPAN_CONTAINER_RETRIEVAL_BLOCKED] = SpanRoute(
         "room_id": (span.attributes or {}).get("room_id", ""),
         "container_id": (span.attributes or {}).get("container_id", ""),
         "prior_retrieved_at_round": (span.attributes or {}).get(
-            "prior_retrieved_at_round", 0,
+            "prior_retrieved_at_round",
+            0,
         ),
         "current_round": (span.attributes or {}).get("current_round", 0),
         "player_name": (span.attributes or {}).get("player_name", ""),
@@ -83,7 +84,8 @@ SPAN_ROUTES[SPAN_ROOM_STATE_INJECTED] = SpanRoute(
         "op": "room_state_injected",
         "room_id": (span.attributes or {}).get("room_id", ""),
         "retrieved_container_count": (span.attributes or {}).get(
-            "retrieved_container_count", 0,
+            "retrieved_container_count",
+            0,
         ),
         "interaction": (span.attributes or {}).get("interaction", 0),
     },
@@ -124,7 +126,9 @@ def container_retrieval_recorded_span(
         **attrs,
     }
     with Span.open(
-        SPAN_CONTAINER_RETRIEVAL_RECORDED, attributes, tracer_override=_tracer,
+        SPAN_CONTAINER_RETRIEVAL_RECORDED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span
 
@@ -159,7 +163,9 @@ def container_retrieval_blocked_span(
         **attrs,
     }
     with Span.open(
-        SPAN_CONTAINER_RETRIEVAL_BLOCKED, attributes, tracer_override=_tracer,
+        SPAN_CONTAINER_RETRIEVAL_BLOCKED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span
 
@@ -185,6 +191,8 @@ def room_state_injected_span(
         **attrs,
     }
     with Span.open(
-        SPAN_ROOM_STATE_INJECTED, attributes, tracer_override=_tracer,
+        SPAN_ROOM_STATE_INJECTED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span

@@ -127,13 +127,11 @@ def resolve_sealed_letter_lookup(
     legal = set(table.maneuvers_consumed)
     if red_maneuver not in legal:
         raise ValueError(
-            f"red maneuver {red_maneuver!r} not in maneuvers_consumed "
-            f"(legal: {sorted(legal)})"
+            f"red maneuver {red_maneuver!r} not in maneuvers_consumed (legal: {sorted(legal)})"
         )
     if blue_maneuver not in legal:
         raise ValueError(
-            f"blue maneuver {blue_maneuver!r} not in maneuvers_consumed "
-            f"(legal: {sorted(legal)})"
+            f"blue maneuver {blue_maneuver!r} not in maneuvers_consumed (legal: {sorted(legal)})"
         )
 
     # ---- Step 2: validate actor presence (no silent fallback) ----
@@ -145,8 +143,10 @@ def resolve_sealed_letter_lookup(
     blue_actor = _find_actor_by_role(encounter, ROLE_BLUE)
     if red_actor is None or blue_actor is None:
         missing = [
-            role for role, actor in (
-                (ROLE_RED, red_actor), (ROLE_BLUE, blue_actor),
+            role
+            for role, actor in (
+                (ROLE_RED, red_actor),
+                (ROLE_BLUE, blue_actor),
             )
             if actor is None
         ]
@@ -181,8 +181,7 @@ def resolve_sealed_letter_lookup(
     cell = _find_cell(table, red_maneuver, blue_maneuver)
     if cell is None:
         raise KeyError(
-            f"no interaction cell for maneuver pair "
-            f"({red_maneuver!r}, {blue_maneuver!r}) in table"
+            f"no interaction cell for maneuver pair ({red_maneuver!r}, {blue_maneuver!r}) in table"
         )
 
     # ---- Step 4: apply view deltas to per_actor_state ----
@@ -221,7 +220,8 @@ def resolve_sealed_letter_lookup(
 
 
 def _find_actor_by_role(
-    encounter: StructuredEncounter, role: str,
+    encounter: StructuredEncounter,
+    role: str,
 ) -> EncounterActor | None:
     """Return the first actor with the matching role, or None.
 
@@ -237,7 +237,9 @@ def _find_actor_by_role(
 
 
 def _find_cell(
-    table: InteractionTable, red_maneuver: str, blue_maneuver: str,
+    table: InteractionTable,
+    red_maneuver: str,
+    blue_maneuver: str,
 ) -> InteractionCell | None:
     """Linear scan for the cell whose ``pair == [red, blue]``.
 
@@ -278,7 +280,8 @@ def _apply_view_deltas(actor: EncounterActor, view: object) -> None:
 
 
 def _maybe_apply_extend_and_return(
-    encounter: StructuredEncounter, cell: InteractionCell,
+    encounter: StructuredEncounter,
+    cell: InteractionCell,
 ) -> bool:
     """Apply the extend-and-return rule (Story 38-8).
 
@@ -297,16 +300,12 @@ def _maybe_apply_extend_and_return(
     Returns:
         True if the reset fired, False otherwise.
     """
-    any_hit = any(
-        bool(actor.per_actor_state.get("gun_solution"))
-        for actor in encounter.actors
-    )
+    any_hit = any(bool(actor.per_actor_state.get("gun_solution")) for actor in encounter.actors)
     if any_hit:
         return False
 
     any_opening_fast = any(
-        actor.per_actor_state.get("closure") == "opening_fast"
-        for actor in encounter.actors
+        actor.per_actor_state.get("closure") == "opening_fast" for actor in encounter.actors
     )
     if not any_opening_fast:
         return False

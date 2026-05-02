@@ -4,6 +4,7 @@ Per spec §6.3: UI sends intents over the existing WebSocket transport
 (ADR-038); server returns rendered SVG (or scene update for commit_route,
 which lives in Plan 2).
 """
+
 from __future__ import annotations
 
 from typing import Annotated, Literal

@@ -1,4 +1,5 @@
 """Voice resolver returns name-form for current bond tier."""
+
 from __future__ import annotations
 
 import pytest
@@ -45,6 +46,7 @@ def _kestrel(strength: float = 0.45) -> ChassisInstance:
 
 class _FakeCharacter:
     """Mirrors the shape resolve_chassis_name_form expects."""
+
     def __init__(
         self,
         *,
@@ -105,17 +107,23 @@ def test_renders_nickname_when_present() -> None:
     chassis = _kestrel(0.85)
     chassis.bond_ledger[0].bond_tier_chassis = "fused"
     zee = _FakeCharacter(
-        id="zee", first_name="Zee", last_name="Jones", nickname="Captain Velocity",
+        id="zee",
+        first_name="Zee",
+        last_name="Jones",
+        nickname="Captain Velocity",
     )
     assert resolve_chassis_name_form(chassis, zee) == "Captain Velocity"
 
 
-@pytest.mark.parametrize("tier,expected", [
-    ("severed", "Pilot"),
-    ("hostile", "Pilot"),
-    ("strained", "Pilot"),
-    ("neutral", "Pilot"),
-])
+@pytest.mark.parametrize(
+    "tier,expected",
+    [
+        ("severed", "Pilot"),
+        ("hostile", "Pilot"),
+        ("strained", "Pilot"),
+        ("neutral", "Pilot"),
+    ],
+)
 def test_low_tiers_return_pilot(tier: str, expected: str) -> None:
     chassis = _kestrel(0.45)
     chassis.bond_ledger[0].bond_tier_chassis = tier  # type: ignore[assignment]

@@ -1,4 +1,5 @@
 """World-layer rigs pydantic loads sample YAML."""
+
 from __future__ import annotations
 
 import textwrap

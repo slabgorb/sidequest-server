@@ -19,6 +19,7 @@ All models inherit `ProtocolBase`:
   - `populate_by_name=True` — accepts Python names and wire aliases
   - Serializer drops None / empty-matching-default containers for wire compactness
 """
+
 from __future__ import annotations
 
 from typing import Literal
@@ -49,7 +50,9 @@ class VisibilityTag(ProtocolBase):
     fills in asymmetric values.
     """
 
-    visible_to: list[str] | Literal["all"] = Field(description="Recipients; 'all' is a conscious choice, not a fallback.")
+    visible_to: list[str] | Literal["all"] = Field(
+        description="Recipients; 'all' is a conscious choice, not a fallback."
+    )
     perception_fidelity: dict[str, PerceptionFidelity] = Field(default_factory=dict)
     secrets_for: list[str] = Field(default_factory=list)
     redact_from_narrator_canonical: bool = False
@@ -61,7 +64,9 @@ class VisibilityTag(ProtocolBase):
 
 
 class Referent(ProtocolBase):
-    token: str = Field(description="The surface token from raw_action, e.g. 'him', 'let's', 'that'.")
+    token: str = Field(
+        description="The surface token from raw_action, e.g. 'him', 'let's', 'that'."
+    )
     # Pingpong 2026-04-26 S2-OBS: the decomposer LLM occasionally emits a
     # ``list[str]`` of player IDs when a token like "the party" resolves to
     # multiple PCs (e.g. ``resolved_to=['Paul','John','George','Ringo']``).
@@ -90,7 +95,10 @@ class Referent(ProtocolBase):
 class SubsystemDispatch(ProtocolBase):
     subsystem: str = Field(description="Subsystem name — must be registered at runtime.")
     params: dict = Field(default_factory=dict)
-    depends_on: list[str] = Field(default_factory=list, description="List of sibling idempotency_keys this dispatch depends on.")
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="List of sibling idempotency_keys this dispatch depends on.",
+    )
     idempotency_key: str
     visibility: VisibilityTag
 

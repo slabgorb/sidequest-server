@@ -6,8 +6,12 @@ from sidequest.corpus.schema import MineProvenance, TrainingPair
 
 def _p(round_: int, inp: str) -> TrainingPair:
     return TrainingPair(
-        schema_version=1, genre="g", world="w", round_number=round_,
-        input_text=inp, output_text="…",
+        schema_version=1,
+        genre="g",
+        world="w",
+        round_number=round_,
+        input_text=inp,
+        output_text="…",
         provenance=MineProvenance(source_save="x.db", event_seq=None),
     )
 

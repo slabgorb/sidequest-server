@@ -31,6 +31,7 @@ one place:
 Plus AC #3 (room-scoped negative gate) and AC #5 (round-trip via
 ``SqliteStore``).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -52,9 +53,7 @@ from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from tests._helpers.session_room import room_for
 
 CONTENT_GENRE_PACKS = (
-    __import__("pathlib").Path(__file__).resolve().parents[3]
-    / "sidequest-content"
-    / "genre_packs"
+    __import__("pathlib").Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 )
 
 
@@ -85,10 +84,15 @@ def vault_snapshot(cac_pack):
     )
     char = Character(
         core=CreatureCore(
-            name="Rux", description="A scavenger", personality="Cautious",
-            inventory=Inventory(), statuses=[],
+            name="Rux",
+            description="A scavenger",
+            personality="Cautious",
+            inventory=Inventory(),
+            statuses=[],
         ),
-        char_class="Ranger", race="Human", backstory="Wanderer.",
+        char_class="Ranger",
+        race="Human",
+        backstory="Wanderer.",
     )
     snap.characters.append(char)
     return snap
@@ -115,7 +119,9 @@ def otel_capture():
 
 
 def _retrieval_result(
-    *, container_id: str, item_name: str = "tin box contents",
+    *,
+    container_id: str,
+    item_name: str = "tin box contents",
 ) -> NarrationTurnResult:
     """Build a ``NarrationTurnResult`` whose ``items_gained`` carries a
     ``from_container`` annotation pointing at ``container_id``.
@@ -144,7 +150,9 @@ def _retrieval_result(
 
 
 def test_first_retrieval_records_room_state_and_fires_recorded_span(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #1: first retrieval of ``tin_box`` in ``mawdeep:vault``:
 
@@ -157,7 +165,10 @@ def test_first_retrieval_records_room_state_and_fires_recorded_span(
     """
     result = _retrieval_result(container_id="tin_box")
     _apply_narration_result_to_snapshot(
-        vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        vault_snapshot,
+        result,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -192,7 +203,9 @@ def test_first_retrieval_records_room_state_and_fires_recorded_span(
 
 
 def test_second_retrieval_same_room_same_container_is_blocked(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #2 — Orin regression (rounds 10 → 16, same room, same container).
 
@@ -211,7 +224,8 @@ def test_second_retrieval_same_room_same_container_is_blocked(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
     inv_after_first = list(vault_snapshot.characters[0].core.inventory.items)
@@ -224,10 +238,14 @@ def test_second_retrieval_same_room_same_container_is_blocked(
     # Turn 16: narrator re-emits a retrieval of the SAME container in
     # the SAME room — this is the bug Orin hit.
     second_result = _retrieval_result(
-        container_id="tin_box", item_name="tin box contents",
+        container_id="tin_box",
+        item_name="tin box contents",
     )
     _apply_narration_result_to_snapshot(
-        vault_snapshot, second_result, player_name="Rux", pack=cac_pack,
+        vault_snapshot,
+        second_result,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -246,12 +264,9 @@ def test_second_retrieval_same_room_same_container_is_blocked(
 
     # Blocked span fires with the audit attributes.
     blocked = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "container.retrieval_blocked"
+        s for s in otel_capture.get_finished_spans() if s.name == "container.retrieval_blocked"
     ]
-    assert len(blocked) >= 1, (
-        "expected at least one container.retrieval_blocked span"
-    )
+    assert len(blocked) >= 1, "expected at least one container.retrieval_blocked span"
     last = blocked[-1]
     attrs = last.attributes or {}
     assert attrs["room_id"] == "mawdeep:vault"
@@ -267,7 +282,9 @@ def test_second_retrieval_same_room_same_container_is_blocked(
 
 
 def test_negative_gate_is_room_scoped_not_global(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #3: same container_id in two different rooms gets independent
     state. After room A retrieves ``tin_box``, the player walks into room
@@ -277,7 +294,8 @@ def test_negative_gate_is_room_scoped_not_global(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
     assert vault_snapshot.room_states["mawdeep:vault"].containers["tin_box"].retrieved is True
@@ -292,29 +310,23 @@ def test_negative_gate_is_room_scoped_not_global(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
     # Both rooms now carry retrieved tin_box state — NOT one global flag.
-    assert (
-        vault_snapshot.room_states["mawdeep:vault"]
-        .containers["tin_box"].retrieved is True
-    )
-    assert (
-        vault_snapshot.room_states["mawdeep:antechamber"]
-        .containers["tin_box"].retrieved is True
-    )
+    assert vault_snapshot.room_states["mawdeep:vault"].containers["tin_box"].retrieved is True
+    assert vault_snapshot.room_states["mawdeep:antechamber"].containers["tin_box"].retrieved is True
     # The antechamber retrieval recorded the new round, not 10.
     assert (
-        vault_snapshot.room_states["mawdeep:antechamber"]
-        .containers["tin_box"].retrieved_at_round == 11
+        vault_snapshot.room_states["mawdeep:antechamber"].containers["tin_box"].retrieved_at_round
+        == 11
     )
 
     # No blocked-span — both are first retrievals in their respective rooms.
     blocked = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "container.retrieval_blocked"
+        s for s in otel_capture.get_finished_spans() if s.name == "container.retrieval_blocked"
     ]
     assert len(blocked) == 0, (
         f"expected zero blocked spans on cross-room retrieval; got {len(blocked)}"
@@ -349,7 +361,9 @@ def _build_minimal_sd(snap: GameSnapshot, pack):
 
 
 def test_room_state_injected_span_fires_with_zero_count_first_turn(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #4 (no-prior-retrievals case): the FIRST narrator turn — before
     anything has been retrieved — must still fire ``room.state_injected``
@@ -363,13 +377,9 @@ def test_room_state_injected_span_fires_with_zero_count_first_turn(
     sd = _build_minimal_sd(vault_snapshot, cac_pack)
     _build_turn_context(sd)
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "room.state_injected"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "room.state_injected"]
     assert len(spans) >= 1, (
-        "room.state_injected must fire even with no prior retrievals "
-        "(Sebastien lie-detector)"
+        "room.state_injected must fire even with no prior retrievals (Sebastien lie-detector)"
     )
     last = spans[-1]
     attrs = last.attributes or {}
@@ -378,7 +388,9 @@ def test_room_state_injected_span_fires_with_zero_count_first_turn(
 
 
 def test_room_state_injected_span_count_reflects_prior_retrievals(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #4 (post-retrieval case): after a retrieval lands, the next
     ``_build_turn_context`` for the same room must fire
@@ -390,7 +402,8 @@ def test_room_state_injected_span_count_reflects_prior_retrievals(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -400,10 +413,7 @@ def test_room_state_injected_span_count_reflects_prior_retrievals(
     sd = _build_minimal_sd(vault_snapshot, cac_pack)
     _build_turn_context(sd)
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "room.state_injected"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "room.state_injected"]
     assert len(spans) >= 1
     attrs = spans[-1].attributes or {}
     assert attrs["room_id"] == "mawdeep:vault"
@@ -411,7 +421,9 @@ def test_room_state_injected_span_count_reflects_prior_retrievals(
 
 
 def test_room_state_injected_resets_count_on_room_change(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #4: the count is room-scoped — when the player walks into a
     different room with no retrievals, the span fires with
@@ -424,7 +436,8 @@ def test_room_state_injected_resets_count_on_room_change(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -437,10 +450,7 @@ def test_room_state_injected_resets_count_on_room_change(
     sd = _build_minimal_sd(vault_snapshot, cac_pack)
     _build_turn_context(sd)
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "room.state_injected"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "room.state_injected"]
     assert len(spans) >= 1
     attrs = spans[-1].attributes or {}
     assert attrs["room_id"] == "mawdeep:antechamber"
@@ -453,14 +463,16 @@ def test_room_state_injected_resets_count_on_room_change(
 
 
 def test_room_states_round_trip_via_sqlite_store(
-    vault_snapshot, cac_pack,
+    vault_snapshot,
+    cac_pack,
 ) -> None:
     """AC #5: ``SqliteStore.save → load`` preserves ``room_states``."""
     # Land a retrieval so room_states has content to round-trip.
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -488,8 +500,7 @@ def test_old_save_without_room_states_loads_with_empty_default(tmp_path) -> None
     so the persistence layer doesn't need to bake in a migration step.
     """
     legacy_payload = (
-        '{"genre_slug": "caverns_and_claudes", "world_slug": "mawdeep", '
-        '"location": "vault"}'
+        '{"genre_slug": "caverns_and_claudes", "world_slug": "mawdeep", "location": "vault"}'
     )
     snap = GameSnapshot.model_validate_json(legacy_payload)
     assert snap.room_states == {}
@@ -502,7 +513,9 @@ def test_old_save_without_room_states_loads_with_empty_default(tmp_path) -> None
 
 
 def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """AC #6: the prompt hint reduces leak rate; the apply-time gate
     PREVENTS leaks. Bypass the prompt-build seam entirely (don't even
@@ -520,7 +533,8 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
     inv_after_first = list(vault_snapshot.characters[0].core.inventory.items)
@@ -538,7 +552,8 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
     _apply_narration_result_to_snapshot(
         vault_snapshot,
         _retrieval_result(container_id="tin_box"),
-        player_name="Rux", pack=cac_pack,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -551,8 +566,7 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
 
     # Blocked span fires.
     blocked = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "container.retrieval_blocked"
+        s for s in otel_capture.get_finished_spans() if s.name == "container.retrieval_blocked"
     ]
     assert len(blocked) == 1
     attrs = blocked[0].attributes or {}
@@ -567,7 +581,9 @@ def test_apply_time_gate_blocks_when_prompt_hint_is_bypassed(
 
 
 def test_items_gained_without_from_container_pass_through_normally(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """Sanity: ``items_gained`` entries that DON'T carry a
     ``from_container`` annotation behave exactly as they did before
@@ -586,7 +602,10 @@ def test_items_gained_without_from_container_pass_through_normally(
         ],
     )
     _apply_narration_result_to_snapshot(
-        vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        vault_snapshot,
+        result,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
     inv = vault_snapshot.characters[0].core.inventory.items
@@ -595,8 +614,7 @@ def test_items_gained_without_from_container_pass_through_normally(
 
     # No container.retrieval_recorded fires (no container involved).
     recorded = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "container.retrieval_recorded"
+        s for s in otel_capture.get_finished_spans() if s.name == "container.retrieval_recorded"
     ]
     assert len(recorded) == 0
 
@@ -654,8 +672,7 @@ def test_session_helpers_imports_room_state_for_prompt_build() -> None:
         __import__("sidequest.server.session_helpers").server.session_helpers.__file__
     ).read_text(encoding="utf-8")
     assert "snapshot.room_states" in helpers_src, (
-        "session_helpers.py does not read snapshot.room_states — "
-        "the prompt-build seam is not wired"
+        "session_helpers.py does not read snapshot.room_states — the prompt-build seam is not wired"
     )
     assert "room_state_injected_span(" in helpers_src, (
         "session_helpers.py does not call room_state_injected_span(...) — "
@@ -671,7 +688,9 @@ def test_session_helpers_imports_room_state_for_prompt_build() -> None:
 
 
 def test_whitespace_only_from_container_does_not_create_room_state(
-    vault_snapshot, cac_pack, otel_capture: InMemorySpanExporter,
+    vault_snapshot,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
 ) -> None:
     """Whitespace-only ``from_container`` is a narrator failure mode
     (the LLM emitted the field but with no payload). It must NOT create
@@ -693,7 +712,10 @@ def test_whitespace_only_from_container_does_not_create_room_state(
         ],
     )
     _apply_narration_result_to_snapshot(
-        vault_snapshot, result, player_name="Rux", pack=cac_pack,
+        vault_snapshot,
+        result,
+        player_name="Rux",
+        pack=cac_pack,
         room=room_for(vault_snapshot),
     )
 
@@ -707,14 +729,15 @@ def test_whitespace_only_from_container_does_not_create_room_state(
 
     # No retrieval span fires (gate was never engaged).
     recorded = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "container.retrieval_recorded"
+        s for s in otel_capture.get_finished_spans() if s.name == "container.retrieval_recorded"
     ]
     assert len(recorded) == 0
 
 
 def test_from_container_set_but_snapshot_location_empty_logs_warning(
-    cac_pack, otel_capture: InMemorySpanExporter, caplog,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
+    caplog,
 ) -> None:
     """No silent fallback (CLAUDE.md): when the narrator emits a
     ``from_container`` annotation but the snapshot has no canonical
@@ -734,24 +757,31 @@ def test_from_container_set_but_snapshot_location_empty_logs_warning(
     )
     char = Character(
         core=CreatureCore(
-            name="Rux", description="x", personality="x",
-            inventory=Inventory(), statuses=[],
+            name="Rux",
+            description="x",
+            personality="x",
+            inventory=Inventory(),
+            statuses=[],
         ),
-        char_class="Ranger", race="Human", backstory="x",
+        char_class="Ranger",
+        race="Human",
+        backstory="x",
     )
     snap.characters.append(char)
 
     result = _retrieval_result(container_id="tin_box")
     with caplog.at_level(logging.WARNING):
         _apply_narration_result_to_snapshot(
-            snap, result, player_name="Rux", pack=cac_pack,
+            snap,
+            result,
+            player_name="Rux",
+            pack=cac_pack,
             room=room_for(snap),
         )
 
     # Warning logged on the apply-side gate-unreachable path.
     apply_warnings = [
-        rec for rec in caplog.records
-        if "container_gate_unreachable" in rec.getMessage()
+        rec for rec in caplog.records if "container_gate_unreachable" in rec.getMessage()
     ]
     assert len(apply_warnings) >= 1, (
         "expected a 'container_gate_unreachable' warning when "
@@ -768,7 +798,9 @@ def test_from_container_set_but_snapshot_location_empty_logs_warning(
 
 
 def test_build_turn_context_logs_warning_when_location_empty(
-    cac_pack, otel_capture: InMemorySpanExporter, caplog,
+    cac_pack,
+    otel_capture: InMemorySpanExporter,
+    caplog,
 ) -> None:
     """Mirror of the apply-side test: the prompt-build seam must also
     surface a warning when ``snapshot.location`` is empty. The span
@@ -787,10 +819,15 @@ def test_build_turn_context_logs_warning_when_location_empty(
     )
     char = Character(
         core=CreatureCore(
-            name="Rux", description="x", personality="x",
-            inventory=Inventory(), statuses=[],
+            name="Rux",
+            description="x",
+            personality="x",
+            inventory=Inventory(),
+            statuses=[],
         ),
-        char_class="Ranger", race="Human", backstory="x",
+        char_class="Ranger",
+        race="Human",
+        backstory="x",
     )
     snap.characters.append(char)
 
@@ -799,19 +836,14 @@ def test_build_turn_context_logs_warning_when_location_empty(
         _build_turn_context(sd)
 
     unreachable = [
-        rec for rec in caplog.records
-        if "room_state_injected_unreachable" in rec.getMessage()
+        rec for rec in caplog.records if "room_state_injected_unreachable" in rec.getMessage()
     ]
     assert len(unreachable) >= 1, (
-        "expected 'room_state_injected_unreachable' warning when "
-        "snapshot.location is empty"
+        "expected 'room_state_injected_unreachable' warning when snapshot.location is empty"
     )
 
     # Span still fires for the lie-detector contract.
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "room.state_injected"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "room.state_injected"]
     assert len(spans) >= 1
     assert (spans[-1].attributes or {})["retrieved_container_count"] == 0
 

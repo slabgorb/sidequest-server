@@ -105,7 +105,8 @@ class OpposedRollResult:
 
 
 def _stat_score_from_actor(
-    actor: EncounterActor, stat_check: str,
+    actor: EncounterActor,
+    stat_check: str,
 ) -> int | None:
     """Return the actor's stat score from ``per_actor_state['stats']``.
 
@@ -168,14 +169,13 @@ def resolve_opponent_modifier(
     score = _stat_score_from_actor(actor, stat_check)
     if score is None:
         score = _stat_score_from_cdef_default(
-            getattr(cdef, "opponent_default_stats", None), stat_check,
+            getattr(cdef, "opponent_default_stats", None),
+            stat_check,
         )
     if score is None:
         cdef_default = getattr(cdef, "opponent_default_stats", None) or {}
         cdef_keys = sorted(cdef_default.keys()) if cdef_default else []
-        per_actor_keys = sorted(
-            (actor.per_actor_state or {}).get("stats", {}).keys()
-        )
+        per_actor_keys = sorted((actor.per_actor_state or {}).get("stats", {}).keys())
         raise ValueError(
             f"opposed_check: no stat {stat_check!r} for opponent "
             f"{actor.name!r} — neither per_actor_state.stats "
@@ -224,23 +224,25 @@ def resolve_opposed_check(
     """
     if not (1 <= player_roll <= 20):
         raise ValueError(
-            f"opposed_check: player_roll {player_roll} not in 1..20 — "
-            f"d20 face value required"
+            f"opposed_check: player_roll {player_roll} not in 1..20 — d20 face value required"
         )
     if not (1 <= opponent_roll <= 20):
         raise ValueError(
-            f"opposed_check: opponent_roll {opponent_roll} not in 1..20 — "
-            f"d20 face value required"
+            f"opposed_check: opponent_roll {opponent_roll} not in 1..20 — d20 face value required"
         )
 
     player_stat = getattr(player_beat, "stat_check", None)
     opponent_stat = getattr(opponent_beat, "stat_check", None)
 
     player_mod = resolve_opponent_modifier(
-        actor=player_actor, cdef=cdef, stat_check=player_stat,
+        actor=player_actor,
+        cdef=cdef,
+        stat_check=player_stat,
     )
     opponent_mod = resolve_opponent_modifier(
-        actor=opponent_actor, cdef=cdef, stat_check=opponent_stat,
+        actor=opponent_actor,
+        cdef=cdef,
+        stat_check=opponent_stat,
     )
 
     shift = (player_roll + player_mod) - (opponent_roll + opponent_mod)

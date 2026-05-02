@@ -29,6 +29,7 @@ class Span:
         """
         if tracer_override is None:
             from sidequest.telemetry import spans as _spans
+
             tracer_override = _spans.tracer()
         with tracer_override.start_as_current_span(name, attributes=attrs or {}) as span:
             yield span

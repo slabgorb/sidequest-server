@@ -117,6 +117,7 @@ def populated_store(tmp_path):
             )
             with store._conn:
                 import json as _json
+
                 store._conn.execute(
                     "INSERT INTO scrapbook_entries "
                     "(turn_id, scene_title, scene_type, location, image_url, "
@@ -130,11 +131,12 @@ def populated_store(tmp_path):
                         payload.image_url,
                         payload.narrative_excerpt,
                         _json.dumps(list(payload.world_facts)),
-                        _json.dumps([
-                            {"name": ref.name, "role": ref.role,
-                             "disposition": ref.disposition}
-                            for ref in payload.npcs_present
-                        ]),
+                        _json.dumps(
+                            [
+                                {"name": ref.name, "role": ref.role, "disposition": ref.disposition}
+                                for ref in payload.npcs_present
+                            ]
+                        ),
                     ),
                 )
 
@@ -329,9 +331,7 @@ class TestOrinRegression:
         assert attrs.get("covered_count") == 10
         assert attrs.get("gap_count") == 19
         # Span attribute coverage_ratio is a float; SDK may store as float.
-        assert float(attrs.get("coverage_ratio") or 0) == pytest.approx(
-            10 / 29, rel=1e-3
-        )
+        assert float(attrs.get("coverage_ratio") or 0) == pytest.approx(10 / 29, rel=1e-3)
 
     def test_orin_fixture_emits_gap_detected_span_with_gap_rounds(
         self, populated_store, stub_snapshot, otel_capture, watcher_capture
@@ -374,9 +374,7 @@ class TestOrinRegression:
         store = populated_store(narrative_rounds=29, scrapbook_rounds=10)
         detect_scrapbook_coverage_gaps(store=store, snapshot=stub_snapshot)
 
-        gap_publishes = [
-            c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"
-        ]
+        gap_publishes = [c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"]
         assert len(gap_publishes) == 1, (
             "Gap path must publish exactly one scrapbook_coverage_gap event. "
             f"Got {len(gap_publishes)} (events: {watcher_capture!r})."
@@ -445,9 +443,7 @@ class TestNoOpSilence:
         store = populated_store(narrative_rounds=5, scrapbook_rounds=5)
         detect_scrapbook_coverage_gaps(store=store, snapshot=stub_snapshot)
 
-        gap_publishes = [
-            c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"
-        ]
+        gap_publishes = [c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"]
         assert gap_publishes == [], (
             "Watcher event MUST NOT publish on full coverage — Sebastien's "
             "GM panel would cry wolf and the alerting goes numb."
@@ -494,8 +490,7 @@ class TestReadOnlyInvariant:
         after = _row_count(store, "narrative_log")
 
         assert before == after == 29, (
-            f"Detector mutated narrative_log: {before} → {after}. AC5 "
-            f"requires read-only behavior."
+            f"Detector mutated narrative_log: {before} → {after}. AC5 requires read-only behavior."
         )
 
     def test_helper_does_not_change_scrapbook_count(
@@ -528,13 +523,8 @@ class TestReadOnlyInvariant:
         assert r1 == r2, "Same input must yield the same report."
         # 2 evaluated spans, 2 gap-detected spans, 2 watcher events
         assert len(_spans_named(otel_capture, "scrapbook.coverage_evaluated")) == 2
-        assert (
-            len(_spans_named(otel_capture, "scrapbook.coverage_gap_detected")) == 2
-        )
-        assert (
-            len([c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"])
-            == 2
-        )
+        assert len(_spans_named(otel_capture, "scrapbook.coverage_gap_detected")) == 2
+        assert len([c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"]) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -559,9 +549,7 @@ class TestSpanRouting:
     def test_gap_detected_span_constant_exported(self) -> None:
         from sidequest.telemetry.spans import SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED
 
-        assert (
-            SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED == "scrapbook.coverage_gap_detected"
-        )
+        assert SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED == "scrapbook.coverage_gap_detected"
 
     def test_evaluated_span_registered_in_routes(self) -> None:
         """SPAN_ROUTES entry required for the watcher hub to pick this

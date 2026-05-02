@@ -44,9 +44,7 @@ SPAN_ROUTES[SPAN_WORLD_HISTORY_ARC_PROMOTED] = SpanRoute(
         "interaction": (span.attributes or {}).get("interaction", 0),
         "from_maturity": (span.attributes or {}).get("from_maturity", ""),
         "to_maturity": (span.attributes or {}).get("to_maturity", ""),
-        "chapters_added": list(
-            (span.attributes or {}).get("chapters_added", [])
-        ),
+        "chapters_added": list((span.attributes or {}).get("chapters_added", [])),
     },
 )
 
@@ -69,18 +67,12 @@ SPAN_ROUTES[SPAN_WORLD_HISTORY_ARC_EMBEDDING_SEED] = SpanRoute(
     extract=lambda span: {
         "field": "arc_embedding_seed",
         "chapter_id": (span.attributes or {}).get("chapter_id", ""),
-        "narrative_entries_appended": (span.attributes or {}).get(
-            "narrative_entries_appended", 0
-        ),
-        "lore_fragments_minted": (span.attributes or {}).get(
-            "lore_fragments_minted", 0
-        ),
+        "narrative_entries_appended": (span.attributes or {}).get("narrative_entries_appended", 0),
+        "lore_fragments_minted": (span.attributes or {}).get("lore_fragments_minted", 0),
         "lore_fragments_skipped_duplicate": (span.attributes or {}).get(
             "lore_fragments_skipped_duplicate", 0
         ),
-        "content_bytes_seeded": (span.attributes or {}).get(
-            "content_bytes_seeded", 0
-        ),
+        "content_bytes_seeded": (span.attributes or {}).get("content_bytes_seeded", 0),
         "interaction": (span.attributes or {}).get("interaction", 0),
     },
 )
@@ -106,8 +98,6 @@ SPAN_ROUTES[SPAN_WORLD_HISTORY_LORE_WRITEBACK] = SpanRoute(
         "fragment_id": (span.attributes or {}).get("fragment_id", ""),
         "category": (span.attributes or {}).get("category", ""),
         "content_bytes": (span.attributes or {}).get("content_bytes", 0),
-        "pending_embedding": (span.attributes or {}).get(
-            "pending_embedding", False
-        ),
+        "pending_embedding": (span.attributes or {}).get("pending_embedding", False),
     },
 )

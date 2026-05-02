@@ -46,9 +46,7 @@ def test_second_player_join_broadcasts_presence_to_first(tmp_path: Path):
         None,
     )
     if genre_packs_path is None:
-        pytest.skip(
-            f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}"
-        )
+        pytest.skip(f"No genre_packs directory found in {DEFAULT_GENRE_PACK_SEARCH_PATHS}")
 
     _seed(tmp_path, _SLUG)
     app = create_app(
@@ -58,22 +56,26 @@ def test_second_player_join_broadcasts_presence_to_first(tmp_path: Path):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws_a:
-        ws_a.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {"event": "connect", "game_slug": _SLUG},
-        })
+        ws_a.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {"event": "connect", "game_slug": _SLUG},
+            }
+        )
         connected_msg = ws_a.receive_json()
         assert connected_msg["type"] == "SESSION_EVENT"
         assert connected_msg["payload"]["event"] == "connected"
         ws_a.receive_json()  # CHARACTER_CREATION bootstrap
 
         with client.websocket_connect("/ws") as ws_b:
-            ws_b.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": _SLUG},
-            })
+            ws_b.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": _SLUG},
+                }
+            )
             bob_connected = ws_b.receive_json()
             assert bob_connected["type"] == "SESSION_EVENT"
             assert bob_connected["payload"]["event"] == "connected"

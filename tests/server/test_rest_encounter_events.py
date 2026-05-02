@@ -53,35 +53,41 @@ def _seed_game_with_events(tmp_path: Path, slug: str) -> None:
     rows = [
         (
             "ENCOUNTER_STARTED",
-            json.dumps({
-                "encounter_type": "combat",
-                "player_metric_threshold": 10,
-                "opponent_metric_threshold": 10,
-                "turn": 1,
-            }),
+            json.dumps(
+                {
+                    "encounter_type": "combat",
+                    "player_metric_threshold": 10,
+                    "opponent_metric_threshold": 10,
+                    "turn": 1,
+                }
+            ),
         ),
         (
             "ENCOUNTER_BEAT_APPLIED",
-            json.dumps({
-                "actor": "Sam",
-                "actor_side": "player",
-                "beat_id": "attack",
-                "beat_kind": "strike",
-                "outcome_tier": "Success",
-                "own_delta": 2,
-                "opponent_delta": 0,
-                "turn": 1,
-            }),
+            json.dumps(
+                {
+                    "actor": "Sam",
+                    "actor_side": "player",
+                    "beat_id": "attack",
+                    "beat_kind": "strike",
+                    "outcome_tier": "Success",
+                    "own_delta": 2,
+                    "opponent_delta": 0,
+                    "turn": 1,
+                }
+            ),
         ),
         (
             "ENCOUNTER_RESOLVED",
-            json.dumps({
-                "outcome": "player_victory",
-                "final_player_metric": 10,
-                "final_opponent_metric": 4,
-                "triggering_side": "player",
-                "turn": 3,
-            }),
+            json.dumps(
+                {
+                    "outcome": "player_victory",
+                    "final_player_metric": 10,
+                    "final_opponent_metric": 4,
+                    "triggering_side": "player",
+                    "turn": 3,
+                }
+            ),
         ),
     ]
     for kind, payload_json in rows:

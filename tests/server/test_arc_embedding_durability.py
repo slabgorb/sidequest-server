@@ -97,10 +97,7 @@ async def test_arc_promotion_entries_survive_save_and_reload(
     )
     reloaded = saved.snapshot
 
-    arc_entries = [
-        e for e in reloaded.narrative_log
-        if e.entry_type == "arc_promotion"
-    ]
+    arc_entries = [e for e in reloaded.narrative_log if e.entry_type == "arc_promotion"]
     assert len(arc_entries) == 2, (
         "AC6 failure: arc-promotion entries did not survive save/reload. "
         "If this fails after the helper-implementation lands, the "
@@ -146,10 +143,7 @@ async def test_arc_promotion_entries_present_in_durable_narrative_log_table(
     # entries (player + narrator) on top of the arc-promotion rows;
     # 20 is a comfortable upper bound.
     rows = sd.store.recent_narrative(limit=20)
-    arc_rows = [
-        r for r in rows
-        if "keep stirs" in r.content or "descend" in r.content
-    ]
+    arc_rows = [r for r in rows if "keep stirs" in r.content or "descend" in r.content]
     assert len(arc_rows) == 2, (
         "Durable narrative_log SQL table is missing arc-promotion "
         "rows — the helper did not call ``sd.store.append_narrative`` "

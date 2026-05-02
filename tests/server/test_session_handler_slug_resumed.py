@@ -42,9 +42,7 @@ from sidequest.server.session_room import RoomRegistry
 
 _GENRE = "caverns_and_claudes"
 _WORLD = "grimvault"
-_CONTENT_SEARCH_PATH = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+_CONTENT_SEARCH_PATH = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _make_handler(save_dir: Path) -> WebSocketSessionHandler:
@@ -125,8 +123,7 @@ async def test_slug_fresh_no_character_emits_chargen_scene(tmp_path: Path) -> No
     outbound = await handler.handle_message(msg)
 
     chargen_msgs = [
-        m for m in outbound
-        if getattr(m, "type", None) == MessageType.CHARACTER_CREATION
+        m for m in outbound if getattr(m, "type", None) == MessageType.CHARACTER_CREATION
     ]
     assert chargen_msgs, (
         "Expected a CHARACTER_CREATION message in outbound so the client "
@@ -137,9 +134,7 @@ async def test_slug_fresh_no_character_emits_chargen_scene(tmp_path: Path) -> No
     # with_lobby_name). We verify the scene payload carries an index.
     first_scene = chargen_msgs[0]
     scene_index = getattr(first_scene.payload, "scene_index", None)
-    assert scene_index == 0, (
-        f"First chargen scene should be scene_index=0, got {scene_index}"
-    )
+    assert scene_index == 0, f"First chargen scene should be scene_index=0, got {scene_index}"
 
     # State must be Creating — builder must be bound.
     assert handler._state is _State.Creating
@@ -168,7 +163,8 @@ async def test_slug_resume_with_character_emits_ready_event(tmp_path: Path) -> N
     outbound = await handler.handle_message(msg)
 
     ready_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "ready"
     ]
@@ -216,13 +212,10 @@ async def test_slug_fresh_emits_chargen_bootstrap_span_event(tmp_path: Path) -> 
         )
         await handler.handle_message(msg)
 
-        mp_spans = [
-            s for s in exporter.get_finished_spans() if s.name == "mp.slug_connect"
-        ]
+        mp_spans = [s for s in exporter.get_finished_spans() if s.name == "mp.slug_connect"]
         assert mp_spans, "Expected mp.slug_connect span"
         bootstrap_spans = [
-            s for s in exporter.get_finished_spans()
-            if s.name == "slug_connect.chargen_bootstrap"
+            s for s in exporter.get_finished_spans() if s.name == "slug_connect.chargen_bootstrap"
         ]
         assert bootstrap_spans, (
             "Expected slug_connect.chargen_bootstrap span so the GM "
@@ -290,7 +283,8 @@ async def test_slug_connect_uses_player_name_from_payload(tmp_path: Path) -> Non
 
     # SESSION_EVENT{connected} carries the display name, not the UUID.
     connected_msgs = [
-        m for m in outbound
+        m
+        for m in outbound
         if getattr(m, "type", None) == "SESSION_EVENT"
         and getattr(getattr(m, "payload", None), "event", None) == "connected"
     ]
@@ -335,6 +329,7 @@ async def test_slug_connect_chargen_complete_character_name_is_display_name(
     from tests.server.conftest import (
         mock_claude_client_factory as _mock_claude_client_factory,
     )
+
     handler = WebSocketSessionHandler(
         save_dir=tmp_path,
         genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
@@ -353,7 +348,9 @@ async def test_slug_connect_chargen_complete_character_name_is_display_name(
         type="SESSION_EVENT",
         player_id=player_uuid,
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name=display_name,
+            event="connect",
+            game_slug=slug,
+            player_name=display_name,
         ),
     )
     await handler.handle_message(connect_msg)
@@ -369,7 +366,8 @@ async def test_slug_connect_chargen_complete_character_name_is_display_name(
         elif scene.allows_freeform:
             # Shouldn't hit this on mutant_wasteland but be safe.
             payload = CharacterCreationPayload(
-                phase="scene", choice=display_name,
+                phase="scene",
+                choice=display_name,
             )
         else:
             payload = CharacterCreationPayload(phase="continue")
@@ -377,9 +375,9 @@ async def test_slug_connect_chargen_complete_character_name_is_display_name(
             CharacterCreationMessage(payload=payload, player_id=player_uuid)
         )
         # Bail out loudly on unexpected errors.
-        assert not any(
-            getattr(m, "type", None) == "ERROR" for m in out
-        ), f"error walking chargen: {out}"
+        assert not any(getattr(m, "type", None) == "ERROR" for m in out), (
+            f"error walking chargen: {out}"
+        )
 
     # Confirm — builds the character.
     out = await handler.handle_message(
@@ -389,7 +387,9 @@ async def test_slug_connect_chargen_complete_character_name_is_display_name(
         )
     )
     complete_msgs = [
-        m for m in out if getattr(m, "type", None) == "CHARACTER_CREATION"
+        m
+        for m in out
+        if getattr(m, "type", None) == "CHARACTER_CREATION"
         and getattr(getattr(m, "payload", None), "phase", None) == "complete"
     ]
     assert complete_msgs, f"expected CHARACTER_CREATION{{complete}}, got {out}"
@@ -443,6 +443,7 @@ async def test_slug_chargen_complete_party_status_has_stats(
     from tests.server.conftest import (
         mock_claude_client_factory as _mock_claude_client_factory,
     )
+
     handler = WebSocketSessionHandler(
         save_dir=tmp_path,
         genre_pack_search_paths=[_CONTENT_SEARCH_PATH],
@@ -460,7 +461,9 @@ async def test_slug_chargen_complete_party_status_has_stats(
             type="SESSION_EVENT",
             player_id=player_uuid,
             payload=SessionEventPayload(
-                event="connect", game_slug=slug, player_name="Slabgorb",
+                event="connect",
+                game_slug=slug,
+                player_name="Slabgorb",
             ),
         )
     )
@@ -479,9 +482,9 @@ async def test_slug_chargen_complete_party_status_has_stats(
         out = await handler.handle_message(
             CharacterCreationMessage(payload=payload, player_id=player_uuid)
         )
-        assert not any(
-            getattr(m, "type", None) == "ERROR" for m in out
-        ), f"error walking chargen: {out}"
+        assert not any(getattr(m, "type", None) == "ERROR" for m in out), (
+            f"error walking chargen: {out}"
+        )
 
     out = await handler.handle_message(
         CharacterCreationMessage(
@@ -490,9 +493,7 @@ async def test_slug_chargen_complete_party_status_has_stats(
         )
     )
 
-    party_status_msgs = [
-        m for m in out if getattr(m, "type", None) == MessageType.PARTY_STATUS
-    ]
+    party_status_msgs = [m for m in out if getattr(m, "type", None) == MessageType.PARTY_STATUS]
     assert party_status_msgs, (
         f"expected PARTY_STATUS after chargen completion. Got: "
         f"{[getattr(m, 'type', None) for m in out]}"
@@ -516,20 +517,14 @@ async def test_slug_chargen_complete_party_status_has_stats(
             f"sheet.stats[{key!r}] = {value!r} (type {type(value).__name__}) "
             "— must be int for UI to render."
         )
-        assert value > 0, (
-            f"sheet.stats[{key!r}] = {value}; stats should be positive post-chargen"
-        )
+        assert value > 0, f"sheet.stats[{key!r}] = {value}; stats should be positive post-chargen"
     # Race is present so the UI can display it on the sheet header.
-    assert member.sheet.race, (
-        "sheet.race must be populated — used for sheet subtitle."
-    )
+    assert member.sheet.race, "sheet.race must be populated — used for sheet subtitle."
     # Inventory currency carries the pack-declared noun — mutant_wasteland
     # is "Salvage" per genre_packs/mutant_wasteland/inventory.yaml. UI
     # reads this to render "42 Salvage" instead of the legacy hardcoded
     # "42 gold" fantasy leak. Pingpong 2026-04-24 "500 gold in Space Opera".
-    assert member.inventory is not None, (
-        "PartyMember.inventory must be populated post-chargen"
-    )
+    assert member.inventory is not None, "PartyMember.inventory must be populated post-chargen"
     assert member.inventory.currency_name == "Salvage", (
         f"expected mutant_wasteland currency_name 'Salvage'; got "
         f"{member.inventory.currency_name!r}. The server reads the noun "
@@ -543,9 +538,7 @@ async def test_slug_chargen_complete_party_status_has_stats(
 # ---------------------------------------------------------------------------
 
 
-def _seed_resumable_game_with_uuid_name(
-    tmp_path: Path, slug: str, player_id: str
-) -> None:
+def _seed_resumable_game_with_uuid_name(tmp_path: Path, slug: str, player_id: str) -> None:
     """Seed a save whose character.core.name is the opaque player_id UUID.
 
     Mirrors pre-fix chargen state: CharacterBuilder committed the character
@@ -686,9 +679,7 @@ def test_rename_helper_idempotent_on_already_renamed_character(tmp_path: Path) -
     assert snap.characters[0].core.name == "Slabgorb"
 
 
-def _seed_resumable_game_with_narrations(
-    tmp_path: Path, slug: str, narrations: list[str]
-) -> None:
+def _seed_resumable_game_with_narrations(tmp_path: Path, slug: str, narrations: list[str]) -> None:
     """Seed a resumable game with prior NARRATION events in the event_log.
 
     Used by the "empty narrative on resume" regression test to prove
@@ -703,19 +694,28 @@ def _seed_resumable_game_with_narrations(
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=slug, mode=GameMode.SOLO,
-        genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     core = CreatureCore(
-        name="Rux", description="A stoic fighter",
-        personality="stoic", inventory=Inventory(),
+        name="Rux",
+        description="A stoic fighter",
+        personality="stoic",
+        inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Fighter", race="Human",
+        core=core,
+        char_class="Fighter",
+        race="Human",
         backstory="A wandering fighter",
     )
     snap = GameSnapshot(
-        genre_slug=_GENRE, world_slug=_WORLD, location="Entrance",
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
+        location="Entrance",
     )
     snap.characters = [char]
     store.init_session(_GENRE, _WORLD)
@@ -767,9 +767,7 @@ async def test_slug_resume_replays_prior_narration(tmp_path: Path) -> None:
     )
     outbound = await handler.handle_message(msg)
 
-    narration_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
-    ]
+    narration_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION]
     assert len(narration_msgs) == len(prior), (
         f"Expected {len(prior)} NARRATION frames on resume, got "
         f"{len(narration_msgs)}. Outbound types: "
@@ -812,9 +810,7 @@ async def test_slug_resume_emits_chapter_marker_for_saved_location(
     )
     outbound = await handler.handle_message(msg)
 
-    chapter_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER
-    ]
+    chapter_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER]
     assert chapter_msgs, (
         "Expected CHAPTER_MARKER on slug resume with a saved location. "
         f"Got message types: {[getattr(m, 'type', None) for m in outbound]}"
@@ -840,19 +836,28 @@ async def test_slug_resume_without_saved_location_skips_chapter_marker(
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=slug, mode=GameMode.SOLO,
-        genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     core = CreatureCore(
-        name="Rux", description="A stoic fighter",
-        personality="stoic", inventory=Inventory(),
+        name="Rux",
+        description="A stoic fighter",
+        personality="stoic",
+        inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Fighter", race="Human",
+        core=core,
+        char_class="Fighter",
+        race="Human",
         backstory="A wandering fighter",
     )
     snap = GameSnapshot(
-        genre_slug=_GENRE, world_slug=_WORLD, location="",  # no location
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
+        location="",  # no location
     )
     snap.characters = [char]
     store.init_session(_GENRE, _WORLD)
@@ -871,9 +876,7 @@ async def test_slug_resume_without_saved_location_skips_chapter_marker(
     )
     outbound = await handler.handle_message(msg)
 
-    chapter_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER
-    ]
+    chapter_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.CHAPTER_MARKER]
     assert not chapter_msgs, (
         "CHAPTER_MARKER must be skipped when snapshot.location is empty "
         "— no silent fallback to a blank title."
@@ -921,9 +924,7 @@ async def test_slug_resume_backfills_last_narration_when_replay_is_empty(
     )
     outbound = await handler.handle_message(msg)
 
-    narration_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
-    ]
+    narration_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION]
     # Backfill cap is DEFAULT_TAIL_BACKFILL_LIMIT (5). With 3 prior
     # narrations seeded, all three should come back in order.
     assert [str(m.payload.text) for m in narration_msgs] == prior, (
@@ -964,9 +965,7 @@ async def test_slug_resume_backfill_caps_at_default_limit(
     )
     outbound = await handler.handle_message(msg)
 
-    narration_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
-    ]
+    narration_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION]
     assert len(narration_msgs) == DEFAULT_TAIL_BACKFILL_LIMIT, (
         f"Expected {DEFAULT_TAIL_BACKFILL_LIMIT} narrations from the "
         f"capped tail backfill, got {len(narration_msgs)}."
@@ -1006,9 +1005,7 @@ async def test_slug_resume_backfill_skips_when_normal_replay_has_narration(
     )
     outbound = await handler.handle_message(msg)
 
-    narration_msgs = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION
-    ]
+    narration_msgs = [m for m in outbound if getattr(m, "type", None) == MessageType.NARRATION]
     texts = [str(m.payload.text) for m in narration_msgs]
     assert texts == prior, (
         f"Full replay path must not be duplicated by tail backfill. "

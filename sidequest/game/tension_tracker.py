@@ -299,9 +299,7 @@ class TensionTracker:
         """Combined drama metric: ``max(action, stakes, effective_spike)``,
         clamped to 1.0.
         """
-        return _clamp01(
-            max(self._action_tension, self._stakes_tension, self._effective_spike())
-        )
+        return _clamp01(max(self._action_tension, self._stakes_tension, self._effective_spike()))
 
     def active_spike(self) -> float:
         """Current effective spike value after linear decay."""

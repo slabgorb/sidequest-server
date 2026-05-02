@@ -11,6 +11,7 @@ This module exercises:
     ``session_handler``) actually call the helpers — per CLAUDE.md
     "every test suite needs a wiring test".
 """
+
 from __future__ import annotations
 
 import pytest
@@ -31,13 +32,19 @@ from tests._helpers.session_room import room_for
 
 def _add_status(char, text: str, severity: StatusSeverity) -> None:
     char.core.statuses.append(
-        Status(text=text, severity=severity, absorbed_shifts=0,
-               created_turn=0, created_in_encounter=None),
+        Status(
+            text=text,
+            severity=severity,
+            absorbed_shifts=0,
+            created_turn=0,
+            created_in_encounter=None,
+        ),
     )
 
 
 def test_clear_scratch_sweeps_scratch_and_boon_only(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Scene-bounded severities (Scratch + Boon) sweep; Wound/Scar persist.
 
@@ -71,7 +78,8 @@ def test_clear_scratch_no_op_with_empty_party(snapshot_with_pack):
 
 
 def test_clear_scratch_handles_multiple_chars(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -79,12 +87,17 @@ def test_clear_scratch_handles_multiple_chars(
     # Build a second character inline
     from sidequest.game.character import Character
     from sidequest.game.creature_core import CreatureCore, Inventory
+
     second = Character(
         core=CreatureCore(
-            name="Lia", description="Nimble", personality="bold",
+            name="Lia",
+            description="Nimble",
+            personality="bold",
             inventory=Inventory(),
         ),
-        char_class="Scout", race="Human", backstory="...",
+        char_class="Scout",
+        race="Human",
+        backstory="...",
     )
     snap.characters.append(second)
 
@@ -105,7 +118,8 @@ def test_clear_scratch_handles_multiple_chars(
 
 
 def test_explicit_clear_removes_named_status(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -128,7 +142,8 @@ def test_explicit_clear_removes_named_status(
 
 
 def test_explicit_clear_case_insensitive_substring(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -145,7 +160,9 @@ def test_explicit_clear_case_insensitive_substring(
 
 
 def test_explicit_clear_unknown_actor_logs_warning(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -160,7 +177,9 @@ def test_explicit_clear_unknown_actor_logs_warning(
 
 
 def test_explicit_clear_no_match_logs_warning(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -179,7 +198,8 @@ def test_explicit_clear_no_match_logs_warning(
 
 
 def test_explicit_clear_empty_or_missing_field_skipped(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -202,7 +222,8 @@ def test_explicit_clear_empty_or_missing_field_skipped(
 
 
 def test_wiring_narration_apply_clears_scratch_on_location_change(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Production path: narrator emits a new location → Scratch sweeps."""
     snap, pack = snapshot_with_pack
@@ -213,7 +234,8 @@ def test_wiring_narration_apply_clears_scratch_on_location_change(
     _add_status(sam, "Bruised Ribs", StatusSeverity.Wound)
 
     result = NarrationTurnResult(
-        narration="They march on.", location="The Antechamber",
+        narration="They march on.",
+        location="The Antechamber",
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
@@ -223,7 +245,8 @@ def test_wiring_narration_apply_clears_scratch_on_location_change(
 
 
 def test_wiring_narration_apply_first_location_does_not_sweep(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Edge case: session start, snapshot.location is empty/falsy —
     sweeping on first set would wipe statuses created during chargen
@@ -237,7 +260,8 @@ def test_wiring_narration_apply_first_location_does_not_sweep(
     _add_status(sam, "Lingering doubt", StatusSeverity.Scratch)
 
     result = NarrationTurnResult(
-        narration="They begin.", location="The Throat",
+        narration="They begin.",
+        location="The Throat",
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
@@ -245,7 +269,8 @@ def test_wiring_narration_apply_first_location_does_not_sweep(
 
 
 def test_wiring_narration_apply_handles_explicit_clear_entry(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Production path: narrator emits {"actor":..,"clear":..} → status drops."""
     snap, pack = snapshot_with_pack
@@ -263,7 +288,8 @@ def test_wiring_narration_apply_handles_explicit_clear_entry(
 
 
 def test_wiring_narration_apply_clear_and_add_in_same_turn(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Mixed batch: clear an old status AND add a new one in one turn.
     Exercises the order-of-ops decision (clears run first; adds aren't
@@ -278,8 +304,7 @@ def test_wiring_narration_apply_clear_and_add_in_same_turn(
         narration="She breaks free but takes a cut.",
         status_changes=[
             {"actor": "Sam", "clear": "Captured"},
-            {"actor": "Sam",
-             "status": {"text": "Sliced palm", "severity": "Scratch"}},
+            {"actor": "Sam", "status": {"text": "Sliced palm", "severity": "Scratch"}},
         ],
     )
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
@@ -354,7 +379,9 @@ def test_wiring_yield_action_imports_status_clear():
 
 
 def test_clear_emits_watcher_event(
-    snapshot_with_pack, character_named_sam, monkeypatch,
+    snapshot_with_pack,
+    character_named_sam,
+    monkeypatch,
 ):
     """clear_scratch_on_scene_end must publish state_transition events so
     the GM panel can verify the clear actually fired (CLAUDE.md OTEL
@@ -371,7 +398,8 @@ def test_clear_emits_watcher_event(
         captured.append((evt_type, dict(payload), kwargs))
 
     monkeypatch.setattr(
-        "sidequest.server.status_clear._watcher_publish", _spy,
+        "sidequest.server.status_clear._watcher_publish",
+        _spy,
     )
 
     clear_scratch_on_scene_end(snap, reason="scene_end", turn=7)
@@ -387,7 +415,9 @@ def test_clear_emits_watcher_event(
 
 
 def test_explicit_clear_emits_watcher_event(
-    snapshot_with_pack, character_named_sam, monkeypatch,
+    snapshot_with_pack,
+    character_named_sam,
+    monkeypatch,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -407,8 +437,7 @@ def test_explicit_clear_emits_watcher_event(
     )
 
     cleared_events = [
-        p for et, p, _ in captured
-        if et == "state_transition" and p.get("op") == "status_cleared"
+        p for et, p, _ in captured if et == "state_transition" and p.get("op") == "status_cleared"
     ]
     assert len(cleared_events) == 1
     assert cleared_events[0]["reason"] == "narrator_clear"
@@ -428,7 +457,8 @@ def test_severity_enum_values_match_otel_contract():
 # into a "scene end" trigger by mistake, this guards the contract documented
 # in game/status.py.
 def test_scene_end_does_not_clear_wound_or_scar(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, _pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -444,7 +474,9 @@ def test_scene_end_does_not_clear_wound_or_scar(
 
 @pytest.mark.parametrize("reason", ["scene_end", "location_change"])
 def test_clear_accepts_documented_reasons(
-    snapshot_with_pack, character_named_sam, reason,
+    snapshot_with_pack,
+    character_named_sam,
+    reason,
 ):
     """Belt-and-braces: both production reasons round-trip through the
     helper without errors."""

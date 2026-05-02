@@ -19,6 +19,7 @@ Broadcast (not return): the session room's broadcast() puts the message into
 every connected socket's outbound queue. Returning these from handle_message
 too would double-send to the rolling player.
 """
+
 from __future__ import annotations
 
 import logging
@@ -250,9 +251,7 @@ def dispatch_dice_throw(
         )
 
     if encounter is None or encounter.resolved:
-        raise DiceDispatchError(
-            "DICE_THROW with beat_id requires an active encounter"
-        )
+        raise DiceDispatchError("DICE_THROW with beat_id requires an active encounter")
 
     cdef: ConfrontationDef | None = find_confrontation_def(
         pack.rules.confrontations if pack.rules else [],
@@ -315,7 +314,10 @@ def dispatch_dice_throw(
     # (playtest 2026-04-24 regression).
     try:
         resolved = resolve_dice_with_faces(
-            request.dice, list(payload.face), request.modifier, request.difficulty,
+            request.dice,
+            list(payload.face),
+            request.modifier,
+            request.difficulty,
         )
     except ResolveError as exc:
         raise DiceDispatchError(f"dice resolution failed: {exc}") from exc
@@ -349,9 +351,7 @@ def dispatch_dice_throw(
     # roll-vs-DC tier (``resolved.outcome``). Letting the legacy path
     # run would double-apply with the wrong tier and re-introduce the
     # exact unfair-combat bug this branch is fixing.
-    opposed_pending = (
-        cdef.resolution_mode == ResolutionMode.opposed_check
-    )
+    opposed_pending = cdef.resolution_mode == ResolutionMode.opposed_check
     opposed_player_d20: int | None = None
 
     if opposed_pending:
@@ -367,15 +367,17 @@ def dispatch_dice_throw(
         opposed_player_d20 = int(payload.face[0])
         if not (1 <= opposed_player_d20 <= 20):
             raise DiceDispatchError(
-                f"opposed_check: player d20 face {opposed_player_d20} not "
-                f"in 1..20"
+                f"opposed_check: player d20 face {opposed_player_d20} not in 1..20"
             )
         # No beat application here; ``apply_result`` is None-equivalent.
         own_delta = 0
         encounter_resolved = False
     else:
         apply_result = apply_beat(
-            encounter, actor, beat, resolved.outcome,
+            encounter,
+            actor,
+            beat,
+            resolved.outcome,
             turn=round_number,
         )
 
@@ -401,8 +403,12 @@ def dispatch_dice_throw(
                 "actor": character_name,
                 "actor_side": actor.side,
                 "beat_id": payload.beat_id,
-                "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
-                "outcome_tier": resolved.outcome.value if hasattr(resolved.outcome, "value") else str(resolved.outcome),
+                "beat_kind": str(beat.kind.value)
+                if hasattr(beat.kind, "value")
+                else str(beat.kind),
+                "outcome_tier": resolved.outcome.value
+                if hasattr(resolved.outcome, "value")
+                else str(resolved.outcome),
                 "own_delta": own_delta,
                 "opponent_delta": apply_result.deltas.opponent if apply_result.deltas else 0,
                 "metric_target": encounter.encounter_type,

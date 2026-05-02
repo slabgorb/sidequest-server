@@ -2,6 +2,7 @@
 
 Task 19 — Wire status_changes into engine state mutation.
 """
+
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.status import StatusSeverity
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
@@ -20,13 +21,14 @@ def test_status_change_appends_to_named_actor(snapshot_with_pack, character_name
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     sam = snap.characters[0]
     assert any(
-        s.text == "Bruised Ribs" and s.severity is StatusSeverity.Wound
-        for s in sam.core.statuses
+        s.text == "Bruised Ribs" and s.severity is StatusSeverity.Wound for s in sam.core.statuses
     )
 
 
 def test_unknown_actor_in_status_change_is_dropped_with_warning(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     snap, pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -40,7 +42,9 @@ def test_unknown_actor_in_status_change_is_dropped_with_warning(
 
 
 def test_invalid_severity_in_status_change_is_dropped_with_warning(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     snap, pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -58,7 +62,8 @@ def test_invalid_severity_in_status_change_is_dropped_with_warning(
 
 
 def test_empty_actor_or_text_in_status_change_is_silently_dropped(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     snap, pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
@@ -101,7 +106,6 @@ def test_boon_severity_appends_to_named_actor(snapshot_with_pack, character_name
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     sam = snap.characters[0]
     assert any(
-        s.text == "Heightened Perception (3 rounds)"
-        and s.severity is StatusSeverity.Boon
+        s.text == "Heightened Perception (3 rounds)" and s.severity is StatusSeverity.Boon
         for s in sam.core.statuses
     )

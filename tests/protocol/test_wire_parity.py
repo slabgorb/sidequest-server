@@ -100,10 +100,12 @@ def test_narration_payload_includes_non_empty_footnotes() -> None:
 
 def test_narration_payload_omits_none_state_delta_through_game_message() -> None:
     """skip_serializing_if must apply even when payload is nested in GameMessage."""
-    msg = GameMessage(root=NarrationMessage(
-        payload=NarrationPayload(text=nbs("hello")),
-        player_id="server",
-    ))
+    msg = GameMessage(
+        root=NarrationMessage(
+            payload=NarrationPayload(text=nbs("hello")),
+            player_id="server",
+        )
+    )
     data = json.loads(msg.model_dump_json())
     assert "state_delta" not in data["payload"]
     assert "footnotes" not in data["payload"]
@@ -116,14 +118,16 @@ def test_narration_payload_omits_none_state_delta_through_game_message() -> None
 
 def test_character_state_required_lists_kept_when_empty() -> None:
     """statuses and inventory are required fields — kept even when empty lists."""
-    cs = CharacterState.model_validate({
-        "name": "Grok",
-        "hp": 20,
-        "max_hp": 20,
-        "class": "Fighter",
-        "statuses": [],
-        "inventory": [],
-    })
+    cs = CharacterState.model_validate(
+        {
+            "name": "Grok",
+            "hp": 20,
+            "max_hp": 20,
+            "class": "Fighter",
+            "statuses": [],
+            "inventory": [],
+        }
+    )
     data = json.loads(cs.model_dump_json())
     # Required fields without defaults are always present
     assert "statuses" in data
@@ -134,14 +138,16 @@ def test_character_state_required_lists_kept_when_empty() -> None:
 
 def test_character_state_omits_none_archetype_provenance() -> None:
     """archetype_provenance=None must be absent (Option::is_none parity)."""
-    cs = CharacterState.model_validate({
-        "name": "Hero",
-        "hp": 20,
-        "max_hp": 20,
-        "class": "Ranger",
-        "statuses": [],
-        "inventory": [],
-    })
+    cs = CharacterState.model_validate(
+        {
+            "name": "Hero",
+            "hp": 20,
+            "max_hp": 20,
+            "class": "Ranger",
+            "statuses": [],
+            "inventory": [],
+        }
+    )
     data = json.loads(cs.model_dump_json())
     assert "archetype_provenance" not in data
 
@@ -179,18 +185,29 @@ def test_character_state_class_wire_key_via_session_event_message() -> None:
     Serialization path: SessionEventMessage -> SessionEventPayload ->
     InitialState -> CharacterState (3 levels deep into GameMessage).
     """
-    msg = SessionEventMessage(payload=SessionEventPayload(
-        event="session_start",
-        initial_state=InitialState(
-            characters=[CharacterState.model_validate({
-                "name": "Rux", "hp": 10, "max_hp": 10, "level": 1,
-                "class": "wizard", "statuses": [], "inventory": [],
-            })],
-            location=nbs("start"),
-            quests={},
-            turn_count=0,
-        ),
-    ))
+    msg = SessionEventMessage(
+        payload=SessionEventPayload(
+            event="session_start",
+            initial_state=InitialState(
+                characters=[
+                    CharacterState.model_validate(
+                        {
+                            "name": "Rux",
+                            "hp": 10,
+                            "max_hp": 10,
+                            "level": 1,
+                            "class": "wizard",
+                            "statuses": [],
+                            "inventory": [],
+                        }
+                    )
+                ],
+                location=nbs("start"),
+                quests={},
+                turn_count=0,
+            ),
+        )
+    )
     wire = json.loads(msg.model_dump_json())
     char = wire["payload"]["initial_state"]["characters"][0]
     assert "class" in char, "'class' key missing from CharacterState wire output"
@@ -204,13 +221,23 @@ def test_party_member_class_wire_key_via_party_status_message() -> None:
     Serialization path: PartyStatusMessage -> PartyStatusPayload ->
     PartyMember (2 levels deep into GameMessage).
     """
-    msg = PartyStatusMessage(payload=PartyStatusPayload(
-        members=[PartyMember.model_validate({
-            "player_id": "p1", "name": "Alice",
-            "current_hp": 20, "max_hp": 20,
-            "statuses": [], "class": "Ranger", "level": 3,
-        })],
-    ))
+    msg = PartyStatusMessage(
+        payload=PartyStatusPayload(
+            members=[
+                PartyMember.model_validate(
+                    {
+                        "player_id": "p1",
+                        "name": "Alice",
+                        "current_hp": 20,
+                        "max_hp": 20,
+                        "statuses": [],
+                        "class": "Ranger",
+                        "level": 3,
+                    }
+                )
+            ],
+        )
+    )
     wire = json.loads(msg.model_dump_json())
     member = wire["payload"]["members"][0]
     assert "class" in member, "'class' key missing from PartyMember wire output"
@@ -224,15 +251,26 @@ def test_inventory_item_type_wire_key_via_party_status_message() -> None:
     Serialization path: PartyStatusMessage -> PartyStatusPayload ->
     PartyMember -> InventoryPayload -> InventoryItem (4 levels deep).
     """
-    inv_item = InventoryItem.model_validate({
-        "name": "Torch", "type": "consumable",
-        "equipped": False, "quantity": 3, "description": "Provides light",
-    })
-    member = PartyMember.model_validate({
-        "player_id": "p1", "name": "Alice",
-        "current_hp": 10, "max_hp": 10,
-        "statuses": [], "class": "Ranger", "level": 1,
-    })
+    inv_item = InventoryItem.model_validate(
+        {
+            "name": "Torch",
+            "type": "consumable",
+            "equipped": False,
+            "quantity": 3,
+            "description": "Provides light",
+        }
+    )
+    member = PartyMember.model_validate(
+        {
+            "player_id": "p1",
+            "name": "Alice",
+            "current_hp": 10,
+            "max_hp": 10,
+            "statuses": [],
+            "class": "Ranger",
+            "level": 1,
+        }
+    )
     member.inventory = InventoryPayload(items=[inv_item], gold=50)
     msg = PartyStatusMessage(payload=PartyStatusPayload(members=[member]))
     wire = json.loads(msg.model_dump_json())
@@ -240,5 +278,3 @@ def test_inventory_item_type_wire_key_via_party_status_message() -> None:
     assert "type" in item, "'type' key missing from InventoryItem wire output"
     assert item["type"] == "consumable"
     assert "item_type" not in item, "'item_type' Python name must not appear on the wire"
-
-

@@ -502,9 +502,7 @@ class TestEdgeSeeding:
         rules.edge_config = EdgeConfig(
             base_max_by_class={"Ranger": 6, "Fighter": 8},
             thresholds=[
-                EdgeThresholdDecl(
-                    at=3, event_id="edge_strained", narrator_hint="Fraying."
-                ),
+                EdgeThresholdDecl(at=3, event_id="edge_strained", narrator_hint="Fraying."),
             ],
         )
         scenes = [
@@ -668,8 +666,6 @@ class TestHooksAndAnchors:
         b.apply_choice(0)
         char = b.build("Kara")
         auto_fills = {
-            h.split(":")[0]
-            for h in char.hooks
-            if h.endswith("auto-filled from genre pack")
+            h.split(":")[0] for h in char.hooks if h.endswith("auto-filled from genre pack")
         }
         assert auto_fills == {"faction", "location"}  # npc covered by anchor

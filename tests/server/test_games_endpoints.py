@@ -20,11 +20,14 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_post_games_creates_new_game(client: TestClient):
-    r = client.post("/api/games", json={
-        "genre_slug": "low_fantasy",
-        "world_slug": "moldharrow-keep",
-        "mode": "multiplayer",
-    })
+    r = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "multiplayer",
+        },
+    )
     assert r.status_code == 201
     body = r.json()
     # Multiplayer slugs carry a "-mp" suffix so they do not collide with
@@ -35,13 +38,23 @@ def test_post_games_creates_new_game(client: TestClient):
 
 
 def test_post_games_same_mode_same_day_same_world_resumes(client: TestClient):
-    first = client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "multiplayer",
-    })
+    first = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "multiplayer",
+        },
+    )
     assert first.status_code == 201
-    second = client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "multiplayer",
-    })
+    second = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "multiplayer",
+        },
+    )
     assert second.status_code == 200  # resumed, not created
     body = second.json()
     assert body["slug"] == "2026-04-22-moldharrow-keep-mp"
@@ -55,16 +68,26 @@ def test_post_games_solo_and_multiplayer_do_not_collide(client: TestClient):
     Pre-fix bug: multiplayer was silently downgraded to whatever mode the
     existing same-day-same-world solo row carried.
     """
-    solo = client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "solo",
-    })
+    solo = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "solo",
+        },
+    )
     assert solo.status_code == 201
     assert solo.json()["slug"] == "2026-04-22-moldharrow-keep"
     assert solo.json()["mode"] == "solo"
 
-    mp = client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "multiplayer",
-    })
+    mp = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "multiplayer",
+        },
+    )
     assert mp.status_code == 201  # new game, not a resume
     assert mp.json()["slug"] == "2026-04-22-moldharrow-keep-mp"
     assert mp.json()["mode"] == "multiplayer"
@@ -72,16 +95,26 @@ def test_post_games_solo_and_multiplayer_do_not_collide(client: TestClient):
 
 
 def test_post_games_rejects_invalid_mode(client: TestClient):
-    r = client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "coop",
-    })
+    r = client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "coop",
+        },
+    )
     assert r.status_code == 422
 
 
 def test_get_games_slug_returns_metadata(client: TestClient):
-    client.post("/api/games", json={
-        "genre_slug": "low_fantasy", "world_slug": "moldharrow-keep", "mode": "solo",
-    })
+    client.post(
+        "/api/games",
+        json={
+            "genre_slug": "low_fantasy",
+            "world_slug": "moldharrow-keep",
+            "mode": "solo",
+        },
+    )
     r = client.get("/api/games/2026-04-22-moldharrow-keep")
     assert r.status_code == 200
     body = r.json()

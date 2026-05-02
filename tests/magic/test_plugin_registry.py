@@ -4,6 +4,7 @@ Mirrors the SPAN_ROUTES pattern in sidequest/telemetry/spans/_core.py.
 Each plugin module mutates MAGIC_PLUGINS at import time; the package
 __init__.py star-imports each plugin module to trigger registration.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,9 +19,7 @@ class _FakePlugin:
     def required_attrs(self) -> set[str]:
         return {"flavor"}
 
-    def validate_working(
-        self, working: MagicWorking, config: WorldMagicConfig
-    ) -> list[Flag]:
+    def validate_working(self, working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
         if working.flavor is None:
             return [Flag(severity=FlagSeverity.RED, reason="missing_flavor")]
         return []

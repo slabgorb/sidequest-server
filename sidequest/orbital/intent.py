@@ -7,6 +7,7 @@ Pure function — does not touch the WebSocket transport. The handler
 module under ``sidequest/handlers/`` (Task 15b) wires this into the
 inbound message router.
 """
+
 from __future__ import annotations
 
 from sidequest.orbital.render import Scope, render_chart
@@ -24,9 +25,7 @@ class OrbitalContentUnavailableError(RuntimeError):
     """Intent received for a session whose world has no orbital tier."""
 
 
-def handle_orbital_intent(
-    session: Session, intent: OrbitalIntent
-) -> OrbitalIntentResponse:
+def handle_orbital_intent(session: Session, intent: OrbitalIntent) -> OrbitalIntentResponse:
     """Resolve an orbital intent against the session's content + state.
 
     Side effect: updates ``session.orbital_scope`` so a subsequent
@@ -54,11 +53,7 @@ def handle_orbital_intent(
             scope = Scope.system_root()
         else:
             body = content.orbits.bodies[current.center_body_id]
-            scope = (
-                Scope(center_body_id=body.parent)
-                if body.parent
-                else Scope.system_root()
-            )
+            scope = Scope(center_body_id=body.parent) if body.parent else Scope.system_root()
     else:  # pragma: no cover — exhaustive
         raise TypeError(f"Unknown orbital intent: {inner!r}")
 
@@ -73,9 +68,7 @@ def handle_orbital_intent(
     session.orbital_scope = scope
 
     actual_center = (
-        scope.center_body_id
-        if scope.center_body_id != "<root>"
-        else _system_primary_id(content)
+        scope.center_body_id if scope.center_body_id != "<root>" else _system_primary_id(content)
     )
 
     return OrbitalIntentResponse(
@@ -87,6 +80,4 @@ def handle_orbital_intent(
 
 
 def _system_primary_id(content) -> str:
-    return next(
-        bid for bid, b in content.orbits.bodies.items() if b.parent is None
-    )
+    return next(bid for bid, b in content.orbits.bodies.items() if b.parent is None)

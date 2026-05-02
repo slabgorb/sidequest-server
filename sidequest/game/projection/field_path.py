@@ -8,6 +8,7 @@ Grammar: path := segment ("." segment)*
 
 No support for array indices, filters, or negations.
 """
+
 from __future__ import annotations
 
 import re

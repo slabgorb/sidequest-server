@@ -50,13 +50,15 @@ def test_migrate_bare_string_list_to_status_list():
 
 
 def test_migrate_already_structured_statuses_passes_through():
-    existing = [Status(
-        text="Wound",
-        severity=StatusSeverity.Wound,
-        absorbed_shifts=2,
-        created_turn=5,
-        created_in_encounter="combat",
-    )]
+    existing = [
+        Status(
+            text="Wound",
+            severity=StatusSeverity.Wound,
+            absorbed_shifts=2,
+            created_turn=5,
+            created_in_encounter="combat",
+        )
+    ]
     migrated = migrate_legacy_statuses(existing)
     assert migrated == existing
 

@@ -6,6 +6,7 @@ Adapted from Task 17 of the orbital-map plan; references to ``Session.empty``,
 ``tests/orbital/conftest.py`` — duplicated here because pytest fixtures don't
 cross test packages).
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -27,9 +28,7 @@ from sidequest.protocol.orbital_intent import OrbitalIntent
 from sidequest.server.session import Session
 from sidequest.telemetry.setup import init_tracer
 
-ORBITAL_FIXTURES = (
-    Path(__file__).resolve().parent.parent / "orbital" / "fixtures" / "world_minimal"
-)
+ORBITAL_FIXTURES = Path(__file__).resolve().parent.parent / "orbital" / "fixtures" / "world_minimal"
 
 
 @pytest.fixture
@@ -70,18 +69,14 @@ def test_full_drill_cycle(session, otel_capture):
     # 2. drill_in to red_prospect
     r2 = handle_orbital_intent(
         session,
-        OrbitalIntent.model_validate(
-            {"kind": "drill_in", "body_id": "red_prospect"}
-        ),
+        OrbitalIntent.model_validate({"kind": "drill_in", "body_id": "red_prospect"}),
     )
     assert r2.scope_center == "red_prospect"
     assert 'data-body-id="turning_hub"' in r2.svg
     assert 'data-action="drill_out"' in r2.svg
 
     # 3. drill_out back to system
-    r3 = handle_orbital_intent(
-        session, OrbitalIntent.model_validate({"kind": "drill_out"})
-    )
+    r3 = handle_orbital_intent(session, OrbitalIntent.model_validate({"kind": "drill_out"}))
     assert r3.scope_center == "coyote"
     assert 'data-action="drill_in:red_prospect"' in r3.svg
 
@@ -101,12 +96,8 @@ def test_clock_advance_visible_in_chart(session, otel_capture):
         session,
         OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
     )
-    session.advance_via_beat(
-        StoryBeat(kind=StoryBeatKind.REST, trigger="rest-1")
-    )  # +8h
-    session.advance_via_beat(
-        StoryBeat(kind=StoryBeatKind.REST, trigger="rest-2")
-    )  # +8h
+    session.advance_via_beat(StoryBeat(kind=StoryBeatKind.REST, trigger="rest-1"))  # +8h
+    session.advance_via_beat(StoryBeat(kind=StoryBeatKind.REST, trigger="rest-2"))  # +8h
     r_t16 = handle_orbital_intent(
         session,
         OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
@@ -126,16 +117,12 @@ def test_drill_in_then_view_map_with_explicit_scope(session, otel_capture):
     """view_map with a body_id scope acts like drill_in (per spec §6.3)."""
     handle_orbital_intent(
         session,
-        OrbitalIntent.model_validate(
-            {"kind": "drill_in", "body_id": "red_prospect"}
-        ),
+        OrbitalIntent.model_validate({"kind": "drill_in", "body_id": "red_prospect"}),
     )
     # view_map with explicit body_id scope re-renders body scope.
     r = handle_orbital_intent(
         session,
-        OrbitalIntent.model_validate(
-            {"kind": "view_map", "scope": "red_prospect"}
-        ),
+        OrbitalIntent.model_validate({"kind": "view_map", "scope": "red_prospect"}),
     )
     assert r.scope_center == "red_prospect"
 

@@ -14,6 +14,4 @@ def test_mp_openings_no_longer_in_loader() -> None:
         "Loader still references mp_openings_raw — the legacy "
         "mp_opening.yaml parsing path was not fully deleted."
     )
-    assert "mp_opening.yaml" not in source, (
-        "Loader still references mp_opening.yaml as a path."
-    )
+    assert "mp_opening.yaml" not in source, "Loader still references mp_opening.yaml as a path."

@@ -59,9 +59,7 @@ from sidequest.server.session_room import LobbyState, RoomRegistry
 
 _GENRE = "space_opera"
 _WORLD = "coyote_star"
-_CONTENT_SEARCH_PATH = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+_CONTENT_SEARCH_PATH = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _make_handler(save_dir: Path) -> WebSocketSessionHandler:
@@ -120,9 +118,7 @@ def _seed_mp_game_with_characters(
         genre_slug=_GENRE,
         world_slug=_WORLD,
     )
-    snap = GameSnapshot(
-        genre_slug=_GENRE, world_slug=_WORLD, location="Far Landing"
-    )
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Far Landing")
     chars: list[Character] = []
     for player_id, char_name in seats:
         core = CreatureCore(
@@ -176,16 +172,16 @@ async def test_mp_returning_player_connect_auto_seats_and_transitions_to_playing
     only the new-player slot-claim flow differs between modes.
     """
     slug = "2026-04-30-mp-returning-test"
-    save_dir = _seed_mp_game_with_characters(
-        tmp_path, slug, seats=[("john-pid", "John")]
-    )
+    save_dir = _seed_mp_game_with_characters(tmp_path, slug, seats=[("john-pid", "John")])
 
     handler = _make_handler(save_dir)
     msg = SessionEventMessage(
         type="SESSION_EVENT",
         player_id="john-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="John",
+            event="connect",
+            game_slug=slug,
+            player_name="John",
         ),
     )
     await handler.handle_message(msg)
@@ -224,14 +220,14 @@ async def test_mp_four_player_returning_connect_all_to_playing(tmp_path: Path):
 
     registry = RoomRegistry()
     for i, (pid, char_name) in enumerate(seats):
-        handler = _make_handler_on_registry(
-            save_dir, registry=registry, socket_id=f"sock-{i}"
-        )
+        handler = _make_handler_on_registry(save_dir, registry=registry, socket_id=f"sock-{i}")
         msg = SessionEventMessage(
             type="SESSION_EVENT",
             player_id=pid,
             payload=SessionEventPayload(
-                event="connect", game_slug=slug, player_name=char_name,
+                event="connect",
+                game_slug=slug,
+                player_name=char_name,
             ),
         )
         await handler.handle_message(msg)
@@ -252,13 +248,10 @@ async def test_mp_four_player_returning_connect_all_to_playing(tmp_path: Path):
         "into an already-closed round (playtest 2026-04-30)."
     )
     for pid, _ in seats:
-        assert pid in room.seated_player_ids(), (
-            f"player {pid!r} must be seated after connect"
-        )
+        assert pid in room.seated_player_ids(), f"player {pid!r} must be seated after connect"
         seat = room._seated.get(pid)
         assert seat is not None and seat.state == LobbyState.PLAYING, (
-            f"player {pid!r} seat state must be PLAYING (got "
-            f"{seat.state if seat else None!r})"
+            f"player {pid!r} seat state must be PLAYING (got {seat.state if seat else None!r})"
         )
 
 
@@ -284,7 +277,9 @@ async def test_mp_new_player_connect_does_not_auto_seat(tmp_path: Path):
         type="SESSION_EVENT",
         player_id="alice-new",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="Alice",
+            event="connect",
+            game_slug=slug,
+            player_name="Alice",
         ),
     )
     await handler.handle_message(msg)
@@ -307,9 +302,7 @@ async def test_mp_returning_reconnect_does_not_reset_seat_state(tmp_path: Path):
     seated_player_ids()``, so reconnect must not flip back.
     """
     slug = "2026-04-30-mp-reconnect-test"
-    save_dir = _seed_mp_game_with_characters(
-        tmp_path, slug, seats=[("john-pid", "John")]
-    )
+    save_dir = _seed_mp_game_with_characters(tmp_path, slug, seats=[("john-pid", "John")])
 
     registry = RoomRegistry()
     handler1 = _make_handler_on_registry(save_dir, registry=registry, socket_id="sock-a")
@@ -317,7 +310,9 @@ async def test_mp_returning_reconnect_does_not_reset_seat_state(tmp_path: Path):
         type="SESSION_EVENT",
         player_id="john-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="John",
+            event="connect",
+            game_slug=slug,
+            player_name="John",
         ),
     )
     await handler1.handle_message(msg)
@@ -343,16 +338,16 @@ async def test_mp_returning_seat_uses_saved_character_name(tmp_path: Path):
     what chargen-complete would have written.
     """
     slug = "2026-04-30-mp-slot-label-test"
-    save_dir = _seed_mp_game_with_characters(
-        tmp_path, slug, seats=[("john-pid", "John")]
-    )
+    save_dir = _seed_mp_game_with_characters(tmp_path, slug, seats=[("john-pid", "John")])
 
     handler = _make_handler(save_dir)
     msg = SessionEventMessage(
         type="SESSION_EVENT",
         player_id="john-pid",
         payload=SessionEventPayload(
-            event="connect", game_slug=slug, player_name="John-LobbyName",
+            event="connect",
+            game_slug=slug,
+            player_name="John-LobbyName",
         ),
     )
     await handler.handle_message(msg)

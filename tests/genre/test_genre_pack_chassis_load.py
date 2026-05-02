@@ -3,6 +3,7 @@
 Lazy import path is the contract: genres without the file get None;
 genres with the file get a populated ChassisClassesConfig.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

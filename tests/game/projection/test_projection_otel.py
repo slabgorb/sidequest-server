@@ -1,4 +1,5 @@
 """OTEL spans emitted by the projection pipeline."""
+
 from __future__ import annotations
 
 from opentelemetry import trace
@@ -36,7 +37,9 @@ def test_decide_span_emitted_with_attributes() -> None:
 
     filt.project(envelope=env, view=view, player_id="alice")
 
-    decide_spans = [s for s in exporter.get_finished_spans() if s.name == "projection.filter.decide"]
+    decide_spans = [
+        s for s in exporter.get_finished_spans() if s.name == "projection.filter.decide"
+    ]
     assert len(decide_spans) == 1
     attrs = dict(decide_spans[0].attributes or {})
     assert attrs["event.kind"] == "NARRATION"

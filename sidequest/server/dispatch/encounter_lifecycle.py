@@ -3,6 +3,7 @@
 Port of sidequest-api/crates/sidequest-server/src/dispatch/
 {state_mutations,tropes,response}.rs combat-sensitive paths (Story 3.4).
 """
+
 from __future__ import annotations
 
 from sidequest.game.encounter import (
@@ -36,15 +37,14 @@ def _validate_side(actor_name: str, declared: str) -> str:
     if declared in _VALID_SIDES:
         return declared
     from sidequest.telemetry.spans import encounter_invalid_side_span
+
     with encounter_invalid_side_span(
         actor_name=actor_name,
         declared_side=declared,
         valid_set="|".join(_VALID_SIDES),
     ):
         pass
-    raise ValueError(
-        f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}"
-    )
+    raise ValueError(f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}")
 
 
 def _publish_combat_stats_to_registry(
@@ -201,10 +201,7 @@ def instantiate_encounter_from_trigger(
     defs = pack.rules.confrontations if pack.rules else []
     cdef = find_confrontation_def(defs, encounter_type)
     if cdef is None:
-        raise ValueError(
-            f"unknown encounter_type {encounter_type!r} — "
-            f"not in pack confrontations"
-        )
+        raise ValueError(f"unknown encounter_type {encounter_type!r} — not in pack confrontations")
 
     # Story 45-18: registry fallback when narrator's npcs_present is empty.
     # Sealed-letter encounters (commit-reveal duels) require exactly one
@@ -214,7 +211,8 @@ def instantiate_encounter_from_trigger(
     # npcs_present is wrong.
     if not npcs_present and cdef.resolution_mode != ResolutionMode.sealed_letter_lookup:
         npcs_present = _registry_fallback_npcs(
-            snapshot, is_combat=cdef.category == "combat",
+            snapshot,
+            is_combat=cdef.category == "combat",
         )
 
     with encounter_confrontation_initiated_span(
@@ -254,7 +252,9 @@ def instantiate_encounter_from_trigger(
             actors = [
                 EncounterActor(name=player_name, role=ROLE_RED, side="player"),
                 EncounterActor(
-                    name=opponent_name, role=ROLE_BLUE, side=opponent_side,
+                    name=opponent_name,
+                    role=ROLE_BLUE,
+                    side=opponent_side,
                 ),
             ]
         else:
@@ -277,7 +277,8 @@ def instantiate_encounter_from_trigger(
         # to call unconditionally.
         _init_span.set_attribute("actor_count", len(actors))
         _init_span.set_attribute(
-            "combatant_names", ",".join(a.name for a in actors),
+            "combatant_names",
+            ",".join(a.name for a in actors),
         )
 
         pm = cdef.player_metric
@@ -285,12 +286,16 @@ def instantiate_encounter_from_trigger(
         enc = StructuredEncounter(
             encounter_type=encounter_type,
             player_metric=EncounterMetric(
-                name=pm.name, current=pm.starting,
-                starting=pm.starting, threshold=pm.threshold,
+                name=pm.name,
+                current=pm.starting,
+                starting=pm.starting,
+                threshold=pm.threshold,
             ),
             opponent_metric=EncounterMetric(
-                name=om.name, current=om.starting,
-                starting=om.starting, threshold=om.threshold,
+                name=om.name,
+                current=om.starting,
+                starting=om.starting,
+                threshold=om.threshold,
             ),
             beat=0,
             structured_phase=EncounterPhase.Setup,
@@ -310,7 +315,9 @@ def instantiate_encounter_from_trigger(
                 "encounter_type": encounter_type,
                 "player_metric_threshold": pm.threshold,
                 "opponent_metric_threshold": om.threshold,
-                "turn": snapshot.turn_manager.interaction if hasattr(snapshot, "turn_manager") else 0,
+                "turn": snapshot.turn_manager.interaction
+                if hasattr(snapshot, "turn_manager")
+                else 0,
                 "genre_slug": genre_slug or "",
             },
             component="encounter",
@@ -333,8 +340,7 @@ def instantiate_encounter_from_trigger(
                 snapshot=snapshot,
                 actors=actors,
                 opponent_metric=enc.opponent_metric,
-                turn=snapshot.turn_manager.interaction
-                    if hasattr(snapshot, "turn_manager") else 0,
+                turn=snapshot.turn_manager.interaction if hasattr(snapshot, "turn_manager") else 0,
                 source="encounter_handshake",
             )
         return enc
@@ -432,7 +438,9 @@ def apply_resource_patches(
         value = float(abs(delta))
         result = snapshot.apply_resource_patch_by_name(name, op, value)
         mint_threshold_lore(
-            result.crossed_thresholds, lore_store, turn,
+            result.crossed_thresholds,
+            lore_store,
+            turn,
         )
         all_crossed.extend(result.crossed_thresholds)
     return all_crossed

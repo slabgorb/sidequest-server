@@ -12,10 +12,14 @@ class TestFaction:
 
     def test_extra_allowed(self) -> None:
         """Faction uses flatten extras."""
-        f = Faction.model_validate({
-            "name": "F", "summary": "S", "description": "D",
-            "agenda": "control everything",
-        })
+        f = Faction.model_validate(
+            {
+                "name": "F",
+                "summary": "S",
+                "description": "D",
+                "agenda": "control everything",
+            }
+        )
         assert f.name == "F"
 
     def test_roundtrip(self) -> None:
@@ -37,11 +41,16 @@ class TestLore:
 
     def test_extra_allowed(self) -> None:
         """Lore uses flatten extras (setting_anchor, themes, etc.)"""
-        lore = Lore.model_validate({
-            "world_name": "W", "history": "H", "geography": "G", "cosmology": "C",
-            "setting_anchor": "The dungeon is the world.",
-            "themes": ["darkness", "greed"],
-        })
+        lore = Lore.model_validate(
+            {
+                "world_name": "W",
+                "history": "H",
+                "geography": "G",
+                "cosmology": "C",
+                "setting_anchor": "The dungeon is the world.",
+                "themes": ["darkness", "greed"],
+            }
+        )
         assert lore.world_name == "W"
 
     def test_roundtrip(self) -> None:

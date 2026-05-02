@@ -1,4 +1,5 @@
 """End-to-end: load_genre_pack + init_chassis_registry → Kestrel materialized."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,7 +65,9 @@ def test_kestrel_voice_section_renders_in_narrator_prompt() -> None:
 
     registry = PromptRegistry()
     registry.register_chassis_voice_section(
-        "narrator", snap.chassis_registry, character_name="Zee Jones",
+        "narrator",
+        snap.chassis_registry,
+        character_name="Zee Jones",
     )
     rendered = registry.render_for("narrator")
 

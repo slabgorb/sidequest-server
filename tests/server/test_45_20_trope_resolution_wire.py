@@ -119,19 +119,13 @@ class TestDispatchSeamWritesDurableRecord:
     """
 
     @pytest.mark.asyncio
-    async def test_trope_resolution_writes_quest_log_entry(
-        self, session_fixture
-    ) -> None:
+    async def test_trope_resolution_writes_quest_log_entry(self, session_fixture) -> None:
         sd, handler = session_fixture
         _seed_active_trope(sd, "extraction_panic", "progressing")
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
 
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         assert "trope_extraction_panic" in sd.snapshot.quest_log, (
             "Wire-first failure: the dispatch seam ran but no quest_log "
@@ -148,20 +142,14 @@ class TestDispatchSeamWritesDurableRecord:
         )
 
     @pytest.mark.asyncio
-    async def test_trope_resolution_appends_active_stakes_marker(
-        self, session_fixture
-    ) -> None:
+    async def test_trope_resolution_appends_active_stakes_marker(self, session_fixture) -> None:
         sd, handler = session_fixture
         _seed_active_trope(sd, "extraction_panic", "progressing")
         sd.snapshot.active_stakes = ""
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
 
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         assert "extraction_panic" in sd.snapshot.active_stakes, (
             "Wire-first failure: active_stakes did not gain a resolution "
@@ -169,20 +157,14 @@ class TestDispatchSeamWritesDurableRecord:
         )
 
     @pytest.mark.asyncio
-    async def test_trope_resolution_preserves_existing_active_stakes(
-        self, session_fixture
-    ) -> None:
+    async def test_trope_resolution_preserves_existing_active_stakes(self, session_fixture) -> None:
         sd, handler = session_fixture
         _seed_active_trope(sd, "extraction_panic", "progressing")
         sd.snapshot.active_stakes = "Find the courier."
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
 
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         assert "Find the courier." in sd.snapshot.active_stakes, (
             "Pre-existing active_stakes content lost; got "
@@ -209,19 +191,14 @@ class TestDispatchSeamEmitsHandshakeSpan:
     ) -> None:
         sd, handler = session_fixture
         _seed_active_trope(sd, "extraction_panic", "progressing")
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert len(spans) == 1, (
             "Dispatch seam must emit exactly one handshake span per "
@@ -260,13 +237,10 @@ class TestDispatchSeamEmitsHandshakeSpan:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I wait.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I wait.", turn_context)
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert spans == [], (
             "Handshake span fired when no trope transitioned to "
@@ -295,17 +269,11 @@ class TestIdempotentReDetectAcrossTurns:
         _seed_active_trope(sd, "extraction_panic", "progressing")
 
         # Turn 1: resolution happens.
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
         turn_context_1 = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context_1
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context_1)
 
-        first_quest_log_value = sd.snapshot.quest_log.get(
-            "trope_extraction_panic"
-        )
+        first_quest_log_value = sd.snapshot.quest_log.get("trope_extraction_panic")
         first_active_stakes = sd.snapshot.active_stakes
 
         # Turn 2: trope already resolved; orchestrator does NOT flip
@@ -319,13 +287,10 @@ class TestIdempotentReDetectAcrossTurns:
             )
         )
         turn_context_2 = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I look at the wreckage.", turn_context_2
-        )
+        await handler._execute_narration_turn(sd, "I look at the wreckage.", turn_context_2)
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert len(spans) == 1, (
             "Idempotent re-detect must STILL emit exactly one handshake "
@@ -339,9 +304,9 @@ class TestIdempotentReDetectAcrossTurns:
             f"Attrs: {attrs}"
         )
 
-        assert sd.snapshot.quest_log["trope_extraction_panic"] == (
-            first_quest_log_value
-        ), "Idempotent re-detect must NOT rewrite the quest_log entry."
+        assert sd.snapshot.quest_log["trope_extraction_panic"] == (first_quest_log_value), (
+            "Idempotent re-detect must NOT rewrite the quest_log entry."
+        )
         assert sd.snapshot.active_stakes == first_active_stakes, (
             "Idempotent re-detect must NOT append a second resolution marker."
         )
@@ -358,21 +323,15 @@ class TestIdempotentReDetectAcrossTurns:
 
 class TestStateSummaryTimingSeam:
     @pytest.mark.asyncio
-    async def test_quest_log_entry_appears_in_snapshot_json(
-        self, session_fixture
-    ) -> None:
+    async def test_quest_log_entry_appears_in_snapshot_json(self, session_fixture) -> None:
         import json
 
         sd, handler = session_fixture
         _seed_active_trope(sd, "extraction_panic", "progressing")
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
 
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         # state_summary_payload at session_helpers.py:312 is built via
         # ``json.loads(snapshot.model_dump_json())``. Asserting on the
@@ -402,9 +361,7 @@ class TestStateSummaryTimingSeam:
 
 class TestSaveReloadDurability:
     @pytest.mark.asyncio
-    async def test_quest_log_entry_survives_save_reload(
-        self, session_fixture, tmp_path
-    ) -> None:
+    async def test_quest_log_entry_survives_save_reload(self, session_fixture, tmp_path) -> None:
         from sidequest.game.persistence import SqliteStore
 
         sd, handler = session_fixture
@@ -415,13 +372,9 @@ class TestSaveReloadDurability:
         sd.store = SqliteStore.open(store_path)
         sd.snapshot.world_slug = "test_world"
 
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context)
 
         # Capture the entry that was written this turn.
         entry_before = sd.snapshot.quest_log.get("trope_extraction_panic")
@@ -439,14 +392,11 @@ class TestSaveReloadDurability:
         reloaded_store = SqliteStore.open(store_path)
         saved = reloaded_store.load()
         assert saved is not None, (
-            "Persistence path returned None on reload — save did not "
-            "round-trip the snapshot."
+            "Persistence path returned None on reload — save did not round-trip the snapshot."
         )
         reloaded = saved.snapshot
 
-        assert (
-            reloaded.quest_log.get("trope_extraction_panic") == entry_before
-        ), (
+        assert reloaded.quest_log.get("trope_extraction_panic") == entry_before, (
             "AC3 failure: quest_log entry did not survive save/reload. "
             f"Pre-save: {entry_before!r}; reloaded: "
             f"{reloaded.quest_log.get('trope_extraction_panic')!r}"
@@ -482,13 +432,9 @@ class TestSaveReloadDurability:
         sd.snapshot.world_slug = "test_world"
 
         # Turn 1: resolution.
-        sd.orchestrator.run_narration_turn = _flipping_orchestrator(
-            sd, "extraction_panic"
-        )
+        sd.orchestrator.run_narration_turn = _flipping_orchestrator(sd, "extraction_panic")
         turn_context_1 = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push the door open.", turn_context_1
-        )
+        await handler._execute_narration_turn(sd, "I push the door open.", turn_context_1)
         entry_after_turn_1 = sd.snapshot.quest_log["trope_extraction_panic"]
         active_stakes_after_turn_1 = sd.snapshot.active_stakes
 
@@ -525,25 +471,18 @@ class TestSaveReloadDurability:
 
         otel_capture.clear()
         turn_context_2 = _build_turn_context_for_test(new_sd)
-        await new_handler._execute_narration_turn(
-            new_sd, "I survey the room.", turn_context_2
-        )
+        await new_handler._execute_narration_turn(new_sd, "I survey the room.", turn_context_2)
 
         # Quest log entry must NOT have been rewritten (baseline ==
         # current == "resolved" → idempotent re-detect).
-        assert (
-            new_sd.snapshot.quest_log["trope_extraction_panic"]
-            == entry_after_turn_1
-        ), (
+        assert new_sd.snapshot.quest_log["trope_extraction_panic"] == entry_after_turn_1, (
             "Post-reload first turn rewrote the quest_log entry — the "
             "baseline must equal the live snapshot so the diff sees no "
             "transition. Got "
             f"{new_sd.snapshot.quest_log['trope_extraction_panic']!r}"
         )
         # active_stakes must NOT have grown a second resolution marker.
-        assert (
-            new_sd.snapshot.active_stakes == active_stakes_after_turn_1
-        ), (
+        assert new_sd.snapshot.active_stakes == active_stakes_after_turn_1, (
             "Post-reload first turn appended a second resolution marker "
             "to active_stakes — false-positive duplicate write. "
             f"Got {new_sd.snapshot.active_stakes!r}"
@@ -551,8 +490,7 @@ class TestSaveReloadDurability:
 
         # But the idempotent re-detect span DID fire (panel-engaged signal).
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert len(spans) == 1, (
             "Post-reload first turn must still emit one handshake span "
@@ -599,9 +537,7 @@ class TestOrinPlaytestReproducer:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I make the final move.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I make the final move.", turn_context)
 
         assert "trope_extraction_panic" in sd.snapshot.quest_log
         assert "trope_hireling_mutiny" in sd.snapshot.quest_log
@@ -609,8 +545,7 @@ class TestOrinPlaytestReproducer:
         assert "hireling_mutiny" in sd.snapshot.active_stakes
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         trope_ids = {dict(s.attributes or {}).get("trope_id") for s in spans}
         assert trope_ids == {"extraction_panic", "hireling_mutiny"}, (

@@ -28,14 +28,16 @@ SPAN_TROPE_CROSS_SESSION = "trope.cross_session"
 SPAN_TROPE_EVALUATE_TRIGGERS = "trope.evaluate_triggers"
 SPAN_TROPE_RESOLUTION_HANDSHAKE = "trope.resolution_handshake"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_TROPE_TICK,
-    SPAN_TROPE_TICK_PER,
-    SPAN_TROPE_ROOM_TICK,
-    SPAN_TROPE_ACTIVATE,
-    SPAN_TROPE_CROSS_SESSION,
-    SPAN_TROPE_EVALUATE_TRIGGERS,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_TROPE_TICK,
+        SPAN_TROPE_TICK_PER,
+        SPAN_TROPE_ROOM_TICK,
+        SPAN_TROPE_ACTIVATE,
+        SPAN_TROPE_CROSS_SESSION,
+        SPAN_TROPE_EVALUATE_TRIGGERS,
+    }
+)
 
 # Story 45-20 — promoted out of FLAT_ONLY_SPANS so the GM panel's typed
 # state_transition feed surfaces trope resolution events.
@@ -63,9 +65,7 @@ SPAN_ROUTES[SPAN_TROPE_RESOLUTION_HANDSHAKE] = SpanRoute(
         "new_status": (span.attributes or {}).get("new_status", ""),
         "interaction": (span.attributes or {}).get("interaction", 0),
         "quest_log_key": (span.attributes or {}).get("quest_log_key", ""),
-        "active_stakes_appended": (span.attributes or {}).get(
-            "active_stakes_appended", False
-        ),
+        "active_stakes_appended": (span.attributes or {}).get("active_stakes_appended", False),
         "source": (span.attributes or {}).get("source", ""),
     },
 )

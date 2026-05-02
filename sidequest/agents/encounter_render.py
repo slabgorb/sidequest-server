@@ -8,6 +8,7 @@ to emit well-formed beat_selections. Story 3.4.
 Task 12 (2026-04-25): Implemented for dual ascending dials
 (player_metric + opponent_metric) per the dual-track momentum spec.
 """
+
 from __future__ import annotations
 
 from sidequest.game.encounter import StructuredEncounter

@@ -1,4 +1,5 @@
 """Pydantic model invariants for the magic module."""
+
 from __future__ import annotations
 
 import pytest
@@ -137,5 +138,9 @@ class TestLedgerBarSpec:
 
 class TestFlag:
     def test_flag_construction(self):
-        f = Flag(severity=FlagSeverity.RED, reason="plugin_not_in_allowed_sources", detail="bargained_for_v1")
+        f = Flag(
+            severity=FlagSeverity.RED,
+            reason="plugin_not_in_allowed_sources",
+            detail="bargained_for_v1",
+        )
         assert f.severity == FlagSeverity.RED

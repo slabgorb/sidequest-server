@@ -33,7 +33,8 @@ def test_create_app_honours_ollama_env(monkeypatch):
 
 
 def test_create_app_discovers_render_root_via_daemon_handshake(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ):
     """Regression: when SIDEQUEST_OUTPUT_DIR isn't set, create_app() must
     fall back to ~/.sidequest/daemon-output-dir (the handshake file the
@@ -57,6 +58,7 @@ def test_create_app_discovers_render_root_via_daemon_handshake(
     # create_app must have promoted the handshake value into the env so
     # downstream `_render_url_from_path` calls see the same root.
     import os as _os
+
     assert _os.environ.get("SIDEQUEST_OUTPUT_DIR") == str(daemon_output)
 
 
@@ -76,18 +78,17 @@ def test_render_url_from_path_publishes_image_unavailable_on_fallthrough(
         captured.append((event_type, fields, {"component": component, "severity": severity}))
 
     import sidequest.telemetry.watcher_hub as _hub
+
     monkeypatch.setattr(_hub, "publish_event", fake_publish)
 
     from sidequest.server.session_helpers import _render_url_from_path
+
     result = _render_url_from_path("/var/folders/h0/sq-daemon-xyz/zimage/render_abc.png")
 
     # Path returned verbatim (no rewrite available)
     assert result == "/var/folders/h0/sq-daemon-xyz/zimage/render_abc.png"
     # And the lie detector lit up
-    unavailable = [
-        (fields, meta) for et, fields, meta in captured
-        if et == "image_unavailable"
-    ]
+    unavailable = [(fields, meta) for et, fields, meta in captured if et == "image_unavailable"]
     assert unavailable, "expected image_unavailable watcher event on env-unset fallthrough"
     fields, meta = unavailable[0]
     assert fields["reason"] == "output_dir_unset"
@@ -104,9 +105,7 @@ def test_validator_starts_with_app() -> None:
     app = create_app()
     with TestClient(app):
         validator = getattr(app.state, "validator", None)
-        assert validator is not None, (
-            "app.state.validator should be populated at startup"
-        )
+        assert validator is not None, "app.state.validator should be populated at startup"
         assert validator.is_running()
     # On exit, the TestClient's shutdown lifespan triggers shutdown.
     assert not validator.is_running()

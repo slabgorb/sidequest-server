@@ -1,4 +1,5 @@
 """Renderer tests — SVG output structure for the engraved layer."""
+
 from __future__ import annotations
 
 from pathlib import Path

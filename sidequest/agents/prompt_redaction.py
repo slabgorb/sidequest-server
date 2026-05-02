@@ -12,6 +12,7 @@ Unit tests for this module remain in `just check-all` so it does not
 bit-rot. If you find yourself adding a live caller, you are landing
 ADR-073 (or undoing this design); update both ends.
 """
+
 from __future__ import annotations
 
 from opentelemetry import trace
@@ -55,10 +56,12 @@ def redact_dispatch_package(
         # protocol shape — the decomposer spec has it emitting via the
         # sibling SubsystemDispatch. If that changes, add a branch here.
         new_players.append(
-            pd.model_copy(update={
-                "dispatch": kept_dispatch,
-                "narrator_instructions": kept_directives,
-            })
+            pd.model_copy(
+                update={
+                    "dispatch": kept_dispatch,
+                    "narrator_instructions": kept_directives,
+                }
+            )
         )
 
     if removed:

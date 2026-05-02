@@ -1,4 +1,5 @@
 """Bond mutation, tier derivation, lineage append."""
+
 from __future__ import annotations
 
 from sidequest.game.chassis import (
@@ -97,6 +98,7 @@ def test_apply_bond_event_clamps_to_unit_range() -> None:
 def test_apply_bond_event_missing_entry_raises() -> None:
     chassis = _kestrel_with_player_bond()
     import pytest
+
     with pytest.raises(ValueError, match="no bond ledger entry"):
         apply_bond_event(
             chassis=chassis,

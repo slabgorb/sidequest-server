@@ -29,9 +29,7 @@ class GenreCode(str):
         if not value:
             raise ValueError("genre code must not be empty")
         if value.startswith("_") or value.endswith("_"):
-            raise ValueError(
-                f"invalid genre code format: '{value}' (must be lowercase snake_case)"
-            )
+            raise ValueError(f"invalid genre code format: '{value}' (must be lowercase snake_case)")
         for ch in value:
             if not (ch.islower() or ch.isdigit() or ch == "_"):
                 raise ValueError(

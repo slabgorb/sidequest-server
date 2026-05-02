@@ -38,13 +38,17 @@ def test_dispatch_package_event_roundtrips() -> None:
 
 
 def test_narrator_directive_event_roundtrips() -> None:
-    evt = NarratorDirectiveUsedEvent(directive_kind="must_narrate", directive_text="A beat of slapstick pain.")
+    evt = NarratorDirectiveUsedEvent(
+        directive_kind="must_narrate", directive_text="A beat of slapstick pain."
+    )
     again = NarratorDirectiveUsedEvent.model_validate_json(evt.model_dump_json())
     assert again.directive_kind == "must_narrate"
 
 
 def test_verdict_override_event_roundtrips_with_null_previous() -> None:
-    evt = VerdictOverrideEvent(entity="alice", previous_verdict=None, new_verdict="humiliated", labeler="keith")
+    evt = VerdictOverrideEvent(
+        entity="alice", previous_verdict=None, new_verdict="humiliated", labeler="keith"
+    )
     again = VerdictOverrideEvent.model_validate_json(evt.model_dump_json())
     assert again.previous_verdict is None
 

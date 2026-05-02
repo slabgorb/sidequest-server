@@ -19,7 +19,9 @@ def test_save_reader_opens_readonly() -> None:
 
 def test_save_reader_refuses_writes() -> None:
     with SaveReader(SINGLE) as reader, pytest.raises(sqlite3.OperationalError, match="readonly"):
-        reader.conn.execute("INSERT INTO events (kind, payload_json, created_at) VALUES ('X', '{}', 'now')")
+        reader.conn.execute(
+            "INSERT INTO events (kind, payload_json, created_at) VALUES ('X', '{}', 'now')"
+        )
 
 
 def test_save_reader_does_not_mutate_mtime(tmp_path: Path) -> None:
@@ -69,6 +71,4 @@ def test_save_reader_does_not_touch_wal_sidecars(tmp_path: Path) -> None:
         list(reader.iter_narrative_log())
 
     after = {p: p.stat().st_mtime_ns for p in before}
-    assert before == after, (
-        f"SaveReader touched {[p for p in before if before[p] != after[p]]}"
-    )
+    assert before == after, f"SaveReader touched {[p for p in before if before[p] != after[p]]}"

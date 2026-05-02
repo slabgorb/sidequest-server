@@ -25,6 +25,7 @@ keyed on encounter_type + old/new location so the GM panel can verify
 the engine fired (CLAUDE.md OTEL principle: silent regressions of this
 exact bug must be Sebastien-visible).
 """
+
 from __future__ import annotations
 
 from sidequest.agents.orchestrator import NarrationTurnResult
@@ -46,10 +47,16 @@ def _attach_active_negotiation(snapshot) -> StructuredEncounter:
     encounter = StructuredEncounter(
         encounter_type="negotiation",
         player_metric=EncounterMetric(
-            name="leverage", current=0, starting=0, threshold=10,
+            name="leverage",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="leverage", current=0, starting=0, threshold=10,
+            name="leverage",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Linus", role="negotiator", side="player"),
@@ -62,7 +69,8 @@ def _attach_active_negotiation(snapshot) -> StructuredEncounter:
 
 
 def test_location_change_resolves_active_encounter_as_abandoned(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Active encounter + location change → encounter resolves with
     outcome=abandoned_on_location_change. The dispatch path will then
@@ -106,7 +114,8 @@ def test_location_change_resolves_active_encounter_as_abandoned(
 
 
 def test_no_location_change_leaves_active_encounter_alone(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Same-location turn (in-room negotiation continues): the encounter
     stays active. Guards against firing the deactivate path on every
@@ -139,7 +148,8 @@ def test_no_location_change_leaves_active_encounter_alone(
 
 
 def test_location_set_to_same_value_does_not_resolve(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """The narrator re-emits the current location. Not a real change;
     the deactivate branch must not fire."""
@@ -166,7 +176,8 @@ def test_location_set_to_same_value_does_not_resolve(
 
 
 def test_already_resolved_encounter_not_re_resolved_on_location_change(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """An encounter that resolved on the prior turn (player_victory,
     opponent_victory, etc.) keeps its outcome — the location-change
@@ -205,7 +216,8 @@ def test_already_resolved_encounter_not_re_resolved_on_location_change(
 
 
 def test_first_location_set_does_not_attempt_deactivation(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """At session start ``snap.location`` is empty; the very first
     location set on the snapshot is not a "scene change" — there's no
@@ -238,7 +250,8 @@ def test_first_location_set_does_not_attempt_deactivation(
 
 
 def test_location_change_with_no_active_encounter_is_no_op(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Snapshot has no encounter at all — the apply step handles the
     location change normally without raising or emitting a
@@ -306,10 +319,16 @@ def test_dispatch_branch_treats_abandoned_encounter_as_prior_live_to_now_dead_tr
     pre_apply = _StructuredEncounter(
         encounter_type="negotiation",
         player_metric=_EncounterMetric(
-            name="leverage", current=0, starting=0, threshold=10,
+            name="leverage",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=_EncounterMetric(
-            name="leverage", current=0, starting=0, threshold=10,
+            name="leverage",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             _EncounterActor(name="Linus", role="negotiator", side="player"),
@@ -354,7 +373,7 @@ def test_dispatch_branch_treats_abandoned_encounter_as_prior_live_to_now_dead_tr
 
     # The dispatch branch then takes:
     branch = "elif prior_live and not now_live"
-    assert (prior_live and not now_live), (
+    assert prior_live and not now_live, (
         f"Branch {branch!r} must fire on this state — pingpong "
         "2026-04-30 confrontation-sticks-open is fixed by routing "
         "narration_apply's resolved-flip through this exact branch's "

@@ -84,9 +84,7 @@ OPTIONAL: list[tuple[str, type[BaseModel], bool]] = [
 ]
 
 
-def _validate_one(
-    path: Path, model: type[BaseModel], repeated: bool
-) -> list[str]:
+def _validate_one(path: Path, model: type[BaseModel], repeated: bool) -> list[str]:
     """Return a list of human-readable error lines for this file.
 
     Empty list means the file validates cleanly.
@@ -108,18 +106,14 @@ def _validate_one(
             except ValidationError as e:
                 for err in e.errors():
                     loc = ".".join(str(p) for p in err["loc"])
-                    errors.append(
-                        f"{path.name}[{idx}].{loc}: {err['type']} — {err['msg']}"
-                    )
+                    errors.append(f"{path.name}[{idx}].{loc}: {err['type']} — {err['msg']}")
     else:
         try:
             model.model_validate(raw)
         except ValidationError as e:
             for err in e.errors():
                 loc = ".".join(str(p) for p in err["loc"])
-                errors.append(
-                    f"{path.name}.{loc}: {err['type']} — {err['msg']}"
-                )
+                errors.append(f"{path.name}.{loc}: {err['type']} — {err['msg']}")
     return errors
 
 
@@ -141,6 +135,7 @@ def _summarize_error_types(all_errors: dict[str, dict[str, list[str]]]) -> dict[
             for err in errs:
                 # strip list indices so "archetypes.yaml[0]" and "[1]" collapse
                 import re
+
                 key = re.sub(r"\[\d+\]", "[N]", err)
                 counts[key] = counts.get(key, 0) + 1
     return counts
@@ -206,7 +201,9 @@ def _example_value(err: dict[str, Any]) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
-def _write_triage_table(out_path: Path, all_errors_raw: dict[str, list[tuple[str, str, dict[str, Any]]]]) -> None:
+def _write_triage_table(
+    out_path: Path, all_errors_raw: dict[str, list[tuple[str, str, dict[str, Any]]]]
+) -> None:
     """Write a markdown triage table with ghost/wire/prose columns.
 
     Each unique (pack, file, canonical_field_path, error_type) is one row.
@@ -233,9 +230,15 @@ def _write_triage_table(out_path: Path, all_errors_raw: dict[str, list[tuple[str
         "Rust port silently dropped. Triage each as:"
     )
     lines.append("")
-    lines.append("- **ghost** — authored for a feature never built; delete from YAML (or file wiring story)")
-    lines.append("- **wire** — engine should consume this; add model field + engine reader + OTEL span")
-    lines.append("- **prose** — flavor for LLM prompts only; accept in model as pass-through, no consumer")
+    lines.append(
+        "- **ghost** — authored for a feature never built; delete from YAML (or file wiring story)"
+    )
+    lines.append(
+        "- **wire** — engine should consume this; add model field + engine reader + OTEL span"
+    )
+    lines.append(
+        "- **prose** — flavor for LLM prompts only; accept in model as pass-through, no consumer"
+    )
     lines.append("")
     lines.append(
         "Mark the correct column with `x`. After triage, run the follow-up scripts "
@@ -247,9 +250,7 @@ def _write_triage_table(out_path: Path, all_errors_raw: dict[str, list[tuple[str
     lines.append("| Pack | File | Field | Error type | Example value | ghost? | wire? | prose? |")
     lines.append("|------|------|-------|-----------|---------------|:------:|:-----:|:------:|")
     for pack, fname, field, etype, example, _msg in rows:
-        lines.append(
-            f"| {pack} | `{fname}` | `{field}` | {etype} | `{example}` |   |   |   |"
-        )
+        lines.append(f"| {pack} | `{fname}` | `{field}` | {etype} | `{example}` |   |   |   |")
     lines.append("")
 
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

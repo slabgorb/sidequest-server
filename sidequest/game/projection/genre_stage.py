@@ -6,6 +6,7 @@ False short-circuit the remaining rules for that envelope; passing
 include-gates continue, allowing redact_fields rules to mask specific
 fields on the still-included viewer's projection.
 """
+
 from __future__ import annotations
 
 import json
@@ -193,6 +194,7 @@ def _apply_fidelity(payload: dict, fidelity: str) -> dict:
 
     filtered = [s for s in spans if keep(s)]
     if fidelity == "audio_only_muffled":
-        filtered = [{**s, "muffled": True} if s.get("kind") == "audio_only" else s
-                    for s in filtered]
+        filtered = [
+            {**s, "muffled": True} if s.get("kind") == "audio_only" else s for s in filtered
+        ]
     return {**payload, "spans": filtered}

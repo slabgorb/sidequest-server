@@ -8,6 +8,7 @@ Future migrations move more behavior inward one method at a time.
 
 Per spec docs/superpowers/specs/2026-05-01-session-aggregate-design.md.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -68,9 +69,7 @@ class Session:
         semantically.
         """
         clear_scratch_on_scene_end(self._snapshot, reason=reason, turn=turn)
-        self.advance_via_beat(
-            StoryBeat(kind=StoryBeatKind.ENCOUNTER, trigger=f"scene-{reason}")
-        )
+        self.advance_via_beat(StoryBeat(kind=StoryBeatKind.ENCOUNTER, trigger=f"scene-{reason}"))
 
     # ------------------------------------------------------------------
     # Orbital map (Task 15) — content + scope state for the chart UI.

@@ -49,9 +49,7 @@ def test_baseline_rejects_unknown_fidelity():
 
 def test_overrides_are_shallow_delta():
     baseline = VisibilityBaseline.model_validate_yaml(SAMPLE_BASELINE)
-    overrides = VisibilityOverrides.model_validate_yaml(
-        "default_visibility:\n  lore_reveal: all\n"
-    )
+    overrides = VisibilityOverrides.model_validate_yaml("default_visibility:\n  lore_reveal: all\n")
     effective = effective_visibility(baseline, overrides)
     assert effective.default_visibility["lore_reveal"] == "all"
     assert effective.default_visibility["npc_agency"] == "all"  # unchanged

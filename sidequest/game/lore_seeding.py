@@ -182,9 +182,7 @@ def seed_lore_from_world(store: LoreStore, world_lore: WorldLore, world_slug: st
     return count
 
 
-def seed_lore_from_char_creation(
-    store: LoreStore, scenes: list[CharCreationScene]
-) -> int:
+def seed_lore_from_char_creation(store: LoreStore, scenes: list[CharCreationScene]) -> int:
     """Seed ``store`` with one fragment per chargen choice.
 
     Returns the number of fragments successfully added. Fragment ids
@@ -297,12 +295,8 @@ def seed_lore_from_arc_promotion(
     # the same tick. Defensive ``getattr`` mirrors the recompute
     # helper's defensive shape — a malformed snapshot must not crash
     # the dispatch loop on a content-authoring bug.
-    round_value = int(
-        getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0
-    )
-    interaction = int(
-        getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0
-    )
+    round_value = int(getattr(getattr(snapshot, "turn_manager", None), "round", 0) or 0)
+    interaction = int(getattr(getattr(snapshot, "turn_manager", None), "interaction", 0) or 0)
 
     for chapter in chapters:
         chapter_id = getattr(chapter, "id", "") or ""

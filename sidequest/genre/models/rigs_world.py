@@ -4,6 +4,7 @@ Each chassis instance picks a class from the genre's chassis_classes.yaml
 and adds named state. Resolution into a runtime ChassisInstance happens
 at world-load (sidequest/game/world_materialization.py).
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

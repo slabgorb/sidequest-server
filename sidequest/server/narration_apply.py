@@ -3,6 +3,7 @@
 Extracted from session_handler.py — pure functions over snapshot + result.
 Re-exported by session_handler for back-compat.
 """
+
 from __future__ import annotations
 
 import logging
@@ -66,6 +67,7 @@ def _gate_applies_to_encounter(encounter, pack) -> bool:
     if encounter is None or pack is None:
         return False
     from sidequest.server.dispatch.confrontation import find_confrontation_def
+
     cdef = find_confrontation_def(
         pack.rules.confrontations if pack.rules else [],
         encounter.encounter_type,
@@ -110,9 +112,7 @@ def _filter_inferred_pc_beats(
             kept.append(sel)
             continue
         # PC-side beat from narrator extraction — REJECT.
-        source = (
-            "narrator_self" if sel.actor == narrating_player else "peer_narration"
-        )
+        source = "narrator_self" if sel.actor == narrating_player else "peer_narration"
         reason = "inferred_pc_beat_no_explicit_action"
         with encounter_beat_skipped_span(
             reason=reason,
@@ -141,7 +141,11 @@ def _filter_inferred_pc_beats(
         logger.warning(
             "confrontation.inferred_pc_beat_rejected actor=%s source=%s "
             "narrating_player=%s beat_id=%s reason=%s",
-            sel.actor, source, narrating_player, sel.beat_id, reason,
+            sel.actor,
+            source,
+            narrating_player,
+            sel.beat_id,
+            reason,
         )
     return kept
 
@@ -221,9 +225,7 @@ class NarrationApplyOutcome:
     magic: MagicApplyResult | None = None
 
 
-def apply_magic_working(
-    *, snapshot: GameSnapshot, patch_field: dict
-) -> MagicApplyResult:
+def apply_magic_working(*, snapshot: GameSnapshot, patch_field: dict) -> MagicApplyResult:
     """Parse a ``game_patch.magic_working`` dict, validate, and apply.
 
     Returns ``MagicApplyResult`` aggregating the mutated ledger /
@@ -244,15 +246,11 @@ def apply_magic_working(
     + apply seam only.
     """
     if snapshot.magic_state is None:
-        raise MagicWorkingParseError(
-            "magic_working emitted but world has no magic_state loaded"
-        )
+        raise MagicWorkingParseError("magic_working emitted but world has no magic_state loaded")
     try:
         working = MagicWorking.model_validate(patch_field)
     except ValidationError as e:
-        raise MagicWorkingParseError(
-            f"magic_working schema invalid: {e}"
-        ) from e
+        raise MagicWorkingParseError(f"magic_working schema invalid: {e}") from e
 
     flags = magic_validate(working, snapshot.magic_state.config)
 
@@ -276,7 +274,9 @@ def apply_magic_working(
         try:
             bar = snapshot.magic_state.get_bar(
                 BarKey(
-                    scope="character", owner_id=working.actor, bar_id=cost_type,
+                    scope="character",
+                    owner_id=working.actor,
+                    bar_id=cost_type,
                 )
             )
         except KeyError:
@@ -414,16 +414,12 @@ def _apply_magic_status_promotions(
     """
     from sidequest.game.status import StatusSeverity
 
-    promotions = promote_crossings_to_status_changes(
-        result=magic_result, snapshot=snapshot
-    )
+    promotions = promote_crossings_to_status_changes(result=magic_result, snapshot=snapshot)
     if not promotions:
         return
 
     turn_num = snapshot.turn_manager.interaction
-    encounter_type = (
-        snapshot.encounter.encounter_type if snapshot.encounter else None
-    )
+    encounter_type = snapshot.encounter.encounter_type if snapshot.encounter else None
     for promo in promotions:
         target = next(
             (c for c in snapshot.characters if c.core.name == promo.actor),
@@ -433,7 +429,9 @@ def _apply_magic_status_promotions(
             logger.warning(
                 "magic.status_promotion_unknown_actor actor=%s text=%s "
                 "player=%s — bar fired but no matching character.core.name",
-                promo.actor, promo.status_text, player_name,
+                promo.actor,
+                promo.status_text,
+                player_name,
             )
             continue
         _append_status_to_actor(
@@ -553,9 +551,7 @@ def _apply_narration_result_to_snapshot(
     magic_working_field = getattr(result, "magic_working", None)
     if magic_working_field is not None:
         try:
-            outcome.magic = apply_magic_working(
-                snapshot=snapshot, patch_field=magic_working_field
-            )
+            outcome.magic = apply_magic_working(snapshot=snapshot, patch_field=magic_working_field)
         except MagicWorkingParseError as e:
             # Log + continue — narration is already delivered; the parse
             # error must not crash the apply pipeline. Task 3.5 will
@@ -656,6 +652,7 @@ def _apply_narration_result_to_snapshot(
         # don't sweep on the first location set (no scene to leave).
         if old_loc and old_loc != result.location:
             from sidequest.server.status_clear import clear_scratch_on_scene_end
+
             clear_scratch_on_scene_end(
                 snapshot,
                 reason="location_change",
@@ -765,8 +762,7 @@ def _apply_narration_result_to_snapshot(
     items_discarded = getattr(result, "items_discarded", None) or []
     items_consumed = getattr(result, "items_consumed", None) or []
     if (
-        result.items_gained or result.items_lost or items_discarded
-        or items_consumed
+        result.items_gained or result.items_lost or items_discarded or items_consumed
     ) and snapshot.characters:
         character = snapshot.characters[0]
         turn_num = snapshot.turn_manager.interaction
@@ -778,7 +774,13 @@ def _apply_narration_result_to_snapshot(
             )
             category_raw = str(entry.get("category", "") or "").strip().lower()
             allowed = {
-                "weapon", "armor", "tool", "consumable", "quest", "treasure", "misc",
+                "weapon",
+                "armor",
+                "tool",
+                "consumable",
+                "quest",
+                "treasure",
+                "misc",
             }
             category = category_raw if category_raw in allowed else "misc"
             slug = name_val.lower().replace(" ", "_").replace("-", "_")
@@ -828,15 +830,13 @@ def _apply_narration_result_to_snapshot(
                 logger.warning(
                     "state.container_gate_unreachable player=%s "
                     "container=%s reason=snapshot_location_empty round=%d",
-                    player_name, container_id, round_number,
+                    player_name,
+                    container_id,
+                    round_number,
                 )
             elif container_id and room_id:
                 room_state = snapshot.room_states.get(room_id)
-                prior = (
-                    room_state.containers.get(container_id)
-                    if room_state is not None
-                    else None
-                )
+                prior = room_state.containers.get(container_id) if room_state is not None else None
                 if prior is not None and prior.retrieved:
                     # Duplicate retrieval — apply-time gate fires. Item
                     # is NOT appended, prior_retrieved_at_round is
@@ -865,8 +865,11 @@ def _apply_narration_result_to_snapshot(
                             "state.container_retrieval_blocked player=%s "
                             "room=%s container=%s prior_round=%s "
                             "current_round=%s",
-                            player_name, room_id, container_id,
-                            prior.retrieved_at_round, round_number,
+                            player_name,
+                            room_id,
+                            container_id,
+                            prior.retrieved_at_round,
+                            round_number,
                         )
                     continue  # skip the inventory append for this entry
 
@@ -892,7 +895,10 @@ def _apply_narration_result_to_snapshot(
                     logger.info(
                         "state.container_retrieval_recorded player=%s "
                         "room=%s container=%s round=%d",
-                        player_name, room_id, container_id, round_number,
+                        player_name,
+                        room_id,
+                        container_id,
+                        round_number,
                     )
 
             item_dict = _narrator_item_dict(entry)
@@ -936,7 +942,9 @@ def _apply_narration_result_to_snapshot(
                 logger.warning(
                     "state.inventory_discard_miss player=%s turn=%d name=%r "
                     "reason=no_carried_match",
-                    player_name, turn_num, discard_name,
+                    player_name,
+                    turn_num,
+                    discard_name,
                 )
 
         # Story 45-15: items_consumed — used-up consumables drop from
@@ -964,7 +972,9 @@ def _apply_narration_result_to_snapshot(
                 logger.warning(
                     "state.inventory_consume_miss player=%s turn=%d "
                     "name=%r reason=no_inventory_match",
-                    player_name, turn_num, consume_name,
+                    player_name,
+                    turn_num,
+                    consume_name,
                 )
 
         # Span emission replaces the prior direct ``_watcher_publish`` —
@@ -1114,9 +1124,7 @@ def _apply_narration_result_to_snapshot(
         )
 
         # (a) Narrator-initiated encounter
-        if result.confrontation and (
-            snapshot.encounter is None or snapshot.encounter.resolved
-        ):
+        if result.confrontation and (snapshot.encounter is None or snapshot.encounter.resolved):
             if not result.npcs_present:
                 with encounter_empty_actor_list_span(
                     encounter_type=result.confrontation,
@@ -1125,7 +1133,8 @@ def _apply_narration_result_to_snapshot(
                 ):
                     logger.warning(
                         "encounter.empty_actor_list confrontation=%s player=%s",
-                        result.confrontation, player_name,
+                        result.confrontation,
+                        player_name,
                     )
             instantiate_encounter_from_trigger(
                 snapshot=snapshot,
@@ -1169,9 +1178,7 @@ def _apply_narration_result_to_snapshot(
                 enc.encounter_type,
             )
             if cdef is None:
-                raise ValueError(
-                    f"active encounter type {enc.encounter_type!r} not in pack"
-                )
+                raise ValueError(f"active encounter type {enc.encounter_type!r} not in pack")
 
             # ---- Sealed-letter lookup branch (T5, dogfight port) ----
             # When the confrontation declares ResolutionMode.sealed_letter_lookup
@@ -1208,7 +1215,9 @@ def _apply_narration_result_to_snapshot(
                     commits[actor.role] = sel.beat_id
 
                 sl_outcome = resolve_sealed_letter_lookup(
-                    enc, commits, cdef.interaction_table,
+                    enc,
+                    commits,
+                    cdef.interaction_table,
                 )
                 outcome.sealed_letter = sl_outcome
                 # Replace, do not append: only the most recent cell's hint
@@ -1256,10 +1265,7 @@ def _apply_narration_result_to_snapshot(
                 # (``from_explicit_action=True``) preserves the raise — if
                 # ``dispatch_dice_throw`` reached us without stashing, that
                 # IS a programming error and should fail loud.
-                if (
-                    opposed_player_d20 is None
-                    and not from_explicit_action
-                ):
+                if opposed_player_d20 is None and not from_explicit_action:
                     for sel in gated_selections:
                         _watcher_publish(
                             "state_transition",
@@ -1294,9 +1300,7 @@ def _apply_narration_result_to_snapshot(
                         snapshot=snapshot,
                     )
                     if outcome_obj.encounter_resolved:
-                        snapshot.pending_resolution_signal = (
-                            _build_resolution_signal(enc)
-                        )
+                        snapshot.pending_resolution_signal = _build_resolution_signal(enc)
                 _legacy_beat_path = False
             else:
                 _legacy_beat_path = True
@@ -1318,9 +1322,7 @@ def _apply_narration_result_to_snapshot(
                 for sel in selections:
                     actor = enc.find_actor(sel.actor)
                     side = actor.side if actor else "unknown"
-                    is_rolling_actor = (
-                        dice_actor is not None and sel.actor == dice_actor
-                    )
+                    is_rolling_actor = dice_actor is not None and sel.actor == dice_actor
                     # Fallback when dice_actor wasn't threaded through (older
                     # call sites): drop player-side selections to preserve
                     # the prior no-double-apply guarantee, but no longer
@@ -1330,7 +1332,9 @@ def _apply_narration_result_to_snapshot(
                     if is_rolling_actor:
                         with encounter_beat_skipped_span(
                             reason="dice_replay_turn",
-                            actor=sel.actor, actor_side=side, beat_id=sel.beat_id,
+                            actor=sel.actor,
+                            actor_side=side,
+                            beat_id=sel.beat_id,
                         ):
                             pass
                         _watcher_publish(
@@ -1368,7 +1372,8 @@ def _apply_narration_result_to_snapshot(
                 if result_apply.skipped_reason is not None:
                     with encounter_beat_skipped_span(
                         reason=result_apply.skipped_reason,
-                        actor=actor.name, actor_side=actor.side,
+                        actor=actor.name,
+                        actor_side=actor.side,
                         beat_id=sel.beat_id,
                     ):
                         pass
@@ -1396,8 +1401,12 @@ def _apply_narration_result_to_snapshot(
                         "actor": actor.name,
                         "actor_side": actor.side,
                         "beat_id": sel.beat_id,
-                        "beat_kind": str(beat.kind.value) if hasattr(beat.kind, "value") else str(beat.kind),
-                        "outcome_tier": sel.outcome.value if hasattr(sel.outcome, "value") else str(sel.outcome),
+                        "beat_kind": str(beat.kind.value)
+                        if hasattr(beat.kind, "value")
+                        else str(beat.kind),
+                        "outcome_tier": sel.outcome.value
+                        if hasattr(sel.outcome, "value")
+                        else str(sel.outcome),
                         "own_delta": own_delta,
                         "opponent_delta": opp_delta,
                         "metric_target": enc.encounter_type,
@@ -1448,10 +1457,9 @@ def _apply_narration_result_to_snapshot(
     if result.status_changes:
         from sidequest.game.status import StatusSeverity
         from sidequest.server.status_clear import apply_explicit_status_clears
+
         turn_num = snapshot.turn_manager.interaction
-        encounter_type = (
-            snapshot.encounter.encounter_type if snapshot.encounter else None
-        )
+        encounter_type = snapshot.encounter.encounter_type if snapshot.encounter else None
         # Explicit clears first — process every {"actor": ..., "clear": "<text>"}
         # entry so a single turn can clear an old status and add a new one
         # without the new ADD getting steamrolled. The clear path is the
@@ -1476,7 +1484,8 @@ def _apply_narration_result_to_snapshot(
             except ValueError:
                 logger.warning(
                     "status_change.invalid_severity actor=%s severity=%s",
-                    actor_name, severity_raw,
+                    actor_name,
+                    severity_raw,
                 )
                 continue
             if not actor_name or not text:
@@ -1488,7 +1497,8 @@ def _apply_narration_result_to_snapshot(
             if target is None:
                 logger.warning(
                     "status_change.unknown_actor actor=%s text=%s",
-                    actor_name, text,
+                    actor_name,
+                    text,
                 )
                 continue
             _append_status_to_actor(
@@ -1506,6 +1516,7 @@ def _apply_narration_result_to_snapshot(
 
 def _build_resolution_signal(enc: object) -> object:
     from sidequest.game.resolution_signal import ResolutionSignal
+
     return ResolutionSignal(
         encounter_type=enc.encounter_type,
         outcome=enc.outcome or "",
@@ -1535,6 +1546,7 @@ def _roll_d20_server_side() -> int:
     coverage of the shift bands without touching the global RNG.
     """
     import random
+
     return random.randint(1, 20)
 
 
@@ -1578,11 +1590,7 @@ def _resolve_opposed_check_branch(
         encounter_resolved_span,
     )
 
-    if (
-        pending_player_d20 is None
-        or pending_player_beat_id is None
-        or pending_player_actor is None
-    ):
+    if pending_player_d20 is None or pending_player_beat_id is None or pending_player_actor is None:
         raise ValueError(
             f"opposed_check encounter {encounter.encounter_type!r} narration "
             f"arrived without a pending DICE_THROW player roll — "
@@ -1699,7 +1707,11 @@ def _resolve_opposed_check_branch(
         (opponent_actor, opponent_beat, opponent_selection.beat_id),
     ):
         applied = apply_beat(
-            encounter, sel_actor, sel_beat, roll_result.tier, turn=turn,
+            encounter,
+            sel_actor,
+            sel_beat,
+            roll_result.tier,
+            turn=turn,
         )
         if applied.skipped_reason is not None:
             with encounter_beat_skipped_span(
@@ -1734,9 +1746,7 @@ def _resolve_opposed_check_branch(
                 "actor_side": sel_actor.side,
                 "beat_id": beat_id,
                 "beat_kind": (
-                    sel_beat.kind.value
-                    if hasattr(sel_beat.kind, "value")
-                    else str(sel_beat.kind)
+                    sel_beat.kind.value if hasattr(sel_beat.kind, "value") else str(sel_beat.kind)
                 ),
                 "outcome_tier": roll_result.tier.value,
                 "own_delta": own_delta,

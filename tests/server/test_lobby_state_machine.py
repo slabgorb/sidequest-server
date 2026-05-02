@@ -24,6 +24,7 @@ not transition CHARGEN → ABANDONED; no lobby-state OTEL spans are emitted.
 
 See `sprint/context/context-story-45-2.md` for the full design.
 """
+
 from __future__ import annotations
 
 import sidequest.telemetry.watcher_hub as _hub
@@ -292,12 +293,10 @@ def test_lobby_state_transition_span_fires_on_seat() -> None:
     # The transition span must fire at least once with the right shape.
     transitions = [(name, p) for name, p in captured if name == "lobby.state_transition"]
     assert transitions, (
-        f"lobby.state_transition must fire on seat(); captured={[n for n,_ in captured]}"
+        f"lobby.state_transition must fire on seat(); captured={[n for n, _ in captured]}"
     )
     # At least one of the captured transitions must describe the seat call.
-    seat_transition = [
-        p for _, p in transitions if p.get("to_state") in ("chargen", "CHARGEN")
-    ]
+    seat_transition = [p for _, p in transitions if p.get("to_state") in ("chargen", "CHARGEN")]
     assert seat_transition, (
         f"At least one lobby.state_transition must report to_state=chargen; got {transitions}"
     )
@@ -333,8 +332,7 @@ def test_lobby_seat_abandoned_span_fires_on_chargen_disconnect() -> None:
 
     abandoned = [p for name, p in captured if name == "lobby.seat_abandoned"]
     assert abandoned, (
-        f"lobby.seat_abandoned must fire on chargen disconnect; "
-        f"captured={[n for n,_ in captured]}"
+        f"lobby.seat_abandoned must fire on chargen disconnect; captured={[n for n, _ in captured]}"
     )
     payload = abandoned[0]
     assert payload.get("player_id") == "hant"
@@ -371,8 +369,7 @@ def test_no_seat_abandoned_span_when_playing_peer_disconnects() -> None:
 
     abandoned = [p for name, p in captured if name == "lobby.seat_abandoned"]
     assert not abandoned, (
-        f"lobby.seat_abandoned must NOT fire when a playing peer disconnects; "
-        f"got {abandoned}"
+        f"lobby.seat_abandoned must NOT fire when a playing peer disconnects; got {abandoned}"
     )
 
 

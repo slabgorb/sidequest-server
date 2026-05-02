@@ -3,6 +3,7 @@
 Run at pack load and in CI. Pack fails to load on any error (no silent
 fallbacks). Every error names the kind + rule index for debuggability.
 """
+
 from __future__ import annotations
 
 from typing import Any, get_args, get_origin
@@ -45,11 +46,7 @@ def _unwrap_rootmodel(ann: Any) -> Any:
     wrapped scalar.  They carry model_fields = {'root': FieldInfo(annotation=X)}.
     Unwrap them so that mask-compatibility checks see the underlying primitive.
     """
-    if (
-        isinstance(ann, type)
-        and issubclass(ann, RootModel)
-        and "root" in ann.model_fields
-    ):
+    if isinstance(ann, type) and issubclass(ann, RootModel) and "root" in ann.model_fields:
         return ann.model_fields["root"].annotation
     return ann
 
@@ -116,9 +113,7 @@ def _schema_fields_for_kind(kind: str) -> dict[str, Any]:
 
     payload_field = message_cls.model_fields.get("payload")
     if payload_field is None:
-        raise ValidationError(
-            f"kind {kind!r} has no payload field on its message class"
-        )
+        raise ValidationError(f"kind {kind!r} has no payload field on its message class")
 
     payload_cls = payload_field.annotation
     if not (isinstance(payload_cls, type) and issubclass(payload_cls, BaseModel)):
@@ -222,9 +217,7 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
 
         elif isinstance(rule, IncludeIfRule):
             # Checks 4 + 7: predicate name exists; arg is a real field.
-            _check_predicate(
-                rule.include_if, kind=rule.kind, rule_idx=idx, schema=schema
-            )
+            _check_predicate(rule.include_if, kind=rule.kind, rule_idx=idx, schema=schema)
 
         elif isinstance(rule, VisibilityTagRule):
             # visibility_tag has no payload-schema dependency: it reads the
@@ -241,9 +234,7 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
                         f"{spec.field!r} in redact_fields"
                     )
                 # Checks 4 + 7: predicate name exists; arg is a real field.
-                _check_predicate(
-                    spec.unless, kind=rule.kind, rule_idx=idx, schema=schema
-                )
+                _check_predicate(spec.unless, kind=rule.kind, rule_idx=idx, schema=schema)
                 # Check 5: mask type must be compatible with the field type.
                 field_type = schema[spec.field]
                 if not _mask_is_compatible(spec.mask, field_type):
@@ -265,6 +256,4 @@ def validate_projection_rules(rules: ProjectionRules) -> None:
                 seen_redactions[key] = spec.unless
 
         else:
-            raise ValidationError(
-                f"rule[{idx}]: unrecognized rule type {type(rule).__name__}"
-            )
+            raise ValidationError(f"rule[{idx}]: unrecognized rule type {type(rule).__name__}")

@@ -45,7 +45,16 @@ from sidequest.genre.models.character import MechanicalEffects
 
 class TestHookType:
     def test_all_variants_present(self) -> None:
-        expected = {"Origin", "Wound", "Relationship", "Goal", "Trait", "Debt", "Secret", "Possession"}
+        expected = {
+            "Origin",
+            "Wound",
+            "Relationship",
+            "Goal",
+            "Trait",
+            "Debt",
+            "Secret",
+            "Possession",
+        }
         assert {h.value for h in HookType} == expected
 
     def test_is_string_enum(self) -> None:

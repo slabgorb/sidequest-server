@@ -44,11 +44,7 @@ def test_per_actor_state_default_is_empty_dict_not_none():
 def test_per_actor_state_default_from_yaml_omits_field():
     """YAML without per_actor_state deserializes to empty dict (backward
     compat for old saves and existing fixtures that pre-date the field)."""
-    blob = yaml.safe_load(
-        "name: Iceman\n"
-        "role: wingman\n"
-        "side: player\n"
-    )
+    blob = yaml.safe_load("name: Iceman\nrole: wingman\nside: player\n")
     actor = EncounterActor.model_validate(blob)
     assert actor.name == "Iceman"
     assert actor.role == "wingman"
@@ -68,13 +64,13 @@ def test_per_actor_state_accepts_json_safe_values():
         role="instructor",
         side="opponent",
         per_actor_state={
-            "bearing": "merge",       # string
-            "range": 500,              # int
-            "energy": 0.75,            # float
-            "gun_solution": False,     # bool
-            "wingman": None,           # null
+            "bearing": "merge",  # string
+            "range": 500,  # int
+            "energy": 0.75,  # float
+            "gun_solution": False,  # bool
+            "wingman": None,  # null
             "nested": {"weapon": "vulcan", "rounds": 940},  # nested dict
-            "tags": ["bandit", "bogey", "tally-ho"],         # nested list
+            "tags": ["bandit", "bogey", "tally-ho"],  # nested list
         },
     )
     # Round-trip through JSON to prove every value survives the wire.

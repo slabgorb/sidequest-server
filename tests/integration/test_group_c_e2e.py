@@ -8,6 +8,7 @@ orchestrator would send, retrieved from Orchestrator.build_narrator_prompt
 (the same call that _execute_narration_turn makes downstream of the real
 session handler).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,14 +37,14 @@ from tests.agents.test_orchestrator import make_spawn_fn
 
 pytestmark = pytest.mark.asyncio
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def _character(name: str, edge_current: int) -> Character:
     core = CreatureCore(
-        name=name, description="d", personality="p",
+        name=name,
+        description="d",
+        personality="p",
         inventory=Inventory(),
         edge=EdgePool(current=edge_current, max=10, base_max=10),
     )
@@ -96,7 +97,9 @@ async def test_zero_edge_pc_in_mutant_wasteland_injects_permadeath_directives():
 
     orch = Orchestrator(client=ClaudeClient(spawn_fn=make_spawn_fn("narration")))
     prompt, _ = await orch.build_narrator_prompt(
-        "block the beast", ctx, tier=NarratorPromptTier.Full,
+        "block the beast",
+        ctx,
+        tier=NarratorPromptTier.Full,
     )
 
     assert "must_narrate" in prompt
@@ -115,7 +118,9 @@ async def test_zero_edge_pc_in_caverns_injects_comedic_directives():
 
     orch = Orchestrator(client=ClaudeClient(spawn_fn=make_spawn_fn("narration")))
     prompt, _ = await orch.build_narrator_prompt(
-        "retreat", ctx, tier=NarratorPromptTier.Full,
+        "retreat",
+        ctx,
+        tier=NarratorPromptTier.Full,
     )
     # Comedic verdict — "humiliated" — with one-liner + slapstick cues:
     assert "one-liner" in prompt or "slapstick" in prompt
@@ -132,7 +137,9 @@ async def test_no_lethality_directives_when_character_above_zero_edge():
 
     orch = Orchestrator(client=ClaudeClient(spawn_fn=make_spawn_fn("narration")))
     prompt, _ = await orch.build_narrator_prompt(
-        "explore", ctx, tier=NarratorPromptTier.Full,
+        "explore",
+        ctx,
+        tier=NarratorPromptTier.Full,
     )
     assert "wasteland is indifferent" not in prompt
     assert "miraculous rescues" not in prompt

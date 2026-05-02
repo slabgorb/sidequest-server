@@ -1,4 +1,5 @@
 """Beat dispatch tests — clock advance via beat kinds."""
+
 from __future__ import annotations
 
 import pytest

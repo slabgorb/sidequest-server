@@ -239,6 +239,7 @@ async def test_cleanup_closes_per_session_store_when_no_room(tmp_path):
     # The store WAS closed — non-slug path owns its own store. Operating
     # on it now should raise.
     import sqlite3
+
     with pytest.raises(sqlite3.ProgrammingError):
         store.save(_fresh_snapshot())
 
@@ -294,8 +295,7 @@ def test_broadcast_returns_only_sockets_with_attached_outbound_queues():
     )
     delivered_player_ids = {pid for _sid, pid in delivered if pid is not None}
     assert delivered_player_ids == {"charlie", "snoopy", "linus"}, (
-        f"Per-recipient player_id resolution must come from `_sockets`; got "
-        f"{delivered_player_ids}."
+        f"Per-recipient player_id resolution must come from `_sockets`; got {delivered_player_ids}."
     )
 
     # Lucy was in `_connected` but had no outbound queue — she got nothing.
@@ -341,4 +341,3 @@ def test_broadcast_returns_empty_list_when_no_sockets_attached():
     delivered = room.broadcast({"x": 1}, exclude_socket_id=None)
     assert delivered == []
     assert room.connected_player_ids() == ["alice"]  # _connected still says 1
-

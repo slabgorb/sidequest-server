@@ -4,6 +4,7 @@ Per spec §3.3 and §7.3: the GM panel relies on this span to verify that
 every story-time advance happened via a real beat (no silent skips, no
 narrator improvisation of duration).
 """
+
 from __future__ import annotations
 
 from ._core import FLAT_ONLY_SPANS
@@ -23,11 +24,14 @@ def emit_clock_advance(
     trigger: str,
 ) -> None:
     """Emit a `clock.advance` span. Fire-and-forget (FLAT_ONLY_SPANS)."""
-    with Span.open(SPAN_CLOCK_ADVANCE, attrs={
-        "beat_kind": beat_kind,
-        "duration_hours": float(duration_hours),
-        "t_before_h": float(t_before_h),
-        "t_after_h": float(t_after_h),
-        "trigger": trigger,
-    }):
+    with Span.open(
+        SPAN_CLOCK_ADVANCE,
+        attrs={
+            "beat_kind": beat_kind,
+            "duration_hours": float(duration_hours),
+            "t_before_h": float(t_before_h),
+            "t_after_h": float(t_after_h),
+            "trigger": trigger,
+        },
+    ):
         pass

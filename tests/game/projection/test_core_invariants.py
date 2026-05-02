@@ -1,4 +1,5 @@
 """CoreInvariantStage — GM sees truth."""
+
 from __future__ import annotations
 
 import json

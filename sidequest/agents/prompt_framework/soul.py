@@ -76,9 +76,7 @@ class SoulData(BaseModel):
             narrator_excluded = agent == "narrator" and p.name in _NARRATOR_COVERED_PRINCIPLES
             if agent_match and not narrator_excluded:
                 filtered.append(p)
-        return "\n\n".join(
-            f"<important>\n{p.name}: {p.text}\n</important>" for p in filtered
-        )
+        return "\n\n".join(f"<important>\n{p.name}: {p.text}\n</important>" for p in filtered)
 
 
 _PRINCIPLE_RE = re.compile(r"\*\*([^*]+?)\.\*\*\s*(.+)")
@@ -116,11 +114,7 @@ def parse_soul_md(path: Path | str) -> SoulData:
     for m in _PRINCIPLE_RE.finditer(content):
         raw_text = m.group(2).strip()
         agents_match = _AGENTS_RE.search(raw_text)
-        agents = (
-            [s.strip() for s in agents_match.group(1).split(",")]
-            if agents_match
-            else ["all"]
-        )
+        agents = [s.strip() for s in agents_match.group(1).split(",")] if agents_match else ["all"]
         text = _AGENTS_RE.sub("", raw_text).strip()
         principles.append(SoulPrinciple(name=m.group(1), text=text, agents=agents))
 
@@ -151,9 +145,7 @@ def _extract_description(content: str) -> str | None:
     end = first_principle_idx if first_principle_idx is not None else len(lines)
 
     # Collect non-empty lines between title and first principle.
-    desc_lines = [
-        line for line in lines[title_idx + 1 : end] if line.strip()
-    ]
+    desc_lines = [line for line in lines[title_idx + 1 : end] if line.strip()]
 
     if not desc_lines:
         return None

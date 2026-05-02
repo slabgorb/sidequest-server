@@ -25,6 +25,7 @@ Watcher events:
     disambiguator actually allocates a new slug. Must NOT fire on the
     MP-join short-circuit path.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -171,9 +172,7 @@ def test_mp_join_existing_emits_session_join_existing_span(
     assert "lobby.session_join_existing" in span_names
 
     span = next(
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "lobby.session_join_existing"
+        s for s in otel_capture.get_finished_spans() if s.name == "lobby.session_join_existing"
     )
     assert span.attributes["slug"] == "2026-04-26-flickering_reach-mp"
     assert span.attributes["player_name"] == "John"

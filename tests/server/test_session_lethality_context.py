@@ -6,6 +6,7 @@ session-handler code path — not just unit-tested in isolation.
 
 CLAUDE.md: "Every Test Suite Needs a Wiring Test."
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,9 +17,7 @@ from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.session_handler import _build_turn_context, _SessionData
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 def test_build_turn_context_populates_lethality_policy_from_pack():

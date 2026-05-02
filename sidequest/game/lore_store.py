@@ -89,6 +89,7 @@ class LoreFragment(BaseModel):
         if not v.strip():
             raise ValueError("content must not be blank or whitespace-only")
         return v
+
     turn_created: int | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     # Semantic-search fields populated asynchronously by the embedding

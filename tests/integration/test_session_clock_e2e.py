@@ -24,6 +24,7 @@ cover (see comment in ``test_yield_action_session_wiring.py``).
 
 Per spec ``docs/superpowers/specs/2026-05-01-session-aggregate-design.md``.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -44,10 +45,16 @@ def _install_yieldable_encounter(sd) -> None:
     enc = StructuredEncounter(
         encounter_type="negotiation",
         player_metric=EncounterMetric(
-            name="resolve", current=0, starting=0, threshold=10,
+            name="resolve",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="pressure", current=0, starting=0, threshold=10,
+            name="pressure",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         beat=0,
         structured_phase=EncounterPhase.Setup,
@@ -81,7 +88,8 @@ def _seed_scratch_status(sd) -> None:
 
 @pytest.mark.asyncio
 async def test_yield_via_handle_message_advances_session_clock_and_clears_scratch(
-    session_handler_factory, otel_capture,
+    session_handler_factory,
+    otel_capture,
 ):
     """End-to-end: YIELD via ``handle_message`` -> Session.end_scene fires.
 
@@ -111,8 +119,7 @@ async def test_yield_via_handle_message_advances_session_clock_and_clears_scratc
     assert sd._room is not None
     assert sd._room.session.clock.t_hours == 0.0
     assert any(
-        s.severity == StatusSeverity.Scratch
-        for s in sd.snapshot.characters[0].core.statuses
+        s.severity == StatusSeverity.Scratch for s in sd.snapshot.characters[0].core.statuses
     )
 
     # Drive the production WebSocket front-door router.
@@ -142,19 +149,13 @@ async def test_yield_via_handle_message_advances_session_clock_and_clears_scratc
     span_names = [s.name for s in otel_capture.get_finished_spans()]
 
     # clock.advance assertion (the orbital half).
-    assert "clock.advance" in span_names, (
-        f"expected clock.advance span, got {span_names}"
-    )
-    clock_span = next(
-        s for s in otel_capture.get_finished_spans() if s.name == "clock.advance"
-    )
+    assert "clock.advance" in span_names, f"expected clock.advance span, got {span_names}"
+    clock_span = next(s for s in otel_capture.get_finished_spans() if s.name == "clock.advance")
     assert clock_span.attributes["beat_kind"] == "encounter"
     assert clock_span.attributes["trigger"] == "scene-scene_end"
 
     # encounter.status_cleared assertion (the scratch-sweep half).
-    status_cleared_count = sum(
-        1 for n in span_names if n == "encounter.status_cleared"
-    )
+    status_cleared_count = sum(1 for n in span_names if n == "encounter.status_cleared")
     assert status_cleared_count >= 1, (
         f"expected >=1 encounter.status_cleared span (one per cleared "
         f"Scratch), got {status_cleared_count} in {span_names}"
@@ -162,6 +163,5 @@ async def test_yield_via_handle_message_advances_session_clock_and_clears_scratc
 
     # And the Scratch is actually gone from the character.
     assert not any(
-        s.severity == StatusSeverity.Scratch
-        for s in sd.snapshot.characters[0].core.statuses
+        s.severity == StatusSeverity.Scratch for s in sd.snapshot.characters[0].core.statuses
     ), "Scratch status should have been cleared by scene-end sweep"

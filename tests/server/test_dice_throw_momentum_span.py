@@ -29,6 +29,7 @@ This test asserts the new ``encounter.momentum_broadcast`` span:
 4. **SPAN_ROUTES wiring:** the new span name appears in
    ``SPAN_ROUTES`` so the GM-panel watcher feed picks it up.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -87,30 +88,36 @@ def otel_capture():
 
 
 def _install_combat_def(sd, *, resolution_mode: str = "beat_selection") -> None:
-    cdef = ConfrontationDef.model_validate({
-        "type": "combat",
-        "label": "Dungeon Combat",
-        "category": "combat",
-        "resolution_mode": resolution_mode,
-        "opponent_default_stats": (
-            {"STR": 12} if resolution_mode == "opposed_check" else {}
-        ),
-        "player_metric": MetricDef(
-            name="momentum", starting=0, threshold=10,
-        ).model_dump(),
-        "opponent_metric": MetricDef(
-            name="momentum", starting=0, threshold=10,
-        ).model_dump(),
-        "beats": [
-            BeatDef.model_validate({
-                "id": "attack",
-                "label": "Attack",
-                "kind": "strike",
-                "base": 3,
-                "stat_check": "STRENGTH",
-            }).model_dump(),
-        ],
-    })
+    cdef = ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Dungeon Combat",
+            "category": "combat",
+            "resolution_mode": resolution_mode,
+            "opponent_default_stats": ({"STR": 12} if resolution_mode == "opposed_check" else {}),
+            "player_metric": MetricDef(
+                name="momentum",
+                starting=0,
+                threshold=10,
+            ).model_dump(),
+            "opponent_metric": MetricDef(
+                name="momentum",
+                starting=0,
+                threshold=10,
+            ).model_dump(),
+            "beats": [
+                BeatDef.model_validate(
+                    {
+                        "id": "attack",
+                        "label": "Attack",
+                        "kind": "strike",
+                        "base": 3,
+                        "stat_check": "STRENGTH",
+                    }
+                ).model_dump(),
+            ],
+        }
+    )
     sd.genre_pack.rules.confrontations = [cdef]
 
 
@@ -118,10 +125,16 @@ def _install_active_encounter(sd) -> None:
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         beat=0,
         structured_phase=EncounterPhase.Setup,
@@ -182,7 +195,8 @@ SPAN_NAME = "encounter.momentum_broadcast"
 
 @pytest.mark.asyncio
 async def test_momentum_broadcast_span_fires_on_dice_throw(
-    session_handler_factory, otel_capture,
+    session_handler_factory,
+    otel_capture,
 ):
     """``encounter.momentum_broadcast`` fires with the post-apply momentum.
 
@@ -209,10 +223,7 @@ async def test_momentum_broadcast_span_fires_on_dice_throw(
 
     await handler.handle_message(_throw(face=15))
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == SPAN_NAME
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == SPAN_NAME]
     assert len(spans) >= 1, (
         f"expected at least one '{SPAN_NAME}' span on a successful "
         f"dice-throw beat; got "
@@ -222,10 +233,7 @@ async def test_momentum_broadcast_span_fires_on_dice_throw(
     # Find the dice_throw-sourced span (post-narration emit will fire a
     # second one with source='narration_apply'; we only check the dice
     # path here).
-    dice_spans = [
-        s for s in spans
-        if (s.attributes or {}).get("source") == "dice_throw"
-    ]
+    dice_spans = [s for s in spans if (s.attributes or {}).get("source") == "dice_throw"]
     assert len(dice_spans) == 1, (
         f"exactly one momentum_broadcast span should fire from the "
         f"dice path; got {len(dice_spans)} (sources: "
@@ -262,6 +270,7 @@ def test_momentum_broadcast_span_is_in_span_routes():
     )
 
     route = SPAN_ROUTES[SPAN_NAME]
+
     # The route must extract attributes the GM panel needs to render
     # the dial event. We don't pin the exact field names beyond the
     # core five — the test verifies the contract, not the schema.
@@ -289,7 +298,8 @@ def test_momentum_broadcast_span_is_in_span_routes():
 
 @pytest.mark.asyncio
 async def test_momentum_broadcast_span_does_not_fire_on_opposed_check(
-    session_handler_factory, otel_capture,
+    session_handler_factory,
+    otel_capture,
 ):
     """Opposed-check defers beat-apply; no broadcast → no span.
 
@@ -315,9 +325,9 @@ async def test_momentum_broadcast_span_does_not_fire_on_opposed_check(
     await handler.handle_message(_throw(face=15))
 
     dice_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == SPAN_NAME
-        and (s.attributes or {}).get("source") == "dice_throw"
+        s
+        for s in otel_capture.get_finished_spans()
+        if s.name == SPAN_NAME and (s.attributes or {}).get("source") == "dice_throw"
     ]
     assert dice_spans == [], (
         f"opposed_check defers beat-apply; '{SPAN_NAME}' MUST NOT fire "
@@ -333,7 +343,8 @@ async def test_momentum_broadcast_span_does_not_fire_on_opposed_check(
 
 @pytest.mark.asyncio
 async def test_momentum_broadcast_span_does_not_fire_on_dispatch_error(
-    session_handler_factory, otel_capture,
+    session_handler_factory,
+    otel_capture,
 ):
     """When dispatch raises (e.g., unknown beat_id), no broadcast → no span.
 
@@ -360,9 +371,9 @@ async def test_momentum_broadcast_span_does_not_fire_on_dispatch_error(
     await handler.handle_message(_throw(face=15, beat_id="nonexistent_beat"))
 
     dice_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == SPAN_NAME
-        and (s.attributes or {}).get("source") == "dice_throw"
+        s
+        for s in otel_capture.get_finished_spans()
+        if s.name == SPAN_NAME and (s.attributes or {}).get("source") == "dice_throw"
     ]
     assert dice_spans == [], (
         f"DiceDispatchError before apply_beat → no broadcast → no "
@@ -395,7 +406,9 @@ async def test_momentum_broadcast_span_does_not_fire_on_dispatch_error(
 
 @pytest.mark.asyncio
 async def test_narration_apply_emits_momentum_broadcast_span(
-    session_handler_factory, otel_capture, tmp_path,
+    session_handler_factory,
+    otel_capture,
+    tmp_path,
 ):
     """Post-narration CONFRONTATION emit must fire ``encounter.momentum_broadcast``.
 
@@ -489,16 +502,18 @@ async def test_narration_apply_emits_momentum_broadcast_span(
     )
 
     await handler._execute_narration_turn(
-        sd, "I attack the goblin.", _build_turn_context(sd),
+        sd,
+        "I attack the goblin.",
+        _build_turn_context(sd),
     )
 
     # Find the narration_apply-sourced span. Filter strictly by source
     # — the dice path (which we're NOT exercising here) would emit
     # source="dice_throw"; only narration_apply is in scope.
     narration_apply_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == SPAN_NAME
-        and (s.attributes or {}).get("source") == "narration_apply"
+        s
+        for s in otel_capture.get_finished_spans()
+        if s.name == SPAN_NAME and (s.attributes or {}).get("source") == "narration_apply"
     ]
     assert len(narration_apply_spans) == 1, (
         f"expected exactly ONE '{SPAN_NAME}' span with "
@@ -506,7 +521,7 @@ async def test_narration_apply_emits_momentum_broadcast_span(
         f"{len(narration_apply_spans)}. AC2 (context-story-45-3.md) "
         f"requires the span fire from EVERY site that broadcasts a "
         f"CONFRONTATION post-mutation; the post-narration emit at "
-        f"_emit_event(\"CONFRONTATION\", ...) inside _execute_narration_turn "
+        f'_emit_event("CONFRONTATION", ...) inside _execute_narration_turn '
         f"is one such site. All {SPAN_NAME} spans seen: "
         f"{[(s.name, dict(s.attributes or {}).get('source', '?')) for s in otel_capture.get_finished_spans() if s.name == SPAN_NAME]!r}"
     )

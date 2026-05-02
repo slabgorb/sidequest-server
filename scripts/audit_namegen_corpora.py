@@ -169,10 +169,7 @@ def _format_report(entries: list[CorpusEntry]) -> str:
         by_status[entry.status].append(entry)
 
     lines: list[str] = ["# Namegen Corpus Audit", ""]
-    lines.append(
-        f"Thresholds: FAIL < {FAIL_BELOW_WORDS} words, "
-        f"THIN < {WARN_BELOW_WORDS} words."
-    )
+    lines.append(f"Thresholds: FAIL < {FAIL_BELOW_WORDS} words, THIN < {WARN_BELOW_WORDS} words.")
     lines.append("")
     lines.append(
         f"**Summary:** {len(by_status['FAIL'])} FAIL, "
@@ -190,9 +187,7 @@ def _format_report(entries: list[CorpusEntry]) -> str:
         lines.append("")
         lines.append("| Pack | Culture | Slot | Corpus | Word Count | Status |")
         lines.append("|------|---------|------|--------|-----------:|--------|")
-        rows_sorted = sorted(
-            rows, key=lambda r: (r.pack, r.culture, r.slot, r.corpus)
-        )
+        rows_sorted = sorted(rows, key=lambda r: (r.pack, r.culture, r.slot, r.corpus))
         for entry in rows_sorted:
             lines.append(
                 f"| {entry.pack} | {entry.culture} | {entry.slot} | "
@@ -204,17 +199,12 @@ def _format_report(entries: list[CorpusEntry]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Audit Markov namegen corpora across genre packs."
-    )
+    parser = argparse.ArgumentParser(description="Audit Markov namegen corpora across genre packs.")
     parser.add_argument(
         "--path",
         type=Path,
         default=DEFAULT_GENRE_PACKS,
-        help=(
-            "Path to a genre_packs/ directory. Defaults to "
-            "sidequest-content/genre_packs/."
-        ),
+        help=("Path to a genre_packs/ directory. Defaults to sidequest-content/genre_packs/."),
     )
     args = parser.parse_args(argv)
 

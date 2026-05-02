@@ -99,9 +99,7 @@ class SceneCache:
             "generation_time_ms": result.generation_time_ms,
             "worker": result.worker,
         }
-        self._sidecar_path(key).write_text(
-            json.dumps(sidecar_data, separators=(",", ":"))
-        )
+        self._sidecar_path(key).write_text(json.dumps(sidecar_data, separators=(",", ":")))
 
         # Track entry
         entry_size = self._entry_size(key)

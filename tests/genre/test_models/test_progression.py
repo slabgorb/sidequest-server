@@ -36,9 +36,14 @@ class TestAffinityTier:
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            AffinityTier.model_validate({
-                "name": "T", "description": "D", "abilities": [], "unknown": True,
-            })
+            AffinityTier.model_validate(
+                {
+                    "name": "T",
+                    "description": "D",
+                    "abilities": [],
+                    "unknown": True,
+                }
+            )
 
 
 class TestProgressionConfig:

@@ -5,6 +5,7 @@ the dual-dial ConfrontationDef schema (player_metric + opponent_metric, BeatDef.
 
 See Task 27 — canary migration for dual-track momentum Phase 3.
 """
+
 from __future__ import annotations
 
 import pytest

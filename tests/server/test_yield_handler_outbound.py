@@ -72,10 +72,16 @@ def _solo_combat_encounter():
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=4, starting=0, threshold=10,
+            name="momentum",
+            current=4,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=7, starting=0, threshold=10,
+            name="momentum",
+            current=7,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
@@ -88,10 +94,16 @@ def _multi_pc_encounter():
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=4, starting=0, threshold=10,
+            name="momentum",
+            current=4,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=7, starting=0, threshold=10,
+            name="momentum",
+            current=7,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
@@ -109,7 +121,9 @@ def _character(name: str = "Sam") -> Character:
         inventory=Inventory(),
     )
     return Character(
-        core=core, char_class="Fighter", race="Human",
+        core=core,
+        char_class="Fighter",
+        race="Human",
         backstory="A wandering fighter",
     )
 
@@ -124,7 +138,9 @@ def _make_yield_msg() -> YieldMessage:
 
 @pytest.mark.asyncio
 async def test_yield_solo_pc_emits_clear_confrontation_outbound(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     """The Parsley/Sage repro shape: solo PC clicks Yield, encounter
     resolves immediately. Handler must emit a CONFRONTATION message
@@ -159,12 +175,12 @@ async def test_yield_solo_pc_emits_clear_confrontation_outbound(
     # Lie-detector trail: grep -i yield /tmp/sidequest-server.log must
     # find SOMETHING. Log lines from the handler itself satisfy this
     # without depending on watcher-hub-to-OTLP wiring.
-    assert any(
-        "session.yield_received" in r.message for r in caplog.records
-    ), "missing INFO log on yield receipt"
-    assert any(
-        "session.yield_resolved" in r.message for r in caplog.records
-    ), "missing INFO log on yield resolution"
+    assert any("session.yield_received" in r.message for r in caplog.records), (
+        "missing INFO log on yield receipt"
+    )
+    assert any("session.yield_resolved" in r.message for r in caplog.records), (
+        "missing INFO log on yield resolution"
+    )
 
 
 @pytest.mark.asyncio
@@ -188,9 +204,7 @@ async def test_yield_multi_pc_partial_emits_active_confrontation(
     assert len(outbound) == 1
     msg = outbound[0]
     assert msg.type == MessageType.CONFRONTATION
-    assert msg.payload.active is True, (
-        "partial yield (Eli still active) → overlay stays mounted"
-    )
+    assert msg.payload.active is True, "partial yield (Eli still active) → overlay stays mounted"
     sam_actor = next(a for a in msg.payload.actors if a["name"] == "Sam")
     assert sam_actor["withdrawn"] is True, (
         "Sam's withdrawal must be reflected in the outbound payload "
@@ -203,7 +217,8 @@ async def test_yield_multi_pc_partial_emits_active_confrontation(
 
 @pytest.mark.asyncio
 async def test_yield_no_active_encounter_returns_error_message(
-    snapshot_with_pack, caplog,
+    snapshot_with_pack,
+    caplog,
 ):
     """Defensive: pressing Yield with no active encounter (edge case
     if the UI desyncs) must produce an ERROR, not a silent no-op.
@@ -220,9 +235,9 @@ async def test_yield_no_active_encounter_returns_error_message(
     assert len(outbound) == 1
     msg = outbound[0]
     assert msg.type == "ERROR"
-    assert any(
-        "session.yield_rejected" in r.message for r in caplog.records
-    ), "missing WARNING log on yield rejection"
+    assert any("session.yield_rejected" in r.message for r in caplog.records), (
+        "missing WARNING log on yield rejection"
+    )
 
 
 @pytest.mark.asyncio

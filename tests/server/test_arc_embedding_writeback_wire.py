@@ -89,8 +89,7 @@ def _content_chapters() -> list[HistoryChapter]:
                 ChapterNarrativeEntry(
                     speaker="narrator",
                     text=(
-                        "The keep stirs. A year of empty halls cracked "
-                        "open by a single footfall."
+                        "The keep stirs. A year of empty halls cracked open by a single footfall."
                     ),
                 ),
                 ChapterNarrativeEntry(
@@ -166,18 +165,13 @@ class TestNarrativeLogWritebackFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         # Felix's bug reproducer: after this turn the in-snapshot
         # narrative_log MUST carry arc-promotion rows. Filter on the
         # entry_type so we don't mistake the per-turn player+narrator
         # appends (entry_type=None) for the arc seeding output.
-        arc_entries = [
-            e for e in sd.snapshot.narrative_log
-            if e.entry_type == "arc_promotion"
-        ]
+        arc_entries = [e for e in sd.snapshot.narrative_log if e.entry_type == "arc_promotion"]
         assert len(arc_entries) == 2, (
             "Wire-first failure: dispatch seam ran but no arc-promotion "
             "entries landed on snapshot.narrative_log. Felix's evropi "
@@ -210,9 +204,7 @@ class TestNarrativeLogWritebackFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         # session_fixture mocks sd.store.append_narrative. The per-turn
         # narration handler also calls it (player + narrator entry); the
@@ -221,8 +213,7 @@ class TestNarrativeLogWritebackFromDispatch:
         # entry_type=arc_promotion.
         all_calls = [c.args[0] for c in sd.store.append_narrative.call_args_list]
         arc_persisted = [
-            entry for entry in all_calls
-            if getattr(entry, "entry_type", None) == "arc_promotion"
+            entry for entry in all_calls if getattr(entry, "entry_type", None) == "arc_promotion"
         ]
         assert len(arc_persisted) == 2, (
             "Each ChapterNarrativeEntry must produce one persistence "
@@ -237,9 +228,7 @@ class TestNarrativeLogWritebackFromDispatch:
 
 class TestLoreStoreWritebackFromDispatch:
     @pytest.mark.asyncio
-    async def test_promotion_mints_lore_arc_fragments(
-        self, session_fixture, otel_capture
-    ) -> None:
+    async def test_promotion_mints_lore_arc_fragments(self, session_fixture, otel_capture) -> None:
         sd, handler = session_fixture
         sd.orchestrator.run_narration_turn = AsyncMock(
             return_value=NarrationTurnResult(
@@ -252,14 +241,9 @@ class TestLoreStoreWritebackFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
-        arc_ids = [
-            fid for fid in sd.lore_store.fragments
-            if fid.startswith("lore_arc_early_")
-        ]
+        arc_ids = [fid for fid in sd.lore_store.fragments if fid.startswith("lore_arc_early_")]
         assert len(arc_ids) == 2, (
             "Wire-first failure: dispatch seam ran but no arc lore "
             f"fragments landed on lore_store. Got fragments: "
@@ -295,9 +279,7 @@ class TestLoreStoreWritebackFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         pending = sd.lore_store.pending_embedding_ids()
         assert "lore_arc_early_0" in pending, (
@@ -337,12 +319,11 @@ class TestOtelSpansFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         seeds = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "world_history.arc_embedding_seed"
         ]
         # Fresh→Early promotes exactly the ``early`` chapter; the seed
@@ -377,12 +358,11 @@ class TestOtelSpansFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         writebacks = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "world_history.narrative_log_writeback"
         ]
         assert len(writebacks) == 1, (
@@ -412,13 +392,10 @@ class TestOtelSpansFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         lore_writes = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "world_history.lore_writeback"
+            s for s in otel_capture.get_finished_spans() if s.name == "world_history.lore_writeback"
         ]
         # ``early`` carries 2 lore strings → 2 fragment writes → 2 spans.
         assert len(lore_writes) == 2, (
@@ -460,9 +437,7 @@ class TestOtelSpansFromDispatch:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         names = [s.name for s in otel_capture.get_finished_spans()]
         assert "world_history.arc_promoted" in names, (
@@ -491,9 +466,7 @@ class TestNonPromotedChaptersAreNotReseeded:
     """
 
     @pytest.mark.asyncio
-    async def test_only_promoted_chapter_is_seeded(
-        self, session_fixture, otel_capture
-    ) -> None:
+    async def test_only_promoted_chapter_is_seeded(self, session_fixture, otel_capture) -> None:
         sd, handler = session_fixture
         sd.orchestrator.run_narration_turn = AsyncMock(
             return_value=NarrationTurnResult(
@@ -506,16 +479,11 @@ class TestNonPromotedChaptersAreNotReseeded:
 
         otel_capture.clear()
         turn_context = _build_turn_context_for_test(sd)
-        await handler._execute_narration_turn(
-            sd, "I push deeper.", turn_context
-        )
+        await handler._execute_narration_turn(sd, "I push deeper.", turn_context)
 
         # Only ``early``'s lore strings should land — never ``mid`` or
         # ``veteran``, which are above the Early tier.
-        all_arc_ids = [
-            fid for fid in sd.lore_store.fragments
-            if fid.startswith("lore_arc_")
-        ]
+        all_arc_ids = [fid for fid in sd.lore_store.fragments if fid.startswith("lore_arc_")]
         assert all(fid.startswith("lore_arc_early_") for fid in all_arc_ids), (
             "Non-promoted chapters seeded into lore_store. The helper "
             f"must consume chapters_added only. Got: {all_arc_ids}"

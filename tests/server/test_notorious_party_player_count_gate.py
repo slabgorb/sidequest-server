@@ -49,6 +49,7 @@ Test paranoia (TEA discipline):
   - Boundary: player_count=2 (just over the gate) → seeds
   - room=None (gate machinery missing) → fail loud, no silent passthrough
 """
+
 from __future__ import annotations
 
 import logging
@@ -108,21 +109,15 @@ def _pumblestone() -> Character:
 
 def _rux() -> Character:
     """Notorious-party member: kobold dragonkin, the leaker."""
-    return _make_character(
-        "Rux", pronouns="he/him", race="Kobold", char_class="Cleric", level=3
-    )
+    return _make_character("Rux", pronouns="he/him", race="Kobold", char_class="Cleric", level=3)
 
 
 def _hant() -> Character:
-    return _make_character(
-        "Hant", pronouns="she/her", race="Human", char_class="Ranger", level=3
-    )
+    return _make_character("Hant", pronouns="she/her", race="Human", char_class="Ranger", level=3)
 
 
 def _ludzo() -> Character:
-    return _make_character(
-        "Ludzo", pronouns="he/him", race="Dwarf", char_class="Fighter", level=3
-    )
+    return _make_character("Ludzo", pronouns="he/him", race="Dwarf", char_class="Fighter", level=3)
 
 
 def _make_orchestrator() -> Orchestrator:
@@ -217,9 +212,7 @@ def test_solo_session_npc_registry_unchanged_by_gate(sd_factory) -> None:
     """
     from sidequest.server.session_helpers import _build_turn_context
 
-    sd = sd_factory(
-        [_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit"
-    )
+    sd = sd_factory([_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit")
     room = _make_room(playing_count=1)
 
     ctx = _build_turn_context(sd, room=room)
@@ -263,8 +256,7 @@ async def test_solo_session_prompt_contains_no_named_party_members(
     section_names = {s.name for s in registry.registry(agent_name)}
     for forbidden in ("party_peer_roster", "party_peers", "party_roster"):
         assert forbidden not in section_names, (
-            f"Solo session still registered party section `{forbidden}` — "
-            "AC1 gate broken."
+            f"Solo session still registered party section `{forbidden}` — AC1 gate broken."
         )
 
     # Guard against the snapshot JSON ``state_summary`` carrying canonical
@@ -317,9 +309,7 @@ def test_two_player_session_just_over_gate_seeds_peers(sd_factory) -> None:
     """Boundary: player_count == 2 must pass (gate is on ``== 1``)."""
     from sidequest.server.session_helpers import _build_turn_context
 
-    sd = sd_factory(
-        [_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit"
-    )
+    sd = sd_factory([_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit")
     room = _make_room(
         playing_count=2,
         seat_map={
@@ -340,9 +330,7 @@ async def test_multiplayer_prompt_contains_peer_names(sd_factory) -> None:
     """Wiring: in MP, the rendered prompt MUST contain peer names."""
     from sidequest.server.session_helpers import _build_turn_context
 
-    sd = sd_factory(
-        [_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit"
-    )
+    sd = sd_factory([_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit")
     room = _make_room(
         playing_count=2,
         seat_map={
@@ -364,9 +352,7 @@ async def test_multiplayer_prompt_contains_peer_names(sd_factory) -> None:
     has_party_section = any(
         n in section_names for n in ("party_peer_roster", "party_peers", "party_roster")
     )
-    assert has_party_section, (
-        "Multiplayer regression: no party-peer roster section registered."
-    )
+    assert has_party_section, "Multiplayer regression: no party-peer roster section registered."
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +403,9 @@ def test_notorious_party_gate_span_is_defined_in_catalog():
 
 
 async def test_solo_session_emits_gate_span_with_gated_true(
-    sd_factory, caplog, monkeypatch,
+    sd_factory,
+    caplog,
+    monkeypatch,
 ) -> None:
     """AC3: every solo turn must fire a gate span carrying the three
     required attributes — ``session.player_count``, ``notorious_party_gated``,
@@ -449,23 +437,18 @@ async def test_solo_session_emits_gate_span_with_gated_true(
     assert "player_count=1" in text or "session.player_count=1" in text, (
         "Gate span missing required attribute `session.player_count=1`."
     )
-    assert (
-        "notorious_party_gated=true" in text.lower()
-        or "notorious_party_gated=True" in text
-    ), (
+    assert "notorious_party_gated=true" in text.lower() or "notorious_party_gated=True" in text, (
         "Gate span missing required attribute `notorious_party_gated=true`."
     )
     assert (
-        "party_context_available=false" in text.lower()
-        or "party_context_available=False" in text
-    ), (
-        "Gate span missing required attribute "
-        "`party_context_available=false` on solo turn."
-    )
+        "party_context_available=false" in text.lower() or "party_context_available=False" in text
+    ), "Gate span missing required attribute `party_context_available=false` on solo turn."
 
 
 async def test_multiplayer_session_emits_gate_span_with_gated_false(
-    sd_factory, caplog, monkeypatch,
+    sd_factory,
+    caplog,
+    monkeypatch,
 ) -> None:
     """AC3 mirror: in MP the same span fires with
     ``notorious_party_gated=false`` and ``party_context_available=true``.
@@ -474,9 +457,7 @@ async def test_multiplayer_session_emits_gate_span_with_gated_false(
 
     monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
 
-    sd = sd_factory(
-        [_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit"
-    )
+    sd = sd_factory([_pumblestone(), _rux()], acting_player="Pumblestone Sweedlewit")
     room = _make_room(
         playing_count=2,
         seat_map={
@@ -494,16 +475,12 @@ async def test_multiplayer_session_emits_gate_span_with_gated_false(
         "span to fire on EVERY turn, not just solo."
     )
     assert "player_count=2" in text or "session.player_count=2" in text
-    assert (
-        "notorious_party_gated=false" in text.lower()
-        or "notorious_party_gated=False" in text
-    ), (
+    assert "notorious_party_gated=false" in text.lower() or "notorious_party_gated=False" in text, (
         "Gate span attribute `notorious_party_gated` should be false in "
         "multiplayer (gate did not engage)."
     )
     assert (
-        "party_context_available=true" in text.lower()
-        or "party_context_available=True" in text
+        "party_context_available=true" in text.lower() or "party_context_available=True" in text
     ), (
         "Gate span attribute `party_context_available` should be true in "
         "multiplayer (peer context is in the prompt)."
@@ -521,7 +498,9 @@ async def test_multiplayer_session_emits_gate_span_with_gated_false(
 
 
 def test_missing_room_fails_loud_when_snapshot_has_multi_pcs(
-    sd_factory, caplog, monkeypatch,
+    sd_factory,
+    caplog,
+    monkeypatch,
 ) -> None:
     """If ``room`` is None and snapshot.characters contains the
     notorious_party fixture, the gate cannot determine player_count.
@@ -563,11 +542,7 @@ def test_missing_room_fails_loud_when_snapshot_has_multi_pcs(
         "fell back to 'every snapshot character is a peer'."
     )
     text = caplog.text.lower()
-    assert (
-        "notorious_party" in text
-        or "gate" in text
-        or "player_count" in text
-    ), (
+    assert "notorious_party" in text or "gate" in text or "player_count" in text, (
         "AC4 violated: room=None defaulted to safe-empty without an "
         "OTEL/structured log event. Silent fallback is forbidden — the "
         "operator needs to see this state in the GM panel."
@@ -608,7 +583,8 @@ async def test_wiring_solo_evropi_save_does_not_leak_canonical_party(
 
     orch = _make_orchestrator()
     _, registry = await orch.build_narrator_prompt(
-        "I take a careful look at the empty road.", ctx,
+        "I take a careful look at the empty road.",
+        ctx,
     )
 
     agent_name = orch._narrator.name()
@@ -661,20 +637,19 @@ async def test_wiring_multiplayer_evropi_save_keeps_party_visible(
 
     orch = _make_orchestrator()
     prompt, registry = await orch.build_narrator_prompt(
-        "I greet my companions.", ctx,
+        "I greet my companions.",
+        ctx,
     )
 
     agent_name = orch._narrator.name()
     section_names = {s.name for s in registry.registry(agent_name)}
     has_peer_section = any(
-        n in section_names
-        for n in ("party_peer_roster", "party_peers", "party_roster")
+        n in section_names for n in ("party_peer_roster", "party_peers", "party_roster")
     )
     assert has_peer_section, (
         "Wiring regression: 3-player session produced no peer dossier "
         "section. The 45-8 gate over-fired."
     )
     assert "Rux" in prompt and "Hant" in prompt, (
-        "Wiring regression: 3-player session lost canonical peer names "
-        "from the rendered prompt."
+        "Wiring regression: 3-player session lost canonical peer names from the rendered prompt."
     )

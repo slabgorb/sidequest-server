@@ -1,4 +1,5 @@
 """Genre-layer chassis pydantic loads sample YAML."""
+
 from __future__ import annotations
 
 import textwrap
@@ -62,5 +63,6 @@ def test_unknown_crew_model_rejected() -> None:
     bad["classes"][0]["crew_model"] = "nonsense"
     import pytest
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         ChassisClassesConfig.model_validate(bad)

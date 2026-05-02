@@ -10,6 +10,7 @@ Three layers:
      and calls ``init_magic_state_for_session`` so a future refactor
      can't silently un-thread the hook.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,9 +35,7 @@ def _resolve_space_opera_world_with_magic() -> tuple[Path, str]:
         )
     world_slug = "coyote_star"
     if not (pack_dir / "worlds" / world_slug / "magic.yaml").is_file():
-        raise AssertionError(
-            f"coyote_star world magic.yaml missing under {pack_dir / 'worlds'}"
-        )
+        raise AssertionError(f"coyote_star world magic.yaml missing under {pack_dir / 'worlds'}")
     return pack_dir, world_slug
 
 
@@ -65,10 +64,7 @@ def test_init_magic_state_loads_coyote_star_and_adds_character() -> None:
     # Character bars must be instantiated in the ledger so a working
     # actor="Sira Mendes" finds its sanity/notice/vitality entries on
     # the very first turn.
-    char_keys = [
-        k for k in snap.magic_state.ledger
-        if k.startswith("character|Sira Mendes|")
-    ]
+    char_keys = [k for k in snap.magic_state.ledger if k.startswith("character|Sira Mendes|")]
     assert len(char_keys) > 0, (
         f"add_character('Sira Mendes') did not produce any character bars; "
         f"ledger keys: {list(snap.magic_state.ledger.keys())}"
@@ -191,10 +187,7 @@ def test_init_magic_state_idempotent_on_existing_state_adds_character_only() -> 
     # ALL four PCs are registered in the ledger, not just the last one.
     assert snap.magic_state is not None
     for pc in chargen_order:
-        char_keys = [
-            k for k in snap.magic_state.ledger
-            if k.startswith(f"character|{pc}|")
-        ]
+        char_keys = [k for k in snap.magic_state.ledger if k.startswith(f"character|{pc}|")]
         assert len(char_keys) > 0, (
             f"PC {pc!r} not registered in magic_state.ledger after MP "
             f"chargen sequence. Pre-fix only the last committer "

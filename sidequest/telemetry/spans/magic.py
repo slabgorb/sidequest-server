@@ -11,6 +11,7 @@ Span attributes are JSON-encoded for the structured payloads (``costs``,
 attribute values; the route extractor decodes them back at the boundary.
 This mirrors the ``audio.skipped`` / ``lore.established`` precedent.
 """
+
 from __future__ import annotations
 
 import json as _json
@@ -38,13 +39,9 @@ SPAN_ROUTES[SPAN_MAGIC_WORKING] = SpanRoute(
         "mechanism_engaged": (span.attributes or {}).get("mechanism_engaged", ""),
         "domain": (span.attributes or {}).get("domain", ""),
         "narrator_basis": (span.attributes or {}).get("narrator_basis", ""),
-        "costs_debited": _json.loads(
-            (span.attributes or {}).get("costs_debited_json", "{}")
-        ),
+        "costs_debited": _json.loads((span.attributes or {}).get("costs_debited_json", "{}")),
         "flags": _json.loads((span.attributes or {}).get("flags_json", "[]")),
-        "ledger_after": _json.loads(
-            (span.attributes or {}).get("ledger_after_json", "{}")
-        ),
+        "ledger_after": _json.loads((span.attributes or {}).get("ledger_after_json", "{}")),
         "flavor": (span.attributes or {}).get("flavor", ""),
         "consent_state": (span.attributes or {}).get("consent_state", ""),
         "item_id": (span.attributes or {}).get("item_id", ""),
@@ -95,9 +92,7 @@ def magic_working_span(
         "consent_state": consent_state or "",
         "item_id": item_id or "",
         "alignment_with_item_nature": (
-            float(alignment_with_item_nature)
-            if alignment_with_item_nature is not None
-            else 0.0
+            float(alignment_with_item_nature) if alignment_with_item_nature is not None else 0.0
         ),
         **attrs,
     }

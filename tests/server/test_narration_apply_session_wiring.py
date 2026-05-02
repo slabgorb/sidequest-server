@@ -46,6 +46,7 @@ To drive the resolution path, we use the synthetic two-dial pack's
 opponent_metric to threshold and ``apply_beat`` flips
 ``enc.resolved = True``, returning ``ApplyResult(resolved=True)``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -86,10 +87,16 @@ def _resolve_ready_encounter() -> StructuredEncounter:
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=2,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=2,
         ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
@@ -99,7 +106,9 @@ def _resolve_ready_encounter() -> StructuredEncounter:
 
 
 def test_narration_apply_advances_clock_on_scene_end(
-    tmp_path, otel_capture, synthetic_two_dial_pack,
+    tmp_path,
+    otel_capture,
+    synthetic_two_dial_pack,
 ):
     """Narrator-beat-resolved encounter -> Session.end_scene -> clock advances.
 
@@ -121,7 +130,9 @@ def test_narration_apply_advances_clock_on_scene_end(
         narration="Promo lunges and overwhelms Sam.",
         beat_selections=[
             BeatSelection(
-                actor="Promo", beat_id="attack", outcome=RollOutcome.Success,
+                actor="Promo",
+                beat_id="attack",
+                outcome=RollOutcome.Success,
             ),
         ],
         npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
@@ -150,7 +161,8 @@ def test_narration_apply_advances_clock_on_scene_end(
 
 
 def test_narration_apply_does_not_advance_clock_on_location_change(
-    tmp_path, otel_capture,
+    tmp_path,
+    otel_capture,
 ):
     """Walking to a new room is not a scene end; clock must stay at 0.
 
@@ -164,7 +176,8 @@ def test_narration_apply_does_not_advance_clock_on_location_change(
     snap.location = "The Throat"  # old_loc must be truthy to take the sweep guard
 
     result = NarrationTurnResult(
-        narration="They march on.", location="The Antechamber",
+        narration="They march on.",
+        location="The Antechamber",
     )
 
     _apply_narration_result_to_snapshot(

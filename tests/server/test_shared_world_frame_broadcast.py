@@ -24,6 +24,7 @@ handler against a real `SessionRoom` with four connected sockets and
 asserts EVERY socket's outbound queue receives the four shared-world
 frames after a merged dispatch.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -76,7 +77,8 @@ async def _drain(queue: asyncio.Queue[object]) -> list[object]:
 
 @pytest.mark.asyncio
 async def test_shared_world_frames_reach_every_socket_including_dispatcher(
-    session_handler_factory, tmp_path: Path,
+    session_handler_factory,
+    tmp_path: Path,
 ) -> None:
     """4-player MP regression: every connected socket — INCLUDING the
     dispatch winner's — receives NARRATION_END, CHAPTER_MARKER, and
@@ -115,9 +117,7 @@ async def test_shared_world_frames_reach_every_socket_including_dispatcher(
         "snoopy": "sock-snoopy",
         "lucy": "sock-lucy",
     }
-    queues: dict[str, asyncio.Queue[object]] = {
-        pid: asyncio.Queue() for pid in socket_ids
-    }
+    queues: dict[str, asyncio.Queue[object]] = {pid: asyncio.Queue() for pid in socket_ids}
     for pid, sid in socket_ids.items():
         room.connect(pid, socket_id=sid)
         room.attach_outbound(sid, queues[pid])
@@ -135,6 +135,7 @@ async def test_shared_world_frames_reach_every_socket_including_dispatcher(
     )
 
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
         sd,
         "Linus: I push the door open one full panel-width.",
@@ -189,7 +190,8 @@ async def test_shared_world_frames_reach_every_socket_including_dispatcher(
 
 @pytest.mark.asyncio
 async def test_solo_room_dispatcher_still_receives_shared_world_frames(
-    session_handler_factory, tmp_path: Path,
+    session_handler_factory,
+    tmp_path: Path,
 ) -> None:
     """Solo regression: with only one socket in the room, the broadcast
     must still deliver — `exclude_socket_id=None` includes the lone
@@ -224,8 +226,11 @@ async def test_solo_room_dispatcher_still_receives_shared_world_frames(
     )
 
     from sidequest.server.session_handler import _build_turn_context
+
     await handler._execute_narration_turn(
-        sd, "I step through.", _build_turn_context(sd),
+        sd,
+        "I step through.",
+        _build_turn_context(sd),
     )
 
     frames = await _drain(queue)

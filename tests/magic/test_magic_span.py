@@ -14,6 +14,7 @@ completeness test; here we assert the *direct* publish that happens
 alongside the span open, so the GM panel's event feed sees the
 working without depending on a tracer provider being installed.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -60,16 +61,18 @@ def captured_watcher_events(monkeypatch) -> Iterator[list[dict[str, Any]]]:
     """
     captured: list[dict[str, Any]] = []
 
-    def _capture(event_type, fields, *, component="sidequest-server",
-                 severity="info"):
-        captured.append({
-            "event_type": event_type,
-            "fields": fields,
-            "component": component,
-            "severity": severity,
-        })
+    def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
+        captured.append(
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
+        )
 
     from sidequest.server import narration_apply
+
     monkeypatch.setattr(narration_apply, "_watcher_publish", _capture)
     yield captured
 
@@ -110,7 +113,8 @@ def test_apply_magic_working_emits_span(coyote_snapshot, captured_watcher_events
     )
 
     matching = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["component"] == "magic"
         and e["event_type"] == "state_transition"
         and e["fields"].get("op") == "working"
@@ -154,7 +158,8 @@ def test_deep_red_flag_appears_in_span(coyote_snapshot, captured_watcher_events)
     )
 
     matching = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["component"] == "magic"
         and e["event_type"] == "state_transition"
         and e["fields"].get("op") == "working"

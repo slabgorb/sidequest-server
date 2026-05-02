@@ -311,8 +311,7 @@ class NumericNameError(BuilderError):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(
-            f"invalid character name: '{name}' is purely numeric "
-            "(likely a UI index, not a name)"
+            f"invalid character name: '{name}' is purely numeric (likely a UI index, not a name)"
         )
 
 
@@ -324,9 +323,7 @@ class EdgeConfigMissingClassError(BuilderError):
 
     def __init__(self, class_name: str) -> None:
         self.class_name = class_name
-        super().__init__(
-            f"edge_config.base_max_by_class missing entry for class '{class_name}'"
-        )
+        super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
 
 
 # Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
@@ -909,14 +906,10 @@ class CharacterBuilder:
 
         if had_name or had_class or had_race:
             rendered = (
-                text.replace("{name}", name)
-                .replace("{class}", class_)
-                .replace("{race}", race)
+                text.replace("{name}", name).replace("{class}", class_).replace("{race}", race)
             )
             any_empty = (
-                (had_name and not name)
-                or (had_class and not class_)
-                or (had_race and not race)
+                (had_name and not name) or (had_class and not class_) or (had_race and not race)
             )
             attrs: dict[str, object] = {
                 "action": "scene_narration_interpolated",
@@ -1163,9 +1156,7 @@ class CharacterBuilder:
         (or Confirmation).
         """
         if not isinstance(self._phase, AwaitingFollowup):
-            raise WrongPhaseError(
-                expected="AwaitingFollowup", actual=self._phase_name()
-            )
+            raise WrongPhaseError(expected="AwaitingFollowup", actual=self._phase_name())
         scene_index = self._phase.scene_index
         scene_id = self._scenes[scene_index].id
 
@@ -1302,9 +1293,7 @@ class CharacterBuilder:
         fallback source and severity.
         """
         if not self.is_confirmation():
-            raise WrongPhaseError(
-                expected="Confirmation", actual=self._phase_name()
-            )
+            raise WrongPhaseError(expected="Confirmation", actual=self._phase_name())
 
         # Numeric-name guard — a purely digit name is a UI index bleed.
         trimmed = name.strip()
@@ -1334,11 +1323,7 @@ class CharacterBuilder:
         # narrator (or the dispatch layer) can seed from the genre pack.
         anchor_types = ("faction", "npc", "location")
         for atype in anchor_types:
-            has_anchor = any(
-                a.anchor_type == atype
-                for r in self._results
-                for a in r.anchors_added
-            )
+            has_anchor = any(a.anchor_type == atype for r in self._results for a in r.anchors_added)
             if not has_anchor:
                 hooks.append(f"{atype}: auto-filled from genre pack")
 
@@ -1367,8 +1352,7 @@ class CharacterBuilder:
             )
 
         random_table_requested = any(
-            r.effects_applied.equipment_generation == "random_table"
-            for r in self._results
+            r.effects_applied.equipment_generation == "random_table" for r in self._results
         )
         if random_table_requested and self._equipment_tables is not None:
             added = 0
@@ -1463,11 +1447,10 @@ class CharacterBuilder:
                 parts.append(f"Background: {acc.background}")
             if acc.personality_trait is not None:
                 parts.append(f"Personality: {acc.personality_trait}")
-            backstory_text = (
-                ". ".join(parts) if parts else "A wanderer with a mysterious past"
-            )
+            backstory_text = ". ".join(parts) if parts else "A wanderer with a mysterious past"
             backstory_method = "fallback"
         from sidequest.telemetry.spans import SPAN_CHARGEN_BACKSTORY_COMPOSED
+
         span.add_event(
             SPAN_CHARGEN_BACKSTORY_COMPOSED,
             {"method": backstory_method, "length": len(backstory_text)},
@@ -1629,6 +1612,7 @@ class CharacterBuilder:
         outputs.
         """
         from sidequest.telemetry.spans import SPAN_CHARGEN_STAT_ROLL, Emitter
+
         rng = self._rng
         results: list[tuple[str, int]] = []
         for name in self._ability_score_names:
@@ -1756,6 +1740,7 @@ class CharacterBuilder:
         import json as _json
 
         from sidequest.telemetry.spans import SPAN_CHARGEN_STATS_GENERATED, Emitter
+
         Emitter.fire(
             SPAN_CHARGEN_STATS_GENERATED,
             {

@@ -9,6 +9,7 @@ These are the cheap unit tests that pin the shape. The wire-test
 (`test_container_retrieval_state.py`) exercises the apply seam end to
 end. Both must pass for AC #1 and AC #5 to land.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -41,7 +42,9 @@ def test_container_state_records_retrieval_round() -> None:
     from sidequest.game.session import ContainerState
 
     state = ContainerState(
-        container_id="tin_box", retrieved=True, retrieved_at_round=10,
+        container_id="tin_box",
+        retrieved=True,
+        retrieved_at_round=10,
     )
     assert state.retrieved is True
     assert state.retrieved_at_round == 10
@@ -167,7 +170,8 @@ def test_discovered_rooms_and_room_states_are_independent() -> None:
     from sidequest.game.session import GameSnapshot
 
     snap = GameSnapshot(
-        genre_slug="caverns_and_claudes", discovered_rooms=["vault", "hall"],
+        genre_slug="caverns_and_claudes",
+        discovered_rooms=["vault", "hall"],
     )
     # Discovery does NOT auto-create a RoomState.
     assert snap.room_states == {}

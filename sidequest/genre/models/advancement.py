@@ -116,7 +116,11 @@ class AdvancementEffectLoreRevealBonus(BaseModel):
 
 
 AdvancementEffect = Annotated[
-    AdvancementEffectEdgeMaxBonus | AdvancementEffectEdgeRecovery | AdvancementEffectBeatDiscount | AdvancementEffectLeverageBonus | AdvancementEffectLoreRevealBonus,
+    AdvancementEffectEdgeMaxBonus
+    | AdvancementEffectEdgeRecovery
+    | AdvancementEffectBeatDiscount
+    | AdvancementEffectLeverageBonus
+    | AdvancementEffectLoreRevealBonus,
     Field(discriminator="type"),
 ]
 

@@ -1,4 +1,5 @@
 """magic_loader: yaml → WorldMagicConfig."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -105,11 +106,7 @@ def test_narrator_register_genre_overrides_plugin_default():
     """Genre narrator_register beats plugin's default register (when world
     declines to override). For this test, build a world fixture without a
     narrator_register and assert the genre value surfaces."""
-    bare_world_yaml = (
-        WORLD_YAML.read_text(encoding="utf-8")
-        .split("narrator_register:")[0]
-        .rstrip()
-    )
+    bare_world_yaml = WORLD_YAML.read_text(encoding="utf-8").split("narrator_register:")[0].rstrip()
     bare_path = FIXTURES / "_bare_register.yaml"
     bare_path.write_text(bare_world_yaml, encoding="utf-8")
     try:

@@ -1,4 +1,5 @@
 """Tests for distinctive_detail_hint subsystem (spec §6.2)."""
+
 from __future__ import annotations
 
 import pytest
@@ -9,7 +10,9 @@ from sidequest.protocol.dispatch import SubsystemDispatch, VisibilityTag
 
 def _tag_all() -> VisibilityTag:
     return VisibilityTag(
-        visible_to="all", perception_fidelity={}, secrets_for=[],
+        visible_to="all",
+        perception_fidelity={},
+        secrets_for=[],
         redact_from_narrator_canonical=False,
     )
 

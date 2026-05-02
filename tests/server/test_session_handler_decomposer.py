@@ -5,6 +5,7 @@ pin LocalDM integration on the live session-handler turn path — a contract sev
 LocalDM was made dormant per the localdm-offline-only design.  Re-enable when ADR-073
 wakes the dispatch bank back up.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,99 +21,120 @@ from tests.server.conftest import _build_turn_context_for_test, _make_minimal_na
 # peer test module's pytest fixtures).
 # ---------------------------------------------------------------------------
 
-PRONOUN_RESOLVED_JSON = json.dumps({
-    "turn_id": "turn-010",
-    "per_player": [{
-        "player_id": "player:Alice",
-        "raw_action": "Attack him!",
-        "resolved": [{
-            "token": "him",
-            "resolved_to": "npc:goblin_2",
-            "confidence": 0.55,
-            "alternatives": ["npc:goblin_1", "npc:bandit_1"],
-            "resolution_note": "most recent direct combatant",
-        }],
-        "dispatch": [{
-            "subsystem": "distinctive_detail_hint",
-            "params": {"target": "npc:goblin_2", "hint": "broken tooth"},
-            "depends_on": [],
-            "idempotency_key": "idem:turn-010:alice:0",
-            "visibility": {
-                "visible_to": "all",
-                "perception_fidelity": {},
-                "secrets_for": [],
-                "redact_from_narrator_canonical": False,
-            },
-        }],
-        "lethality": [],
-        "narrator_instructions": [{
-            "kind": "distinctive_detail_for_referent",
-            "payload": "describe the goblin by its broken tooth",
-            "visibility": {
-                "visible_to": "all",
-                "perception_fidelity": {},
-                "secrets_for": [],
-                "redact_from_narrator_canonical": False,
-            },
-        }],
-    }],
-    "cross_player": [],
-    "confidence_global": 0.55,
-    "degraded": False,
-    "degraded_reason": None,
-})
+PRONOUN_RESOLVED_JSON = json.dumps(
+    {
+        "turn_id": "turn-010",
+        "per_player": [
+            {
+                "player_id": "player:Alice",
+                "raw_action": "Attack him!",
+                "resolved": [
+                    {
+                        "token": "him",
+                        "resolved_to": "npc:goblin_2",
+                        "confidence": 0.55,
+                        "alternatives": ["npc:goblin_1", "npc:bandit_1"],
+                        "resolution_note": "most recent direct combatant",
+                    }
+                ],
+                "dispatch": [
+                    {
+                        "subsystem": "distinctive_detail_hint",
+                        "params": {"target": "npc:goblin_2", "hint": "broken tooth"},
+                        "depends_on": [],
+                        "idempotency_key": "idem:turn-010:alice:0",
+                        "visibility": {
+                            "visible_to": "all",
+                            "perception_fidelity": {},
+                            "secrets_for": [],
+                            "redact_from_narrator_canonical": False,
+                        },
+                    }
+                ],
+                "lethality": [],
+                "narrator_instructions": [
+                    {
+                        "kind": "distinctive_detail_for_referent",
+                        "payload": "describe the goblin by its broken tooth",
+                        "visibility": {
+                            "visible_to": "all",
+                            "perception_fidelity": {},
+                            "secrets_for": [],
+                            "redact_from_narrator_canonical": False,
+                        },
+                    }
+                ],
+            }
+        ],
+        "cross_player": [],
+        "confidence_global": 0.55,
+        "degraded": False,
+        "degraded_reason": None,
+    }
+)
 
 
-ABSENCE_JSON = json.dumps({
-    "turn_id": "turn-011",
-    "per_player": [{
-        "player_id": "player:Alice",
-        "raw_action": "Let's go!",
-        "resolved": [{
-            "token": "let's",
-            "resolved_to": None,
-            "confidence": 0.0,
-            "alternatives": [],
-            "resolution_note": "no party present in scene",
-        }],
-        "dispatch": [{
-            "subsystem": "reflect_absence",
-            "params": {"addressee_hint": "no party"},
-            "depends_on": [],
-            "idempotency_key": "idem:turn-011:alice:0",
-            "visibility": {
-                "visible_to": "all",
-                "perception_fidelity": {},
-                "secrets_for": [],
-                "redact_from_narrator_canonical": False,
-            },
-        }],
-        "lethality": [],
-        "narrator_instructions": [{
-            "kind": "must_not_narrate",
-            "payload": "inventing an NPC follower",
-            "visibility": {
-                "visible_to": "all",
-                "perception_fidelity": {},
-                "secrets_for": [],
-                "redact_from_narrator_canonical": False,
-            },
-        }, {
-            "kind": "must_narrate",
-            "payload": "the empty room answering back",
-            "visibility": {
-                "visible_to": "all",
-                "perception_fidelity": {},
-                "secrets_for": [],
-                "redact_from_narrator_canonical": False,
-            },
-        }],
-    }],
-    "cross_player": [],
-    "confidence_global": 1.0,
-    "degraded": False,
-    "degraded_reason": None,
-})
+ABSENCE_JSON = json.dumps(
+    {
+        "turn_id": "turn-011",
+        "per_player": [
+            {
+                "player_id": "player:Alice",
+                "raw_action": "Let's go!",
+                "resolved": [
+                    {
+                        "token": "let's",
+                        "resolved_to": None,
+                        "confidence": 0.0,
+                        "alternatives": [],
+                        "resolution_note": "no party present in scene",
+                    }
+                ],
+                "dispatch": [
+                    {
+                        "subsystem": "reflect_absence",
+                        "params": {"addressee_hint": "no party"},
+                        "depends_on": [],
+                        "idempotency_key": "idem:turn-011:alice:0",
+                        "visibility": {
+                            "visible_to": "all",
+                            "perception_fidelity": {},
+                            "secrets_for": [],
+                            "redact_from_narrator_canonical": False,
+                        },
+                    }
+                ],
+                "lethality": [],
+                "narrator_instructions": [
+                    {
+                        "kind": "must_not_narrate",
+                        "payload": "inventing an NPC follower",
+                        "visibility": {
+                            "visible_to": "all",
+                            "perception_fidelity": {},
+                            "secrets_for": [],
+                            "redact_from_narrator_canonical": False,
+                        },
+                    },
+                    {
+                        "kind": "must_narrate",
+                        "payload": "the empty room answering back",
+                        "visibility": {
+                            "visible_to": "all",
+                            "perception_fidelity": {},
+                            "secrets_for": [],
+                            "redact_from_narrator_canonical": False,
+                        },
+                    },
+                ],
+            }
+        ],
+        "cross_player": [],
+        "confidence_global": 1.0,
+        "degraded": False,
+        "degraded_reason": None,
+    }
+)
 
 
 def _install_real_orchestrator(sd) -> None:
@@ -147,12 +169,17 @@ async def test_execute_narration_turn_invokes_local_dm_before_narrator(session_f
 
     async def fake_decompose(**kwargs):
         from sidequest.protocol.dispatch import DispatchPackage
+
         call_order.append("decompose")
         captured["decomposer_called"] = True
         captured["raw_action"] = kwargs["raw_action"]
         return DispatchPackage(
-            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
-            confidence_global=1.0, degraded=False, degraded_reason=None,
+            turn_id=kwargs["turn_id"],
+            per_player=[],
+            cross_player=[],
+            confidence_global=1.0,
+            degraded=False,
+            degraded_reason=None,
         )
 
     async def fake_run_narration_turn(action, context):
@@ -161,9 +188,15 @@ async def test_execute_narration_turn_invokes_local_dm_before_narrator(session_f
         captured["narrator_saw_dispatch_package"] = context.dispatch_package is not None
         return _make_minimal_narration_turn_result(narration="ok")
 
-    with patch.object(sd.local_dm, "decompose", side_effect=fake_decompose), \
-         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run_narration_turn)):
-        await handler._execute_narration_turn(sd, "I look around.", _build_turn_context_for_test(sd))
+    with (
+        patch.object(sd.local_dm, "decompose", side_effect=fake_decompose),
+        patch.object(
+            sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run_narration_turn)
+        ),
+    ):
+        await handler._execute_narration_turn(
+            sd, "I look around.", _build_turn_context_for_test(sd)
+        )
 
     assert captured["decomposer_called"] is True
     assert captured["narrator_called"] is True
@@ -186,9 +219,14 @@ async def test_execute_narration_turn_continues_when_decomposer_degraded(session
 
     async def degraded_decompose(**kwargs):
         from sidequest.protocol.dispatch import DispatchPackage
+
         return DispatchPackage(
-            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
-            confidence_global=0.0, degraded=True, degraded_reason="test-forced",
+            turn_id=kwargs["turn_id"],
+            per_player=[],
+            cross_player=[],
+            confidence_global=0.0,
+            degraded=True,
+            degraded_reason="test-forced",
         )
 
     narrator_called = False
@@ -198,8 +236,10 @@ async def test_execute_narration_turn_continues_when_decomposer_degraded(session
         narrator_called = True
         return _make_minimal_narration_turn_result(narration="ok")
 
-    with patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose), \
-         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)):
+    with (
+        patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose),
+        patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)),
+    ):
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
     assert narrator_called, "narrator must still run when decomposer is degraded"
@@ -225,9 +265,13 @@ async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded
 
     async def degraded_decompose(**kwargs):
         from sidequest.protocol.dispatch import DispatchPackage
+
         return DispatchPackage(
-            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
-            confidence_global=0.0, degraded=True,
+            turn_id=kwargs["turn_id"],
+            per_player=[],
+            cross_player=[],
+            confidence_global=0.0,
+            degraded=True,
             degraded_reason="parse_failure: ValidationError",
         )
 
@@ -239,9 +283,13 @@ async def test_execute_narration_turn_emits_watcher_event_on_decomposer_degraded
     def fake_publish(event_type: str, fields: dict, *, component: str = "", severity: str = "info"):
         captured.append((event_type, fields, {"component": component, "severity": severity}))
 
-    with patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose), \
-         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)), \
-         patch("sidequest.server.websocket_session_handler._watcher_publish", side_effect=fake_publish):
+    with (
+        patch.object(sd.local_dm, "decompose", side_effect=degraded_decompose),
+        patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)),
+        patch(
+            "sidequest.server.websocket_session_handler._watcher_publish", side_effect=fake_publish
+        ),
+    ):
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
     degraded_events = [
@@ -276,9 +324,11 @@ async def test_execute_narration_turn_propagates_programmer_bug_exceptions(sessi
         # Simulate a programmer bug — e.g. AttributeError from a rename.
         raise AttributeError("simulated programmer bug")
 
-    with patch.object(sd.local_dm, "decompose", side_effect=buggy_decompose), \
-         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock()), \
-         pytest.raises(AttributeError, match="simulated programmer bug"):
+    with (
+        patch.object(sd.local_dm, "decompose", side_effect=buggy_decompose),
+        patch.object(sd.orchestrator, "run_narration_turn", AsyncMock()),
+        pytest.raises(AttributeError, match="simulated programmer bug"),
+    ):
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
 
@@ -298,17 +348,24 @@ async def test_execute_narration_turn_turn_id_includes_player_id(session_fixture
 
     async def fake_decompose(**kwargs):
         from sidequest.protocol.dispatch import DispatchPackage
+
         captured["turn_id"] = kwargs["turn_id"]
         return DispatchPackage(
-            turn_id=kwargs["turn_id"], per_player=[], cross_player=[],
-            confidence_global=1.0, degraded=False, degraded_reason=None,
+            turn_id=kwargs["turn_id"],
+            per_player=[],
+            cross_player=[],
+            confidence_global=1.0,
+            degraded=False,
+            degraded_reason=None,
         )
 
     async def fake_run(action, context):
         return _make_minimal_narration_turn_result(narration="ok")
 
-    with patch.object(sd.local_dm, "decompose", side_effect=fake_decompose), \
-         patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)):
+    with (
+        patch.object(sd.local_dm, "decompose", side_effect=fake_decompose),
+        patch.object(sd.orchestrator, "run_narration_turn", AsyncMock(side_effect=fake_run)),
+    ):
         await handler._execute_narration_turn(sd, "x", _build_turn_context_for_test(sd))
 
     assert sd.player_id in captured["turn_id"], (
@@ -339,9 +396,12 @@ async def test_full_turn_happy_path_pronoun_resolved(session_fixture):
     from sidequest.agents.claude_client import ClaudeResponse
 
     sd.local_dm._client = AsyncMock()
-    sd.local_dm._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
-        text=PRONOUN_RESOLVED_JSON, session_id="dec-sess-xyz",
-    ))
+    sd.local_dm._client.send_with_session = AsyncMock(
+        return_value=ClaudeResponse(
+            text=PRONOUN_RESOLVED_JSON,
+            session_id="dec-sess-xyz",
+        )
+    )
 
     captured_prompt: dict = {}
     orig_build = sd.orchestrator.build_narrator_prompt
@@ -354,9 +414,12 @@ async def test_full_turn_happy_path_pronoun_resolved(session_fixture):
     sd.orchestrator.build_narrator_prompt = spying_build
 
     sd.orchestrator._client = AsyncMock()
-    sd.orchestrator._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
-        text='{"narration": "ok"}', session_id="n",
-    ))
+    sd.orchestrator._client.send_with_session = AsyncMock(
+        return_value=ClaudeResponse(
+            text='{"narration": "ok"}',
+            session_id="n",
+        )
+    )
 
     await handler._execute_narration_turn(sd, "Attack him!", _build_turn_context_for_test(sd))
 
@@ -390,9 +453,12 @@ async def test_full_turn_absence_path_injects_reflect_absence_directives(session
     from sidequest.agents.claude_client import ClaudeResponse
 
     sd.local_dm._client = AsyncMock()
-    sd.local_dm._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
-        text=ABSENCE_JSON, session_id="dec-sess-xyz",
-    ))
+    sd.local_dm._client.send_with_session = AsyncMock(
+        return_value=ClaudeResponse(
+            text=ABSENCE_JSON,
+            session_id="dec-sess-xyz",
+        )
+    )
 
     captured_prompt: dict = {}
     orig_build = sd.orchestrator.build_narrator_prompt
@@ -405,9 +471,12 @@ async def test_full_turn_absence_path_injects_reflect_absence_directives(session
     sd.orchestrator.build_narrator_prompt = spying_build
 
     sd.orchestrator._client = AsyncMock()
-    sd.orchestrator._client.send_with_session = AsyncMock(return_value=ClaudeResponse(
-        text='{"narration": "the room is empty"}', session_id="n",
-    ))
+    sd.orchestrator._client.send_with_session = AsyncMock(
+        return_value=ClaudeResponse(
+            text='{"narration": "the room is empty"}',
+            session_id="n",
+        )
+    )
 
     await handler._execute_narration_turn(sd, "Let's go!", _build_turn_context_for_test(sd))
 
@@ -513,9 +582,7 @@ async def test_session_open_initializes_local_dm(tmp_path):
     from sidequest.server.session_handler import WebSocketSessionHandler
     from tests.server.conftest import mock_claude_client_factory
 
-    content_root = (
-        Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-    )
+    content_root = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
     if not (content_root / "caverns_and_claudes").is_dir():
         pytest.skip("content pack not found")
 
@@ -531,18 +598,12 @@ async def test_session_open_initializes_local_dm(tmp_path):
         genre="caverns_and_claudes",
         world="grimvault",
     )
-    out = await handler.handle_message(
-        SessionEventMessage(payload=payload, player_id="")
-    )
-    assert isinstance(out[0], SessionEventMessage), (
-        f"expected connect response, got: {out[0]!r}"
-    )
+    out = await handler.handle_message(SessionEventMessage(payload=payload, player_id=""))
+    assert isinstance(out[0], SessionEventMessage), f"expected connect response, got: {out[0]!r}"
 
     sd = handler._session_data
     assert sd is not None, "session_data must be populated after connect"
-    assert hasattr(sd, "local_dm"), (
-        "sd must have local_dm attribute (Task 10 regression)"
-    )
+    assert hasattr(sd, "local_dm"), "sd must have local_dm attribute (Task 10 regression)"
     assert isinstance(sd.local_dm, LocalDM), (
         f"sd.local_dm must be a live LocalDM, got: {type(sd.local_dm).__name__}"
     )

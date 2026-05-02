@@ -53,6 +53,7 @@ def test_turn_span_names() -> None:
         SPAN_TURN_SYSTEM_TICK_TROPES,
         SPAN_TURN_TROPES,
     )
+
     assert SPAN_TURN == "turn"
     assert SPAN_TURN_BARRIER == "turn.barrier"
     assert SPAN_TURN_STATE_UPDATE == "turn.state_update"
@@ -71,6 +72,7 @@ def test_turn_span_names() -> None:
 
 def test_narrator_span_names() -> None:
     from sidequest.telemetry.spans import SPAN_NARRATOR_SEALED_ROUND
+
     assert SPAN_NARRATOR_SEALED_ROUND == "narrator.sealed_round"
 
 
@@ -83,6 +85,7 @@ def test_orchestrator_span_names() -> None:
         SPAN_ORCHESTRATOR_TACTICAL_GRID_INJECTION,
         SPAN_ORCHESTRATOR_TROPE_BEAT_INJECTION,
     )
+
     assert SPAN_ORCHESTRATOR_PROCESS_ACTION == "orchestrator.process_action"
     assert SPAN_ORCHESTRATOR_NARRATOR_SESSION_RESET == "orchestrator.narrator_session_reset"
     assert SPAN_ORCHESTRATOR_GENRE_IDENTITY_INJECTION == "orchestrator.genre_identity_injection"
@@ -96,6 +99,7 @@ def test_agent_call_span_names() -> None:
         SPAN_AGENT_CALL,
         SPAN_AGENT_CALL_SESSION,
     )
+
     assert SPAN_AGENT_CALL == "agent.call"
     assert SPAN_AGENT_CALL_SESSION == "agent.call.session"
 
@@ -106,6 +110,7 @@ def test_turn_agent_llm_span_names() -> None:
         SPAN_TURN_AGENT_LLM_PARSE_RESPONSE,
         SPAN_TURN_AGENT_LLM_PROMPT_BUILD,
     )
+
     assert SPAN_TURN_AGENT_LLM_PROMPT_BUILD == "turn.agent_llm.prompt_build"
     assert SPAN_TURN_AGENT_LLM_INFERENCE == "turn.agent_llm.inference"
     assert SPAN_TURN_AGENT_LLM_PARSE_RESPONSE == "turn.agent_llm.parse_response"
@@ -113,6 +118,7 @@ def test_turn_agent_llm_span_names() -> None:
 
 def test_content_span_names() -> None:
     from sidequest.telemetry.spans import SPAN_CONTENT_RESOLVE
+
     assert SPAN_CONTENT_RESOLVE == "content.resolve"
 
 
@@ -126,6 +132,7 @@ def test_trope_span_names() -> None:
         SPAN_TROPE_TICK,
         SPAN_TROPE_TICK_PER,
     )
+
     assert SPAN_TROPE_TICK == "trope_tick"
     assert SPAN_TROPE_TICK_PER == "trope.tick"
     assert SPAN_TROPE_ROOM_TICK == "trope.room_tick"
@@ -140,6 +147,7 @@ def test_barrier_span_names() -> None:
         SPAN_BARRIER_ACTIVATED,
         SPAN_BARRIER_RESOLVED,
     )
+
     assert SPAN_BARRIER_ACTIVATED == "barrier.activated"
     assert SPAN_BARRIER_RESOLVED == "barrier.resolved"
 
@@ -149,6 +157,7 @@ def test_music_span_names() -> None:
         SPAN_MUSIC_CLASSIFY_MOOD,
         SPAN_MUSIC_EVALUATE,
     )
+
     assert SPAN_MUSIC_EVALUATE == "music_evaluate"
     assert SPAN_MUSIC_CLASSIFY_MOOD == "music_classify_mood"
 
@@ -159,6 +168,7 @@ def test_persistence_span_names() -> None:
         SPAN_PERSISTENCE_LOAD,
         SPAN_PERSISTENCE_SAVE,
     )
+
     assert SPAN_PERSISTENCE_SAVE == "persistence_save"
     assert SPAN_PERSISTENCE_LOAD == "persistence_load"
     assert SPAN_PERSISTENCE_DELETE == "persistence_delete"
@@ -170,6 +180,7 @@ def test_chargen_span_names() -> None:
         SPAN_CHARGEN_STAT_ROLL,
         SPAN_CHARGEN_STATS_GENERATED,
     )
+
     assert SPAN_CHARGEN_STAT_ROLL == "chargen.stat_roll"
     assert SPAN_CHARGEN_STATS_GENERATED == "chargen.stats_generated"
     assert SPAN_CHARGEN_BACKSTORY_COMPOSED == "chargen.backstory_composed"
@@ -180,12 +191,14 @@ def test_npc_span_names() -> None:
         SPAN_NPC_MERGE_PATCH,
         SPAN_NPC_REGISTRATION,
     )
+
     assert SPAN_NPC_MERGE_PATCH == "npc_merge_patch"
     assert SPAN_NPC_REGISTRATION == "npc.registration"
 
 
 def test_disposition_span_names() -> None:
     from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT
+
     assert SPAN_DISPOSITION_SHIFT == "disposition.shift"
 
 
@@ -196,6 +209,7 @@ def test_state_patch_span_names() -> None:
         SPAN_COMPUTE_DELTA,
         SPAN_QUEST_UPDATE,
     )
+
     assert SPAN_APPLY_WORLD_PATCH == "apply_world_patch"
     assert SPAN_QUEST_UPDATE == "quest_update"
     assert SPAN_BUILD_PROTOCOL_DELTA == "build_protocol_delta"
@@ -207,6 +221,7 @@ def test_merchant_span_names() -> None:
         SPAN_MERCHANT_CONTEXT_INJECTED,
         SPAN_MERCHANT_TRANSACTION,
     )
+
     assert SPAN_MERCHANT_CONTEXT_INJECTED == "merchant.context_injected"
     assert SPAN_MERCHANT_TRANSACTION == "merchant.transaction"
 
@@ -220,6 +235,7 @@ def test_misc_agent_span_names() -> None:
         SPAN_SCRIPT_TOOL_PROMPT_INJECTED,
         SPAN_WORLD_MATERIALIZED,
     )
+
     assert SPAN_INVENTORY_EXTRACTION == "inventory.extraction"
     assert SPAN_CONTINUITY_LLM_VALIDATION == "continuity.llm_validation"
     assert SPAN_COMPOSE == "compose"
@@ -238,6 +254,7 @@ def test_server_misc_span_names() -> None:
         SPAN_SCENARIO_ACCUSATION,
         SPAN_SCENARIO_ADVANCE,
     )
+
     assert SPAN_REMINDER_SPAWNED == "reminder_spawned"
     assert SPAN_REMINDER_FIRED == "reminder_fired"
     assert SPAN_PREGEN_SEED_MANUAL == "pregen.seed_manual"
@@ -591,6 +608,7 @@ def test_mp_span_names() -> None:
         SPAN_MP_SEAT,
         SPAN_MP_SLUG_CONNECT,
     )
+
     assert SPAN_MP_GAME_CREATED == "mp.game_created"
     assert SPAN_MP_SLUG_CONNECT == "mp.slug_connect"
     assert SPAN_MP_SEAT == "mp.seat"

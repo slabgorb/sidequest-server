@@ -1,4 +1,5 @@
 """SessionRoom.session lifecycle tests."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,9 +43,7 @@ def test_session_advance_via_room_persists_to_room_snapshot(tmp_path: Path):
     store = SqliteStore(tmp_path / "t.db")
     room.bind_world(snapshot=snap, store=store)
 
-    room.session.advance_via_beat(
-        StoryBeat(kind=StoryBeatKind.ENCOUNTER, trigger="test")
-    )
+    room.session.advance_via_beat(StoryBeat(kind=StoryBeatKind.ENCOUNTER, trigger="test"))
     # The room's snapshot is the canonical reference.
     assert room.snapshot is snap
     assert snap.clock_t_hours == 1.0
@@ -65,9 +64,7 @@ def test_bind_world_is_idempotent_on_session(tmp_path: Path):
 
 def test_bind_world_loads_orbital_content_when_world_dir_has_orbits(tmp_path: Path):
     """Orbital tier (orbits.yaml present) → session.orbital_content populated."""
-    fixtures = (
-        Path(__file__).parent.parent / "orbital" / "fixtures" / "world_minimal"
-    )
+    fixtures = Path(__file__).parent.parent / "orbital" / "fixtures" / "world_minimal"
     room = _make_room()
     snap = GameSnapshot()
     store = SqliteStore(tmp_path / "t.db")

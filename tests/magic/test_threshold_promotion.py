@@ -13,6 +13,7 @@ auto-promoted threshold crossing actually lands as a
 promotion is reachable from production code paths
 (CLAUDE.md "Verify Wiring, Not Just Existence").
 """
+
 from __future__ import annotations
 
 import pytest
@@ -40,9 +41,7 @@ def test_sanity_low_crossing_adds_bleeding_through_wound(coyote_world_config):
 
     state = MagicState.from_config(coyote_world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
     result = apply_magic_working(
@@ -76,9 +75,7 @@ def test_notice_high_crossing_adds_quiet_word_wound(coyote_world_config):
 
     state = MagicState.from_config(coyote_world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.70
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.70)
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
     result = apply_magic_working(
@@ -97,8 +94,7 @@ def test_notice_high_crossing_adds_quiet_word_wound(coyote_world_config):
 
     promotions = promote_crossings_to_status_changes(result=result, snapshot=snapshot)
     assert any(
-        "Quiet Word" in p.status_text or "noticed" in p.status_text.lower()
-        for p in promotions
+        "Quiet Word" in p.status_text or "noticed" in p.status_text.lower() for p in promotions
     )
 
 
@@ -157,14 +153,10 @@ def test_bar_without_promote_to_status_silently_skipped(world_config):
         # promote_to_status omitted intentionally
     )
     other_bars = [b for b in world_config.ledger_bars if b.id != "sanity"]
-    stripped = world_config.model_copy(
-        update={"ledger_bars": [bare_sanity] + other_bars}
-    )
+    stripped = world_config.model_copy(update={"ledger_bars": [bare_sanity] + other_bars})
     state = MagicState.from_config(stripped)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
     snapshot = GameSnapshot.model_construct(magic_state=state)
 
     result = apply_magic_working(
@@ -208,9 +200,7 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
 
     state = MagicState.from_config(coyote_world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
     snapshot.turn_manager = TurnManager()
@@ -243,14 +233,13 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
         },
     )
 
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Sira", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Sira", room=room_for(snapshot)
+    )
 
     target = next(c for c in snapshot.characters if c.core.name == "sira_mendes")
     statuses = target.core.statuses
-    bleeding = [
-        s for s in statuses
-        if "Bleeding" in s.text and s.severity == StatusSeverity.Wound
-    ]
+    bleeding = [s for s in statuses if "Bleeding" in s.text and s.severity == StatusSeverity.Wound]
     assert len(bleeding) == 1, (
         f"expected one auto-promoted 'Bleeding through' Wound, got {statuses!r}"
     )

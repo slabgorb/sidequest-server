@@ -14,10 +14,12 @@ from .span import Span
 SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED = "lobby.force_new_disambiguated"
 SPAN_LOBBY_SESSION_JOIN_EXISTING = "lobby.session_join_existing"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED,
-    SPAN_LOBBY_SESSION_JOIN_EXISTING,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_LOBBY_FORCE_NEW_DISAMBIGUATED,
+        SPAN_LOBBY_SESSION_JOIN_EXISTING,
+    }
+)
 
 
 @contextmanager

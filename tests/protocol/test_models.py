@@ -158,9 +158,7 @@ def test_footnote_callback_has_fact_id() -> None:
 
 def test_footnote_blank_summary_rejected() -> None:
     with pytest.raises(ValidationError):
-        Footnote.model_validate(
-            {"summary": "", "category": "Lore", "is_new": True}
-        )
+        Footnote.model_validate({"summary": "", "category": "Lore", "is_new": True})
 
 
 # ---------------------------------------------------------------------------
@@ -223,14 +221,16 @@ def test_character_state_serializes_class_not_class_underscore() -> None:
 
 def test_character_state_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        CharacterState.model_validate({
-            "name": "Grok",
-            "hp": 10,
-            "max_hp": 20,
-            "statuses": [],
-            "inventory": [],
-            "unknown_field": "bad",
-        })
+        CharacterState.model_validate(
+            {
+                "name": "Grok",
+                "hp": 10,
+                "max_hp": 20,
+                "statuses": [],
+                "inventory": [],
+                "unknown_field": "bad",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,12 +297,14 @@ def test_initial_state_default_turn_count() -> None:
 
 def test_initial_state_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        InitialState.model_validate({
-            "characters": [],
-            "location": "Start",
-            "quests": {},
-            "extra": "bad",
-        })
+        InitialState.model_validate(
+            {
+                "characters": [],
+                "location": "Start",
+                "quests": {},
+                "extra": "bad",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -368,14 +370,16 @@ def test_inventory_item_serializes_type_not_item_type() -> None:
 
 def test_inventory_item_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        InventoryItem.model_validate({
-            "name": "Sword",
-            "type": "weapon",
-            "equipped": False,
-            "quantity": 1,
-            "description": "A sword",
-            "bogus": "field",
-        })
+        InventoryItem.model_validate(
+            {
+                "name": "Sword",
+                "type": "weapon",
+                "equipped": False,
+                "quantity": 1,
+                "description": "A sword",
+                "bogus": "field",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -385,13 +389,15 @@ def test_inventory_item_deny_unknown_fields() -> None:
 
 def test_inventory_payload_basic() -> None:
     payload = InventoryPayload(
-        items=[make_inventory_item(
-            name="Iron Sword",
-            **{"type": "weapon"},
-            equipped=True,
-            quantity=1,
-            description="A sturdy blade",
-        )],
+        items=[
+            make_inventory_item(
+                name="Iron Sword",
+                **{"type": "weapon"},
+                equipped=True,
+                quantity=1,
+                description="A sturdy blade",
+            )
+        ],
         gold=150,
     )
     assert payload.gold == 150
@@ -432,14 +438,16 @@ def test_character_sheet_optional_pronouns() -> None:
 
 def test_character_sheet_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        CharacterSheetDetails.model_validate({
-            "race": "Elf",
-            "stats": {},
-            "abilities": [],
-            "backstory": "A backstory",
-            "personality": "Calm",
-            "extra": "bad",
-        })
+        CharacterSheetDetails.model_validate(
+            {
+                "race": "Elf",
+                "stats": {},
+                "abilities": [],
+                "backstory": "A backstory",
+                "personality": "Calm",
+                "extra": "bad",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -495,16 +503,18 @@ def test_party_member_pre_chargen_has_no_sheet_or_inventory() -> None:
 
 def test_party_member_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        PartyMember.model_validate({
-            "player_id": "p1",
-            "name": "Alice",
-            "current_hp": 10,
-            "max_hp": 10,
-            "statuses": [],
-            "class": "Ranger",
-            "level": 1,
-            "bogus": "field",
-        })
+        PartyMember.model_validate(
+            {
+                "player_id": "p1",
+                "name": "Alice",
+                "current_hp": 10,
+                "max_hp": 10,
+                "statuses": [],
+                "class": "Ranger",
+                "level": 1,
+                "bogus": "field",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -538,12 +548,12 @@ def test_tactical_grid_payload_basic() -> None:
 
 def test_tactical_grid_deny_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        TacticalGridPayload.model_validate({
-            "width": 5,
-            "height": 5,
-            "cells": [["floor"] * 5 for _ in range(5)],
-            "features": [],
-            "extra": "bad",
-        })
-
-
+        TacticalGridPayload.model_validate(
+            {
+                "width": 5,
+                "height": 5,
+                "cells": [["floor"] * 5 for _ in range(5)],
+                "features": [],
+                "extra": "bad",
+            }
+        )

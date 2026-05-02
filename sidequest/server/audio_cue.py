@@ -61,9 +61,7 @@ def build_audio_cue_payload(
             mood = cue.mood
             if audio_backend is not None:
                 resolved = _relative_to_backend(audio_backend, cue)
-                music_track = (
-                    _maybe_prefix(resolved) if resolved is not None else None
-                )
+                music_track = _maybe_prefix(resolved) if resolved is not None else None
         elif cue.lane == AudioLane.SFX and cue.sfx_id is not None:
             entry = cue.sfx_id
             if audio_backend is not None:

@@ -5,6 +5,7 @@ of every shipped plugin into ``MAGIC_PLUGINS``. Tests need that side effect
 before calling ``get_plugin``. Hoist it into a session-scoped autouse fixture
 so individual test bodies don't have to repeat the import.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -50,9 +51,7 @@ def world_config() -> WorldMagicConfig:
                 threshold_low=0.40,
                 consequence_on_low_cross="auto-fire The Bleeding-Through",
                 starts_at_chargen=1.0,
-                promote_to_status=StatusPromotion(
-                    text="Bleeding through", severity="Wound"
-                ),
+                promote_to_status=StatusPromotion(text="Bleeding through", severity="Wound"),
             ),
             LedgerBarSpec(
                 id="notice",
@@ -62,9 +61,7 @@ def world_config() -> WorldMagicConfig:
                 threshold_high=0.75,
                 consequence_on_high_cross="auto-fire The Quiet Word",
                 starts_at_chargen=0.0,
-                promote_to_status=StatusPromotion(
-                    text="Hegemony noticed", severity="Wound"
-                ),
+                promote_to_status=StatusPromotion(text="Hegemony noticed", severity="Wound"),
             ),
             LedgerBarSpec(
                 id="hegemony_heat",

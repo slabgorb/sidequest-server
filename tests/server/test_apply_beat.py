@@ -13,8 +13,12 @@ from sidequest.protocol.dice import RollOutcome
 def _enc(*, p_thresh: int = 10, o_thresh: int = 10, p_cur: int = 0, o_cur: int = 0):
     return StructuredEncounter(
         encounter_type="combat",
-        player_metric=EncounterMetric(name="momentum", current=p_cur, starting=0, threshold=p_thresh),
-        opponent_metric=EncounterMetric(name="momentum", current=o_cur, starting=0, threshold=o_thresh),
+        player_metric=EncounterMetric(
+            name="momentum", current=p_cur, starting=0, threshold=p_thresh
+        ),
+        opponent_metric=EncounterMetric(
+            name="momentum", current=o_cur, starting=0, threshold=o_thresh
+        ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
             EncounterActor(name="Promo", role="combatant", side="opponent"),
@@ -24,24 +28,39 @@ def _enc(*, p_thresh: int = 10, o_thresh: int = 10, p_cur: int = 0, o_cur: int =
 
 
 def _strike_beat(beat_id: str = "attack", base: int = 2) -> BeatDef:
-    return BeatDef.model_validate({
-        "id": beat_id, "label": beat_id, "kind": "strike", "base": base,
-        "stat_check": "STR",
-    })
+    return BeatDef.model_validate(
+        {
+            "id": beat_id,
+            "label": beat_id,
+            "kind": "strike",
+            "base": base,
+            "stat_check": "STR",
+        }
+    )
 
 
 def _angle_beat(beat_id: str = "feint", target_tag: str = "Off-Balance") -> BeatDef:
-    return BeatDef.model_validate({
-        "id": beat_id, "label": beat_id, "kind": "angle",
-        "target_tag": target_tag, "stat_check": "DEX",
-    })
+    return BeatDef.model_validate(
+        {
+            "id": beat_id,
+            "label": beat_id,
+            "kind": "angle",
+            "target_tag": target_tag,
+            "stat_check": "DEX",
+        }
+    )
 
 
 def _push_beat(beat_id: str = "flee") -> BeatDef:
-    return BeatDef.model_validate({
-        "id": beat_id, "label": beat_id, "kind": "push", "base": 1,
-        "stat_check": "DEX",
-    })
+    return BeatDef.model_validate(
+        {
+            "id": beat_id,
+            "label": beat_id,
+            "kind": "push",
+            "base": 1,
+            "stat_check": "DEX",
+        }
+    )
 
 
 def test_strike_player_advances_player_metric_only():
@@ -159,6 +178,7 @@ def test_strike_fail_publishes_beat_no_op_for_gm_panel(monkeypatch):
         captured.append((event_type, fields, {"component": component, "severity": severity}))
 
     import sidequest.game.beat_kinds as _bk
+
     monkeypatch.setattr(_bk, "_watcher_publish", fake_publish)
 
     enc = _enc()
@@ -166,7 +186,8 @@ def test_strike_fail_publishes_beat_no_op_for_gm_panel(monkeypatch):
     apply_beat(enc, sam, _strike_beat(base=2), RollOutcome.Fail)
 
     no_ops = [
-        (fields, meta) for et, fields, meta in captured
+        (fields, meta)
+        for et, fields, meta in captured
         if et == "state_transition" and fields.get("op") == "beat_no_op"
     ]
     assert no_ops, "Fail-tier strike must publish beat_no_op for GM panel visibility"
@@ -188,6 +209,7 @@ def test_strike_success_does_not_publish_beat_no_op(monkeypatch):
             captured.append(fields["beat_id"])
 
     import sidequest.game.beat_kinds as _bk
+
     monkeypatch.setattr(_bk, "_watcher_publish", fake_publish)
 
     enc = _enc()
@@ -209,11 +231,16 @@ def test_post_resolution_apply_is_dropped_with_skipped_reason():
 def test_per_tier_override_applies_critfail_own_minus_two():
     enc = _enc()
     sam = enc.find_actor("Sam")
-    bash = BeatDef.model_validate({
-        "id": "shield_bash", "label": "Shield Bash", "kind": "strike", "base": 4,
-        "stat_check": "STR",
-        "deltas": {"crit_fail": {"own": -2}},
-    })
+    bash = BeatDef.model_validate(
+        {
+            "id": "shield_bash",
+            "label": "Shield Bash",
+            "kind": "strike",
+            "base": 4,
+            "stat_check": "STR",
+            "deltas": {"crit_fail": {"own": -2}},
+        }
+    )
     apply_beat(enc, sam, bash, RollOutcome.CritFail)
     # CritFail on strike default is 0 own; override drops to -2; ascending dial
     # is clamped at 0 (from spec — never go negative on a side's own dial)

@@ -60,9 +60,7 @@ async def test_dispatch_submits_turn_record_to_validator(session_fixture) -> Non
         "dispatch must submit a TurnRecord at end of turn"
     )
     record = mock_validator.submit.await_args.args[0]
-    assert isinstance(record, TurnRecord), (
-        f"expected TurnRecord, got {type(record)}"
-    )
+    assert isinstance(record, TurnRecord), f"expected TurnRecord, got {type(record)}"
     assert record.player_id == sd.player_id
     assert record.player_input == "I look around."
 

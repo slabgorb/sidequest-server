@@ -55,11 +55,10 @@ def _capture_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict, di
     captured: list[tuple[str, dict, dict]] = []
 
     def fake_publish(event_type, fields, *, component="", severity="info"):
-        captured.append(
-            (event_type, dict(fields), {"component": component, "severity": severity})
-        )
+        captured.append((event_type, dict(fields), {"component": component, "severity": severity}))
 
     import sidequest.telemetry.watcher_hub as _hub
+
     monkeypatch.setattr(_hub, "publish_event", fake_publish)
     return captured
 
@@ -78,10 +77,7 @@ def test_register_root_appends_to_existing_mount(tmp_path: Path) -> None:
         assert added is True
 
         # Both directories are now reachable from the same /renders mount.
-        sf = next(
-            r.app for r in app.routes
-            if getattr(r, "name", None) == "render_assets"
-        )
+        sf = next(r.app for r in app.routes if getattr(r, "name", None) == "render_assets")
         assert isinstance(sf, StaticFiles)
         # Resolve both for symlink-equality on macOS (/var -> /private/var).
         served = {Path(d).resolve() for d in sf.all_directories}
@@ -104,10 +100,7 @@ def test_register_root_idempotent(tmp_path: Path) -> None:
         assert first is True
         assert second is False
 
-        sf = next(
-            r.app for r in app.routes
-            if getattr(r, "name", None) == "render_assets"
-        )
+        sf = next(r.app for r in app.routes if getattr(r, "name", None) == "render_assets")
         # The new root appears at most once.
         resolved_new = new_root.resolve()
         count = sum(1 for d in sf.all_directories if Path(d).resolve() == resolved_new)
@@ -129,7 +122,8 @@ def test_register_root_rejects_missing_dir(tmp_path: Path) -> None:
 
 
 def test_ensure_render_mount_serves_new_dir_end_to_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Wiring test (CLAUDE.md mandates one per suite).
 
@@ -181,10 +175,7 @@ def test_ensure_render_mount_idempotent_for_same_dir(tmp_path: Path) -> None:
         u2 = render_mounts.ensure_render_mount(app, str(f2))
         assert u1 and u2
 
-        sf = next(
-            r.app for r in app.routes
-            if getattr(r, "name", None) == "render_assets"
-        )
+        sf = next(r.app for r in app.routes if getattr(r, "name", None) == "render_assets")
         # Count distinct resolved directories under the mount.
         seen_roots = {Path(d).resolve() for d in sf.all_directories}
         # Seed + (one) daemon parent — never two new entries for two files.
@@ -200,7 +191,8 @@ def test_ensure_render_mount_returns_none_for_missing_file(tmp_path: Path) -> No
     app = _fresh_app(initial_dir=tmp_path / "seed")
     try:
         result = render_mounts.ensure_render_mount(
-            app, str(tmp_path / "ghost" / "no.png"),
+            app,
+            str(tmp_path / "ghost" / "no.png"),
         )
         assert result is None
     finally:
@@ -208,7 +200,8 @@ def test_ensure_render_mount_returns_none_for_missing_file(tmp_path: Path) -> No
 
 
 def test_ensure_render_mount_emits_remount_otel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The lie-detector event: ``render_assets.mount_remounted`` must
     fire when a new daemon dir is registered post-startup."""
@@ -224,8 +217,7 @@ def test_ensure_render_mount_emits_remount_otel(
         render_mounts.ensure_render_mount(app, str(f))
 
         remount = [
-            (fields, meta) for et, fields, meta in captured
-            if et == "render_assets.mount_remounted"
+            (fields, meta) for et, fields, meta in captured if et == "render_assets.mount_remounted"
         ]
         assert remount, "expected render_assets.mount_remounted on first heal"
         fields, meta = remount[0]

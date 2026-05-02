@@ -23,6 +23,7 @@ patterns from ``tests/server/dispatch/test_sealed_letter_dispatch_integration.py
 into reusable helpers — no new code paths, just a stable surface around
 the existing production wiring.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -45,9 +46,7 @@ from tests._helpers.session_room import room_for
 # the path-walk in test_sealed_letter_dispatch_integration.py so that
 # subrepo layouts (oq-1, oq-2) resolve identically.
 DEFAULT_CONTENT_ROOT = (
-    Path(__file__).resolve().parents[2].parent
-    / "sidequest-content"
-    / "genre_packs"
+    Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 )
 
 GENRE_SLUG = "space_opera"
@@ -147,8 +146,7 @@ def make_dogfight_playtest_state(
     )
     roles = sorted(a.role for a in enc.actors)
     assert roles == ["blue", "red"], (
-        f"expected red+blue role tags from sealed-letter instantiation, "
-        f"got {roles!r}"
+        f"expected red+blue role tags from sealed-letter instantiation, got {roles!r}"
     )
 
     return snap, cdef, pack
@@ -204,8 +202,7 @@ def drive_dogfight_turn(
     enc = snapshot.encounter
     if enc is None:
         raise ValueError(
-            "snapshot has no active encounter — call "
-            "make_dogfight_playtest_state first"
+            "snapshot has no active encounter — call make_dogfight_playtest_state first"
         )
     if enc.encounter_type != DOGFIGHT_TYPE:
         raise ValueError(
@@ -220,19 +217,15 @@ def drive_dogfight_turn(
     confrontations = pack.rules.confrontations if pack.rules else []
     cdef = find_confrontation_def(confrontations, DOGFIGHT_TYPE)
     if cdef is None or cdef.interaction_table is None:
-        raise ValueError(
-            "loaded pack has no dogfight interaction_table — content drift"
-        )
+        raise ValueError("loaded pack has no dogfight interaction_table — content drift")
     legal = set(cdef.interaction_table.maneuvers_consumed)
     if red_maneuver not in legal:
         raise ValueError(
-            f"red_maneuver {red_maneuver!r} not in maneuvers_consumed "
-            f"(legal: {sorted(legal)})"
+            f"red_maneuver {red_maneuver!r} not in maneuvers_consumed (legal: {sorted(legal)})"
         )
     if blue_maneuver not in legal:
         raise ValueError(
-            f"blue_maneuver {blue_maneuver!r} not in maneuvers_consumed "
-            f"(legal: {sorted(legal)})"
+            f"blue_maneuver {blue_maneuver!r} not in maneuvers_consumed (legal: {sorted(legal)})"
         )
 
     red_actor = next(a for a in enc.actors if a.role == "red")

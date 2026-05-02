@@ -24,6 +24,7 @@ on the next player's turn will overwrite their POV state with the prior
 actor's perception — bigger break than the original "collapsed corridor"
 bug. Pydantic ``extra="forbid"`` is the schema-level guard.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

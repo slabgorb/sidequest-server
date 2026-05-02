@@ -9,6 +9,5 @@ def test_turn_complete_watcher_payload_omits_classified_intent():
 
     source = inspect.getsource(session_handler)
     assert '"classified_intent"' not in source and "'classified_intent'" not in source, (
-        "classified_intent string key still present in session_handler — "
-        "Task 6 not complete"
+        "classified_intent string key still present in session_handler — Task 6 not complete"
     )

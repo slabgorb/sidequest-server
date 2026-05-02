@@ -1,4 +1,5 @@
 """Pydantic model tests for orbits.yaml + chart.yaml schemas."""
+
 from __future__ import annotations
 
 import pytest

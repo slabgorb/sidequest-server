@@ -119,9 +119,7 @@ async def ws_endpoint(websocket: WebSocket, handler: WebSocketSessionHandler) ->
                 if room.is_paused():
                     absent = room.absent_seated_player_ids()
                     room.broadcast(
-                        GamePausedMessage(
-                            payload=GamePausedPayload(waiting_for=absent)
-                        ),
+                        GamePausedMessage(payload=GamePausedPayload(waiting_for=absent)),
                         exclude_socket_id=None,
                     )
         await handler.cleanup()

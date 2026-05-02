@@ -4,6 +4,7 @@ Spec: docs/superpowers/specs/2026-04-23-local-dm-decomposer-design.md §4
 Group C: verdict producer consumes HP/edge state + policy, emits verdicts
 and paired narrator directives. Edge-based triggers only for Phase A.
 """
+
 from __future__ import annotations
 
 from sidequest.agents.lethality_arbiter import LethalityArbiter, LethalityResult
@@ -185,11 +186,13 @@ def test_arbiter_overrides_decomposer_verdict_on_conflict():
     pc = _make_pc("Alice", edge_current=0)
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="alice",
-            raw_action="x",
-            lethality=[_decomposer_verdict("player:alice", "humiliated")],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="alice",
+                raw_action="x",
+                lethality=[_decomposer_verdict("player:alice", "humiliated")],
+            )
+        ],
         cross_player=[],
         confidence_global=1.0,
     )
@@ -210,19 +213,21 @@ def test_arbiter_passes_through_decomposer_only_entities():
     arbiter = LethalityArbiter(policy=_heavy_metal_policy())
     pkg = DispatchPackage(
         turn_id="t1",
-        per_player=[PlayerDispatch(
-            player_id="alice",
-            raw_action="x",
-            lethality=[_decomposer_verdict("npc:BoneChewer", "maimed")],
-        )],
+        per_player=[
+            PlayerDispatch(
+                player_id="alice",
+                raw_action="x",
+                lethality=[_decomposer_verdict("npc:BoneChewer", "maimed")],
+            )
+        ],
         cross_player=[],
         confidence_global=1.0,
     )
     result = arbiter.arbitrate(
         package=pkg,
         bank_result=BankResult(),
-        pc_cores_by_player={},   # no one at zero edge
-        npc_cores_by_name={},    # BoneChewer's core not tracked this turn
+        pc_cores_by_player={},  # no one at zero edge
+        npc_cores_by_name={},  # BoneChewer's core not tracked this turn
     )
     assert len(result.verdicts) == 1
     assert result.verdicts[0].entity == "npc:BoneChewer"

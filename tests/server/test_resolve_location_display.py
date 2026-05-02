@@ -28,8 +28,7 @@ def test_room_id_resolves_to_room_name() -> None:
     #   - id: the_summoning_stage
     #     name: "The Summoning Stage"
     assert (
-        _resolve_location_display(pack, "primetime", "the_summoning_stage")
-        == "The Summoning Stage"
+        _resolve_location_display(pack, "primetime", "the_summoning_stage") == "The Summoning Stage"
     )
 
 
@@ -39,24 +38,17 @@ def test_narrator_invented_slug_humanizes() -> None:
     # confabulated it. We humanize so the UI header doesn't read
     # "backstage_corridor".
     assert (
-        _resolve_location_display(pack, "primetime", "backstage_corridor")
-        == "Backstage Corridor"
+        _resolve_location_display(pack, "primetime", "backstage_corridor") == "Backstage Corridor"
     )
 
 
 def test_already_humanized_returns_unchanged() -> None:
     pack = _load_cnc()
-    assert (
-        _resolve_location_display(pack, "primetime", "The Green Room")
-        == "The Green Room"
-    )
+    assert _resolve_location_display(pack, "primetime", "The Green Room") == "The Green Room"
 
 
 def test_no_pack_falls_back_to_humanize() -> None:
-    assert (
-        _resolve_location_display(None, None, "mystery_compass_shop")
-        == "Mystery Compass Shop"
-    )
+    assert _resolve_location_display(None, None, "mystery_compass_shop") == "Mystery Compass Shop"
 
 
 def test_empty_location_returns_empty() -> None:

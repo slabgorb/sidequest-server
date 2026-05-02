@@ -25,6 +25,7 @@ Migration: existing saves carry ``CreatureCore.statuses`` as ``list[str]``.
 created_in_encounter=None)`` so loaders can call it during
 ``model_validator(mode="before")`` on CreatureCore.
 """
+
 from __future__ import annotations
 
 from enum import Enum

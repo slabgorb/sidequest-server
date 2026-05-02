@@ -41,14 +41,16 @@ def _make_kestrel() -> ChassisInstanceConfig:
             },
         ),
         interior_rooms=["galley", "cockpit", "engineering"],
-        bond_seeds=[BondSeed(
-            character_role="player_character",
-            bond_strength_character_to_chassis=0.45,
-            bond_strength_chassis_to_character=0.45,
-            bond_tier_character="trusted",
-            bond_tier_chassis="trusted",
-            history_seeds=["three jumps' worth of patch kits"],
-        )],
+        bond_seeds=[
+            BondSeed(
+                character_role="player_character",
+                bond_strength_character_to_chassis=0.45,
+                bond_strength_chassis_to_character=0.45,
+                bond_tier_character="trusted",
+                bond_tier_chassis="trusted",
+                history_seeds=["three jumps' worth of patch kits"],
+            )
+        ],
         crew_npcs=["captain_x", "engineer_y"],
     )
 
@@ -56,14 +58,18 @@ def _make_kestrel() -> ChassisInstanceConfig:
 def _make_authored_crew() -> list[AuthoredNpc]:
     return [
         AuthoredNpc(
-            id="captain_x", name="CaptainName",
-            role="captain", appearance="weathered",
+            id="captain_x",
+            name="CaptainName",
+            role="captain",
+            appearance="weathered",
             history_seeds=["flew Hegemony patrol once"],
             initial_disposition=60,
         ),
         AuthoredNpc(
-            id="engineer_y", name="EngineerName",
-            role="engineer", appearance="grease-stained jumpsuit",
+            id="engineer_y",
+            name="EngineerName",
+            role="engineer",
+            appearance="grease-stained jumpsuit",
             initial_disposition=55,
         ),
     ]
@@ -133,7 +139,9 @@ def test_chassis_render_includes_establishing_narration() -> None:
         magic_register="Reach register text",
         bond_tier_for_pc="trusted",
         per_pc_beat=None,
-        pc_first_name="Z", pc_last_name="J", pc_nickname="",
+        pc_first_name="Z",
+        pc_last_name="J",
+        pc_nickname="",
     )
     assert op.establishing_narration in out
     assert "ESTABLISHING NARRATION" in out
@@ -147,7 +155,9 @@ def test_chassis_render_includes_avoid_list() -> None:
         magic_register="Reach register text",
         bond_tier_for_pc="trusted",
         per_pc_beat=None,
-        pc_first_name="Z", pc_last_name="J", pc_nickname="",
+        pc_first_name="Z",
+        pc_last_name="J",
+        pc_nickname="",
     )
     assert "any confrontation" in out
     assert "any dice roll" in out
@@ -161,7 +171,9 @@ def test_chassis_render_lists_crew_npcs() -> None:
         magic_register="Reach register text",
         bond_tier_for_pc="trusted",
         per_pc_beat=None,
-        pc_first_name="Z", pc_last_name="J", pc_nickname="",
+        pc_first_name="Z",
+        pc_last_name="J",
+        pc_nickname="",
     )
     assert "CaptainName" in out
     assert "EngineerName" in out
@@ -176,7 +188,9 @@ def test_chassis_render_omits_party_framing_when_solo() -> None:
         magic_register="Reach register text",
         bond_tier_for_pc="trusted",
         per_pc_beat=None,
-        pc_first_name="Z", pc_last_name="J", pc_nickname="",
+        pc_first_name="Z",
+        pc_last_name="J",
+        pc_nickname="",
     )
     assert "PARTY FRAMING" not in out
 
@@ -190,7 +204,9 @@ def test_chassis_render_first_turn_invitation_at_close() -> None:
         magic_register="Reach register text",
         bond_tier_for_pc="trusted",
         per_pc_beat=None,
-        pc_first_name="Z", pc_last_name="J", pc_nickname="",
+        pc_first_name="Z",
+        pc_last_name="J",
+        pc_nickname="",
     )
     inv_idx = out.find(op.first_turn_invitation)
     narr_idx = out.find(op.establishing_narration)

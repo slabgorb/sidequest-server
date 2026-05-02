@@ -1,4 +1,5 @@
 """MagicState aggregate."""
+
 from __future__ import annotations
 
 import pytest
@@ -128,12 +129,9 @@ def test_pydantic_serialization_roundtrip(world_config):
 
     dumped = state.model_dump()
     restored = MagicState.model_validate(dumped)
-    assert (
-        restored.get_bar(
-            BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity")
-        ).value
-        == pytest.approx(0.88)
-    )
+    assert restored.get_bar(
+        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity")
+    ).value == pytest.approx(0.88)
     assert len(restored.working_log) == 1
 
 
@@ -163,9 +161,7 @@ def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
     with caplog.at_level(logging.WARNING, logger="sidequest.magic.state"):
         state.apply_working(working)
 
-    assert any(
-        "magic.unrouted_cost" in r.message and "karma" in r.message for r in caplog.records
-    )
+    assert any("magic.unrouted_cost" in r.message and "karma" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

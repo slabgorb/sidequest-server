@@ -1,4 +1,5 @@
 """Rule schema parsing (structural — semantic validation is Task 10)."""
+
 from __future__ import annotations
 
 import textwrap

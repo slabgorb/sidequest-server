@@ -4,14 +4,13 @@ When a world has magic.yaml loaded (snapshot.magic_state is not None),
 the block is emitted alongside other pre-prompt scaffolding. When
 absent, returns empty string and narrator pre-prompt is unchanged.
 """
+
 from __future__ import annotations
 
 from sidequest.magic.state import BarKey, MagicState
 
 
-def build_magic_context_block(
-    *, magic_state: MagicState | None, actor_id: str | None
-) -> str:
+def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str | None) -> str:
     """Return the pre-prompt magic-context block (or empty string if state absent)."""
     if magic_state is None:
         return ""

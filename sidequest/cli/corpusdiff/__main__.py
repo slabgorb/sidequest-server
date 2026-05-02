@@ -1,4 +1,5 @@
 """Entry point for python -m sidequest.cli.corpusdiff."""
+
 from __future__ import annotations
 
 import sys

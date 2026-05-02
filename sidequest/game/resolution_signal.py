@@ -5,6 +5,7 @@ encounter flips ``resolved=True``. The narrator prompt assembler reads
 this slot on the next turn and clears it. Spec 2026-04-25-dual-track-
 momentum-design.md §"[ENCOUNTER RESOLVED] zone (one-shot)".
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

@@ -76,9 +76,7 @@ def bind_scenario(
     # Seed scenario NPC belief states from pack data. Matched by name
     # (Rust parity: ``n.core.name.as_str() == snpc.name``).
     for snpc in scenario_pack.npcs:
-        target = next(
-            (n for n in snapshot.npcs if n.core.name == snpc.name), None
-        )
+        target = next((n for n in snapshot.npcs if n.core.name == snpc.name), None)
         if target is None:
             continue
         for fact in snpc.initial_beliefs.facts:

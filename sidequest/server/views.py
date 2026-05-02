@@ -247,8 +247,7 @@ def backfill_last_narration_block(
     # take what's there.
     with store._conn:
         narration_seq_rows = store._conn.execute(
-            "SELECT seq FROM events WHERE kind = 'NARRATION' "
-            "ORDER BY seq DESC LIMIT ?",
+            "SELECT seq FROM events WHERE kind = 'NARRATION' ORDER BY seq DESC LIMIT ?",
             (limit,),
         ).fetchall()
     if not narration_seq_rows:

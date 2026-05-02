@@ -22,9 +22,7 @@ _DANGEROUS_TAGS: re.Pattern[str] = re.compile(
     r"(?:\s[^>]*)?\s*/?\s*>"
 )
 
-_BRACKET_MARKERS: re.Pattern[str] = re.compile(
-    r"(?i)\[\s*/?\s*(?:SYSTEM(?:\s+PROMPT)?|INST)\s*\]"
-)
+_BRACKET_MARKERS: re.Pattern[str] = re.compile(r"(?i)\[\s*/?\s*(?:SYSTEM(?:\s+PROMPT)?|INST)\s*\]")
 
 _OVERRIDE_PREAMBLES: list[re.Pattern[str]] = [
     re.compile(r"(?i)ignore\s+(?:all\s+)?previous\s+instructions"),

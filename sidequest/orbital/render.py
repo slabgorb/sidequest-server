@@ -10,6 +10,7 @@ Position math is deliberately simple in this plan: circular orbits only,
 theta = epoch_phase + 360 * t_days / period. Plan 2 (Track C) brings in
 the full position() module that will be a drop-in replacement here.
 """
+
 from __future__ import annotations
 
 import math
@@ -33,9 +34,7 @@ from sidequest.telemetry.spans.chart import emit_chart_render
 
 # svgwrite's built-in validators reject `data-*` attributes that we use for
 # click-routing on rendered bodies. Allow them by patching the name check.
-_orig_is_valid_attribute = (
-    svgwrite.validator2.Full11Validator.is_valid_svg_attribute
-)
+_orig_is_valid_attribute = svgwrite.validator2.Full11Validator.is_valid_svg_attribute
 
 
 def _is_valid_or_data_attr(self, elementname, attributename):
@@ -54,15 +53,9 @@ def _check_svg_attribute_value_with_data(self, elementname, attributename, value
     return _orig_check_value(self, elementname, attributename, value)
 
 
-_orig_check_value = (
-    svgwrite.validator2.Full11Validator.check_svg_attribute_value
-)
-svgwrite.validator2.Full11Validator.check_svg_attribute_value = (
-    _check_svg_attribute_value_with_data
-)
-svgwrite.validator2.Tiny12Validator.check_svg_attribute_value = (
-    _check_svg_attribute_value_with_data
-)
+_orig_check_value = svgwrite.validator2.Full11Validator.check_svg_attribute_value
+svgwrite.validator2.Full11Validator.check_svg_attribute_value = _check_svg_attribute_value_with_data
+svgwrite.validator2.Tiny12Validator.check_svg_attribute_value = _check_svg_attribute_value_with_data
 
 
 @dataclass(frozen=True)
@@ -76,9 +69,7 @@ class Scope:
         return cls(center_body_id="<root>")
 
 
-def _body_position_au_polar(
-    body: BodyDef, t_hours: float
-) -> tuple[float, float]:
+def _body_position_au_polar(body: BodyDef, t_hours: float) -> tuple[float, float]:
     """Return (au, theta_deg) of a body relative to its parent at story-time t.
 
     Circular-orbit approximation. Plan 2 (Track C) replaces this with the
@@ -94,9 +85,7 @@ def _body_position_au_polar(
     return (body.semi_major_au, theta)
 
 
-def _polar_to_cartesian(
-    au: float, theta_deg: float, scale: float
-) -> tuple[float, float]:
+def _polar_to_cartesian(au: float, theta_deg: float, scale: float) -> tuple[float, float]:
     """Convert polar (AU, deg) to SVG cartesian pixels.
 
     SVG y-axis grows downward; we flip so 0° is "right" (3 o'clock) and 90°
@@ -122,10 +111,7 @@ def render_chart(
 
     dwg = svgwrite.Drawing(
         size=(viewport.size_px, viewport.size_px),
-        viewBox=(
-            f"{-viewport.half} {-viewport.half} "
-            f"{viewport.size_px} {viewport.size_px}"
-        ),
+        viewBox=(f"{-viewport.half} {-viewport.half} {viewport.size_px} {viewport.size_px}"),
         profile="tiny",
         debug=False,
     )
@@ -193,11 +179,7 @@ def _attach_body_id(elem: svgwrite.base.BaseElement, body_id: str) -> svgwrite.b
 
 def _drillable_body_ids(orbits: OrbitsConfig) -> set[str]:
     """Bodies that have at least one child — eligible for cluster-glyph drill-in."""
-    return {
-        bid
-        for bid in orbits.bodies
-        if any(b.parent == bid for b in orbits.bodies.values())
-    }
+    return {bid for bid in orbits.bodies if any(b.parent == bid for b in orbits.bodies.values())}
 
 
 def _render_engraved_layer(
@@ -211,9 +193,7 @@ def _render_engraved_layer(
 
     if center.parent is not None:
         if center.parent not in orbits.bodies:
-            raise ValueError(
-                f"center {center_id!r} has parent {center.parent!r} not in bodies"
-            )
+            raise ValueError(f"center {center_id!r} has parent {center.parent!r} not in bodies")
         parent = orbits.bodies[center.parent]
         parent_label = parent.label or center.parent.upper()
         edge = svgwrite.container.Group()
@@ -278,9 +258,7 @@ def _render_engraved_layer(
                 )
             )
             cluster.add(_body_glyph(body, x=x, y=y, body_id=body_id))
-            child_count = sum(
-                1 for c in orbits.bodies.values() if c.parent == body_id
-            )
+            child_count = sum(1 for c in orbits.bodies.values() if c.parent == body_id)
             cluster.add(
                 svgwrite.text.Text(
                     f"+{child_count}",
@@ -321,14 +299,10 @@ def _render_engraved_layer(
     return g
 
 
-def _body_glyph(
-    body: BodyDef, *, x: float, y: float, body_id: str
-) -> svgwrite.base.BaseElement:
+def _body_glyph(body: BodyDef, *, x: float, y: float, body_id: str) -> svgwrite.base.BaseElement:
     """Pick the right shape for a body type."""
     if body.type == BodyType.STAR:
-        circle = svgwrite.shapes.Circle(
-            center=(x, y), r=8, fill="red", stroke="red"
-        )
+        circle = svgwrite.shapes.Circle(center=(x, y), r=8, fill="red", stroke="red")
     elif body.type == BodyType.COMPANION:
         circle = svgwrite.shapes.Circle(center=(x, y), r=4, fill="red")
     elif body.type == BodyType.ARC_BELT:
@@ -338,9 +312,7 @@ def _body_glyph(
     return _attach_body_id(circle, body_id)
 
 
-def _render_flavor_layer(
-    chart: ChartConfig, vp: _Viewport
-) -> svgwrite.container.Group:
+def _render_flavor_layer(chart: ChartConfig, vp: _Viewport) -> svgwrite.container.Group:
     g = svgwrite.container.Group(id="layer-flavor")
     for annot in chart.annotations:
         elem = _render_annotation(annot, vp)
@@ -349,9 +321,7 @@ def _render_flavor_layer(
     return g
 
 
-def _render_annotation(
-    annot: Annotation, vp: _Viewport
-) -> svgwrite.base.BaseElement | None:
+def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseElement | None:
     if annot.kind == "engraved_label":
         if annot.text is None:
             return None

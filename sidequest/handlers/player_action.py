@@ -188,7 +188,9 @@ class PlayerActionHandler:
             lore_context = await session._retrieve_lore_for_turn(sd, action)
         with timings.phase("turn_context_build"):
             turn_context = _build_turn_context(
-                sd, lore_context=lore_context, room=session._room,
+                sd,
+                lore_context=lore_context,
+                room=session._room,
             )
         # Attach the handler-entry timer so `_execute_narration_turn`
         # accumulates its in-turn phases into the same instance.
@@ -221,9 +223,7 @@ class PlayerActionHandler:
             lobby_participant_count = session._room.non_abandoned_player_count()
             snapshot.turn_manager.set_player_count(playing_count)
             snapshot.turn_manager.submit_input(sd.player_id)
-            submitted_count = len(
-                object.__getattribute__(snapshot.turn_manager, "_submitted")
-            )
+            submitted_count = len(object.__getattribute__(snapshot.turn_manager, "_submitted"))
             barrier_fired = snapshot.turn_manager.get_phase() != TurnPhase.InputCollection
             # Story 45-2 AC4: barrier.wait fires on EVERY barrier check —
             # not only on barrier_fired transitions. A wait that never
@@ -280,7 +280,8 @@ class PlayerActionHandler:
                 pending = session._room.drain_pending_actions()
             if barrier_wait_started_at is not None:
                 wait_ms = max(
-                    0, round((time.monotonic() - barrier_wait_started_at) * 1000),
+                    0,
+                    round((time.monotonic() - barrier_wait_started_at) * 1000),
                 )
                 timings.record_phase("mp_barrier_wait", wait_ms)
 
@@ -312,9 +313,7 @@ class PlayerActionHandler:
             # mis-attributed Shirley's declaration to Laverne and invited
             # the LLM to put dialogue in either PC's mouth (2026-04-29
             # multiplayer playtest, SOUL.md "Agency" violation).
-            turn_context.merged_player_actions = [
-                (p.character_name, p.action) for _, p in pending
-            ]
+            turn_context.merged_player_actions = [(p.character_name, p.action) for _, p in pending]
             result = await session._execute_narration_turn(
                 sd,
                 combined_action,

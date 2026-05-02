@@ -136,8 +136,7 @@ def test_combatant_protocol_is_runtime_checkable() -> None:
     Without it, Character conformance can't be verified at runtime."""
     c = warrior()
     assert isinstance(c, Combatant), (
-        "Combatant must be @runtime_checkable — add the decorator in "
-        "sidequest.game.combatant"
+        "Combatant must be @runtime_checkable — add the decorator in sidequest.game.combatant"
     )
 
 

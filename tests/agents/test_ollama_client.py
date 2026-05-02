@@ -1,4 +1,5 @@
 """Tests for OllamaClient — HTTP backend behind LlmClient (ADR-073 Phase 2)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -45,13 +46,15 @@ class _FakeHttpResponse:
 
 
 def _ok_generate_body(text: str, eval_count: int = 5, prompt_eval_count: int = 7) -> bytes:
-    return json.dumps({
-        "model": "sidequest-narrator:latest",
-        "response": text,
-        "done": True,
-        "eval_count": eval_count,
-        "prompt_eval_count": prompt_eval_count,
-    }).encode()
+    return json.dumps(
+        {
+            "model": "sidequest-narrator:latest",
+            "response": text,
+            "done": True,
+            "eval_count": eval_count,
+            "prompt_eval_count": prompt_eval_count,
+        }
+    ).encode()
 
 
 def test_send_with_model_calls_api_generate_and_maps_tokens():
@@ -94,13 +97,15 @@ def test_send_with_model_non_200_raises_ollama_error():
 
 
 def _ok_chat_body(text: str, eval_count: int = 5, prompt_eval_count: int = 7) -> bytes:
-    return json.dumps({
-        "model": "sidequest-narrator:latest",
-        "message": {"role": "assistant", "content": text},
-        "done": True,
-        "eval_count": eval_count,
-        "prompt_eval_count": prompt_eval_count,
-    }).encode()
+    return json.dumps(
+        {
+            "model": "sidequest-narrator:latest",
+            "message": {"role": "assistant", "content": text},
+            "done": True,
+            "eval_count": eval_count,
+            "prompt_eval_count": prompt_eval_count,
+        }
+    ).encode()
 
 
 def test_send_with_session_establishes_new_session():
@@ -112,12 +117,14 @@ def test_send_with_session_establishes_new_session():
         return _FakeHttpResponse(_ok_chat_body("hi back"))
 
     client = OllamaClient(http_fn=fake_http)
-    response = asyncio.run(client.send_with_session(
-        prompt="hello",
-        model="sonnet",
-        session_id=None,
-        system_prompt="you are a bot",
-    ))
+    response = asyncio.run(
+        client.send_with_session(
+            prompt="hello",
+            model="sonnet",
+            session_id=None,
+            system_prompt="you are a bot",
+        )
+    )
 
     assert response.text == "hi back"
     assert response.backend == "ollama"
@@ -143,18 +150,22 @@ def test_send_with_session_resume_replays_history():
         return _FakeHttpResponse(bodies.pop(0))
 
     client = OllamaClient(http_fn=fake_http)
-    first = asyncio.run(client.send_with_session(
-        prompt="turn 1",
-        model="sonnet",
-        session_id=None,
-        system_prompt="sys",
-    ))
+    first = asyncio.run(
+        client.send_with_session(
+            prompt="turn 1",
+            model="sonnet",
+            session_id=None,
+            system_prompt="sys",
+        )
+    )
     sid = first.session_id
-    asyncio.run(client.send_with_session(
-        prompt="turn 2",
-        model="sonnet",
-        session_id=sid,
-    ))
+    asyncio.run(
+        client.send_with_session(
+            prompt="turn 2",
+            model="sonnet",
+            session_id=sid,
+        )
+    )
 
     # Second call must replay the full history (system, u1, a1, u2).
     assert calls[1]["messages"] == [
@@ -168,38 +179,45 @@ def test_send_with_session_resume_replays_history():
 def test_send_with_session_unknown_session_id_raises():
     client = OllamaClient(http_fn=lambda req: pytest.fail("no http expected"))
     with pytest.raises(OllamaClientError):
-        asyncio.run(client.send_with_session(
-            prompt="hi",
-            model="sonnet",
-            session_id="00000000-0000-0000-0000-000000000000",
-        ))
+        asyncio.run(
+            client.send_with_session(
+                prompt="hi",
+                model="sonnet",
+                session_id="00000000-0000-0000-0000-000000000000",
+            )
+        )
 
 
 def test_send_with_session_history_cap_drops_oldest_pairs(caplog):
     # Drive the client past OLLAMA_HISTORY_CAP and assert it drops oldest
     # exchanges while preserving the leading system message.
     from sidequest.agents.ollama_client import OLLAMA_HISTORY_CAP
+
     reply_bodies = [_ok_chat_body(f"reply {i}") for i in range(OLLAMA_HISTORY_CAP + 2)]
 
     def fake_http(req):
         return _FakeHttpResponse(reply_bodies.pop(0))
 
     client = OllamaClient(http_fn=fake_http)
-    first = asyncio.run(client.send_with_session(
-        prompt="turn 0",
-        model="sonnet",
-        session_id=None,
-        system_prompt="sys",
-    ))
+    first = asyncio.run(
+        client.send_with_session(
+            prompt="turn 0",
+            model="sonnet",
+            session_id=None,
+            system_prompt="sys",
+        )
+    )
     sid = first.session_id
     assert sid is not None
     with caplog.at_level("WARNING"):
         for i in range(1, OLLAMA_HISTORY_CAP + 2):
-            asyncio.run(client.send_with_session(
-                prompt=f"turn {i}",
-                model="sonnet",
-                session_id=sid,
-            ))
+            asyncio.run(
+                client.send_with_session(
+                    prompt=f"turn {i}",
+                    model="sonnet",
+                    session_id=sid,
+                )
+            )
 
     history = client._histories[sid]
     # System is always first, and user+assistant pairs fit within the cap.

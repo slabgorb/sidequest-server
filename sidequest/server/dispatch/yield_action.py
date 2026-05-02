@@ -5,6 +5,7 @@ actor is marked ``withdrawn``; the encounter resolves when every
 ``side="player"`` actor has yielded or been taken out. Edge is refunded by
 ``1 + count_of_scratch-or-worse-statuses-created-this-encounter``.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -24,13 +25,16 @@ if TYPE_CHECKING:
 
 
 def _statuses_taken_in_encounter(
-    statuses: list[Status], encounter_type: str,
+    statuses: list[Status],
+    encounter_type: str,
 ) -> int:
     return sum(1 for s in statuses if s.created_in_encounter == encounter_type)
 
 
 def _refund_edge_for_yielders(
-    snapshot: GameSnapshot, yielded_names: list[str], encounter_type: str,
+    snapshot: GameSnapshot,
+    yielded_names: list[str],
+    encounter_type: str,
 ) -> int:
     total_refund = 0
     for name in yielded_names:
@@ -62,11 +66,13 @@ def handle_yield(
         return  # idempotent
 
     actor_char = next(
-        (c for c in snapshot.characters if c.core.name == player_name), None,
+        (c for c in snapshot.characters if c.core.name == player_name),
+        None,
     )
     statuses_taken = (
         _statuses_taken_in_encounter(actor_char.core.statuses, enc.encounter_type)
-        if actor_char else 0
+        if actor_char
+        else 0
     )
     with encounter_yield_received_span(
         player_id=player_id,
@@ -100,7 +106,9 @@ def handle_yield(
 
     yielded_names = [a.name for a in player_actors if a.withdrawn]
     edge_refreshed = _refund_edge_for_yielders(
-        snapshot, yielded_names, enc.encounter_type,
+        snapshot,
+        yielded_names,
+        enc.encounter_type,
     )
 
     enc.resolved = True

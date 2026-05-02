@@ -74,8 +74,7 @@ async def test_player_action_in_awaiting_connect_tags_session_unbound(caplog):
         "re-firing SESSION_EVENT{connect}"
     )
     assert any(
-        "session.message_rejected_unbound" in r.message
-        and "PLAYER_ACTION" in r.message
+        "session.message_rejected_unbound" in r.message and "PLAYER_ACTION" in r.message
         for r in caplog.records
     ), "missing INFO log for grep-able recovery trail"
 
@@ -107,8 +106,7 @@ async def test_dice_throw_in_awaiting_connect_tags_session_unbound(caplog):
     assert outbound[0].type == "ERROR"
     assert outbound[0].payload.code == "session_unbound"
     assert any(
-        "session.message_rejected_unbound" in r.message
-        and "DICE_THROW" in r.message
+        "session.message_rejected_unbound" in r.message and "DICE_THROW" in r.message
         for r in caplog.records
     )
 
@@ -131,8 +129,7 @@ async def test_yield_in_awaiting_connect_tags_session_unbound(caplog):
     assert outbound[0].type == "ERROR"
     assert outbound[0].payload.code == "session_unbound"
     assert any(
-        "session.message_rejected_unbound" in r.message
-        and "YIELD" in r.message
+        "session.message_rejected_unbound" in r.message and "YIELD" in r.message
         for r in caplog.records
     )
 

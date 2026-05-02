@@ -51,7 +51,7 @@ def _seed_with_events(tmp_path: Path, slug: str) -> None:
     )
     log = EventLog(store)
     for i in range(3):
-        log.append(kind="NARRATION", payload_json=f'{{"text":"beat {i+1}","seq":0}}')
+        log.append(kind="NARRATION", payload_json=f'{{"text":"beat {i + 1}","seq":0}}')
     store.close()
 
 
@@ -68,15 +68,17 @@ def test_connect_with_last_seen_seq_replays_missed_events(tmp_path: Path) -> Non
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {
-                "event": "connect",
-                "game_slug": slug,
-                "last_seen_seq": 1,
-            },
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {
+                    "event": "connect",
+                    "game_slug": slug,
+                    "last_seen_seq": 1,
+                },
+            }
+        )
 
         # First message must be SESSION_CONNECTED
         first = ws.receive_json()
@@ -94,9 +96,7 @@ def test_connect_with_last_seen_seq_replays_missed_events(tmp_path: Path) -> Non
             if len(seen_seqs) == 2:
                 break
 
-    assert seen_seqs == [2, 3], (
-        f"Expected replay of seq [2, 3] but got {seen_seqs}"
-    )
+    assert seen_seqs == [2, 3], f"Expected replay of seq [2, 3] but got {seen_seqs}"
 
 
 def test_connect_with_last_seen_seq_equal_to_latest_replays_nothing(tmp_path: Path) -> None:
@@ -112,15 +112,17 @@ def test_connect_with_last_seen_seq_equal_to_latest_replays_nothing(tmp_path: Pa
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {
-                "event": "connect",
-                "game_slug": slug,
-                "last_seen_seq": 3,
-            },
-        })
+        ws.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {
+                    "event": "connect",
+                    "game_slug": slug,
+                    "last_seen_seq": 3,
+                },
+            }
+        )
 
         connected = ws.receive_json()
         assert connected["type"] == "SESSION_EVENT"

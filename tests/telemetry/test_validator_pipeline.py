@@ -73,12 +73,14 @@ def captured_events(monkeypatch):
     captured = _CapturedEvents()
 
     def fake_publish(event_type, fields, *, component="sidequest-server", severity="info"):
-        captured.append({
-            "event_type": event_type,
-            "fields": fields,
-            "component": component,
-            "severity": severity,
-        })
+        captured.append(
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
+        )
 
     monkeypatch.setattr(
         "sidequest.telemetry.validator.publish_event",
@@ -174,7 +176,8 @@ async def test_patch_legality_warns_on_hp_over_max(captured_events) -> None:
 
     await patch_legality_check(record)
     errors = [
-        e for e in captured_events
+        e
+        for e in captured_events
         if e["event_type"] == "validation_warning" and e["severity"] == "error"
     ]
     assert errors, "HP-over-max should produce an error-severity warning"
@@ -225,7 +228,8 @@ async def test_patch_legality_handles_list_shaped_snapshot(captured_events) -> N
     # HP-over-max should still fire even when characters is a list. The
     # owner key falls back to `core.name` per the _iter_owned contract.
     errors = [
-        e for e in captured_events
+        e
+        for e in captured_events
         if e["event_type"] == "validation_warning"
         and e["severity"] == "error"
         and e["fields"].get("subject") == "alice"
@@ -235,7 +239,8 @@ async def test_patch_legality_handles_list_shaped_snapshot(captured_events) -> N
 
 @pytest.mark.asyncio
 async def test_trope_alignment_warns_when_keywords_absent(
-    captured_events, monkeypatch,
+    captured_events,
+    monkeypatch,
 ) -> None:
     monkeypatch.setitem(
         TROPE_KEYWORDS_SOURCE,
@@ -250,19 +255,14 @@ async def test_trope_alignment_warns_when_keywords_absent(
 
     await trope_alignment_check(record)
     warnings = [e for e in captured_events if e["event_type"] == "validation_warning"]
-    assert any(
-        "trope_alignment" in str(w["fields"]) for w in warnings
-    )
+    assert any("trope_alignment" in str(w["fields"]) for w in warnings)
 
 
 @pytest.mark.asyncio
 async def test_subsystem_exercise_emits_per_turn_summary(captured_events) -> None:
     record = _make_record()
     await subsystem_exercise_check(record)
-    summaries = [
-        e for e in captured_events
-        if e["event_type"] == "subsystem_exercise_summary"
-    ]
+    summaries = [e for e in captured_events if e["event_type"] == "subsystem_exercise_summary"]
     assert summaries, "subsystem_exercise_check should emit a per-turn summary"
 
 
@@ -303,7 +303,8 @@ async def test_validator_emits_turn_complete_first(captured_events) -> None:
 
 @pytest.mark.asyncio
 async def test_trope_alignment_silent_when_keywords_present(
-    captured_events, monkeypatch,
+    captured_events,
+    monkeypatch,
 ) -> None:
     monkeypatch.setitem(
         TROPE_KEYWORDS_SOURCE,
@@ -334,7 +335,8 @@ async def test_validator_emits_periodic_queue_depth(captured_events) -> None:
         await v.shutdown()
 
     health = [
-        e for e in captured_events
+        e
+        for e in captured_events
         if e["event_type"] == "state_transition"
         and e["component"] == "validator"
         and "queue_depth" in str(e["fields"])
@@ -368,11 +370,13 @@ async def test_validator_survives_crashing_check(captured_events) -> None:
         await v.shutdown()
 
     crash_events = [
-        e for e in captured_events
+        e
+        for e in captured_events
         if e["event_type"] == "validation_warning" and "intentional" in str(e["fields"])
     ]
     benign_events = [
-        e for e in captured_events
+        e
+        for e in captured_events
         if e["event_type"] == "validation_warning" and e["fields"].get("check") == "benign"
     ]
     assert crash_events, "crash should be reported as validation_warning"
@@ -386,9 +390,9 @@ async def test_backpressure_drops_oldest_and_emits_warning(captured_events) -> N
         await v.submit(_make_record(turn_id=i))
 
     drops = [
-        e for e in captured_events
-        if e["event_type"] == "validation_warning"
-        and e["fields"].get("reason") == "queue_full"
+        e
+        for e in captured_events
+        if e["event_type"] == "validation_warning" and e["fields"].get("reason") == "queue_full"
     ]
     assert drops, "queue-full should publish a warning"
     assert v.dropped_records >= 3

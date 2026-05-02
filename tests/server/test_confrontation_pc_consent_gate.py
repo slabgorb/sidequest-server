@@ -40,6 +40,7 @@ Tests in this file:
     test. The legitimate ``dispatch_dice_throw`` path still advances
     the player dial. Proves the gate isn't over-broad.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -71,6 +72,7 @@ def _make_snapshot() -> GameSnapshot:
         turn_manager=TurnManager(),
     )
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -85,10 +87,16 @@ def two_pc_negotiation_setup(synthetic_two_dial_pack):
     enc = StructuredEncounter(
         encounter_type="combat",  # synthetic_two_dial_pack only defines 'combat'
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="George", role="combatant", side="player"),
@@ -106,16 +114,18 @@ def captured_watcher_events(monkeypatch) -> Iterator[list[dict[str, Any]]]:
     """
     captured: list[dict[str, Any]] = []
 
-    def _capture(event_type, fields, *, component="sidequest-server",
-                 severity="info"):
-        captured.append({
-            "event_type": event_type,
-            "fields": fields,
-            "component": component,
-            "severity": severity,
-        })
+    def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
+        captured.append(
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
+        )
 
     from sidequest.server import narration_apply
+
     monkeypatch.setattr(narration_apply, "_watcher_publish", _capture)
     yield captured
 
@@ -126,7 +136,9 @@ def captured_watcher_events(monkeypatch) -> Iterator[list[dict[str, Any]]]:
 
 
 def test_inferred_pc_beat_from_peer_narration_is_rejected(
-    snapshot_with_pack, two_pc_negotiation_setup, captured_watcher_events,
+    snapshot_with_pack,
+    two_pc_negotiation_setup,
+    captured_watcher_events,
 ):
     """George narrates "Paul concedes the point" — narrator extracts a
     beat for Paul. Paul's player_metric MUST NOT move. The gate emits a
@@ -146,14 +158,19 @@ def test_inferred_pc_beat_from_peer_narration_is_rejected(
         beat_selections=[
             # The bug: narrator extracted Paul's beat from George's prose.
             BeatSelection(
-                actor="Paul", beat_id="defend",
-                outcome=RollOutcome.Success, target=None,
+                actor="Paul",
+                beat_id="defend",
+                outcome=RollOutcome.Success,
+                target=None,
             ),
         ],
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="George", pack=pack,
+        snap,
+        result,
+        player_name="George",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -166,7 +183,8 @@ def test_inferred_pc_beat_from_peer_narration_is_rejected(
 
     # Watcher event recorded the rejection — lie detector intact.
     rejections = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["event_type"] == "state_transition"
         and e["fields"].get("op") == "inferred_pc_beat_rejected"
     ]
@@ -187,7 +205,9 @@ def test_inferred_pc_beat_from_peer_narration_is_rejected(
 
 
 def test_inferred_own_pc_beat_from_narration_is_rejected(
-    snapshot_with_pack, two_pc_negotiation_setup, captured_watcher_events,
+    snapshot_with_pack,
+    two_pc_negotiation_setup,
+    captured_watcher_events,
 ):
     """Even when the narrator emits a beat for the narrating PC, the
     gate rejects it. PC beats MUST come through DICE_THROW dispatch.
@@ -207,14 +227,19 @@ def test_inferred_own_pc_beat_from_narration_is_rejected(
         narration="George rolls forward, attacking the Dispatcher.",
         beat_selections=[
             BeatSelection(
-                actor="George", beat_id="attack",
-                outcome=RollOutcome.Success, target=None,
+                actor="George",
+                beat_id="attack",
+                outcome=RollOutcome.Success,
+                target=None,
             ),
         ],
         npcs_present=[],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="George", pack=pack,
+        snap,
+        result,
+        player_name="George",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -225,7 +250,8 @@ def test_inferred_own_pc_beat_from_narration_is_rejected(
     )
 
     rejections = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["event_type"] == "state_transition"
         and e["fields"].get("op") == "inferred_pc_beat_rejected"
     ]
@@ -240,7 +266,9 @@ def test_inferred_own_pc_beat_from_narration_is_rejected(
 
 
 def test_npc_beat_from_narration_still_fires(
-    snapshot_with_pack, two_pc_negotiation_setup, captured_watcher_events,
+    snapshot_with_pack,
+    two_pc_negotiation_setup,
+    captured_watcher_events,
 ):
     """Opponent-side actors (Dispatcher, hostiles) DO have their beats
     applied from narrator extraction — NPCs don't have the same agency
@@ -259,8 +287,10 @@ def test_npc_beat_from_narration_still_fires(
         narration="The Dispatcher levels its blade and strikes.",
         beat_selections=[
             BeatSelection(
-                actor="Dispatcher", beat_id="attack",
-                outcome=RollOutcome.Success, target=None,
+                actor="Dispatcher",
+                beat_id="attack",
+                outcome=RollOutcome.Success,
+                target=None,
             ),
         ],
         npcs_present=[
@@ -268,7 +298,10 @@ def test_npc_beat_from_narration_still_fires(
         ],
     )
     _apply_narration_result_to_snapshot(
-        snap, result, player_name="George", pack=pack,
+        snap,
+        result,
+        player_name="George",
+        pack=pack,
         room=room_for(snap),
     )
 
@@ -282,13 +315,13 @@ def test_npc_beat_from_narration_still_fires(
 
     # No PC rejection events.
     rejections = [
-        e for e in captured_watcher_events
+        e
+        for e in captured_watcher_events
         if e["event_type"] == "state_transition"
         and e["fields"].get("op") == "inferred_pc_beat_rejected"
     ]
     assert rejections == [], (
-        f"Opponent beat must not be misclassified as a PC rejection; "
-        f"got rejections {rejections}"
+        f"Opponent beat must not be misclassified as a PC rejection; got rejections {rejections}"
     )
 
 
@@ -298,7 +331,8 @@ def test_npc_beat_from_narration_still_fires(
 
 
 def test_explicit_action_path_still_advances_pc_metric(
-    snapshot_with_pack, two_pc_negotiation_setup,
+    snapshot_with_pack,
+    two_pc_negotiation_setup,
 ):
     """Wiring guard: the legitimate PC beat path
     (``dispatch_dice_throw`` driven by a player's explicit DICE_THROW
@@ -320,7 +354,9 @@ def test_explicit_action_path_still_advances_pc_metric(
     payload = DiceThrowPayload(
         request_id="r-george-1",
         throw_params=ThrowParams(
-            velocity=(0, 0, 0), angular=(0, 0, 0), position=(0, 0),
+            velocity=(0, 0, 0),
+            angular=(0, 0, 0),
+            position=(0, 0),
         ),
         # Single d20 face (pool size = 1 for the default difficulty
         # gate). 18 + STR mod is comfortably over DC 10.
@@ -332,7 +368,12 @@ def test_explicit_action_path_still_advances_pc_metric(
         rolling_player_id="p-george",
         character_name="George",
         character_stats={
-            "STR": 14, "DEX": 10, "CON": 10, "INT": 10, "WIS": 10, "CHA": 10,
+            "STR": 14,
+            "DEX": 10,
+            "CON": 10,
+            "INT": 10,
+            "WIS": 10,
+            "CHA": 10,
         },
         encounter=enc,
         pack=pack,
@@ -346,6 +387,5 @@ def test_explicit_action_path_still_advances_pc_metric(
     # PC metric advanced — explicit action consent bears the apply.
     assert snap.encounter is not None
     assert snap.encounter.player_metric.current > 0, (
-        "Explicit dispatch_dice_throw path MUST still advance PC metric "
-        "— gate was over-broad"
+        "Explicit dispatch_dice_throw path MUST still advance PC metric — gate was over-broad"
     )

@@ -13,6 +13,7 @@ Usage:
     room = room_for(snap)
     _apply_narration_result_to_snapshot(snap, result, "Sam", room=room, pack=pack)
 """
+
 from __future__ import annotations
 
 from sidequest.game.persistence import GameMode, SqliteStore

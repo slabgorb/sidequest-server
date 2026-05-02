@@ -132,9 +132,7 @@ def _write_minimal_world(world_dir: Path) -> None:
     """Drop the required-files set into ``world_dir`` (must already exist)."""
     (world_dir / "world.yaml").write_text(_WORLD_YAML, encoding="utf-8")
     (world_dir / "lore.yaml").write_text(_LORE_YAML, encoding="utf-8")
-    (world_dir / "cartography.yaml").write_text(
-        _CARTOGRAPHY_YAML, encoding="utf-8"
-    )
+    (world_dir / "cartography.yaml").write_text(_CARTOGRAPHY_YAML, encoding="utf-8")
     (world_dir / "openings.yaml").write_text(_OPENINGS_YAML, encoding="utf-8")
 
 
@@ -153,6 +151,7 @@ def _make_world_tree(tmp_path: Path) -> tuple[Path, Path]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_world_without_rigs_or_magic_has_empty_defaults(tmp_path: Path) -> None:
     """Bare world: chassis_instances == [] and magic_register == ''."""

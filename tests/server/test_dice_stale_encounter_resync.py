@@ -74,10 +74,16 @@ def _resolved_encounter(encounter_type: str = "negotiation") -> StructuredEncoun
     enc = StructuredEncounter(
         encounter_type=encounter_type,
         player_metric=EncounterMetric(
-            name="leverage", current=10, starting=0, threshold=10,
+            name="leverage",
+            current=10,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="leverage", current=2, starting=0, threshold=10,
+            name="leverage",
+            current=2,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Sam", role="participant", side="player"),
@@ -109,7 +115,9 @@ def _make_session(snapshot, pack):
 
 @pytest.mark.asyncio
 async def test_dice_throw_on_resolved_encounter_emits_clear_resync(
-    snapshot_with_pack, character_named_sam, caplog,
+    snapshot_with_pack,
+    character_named_sam,
+    caplog,
 ):
     """The Sage repro shape: encounter resolved server-side, UI doesn't
     know, player clicks an action button. Handler must reject AND emit
@@ -149,14 +157,15 @@ async def test_dice_throw_on_resolved_encounter_emits_clear_resync(
 
     # Lie-detector: the resync event has its own log line so the GM
     # panel / grep can see the recovery firing.
-    assert any(
-        "dice.stale_encounter_resync" in r.message for r in caplog.records
-    ), "missing dice.stale_encounter_resync INFO log"
+    assert any("dice.stale_encounter_resync" in r.message for r in caplog.records), (
+        "missing dice.stale_encounter_resync INFO log"
+    )
 
 
 @pytest.mark.asyncio
 async def test_dice_throw_other_rejection_does_not_emit_clear(
-    snapshot_with_pack, character_named_sam,
+    snapshot_with_pack,
+    character_named_sam,
 ):
     """Defensive: rejections that ARE NOT 'requires an active encounter'
     (e.g. unknown beat_id, invalid stat_check) should NOT trigger the
@@ -172,10 +181,16 @@ async def test_dice_throw_other_rejection_does_not_emit_clear(
     snap.encounter = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Sam", role="combatant", side="player"),
@@ -185,7 +200,8 @@ async def test_dice_throw_other_rejection_does_not_emit_clear(
     session = _make_session(snap, pack)
 
     outbound = await HANDLER.handle(
-        session, _make_dice_throw_msg(beat_id="nonexistent_beat"),
+        session,
+        _make_dice_throw_msg(beat_id="nonexistent_beat"),
     )
 
     types = [m.type for m in outbound]
@@ -194,8 +210,7 @@ async def test_dice_throw_other_rejection_does_not_emit_clear(
     # Adding one would unmount a working overlay and the player would
     # need to re-enter the confrontation.
     assert MessageType.CONFRONTATION not in types, (
-        f"non-stale-encounter rejection must not unmount the overlay. "
-        f"Got {types!r}"
+        f"non-stale-encounter rejection must not unmount the overlay. Got {types!r}"
     )
 
 

@@ -34,6 +34,7 @@ Wire-first gate: the test drives the production handler through
 in isolation. A future regression that re-orders emit vs broadcast (or
 moves the call inside the narrator) will be caught here.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,30 +75,36 @@ def _install_combat_def(sd, *, resolution_mode: str = "beat_selection") -> None:
     Rux character. ``base=3`` so a Success throw produces a non-zero
     metric delta we can observe on the post-apply momentum.
     """
-    cdef = ConfrontationDef.model_validate({
-        "type": "combat",
-        "label": "Dungeon Combat",
-        "category": "combat",
-        "resolution_mode": resolution_mode,
-        "opponent_default_stats": (
-            {"STR": 12} if resolution_mode == "opposed_check" else {}
-        ),
-        "player_metric": MetricDef(
-            name="momentum", starting=0, threshold=10,
-        ).model_dump(),
-        "opponent_metric": MetricDef(
-            name="momentum", starting=0, threshold=10,
-        ).model_dump(),
-        "beats": [
-            BeatDef.model_validate({
-                "id": "attack",
-                "label": "Attack",
-                "kind": "strike",
-                "base": 3,
-                "stat_check": "STRENGTH",
-            }).model_dump(),
-        ],
-    })
+    cdef = ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Dungeon Combat",
+            "category": "combat",
+            "resolution_mode": resolution_mode,
+            "opponent_default_stats": ({"STR": 12} if resolution_mode == "opposed_check" else {}),
+            "player_metric": MetricDef(
+                name="momentum",
+                starting=0,
+                threshold=10,
+            ).model_dump(),
+            "opponent_metric": MetricDef(
+                name="momentum",
+                starting=0,
+                threshold=10,
+            ).model_dump(),
+            "beats": [
+                BeatDef.model_validate(
+                    {
+                        "id": "attack",
+                        "label": "Attack",
+                        "kind": "strike",
+                        "base": 3,
+                        "stat_check": "STRENGTH",
+                    }
+                ).model_dump(),
+            ],
+        }
+    )
     sd.genre_pack.rules.confrontations = [cdef]
 
 
@@ -105,10 +112,16 @@ def _install_active_encounter(sd) -> None:
     enc = StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         beat=0,
         structured_phase=EncounterPhase.Setup,
@@ -223,9 +236,7 @@ async def test_dice_throw_emits_confrontation_with_post_beat_momentum(
     # CONFRONTATION in the room queue at all (it only emits post-
     # narration via the handler return path), so this assertion fails
     # red.
-    confrontations = [
-        m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)
-    ]
+    confrontations = [m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)]
     assert len(confrontations) >= 1, (
         f"expected at least one CONFRONTATION broadcast in the room queue "
         f"between DICE_RESULT and NARRATION_END; got order={order!r}"
@@ -234,12 +245,10 @@ async def test_dice_throw_emits_confrontation_with_post_beat_momentum(
     # Find the FIRST CONFRONTATION (the new mid-turn emit). It must
     # arrive after DICE_RESULT and carry the post-apply momentum.
     first_conf_idx = next(
-        i for i, (m, _) in enumerate(room.broadcasts)
-        if isinstance(m, ConfrontationMessage)
+        i for i, (m, _) in enumerate(room.broadcasts) if isinstance(m, ConfrontationMessage)
     )
     dice_result_idx = next(
-        i for i, (m, _) in enumerate(room.broadcasts)
-        if isinstance(m, DiceResultMessage)
+        i for i, (m, _) in enumerate(room.broadcasts) if isinstance(m, DiceResultMessage)
     )
     assert first_conf_idx > dice_result_idx, (
         f"CONFRONTATION must broadcast AFTER DICE_RESULT so the UI "
@@ -263,8 +272,7 @@ async def test_dice_throw_emits_confrontation_with_post_beat_momentum(
     )
     # Active flag asserts the encounter is not yet resolved (3 < 10).
     assert payload.active is True, (
-        "mid-turn CONFRONTATION must keep active=True while the "
-        "encounter remains unresolved"
+        "mid-turn CONFRONTATION must keep active=True while the encounter remains unresolved"
     )
 
 
@@ -301,7 +309,8 @@ async def test_dice_throw_mid_turn_confrontation_arrives_before_narration_end(
     pre_narrator_broadcasts: list[object] = []
 
     async def _capture_then_return(
-        *_args, **_kwargs,  # noqa: ANN002, ANN003
+        *_args,
+        **_kwargs,  # noqa: ANN002, ANN003
     ) -> NarrationTurnResult:
         # session_handler invokes run_narration_turn(action, turn_context)
         # — capture *args/**kwargs to be invariant to that call shape.
@@ -320,9 +329,7 @@ async def test_dice_throw_mid_turn_confrontation_arrives_before_narration_end(
     # the new mid-turn CONFRONTATION — i.e., all three broadcasts landed
     # on the room queue BEFORE the narrator started its work.
     pre_types = [type(m).__name__ for m in pre_narrator_broadcasts]
-    assert any(
-        isinstance(m, ConfrontationMessage) for m in pre_narrator_broadcasts
-    ), (
+    assert any(isinstance(m, ConfrontationMessage) for m in pre_narrator_broadcasts), (
         f"mid-turn CONFRONTATION must broadcast BEFORE the narrator runs; "
         f"narrator saw room queue contents {pre_types!r} — no "
         f"CONFRONTATION among them. A regression that moved the broadcast "
@@ -331,12 +338,12 @@ async def test_dice_throw_mid_turn_confrontation_arrives_before_narration_end(
     # And both dice messages must precede it (sanity — without this the
     # ordering claim could be satisfied by an out-of-order CONFRONTATION
     # arriving before DICE_RESULT).
-    assert any(
-        isinstance(m, DiceRequestMessage) for m in pre_narrator_broadcasts
-    ), f"narrator saw {pre_types!r} — DICE_REQUEST missing"
-    assert any(
-        isinstance(m, DiceResultMessage) for m in pre_narrator_broadcasts
-    ), f"narrator saw {pre_types!r} — DICE_RESULT missing"
+    assert any(isinstance(m, DiceRequestMessage) for m in pre_narrator_broadcasts), (
+        f"narrator saw {pre_types!r} — DICE_REQUEST missing"
+    )
+    assert any(isinstance(m, DiceResultMessage) for m in pre_narrator_broadcasts), (
+        f"narrator saw {pre_types!r} — DICE_RESULT missing"
+    )
 
     # Sanity: the narrator was actually invoked (otherwise the side_effect
     # never ran and pre_narrator_broadcasts would just be empty —
@@ -396,9 +403,7 @@ async def test_opposed_check_does_not_emit_mid_turn_confrontation(
     # CONFRONTATION in the room queue here would be a regression — it
     # would broadcast a stale-zero metric and convince the UI the engine
     # had moved when it hasn't yet.
-    confrontations_in_room = [
-        m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)
-    ]
+    confrontations_in_room = [m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)]
     assert confrontations_in_room == [], (
         f"opposed_check defers beat application; the dice-throw site "
         f"MUST NOT emit a mid-turn CONFRONTATION on this branch. Got "
@@ -409,8 +414,7 @@ async def test_opposed_check_does_not_emit_mid_turn_confrontation(
     # Sanity: the dice messages still went out — the deferral only
     # gates the new CONFRONTATION emit, not the existing dice fan-out.
     dice_msgs = [
-        m for m, _ in room.broadcasts
-        if isinstance(m, (DiceRequestMessage, DiceResultMessage))
+        m for m, _ in room.broadcasts if isinstance(m, (DiceRequestMessage, DiceResultMessage))
     ]
     assert len(dice_msgs) == 2, (
         f"opposed_check still fans out DICE_REQUEST + DICE_RESULT; got "
@@ -464,9 +468,7 @@ async def test_narrator_step_still_runs_after_mid_turn_emit(
     msgs = await handler.handle_message(_throw(face=15))
 
     # Mid-turn emit fires exactly once on the room broadcast path.
-    room_confrontations = [
-        m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)
-    ]
+    room_confrontations = [m for m, _ in room.broadcasts if isinstance(m, ConfrontationMessage)]
     assert len(room_confrontations) == 1, (
         f"expected exactly ONE mid-turn CONFRONTATION on the room "
         f"broadcast queue; got {len(room_confrontations)}. A duplicate "
@@ -494,7 +496,8 @@ async def test_narrator_step_still_runs_after_mid_turn_emit(
 
 @pytest.mark.asyncio
 async def test_post_narration_confrontation_emit_fans_out_with_event_log(
-    session_handler_factory, tmp_path,
+    session_handler_factory,
+    tmp_path,
 ):
     """AC5: dice path → post-narration CONFRONTATION reaches peer queues.
 
@@ -572,9 +575,7 @@ async def test_post_narration_confrontation_emit_fans_out_with_event_log(
     registry = RoomRegistry()
     room = registry.get_or_create(slug=slug, mode=GameMode.MULTIPLAYER)
     socket_ids = {"actor": "sock-actor", "peer": "sock-peer"}
-    queues: dict[str, _asyncio.Queue[object]] = {
-        pid: _asyncio.Queue() for pid in socket_ids
-    }
+    queues: dict[str, _asyncio.Queue[object]] = {pid: _asyncio.Queue() for pid in socket_ids}
     for pid, sid in socket_ids.items():
         room.connect(pid, socket_id=sid)
         room.attach_outbound(sid, queues[pid])
@@ -598,9 +599,7 @@ async def test_post_narration_confrontation_emit_fans_out_with_event_log(
     while not queues["peer"].empty():
         peer_frames.append(queues["peer"].get_nowait())
 
-    peer_confrontations = [
-        f for f in peer_frames if isinstance(f, ConfrontationMessage)
-    ]
+    peer_confrontations = [f for f in peer_frames if isinstance(f, ConfrontationMessage)]
     # At least one CONFRONTATION must reach the peer for AC5 to hold.
     # The peer should observe the mid-turn emit (via room.broadcast on
     # the live room) AND the post-narration emit (via _emit_event

@@ -7,7 +7,10 @@ from sidequest.game.persistence import GameMode
 
 
 def test_generate_slug_uses_date_and_world():
-    assert generate_slug(world_slug="moldharrow-keep", today=date(2026, 4, 22)) == "2026-04-22-moldharrow-keep"
+    assert (
+        generate_slug(world_slug="moldharrow-keep", today=date(2026, 4, 22))
+        == "2026-04-22-moldharrow-keep"
+    )
 
 
 def test_generate_slug_rejects_empty_world():
@@ -39,11 +42,17 @@ def test_parse_slug_rejects_malformed_date():
 
 
 def test_generate_slug_appends_mp_for_multiplayer():
-    assert generate_slug(world_slug="mawdeep", today=date(2026, 4, 24), mode=GameMode.MULTIPLAYER) == "2026-04-24-mawdeep-mp"
+    assert (
+        generate_slug(world_slug="mawdeep", today=date(2026, 4, 24), mode=GameMode.MULTIPLAYER)
+        == "2026-04-24-mawdeep-mp"
+    )
 
 
 def test_generate_slug_solo_unchanged_when_mode_explicit():
-    assert generate_slug(world_slug="mawdeep", today=date(2026, 4, 24), mode=GameMode.SOLO) == "2026-04-24-mawdeep"
+    assert (
+        generate_slug(world_slug="mawdeep", today=date(2026, 4, 24), mode=GameMode.SOLO)
+        == "2026-04-24-mawdeep"
+    )
 
 
 def test_solo_and_multiplayer_slugs_do_not_collide():

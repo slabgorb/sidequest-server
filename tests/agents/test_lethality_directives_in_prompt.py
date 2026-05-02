@@ -8,6 +8,7 @@ Group C Task 10 — the wiring pass between LethalityArbiter and the prompt
 registry. No session handler in scope here: TurnContext is constructed
 directly and the arbiter runs inline on it.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -42,7 +43,9 @@ def _policy() -> LethalityPolicy:
 
 def _pc(current: int) -> CreatureCore:
     return CreatureCore(
-        name="Alice", description="d", personality="p",
+        name="Alice",
+        description="d",
+        personality="p",
         inventory=Inventory(),
         edge=EdgePool(current=current, max=10, base_max=10),
     )
@@ -68,7 +71,9 @@ async def test_pc_at_zero_edge_injects_paired_directives_in_prompt():
         npc_cores_by_name={},
     )
     prompt, _ = await orch.build_narrator_prompt(
-        "swing sword", context, tier=NarratorPromptTier.Full,
+        "swing sword",
+        context,
+        tier=NarratorPromptTier.Full,
     )
     assert "must_narrate" in prompt
     assert "Render the death" in prompt
@@ -87,7 +92,9 @@ async def test_pc_above_zero_edge_injects_no_lethality_directives():
         npc_cores_by_name={},
     )
     prompt, _ = await orch.build_narrator_prompt(
-        "swing sword", context, tier=NarratorPromptTier.Full,
+        "swing sword",
+        context,
+        tier=NarratorPromptTier.Full,
     )
     assert "Render the death" not in prompt
     assert "narrate survival" not in prompt
@@ -104,7 +111,9 @@ async def test_lethality_policy_none_leaves_bank_directives_unaffected():
         npc_cores_by_name={},
     )
     prompt, _ = await orch.build_narrator_prompt(
-        "swing sword", context, tier=NarratorPromptTier.Full,
+        "swing sword",
+        context,
+        tier=NarratorPromptTier.Full,
     )
     # No arbiter ran — policy was None — so none of its text surfaces.
     assert "Render the death" not in prompt

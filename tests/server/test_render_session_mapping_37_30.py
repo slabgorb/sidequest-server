@@ -22,6 +22,7 @@ See ``.session/37-30-session.md`` for the four design deviations from
 spec (job_id vs render_id naming, watcher events vs real OTEL spans,
 request/response vs broadcast architecture, AC-4 scoping).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -167,9 +168,7 @@ def _make_handler_with_room(
     slug = _slug(sd)
     room = registry.get_or_create(slug, mode=GameMode.SOLO)
     queue: asyncio.Queue[object] = asyncio.Queue()
-    handler.attach_room_context(
-        registry=registry, socket_id=socket_id, out_queue=queue
-    )
+    handler.attach_room_context(registry=registry, socket_id=socket_id, out_queue=queue)
     handler._room = room  # noqa: SLF001 — _room set in slug-connect branch normally
     handler._session_data = sd  # noqa: SLF001
     room.connect(sd.player_id, socket_id=socket_id)
@@ -219,9 +218,7 @@ async def test_render_dispatch_event_includes_player_and_room_slug(
 
     result = NarrationTurnResult(
         narration="The crack yawns open.",
-        visual_scene=VisualScene(
-            subject="a jagged fissure", tier="scene_illustration"
-        ),
+        visual_scene=VisualScene(subject="a jagged fissure", tier="scene_illustration"),
     )
     handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
 
@@ -229,7 +226,8 @@ async def test_render_dispatch_event_includes_player_and_room_slug(
     await daemon.stop()
 
     dispatched = [
-        e for e in capture.events
+        e
+        for e in capture.events
         if e["event_type"] == "state_transition"
         and e["fields"].get("field") == "render"
         and e["fields"].get("op") == "dispatched"
@@ -289,9 +287,7 @@ async def test_render_completion_routes_to_current_queue_after_reconnect(
     )
 
     sd = _make_session_data()
-    handler, registry, queue_a, slug = _make_handler_with_room(
-        sd, socket_id="sock-A"
-    )
+    handler, registry, queue_a, slug = _make_handler_with_room(sd, socket_id="sock-A")
 
     result = NarrationTurnResult(
         narration="Portrait pose.",
@@ -383,7 +379,8 @@ async def test_render_completion_emits_session_not_found_when_disconnected(
     await daemon.stop()
 
     not_found = [
-        e for e in capture.events
+        e
+        for e in capture.events
         if e["event_type"] == "state_transition"
         and e["fields"].get("field") == "render"
         and e["fields"].get("op") == "session_not_found"
@@ -397,14 +394,12 @@ async def test_render_completion_emits_session_not_found_when_disconnected(
     assert fields.get("room_slug") == slug
     assert fields.get("render_id"), "missing render_id on drop event"
     assert not_found[0]["severity"] == "warning", (
-        "session_not_found must be a warning, not info — operators "
-        "need it visible in the GM panel"
+        "session_not_found must be a warning, not info — operators need it visible in the GM panel"
     )
 
     # The orphaned queue stays empty; nothing should have been put there.
     assert queue_a.empty(), (
-        "IMAGE landed on a detached queue — the silent-drop path is "
-        "still active"
+        "IMAGE landed on a detached queue — the silent-drop path is still active"
     )
 
 
@@ -446,9 +441,7 @@ async def test_portrait_render_params_include_character_name(
     handler, _registry, _queue, _slug = _make_handler_with_room(sd)
     result = NarrationTurnResult(
         narration="Rux looks up.",
-        visual_scene=VisualScene(
-            subject="Rux, the kobold scout", tier="portrait"
-        ),
+        visual_scene=VisualScene(subject="Rux, the kobold scout", tier="portrait"),
     )
     handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
 
@@ -507,9 +500,7 @@ async def test_end_to_end_render_routes_through_registry_on_happy_path(
 
     result = NarrationTurnResult(
         narration="The crack yawns open.",
-        visual_scene=VisualScene(
-            subject="a jagged fissure", tier="scene_illustration"
-        ),
+        visual_scene=VisualScene(subject="a jagged fissure", tier="scene_illustration"),
     )
     queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
     assert queued is not None
@@ -526,9 +517,9 @@ async def test_end_to_end_render_routes_through_registry_on_happy_path(
 
     # Watcher trail: dispatched + completed, no session_not_found.
     render_events = [
-        e for e in capture.events
-        if e["event_type"] == "state_transition"
-        and e["fields"].get("field") == "render"
+        e
+        for e in capture.events
+        if e["event_type"] == "state_transition" and e["fields"].get("field") == "render"
     ]
     ops = {e["fields"].get("op") for e in render_events}
     assert "dispatched" in ops

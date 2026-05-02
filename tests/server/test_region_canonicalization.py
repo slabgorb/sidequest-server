@@ -39,8 +39,10 @@ class TestCanonicalize:
             ("the crew quarters", "the-crew-quarters"),
             ("The  Crew   Quarters", "the-crew-quarters"),
             ("the crew quarters!", "the-crew-quarters"),
-            ("The Crew Quarters — Freighter Unpaid Debt",
-             "the-crew-quarters-freighter-unpaid-debt"),
+            (
+                "The Crew Quarters — Freighter Unpaid Debt",
+                "the-crew-quarters-freighter-unpaid-debt",
+            ),
             ("Felix's Workshop", "felix-s-workshop"),
             ("Tood's Dome", "tood-s-dome"),
             ("Bridge", "bridge"),
@@ -194,8 +196,7 @@ class TestNarrationApplyDedupWiring:
         )
 
         assert snap.discovered_regions == ["The Crew Quarters"], (
-            "second-emitted variant must dedup against first; got "
-            f"{snap.discovered_regions}"
+            f"second-emitted variant must dedup against first; got {snap.discovered_regions}"
         )
 
     def test_dedup_emits_span(self, otel_capture) -> None:
@@ -219,12 +220,12 @@ class TestNarrationApplyDedupWiring:
         )
 
         dedup_spans = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "region.entry_canonicalized_dedup"
         ]
         assert len(dedup_spans) == 1, (
-            "second variant must emit dedup span so Sebastien sees the "
-            "merge fire"
+            "second variant must emit dedup span so Sebastien sees the merge fire"
         )
         attrs = dict(dedup_spans[0].attributes)
         assert attrs["entry"] == "THE  CREW  QUARTERS!"
@@ -250,7 +251,8 @@ class TestNarrationApplyDedupWiring:
             )
 
         dedup_spans = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "region.entry_canonicalized_dedup"
         ]
         assert dedup_spans == []
@@ -284,21 +286,21 @@ class TestSessionPatchDedupWiring:
     incremental-discover path (``patch.discover_regions``)."""
 
     def test_discover_regions_patch_dedups_against_existing(
-        self, otel_capture,
+        self,
+        otel_capture,
     ) -> None:
         from sidequest.game.session import GameSnapshot, WorldStatePatch
 
         snap = GameSnapshot()
         snap.discovered_regions = ["The Crew Quarters"]
-        patch = WorldStatePatch(
-            discover_regions=["the crew quarters", "Engine Room"]
-        )
+        patch = WorldStatePatch(discover_regions=["the crew quarters", "Engine Room"])
 
         snap.apply_world_patch(patch)
 
         assert snap.discovered_regions == ["The Crew Quarters", "Engine Room"]
         dedup_spans = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "region.entry_canonicalized_dedup"
         ]
         assert len(dedup_spans) == 1
@@ -308,7 +310,8 @@ class TestSessionPatchDedupWiring:
         assert attrs["existing_surface_form"] == "The Crew Quarters"
 
     def test_discovered_regions_set_path_collapses_internal_dups(
-        self, otel_capture,
+        self,
+        otel_capture,
     ) -> None:
         """A wholesale-replace patch carrying its own internal dups
         (e.g., narrator emitted both forms in one patch) must
@@ -328,7 +331,8 @@ class TestSessionPatchDedupWiring:
 
         assert snap.discovered_regions == ["The Crew Quarters", "Engine Room"]
         dedup_spans = [
-            s for s in otel_capture.get_finished_spans()
+            s
+            for s in otel_capture.get_finished_spans()
             if s.name == "region.entry_canonicalized_dedup"
         ]
         assert len(dedup_spans) == 1

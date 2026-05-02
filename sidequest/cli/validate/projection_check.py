@@ -6,6 +6,7 @@ Usage:
 Exits 0 on success (prints audit table), nonzero on validation error
 (prints error to stderr).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,14 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     print("-" * 90)
     for rule in rules.rules:
         if isinstance(rule, TargetOnlyRule):
-            print(
-                f"{rule.kind:<20} {'target_only':<14} "
-                f"{rule.target_only.field:<24} {'':<20} {''}"
-            )
+            print(f"{rule.kind:<20} {'target_only':<14} {rule.target_only.field:<24} {'':<20} {''}")
         elif isinstance(rule, IncludeIfRule):
             print(
-                f"{rule.kind:<20} {'include_if':<14} "
-                f"{'':<24} {rule.include_if.predicate:<20} {''}"
+                f"{rule.kind:<20} {'include_if':<14} {'':<24} {rule.include_if.predicate:<20} {''}"
             )
         elif isinstance(rule, RedactFieldsRule):
             for spec in rule.redact_fields:

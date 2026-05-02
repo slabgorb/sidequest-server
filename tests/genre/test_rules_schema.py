@@ -7,44 +7,38 @@ from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 
 def _conf_yaml(beats_yaml: str, *, two_dials: bool = True) -> str:
     metric_block = (
-        "player_metric:\n"
-        "  name: momentum\n"
-        "  starting: 0\n"
-        "  threshold: 10\n"
-        "opponent_metric:\n"
-        "  name: momentum\n"
-        "  starting: 0\n"
-        "  threshold: 10\n"
-    ) if two_dials else (
-        "metric:\n"
-        "  name: momentum\n"
-        "  direction: bidirectional\n"
-        "  starting: 0\n"
-        "  threshold_high: 10\n"
-        "  threshold_low: -10\n"
+        (
+            "player_metric:\n"
+            "  name: momentum\n"
+            "  starting: 0\n"
+            "  threshold: 10\n"
+            "opponent_metric:\n"
+            "  name: momentum\n"
+            "  starting: 0\n"
+            "  threshold: 10\n"
+        )
+        if two_dials
+        else (
+            "metric:\n"
+            "  name: momentum\n"
+            "  direction: bidirectional\n"
+            "  starting: 0\n"
+            "  threshold_high: 10\n"
+            "  threshold_low: -10\n"
+        )
     )
-    return (
-        "type: combat\n"
-        "label: Test Combat\n"
-        "category: combat\n"
-        f"{metric_block}"
-        f"beats:\n{beats_yaml}"
-    )
+    return f"type: combat\nlabel: Test Combat\ncategory: combat\n{metric_block}beats:\n{beats_yaml}"
 
 
 def test_beat_def_kind_required():
-    raw = yaml.safe_load(
-        "id: attack\nlabel: Attack\nkind: strike\nbase: 2\nstat_check: STR\n"
-    )
+    raw = yaml.safe_load("id: attack\nlabel: Attack\nkind: strike\nbase: 2\nstat_check: STR\n")
     beat = BeatDef.model_validate(raw)
     assert beat.kind.value == "strike"
     assert beat.base == 2
 
 
 def test_beat_def_invalid_kind_rejected():
-    raw = yaml.safe_load(
-        "id: x\nlabel: X\nkind: bogus\nbase: 1\nstat_check: STR\n"
-    )
+    raw = yaml.safe_load("id: x\nlabel: X\nkind: bogus\nbase: 1\nstat_check: STR\n")
     with pytest.raises(ValidationError):
         BeatDef.model_validate(raw)
 
@@ -70,17 +64,14 @@ stat_check: STR
 
 
 def test_angle_beat_requires_target_tag():
-    raw = yaml.safe_load(
-        "id: feint\nlabel: Feint\nkind: angle\nstat_check: DEX\n"
-    )
+    raw = yaml.safe_load("id: feint\nlabel: Feint\nkind: angle\nstat_check: DEX\n")
     with pytest.raises(ValidationError):
         BeatDef.model_validate(raw)
 
 
 def test_angle_beat_with_target_tag_ok():
     raw = yaml.safe_load(
-        "id: feint\nlabel: Feint\nkind: angle\nstat_check: DEX\n"
-        'target_tag: "Out of Position"\n'
+        'id: feint\nlabel: Feint\nkind: angle\nstat_check: DEX\ntarget_tag: "Out of Position"\n'
     )
     beat = BeatDef.model_validate(raw)
     assert beat.target_tag == "Out of Position"
@@ -88,11 +79,7 @@ def test_angle_beat_with_target_tag_ok():
 
 def test_confrontation_def_two_dials_loads():
     src = _conf_yaml(
-        "  - id: attack\n"
-        "    label: Attack\n"
-        "    kind: strike\n"
-        "    base: 2\n"
-        "    stat_check: STR\n",
+        "  - id: attack\n    label: Attack\n    kind: strike\n    base: 2\n    stat_check: STR\n",
         two_dials=True,
     )
     cdef = ConfrontationDef.model_validate(yaml.safe_load(src))
@@ -102,11 +89,7 @@ def test_confrontation_def_two_dials_loads():
 
 def test_confrontation_def_legacy_single_metric_rejected():
     src = _conf_yaml(
-        "  - id: attack\n"
-        "    label: Attack\n"
-        "    kind: strike\n"
-        "    base: 2\n"
-        "    stat_check: STR\n",
+        "  - id: attack\n    label: Attack\n    kind: strike\n    base: 2\n    stat_check: STR\n",
         two_dials=False,
     )
     with pytest.raises(ValidationError) as exc:
@@ -118,8 +101,7 @@ def test_confrontation_def_legacy_single_metric_rejected():
 
 def test_legacy_metric_delta_field_rejected():
     raw = yaml.safe_load(
-        "id: attack\nlabel: Attack\nkind: strike\nbase: 2\nstat_check: STR\n"
-        "metric_delta: 2\n"
+        "id: attack\nlabel: Attack\nkind: strike\nbase: 2\nstat_check: STR\nmetric_delta: 2\n"
     )
     with pytest.raises(ValidationError):
         BeatDef.model_validate(raw)

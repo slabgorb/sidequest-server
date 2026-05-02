@@ -1,4 +1,5 @@
 """Intent protocol tests — message shape lock."""
+
 from __future__ import annotations
 
 import pytest
@@ -39,7 +40,5 @@ def test_unknown_kind_rejected():
 
 
 def test_response_carries_svg():
-    resp = OrbitalIntentResponse(
-        scope_center="coyote", svg="<svg></svg>", t_hours=0.0
-    )
+    resp = OrbitalIntentResponse(scope_center="coyote", svg="<svg></svg>", t_hours=0.0)
     assert resp.svg.startswith("<svg")

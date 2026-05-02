@@ -1,4 +1,5 @@
 """ComposedFilter — invariant stage + genre stage + default pass-through."""
+
 from __future__ import annotations
 
 import json

@@ -23,6 +23,7 @@ Acceptance criteria covered here:
 AC-1 (auto-population of ``npc_registry`` from ``npcs_present``) already has
 coverage in ``tests/server/test_dispatch.py``; we add the OTEL span check here.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -140,8 +141,7 @@ async def test_empty_npc_registry_produces_no_dossier_section():
     agent_name = orch._narrator.name()
     section_names = {s.name for s in registry.registry(agent_name)}
     assert "npc_roster" not in section_names, (
-        "Empty registry still produced npc_roster section — violates "
-        "zero-byte-leak discipline."
+        "Empty registry still produced npc_roster section — violates zero-byte-leak discipline."
     )
 
 
@@ -160,16 +160,13 @@ async def test_npc_roster_section_uses_valley_or_early_zone():
     _, registry = await orch.build_narrator_prompt("look around", context)
 
     agent_name = orch._narrator.name()
-    roster_sections = [
-        s for s in registry.registry(agent_name) if s.name == "npc_roster"
-    ]
+    roster_sections = [s for s in registry.registry(agent_name) if s.name == "npc_roster"]
     assert len(roster_sections) == 1, (
         f"Expected exactly one npc_roster section, got {len(roster_sections)}"
     )
     zone = roster_sections[0].zone
     assert zone in (AttentionZone.Early, AttentionZone.Valley), (
-        f"npc_roster zone={zone!r} — should be Early or Valley (background "
-        "reference), not Primacy."
+        f"npc_roster zone={zone!r} — should be Early or Valley (background reference), not Primacy."
     )
 
 
@@ -185,9 +182,7 @@ async def test_npc_roster_section_is_state_category():
     _, registry = await orch.build_narrator_prompt("look around", context)
 
     agent_name = orch._narrator.name()
-    roster_sections = [
-        s for s in registry.registry(agent_name) if s.name == "npc_roster"
-    ]
+    roster_sections = [s for s in registry.registry(agent_name) if s.name == "npc_roster"]
     assert len(roster_sections) == 1
     assert roster_sections[0].category == SectionCategory.State
 
@@ -253,9 +248,7 @@ async def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
         genre="space_opera",
         npc_registry=list(snapshot.npc_registry),
     )
-    prompt_n_plus_1, _ = await orch.build_narrator_prompt(
-        "I salute the captain", context
-    )
+    prompt_n_plus_1, _ = await orch.build_narrator_prompt("I salute the captain", context)
 
     assert "Frandrew" in prompt_n_plus_1
     assert "she/her" in prompt_n_plus_1
@@ -283,9 +276,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
         snapshot,
         NarrationTurnResult(
             narration="Frandrew is on the bridge.",
-            npcs_present=[
-                NpcMention(name="Frandrew", role="captain", pronouns="she/her")
-            ],
+            npcs_present=[NpcMention(name="Frandrew", role="captain", pronouns="she/her")],
             is_degraded=False,
         ),
         "Felix",
@@ -296,9 +287,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
         snapshot,
         NarrationTurnResult(
             narration="Vey slides under a console.",
-            npcs_present=[
-                NpcMention(name="Vey", role="engineer", pronouns="he/him")
-            ],
+            npcs_present=[NpcMention(name="Vey", role="engineer", pronouns="he/him")],
             is_degraded=False,
         ),
         "Felix",
@@ -373,12 +362,8 @@ def test_bare_name_re_mention_does_not_overwrite_canonical_fields():
     )
 
     entry = snapshot.npc_registry[0]
-    assert entry.role == "captain", (
-        "Bare-name re-mention wiped the role — identity drift bug."
-    )
-    assert entry.pronouns == "she/her", (
-        "Bare-name re-mention wiped pronouns — identity drift bug."
-    )
+    assert entry.role == "captain", "Bare-name re-mention wiped the role — identity drift bug."
+    assert entry.pronouns == "she/her", "Bare-name re-mention wiped pronouns — identity drift bug."
     assert entry.appearance == "tall, scarred eyebrow"
 
 
@@ -400,8 +385,7 @@ def test_npc_auto_registered_span_is_defined_in_catalog():
         "ran this turn or whether Claude is faking consistency."
     )
     assert spans_module.SPAN_NPC_AUTO_REGISTERED == "npc.auto_registered", (
-        "Span name must be exactly 'npc.auto_registered' for the GM panel "
-        "filter to match."
+        "Span name must be exactly 'npc.auto_registered' for the GM panel filter to match."
     )
 
 
@@ -433,9 +417,7 @@ def test_auto_register_emits_span_on_new_npc(caplog, monkeypatch):
     # app.py disables propagation on the sidequest logger at import time
     # (so uvicorn's dictConfig doesn't silence us). pytest's caplog attaches
     # at the root logger, so re-enable propagation for the duration of this test.
-    monkeypatch.setattr(
-        logging.getLogger("sidequest"), "propagate", True
-    )
+    monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
 
     snapshot = GameSnapshot(
         genre_slug="space_opera",
@@ -507,9 +489,7 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
 
     # See comment in test_auto_register_emits_span_on_new_npc — app.py
     # disables propagation on the sidequest logger at import time.
-    monkeypatch.setattr(
-        logging.getLogger("sidequest"), "propagate", True
-    )
+    monkeypatch.setattr(logging.getLogger("sidequest"), "propagate", True)
 
     snapshot = GameSnapshot(
         genre_slug="space_opera",
@@ -530,9 +510,7 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
             snapshot,
             NarrationTurnResult(
                 narration="Frandrew scratches his neck.",
-                npcs_present=[
-                    NpcMention(name="Frandrew", pronouns="he/him")
-                ],
+                npcs_present=[NpcMention(name="Frandrew", pronouns="he/him")],
                 is_degraded=False,
             ),
             "Felix",
@@ -606,8 +584,7 @@ def test_explicit_drift_does_not_overwrite_canonical_pronouns(caplog, monkeypatc
         "in the roster and drift will be permanent."
     )
     assert entry.role == "captain", (
-        f"Canonical role overwritten by drifted value: got {entry.role!r}, "
-        "expected 'captain'."
+        f"Canonical role overwritten by drifted value: got {entry.role!r}, expected 'captain'."
     )
     assert entry.appearance == "tall, scarred eyebrow", (
         f"Canonical appearance overwritten: got {entry.appearance!r}."
@@ -643,9 +620,7 @@ def test_drift_detector_fires_on_role_mismatch(caplog, monkeypatch):
                 narration="Frandrew greases a bolt.",
                 # Matching pronouns (no pronoun drift) but mismatched role.
                 npcs_present=[
-                    NpcMention(
-                        name="Frandrew", pronouns="she/her", role="grease monkey"
-                    )
+                    NpcMention(name="Frandrew", pronouns="she/her", role="grease monkey")
                 ],
                 is_degraded=False,
             ),
@@ -708,9 +683,7 @@ async def test_run_narration_turn_passes_npc_registry_to_turn_context(monkeypatc
         captured["context"] = context
         return NarrationTurnResult(narration="", is_degraded=False)
 
-    monkeypatch.setattr(
-        orch_module.Orchestrator, "run_narration_turn", fake_method
-    )
+    monkeypatch.setattr(orch_module.Orchestrator, "run_narration_turn", fake_method)
 
     await orch_module.run_narration_turn(
         client=client,
@@ -757,11 +730,7 @@ def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
             snapshot,
             NarrationTurnResult(
                 narration="Frandrew nods.",
-                npcs_present=[
-                    NpcMention(
-                        name="Frandrew", pronouns="she/her", role="captain"
-                    )
-                ],
+                npcs_present=[NpcMention(name="Frandrew", pronouns="she/her", role="captain")],
                 is_degraded=False,
             ),
             "Felix",
@@ -769,6 +738,5 @@ def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
         )
 
     assert "npc.reinvented" not in caplog.text, (
-        "Drift detector fired on case-only difference — case-insensitive "
-        "comparison broken."
+        "Drift detector fired on case-only difference — case-insensitive comparison broken."
     )

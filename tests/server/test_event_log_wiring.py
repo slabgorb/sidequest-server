@@ -42,7 +42,11 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=slug, mode=GameMode.SOLO, genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     core = CreatureCore(
         name="Thorn",
@@ -51,7 +55,10 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
         inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Fighter", race="Human", backstory="A wanderer.",
+        core=core,
+        char_class="Fighter",
+        race="Human",
+        backstory="A wanderer.",
     )
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [char]
@@ -79,11 +86,14 @@ async def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> No
     _seed_with_character(tmp_path, _SLUG)
     registry = RoomRegistry()
     handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id="sock-alice", out_queue=queue,
+        registry=registry,
+        socket_id="sock-alice",
+        out_queue=queue,
     )
 
     connect = GameMessage.model_validate(
@@ -106,8 +116,7 @@ async def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> No
         # Sanity: connected event must advertise has_character=True so the
         # session is in Playing state for the PLAYER_ACTION below.
         connected = [
-            m for m in connect_out
-            if getattr(m, "type", None) == MessageType.SESSION_EVENT
+            m for m in connect_out if getattr(m, "type", None) == MessageType.SESSION_EVENT
         ]
         assert connected, f"expected SESSION_EVENT connected; got {connect_out}"
         assert getattr(connected[0].payload, "has_character", False) is True
@@ -121,12 +130,8 @@ async def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> No
         )
         action_out = await handler.handle_message(action)
 
-    narrations = [
-        m for m in action_out if getattr(m, "type", None) == MessageType.NARRATION
-    ]
-    assert narrations, (
-        f"PLAYER_ACTION must produce a NARRATION frame; got {action_out}"
-    )
+    narrations = [m for m in action_out if getattr(m, "type", None) == MessageType.NARRATION]
+    assert narrations, f"PLAYER_ACTION must produce a NARRATION frame; got {action_out}"
     seq = getattr(narrations[0].payload, "seq", None)
     assert seq is not None, f"NARRATION payload missing seq: {narrations[0].payload}"
     assert seq >= 1, f"expected seq >= 1, got {seq}"
@@ -138,8 +143,6 @@ async def test_narration_carries_seq_and_event_log_has_row(tmp_path: Path) -> No
     try:
         rows = EventLog(store).read_since(since_seq=0)
         narration_rows = [r for r in rows if r.kind == "NARRATION"]
-        assert narration_rows, (
-            f"expected at least one NARRATION row in EventLog; got {rows}"
-        )
+        assert narration_rows, f"expected at least one NARRATION row in EventLog; got {rows}"
     finally:
         store.close()

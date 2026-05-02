@@ -11,6 +11,7 @@ single-use: ``leverage`` starts at 1 and the tag vanishes when consumed
 (v2). Persistent tags (``fleeting=False``) survive at ``leverage=0`` as
 scene context the narrator can lean on prose-wise.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

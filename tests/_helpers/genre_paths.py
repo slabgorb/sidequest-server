@@ -7,6 +7,7 @@ under -- that's content-team state, not test contract.
 
 Use ``find_pack_path("heavy_metal")`` to get the actual on-disk directory.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

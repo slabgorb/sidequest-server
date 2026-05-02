@@ -13,6 +13,7 @@ include_if rules, True => include, False => omit.
 Predicates never raise on missing fields / unknown relationships. They
 return False, which is the conservative (more-restrictive) direction.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable

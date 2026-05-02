@@ -17,6 +17,7 @@ slug" (playtest 2026-04-26 Fonzie/Richie / Mawdeep):
 
 These tests pin the fixes so they don't regress.
 """
+
 from __future__ import annotations
 
 from sidequest.agents.orchestrator import Orchestrator

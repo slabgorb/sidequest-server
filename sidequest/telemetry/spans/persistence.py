@@ -15,11 +15,13 @@ SPAN_PERSISTENCE_SAVE = "persistence_save"
 SPAN_PERSISTENCE_LOAD = "persistence_load"
 SPAN_PERSISTENCE_DELETE = "persistence_delete"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_PERSISTENCE_SAVE,
-    SPAN_PERSISTENCE_LOAD,
-    SPAN_PERSISTENCE_DELETE,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_PERSISTENCE_SAVE,
+        SPAN_PERSISTENCE_LOAD,
+        SPAN_PERSISTENCE_DELETE,
+    }
+)
 
 
 # ---------------------------------------------------------------------------

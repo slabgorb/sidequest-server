@@ -1,4 +1,5 @@
 """Entry point for python -m sidequest.cli.namegen."""
+
 from __future__ import annotations
 
 import sys

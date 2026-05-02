@@ -75,9 +75,7 @@ def _content_chapters() -> list[HistoryChapter]:
             id="early",
             label="Early arc",
             narrative_log=[
-                ChapterNarrativeEntry(
-                    speaker="narrator", text="Early arc opening."
-                ),
+                ChapterNarrativeEntry(speaker="narrator", text="Early arc opening."),
             ],
             lore=["Early-tier fact."],
         ),
@@ -85,9 +83,7 @@ def _content_chapters() -> list[HistoryChapter]:
             id="mid",
             label="Mid arc",
             narrative_log=[
-                ChapterNarrativeEntry(
-                    speaker="narrator", text="Mid arc opening."
-                ),
+                ChapterNarrativeEntry(speaker="narrator", text="Mid arc opening."),
             ],
             lore=["Mid-tier fact."],
         ),
@@ -95,9 +91,7 @@ def _content_chapters() -> list[HistoryChapter]:
             id="veteran",
             label="Veteran arc",
             narrative_log=[
-                ChapterNarrativeEntry(
-                    speaker="narrator", text="Veteran arc opening."
-                ),
+                ChapterNarrativeEntry(speaker="narrator", text="Veteran arc opening."),
             ],
             lore=["Veteran-tier fact."],
         ),
@@ -105,9 +99,7 @@ def _content_chapters() -> list[HistoryChapter]:
 
 
 @pytest.mark.asyncio
-async def test_no_promotion_no_arc_embedding_seed_span(
-    session_fixture, otel_capture
-) -> None:
+async def test_no_promotion_no_arc_embedding_seed_span(session_fixture, otel_capture) -> None:
     """A turn at Veteran-stable lands at a cadence boundary (so 45-19's
     ``arc_tick`` fires) but no tier change (so ``arc_promoted`` does
     NOT fire and ``chapters_added=[]``). 45-23's seed span must also
@@ -171,9 +163,7 @@ async def test_no_promotion_no_arc_embedding_seed_span(
 
 
 @pytest.mark.asyncio
-async def test_no_promotion_no_arc_lore_fragments_added(
-    session_fixture, otel_capture
-) -> None:
+async def test_no_promotion_no_arc_lore_fragments_added(session_fixture, otel_capture) -> None:
     """A no-promotion tick must not mint new ``lore_arc_*`` fragments
     on ``lore_store``. Even with content-bearing chapters in the cache,
     the helper consumes only the empty diff.
@@ -197,10 +187,7 @@ async def test_no_promotion_no_arc_lore_fragments_added(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "patrol", turn_context)
 
-    arc_ids = [
-        fid for fid in sd.lore_store.fragments
-        if fid.startswith("lore_arc_")
-    ]
+    arc_ids = [fid for fid in sd.lore_store.fragments if fid.startswith("lore_arc_")]
     assert arc_ids == [], (
         "No-promotion tick minted lore_arc_* fragments — the helper "
         f"is not consuming the chapters_added diff. Got: {arc_ids}"
@@ -234,10 +221,7 @@ async def test_no_promotion_no_arc_promotion_narrative_entries(
     turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "patrol", turn_context)
 
-    arc_entries = [
-        e for e in sd.snapshot.narrative_log
-        if e.entry_type == "arc_promotion"
-    ]
+    arc_entries = [e for e in sd.snapshot.narrative_log if e.entry_type == "arc_promotion"]
     assert arc_entries == [], (
         "No-promotion tick wrote arc-promotion narrative entries — the "
         "seeding path engaged when it should have been silent. "
@@ -246,9 +230,7 @@ async def test_no_promotion_no_arc_promotion_narrative_entries(
 
 
 @pytest.mark.asyncio
-async def test_off_cadence_turn_emits_no_45_23_spans(
-    session_fixture, otel_capture
-) -> None:
+async def test_off_cadence_turn_emits_no_45_23_spans(session_fixture, otel_capture) -> None:
     """Off-cadence turn — 45-19's ``arc_tick`` doesn't fire (the
     cadence predicate is false), so 45-23's seed path also has no
     chance to engage. Pin this so a future implementation that
@@ -279,8 +261,7 @@ async def test_off_cadence_turn_emits_no_45_23_spans(
 
     span_names = [s.name for s in otel_capture.get_finished_spans()]
     assert "world_history.arc_tick" not in span_names, (
-        "Test setup mismatch: arc_tick fired off-cadence. "
-        f"Spans seen: {span_names}"
+        f"Test setup mismatch: arc_tick fired off-cadence. Spans seen: {span_names}"
     )
     for forbidden in (
         "world_history.arc_embedding_seed",

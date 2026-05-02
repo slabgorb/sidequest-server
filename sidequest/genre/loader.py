@@ -73,6 +73,7 @@ DEFAULT_GENRE_PACK_SEARCH_PATHS: list[Path] = [
 # Low-level YAML helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_yaml[T](path: Path, type_: type[T]) -> T:
     """Load and parse a required YAML file.
 
@@ -136,6 +137,7 @@ def _load_yaml_raw_optional(path: Path) -> Any | None:
 # ---------------------------------------------------------------------------
 # Rules config loader (with _from: pointer resolution)
 # ---------------------------------------------------------------------------
+
 
 def _load_rules_config(rules_path: Path, pack_dir: Path) -> RulesConfig:
     """Load and resolve rules.yaml, honoring _from: pointers on confrontation
@@ -257,6 +259,7 @@ def _resolve_from_pointer(rel: str, pack_dir: Path) -> Any:
 # Legends loader (flexible format)
 # ---------------------------------------------------------------------------
 
+
 def _load_legends_flexible(path: Path) -> tuple[list[Legend], Any]:
     """Load legends.yaml flexibly: accepts Vec<Legend> or a map with a "legends" key.
 
@@ -297,6 +300,7 @@ def _load_legends_flexible(path: Path) -> tuple[list[Legend], Any]:
 # Subdirectory loader
 # ---------------------------------------------------------------------------
 
+
 def _load_subdirectories(
     pack_path: Path,
     subdir: str,
@@ -328,6 +332,7 @@ def _load_subdirectories(
 # ---------------------------------------------------------------------------
 # Cross-file validators (canned-openings spec §1.4)
 # ---------------------------------------------------------------------------
+
 
 def _validate_opening_setting_references(
     openings: list[Opening],
@@ -501,6 +506,7 @@ def _validate_opening_bank_coverage(
 # World loader
 # ---------------------------------------------------------------------------
 
+
 def _load_single_world(
     world_path: Path,
     genre_tropes: list[TropeDefinition],
@@ -530,15 +536,18 @@ def _load_single_world(
         rooms_raw = _load_yaml_raw_optional(world_path / "rooms.yaml")
         if rooms_raw is not None:
             from sidequest.genre.models.world import RoomDef
-            rooms = [RoomDef.model_validate(r) for r in rooms_raw] if isinstance(rooms_raw, list) else None
+
+            rooms = (
+                [RoomDef.model_validate(r) for r in rooms_raw]
+                if isinstance(rooms_raw, list)
+                else None
+            )
             # Pydantic model is frozen — build a new one with rooms set
             cartography = cartography.model_copy(update={"rooms": rooms})
 
     cultures_raw = _load_yaml_raw_optional(world_path / "cultures.yaml")
     cultures: list[Culture] = (
-        [Culture.model_validate(c) for c in cultures_raw]
-        if isinstance(cultures_raw, list)
-        else []
+        [Culture.model_validate(c) for c in cultures_raw] if isinstance(cultures_raw, list) else []
     )
 
     # Legends: accept either Vec<Legend> (low_fantasy) or map with "legends" key (road_warrior).
@@ -551,9 +560,7 @@ def _load_single_world(
         if isinstance(world_tropes_raw, list)
         else []
     )
-    tropes = (
-        resolve_trope_inheritance(genre_tropes, raw_world_tropes) if raw_world_tropes else []
-    )
+    tropes = resolve_trope_inheritance(genre_tropes, raw_world_tropes) if raw_world_tropes else []
 
     # Optional world-level overrides
     archetypes_raw = _load_yaml_raw_optional(world_path / "archetypes.yaml")
@@ -588,9 +595,7 @@ def _load_single_world(
         )
     openings_raw = _load_yaml_raw(openings_path)
     # openings.yaml top-level shape: { version, world, genre, openings: [...] }
-    openings_list_raw = (
-        openings_raw.get("openings", []) if isinstance(openings_raw, dict) else []
-    )
+    openings_list_raw = openings_raw.get("openings", []) if isinstance(openings_raw, dict) else []
     openings: list[Opening] = [Opening.model_validate(o) for o in openings_list_raw]
 
     # === World-tier npcs.yaml — OPTIONAL ===
@@ -600,9 +605,7 @@ def _load_single_world(
     authored_npcs: list[AuthoredNpc] = []
     if npcs_path.exists():
         npcs_raw = _load_yaml_raw(npcs_path)
-        npcs_list_raw = (
-            npcs_raw.get("npcs", []) if isinstance(npcs_raw, dict) else []
-        )
+        npcs_list_raw = npcs_raw.get("npcs", []) if isinstance(npcs_raw, dict) else []
         authored_npcs = [AuthoredNpc.model_validate(n) for n in npcs_list_raw]
 
     char_creation_raw = _load_yaml_raw_optional(world_path / "char_creation.yaml")
@@ -626,24 +629,18 @@ def _load_single_world(
 
     # Cross-file validators 2 + 3: chassis_instance + interior_room
     # references in openings resolve against rigs.yaml.
-    _validate_opening_setting_references(
-        openings, chassis_instances, world_slug=world_path.name
-    )
+    _validate_opening_setting_references(openings, chassis_instances, world_slug=world_path.name)
 
     # Cross-file validator 4: chassis_instance.crew_npcs entries resolve
     # against AuthoredNpc ids in npcs.yaml.
-    _validate_crew_npc_references(
-        chassis_instances, authored_npcs, world_slug=world_path.name
-    )
+    _validate_crew_npc_references(chassis_instances, authored_npcs, world_slug=world_path.name)
 
     # Cross-file validator 5: AuthoredNpc ids are unique within a world.
     _validate_authored_npc_uniqueness(authored_npcs, world_slug=world_path.name)
 
     # Cross-file validator 12 part-b: Opening.setting.present_npcs entries
     # resolve to AuthoredNpc ids.
-    _validate_present_npcs_resolve(
-        openings, authored_npcs, world_slug=world_path.name
-    )
+    _validate_present_npcs_resolve(openings, authored_npcs, world_slug=world_path.name)
 
     # Cross-file validators 7 + 8: opening bank coverage (canned-openings §1.4).
     # Derive chargen backgrounds from the canonical "background" scene in
@@ -657,9 +654,7 @@ def _load_single_world(
     chargen_backgrounds: list[str] = (
         [c.label for c in background_scene.choices] if background_scene else []
     )
-    _validate_opening_bank_coverage(
-        openings, chargen_backgrounds, world_slug=world_path.name
-    )
+    _validate_opening_bank_coverage(openings, chargen_backgrounds, world_slug=world_path.name)
 
     # === World-tier magic.yaml — OPTIONAL (silent-skip when absent) ===
     # The magic_loader requires BOTH genre-tier and world-tier magic.yaml.
@@ -673,9 +668,7 @@ def _load_single_world(
     if genre_magic_path.exists() and world_magic_path.exists():
         from sidequest.genre.magic_loader import load_world_magic
 
-        magic_cfg = load_world_magic(
-            genre_yaml=genre_magic_path, world_yaml=world_magic_path
-        )
+        magic_cfg = load_world_magic(genre_yaml=genre_magic_path, world_yaml=world_magic_path)
         magic_register = magic_cfg.narrator_register or ""
 
     # Portrait manifest
@@ -715,6 +708,7 @@ def _load_single_world(
 # Scenario loader
 # ---------------------------------------------------------------------------
 
+
 def _load_single_scenario(scenario_path: Path) -> ScenarioPack:
     """Load a single scenario from its directory.
 
@@ -726,17 +720,24 @@ def _load_single_scenario(scenario_path: Path) -> ScenarioPack:
     matrix_raw = _load_yaml_raw_optional(scenario_path / "assignment_matrix.yaml")
     if matrix_raw is not None:
         from sidequest.genre.models.scenario import AssignmentMatrix
-        scenario = scenario.model_copy(update={"assignment_matrix": AssignmentMatrix.model_validate(matrix_raw)})
+
+        scenario = scenario.model_copy(
+            update={"assignment_matrix": AssignmentMatrix.model_validate(matrix_raw)}
+        )
 
     graph_raw = _load_yaml_raw_optional(scenario_path / "clue_graph.yaml")
     if graph_raw is not None:
         from sidequest.genre.models.scenario import ClueGraph
+
         scenario = scenario.model_copy(update={"clue_graph": ClueGraph.model_validate(graph_raw)})
 
     atmo_raw = _load_yaml_raw_optional(scenario_path / "atmosphere_matrix.yaml")
     if atmo_raw is not None:
         from sidequest.genre.models.scenario import AtmosphereMatrix
-        scenario = scenario.model_copy(update={"atmosphere_matrix": AtmosphereMatrix.model_validate(atmo_raw)})
+
+        scenario = scenario.model_copy(
+            update={"atmosphere_matrix": AtmosphereMatrix.model_validate(atmo_raw)}
+        )
 
     npcs_raw = _load_yaml_raw_optional(scenario_path / "npcs.yaml")
     if npcs_raw is not None and isinstance(npcs_raw, list):
@@ -749,6 +750,7 @@ def _load_single_scenario(scenario_path: Path) -> ScenarioPack:
 # ---------------------------------------------------------------------------
 # Top-level pack loader
 # ---------------------------------------------------------------------------
+
 
 def load_genre_pack(path: Path | str) -> GenrePack:
     """Load a complete genre pack from a directory.
@@ -781,20 +783,34 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     lore = _load_yaml(path / "lore.yaml", Lore)
     theme = _load_yaml(path / "theme.yaml", GenreTheme)
     archetypes_raw = _load_yaml_raw(path / "archetypes.yaml")
-    archetypes: list[NpcArchetype] = [NpcArchetype.model_validate(a) for a in archetypes_raw] if isinstance(archetypes_raw, list) else []
+    archetypes: list[NpcArchetype] = (
+        [NpcArchetype.model_validate(a) for a in archetypes_raw]
+        if isinstance(archetypes_raw, list)
+        else []
+    )
     char_creation_raw = _load_yaml_raw(path / "char_creation.yaml")
-    char_creation: list[CharCreationScene] = [CharCreationScene.model_validate(c) for c in char_creation_raw] if isinstance(char_creation_raw, list) else []
+    char_creation: list[CharCreationScene] = (
+        [CharCreationScene.model_validate(c) for c in char_creation_raw]
+        if isinstance(char_creation_raw, list)
+        else []
+    )
     visual_style = _load_yaml(path / "visual_style.yaml", VisualStyle)
     progression = _load_yaml(path / "progression.yaml", ProgressionConfig)
     axes = _load_yaml(path / "axes.yaml", AxesConfig)
     audio = _load_yaml(path / "audio.yaml", AudioConfig)
     cultures_raw = _load_yaml_raw(path / "cultures.yaml")
-    cultures: list[Culture] = [Culture.model_validate(c) for c in cultures_raw] if isinstance(cultures_raw, list) else []
+    cultures: list[Culture] = (
+        [Culture.model_validate(c) for c in cultures_raw] if isinstance(cultures_raw, list) else []
+    )
     prompts = _load_yaml(path / "prompts.yaml", Prompts)
 
     # Load required genre-level tropes
     genre_tropes_raw = _load_yaml_raw(path / "tropes.yaml")
-    genre_tropes: list[TropeDefinition] = [TropeDefinition.model_validate(t) for t in genre_tropes_raw] if isinstance(genre_tropes_raw, list) else []
+    genre_tropes: list[TropeDefinition] = (
+        [TropeDefinition.model_validate(t) for t in genre_tropes_raw]
+        if isinstance(genre_tropes_raw, list)
+        else []
+    )
 
     # Load optional files
     achievements_raw = _load_yaml_raw_optional(path / "achievements.yaml")
@@ -856,12 +872,8 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     base_archetypes: BaseArchetypes | None = None
     npc_traits: NpcTraitsDatabase | None = None
     if content_root is not None:
-        base_archetypes = _load_yaml_optional(
-            content_root / "archetypes_base.yaml", BaseArchetypes
-        )
-        npc_traits = _load_yaml_optional(
-            content_root / "npc_traits.yaml", NpcTraitsDatabase
-        )
+        base_archetypes = _load_yaml_optional(content_root / "archetypes_base.yaml", BaseArchetypes)
+        npc_traits = _load_yaml_optional(content_root / "npc_traits.yaml", NpcTraitsDatabase)
 
     # Load worlds and scenarios from subdirectories
     worlds: dict[str, World] = _load_subdirectories(
@@ -947,6 +959,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
 # ---------------------------------------------------------------------------
 # GenreLoader — multi-path search class
 # ---------------------------------------------------------------------------
+
 
 class GenreLoader:
     """Multi-path genre pack loader.

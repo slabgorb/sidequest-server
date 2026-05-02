@@ -129,7 +129,9 @@ def test_happy_path_returns_outcome_and_merges_deltas() -> None:
     table = _make_table(_hit_cell())
 
     outcome = resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "loop"}, table,
+        enc,
+        {"red": "straight", "blue": "loop"},
+        table,
     )
 
     assert isinstance(outcome, SealedLetterOutcome)
@@ -179,7 +181,9 @@ def test_illegal_red_maneuver_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="not in maneuvers_consumed"):
         resolve_sealed_letter_lookup(
-            enc, {"red": "barrel_roll", "blue": "loop"}, table,
+            enc,
+            {"red": "barrel_roll", "blue": "loop"},
+            table,
         )
 
 
@@ -189,7 +193,9 @@ def test_illegal_blue_maneuver_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="not in maneuvers_consumed"):
         resolve_sealed_letter_lookup(
-            enc, {"red": "straight", "blue": "split_s"}, table,
+            enc,
+            {"red": "straight", "blue": "split_s"},
+            table,
         )
 
 
@@ -205,7 +211,9 @@ def test_no_matching_cell_raises_key_error() -> None:
 
     with pytest.raises(KeyError, match=r"no interaction cell"):
         resolve_sealed_letter_lookup(
-            enc, {"red": "bank", "blue": "bank"}, table,
+            enc,
+            {"red": "bank", "blue": "bank"},
+            table,
         )
 
 
@@ -222,7 +230,9 @@ def test_existing_per_actor_state_keys_preserved() -> None:
     table = _make_table(_hit_cell())
 
     resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "loop"}, table,
+        enc,
+        {"red": "straight", "blue": "loop"},
+        table,
     )
 
     red = next(a for a in enc.actors if a.role == "red")
@@ -257,7 +267,9 @@ def test_cross_actor_isolation_no_pollution() -> None:
     table = _make_table(cell)
 
     resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "loop"}, table,
+        enc,
+        {"red": "straight", "blue": "loop"},
+        table,
     )
 
     red = next(a for a in enc.actors if a.role == "red")
@@ -281,7 +293,9 @@ def test_extend_and_return_triggers_resets_geometry_preserves_energy() -> None:
     table = _make_table(_no_hit_cell_with_opening_fast())
 
     outcome = resolve_sealed_letter_lookup(
-        enc, {"red": "bank", "blue": "kill_rotation"}, table,
+        enc,
+        {"red": "bank", "blue": "kill_rotation"},
+        table,
     )
 
     assert outcome.extend_and_return_triggered is True
@@ -336,7 +350,9 @@ def test_extend_and_return_skipped_when_hit_landed() -> None:
     table = _make_table(cell)
 
     outcome = resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "loop"}, table,
+        enc,
+        {"red": "straight", "blue": "loop"},
+        table,
     )
 
     assert outcome.extend_and_return_triggered is False
@@ -364,7 +380,9 @@ def test_otel_spans_emitted_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     enc = _make_encounter()
     table = _make_table(_hit_cell())
     resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "loop"}, table,
+        enc,
+        {"red": "straight", "blue": "loop"},
+        table,
     )
 
     finished = exporter.get_finished_spans()
@@ -374,8 +392,7 @@ def test_otel_spans_emitted_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     assert spans_module.SPAN_DOGFIGHT_CONFRONTATION_STARTED in names
     # SPAN_DOGFIGHT_MANEUVER_COMMITTED fires twice (once per actor)
     maneuver_spans = [
-        s for s in finished
-        if s.name == spans_module.SPAN_DOGFIGHT_MANEUVER_COMMITTED
+        s for s in finished if s.name == spans_module.SPAN_DOGFIGHT_MANEUVER_COMMITTED
     ]
     assert len(maneuver_spans) == 2, (
         f"expected 2 maneuver_committed spans, got {len(maneuver_spans)}"
@@ -388,31 +405,23 @@ def test_otel_spans_emitted_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     started_idx = names.index(spans_module.SPAN_DOGFIGHT_CONFRONTATION_STARTED)
     cell_idx = names.index(spans_module.SPAN_DOGFIGHT_CELL_RESOLVED)
     maneuver_indices = [
-        i for i, n in enumerate(names)
-        if n == spans_module.SPAN_DOGFIGHT_MANEUVER_COMMITTED
+        i for i, n in enumerate(names) if n == spans_module.SPAN_DOGFIGHT_MANEUVER_COMMITTED
     ]
     assert started_idx < min(maneuver_indices)
     assert max(maneuver_indices) < cell_idx
 
     # Verify attribute payloads on each span.
     started = next(
-        s for s in finished
-        if s.name == spans_module.SPAN_DOGFIGHT_CONFRONTATION_STARTED
+        s for s in finished if s.name == spans_module.SPAN_DOGFIGHT_CONFRONTATION_STARTED
     )
     assert started.attributes["encounter_type"] == "dogfight"
     assert started.attributes["red_actor"] == "Red Pilot"
     assert started.attributes["blue_actor"] == "Blue Pilot"
 
-    maneuver_attrs = {
-        (s.attributes["actor"], s.attributes["maneuver"])
-        for s in maneuver_spans
-    }
+    maneuver_attrs = {(s.attributes["actor"], s.attributes["maneuver"]) for s in maneuver_spans}
     assert maneuver_attrs == {("Red Pilot", "straight"), ("Blue Pilot", "loop")}
 
-    cell_resolved = next(
-        s for s in finished
-        if s.name == spans_module.SPAN_DOGFIGHT_CELL_RESOLVED
-    )
+    cell_resolved = next(s for s in finished if s.name == spans_module.SPAN_DOGFIGHT_CELL_RESOLVED)
     assert cell_resolved.attributes["cell_name"] == "Blue reverses onto Red's six"
     assert cell_resolved.attributes["shape"] == "passive vs offense"
     assert cell_resolved.attributes["red_maneuver"] == "straight"
@@ -453,7 +462,8 @@ def test_wiring_real_space_opera_dogfight_table() -> None:
     # Find a confrontation that ships an interaction_table.
     conf = next(
         (
-            c for c in (pack.rules.confrontations if pack.rules else [])
+            c
+            for c in (pack.rules.confrontations if pack.rules else [])
             if c.interaction_table is not None
         ),
         None,
@@ -469,7 +479,9 @@ def test_wiring_real_space_opera_dogfight_table() -> None:
 
     enc = _make_encounter()
     outcome = resolve_sealed_letter_lookup(
-        enc, {"red": "straight", "blue": "bank"}, table,
+        enc,
+        {"red": "straight", "blue": "bank"},
+        table,
     )
 
     # The cell at (straight, bank) is "Red drills through, Blue breaks".
@@ -492,9 +504,7 @@ def test_wiring_real_space_opera_dogfight_table() -> None:
 
 def _encounter_missing_role(role_to_drop: str) -> StructuredEncounter:
     """Encounter that's missing one of the required dogfight roles."""
-    keep = [
-        a for a in _make_encounter().actors if a.role != role_to_drop
-    ]
+    keep = [a for a in _make_encounter().actors if a.role != role_to_drop]
     return StructuredEncounter(
         encounter_type="dogfight",
         player_metric=EncounterMetric(name="hits", current=0, threshold=3),
@@ -509,7 +519,9 @@ def test_missing_red_actor_raises() -> None:
 
     with pytest.raises(ValueError, match=r"role\(s\) \['red'\]"):
         resolve_sealed_letter_lookup(
-            enc, {"red": "straight", "blue": "loop"}, table,
+            enc,
+            {"red": "straight", "blue": "loop"},
+            table,
         )
 
 
@@ -519,7 +531,9 @@ def test_missing_blue_actor_raises() -> None:
 
     with pytest.raises(ValueError, match=r"role\(s\) \['blue'\]"):
         resolve_sealed_letter_lookup(
-            enc, {"red": "straight", "blue": "loop"}, table,
+            enc,
+            {"red": "straight", "blue": "loop"},
+            table,
         )
 
 
@@ -545,13 +559,13 @@ def test_no_spans_emitted_when_actor_validation_fails(
 
     with pytest.raises(ValueError):
         resolve_sealed_letter_lookup(
-            enc, {"red": "straight", "blue": "loop"}, table,
+            enc,
+            {"red": "straight", "blue": "loop"},
+            table,
         )
 
     finished = exporter.get_finished_spans()
-    dogfight_spans = [
-        s for s in finished if s.name.startswith("dogfight.")
-    ]
+    dogfight_spans = [s for s in finished if s.name.startswith("dogfight.")]
     assert dogfight_spans == [], (
         f"expected no dogfight.* spans on validation failure, "
         f"got: {[s.name for s in dogfight_spans]}"

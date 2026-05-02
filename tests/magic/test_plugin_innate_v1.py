@@ -1,4 +1,5 @@
 """innate_v1 plugin behavior."""
+
 from __future__ import annotations
 
 import pytest
@@ -107,9 +108,7 @@ def test_innate_v1_consent_flavor_mismatch_yellow(world_config):
         consent_state="willing",  # mismatch
     )
     flags = plugin.validate_working(working, world_config)
-    assert any(
-        f.severity == FlagSeverity.YELLOW and "consent" in f.reason for f in flags
-    )
+    assert any(f.severity == FlagSeverity.YELLOW and "consent" in f.reason for f in flags)
 
 
 def test_innate_v1_faction_mechanism_red_flag(world_config):
@@ -126,9 +125,7 @@ def test_innate_v1_faction_mechanism_red_flag(world_config):
         consent_state="involuntary",
     )
     flags = plugin.validate_working(working, world_config)
-    assert any(
-        f.severity == FlagSeverity.RED and "lane_violation" in f.reason for f in flags
-    )
+    assert any(f.severity == FlagSeverity.RED and "lane_violation" in f.reason for f in flags)
 
 
 def test_innate_v1_yaml_descriptor_loads():

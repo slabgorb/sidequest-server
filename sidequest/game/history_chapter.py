@@ -19,9 +19,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 
-def _reject_template_markers(
-    model_name: str, fields: dict[str, str | None]
-) -> None:
+def _reject_template_markers(model_name: str, fields: dict[str, str | None]) -> None:
     """Raise ValueError if any field contains ``{{`` or ``}}``.
 
     History chapters do not support template substitution — markers

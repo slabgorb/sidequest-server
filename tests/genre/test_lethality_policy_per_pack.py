@@ -5,6 +5,7 @@ kind matches its declared policy.verdicts_on_zero_edge.pc.
 Group C Task 13 — mechanical breadth: if a pack author typos the YAML or
 drifts the schema in a future PR, this parametrised smoke catches it.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,7 +29,9 @@ SHIPPED_PACKS = [
 
 def _pc(current: int) -> CreatureCore:
     return CreatureCore(
-        name="Alice", description="d", personality="p",
+        name="Alice",
+        description="d",
+        personality="p",
         inventory=Inventory(),
         edge=EdgePool(current=current, max=10, base_max=10),
     )

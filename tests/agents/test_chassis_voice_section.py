@@ -1,4 +1,5 @@
 """Narrator prompt — register_chassis_voice_section renders voice + name-form."""
+
 from __future__ import annotations
 
 from sidequest.agents.prompt_framework.core import PromptRegistry

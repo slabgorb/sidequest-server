@@ -100,9 +100,7 @@ class TestFreshResolution:
     appended, span emitted with ``active_stakes_appended=True``.
     """
 
-    def test_progressing_to_resolved_writes_quest_log_entry(
-        self, otel_capture
-    ) -> None:
+    def test_progressing_to_resolved_writes_quest_log_entry(self, otel_capture) -> None:
         helper = _import_helper()
         snap = _snapshot_with_tropes([("extraction_panic", "progressing")])
         baseline = _baseline_from_snapshot(snap)
@@ -125,8 +123,7 @@ class TestFreshResolution:
         # interaction so the next narrator's state_summary anchors the
         # resolution in time.
         assert "17" in snap.quest_log["trope_extraction_panic"], (
-            "quest_log entry text must include the interaction number "
-            "(turn marker)."
+            "quest_log entry text must include the interaction number (turn marker)."
         )
 
     def test_active_to_resolved_writes_quest_log_entry(self) -> None:
@@ -168,8 +165,7 @@ class TestFreshResolution:
         # the trope id must appear so the panel and the next narrator
         # both see what resolved.
         assert "extraction_panic" in snap.active_stakes, (
-            "Resolution marker must include the trope_id; "
-            f"got active_stakes={snap.active_stakes!r}"
+            f"Resolution marker must include the trope_id; got active_stakes={snap.active_stakes!r}"
         )
         assert "Resolved" in snap.active_stakes or "resolved" in snap.active_stakes, (
             "Resolution marker must indicate resolution explicitly."
@@ -191,9 +187,7 @@ class TestFreshResolution:
         )
         assert "extraction_panic" in snap.active_stakes
 
-    def test_fresh_resolution_emits_handshake_span_with_appended_true(
-        self, otel_capture
-    ) -> None:
+    def test_fresh_resolution_emits_handshake_span_with_appended_true(self, otel_capture) -> None:
         helper = _import_helper()
         snap = _snapshot_with_tropes([("extraction_panic", "progressing")])
         baseline = _baseline_from_snapshot(snap)
@@ -203,8 +197,7 @@ class TestFreshResolution:
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert len(spans) == 1, (
             "Fresh resolution must emit exactly one handshake span; "
@@ -221,9 +214,7 @@ class TestFreshResolution:
         assert attrs.get("quest_log_key") == "trope_extraction_panic"
         assert attrs.get("source") == "chapter_promotion"
 
-    def test_quest_log_write_emits_quest_update_span(
-        self, otel_capture
-    ) -> None:
+    def test_quest_log_write_emits_quest_update_span(self, otel_capture) -> None:
         """The story context says the quest_log mutation must wrap in
         the existing ``quest_update_span`` helper — do NOT author a
         parallel quest-write span. The GM panel's existing
@@ -239,10 +230,7 @@ class TestFreshResolution:
         otel_capture.clear()
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
-        quest_spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "quest_update"
-        ]
+        quest_spans = [s for s in otel_capture.get_finished_spans() if s.name == "quest_update"]
         assert quest_spans, (
             "quest_log mutation must wrap in quest_update_span — the "
             "existing SPAN_QUEST_UPDATE route is what the GM panel reads."
@@ -268,9 +256,7 @@ class TestIdempotentReDetect:
 
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
-        assert (
-            snap.quest_log["trope_extraction_panic"] == "Resolved at turn 12"
-        ), (
+        assert snap.quest_log["trope_extraction_panic"] == "Resolved at turn 12", (
             "Idempotent re-detect must NOT rewrite the quest_log entry — "
             "the original turn-marker is the canonical record."
         )
@@ -289,9 +275,7 @@ class TestIdempotentReDetect:
             f"marker; got {snap.active_stakes!r}"
         )
 
-    def test_idempotent_re_detect_still_emits_handshake_span(
-        self, otel_capture
-    ) -> None:
+    def test_idempotent_re_detect_still_emits_handshake_span(self, otel_capture) -> None:
         """The lie-detector requirement: even when the write is a no-op,
         the span fires so the GM panel can distinguish "handshake
         correctly idempotent" from "handshake never engaged after turn N".
@@ -306,8 +290,7 @@ class TestIdempotentReDetect:
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert len(spans) == 1, (
             "Idempotent re-detect must STILL emit exactly one handshake "
@@ -381,8 +364,7 @@ class TestNonResolutionTransitionsAreNoops:
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert spans == [], (
             f"Transition {prior}->{current} must NOT emit a handshake span; "
@@ -416,10 +398,12 @@ class TestMultiTropeDiff:
         """
 
         helper = _import_helper()
-        snap = _snapshot_with_tropes([
-            ("extraction_panic", "progressing"),
-            ("hireling_mutiny", "progressing"),
-        ])
+        snap = _snapshot_with_tropes(
+            [
+                ("extraction_panic", "progressing"),
+                ("hireling_mutiny", "progressing"),
+            ]
+        )
         baseline = _baseline_from_snapshot(snap)
         snap.active_tropes[0].status = "resolved"
         snap.active_tropes[1].status = "resolved"
@@ -429,14 +413,14 @@ class TestMultiTropeDiff:
         assert "trope_extraction_panic" in snap.quest_log
         assert "trope_hireling_mutiny" in snap.quest_log
 
-    def test_two_concurrent_resolutions_emit_two_handshake_spans(
-        self, otel_capture
-    ) -> None:
+    def test_two_concurrent_resolutions_emit_two_handshake_spans(self, otel_capture) -> None:
         helper = _import_helper()
-        snap = _snapshot_with_tropes([
-            ("extraction_panic", "progressing"),
-            ("hireling_mutiny", "progressing"),
-        ])
+        snap = _snapshot_with_tropes(
+            [
+                ("extraction_panic", "progressing"),
+                ("hireling_mutiny", "progressing"),
+            ]
+        )
         baseline = _baseline_from_snapshot(snap)
         snap.active_tropes[0].status = "resolved"
         snap.active_tropes[1].status = "resolved"
@@ -445,8 +429,7 @@ class TestMultiTropeDiff:
         helper(snap, baseline, player_name="Rux", source="chapter_promotion")
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         trope_ids = {dict(s.attributes or {}).get("trope_id") for s in spans}
         assert trope_ids == {"extraction_panic", "hireling_mutiny"}, (
@@ -457,10 +440,12 @@ class TestMultiTropeDiff:
         self,
     ) -> None:
         helper = _import_helper()
-        snap = _snapshot_with_tropes([
-            ("extraction_panic", "progressing"),
-            ("hireling_mutiny", "progressing"),
-        ])
+        snap = _snapshot_with_tropes(
+            [
+                ("extraction_panic", "progressing"),
+                ("hireling_mutiny", "progressing"),
+            ]
+        )
         baseline = _baseline_from_snapshot(snap)
         snap.active_tropes[0].status = "resolved"
         # hireling_mutiny stays at "progressing" (no transition into resolved)
@@ -542,8 +527,7 @@ class TestSourceAttribute:
         helper(snap, baseline, player_name="Rux", source=source)
 
         spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "trope.resolution_handshake"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.resolution_handshake"
         ]
         assert spans, "Helper must accept the source string and still emit."
         attrs = dict(spans[0].attributes or {})

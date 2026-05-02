@@ -19,6 +19,7 @@ may still emit `LethalityVerdict` entries in `DispatchPackage.per_player[*].
 lethality` for paper-trail purposes; arbiter output is authoritative on
 conflict (see Task 8).
 """
+
 from __future__ import annotations
 
 import logging
@@ -102,9 +103,13 @@ class LethalityArbiter:
     ) -> None:
         """Append one verdict + its paired must/must-not directives."""
         cause = f"{core.name} reduced to zero edge (0/{core.edge.max})"
-        result.verdicts.append(self._build_verdict(
-            entity=entity, verdict_kind=verdict_kind, cause=cause,
-        ))
+        result.verdicts.append(
+            self._build_verdict(
+                entity=entity,
+                verdict_kind=verdict_kind,
+                cause=cause,
+            )
+        )
         # Paired directives — narrator reads them as one constraint envelope.
         shared_viz = VisibilityTag(
             visible_to="all",
@@ -112,16 +117,20 @@ class LethalityArbiter:
             secrets_for=[],
             redact_from_narrator_canonical=False,
         )
-        result.directives.append(NarratorDirective(
-            kind="must_narrate",
-            payload=f"{entity} verdict={verdict_kind}. {self._policy.must_narrate}",
-            visibility=shared_viz,
-        ))
-        result.directives.append(NarratorDirective(
-            kind="must_not_narrate",
-            payload=self._policy.must_not_narrate,
-            visibility=shared_viz,
-        ))
+        result.directives.append(
+            NarratorDirective(
+                kind="must_narrate",
+                payload=f"{entity} verdict={verdict_kind}. {self._policy.must_narrate}",
+                visibility=shared_viz,
+            )
+        )
+        result.directives.append(
+            NarratorDirective(
+                kind="must_not_narrate",
+                payload=self._policy.must_not_narrate,
+                visibility=shared_viz,
+            )
+        )
 
     def _build_verdict(
         self,

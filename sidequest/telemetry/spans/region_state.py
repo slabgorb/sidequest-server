@@ -76,7 +76,9 @@ def region_entry_rejected_span(
         **attrs,
     }
     with Span.open(
-        SPAN_REGION_ENTRY_REJECTED, attributes, tracer_override=_tracer,
+        SPAN_REGION_ENTRY_REJECTED,
+        attributes,
+        tracer_override=_tracer,
     ) as span:
         yield span
 
@@ -93,7 +95,8 @@ SPAN_ROUTES[SPAN_REGION_ENTRY_CANONICALIZED_DEDUP] = SpanRoute(
         "entry": (span.attributes or {}).get("entry", ""),
         "canonical_slug": (span.attributes or {}).get("canonical_slug", ""),
         "existing_surface_form": (span.attributes or {}).get(
-            "existing_surface_form", "",
+            "existing_surface_form",
+            "",
         ),
         "caller_path": (span.attributes or {}).get("caller_path", ""),
         "dedup_count": (span.attributes or {}).get("dedup_count", 1),

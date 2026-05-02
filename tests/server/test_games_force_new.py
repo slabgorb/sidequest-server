@@ -7,6 +7,7 @@ silently returned the colliding slug and the lobby resumed the prior
 character. Each behavior in :func:`create_or_resume_game` that the UI
 fix relies on has a check below.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -129,9 +130,7 @@ def test_force_new_disambiguation_emits_watcher_span(
     assert "lobby.force_new_disambiguated" in span_names
 
     span = next(
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "lobby.force_new_disambiguated"
+        s for s in otel_capture.get_finished_spans() if s.name == "lobby.force_new_disambiguated"
     )
     assert span.attributes["requested_slug"] == "2026-04-26-moldharrow-keep"
     assert span.attributes["final_slug"] == "2026-04-26-moldharrow-keep-2"

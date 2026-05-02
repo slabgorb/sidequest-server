@@ -1,4 +1,5 @@
 """Mid-session join: lazy-fill cache for the new player."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -57,7 +58,5 @@ def test_lazy_fill_skips_already_cached_events(tmp_path: Path) -> None:
         decision=FilterDecision(include=True, payload_json='{"text":"one"}'),
     )
 
-    filled = lazy_fill(
-        event_log=log, cache=cache, filter_=filt, view=view, player_id="alice"
-    )
+    filled = lazy_fill(event_log=log, cache=cache, filter_=filt, view=view, player_id="alice")
     assert filled == 1

@@ -10,6 +10,7 @@ was empty, so ``view.character_of(player_id)`` returned ``None`` and
 ever consulted. After the fix, the predicate must route through the real
 zone data.
 """
+
 from __future__ import annotations
 
 import json

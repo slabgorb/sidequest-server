@@ -55,18 +55,14 @@ def build_app(corpus: Path, labeled_out: Path) -> FastAPI:
         unlabeled = len(_load_unlabeled(corpus))
         labeled = 0
         if labeled_out.exists():
-            for line_no, line in enumerate(
-                labeled_out.read_text().splitlines(), start=1
-            ):
+            for line_no, line in enumerate(labeled_out.read_text().splitlines(), start=1):
                 if not line.strip():
                     continue
                 try:
                     LabeledPair.model_validate_json(line)
                     labeled += 1
                 except Exception as e:
-                    _log.warning(
-                        "labeled line %d is malformed, not counted: %s", line_no, e
-                    )
+                    _log.warning("labeled line %d is malformed, not counted: %s", line_no, e)
         return {"unlabeled": unlabeled, "labeled": labeled}
 
     @app.post("/api/label")

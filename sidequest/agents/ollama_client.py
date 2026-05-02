@@ -1,4 +1,5 @@
 """Ollama HTTP backend for LlmClient (ADR-073 Phase 2)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -74,8 +75,7 @@ class OllamaClient:
         resolved = self._model_map.get(hint)
         if resolved is None:
             raise UnknownModel(
-                f"model hint {hint!r} not in Ollama model_map "
-                f"keys={sorted(self._model_map.keys())}"
+                f"model hint {hint!r} not in Ollama model_map keys={sorted(self._model_map.keys())}"
             )
         return resolved
 
@@ -97,19 +97,13 @@ class OllamaClient:
                 status = getattr(resp, "status", 200)
                 payload = resp.read()
         except Exception as exc:
-            raise OllamaClientError(
-                f"ollama /api/generate transport error: {exc}"
-            ) from exc
+            raise OllamaClientError(f"ollama /api/generate transport error: {exc}") from exc
         if status != 200:
-            raise OllamaClientError(
-                f"ollama /api/generate HTTP {status}: {payload!r:.200}"
-            )
+            raise OllamaClientError(f"ollama /api/generate HTTP {status}: {payload!r:.200}")
         try:
             envelope = json.loads(payload)
         except json.JSONDecodeError as exc:
-            raise OllamaClientError(
-                f"ollama /api/generate non-json body: {exc}"
-            ) from exc
+            raise OllamaClientError(f"ollama /api/generate non-json body: {exc}") from exc
         return ClaudeResponse(
             text=envelope.get("response", ""),
             input_tokens=envelope.get("prompt_eval_count"),
@@ -151,9 +145,7 @@ class OllamaClient:
         # (cap * 2) user+assistant messages.
         self._cap_history(self._histories[session_to_return])
 
-        with agent_call_session_span(
-            model=local_model, prompt_len=len(prompt), backend="ollama"
-        ):
+        with agent_call_session_span(model=local_model, prompt_len=len(prompt), backend="ollama"):
             body = {
                 "model": local_model,
                 "messages": list(self._histories[session_to_return]),
@@ -162,9 +154,7 @@ class OllamaClient:
             response = await asyncio.to_thread(self._post_chat, body)
 
         # Append assistant reply to history for next turn.
-        self._histories[session_to_return].append(
-            {"role": "assistant", "content": response.text}
-        )
+        self._histories[session_to_return].append({"role": "assistant", "content": response.text})
         self._cap_history(self._histories[session_to_return])
 
         return ClaudeResponse(
@@ -182,15 +172,13 @@ class OllamaClient:
         )
         if len(history) <= max_total:
             return
-        logger.warning(
-            "ollama.history_cap_exceeded len=%d cap=%d", len(history), max_total
-        )
+        logger.warning("ollama.history_cap_exceeded len=%d cap=%d", len(history), max_total)
         if history and history[0]["role"] == "system":
             system = history[0]
-            tail = history[-(OLLAMA_HISTORY_CAP * 2):]
+            tail = history[-(OLLAMA_HISTORY_CAP * 2) :]
             history[:] = [system, *tail]
         else:
-            history[:] = history[-(OLLAMA_HISTORY_CAP * 2):]
+            history[:] = history[-(OLLAMA_HISTORY_CAP * 2) :]
 
     def _post_chat(self, body: dict[str, object]) -> ClaudeResponse:
         req = Request(

@@ -5,6 +5,7 @@ These tests verify the multiplayer barrier + dispatch election. Each test
 either calls SessionRoom helpers directly (unit) or drives
 ``_handle_player_action`` end-to-end with mocked Claude (integration).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,6 +76,7 @@ def test_first_pending_at_monotonic_cleared_on_drain() -> None:
 def test_first_pending_restamped_after_drain() -> None:
     """Round N+1 gets a fresh stamp after round N drained."""
     import time
+
     room = SessionRoom(slug="test-slug", mode=GameMode.MULTIPLAYER)
     room.record_pending_action("p1", "G", "act1")
     first = room.first_pending_at_monotonic()
@@ -561,8 +563,7 @@ async def test_dispatch_fires_in_round_two_after_round_one_completes(
     await handler1._handle_player_action(msg2a)
     await handler2._handle_player_action(msg2b)
     assert len(captured) == 2, (
-        f"round 2 dispatch silently skipped — CAS guard regression. "
-        f"captured: {captured}"
+        f"round 2 dispatch silently skipped — CAS guard regression. captured: {captured}"
     )
     assert "Gladstone: Round 2 — Gladstone" in captured[1]
     assert "Zanzibar Jones: Round 2 — Zanzibar" in captured[1]

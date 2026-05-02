@@ -4,6 +4,7 @@ Importing this module is the public API: it mutates ``MAGIC_PLUGINS`` by
 side effect. ``__all__ = []`` keeps the package star-import from leaking
 this module's imports.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,9 +25,7 @@ from sidequest.magic.plugin import MAGIC_PLUGINS
 _YAML_PATH = Path(__file__).with_suffix(".yaml")
 
 # Content descriptor — loaded once at import time.
-descriptor: Plugin = Plugin.model_validate(
-    yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8"))
-)
+descriptor: Plugin = Plugin.model_validate(yaml.safe_load(_YAML_PATH.read_text(encoding="utf-8")))
 
 
 class ItemLegacyV1Plugin:
@@ -35,9 +34,7 @@ class ItemLegacyV1Plugin:
     def required_attrs(self) -> set[str]:
         return set(descriptor.required_span_attrs)
 
-    def validate_working(
-        self, working: MagicWorking, config: WorldMagicConfig
-    ) -> list[Flag]:
+    def validate_working(self, working: MagicWorking, config: WorldMagicConfig) -> list[Flag]:
         flags: list[Flag] = []
 
         if working.item_id is None:

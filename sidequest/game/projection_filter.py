@@ -9,6 +9,7 @@ New signature as of the ProjectionFilter Rules feature: project takes a
 MessageEnvelope + GameStateView + player_id. This supersedes the old
 event=EventRow signature.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

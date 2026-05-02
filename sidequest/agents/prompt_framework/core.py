@@ -137,6 +137,7 @@ class PromptRegistry:
         Sorts by zone order before joining — same as Rust implementation.
         """
         from sidequest.telemetry.spans import SPAN_COMPOSE, Span
+
         with Span.open(SPAN_COMPOSE, {"agent_name": agent_name}) as span:
             sections = list(self._sections.get(agent_name, []))
             sections.sort(key=lambda s: s.zone.order())
@@ -464,27 +465,25 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
             if chassis.voice is None:
                 continue
             name_form = resolve_chassis_name_form(chassis, stub)
-            tics = (
-                "; ".join(chassis.voice.vocal_tics)
-                if chassis.voice.vocal_tics
-                else "(none)"
-            )
+            tics = "; ".join(chassis.voice.vocal_tics) if chassis.voice.vocal_tics else "(none)"
             silence = chassis.voice.silence_register or "(unspecified)"
             rendered_lines.append(
                 f"- {chassis.name} (chassis voice — {chassis.voice.default_register}): "
-                f"addresses you as \"{name_form}\". Vocal tics: {tics}. "
+                f'addresses you as "{name_form}". Vocal tics: {tics}. '
                 f"Silence reads as: {silence}."
             )
 
         if not rendered_lines:
             return
 
-        body = "\n".join([
-            "## CHASSIS VOICES — Speak as them with this register",
-            *rendered_lines,
-            "Use the address-form exactly. The chassis's tone is set; "
-            "the narrator's job is to honor it.",
-        ])
+        body = "\n".join(
+            [
+                "## CHASSIS VOICES — Speak as them with this register",
+                *rendered_lines,
+                "Use the address-form exactly. The chassis's tone is set; "
+                "the narrator's job is to honor it.",
+            ]
+        )
 
         self.register_section(
             agent_name,

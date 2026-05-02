@@ -12,6 +12,7 @@ in multiple rule entries; they compose (Task 14).
 Semantic validation (kind exists, predicate exists, field paths
 resolve against payload schema, type-compatible masks) is Task 10.
 """
+
 from __future__ import annotations
 
 import re
@@ -118,7 +119,8 @@ class ProjectionRules(BaseModel):
             if not isinstance(r, dict):
                 raise ValueError(f"rule entry must be a mapping, got {type(r).__name__}")
             present = [
-                k for k in ("target_only", "include_if", "redact_fields", "visibility_tag")
+                k
+                for k in ("target_only", "include_if", "redact_fields", "visibility_tag")
                 if k in r
             ]
             if len(present) != 1:

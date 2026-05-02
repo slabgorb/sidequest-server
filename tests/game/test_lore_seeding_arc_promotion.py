@@ -61,9 +61,7 @@ def _chapter_with_narrative(
     return HistoryChapter(
         id=chapter_id,
         label=f"{chapter_id.title()} arc",
-        narrative_log=[
-            ChapterNarrativeEntry(speaker=spk, text=txt) for spk, txt in pairs
-        ],
+        narrative_log=[ChapterNarrativeEntry(speaker=spk, text=txt) for spk, txt in pairs],
         lore=list(lore or []),
     )
 
@@ -95,9 +93,7 @@ class TestNarrativeLogWriteback:
 
         # Both entries land on the in-snapshot list (the narrator's
         # state_summary reads this; per context-story-45-23.md AC1).
-        snapshot_authors = [
-            e.author for e in snap.narrative_log if e.entry_type == "arc_promotion"
-        ]
+        snapshot_authors = [e.author for e in snap.narrative_log if e.entry_type == "arc_promotion"]
         assert snapshot_authors == ["narrator", "Rux"]
         assert result.narrative_entries_appended == 2
 
@@ -130,9 +126,7 @@ class TestNarrativeLogWriteback:
 
         seed_lore_from_arc_promotion(snap, store, lore_store, [chapter])
 
-        promo_entries = [
-            e for e in snap.narrative_log if e.entry_type == "arc_promotion"
-        ]
+        promo_entries = [e for e in snap.narrative_log if e.entry_type == "arc_promotion"]
         assert len(promo_entries) == 1
         entry = promo_entries[0]
         # Per context-story-45-23.md "Seeding helper" §1.
@@ -257,9 +251,7 @@ class TestLoreStoreWriteback:
         snap = _snapshot()
         store = MagicMock()
         lore_store = LoreStore()
-        chapter = _chapter_with_narrative(
-            "early", lore=["valid entry", "   ", "another valid"]
-        )
+        chapter = _chapter_with_narrative("early", lore=["valid entry", "   ", "another valid"])
 
         # Must not raise.
         result = seed_lore_from_arc_promotion(snap, store, lore_store, [chapter])
@@ -316,9 +308,7 @@ class TestIdempotentReseed:
                 source=LoreSource.GameEvent,
             )
         )
-        chapter = _chapter_with_narrative(
-            "early", lore=["new content A", "new content B"]
-        )
+        chapter = _chapter_with_narrative("early", lore=["new content A", "new content B"])
 
         result = seed_lore_from_arc_promotion(snap, store, lore_store, [chapter])
 

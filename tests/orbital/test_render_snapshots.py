@@ -1,4 +1,5 @@
 """Snapshot tests — pin SVG output bytes for canonical inputs."""
+
 from __future__ import annotations
 
 from pathlib import Path

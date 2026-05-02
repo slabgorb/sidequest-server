@@ -1,4 +1,5 @@
 """Top-level magic.validator.validate()."""
+
 from __future__ import annotations
 
 import pytest
@@ -55,8 +56,7 @@ def test_known_but_unregistered_plugin_emits_deep_red_not_keyerror(world_config)
     )
     flags = validate(w, bad_config)
     assert any(
-        f.severity == FlagSeverity.DEEP_RED
-        and "plugin_known_but_not_registered" in f.reason
+        f.severity == FlagSeverity.DEEP_RED and "plugin_known_but_not_registered" in f.reason
         for f in flags
     )
 

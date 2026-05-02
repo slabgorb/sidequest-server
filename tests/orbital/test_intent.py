@@ -1,4 +1,5 @@
 """Intent dispatch tests — view_map / drill_in / drill_out cycle."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -55,9 +55,7 @@ def _install_uvicorn_log_bridge() -> None:
     sq.setLevel(logging.INFO)
     if not any(getattr(h, "_sidequest_bridge", False) for h in sq.handlers):
         handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter("%(levelname)s [%(name)s] %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
         handler._sidequest_bridge = True  # type: ignore[attr-defined]
         sq.addHandler(handler)
 
@@ -77,17 +75,14 @@ def create_app(
         save_dir: Root directory for SQLite save files.
             Defaults to ``~/.sidequest/saves``.
     """
-    resolved_save_dir: Path = save_dir or (
-        Path.home() / ".sidequest" / "saves"
-    )
+    resolved_save_dir: Path = save_dir or (Path.home() / ".sidequest" / "saves")
     resolved_search_paths: list[Path] = (
         genre_pack_search_paths
         if genre_pack_search_paths is not None
         else DEFAULT_GENRE_PACK_SEARCH_PATHS
     )
     resolved_client_factory: Callable[[], LlmClient] = (
-        claude_client_factory if claude_client_factory is not None
-        else build_llm_client
+        claude_client_factory if claude_client_factory is not None else build_llm_client
     )
 
     _install_uvicorn_log_bridge()
@@ -172,9 +167,7 @@ def create_app(
         # registration if one of ours is already wired up.
         existing = getattr(provider, "_active_span_processor", None)
         processors = getattr(existing, "_span_processors", ()) if existing else ()
-        already_wired = any(
-            isinstance(p, WatcherSpanProcessor) for p in processors
-        )
+        already_wired = any(isinstance(p, WatcherSpanProcessor) for p in processors)
         if already_wired:
             logger.info(
                 "watcher.span_processor_already_registered count=%d",
@@ -256,7 +249,8 @@ def create_app(
             except OSError as exc:
                 logger.warning(
                     "render_assets.handshake_read_failed path=%s error=%s",
-                    handshake_path, exc,
+                    handshake_path,
+                    exc,
                 )
     if render_root:
         render_dir = Path(render_root)
@@ -268,7 +262,8 @@ def create_app(
         )
         logger.info(
             "render_assets.mount_registered dir=%s source=%s",
-            render_dir, handshake_source,
+            render_dir,
+            handshake_source,
         )
     else:
         logger.warning(
@@ -288,10 +283,7 @@ def create_app(
     @app.middleware("http")
     async def _render_404_watcher(request, call_next):  # type: ignore[no-untyped-def]
         response = await call_next(request)
-        if (
-            response.status_code == 404
-            and request.url.path.startswith("/renders/")
-        ):
+        if response.status_code == 404 and request.url.path.startswith("/renders/"):
             _render_mounts.publish_url_404(request.url.path)
         return response
 

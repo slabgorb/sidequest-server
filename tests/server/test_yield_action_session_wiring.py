@@ -1,4 +1,5 @@
 """Wiring test: handle_yield advances the room's session clock on scene end."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -38,6 +38,7 @@ on those packs will RED with "pack not found" until the packs are restored
 or the paths are updated. This is a CONTENT-side decision, not a test-port
 decision — surfacing to Dev/Architect/team-lead for resolution.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -54,6 +55,7 @@ from tests._helpers.genre_paths import GENRE_PACKS_DIR, PackNotFound, find_pack_
 # ═══════════════════════════════════════════════════════════
 # Test helpers (port of Rust helpers)
 # ═══════════════════════════════════════════════════════════
+
 
 def genre_pack_path(genre: str) -> Path:
     """Path to a genre pack on disk (resolves either content root).
@@ -85,9 +87,7 @@ def load_rules_yaml(genre: str) -> RulesConfig:
     """
     pack_path = genre_pack_path(genre)
     if not pack_path.exists():
-        raise AssertionError(
-            f"Failed to find genre pack at {pack_path}"
-        )
+        raise AssertionError(f"Failed to find genre pack at {pack_path}")
     return load_genre_pack(pack_path).rules
 
 
@@ -118,6 +118,7 @@ def find_resource(rules: RulesConfig, name: str) -> ResourceDeclaration:
 # Grep recipe at pack-promotion time:
 #     grep -rn 'genre_workshopping/' tests/
 # ═══════════════════════════════════════════════════════════
+
 
 def _pack_missing_reason(name: str) -> str:
     return (
@@ -156,6 +157,7 @@ _requires_low_fantasy = pytest.mark.skipif(
 # ═══════════════════════════════════════════════════════════
 # AC1: spaghetti_western — Luck (0-6, voluntary, thresholds at 1 and 0)
 # ═══════════════════════════════════════════════════════════
+
 
 def test_spaghetti_western_has_luck_resource():
     rules = load_rules_yaml("spaghetti_western")
@@ -200,17 +202,14 @@ def test_spaghetti_western_luck_thresholds_have_event_ids():
     luck = find_resource(rules, "luck")
 
     for threshold in luck.thresholds:
-        assert threshold.event_id, (
-            "every threshold should have a non-empty event_id"
-        )
-        assert threshold.narrator_hint, (
-            "every threshold should have a non-empty narrator_hint"
-        )
+        assert threshold.event_id, "every threshold should have a non-empty event_id"
+        assert threshold.narrator_hint, "every threshold should have a non-empty narrator_hint"
 
 
 # ═══════════════════════════════════════════════════════════
 # AC2: neon_dystopia — Humanity (0-100, involuntary, thresholds at 50/25/0)
 # ═══════════════════════════════════════════════════════════
+
 
 @_requires_neon_dystopia
 def test_neon_dystopia_has_humanity_resource():
@@ -258,18 +257,15 @@ def test_neon_dystopia_humanity_thresholds_have_narrator_hints():
     rules = load_rules_yaml("neon_dystopia")
     humanity = find_resource(rules, "humanity")
 
-    assert len(humanity.thresholds) >= 3, (
-        "humanity should have at least 3 thresholds (50, 25, 0)"
-    )
+    assert len(humanity.thresholds) >= 3, "humanity should have at least 3 thresholds (50, 25, 0)"
     for threshold in humanity.thresholds:
-        assert threshold.narrator_hint, (
-            f"threshold at {threshold.at} should have a narrator_hint"
-        )
+        assert threshold.narrator_hint, f"threshold at {threshold.at} should have a narrator_hint"
 
 
 # ═══════════════════════════════════════════════════════════
 # AC3: pulp_noir — Heat (0-5, involuntary, decay 0.1/turn)
 # ═══════════════════════════════════════════════════════════
+
 
 @_requires_pulp_noir
 def test_pulp_noir_has_heat_resource():
@@ -306,6 +302,7 @@ def test_pulp_noir_heat_starts_at_zero():
 # AC4: road_warrior — Fuel (0-100, resource-at-rest → RigStats transfer)
 # ═══════════════════════════════════════════════════════════
 
+
 @_requires_road_warrior
 def test_road_warrior_has_fuel_resource():
     rules = load_rules_yaml("road_warrior")
@@ -314,9 +311,7 @@ def test_road_warrior_has_fuel_resource():
     assert fuel.label == "Fuel"
     assert abs(fuel.min - 0.0) < 1e-9
     assert abs(fuel.max - 100.0) < 1e-9
-    assert not fuel.voluntary, (
-        "fuel should be involuntary (consumed by driving)"
-    )
+    assert not fuel.voluntary, "fuel should be involuntary (consumed by driving)"
 
 
 @_requires_road_warrior
@@ -324,29 +319,22 @@ def test_road_warrior_fuel_starting_value():
     rules = load_rules_yaml("road_warrior")
     fuel = find_resource(rules, "fuel")
 
-    assert fuel.starting > 0.0, (
-        "fuel should have a positive starting value"
-    )
-    assert fuel.starting <= fuel.max, (
-        "fuel starting should not exceed max"
-    )
+    assert fuel.starting > 0.0, "fuel should have a positive starting value"
+    assert fuel.starting <= fuel.max, "fuel starting should not exceed max"
 
 
 # ═══════════════════════════════════════════════════════════
 # AC5: Genre loader parses and inits ResourcePools on GameSnapshot
 # ═══════════════════════════════════════════════════════════
 
+
 def test_genre_loader_parses_spaghetti_western_resources():
     path = genre_pack_path("spaghetti_western")
-    assert path.exists(), (
-        f"spaghetti_western genre pack not found at {path}"
-    )
+    assert path.exists(), f"spaghetti_western genre pack not found at {path}"
     pack = load_genre_pack(path)
 
     luck = next((r for r in pack.rules.resources if r.name == "luck"), None)
-    assert luck is not None, (
-        "loader should parse luck resource from spaghetti_western"
-    )
+    assert luck is not None, "loader should parse luck resource from spaghetti_western"
 
 
 @_requires_neon_dystopia
@@ -354,12 +342,8 @@ def test_genre_loader_parses_neon_dystopia_resources():
     path = genre_pack_path("neon_dystopia")
     pack = load_genre_pack(path)
 
-    humanity = next(
-        (r for r in pack.rules.resources if r.name == "humanity"), None
-    )
-    assert humanity is not None, (
-        "loader should parse humanity resource from neon_dystopia"
-    )
+    humanity = next((r for r in pack.rules.resources if r.name == "humanity"), None)
+    assert humanity is not None, "loader should parse humanity resource from neon_dystopia"
 
 
 def test_init_pools_from_spaghetti_western_declarations():
@@ -387,9 +371,7 @@ def test_init_pools_from_neon_dystopia_declarations():
     pool = snap.resources["humanity"]
     assert abs(pool.max - 100.0) < 1e-9
     assert not pool.voluntary
-    assert len(pool.thresholds) >= 3, (
-        "humanity pool should have at least 3 thresholds from YAML"
-    )
+    assert len(pool.thresholds) >= 3, "humanity pool should have at least 3 thresholds from YAML"
 
 
 @_requires_pulp_noir
@@ -420,6 +402,7 @@ def test_init_pools_from_road_warrior_declarations():
 # AC6: Bounds validation per genre
 # ═══════════════════════════════════════════════════════════
 
+
 def test_spaghetti_western_luck_validates_bounds():
     rules = load_rules_yaml("spaghetti_western")
     snap = GameSnapshot()
@@ -427,9 +410,7 @@ def test_spaghetti_western_luck_validates_bounds():
 
     # Try to exceed luck max (6.0) — should clamp, not raise
     snap.apply_resource_patch_by_name("luck", ResourcePatchOp.Add, 100.0)
-    assert snap.resources["luck"].current <= 6.0, (
-        "luck should clamp to max 6.0"
-    )
+    assert snap.resources["luck"].current <= 6.0, "luck should clamp to max 6.0"
 
 
 @_requires_neon_dystopia
@@ -439,12 +420,8 @@ def test_neon_dystopia_humanity_validates_bounds():
     snap.init_resource_pools(rules.resources)
 
     # Try to go below humanity min (0.0) — should clamp, not raise
-    snap.apply_resource_patch_by_name(
-        "humanity", ResourcePatchOp.Subtract, 999.0
-    )
-    assert snap.resources["humanity"].current >= 0.0, (
-        "humanity should clamp to min 0.0"
-    )
+    snap.apply_resource_patch_by_name("humanity", ResourcePatchOp.Subtract, 999.0)
+    assert snap.resources["humanity"].current >= 0.0, "humanity should clamp to min 0.0"
 
 
 @_requires_pulp_noir
@@ -455,9 +432,7 @@ def test_pulp_noir_heat_validates_bounds():
 
     # Try to exceed heat max (5.0) — should clamp, not raise
     snap.apply_resource_patch_by_name("heat", ResourcePatchOp.Add, 100.0)
-    assert snap.resources["heat"].current <= 5.0, (
-        "heat should clamp to max 5.0"
-    )
+    assert snap.resources["heat"].current <= 5.0, "heat should clamp to max 5.0"
 
 
 @_requires_road_warrior
@@ -467,17 +442,14 @@ def test_road_warrior_fuel_validates_bounds():
     snap.init_resource_pools(rules.resources)
 
     # Try to go below fuel min (0.0) — should clamp, not raise
-    snap.apply_resource_patch_by_name(
-        "fuel", ResourcePatchOp.Subtract, 999.0
-    )
-    assert snap.resources["fuel"].current >= 0.0, (
-        "fuel should clamp to min 0.0"
-    )
+    snap.apply_resource_patch_by_name("fuel", ResourcePatchOp.Subtract, 999.0)
+    assert snap.resources["fuel"].current >= 0.0, "fuel should clamp to min 0.0"
 
 
 # ═══════════════════════════════════════════════════════════
 # AC7: Integration — load → init → patch → threshold → LoreStore
 # ═══════════════════════════════════════════════════════════
+
 
 def test_spaghetti_western_luck_threshold_fires_known_fact():
     rules = load_rules_yaml("spaghetti_western")
@@ -489,13 +461,9 @@ def test_spaghetti_western_luck_threshold_fires_known_fact():
     # Drain luck from starting to below threshold at 1.0
     starting = snap.resources["luck"].current
     drain = starting  # drain all luck to 0
-    snap.process_resource_patch_with_lore(
-        "luck", ResourcePatchOp.Subtract, drain, store, 10
-    )
+    snap.process_resource_patch_with_lore("luck", ResourcePatchOp.Subtract, drain, store, 10)
 
-    assert len(store) > 0, (
-        "draining luck past thresholds should mint KnownFacts"
-    )
+    assert len(store) > 0, "draining luck past thresholds should mint KnownFacts"
 
 
 @_requires_neon_dystopia
@@ -507,13 +475,9 @@ def test_neon_dystopia_humanity_threshold_fires_known_fact():
     store = LoreStore()
 
     # Drop humanity from 100 to 40 — should cross threshold at 50
-    snap.process_resource_patch_with_lore(
-        "humanity", ResourcePatchOp.Subtract, 60.0, store, 15
-    )
+    snap.process_resource_patch_with_lore("humanity", ResourcePatchOp.Subtract, 60.0, store, 15)
 
-    assert len(store) > 0, (
-        "dropping humanity below 50 should mint a KnownFact"
-    )
+    assert len(store) > 0, "dropping humanity below 50 should mint a KnownFact"
 
 
 @_requires_pulp_noir
@@ -536,6 +500,7 @@ def test_pulp_noir_heat_decay_integration():
 # ═══════════════════════════════════════════════════════════
 # ResourceDeclaration now requires thresholds field
 # ═══════════════════════════════════════════════════════════
+
 
 def test_resource_declaration_with_thresholds_deserializes():
     import yaml as _yaml
@@ -580,9 +545,7 @@ decay_per_turn: -0.1
 
     data = _yaml.safe_load(yaml_text)
     decl = ResourceDeclaration.model_validate(data)
-    assert decl.thresholds == [], (
-        "missing thresholds field should default to empty list"
-    )
+    assert decl.thresholds == [], "missing thresholds field should default to empty list"
 
 
 def test_rules_config_resources_with_thresholds_parses():
@@ -624,13 +587,12 @@ resources:
 # Edge: genres without resources still load fine
 # ═══════════════════════════════════════════════════════════
 
+
 @_requires_low_fantasy
 def test_genre_without_resources_loads_empty():
     # low_fantasy doesn't declare resources
     rules = load_rules_yaml("low_fantasy")
-    assert rules.resources == [], (
-        "genres without resource declarations should have empty list"
-    )
+    assert rules.resources == [], "genres without resource declarations should have empty list"
 
 
 @_requires_low_fantasy
@@ -650,6 +612,7 @@ def test_init_pools_from_empty_declarations_no_crash():
 # pools with the saved `current`, then init_resource_pools populates
 # genre-pack metadata without clobbering the player's progress.
 # ═══════════════════════════════════════════════════════════
+
 
 def test_init_resource_pools_preserves_current_on_second_call():
     decl = ResourceDeclaration(
@@ -733,8 +696,7 @@ def test_init_resource_pools_updates_bounds_but_reclamps_current():
 
     # Current re-clamps to the new max (80 > 50 → 50).
     assert abs(snap.resources["fuel"].current - 50.0) < 1e-9, (
-        f"current must re-clamp when bounds narrow; "
-        f"got {snap.resources['fuel'].current}"
+        f"current must re-clamp when bounds narrow; got {snap.resources['fuel'].current}"
     )
     assert abs(snap.resources["fuel"].max - 50.0) < 1e-9
 
@@ -752,15 +714,14 @@ def test_resource_pool_label_serde_defaults_empty():
         "decay_per_turn": 0.0
     }""")
     pool = ResourcePool.model_validate(payload)
-    assert pool.label == "", (
-        "old saves without label should deserialize with empty label"
-    )
+    assert pool.label == "", "old saves without label should deserialize with empty label"
     assert abs(pool.current - 3.0) < 1e-9
 
 
 # ═══════════════════════════════════════════════════════════
 # Phase 4 — GameSnapshot migration from legacy resource_state
 # ═══════════════════════════════════════════════════════════
+
 
 def test_old_save_with_resource_state_migrates_to_resources_map():
     # Minimal save JSON shaped like a pre-phase-4 persistence file:
@@ -784,12 +745,9 @@ def test_old_save_with_resource_state_migrates_to_resources_map():
     # Migration populated the resources map.
     assert len(snap.resources) == 2
     assert abs(snap.resources["luck"].current - 2.5) < 1e-9, (
-        f"luck.current must be preserved from resource_state, "
-        f"got {snap.resources['luck'].current}"
+        f"luck.current must be preserved from resource_state, got {snap.resources['luck'].current}"
     )
-    assert abs(snap.resources["heat"].current - 3.0) < 1e-9, (
-        "heat.current must be preserved"
-    )
+    assert abs(snap.resources["heat"].current - 3.0) < 1e-9, "heat.current must be preserved"
     # Labels and bounds came from resource_declarations.
     assert snap.resources["luck"].label == "Luck"
     assert snap.resources["heat"].label == "Heat"
@@ -820,8 +778,7 @@ def test_new_save_with_resources_takes_precedence_over_legacy_fields():
 
     snap = GameSnapshot.model_validate(payload)
     assert abs(snap.resources["luck"].current - 4.0) < 1e-9, (
-        "resources field (4.0) must take precedence over legacy "
-        "resource_state (9.9)"
+        "resources field (4.0) must take precedence over legacy resource_state (9.9)"
     )
 
 
@@ -842,9 +799,7 @@ def test_migration_without_declarations_produces_minimal_pool():
     assert len(snap.resources) == 1
     mana = snap.resources["mana"]
     assert abs(mana.current - 7.0) < 1e-9
-    assert mana.label == "", (
-        "no declaration → empty label for upsert to fill"
-    )
+    assert mana.label == "", "no declaration → empty label for upsert to fill"
     assert mana.name == "mana"
 
 

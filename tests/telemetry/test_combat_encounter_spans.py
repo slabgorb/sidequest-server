@@ -3,6 +3,7 @@
 Story 3.4 AC: OTEL span names are byte-identical to Rust. GM-panel queries
 break on drift (docs/plans/phase-3-combat-port.md Risks §2).
 """
+
 from __future__ import annotations
 
 from opentelemetry.sdk.trace import TracerProvider
@@ -23,15 +24,14 @@ def test_combat_encounter_span_constants_match_rust_names() -> None:
         SPAN_ENCOUNTER_PHASE_TRANSITION,
         SPAN_ENCOUNTER_RESOLVED,
     )
+
     assert SPAN_COMBAT_TICK == "combat.tick"
     assert SPAN_COMBAT_ENDED == "combat.ended"
     assert SPAN_COMBAT_PLAYER_DEAD == "combat.player_dead"
     assert SPAN_ENCOUNTER_PHASE_TRANSITION == "encounter.phase_transition"
     assert SPAN_ENCOUNTER_RESOLVED == "encounter.resolved"
     assert SPAN_ENCOUNTER_BEAT_APPLIED == "encounter.beat_applied"
-    assert SPAN_ENCOUNTER_CONFRONTATION_INITIATED == (
-        "encounter.confrontation_initiated"
-    )
+    assert SPAN_ENCOUNTER_CONFRONTATION_INITIATED == ("encounter.confrontation_initiated")
     assert SPAN_ENCOUNTER_EMPTY_ACTOR_LIST == "encounter.empty_actor_list"
 
 
@@ -64,7 +64,10 @@ def test_combat_tick_span_emits_attributes() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with combat_tick_span(
-        _tracer=tracer, encounter_type="combat", beat=3, phase="Escalation",
+        _tracer=tracer,
+        encounter_type="combat",
+        beat=3,
+        phase="Escalation",
     ):
         pass
     [span] = exporter.get_finished_spans()
@@ -82,7 +85,9 @@ def test_encounter_phase_transition_span_emits_from_to() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with encounter_phase_transition_span(
-        _tracer=tracer, from_phase="Opening", to_phase="Escalation",
+        _tracer=tracer,
+        from_phase="Opening",
+        to_phase="Escalation",
         encounter_type="combat",
     ):
         pass
@@ -101,7 +106,9 @@ def test_encounter_confrontation_initiated_emits_attrs() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with encounter_confrontation_initiated_span(
-        _tracer=tracer, encounter_type="combat", genre_slug="caverns_and_claudes",
+        _tracer=tracer,
+        encounter_type="combat",
+        genre_slug="caverns_and_claudes",
     ):
         pass
     [span] = exporter.get_finished_spans()
@@ -118,8 +125,11 @@ def test_encounter_beat_applied_emits_attrs() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with encounter_beat_applied_span(
-        _tracer=tracer, encounter_type="combat", actor="Rux",
-        beat_id="attack", metric_delta=2,
+        _tracer=tracer,
+        encounter_type="combat",
+        actor="Rux",
+        beat_id="attack",
+        metric_delta=2,
     ):
         pass
     [span] = exporter.get_finished_spans()
@@ -137,7 +147,10 @@ def test_encounter_resolved_emits_attrs_with_source() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with encounter_resolved_span(
-        _tracer=tracer, encounter_type="combat", outcome="victory", source="metric",
+        _tracer=tracer,
+        encounter_type="combat",
+        outcome="victory",
+        source="metric",
     ):
         pass
     [span] = exporter.get_finished_spans()
@@ -190,7 +203,10 @@ def test_encounter_resolved_omits_outcome_when_none() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("test")
     with encounter_resolved_span(
-        _tracer=tracer, encounter_type="combat", outcome=None, source="player_death",
+        _tracer=tracer,
+        encounter_type="combat",
+        outcome=None,
+        source="player_death",
     ):
         pass
     [span] = exporter.get_finished_spans()

@@ -40,8 +40,7 @@ def _resolve_name_form(
 ) -> str:
     template = name_forms.get(tier, "")
     return (
-        template
-        .replace("{first_name}", first_name)
+        template.replace("{first_name}", first_name)
         .replace("{last_name}", last_name)
         .replace("{nickname}", nickname or first_name)
     )
@@ -100,7 +99,7 @@ def _render_directive_chassis(
             last_name=pc_last_name,
             nickname=pc_nickname,
         )
-        parts.append(f"- Name-form for this PC at bond_tier {bond_tier_for_pc}: \"{name_form}\"")
+        parts.append(f'- Name-form for this PC at bond_tier {bond_tier_for_pc}: "{name_form}"')
         parts.append(f"- Default register: {chassis.voice.default_register}")
         if chassis.voice.vocal_tics:
             parts.append(f"- Vocal tics: {', '.join(chassis.voice.vocal_tics)}")
@@ -125,9 +124,7 @@ def _render_directive_chassis(
         parts.append("MICROBLEED (one quiet uncanny detail to weave in once):")
         parts.append(opening.magic_microbleed.detail)
         if opening.magic_microbleed.cost_bar:
-            parts.append(
-                f"- Tick {opening.magic_microbleed.cost_bar} by 0.05 via narration."
-            )
+            parts.append(f"- Tick {opening.magic_microbleed.cost_bar} by 0.05 via narration.")
 
     if authored_crew:
         parts.append("")
@@ -249,9 +246,7 @@ def _resolve_opening_post_chargen(
     # Layer 3a: prefer background-keyed matches; 3b fall back to
     # backgrounds=[] entries when no keyed entry matches.
     keyed = [
-        op
-        for op in pool
-        if op.triggers.backgrounds and pc_background in op.triggers.backgrounds
+        op for op in pool if op.triggers.backgrounds and pc_background in op.triggers.backgrounds
     ]
     candidates = keyed or [op for op in pool if not op.triggers.backgrounds]
 

@@ -1,4 +1,5 @@
 """Shared fixtures for tests/agents/ and its subdirectories."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,6 +12,7 @@ from sidequest.game.session import NpcRegistryEntry
 def build_registry():
     def _build():
         return PromptRegistry()
+
     return _build
 
 

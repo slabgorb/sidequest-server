@@ -7,6 +7,7 @@ SECRET_NOTE events which flow through the same EventLog / ProjectionFilter
 pipeline as NARRATION, so Task 3's ``visibility_tag`` rule can route them
 per-recipient.
 """
+
 from __future__ import annotations
 
 import json

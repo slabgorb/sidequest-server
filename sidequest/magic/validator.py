@@ -4,6 +4,7 @@ Composes framework-side checks (plugin ∈ active_plugins, source ∈
 allowed_sources, hard_limits, cost_types) with plugin-side validation
 (plugin.validate_working).
 """
+
 from __future__ import annotations
 
 from sidequest.magic.models import (

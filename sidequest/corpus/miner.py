@@ -14,9 +14,7 @@ def _session_meta(reader: SaveReader) -> tuple[str, str]:
     genre_slug / world_slug, not genre / world. The TrainingPair fields
     (genre, world) drop the _slug suffix.
     """
-    row = reader.conn.execute(
-        "SELECT genre_slug, world_slug FROM session_meta LIMIT 1"
-    ).fetchone()
+    row = reader.conn.execute("SELECT genre_slug, world_slug FROM session_meta LIMIT 1").fetchone()
     if row is None:
         raise RuntimeError("save.db has no session_meta row — cannot mine corpus")
     return row[0], row[1]

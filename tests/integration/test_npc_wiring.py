@@ -12,6 +12,7 @@ hatch added to ``WatcherSpanProcessor``.
 
 Per ``CLAUDE.md`` "Verify Wiring, Not Just Existence".
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -83,11 +84,11 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
 
     result = NarrationTurnResult(
         narration="She waves.",
-        npcs_present=[
-            NpcMention(name="Vex", pronouns="she/her", role="scavenger", appearance="")
-        ],
+        npcs_present=[NpcMention(name="Vex", pronouns="she/her", role="scavenger", appearance="")],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Rux", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Rux", room=room_for(snapshot)
+    )
     await asyncio.sleep(0.05)
 
     # Snapshot must have been mutated inside the span.
@@ -168,7 +169,9 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
             NpcMention(name="Laverne", pronouns="she/her", role="ally", appearance=""),
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Shirley", room=room_for(snapshot)
+    )
     await asyncio.sleep(0.05)
 
     # Critical: registry must NOT have been mutated.
@@ -251,7 +254,9 @@ async def test_pc_name_filter_is_case_insensitive(
             NpcMention(name="laverne", pronouns="", role="", appearance=""),
         ],
     )
-    _apply_narration_result_to_snapshot(snapshot, result, player_name="Shirley", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot, result, player_name="Shirley", room=room_for(snapshot)
+    )
     await asyncio.sleep(0.05)
     assert snapshot.npc_registry == []
     skipped = [

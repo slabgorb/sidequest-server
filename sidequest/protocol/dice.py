@@ -14,6 +14,7 @@ Port of the dice types from sidequest-protocol/src/message.rs:
 Wire format matches the Rust crate exactly — the React UI already consumes
 this shape via sidequest-ui/src/types/payloads.ts.
 """
+
 from __future__ import annotations
 
 from enum import Enum, IntEnum

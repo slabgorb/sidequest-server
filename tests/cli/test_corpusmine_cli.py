@@ -11,10 +11,18 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def test_corpusmine_writes_jsonl(tmp_path: Path) -> None:
     out = tmp_path / "mined.jsonl"
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusmine",
-         "--save", str(FIXTURES / "single_session.db"),
-         "--out", str(out)],
-        capture_output=True, text=True, check=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusmine",
+            "--save",
+            str(FIXTURES / "single_session.db"),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert out.exists()
     lines = out.read_text().splitlines()
@@ -26,10 +34,17 @@ def test_corpusmine_writes_jsonl(tmp_path: Path) -> None:
 
 def test_corpusmine_fails_loud_on_missing_save(tmp_path: Path) -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusmine",
-         "--save", str(tmp_path / "nope.db"),
-         "--out", str(tmp_path / "x.jsonl")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusmine",
+            "--save",
+            str(tmp_path / "nope.db"),
+            "--out",
+            str(tmp_path / "x.jsonl"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0
     assert "not found" in result.stderr.lower() or "no such file" in result.stderr.lower()
@@ -38,7 +53,8 @@ def test_corpusmine_fails_loud_on_missing_save(tmp_path: Path) -> None:
 def test_corpusmine_requires_save_and_out_flags() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "sidequest.cli.corpusmine"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0
 
@@ -47,10 +63,17 @@ def test_corpusmine_fails_loud_on_non_sqlite_save(tmp_path: Path) -> None:
     not_a_db = tmp_path / "not.db"
     not_a_db.write_text("this is not a sqlite file")
     result = subprocess.run(
-        [sys.executable, "-m", "sidequest.cli.corpusmine",
-         "--save", str(not_a_db),
-         "--out", str(tmp_path / "x.jsonl")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "sidequest.cli.corpusmine",
+            "--save",
+            str(not_a_db),
+            "--out",
+            str(tmp_path / "x.jsonl"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 2
     combined = result.stderr.lower()

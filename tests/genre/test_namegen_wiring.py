@@ -156,9 +156,7 @@ def _span_names(exporter: InMemorySpanExporter) -> list[str]:
     return [span.name for span in exporter.get_finished_spans()]
 
 
-def _spans_named(
-    exporter: InMemorySpanExporter, name: str
-) -> list[Any]:
+def _spans_named(exporter: InMemorySpanExporter, name: str) -> list[Any]:
     return [span for span in exporter.get_finished_spans() if span.name == name]
 
 
@@ -297,8 +295,7 @@ def test_thin_corpus_logs_warning(
     matches = [
         record
         for record in caplog.records
-        if record.levelno == logging.WARNING
-        and "thin.txt" in record.getMessage()
+        if record.levelno == logging.WARNING and "thin.txt" in record.getMessage()
     ]
     assert matches, (
         f"expected a logger.warning mentioning 'thin.txt'; got "
@@ -371,8 +368,7 @@ def test_generate_npc_rejects_collision_and_emits_collision_span(
     npc = namegen_cli.generate_npc(pack, genre_dir, args, rng)
 
     assert npc.name == "Solenne Veradaine", (
-        f"generate_npc must return the first non-collision candidate; "
-        f"got {npc.name!r}"
+        f"generate_npc must return the first non-collision candidate; got {npc.name!r}"
     )
 
     collision_spans = _spans_named(captured_spans, SPAN_NAMEGEN_STEM_COLLISION)
@@ -389,9 +385,7 @@ def test_generate_npc_rejects_collision_and_emits_collision_span(
     ]
     # attempt_index ascends 0..2 so the GM panel can render a chronological
     # rejection trail rather than three identical-looking events.
-    indices = sorted(
-        (s.attributes or {}).get("attempt_index") for s in collision_spans
-    )
+    indices = sorted((s.attributes or {}).get("attempt_index") for s in collision_spans)
     assert indices == [0, 1, 2]
 
 

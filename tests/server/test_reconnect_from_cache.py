@@ -1,4 +1,5 @@
 """Reconnect reads pre-computed projection_cache — bit-identical to live frames."""
+
 from __future__ import annotations
 
 from pathlib import Path

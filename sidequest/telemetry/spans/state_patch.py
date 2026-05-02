@@ -17,11 +17,13 @@ SPAN_APPLY_WORLD_PATCH = "apply_world_patch"
 SPAN_BUILD_PROTOCOL_DELTA = "build_protocol_delta"
 SPAN_COMPUTE_DELTA = "compute_delta"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_APPLY_WORLD_PATCH,
-    SPAN_BUILD_PROTOCOL_DELTA,
-    SPAN_COMPUTE_DELTA,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_APPLY_WORLD_PATCH,
+        SPAN_BUILD_PROTOCOL_DELTA,
+        SPAN_COMPUTE_DELTA,
+    }
+)
 
 # Live spans.
 SPAN_QUEST_UPDATE = "quest_update"

@@ -4,6 +4,7 @@ One SessionRoom exists per game slug. Lives for the life of the process; content
 is derivable from the save so loss on restart is acceptable (players reconnect
 and re-seat).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,11 +63,11 @@ class LobbyState(StrEnum):
         code may use it without an enum change.
     """
 
-    CONNECTED = "connected"          # WS open, no PLAYER_SEAT yet (emitted, not stored)
+    CONNECTED = "connected"  # WS open, no PLAYER_SEAT yet (emitted, not stored)
     CLAIMING_SEAT = "claiming_seat"  # reserved — not currently emitted or stored
-    CHARGEN = "chargen"              # seat claimed, character builder active
-    PLAYING = "playing"              # chargen committed, character in world
-    ABANDONED = "abandoned"          # disconnected during chargen — reclaimable
+    CHARGEN = "chargen"  # seat claimed, character builder active
+    PLAYING = "playing"  # chargen committed, character in world
+    ABANDONED = "abandoned"  # disconnected during chargen — reclaimable
 
 
 # Watcher event names (Story 45-2). String constants here so call sites
@@ -95,6 +96,7 @@ class PendingAction:
     session data. See spec
     docs/superpowers/specs/2026-04-26-mp-cinematic-mode-wiring-design.md.
     """
+
     character_name: str
     action: str
 
@@ -207,9 +209,7 @@ class SessionRoom:
     def session(self) -> Session:
         """Per-slug Session aggregate. Raises if not yet bound to a world."""
         if self._session is None:
-            raise RuntimeError(
-                "Session not yet bound; call bind_world(snapshot, store) first."
-            )
+            raise RuntimeError("Session not yet bound; call bind_world(snapshot, store) first.")
         return self._session
 
     def save(self) -> None:
@@ -243,6 +243,7 @@ class SessionRoom:
         factory is never called, avoiding wasted Claude-client setup.
         """
         import logging as _logging
+
         _log = _logging.getLogger("sidequest.server.session_room")
         with self._lock:
             if self._orchestrator is None:
@@ -362,7 +363,8 @@ class SessionRoom:
             # New seat starts in CHARGEN by default — transition_to_playing()
             # flips to PLAYING once the character is committed.
             self._seated[player_id] = _Seat(
-                player_id=player_id, character_slot=character_slot,
+                player_id=player_id,
+                character_slot=character_slot,
             )
 
         _hub.publish_event(
@@ -433,11 +435,7 @@ class SessionRoom:
         2026-04-19 scenario).
         """
         with self._lock:
-            return [
-                pid
-                for pid, seat in self._seated.items()
-                if seat.state == LobbyState.PLAYING
-            ]
+            return [pid for pid, seat in self._seated.items() if seat.state == LobbyState.PLAYING]
 
     def playing_player_count(self) -> int:
         """Number of PLAYING peers — input to the turn barrier (Story 45-2)."""
@@ -455,14 +453,13 @@ class SessionRoom:
         direction (only PLAYING).
         """
         with self._lock:
-            return sum(
-                1
-                for seat in self._seated.values()
-                if seat.state != LobbyState.ABANDONED
-            )
+            return sum(1 for seat in self._seated.values() if seat.state != LobbyState.ABANDONED)
 
     def record_pending_action(
-        self, player_id: str, character_name: str, action: str,
+        self,
+        player_id: str,
+        character_name: str,
+        action: str,
     ) -> None:
         """Buffer one player's action for the current round (ADR-036).
 
@@ -474,7 +471,8 @@ class SessionRoom:
             if not self._pending_actions and self._first_pending_at_monotonic is None:
                 self._first_pending_at_monotonic = time.monotonic()
             self._pending_actions[player_id] = PendingAction(
-                character_name=character_name, action=action,
+                character_name=character_name,
+                action=action,
             )
 
     def first_pending_at_monotonic(self) -> float | None:

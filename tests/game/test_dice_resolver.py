@@ -4,6 +4,7 @@ Tie / margin-CritSuccess paths added in Task 2 of dual-track momentum.
 General resolver tests (validation, mixed pools, baseline crits) live in
 ``test_dice.py``.
 """
+
 from sidequest.game.dice import resolve_dice_with_faces
 from sidequest.protocol.dice import DieSides, DieSpec, RollOutcome
 

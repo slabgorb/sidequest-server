@@ -6,6 +6,7 @@ in `orbits.yaml`). It advances *only* via beats — see `sidequest.orbital.beats
 Per the orbital map spec (§3.1): internal unit is hours; display formatting
 lives in `sidequest.orbital.display`. Standard Day = 24h.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

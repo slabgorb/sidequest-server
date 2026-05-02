@@ -69,7 +69,9 @@ def test_multi_level_inheritance_resolves_grandparent_fields() -> None:
 
     leaf = next(t for t in resolved if t.name == "Leaf Trope")
     assert leaf.description == "The final inheritor", "leaf keeps its own description"
-    assert any("mid trigger" in t for t in leaf.triggers), "leaf should inherit triggers from mid parent"
+    assert any("mid trigger" in t for t in leaf.triggers), (
+        "leaf should inherit triggers from mid parent"
+    )
 
 
 # ═══════════════════════════════════════════════════════════
@@ -558,4 +560,5 @@ def test_missing_parent_raises_error() -> None:
 def test_resolve_trope_inheritance_wired_into_package() -> None:
     """resolve_trope_inheritance must be importable from sidequest.genre."""
     from sidequest.genre import resolve_trope_inheritance as rtr  # noqa: F401
+
     assert callable(rtr)

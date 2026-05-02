@@ -29,6 +29,7 @@ from sidequest.protocol.dice import RollOutcome
 # Shift band boundaries (spec table — locked thresholds)
 # ---------------------------------------------------------------------------
 
+
 def test_shift_at_plus_10_is_crit_success():
     assert _tier_from_shift(10) is RollOutcome.CritSuccess
 
@@ -82,6 +83,7 @@ def test_shift_at_plus_25_is_still_crit_success():
 # Ability modifier formula matches dice dispatcher (D&D-style floor)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "score,expected_mod",
     [
@@ -104,6 +106,7 @@ def test_ability_modifier_matches_dnd_table(score: int, expected_mod: int):
 # Stat-sourcing helper — per_actor → cdef → hard fail
 # ---------------------------------------------------------------------------
 
+
 def _make_cdef(opponent_default_stats: dict[str, int] | None = None) -> ConfrontationDef:
     """Minimal valid ConfrontationDef for testing the resolver paths."""
     return ConfrontationDef.model_validate(
@@ -116,7 +119,13 @@ def _make_cdef(opponent_default_stats: dict[str, int] | None = None) -> Confront
             "player_metric": {"name": "momentum", "starting": 0, "threshold": 10},
             "opponent_metric": {"name": "momentum", "starting": 0, "threshold": 10},
             "beats": [
-                {"id": "attack", "label": "Attack", "kind": "strike", "base": 2, "stat_check": "STR"},
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                },
             ],
         }
     )
@@ -124,7 +133,9 @@ def _make_cdef(opponent_default_stats: dict[str, int] | None = None) -> Confront
 
 def test_modifier_sourced_from_per_actor_state_first():
     actor = EncounterActor(
-        name="Wolf", role="combatant", side="opponent",
+        name="Wolf",
+        role="combatant",
+        side="opponent",
         per_actor_state={"stats": {"STR": 16}},
     )
     cdef = _make_cdef(opponent_default_stats={"STR": 12})
@@ -134,7 +145,9 @@ def test_modifier_sourced_from_per_actor_state_first():
 
 def test_modifier_falls_back_to_cdef_when_per_actor_lacks_stat():
     actor = EncounterActor(
-        name="Wolf", role="combatant", side="opponent",
+        name="Wolf",
+        role="combatant",
+        side="opponent",
         per_actor_state={"stats": {"DEX": 14}},  # no STR
     )
     cdef = _make_cdef(opponent_default_stats={"STR": 12})
@@ -143,7 +156,9 @@ def test_modifier_falls_back_to_cdef_when_per_actor_lacks_stat():
 
 def test_modifier_lookup_is_case_insensitive_in_per_actor():
     actor = EncounterActor(
-        name="Wolf", role="combatant", side="opponent",
+        name="Wolf",
+        role="combatant",
+        side="opponent",
         per_actor_state={"stats": {"str": 14}},  # lowercase
     )
     cdef = _make_cdef(opponent_default_stats=None)
@@ -152,7 +167,9 @@ def test_modifier_lookup_is_case_insensitive_in_per_actor():
 
 def test_modifier_lookup_is_case_insensitive_in_cdef():
     actor = EncounterActor(
-        name="Wolf", role="combatant", side="opponent",
+        name="Wolf",
+        role="combatant",
+        side="opponent",
         per_actor_state={"stats": {"DEX": 12}},
     )
     cdef = _make_cdef(opponent_default_stats={"strength": 18})
@@ -188,20 +205,30 @@ def test_modifier_hard_fails_on_empty_stat_check():
 # resolve_opposed_check — full happy paths and tier returns
 # ---------------------------------------------------------------------------
 
+
 def _attack_beat(stat: str = "STR") -> BeatDef:
-    return BeatDef.model_validate({
-        "id": "attack", "label": "Attack", "kind": "strike", "base": 2,
-        "stat_check": stat,
-    })
+    return BeatDef.model_validate(
+        {
+            "id": "attack",
+            "label": "Attack",
+            "kind": "strike",
+            "base": 2,
+            "stat_check": stat,
+        }
+    )
 
 
 def _make_resolver_actors(player_stats: dict[str, int], opponent_stats: dict[str, int]):
     player = EncounterActor(
-        name="Sam", role="combatant", side="player",
+        name="Sam",
+        role="combatant",
+        side="player",
         per_actor_state={"stats": player_stats},
     )
     opponent = EncounterActor(
-        name="Wolf", role="combatant", side="opponent",
+        name="Wolf",
+        role="combatant",
+        side="opponent",
         per_actor_state={"stats": opponent_stats},
     )
     return player, opponent
@@ -223,8 +250,12 @@ def _make_resolver_actors(player_stats: dict[str, int], opponent_stats: dict[str
     ],
 )
 def test_resolve_opposed_check_happy_paths(
-    p_roll: int, p_score: int, o_roll: int, o_score: int,
-    expected_shift: int, expected_tier: RollOutcome,
+    p_roll: int,
+    p_score: int,
+    o_roll: int,
+    o_score: int,
+    expected_shift: int,
+    expected_tier: RollOutcome,
 ):
     player, opponent = _make_resolver_actors(
         player_stats={"STR": p_score},
@@ -241,9 +272,7 @@ def test_resolve_opposed_check_happy_paths(
         opponent_roll=o_roll,
     )
     assert isinstance(result, OpposedRollResult)
-    assert result.shift == expected_shift, (
-        f"shift mismatch: {result.shift} != {expected_shift}"
-    )
+    assert result.shift == expected_shift, f"shift mismatch: {result.shift} != {expected_shift}"
     assert result.tier is expected_tier
     # Sanity: modifiers actually computed.
     assert result.player_mod == _ability_modifier(p_score)
@@ -254,7 +283,9 @@ def test_resolve_opposed_check_uses_cdef_fallback_for_opponent():
     """Wiring: opponent has no per_actor stats; cdef.opponent_default_stats
     carries the value. No silent zero default."""
     player = EncounterActor(
-        name="Sam", role="combatant", side="player",
+        name="Sam",
+        role="combatant",
+        side="player",
         per_actor_state={"stats": {"STR": 14}},
     )
     opponent = EncounterActor(name="Wolf", role="combatant", side="opponent")
@@ -277,9 +308,13 @@ def test_resolve_opposed_check_rejects_out_of_range_player_roll():
     player, opponent = _make_resolver_actors({"STR": 12}, {"STR": 12})
     with pytest.raises(ValueError, match="player_roll 21 not in 1..20"):
         resolve_opposed_check(
-            player_actor=player, opponent_actor=opponent,
-            player_beat=_attack_beat(), opponent_beat=_attack_beat(),
-            cdef=_make_cdef(), player_roll=21, opponent_roll=10,
+            player_actor=player,
+            opponent_actor=opponent,
+            player_beat=_attack_beat(),
+            opponent_beat=_attack_beat(),
+            cdef=_make_cdef(),
+            player_roll=21,
+            opponent_roll=10,
         )
 
 
@@ -287,9 +322,13 @@ def test_resolve_opposed_check_rejects_out_of_range_opponent_roll():
     player, opponent = _make_resolver_actors({"STR": 12}, {"STR": 12})
     with pytest.raises(ValueError, match="opponent_roll 0 not in 1..20"):
         resolve_opposed_check(
-            player_actor=player, opponent_actor=opponent,
-            player_beat=_attack_beat(), opponent_beat=_attack_beat(),
-            cdef=_make_cdef(), player_roll=10, opponent_roll=0,
+            player_actor=player,
+            opponent_actor=opponent,
+            player_beat=_attack_beat(),
+            opponent_beat=_attack_beat(),
+            cdef=_make_cdef(),
+            player_roll=10,
+            opponent_roll=0,
         )
 
 
@@ -297,16 +336,22 @@ def test_resolve_opposed_check_propagates_missing_stat_for_opponent():
     """Hard-fail-loud propagates from the resolver — caller sees the
     opponent's missing-stat error directly. No silent zero modifier."""
     player = EncounterActor(
-        name="Sam", role="combatant", side="player",
+        name="Sam",
+        role="combatant",
+        side="player",
         per_actor_state={"stats": {"STR": 14}},
     )
     opponent = EncounterActor(name="Wolf", role="combatant", side="opponent")
     cdef = _make_cdef(opponent_default_stats=None)  # no fallback
     with pytest.raises(ValueError, match="no stat 'STR'"):
         resolve_opposed_check(
-            player_actor=player, opponent_actor=opponent,
-            player_beat=_attack_beat(), opponent_beat=_attack_beat(),
-            cdef=cdef, player_roll=10, opponent_roll=10,
+            player_actor=player,
+            opponent_actor=opponent,
+            player_beat=_attack_beat(),
+            opponent_beat=_attack_beat(),
+            cdef=cdef,
+            player_roll=10,
+            opponent_roll=10,
         )
 
 
@@ -314,6 +359,7 @@ def test_resolve_opposed_check_propagates_missing_stat_for_opponent():
 # Schema-side wiring: ConfrontationDef accepts opponent_default_stats and
 # the new ResolutionMode.opposed_check variant
 # ---------------------------------------------------------------------------
+
 
 def test_confrontation_def_accepts_opposed_check_with_default_stats():
     cdef = _make_cdef(opponent_default_stats={"STR": 12, "DEX": 11})

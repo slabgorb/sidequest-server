@@ -28,6 +28,7 @@ This module locks the fix in place:
 Together (3) and (4) cover the two production fire paths called out
 in the codebase audit; (1) and (2) lock the helper itself.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -74,13 +75,15 @@ def _make_pack_with_combat() -> GenrePack:
         player_metric=MetricDef(name="momentum", starting=0, threshold=10),
         opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
         beats=[
-            BeatDef.model_validate({
-                "id": "swing",
-                "label": "Swing",
-                "kind": "strike",
-                "base": 2,
-                "stat_check": "STRENGTH",
-            }),
+            BeatDef.model_validate(
+                {
+                    "id": "swing",
+                    "label": "Swing",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STRENGTH",
+                }
+            ),
         ],
     )
     rules = MagicMock(spec=RulesConfig)
@@ -94,10 +97,16 @@ def _make_encounter() -> StructuredEncounter:
     return StructuredEncounter(
         encounter_type="combat",
         player_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         opponent_metric=EncounterMetric(
-            name="momentum", current=0, starting=0, threshold=10,
+            name="momentum",
+            current=0,
+            starting=0,
+            threshold=10,
         ),
         actors=[
             EncounterActor(name="Bob", role="combatant", side="player"),
@@ -149,7 +158,8 @@ class TestRecordBeatFiredCounter:
 
 class TestRecordBeatFiredOtel:
     def test_record_beat_fired_emits_watcher_event(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[dict] = []
 
@@ -160,15 +170,18 @@ class TestRecordBeatFiredOtel:
             component: str = "x",
             severity: str = "info",
         ) -> None:
-            captured.append({
-                "event_type": event_type,
-                "fields": fields,
-                "component": component,
-                "severity": severity,
-            })
+            captured.append(
+                {
+                    "event_type": event_type,
+                    "fields": fields,
+                    "component": component,
+                    "severity": severity,
+                }
+            )
 
         # Patch the symbol that ``record_beat_fired`` lazy-imports.
         from sidequest.telemetry import watcher_hub
+
         monkeypatch.setattr(watcher_hub, "publish_event", fake_publish)
 
         snap = _make_snapshot()

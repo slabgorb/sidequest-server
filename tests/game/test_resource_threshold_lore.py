@@ -30,6 +30,7 @@ Contract under test:
   ``GameSnapshot.apply_resource_patch`` and
   ``GameSnapshot.apply_pool_decay``.
 """
+
 from __future__ import annotations
 
 from sidequest.game.lore_store import LoreCategory, LoreSource, LoreStore

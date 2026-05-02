@@ -153,9 +153,7 @@ def test_build_output_format_content_contains_game_patch():
     agent = NarratorAgent()
     registry = PromptRegistry()
     agent.build_output_format(registry)
-    section = next(
-        s for s in registry.registry("narrator") if s.name == "narrator_output_only"
-    )
+    section = next(s for s in registry.registry("narrator") if s.name == "narrator_output_only")
     assert "game_patch" in section.content
 
 
@@ -191,9 +189,7 @@ def test_build_encounter_context_contains_combat_rules():
     agent = NarratorAgent()
     registry = PromptRegistry()
     agent.build_encounter_context(registry)
-    section = next(
-        s for s in registry.registry("narrator") if s.name == "narrator_encounter_rules"
-    )
+    section = next(s for s in registry.registry("narrator") if s.name == "narrator_encounter_rules")
     assert "COMBAT NARRATION RULES" in section.content
 
 
@@ -201,9 +197,7 @@ def test_build_encounter_context_contains_chase_rules():
     agent = NarratorAgent()
     registry = PromptRegistry()
     agent.build_encounter_context(registry)
-    section = next(
-        s for s in registry.registry("narrator") if s.name == "narrator_encounter_rules"
-    )
+    section = next(s for s in registry.registry("narrator") if s.name == "narrator_encounter_rules")
     assert "CHASE NARRATION RULES" in section.content
 
 
@@ -233,9 +227,7 @@ def test_build_dialogue_context_content_contains_dialogue_rules():
     agent = NarratorAgent()
     registry = PromptRegistry()
     agent.build_dialogue_context(registry)
-    section = next(
-        s for s in registry.registry("narrator") if s.name == "narrator_dialogue_rules"
-    )
+    section = next(s for s in registry.registry("narrator") if s.name == "narrator_dialogue_rules")
     assert "DIALOGUE NARRATION RULES" in section.content
 
 
@@ -335,41 +327,48 @@ def test_narrator_dialogue_rules_mentions_npc_talk_only():
 def test_narrator_output_format_does_not_contain_action_flags_token():
     """action_flags is write-only — never read by server/UI/daemon.
     This test ensures it's been removed from the prompt."""
-    assert "action_flags" not in NARRATOR_OUTPUT_ONLY, \
+    assert "action_flags" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'action_flags' token"
+    )
 
 
 def test_narrator_output_format_does_not_contain_is_power_grab():
     """is_power_grab is a dead action_flags field."""
-    assert "is_power_grab" not in NARRATOR_OUTPUT_ONLY, \
+    assert "is_power_grab" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'is_power_grab'"
+    )
 
 
 def test_narrator_output_format_does_not_contain_references_inventory():
     """references_inventory is a dead action_flags field."""
-    assert "references_inventory" not in NARRATOR_OUTPUT_ONLY, \
+    assert "references_inventory" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'references_inventory'"
+    )
 
 
 def test_narrator_output_format_does_not_contain_references_npc():
     """references_npc is a dead action_flags field."""
-    assert "references_npc" not in NARRATOR_OUTPUT_ONLY, \
+    assert "references_npc" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'references_npc'"
+    )
 
 
 def test_narrator_output_format_does_not_contain_references_ability():
     """references_ability is a dead action_flags field."""
-    assert "references_ability" not in NARRATOR_OUTPUT_ONLY, \
+    assert "references_ability" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'references_ability'"
+    )
 
 
 def test_narrator_output_format_does_not_contain_references_location():
     """references_location is a dead action_flags field."""
-    assert "references_location" not in NARRATOR_OUTPUT_ONLY, \
+    assert "references_location" not in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must not contain 'references_location'"
+    )
 
 
 def test_narrator_output_format_keeps_action_rewrite():
     """action_rewrite is live — must remain in prompt."""
-    assert "action_rewrite" in NARRATOR_OUTPUT_ONLY, \
+    assert "action_rewrite" in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must still contain 'action_rewrite' (it's live)"
+    )

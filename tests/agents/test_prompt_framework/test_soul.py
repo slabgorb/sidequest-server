@@ -18,9 +18,7 @@ from sidequest.agents.prompt_framework.soul import parse_soul_md
 
 def write_temp_soul(content: str) -> Path:
     """Write content to a temp file and return its path."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(content)
         f.flush()
     return Path(f.name)

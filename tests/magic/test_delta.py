@@ -6,6 +6,7 @@ Task 2.4: verify that:
   3. compute_delta leaves magic=False when MagicState is identical.
   4. Protocol StateDelta carries magic_state: dict | None.
 """
+
 from __future__ import annotations
 
 from sidequest.game.delta import StateDelta, compute_delta, snapshot
@@ -61,9 +62,7 @@ def test_compute_delta_sets_magic_flag_when_state_changes():
 
     state_b = MagicState.from_config(config)
     state_b.add_character("sira_mendes")
-    state_b.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.66
-    )
+    state_b.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.66)
 
     snap_a = GameSnapshot(magic_state=state_a)
     snap_b = GameSnapshot(magic_state=state_b)

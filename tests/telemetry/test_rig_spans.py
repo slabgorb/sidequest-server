@@ -3,6 +3,7 @@
 Pattern follows tests/telemetry/test_spans.py — installs an
 InMemorySpanExporter on a fresh TracerProvider so emit calls are captured.
 """
+
 from __future__ import annotations
 
 from opentelemetry.sdk.trace import TracerProvider
@@ -25,6 +26,7 @@ def test_rig_span_constants() -> None:
         SPAN_RIG_CONFRONTATION_OUTCOME,
         SPAN_RIG_VOICE_REGISTER_CHANGE,
     )
+
     assert SPAN_RIG_BOND_EVENT == "rig.bond_event"
     assert SPAN_RIG_VOICE_REGISTER_CHANGE == "rig.voice_register_change"
     assert SPAN_RIG_CONFRONTATION_OUTCOME == "rig.confrontation_outcome"
@@ -37,6 +39,7 @@ def test_rig_spans_are_flat_only() -> None:
         SPAN_RIG_CONFRONTATION_OUTCOME,
         SPAN_RIG_VOICE_REGISTER_CHANGE,
     )
+
     assert SPAN_RIG_BOND_EVENT in FLAT_ONLY_SPANS
     assert SPAN_RIG_VOICE_REGISTER_CHANGE in FLAT_ONLY_SPANS
     assert SPAN_RIG_CONFRONTATION_OUTCOME in FLAT_ONLY_SPANS

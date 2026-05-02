@@ -20,6 +20,7 @@ handler against a real :class:`SessionRoom` with four connected sockets
 and asserts every non-acting peer's outbound queue receives a
 CONFRONTATION frame.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -61,7 +62,8 @@ def _seed_game_row(tmp_path: Path) -> SqliteStore:
 
 @pytest.mark.asyncio
 async def test_confrontation_broadcasts_to_all_four_peer_sockets(
-    session_handler_factory, tmp_path: Path,
+    session_handler_factory,
+    tmp_path: Path,
 ) -> None:
     """4-player MP regression: every connected socket receives the
     CONFRONTATION frame on encounter start, not just the actor's socket.
@@ -104,9 +106,7 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
         "george": "sock-george",
         "ringo": "sock-ringo",
     }
-    queues: dict[str, asyncio.Queue[object]] = {
-        pid: asyncio.Queue() for pid in socket_ids
-    }
+    queues: dict[str, asyncio.Queue[object]] = {pid: asyncio.Queue() for pid in socket_ids}
     for pid, sid in socket_ids.items():
         room.connect(pid, socket_id=sid)
         room.attach_outbound(sid, queues[pid])
@@ -124,8 +124,11 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
     )
 
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "I open negotiations with Veriti Onua.", _build_turn_context(sd),
+        sd,
+        "I open negotiations with Veriti Onua.",
+        _build_turn_context(sd),
     )
 
     # Pingpong 2026-04-30 follow-on (sibling of f0b40c7): CONFRONTATION
@@ -152,9 +155,7 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
         peer_frames: list[object] = []
         while not queues[peer_pid].empty():
             peer_frames.append(queues[peer_pid].get_nowait())
-        peer_conf = [
-            f for f in peer_frames if isinstance(f, ConfrontationMessage)
-        ]
+        peer_conf = [f for f in peer_frames if isinstance(f, ConfrontationMessage)]
         assert len(peer_conf) == 1, (
             f"Peer {peer_pid!r} expected exactly one CONFRONTATION frame "
             f"on their queue; got {len(peer_conf)} (frames on queue: "
@@ -173,9 +174,7 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
     paul_frames: list[object] = []
     while not queues["paul"].empty():
         paul_frames.append(queues["paul"].get_nowait())
-    paul_conf_via_queue = [
-        f for f in paul_frames if isinstance(f, ConfrontationMessage)
-    ]
+    paul_conf_via_queue = [f for f in paul_frames if isinstance(f, ConfrontationMessage)]
     assert len(paul_conf_via_queue) == 1, (
         f"Dispatcher (Paul) must receive exactly one CONFRONTATION frame "
         f"on their CURRENT socket queue (post pingpong 2026-04-30 fix); "
@@ -190,7 +189,8 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
 
 @pytest.mark.asyncio
 async def test_confrontation_reaches_dispatcher_after_socket_cycle(
-    session_handler_factory, tmp_path: Path,
+    session_handler_factory,
+    tmp_path: Path,
 ) -> None:
     """Pingpong 2026-04-30 follow-on regression: dispatcher's WS cycles
     mid-narration and the NEW socket receives CONFRONTATION.
@@ -260,8 +260,11 @@ async def test_confrontation_reaches_dispatcher_after_socket_cycle(
     room.attach_outbound(post_socket_id, post_queue)
 
     from sidequest.server.session_handler import _build_turn_context
+
     msgs = await handler._execute_narration_turn(
-        sd, "I open negotiations.", _build_turn_context(sd),
+        sd,
+        "I open negotiations.",
+        _build_turn_context(sd),
     )
 
     # Load-bearing assertion: the NEW socket's queue receives

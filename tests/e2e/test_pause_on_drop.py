@@ -81,17 +81,22 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
         narrator_calls.append(args)
         return await original_execute(self, *args, **kwargs)
 
-    with patch.object(
-        WebSocketSessionHandler,
-        "_execute_narration_turn",
-        new=_recording_execute,
-    ), client.websocket_connect("/ws") as ws_alice:
+    with (
+        patch.object(
+            WebSocketSessionHandler,
+            "_execute_narration_turn",
+            new=_recording_execute,
+        ),
+        client.websocket_connect("/ws") as ws_alice,
+    ):
         # Alice connects
-        ws_alice.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {"event": "connect", "game_slug": slug},
-        })
+        ws_alice.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {"event": "connect", "game_slug": slug},
+            }
+        )
         msg = ws_alice.receive_json()
         assert msg["type"] == "SESSION_EVENT"
         assert msg["payload"]["event"] == "connected"
@@ -100,21 +105,25 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
         assert alice_chargen["type"] == "CHARACTER_CREATION"
 
         # Alice claims a seat
-        ws_alice.send_json({
-            "type": "PLAYER_SEAT",
-            "player_id": "alice",
-            "payload": {"character_slot": "rux"},
-        })
+        ws_alice.send_json(
+            {
+                "type": "PLAYER_SEAT",
+                "player_id": "alice",
+                "payload": {"character_slot": "rux"},
+            }
+        )
         seat_msg = ws_alice.receive_json()
         assert seat_msg["type"] == "SEAT_CONFIRMED"
 
         # Bob connects to the same slug then immediately disconnects
         with client.websocket_connect("/ws") as ws_bob:
-            ws_bob.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": slug},
-            })
+            ws_bob.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": slug},
+                }
+            )
             bob_connected = ws_bob.receive_json()
             # Drain bob's chargen bootstrap.
             bob_chargen = ws_bob.receive_json()
@@ -128,11 +137,13 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
             assert bob_connected["payload"]["event"] == "connected"
 
             # Bob claims a seat so he is a "seated" player
-            ws_bob.send_json({
-                "type": "PLAYER_SEAT",
-                "player_id": "bob",
-                "payload": {"character_slot": "grimble"},
-            })
+            ws_bob.send_json(
+                {
+                    "type": "PLAYER_SEAT",
+                    "player_id": "bob",
+                    "payload": {"character_slot": "grimble"},
+                }
+            )
             bob_seat_bob = ws_bob.receive_json()
             assert bob_seat_bob["type"] == "SEAT_CONFIRMED"
             # Alice also receives Bob's seat confirmed
@@ -156,11 +167,13 @@ def test_player_action_while_paused_returns_game_paused_not_narration(
 
         # Alice sends a PLAYER_ACTION — should get GAME_PAUSED back, NOT narration
         narrator_calls.clear()
-        ws_alice.send_json({
-            "type": "PLAYER_ACTION",
-            "player_id": "alice",
-            "payload": {"action": "I look around the grimvault."},
-        })
+        ws_alice.send_json(
+            {
+                "type": "PLAYER_ACTION",
+                "player_id": "alice",
+                "payload": {"action": "I look around the grimvault."},
+            }
+        )
         action_resp = ws_alice.receive_json()
         assert action_resp["type"] == "GAME_PAUSED", (
             f"Expected GAME_PAUSED in response to PLAYER_ACTION while paused, "
@@ -191,40 +204,48 @@ def test_absent_player_reconnect_broadcasts_game_resumed(
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws_alice:
-        ws_alice.send_json({
-            "type": "SESSION_EVENT",
-            "player_id": "alice",
-            "payload": {"event": "connect", "game_slug": slug},
-        })
+        ws_alice.send_json(
+            {
+                "type": "SESSION_EVENT",
+                "player_id": "alice",
+                "payload": {"event": "connect", "game_slug": slug},
+            }
+        )
         msg = ws_alice.receive_json()
         assert msg["type"] == "SESSION_EVENT"
         ws_alice.receive_json()  # CHARACTER_CREATION bootstrap
 
-        ws_alice.send_json({
-            "type": "PLAYER_SEAT",
-            "player_id": "alice",
-            "payload": {"character_slot": "rux"},
-        })
+        ws_alice.send_json(
+            {
+                "type": "PLAYER_SEAT",
+                "player_id": "alice",
+                "payload": {"character_slot": "rux"},
+            }
+        )
         ws_alice.receive_json()  # SEAT_CONFIRMED
 
         # Bob connects and seats
         with client.websocket_connect("/ws") as ws_bob:
-            ws_bob.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": slug},
-            })
+            ws_bob.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": slug},
+                }
+            )
             ws_bob.receive_json()  # connected
             ws_bob.receive_json()  # CHARACTER_CREATION bootstrap
             ws_alice.receive_json()  # PLAYER_PRESENCE{connected} for bob
 
-            ws_bob.send_json({
-                "type": "PLAYER_SEAT",
-                "player_id": "bob",
-                "payload": {"character_slot": "grimble"},
-            })
-            ws_bob.receive_json()   # bob sees SEAT_CONFIRMED
-            ws_alice.receive_json() # alice sees SEAT_CONFIRMED
+            ws_bob.send_json(
+                {
+                    "type": "PLAYER_SEAT",
+                    "player_id": "bob",
+                    "payload": {"character_slot": "grimble"},
+                }
+            )
+            ws_bob.receive_json()  # bob sees SEAT_CONFIRMED
+            ws_alice.receive_json()  # alice sees SEAT_CONFIRMED
 
         # Bob disconnected — alice receives PLAYER_PRESENCE then GAME_PAUSED
         presence_msg = ws_alice.receive_json()
@@ -234,11 +255,13 @@ def test_absent_player_reconnect_broadcasts_game_resumed(
 
         # Bob reconnects
         with client.websocket_connect("/ws") as ws_bob2:
-            ws_bob2.send_json({
-                "type": "SESSION_EVENT",
-                "player_id": "bob",
-                "payload": {"event": "connect", "game_slug": slug},
-            })
+            ws_bob2.send_json(
+                {
+                    "type": "SESSION_EVENT",
+                    "player_id": "bob",
+                    "payload": {"event": "connect", "game_slug": slug},
+                }
+            )
             ws_bob2.receive_json()  # bob sees SESSION_EVENT{connected}
             ws_bob2.receive_json()  # CHARACTER_CREATION bootstrap
             # alice should receive PLAYER_PRESENCE{connected} then GAME_RESUMED

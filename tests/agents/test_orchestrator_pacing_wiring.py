@@ -74,9 +74,7 @@ def _agent_name(orch: Orchestrator) -> str:
     return orch._narrator.name()  # type: ignore[attr-defined]
 
 
-def _section(
-    registry: PromptRegistry, agent_name: str, section_name: str
-) -> PromptSection | None:
+def _section(registry: PromptRegistry, agent_name: str, section_name: str) -> PromptSection | None:
     """Locate a registered section by name on the registry, or None.
 
     Uses the public ``get_sections()`` API rather than reaching into the
@@ -119,9 +117,7 @@ def test_turn_context_accepts_pacing_hint_typed():
 async def test_pacing_hint_none_does_not_register_section():
     orch = Orchestrator(client=_make_client())
     ctx = TurnContext(character_name="Kael", pacing_hint=None)
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
     assert _section(registry, _agent_name(orch), "pacing") is None, (
         "no pacing section should register when TurnContext.pacing_hint is None"
     )
@@ -141,9 +137,7 @@ async def test_pacing_hint_present_registers_pacing_section_in_late_zone():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
     section = _section(registry, _agent_name(orch), "pacing")
     assert section is not None, "pacing section must be registered when hint present"
     assert section.zone == AttentionZone.Late, (
@@ -170,9 +164,7 @@ async def test_pacing_hint_section_content_includes_directive():
     assert expected_directive in section.content, (
         "section content must include hint.narrator_directive() text"
     )
-    assert expected_directive in prompt, (
-        "rendered prompt must include the pacing directive"
-    )
+    assert expected_directive in prompt, "rendered prompt must include the pacing directive"
 
 
 async def test_pacing_hint_escalation_beat_appears_when_set():
@@ -185,9 +177,7 @@ async def test_pacing_hint_escalation_beat_appears_when_set():
         escalation_beat=beat,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = await orch.build_narrator_prompt(
-        "wait", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("wait", ctx, tier=NarratorPromptTier.Full)
     section = _section(registry, _agent_name(orch), "pacing")
     assert section is not None
     assert "## Escalation Beat" in section.content
@@ -203,9 +193,7 @@ async def test_pacing_hint_no_escalation_beat_omits_escalation_block():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
     section = _section(registry, _agent_name(orch), "pacing")
     assert section is not None
     assert "## Escalation Beat" not in section.content, (

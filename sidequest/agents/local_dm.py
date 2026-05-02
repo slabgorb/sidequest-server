@@ -420,11 +420,13 @@ class LocalDM:
                 multi_target_count = _normalize_multi_target_resolved_to(raw_dict)
                 if multi_target_count:
                     span.set_attribute(
-                        "resolved_to_multi_target_count", multi_target_count,
+                        "resolved_to_multi_target_count",
+                        multi_target_count,
                     )
                     logger.info(
                         "local_dm.multi_target_resolved_to turn_id=%s count=%d",
-                        turn_id, multi_target_count,
+                        turn_id,
+                        multi_target_count,
                     )
                 if visibility_baseline is not None:
                     _apply_baseline_to_package_dict(raw_dict, visibility_baseline)

@@ -178,12 +178,34 @@ def test_blank_char_class_rejected():
 def test_nonblank_fields_validated():
     """Rust: nonblank_fields_validated — core name/description/personality."""
     from sidequest.game.creature_core import CreatureCore
+
     with pytest.raises(ValidationError):
-        CreatureCore(name="", description="y", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+        CreatureCore(
+            name="",
+            description="y",
+            personality="z",
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+        )
     with pytest.raises(ValidationError):
-        CreatureCore(name="x", description="   ", personality="z", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+        CreatureCore(
+            name="x",
+            description="   ",
+            personality="z",
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+        )
     # valid
-    cc = CreatureCore(name="valid", description="desc", personality="calm", inventory=Inventory(), statuses=[], edge=placeholder_edge_pool())
+    cc = CreatureCore(
+        name="valid",
+        description="desc",
+        personality="calm",
+        inventory=Inventory(),
+        statuses=[],
+        edge=placeholder_edge_pool(),
+    )
     assert cc.name == "valid"
 
 

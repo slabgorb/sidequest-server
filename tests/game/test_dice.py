@@ -4,6 +4,7 @@ Physics-is-the-roll path (ADR-074 / story 34-12): the server uses
 client-reported face values as authoritative. These tests cover the crit
 rules, DC comparisons, modifier arithmetic, and the validation boundary.
 """
+
 from __future__ import annotations
 
 import pytest

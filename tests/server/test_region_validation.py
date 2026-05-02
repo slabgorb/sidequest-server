@@ -252,8 +252,7 @@ class TestNarrationApplyWiring:
         assert "(aside — narrator brief)" not in snap.discovered_regions
 
         rejection_spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "region.entry_rejected"
+            s for s in otel_capture.get_finished_spans() if s.name == "region.entry_rejected"
         ]
         assert len(rejection_spans) == 1, (
             "Validator must emit region.entry_rejected so Sebastien's "
@@ -274,9 +273,7 @@ class TestSessionPatchWiring:
         from sidequest.game.session import GameSnapshot, WorldStatePatch
 
         snap = GameSnapshot()
-        patch = WorldStatePatch(
-            discover_regions=["Felix's Workshop", "(aside — narrator brief)"]
-        )
+        patch = WorldStatePatch(discover_regions=["Felix's Workshop", "(aside — narrator brief)"])
 
         snap.apply_world_patch(patch)
 
@@ -284,8 +281,7 @@ class TestSessionPatchWiring:
         assert "(aside — narrator brief)" not in snap.discovered_regions
 
         rejection_spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "region.entry_rejected"
+            s for s in otel_capture.get_finished_spans() if s.name == "region.entry_rejected"
         ]
         assert len(rejection_spans) == 1
         attrs = dict(rejection_spans[0].attributes)
@@ -299,17 +295,14 @@ class TestSessionPatchWiring:
         from sidequest.game.session import GameSnapshot, WorldStatePatch
 
         snap = GameSnapshot()
-        patch = WorldStatePatch(
-            discovered_regions=["Felix's Workshop", "(aside — narrator brief)"]
-        )
+        patch = WorldStatePatch(discovered_regions=["Felix's Workshop", "(aside — narrator brief)"])
 
         snap.apply_world_patch(patch)
 
         assert snap.discovered_regions == ["Felix's Workshop"]
 
         rejection_spans = [
-            s for s in otel_capture.get_finished_spans()
-            if s.name == "region.entry_rejected"
+            s for s in otel_capture.get_finished_spans() if s.name == "region.entry_rejected"
         ]
         assert len(rejection_spans) == 1
         attrs = dict(rejection_spans[0].attributes)

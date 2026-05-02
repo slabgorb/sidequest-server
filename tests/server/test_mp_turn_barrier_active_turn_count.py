@@ -19,6 +19,7 @@ is not emitted; `LobbyState` is not defined.
 
 See `sprint/context/context-story-45-2.md` for the full design.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -312,7 +313,7 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
     # transition runs through production code paths.
     room.connect("flake", socket_id="sock-flake")
     room.seat("flake", character_slot="Flake")  # → CHARGEN
-    room.disconnect(socket_id="sock-flake")    # CHARGEN → ABANDONED
+    room.disconnect(socket_id="sock-flake")  # CHARGEN → ABANDONED
     assert room._seated["flake"].state == LobbyState.ABANDONED, (  # noqa: SLF001
         "Test precondition: flake must be ABANDONED for this fixture to "
         "test the seated-vs-non-abandoned distinction"
@@ -333,10 +334,7 @@ async def test_barrier_wait_span_carries_lobby_and_active_counts(
 
     # Find the barrier.wait call.
     wait_calls = [c for c in wp.call_args_list if c.args[0] == "barrier.wait"]
-    assert wait_calls, (
-        f"barrier.wait must fire; captured "
-        f"{[c.args[0] for c in wp.call_args_list]}"
-    )
+    assert wait_calls, f"barrier.wait must fire; captured {[c.args[0] for c in wp.call_args_list]}"
     # The payload (second positional arg) must carry both counts.
     payload = wait_calls[0].args[1]
     assert payload.get("lobby_participant_count") == 4, (
@@ -473,11 +471,7 @@ async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
         None,
     )
     dispatched_payload = next(
-        (
-            c.args[1]
-            for c in wp.call_args_list
-            if c.args[0] == "mp.round_dispatched"
-        ),
+        (c.args[1] for c in wp.call_args_list if c.args[0] == "mp.round_dispatched"),
         None,
     )
 
@@ -498,8 +492,7 @@ async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
         f"got {active_turn_count}"
     )
     assert fired_count == 1, (
-        f"mp.barrier_fired.player_count must be 1 (already correct in code); "
-        f"got {fired_count}"
+        f"mp.barrier_fired.player_count must be 1 (already correct in code); got {fired_count}"
     )
     assert dispatched_count == 1, (
         f"mp.round_dispatched.player_count must equal "

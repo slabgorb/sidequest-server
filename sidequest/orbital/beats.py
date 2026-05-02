@@ -7,6 +7,7 @@ and supplied to this module as a parameter. Downtime is player-declared.
 Every beat advance emits a `clock.advance` OTEL span — see Task 3 for that
 wiring. The dispatcher itself does not yet emit; it just mutates the clock.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -82,7 +83,6 @@ def _resolve_duration(beat: StoryBeat) -> float:
     # TRAVEL and DOWNTIME require explicit duration
     if beat.duration_hours is None:
         raise ValueError(
-            f"{beat.kind.name} beat requires explicit duration_hours "
-            f"(trigger={beat.trigger!r})"
+            f"{beat.kind.name} beat requires explicit duration_hours (trigger={beat.trigger!r})"
         )
     return beat.duration_hours

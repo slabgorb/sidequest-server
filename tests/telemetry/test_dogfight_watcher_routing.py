@@ -163,9 +163,9 @@ async def test_sealed_letter_emits_dogfight_watcher_events(
     await asyncio.sleep(0.05)
 
     typed = [
-        e for e in sub.events
-        if e["event_type"] == "state_transition"
-        and e["component"] == "dogfight"
+        e
+        for e in sub.events
+        if e["event_type"] == "state_transition" and e["component"] == "dogfight"
     ]
     ops = [e["fields"].get("op") for e in typed]
     assert ops == [
@@ -209,8 +209,7 @@ async def test_sealed_letter_emits_dogfight_watcher_events(
     # firehose ``agent_span_close`` sibling (same invariant the
     # projection / quest / npc tests check).
     flat_names = {
-        e["fields"].get("name") for e in sub.events
-        if e["event_type"] == "agent_span_close"
+        e["fields"].get("name") for e in sub.events if e["event_type"] == "agent_span_close"
     }
     for span_name in (
         SPAN_DOGFIGHT_CONFRONTATION_STARTED,
@@ -218,6 +217,5 @@ async def test_sealed_letter_emits_dogfight_watcher_events(
         SPAN_DOGFIGHT_CELL_RESOLVED,
     ):
         assert span_name in flat_names, (
-            f"flat agent_span_close missing for {span_name!r}; firehose "
-            f"got: {sorted(flat_names)}"
+            f"flat agent_span_close missing for {span_name!r}; firehose got: {sorted(flat_names)}"
         )

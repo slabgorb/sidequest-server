@@ -65,9 +65,7 @@ def _agent_name(orch: Orchestrator) -> str:
     return orch._narrator.name()  # type: ignore[attr-defined]
 
 
-def _section(
-    registry: PromptRegistry, agent_name: str, section_name: str
-) -> PromptSection | None:
+def _section(registry: PromptRegistry, agent_name: str, section_name: str) -> PromptSection | None:
     for section in registry.get_sections(agent_name):
         if section.name == section_name:
             return section
@@ -94,11 +92,11 @@ async def test_available_confrontations_renders_menu_when_no_encounter() -> None
         character_name="Carrot",
         available_confrontations=_SPACE_OPERA_MENU,
     )
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
     section = _section(
-        registry, _agent_name(orch), "narrator_available_confrontations",
+        registry,
+        _agent_name(orch),
+        "narrator_available_confrontations",
     )
     assert section is not None, (
         "expected narrator_available_confrontations section when "
@@ -135,7 +133,9 @@ async def test_available_confrontations_suppressed_when_encounter_active() -> No
         "shoot the corvette", ctx, tier=NarratorPromptTier.Full
     )
     section = _section(
-        registry, _agent_name(orch), "narrator_available_confrontations",
+        registry,
+        _agent_name(orch),
+        "narrator_available_confrontations",
     )
     assert section is None, (
         "menu must NOT register while an encounter is active — the "
@@ -153,12 +153,12 @@ async def test_available_confrontations_suppressed_when_encounter_active() -> No
 async def test_available_confrontations_empty_menu_does_not_register() -> None:
     orch = Orchestrator(client=_make_client())
     ctx = TurnContext(character_name="Carrot", available_confrontations=[])
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx, tier=NarratorPromptTier.Full
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
     assert (
         _section(
-            registry, _agent_name(orch), "narrator_available_confrontations",
+            registry,
+            _agent_name(orch),
+            "narrator_available_confrontations",
         )
         is None
     )

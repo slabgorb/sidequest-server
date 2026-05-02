@@ -99,9 +99,7 @@ class EdgeConfigMissingClassError(KeyError):
 
     def __init__(self, class_name: str) -> None:
         self.class_name = class_name
-        super().__init__(
-            f"edge_config.base_max_by_class missing entry for class '{class_name}'"
-        )
+        super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
 
 
 def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:

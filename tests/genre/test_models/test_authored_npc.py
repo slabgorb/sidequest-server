@@ -58,6 +58,4 @@ def test_empty_id_rejected() -> None:
 def test_extra_fields_rejected() -> None:
     """`extra='forbid'` catches author typos."""
     with pytest.raises(ValidationError, match="extra"):
-        AuthoredNpc.model_validate(
-            {"id": "x", "name": "X", "totally_made_up_field": "oops"}
-        )
+        AuthoredNpc.model_validate({"id": "x", "name": "X", "totally_made_up_field": "oops"})

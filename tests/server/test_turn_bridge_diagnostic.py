@@ -44,7 +44,11 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
     store = SqliteStore(db)
     store.initialize()
     upsert_game(
-        store, slug=slug, mode=GameMode.SOLO, genre_slug=_GENRE, world_slug=_WORLD,
+        store,
+        slug=slug,
+        mode=GameMode.SOLO,
+        genre_slug=_GENRE,
+        world_slug=_WORLD,
     )
     core = CreatureCore(
         name="Thorn",
@@ -53,7 +57,10 @@ def _seed_with_character(tmp_path: Path, slug: str) -> None:
         inventory=Inventory(),
     )
     char = Character(
-        core=core, char_class="Fighter", race="Human", backstory="A wanderer.",
+        core=core,
+        char_class="Fighter",
+        race="Human",
+        backstory="A wanderer.",
     )
     snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [char]
@@ -89,11 +96,14 @@ async def test_dispatch_logs_bridge_diagnostic_with_minted_count(
     _seed_with_character(tmp_path, _SLUG)
     registry = RoomRegistry()
     handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id="sock-thorn", out_queue=queue,
+        registry=registry,
+        socket_id="sock-thorn",
+        out_queue=queue,
     )
 
     connect = GameMessage.model_validate(
@@ -115,18 +125,20 @@ async def test_dispatch_logs_bridge_diagnostic_with_minted_count(
         }
     )
 
-    with caplog.at_level(
-        logging.INFO, logger="sidequest.server.websocket_session_handler",
-    ), patch(
-        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-        new=AsyncMock(return_value=_fake_narration_result()),
+    with (
+        caplog.at_level(
+            logging.INFO,
+            logger="sidequest.server.websocket_session_handler",
+        ),
+        patch(
+            "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+            new=AsyncMock(return_value=_fake_narration_result()),
+        ),
     ):
         await handler.handle_message(connect)
         await handler.handle_message(action)
 
-    diagnostic_records = [
-        r for r in caplog.records if "turn.bridge_diagnostic" in r.getMessage()
-    ]
+    diagnostic_records = [r for r in caplog.records if "turn.bridge_diagnostic" in r.getMessage()]
     assert diagnostic_records, (
         "expected at least one turn.bridge_diagnostic INFO line — "
         "the per-turn bridge probe never fired"
@@ -137,8 +149,7 @@ async def test_dispatch_logs_bridge_diagnostic_with_minted_count(
     # when the bridge flag is set. A 0 here means the bridge silently
     # broke between publish_event and _emit_watcher_span.
     assert "minted=0" not in msg, (
-        f"bridge minted=0 with flag set — bridge isn't firing during "
-        f"gameplay: {msg}"
+        f"bridge minted=0 with flag set — bridge isn't firing during gameplay: {msg}"
     )
 
 
@@ -155,11 +166,14 @@ async def test_dispatch_force_flushes_tracer_provider(
     _seed_with_character(tmp_path, _SLUG)
     registry = RoomRegistry()
     handler = WebSocketSessionHandler(
-        save_dir=tmp_path, genre_pack_search_paths=[_FIXTURE_PACKS],
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
     )
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler.attach_room_context(
-        registry=registry, socket_id="sock-thorn", out_queue=queue,
+        registry=registry,
+        socket_id="sock-thorn",
+        out_queue=queue,
     )
 
     connect = GameMessage.model_validate(
@@ -184,12 +198,15 @@ async def test_dispatch_force_flushes_tracer_provider(
     fake_provider = MagicMock()
     fake_provider.force_flush = MagicMock()
 
-    with patch(
-        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
-        new=AsyncMock(return_value=_fake_narration_result()),
-    ), patch(
-        "sidequest.server.websocket_session_handler.trace.get_tracer_provider",
-        return_value=fake_provider,
+    with (
+        patch(
+            "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+            new=AsyncMock(return_value=_fake_narration_result()),
+        ),
+        patch(
+            "sidequest.server.websocket_session_handler.trace.get_tracer_provider",
+            return_value=fake_provider,
+        ),
     ):
         await handler.handle_message(connect)
         await handler.handle_message(action)
