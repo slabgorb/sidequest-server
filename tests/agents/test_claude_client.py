@@ -472,7 +472,7 @@ def test_claude_client_reports_capabilities():
     caps = client.capabilities()
     assert caps.supports_sessions is True
     assert caps.supports_tools is True
-    assert caps.supports_streaming is False
+    assert caps.supports_streaming is True
     assert caps.max_context_tokens >= 200_000
     assert caps.backend_id == "claude-cli"
 

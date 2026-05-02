@@ -251,7 +251,7 @@ class ClaudeClient:
             supports_sessions=True,
             supports_tools=True,
             max_context_tokens=200_000,
-            supports_streaming=False,
+            supports_streaming=True,
         )
 
     # ------------------------------------------------------------------

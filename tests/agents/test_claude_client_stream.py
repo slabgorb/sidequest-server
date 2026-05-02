@@ -205,3 +205,9 @@ async def test_stream_timeout_yields_stream_error():
     assert errors[0].kind == "timeout"
     # Should have captured at least the first chunk before timeout
     assert "chunk 0" in errors[0].partial_text or errors[0].partial_text == ""
+
+
+def test_capabilities_reports_streaming_supported():
+    client = ClaudeClient()
+    caps = client.capabilities()
+    assert caps.supports_streaming is True
