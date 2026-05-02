@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING
 
 from sidequest.orbital.beats import StoryBeat, StoryBeatKind, advance_clock_via_beat
 from sidequest.orbital.clock import Clock
+from sidequest.orbital.render import Scope
 from sidequest.server.status_clear import clear_scratch_on_scene_end
 
 if TYPE_CHECKING:
     from sidequest.game.session import GameSnapshot
+    from sidequest.orbital.loader import OrbitalContent
 
 
 class Session:
@@ -28,8 +30,17 @@ class Session:
     persistence boundary; ``Session`` is a thin behavior layer over it.
     """
 
-    def __init__(self, snapshot: GameSnapshot) -> None:
+    def __init__(
+        self,
+        snapshot: GameSnapshot,
+        *,
+        orbital_content: OrbitalContent | None = None,
+    ) -> None:
         self._snapshot = snapshot
+        self._orbital_content = orbital_content
+        # Orbital scope is transient session UI state — defaults to system
+        # root on each connect rather than persisting across reconnects.
+        self._orbital_scope: Scope | None = None
 
     @property
     def clock(self) -> Clock:
@@ -60,3 +71,30 @@ class Session:
         self.advance_via_beat(
             StoryBeat(kind=StoryBeatKind.ENCOUNTER, trigger=f"scene-{reason}")
         )
+
+    # ------------------------------------------------------------------
+    # Orbital map (Task 15) — content + scope state for the chart UI.
+    # ------------------------------------------------------------------
+
+    @property
+    def orbital_content(self) -> OrbitalContent | None:
+        """Loaded ``orbits.yaml`` + ``chart.yaml`` for the bound world.
+
+        ``None`` for worlds without an orbital tier (caverns_and_claudes,
+        victoria, etc.). Set once at room bind time; never mutated.
+        """
+        return self._orbital_content
+
+    @property
+    def orbital_scope(self) -> Scope:
+        """Current chart scope — defaults to system root on first read."""
+        return self._orbital_scope or Scope.system_root()
+
+    @orbital_scope.setter
+    def orbital_scope(self, scope: Scope) -> None:
+        self._orbital_scope = scope
+
+    @property
+    def party_body_id(self) -> str | None:
+        """Party's orbital body id (from ``orbits.yaml``), or ``None``."""
+        return self._snapshot.party_body_id
