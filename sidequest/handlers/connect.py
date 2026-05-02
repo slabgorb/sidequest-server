@@ -31,6 +31,8 @@ from sidequest.protocol.messages import (
     ConfrontationMessage,
     ConfrontationPayload,
     GameResumedMessage,
+    SeatConfirmedMessage,
+    SeatConfirmedPayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -777,6 +779,29 @@ class ConnectHandler:
             _replay_kind_lookup_miss = 0
             _replay_skipped_internal = 0
             _replay_kinds: dict[str, int] = {}
+
+            # Playtest 2026-05-02 [OBS] "Scrapbook state lost on reload":
+            # SCRAPBOOK_ENTRY events were emitted with image_url=None at
+            # the time the narrator's structured output landed; the
+            # daemon's IMAGE message arrived later via a non-event-
+            # sourced broadcast and so vanished on browser reload. The
+            # render-completed handler now backfills
+            # ``scrapbook_entries.image_url`` for the matching turn_id.
+            # Build a turn_id -> image_url map here so the replay loop
+            # can JOIN it into rebuilt SCRAPBOOK_ENTRY payloads — one
+            # query per reconnect, not one per row.
+            _scrapbook_image_urls: dict[int, str] = {}
+            if session._event_log is not None:
+                try:
+                    rows = session._event_log.store._conn.execute(
+                        "SELECT turn_id, image_url FROM scrapbook_entries "
+                        "WHERE image_url IS NOT NULL"
+                    ).fetchall()
+                    for _turn_id, _url in rows:
+                        if isinstance(_turn_id, int) and isinstance(_url, str) and _url:
+                            _scrapbook_image_urls[_turn_id] = _url
+                except Exception as exc:  # noqa: BLE001 — replay must not crash on a metadata read
+                    logger.warning("scrapbook.image_url_replay_lookup_failed error=%s", exc)
             if session._projection_cache is not None:
                 cached_rows = session._projection_cache.read_since(
                     player_id=session._current_player_id,
@@ -806,6 +831,22 @@ class ConnectHandler:
                         # client-bound. Skip without crashing replay.
                         _replay_skipped_internal += 1
                         continue
+                    if (
+                        _kind == "SCRAPBOOK_ENTRY"
+                        and _scrapbook_image_urls
+                        and getattr(_built, "payload", None) is not None
+                        and getattr(_built.payload, "image_url", None) is None
+                    ):
+                        _t = getattr(_built.payload, "turn_id", None)
+                        _url = _scrapbook_image_urls.get(_t) if isinstance(_t, int) else None
+                        if _url:
+                            _built = _built.model_copy(
+                                update={
+                                    "payload": _built.payload.model_copy(
+                                        update={"image_url": _url}
+                                    )
+                                }
+                            )
                     _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
                     replay_msgs.append(_built)
             else:
@@ -832,6 +873,22 @@ class ConnectHandler:
                     if _built is None:
                         _replay_skipped_internal += 1
                         continue
+                    if (
+                        event_row.kind == "SCRAPBOOK_ENTRY"
+                        and _scrapbook_image_urls
+                        and getattr(_built, "payload", None) is not None
+                        and getattr(_built.payload, "image_url", None) is None
+                    ):
+                        _t = getattr(_built.payload, "turn_id", None)
+                        _url = _scrapbook_image_urls.get(_t) if isinstance(_t, int) else None
+                        if _url:
+                            _built = _built.model_copy(
+                                update={
+                                    "payload": _built.payload.model_copy(
+                                        update={"image_url": _url}
+                                    )
+                                }
+                            )
                     _replay_kinds[event_row.kind] = _replay_kinds.get(event_row.kind, 0) + 1
                     replay_msgs.append(_built)
 
@@ -1077,7 +1134,52 @@ class ConnectHandler:
                             row.genre_slug,
                         )
 
-            return [connected_msg, *bootstrap_msgs, *replay_msgs]
+            # Seat backfill (playtest 2026-05-02 [BUG-LOW] — roster shows
+            # peers as "creating character" forever). The connecting client
+            # only learns about seated peers via SEAT_CONFIRMED broadcasts,
+            # which fire at seat-claim time only. A new joiner who arrives
+            # AFTER an existing player has seated never receives those
+            # broadcasts, so their MultiplayerSessionStatus widget keeps
+            # showing the seated peer as in-chargen until the next live
+            # seat-claim (which may never come once everyone is seated).
+            #
+            # Fix: replay one SEAT_CONFIRMED per existing seat to the
+            # connecting socket. The room.broadcast(exclude_socket_id=None)
+            # path on PLAYER_SEAT also delivers the original frame to the
+            # seater; this backfill targets only the new socket via the
+            # bootstrap_msgs list, which the dispatcher writes onto its
+            # own outbound queue (no fan-out).
+            seat_backfill: list[SeatConfirmedMessage] = []
+            for seated_pid, seated_slot in snapshot.player_seats.items():
+                seat_backfill.append(
+                    SeatConfirmedMessage(
+                        payload=SeatConfirmedPayload(
+                            player_id=seated_pid,
+                            character_slot=seated_slot,
+                        ),
+                    )
+                )
+            if seat_backfill:
+                logger.info(
+                    "session.seat_backfill_emitted slug=%s player_id=%s count=%d "
+                    "seated=%s",
+                    slug,
+                    player_id,
+                    len(seat_backfill),
+                    list(snapshot.player_seats.keys()),
+                )
+                _watcher_publish(
+                    "session_seat_backfill_emitted",
+                    {
+                        "slug": slug,
+                        "player_id": player_id,
+                        "count": len(seat_backfill),
+                        "seated_player_ids": list(snapshot.player_seats.keys()),
+                    },
+                    component="session",
+                )
+
+            return [connected_msg, *bootstrap_msgs, *seat_backfill, *replay_msgs]
 
         # Story 45-26: legacy (genre, world, player_name) connect path
         # was deleted alongside the legacy /api/saves/* REST routes.

@@ -642,6 +642,7 @@ def _apply_narration_result_to_snapshot(
     opposed_player_d20: int | None = None,
     opposed_player_beat_id: str | None = None,
     opposed_player_actor: str | None = None,
+    acting_character_name: str | None = None,
 ) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
@@ -720,7 +721,58 @@ def _apply_narration_result_to_snapshot(
 
     if result.location:
         old_loc = snapshot.location
+        # Playtest 2026-05-02 [BUG] (round 2): the bundled-actions narrator
+        # returns ONE ``result.location`` per round even when both players
+        # acted, so only the acting PC's ``character_locations`` entry is
+        # written each turn. Without this seed loop, a non-acting peer who
+        # never narrated a location update (e.g. joiner with suppressed
+        # opening, or a peer who just hasn't moved yet) has no entry in
+        # ``character_locations`` — and the resolver falls back to
+        # ``snapshot.location``, which we are about to clobber. So the peer's
+        # header would track whichever player most recently narrated.
+        # Defense: BEFORE clobbering ``snapshot.location``, snapshot the
+        # current global into ``character_locations[peer]`` for every seated
+        # PC who doesn't have an entry yet. They were canonically at the
+        # current ``snapshot.location`` until this narration moved someone;
+        # freezing that there preserves the right scene for them on the
+        # next PARTY_STATUS frame. ``player_seats.values()`` is the
+        # authoritative seated-PC set (chargen-bound character names).
+        if old_loc:
+            for seated_char_name in snapshot.player_seats.values():
+                if seated_char_name and seated_char_name not in snapshot.character_locations:
+                    snapshot.character_locations[seated_char_name] = old_loc
+                    _watcher_publish(
+                        "state_transition",
+                        {
+                            "kind": "character_location_seeded",
+                            "character": seated_char_name,
+                            "seeded_location": old_loc,
+                            "reason": "peer_seed_pre_acting_update",
+                        },
+                        component="game",
+                    )
         snapshot.location = result.location
+        # Bind this turn's location to the acting character so views.py
+        # can build per-player PARTY_STATUS frames with the right scene
+        # per member. Solo sessions populate a single entry that equals
+        # snapshot.location; MP populates one entry per actor as they
+        # narrate. ``acting_character_name`` is ``None`` only on legacy
+        # callers that haven't been threaded — fall back to the existing
+        # snapshot.location-only behavior in that case rather than poison
+        # the dict with a fabricated key.
+        if acting_character_name:
+            snapshot.character_locations[acting_character_name] = result.location
+            _watcher_publish(
+                "state_transition",
+                {
+                    "kind": "character_location_updated",
+                    "character": acting_character_name,
+                    "old_location": old_loc,
+                    "new_location": result.location,
+                    "player_name": player_name,
+                },
+                component="game",
+            )
         # Story 45-16: filter narrator-emitted location before adding
         # to the region graph. Playtest 3 leaked
         # `(aside — narrator brief)` into discovered_regions because

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
+from starlette.websockets import WebSocketState
 
 from sidequest.protocol import GameMessage
 from sidequest.protocol.messages import (
@@ -137,7 +138,24 @@ async def _send_message(websocket: WebSocket, msg: Any) -> None:
     """Serialize and send a protocol message object over the WebSocket.
 
     All outbound messages are pydantic BaseModel instances with model_dump_json().
+
+    Tab-refresh / disconnect short-circuit (playtest 2026-05-02 [BUG-LOW]):
+    when the application_state has already advanced past CONNECTED — i.e.
+    the close frame has been sent or the peer disconnected — Starlette's
+    ``send`` raises ``RuntimeError("Cannot call 'send' once a close
+    message has been sent.")``. That's a normal lifecycle event during
+    tab focus-switching while broadcasts are mid-fan-out, not a fault.
+    Skip the send entirely with a DEBUG breadcrumb so the GM panel keeps
+    visibility (CLAUDE.md OTEL principle) without spamming WARNING
+    "ws.send_failed" lines that look like real failures.
     """
+    if websocket.application_state != WebSocketState.CONNECTED:
+        logger.debug(
+            "ws.send_skipped_closing type=%s state=%s",
+            getattr(msg, "type", "?"),
+            websocket.application_state.name,
+        )
+        return
     try:
         json_str = msg.model_dump_json()
         await websocket.send_text(json_str)

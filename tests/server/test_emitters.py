@@ -88,6 +88,82 @@ def test_persist_scrapbook_entry_inserts_row(session_handler_factory) -> None:
     assert rows[0][2] == "The fighter pondered."
 
 
+def test_update_scrapbook_image_url_backfills_most_recent_row(tmp_path) -> None:
+    """Playtest 2026-05-02: when render.completed fires, the new helper
+    must UPDATE the scrapbook_entries row for the matching turn_id from
+    image_url=NULL to the served URL. On reconnect/replay, this is the
+    only persisted record of which turn produced which image — the live
+    IMAGE broadcast is ephemeral and missed entirely on browser reload.
+
+    Uses a minimal stub instead of `session_handler_factory` because the
+    factory loads a real genre pack from `tests/fixtures/packs/` and that
+    fixture is missing the world-tier `openings.yaml` required since the
+    canned-openings story (pre-existing baseline failure unrelated to
+    this change). The helper only touches `handler._event_log.store`, so
+    a minimal duck-typed stub is sufficient.
+    """
+    from sidequest.game.event_log import EventLog
+    from sidequest.game.persistence import SqliteStore
+    from sidequest.protocol.messages import ScrapbookEntryPayload
+    from sidequest.server import emitters
+
+    store = SqliteStore(tmp_path / "test.db")
+
+    class _Handler:
+        pass
+
+    handler = _Handler()
+    handler._event_log = EventLog(store)
+
+    payload = ScrapbookEntryPayload(
+        turn_id=7,
+        location="The Kestrel — Galley, Mid-Coast",
+        narrative_excerpt="The mug jitters once, exactly once.",
+        scene_title="A clan-blue omen",
+        scene_type="scene_illustration",
+        image_url=None,
+    )
+    emitters.persist_scrapbook_entry(handler, payload)
+
+    updated = emitters.update_scrapbook_image_url(
+        handler, turn_id=7, image_url="/renders/zimage/render_abc.png"
+    )
+    assert updated is True
+
+    rows = store._conn.execute(
+        "SELECT turn_id, image_url FROM scrapbook_entries WHERE turn_id = 7"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == "/renders/zimage/render_abc.png"
+
+    # Idempotency: a second backfill for the same turn must NOT clobber —
+    # we only update rows where image_url IS NULL, so the second call
+    # finds nothing matching and returns False.
+    updated_again = emitters.update_scrapbook_image_url(
+        handler, turn_id=7, image_url="/renders/zimage/render_xyz.png"
+    )
+    assert updated_again is False
+    final_url = store._conn.execute(
+        "SELECT image_url FROM scrapbook_entries WHERE turn_id = 7"
+    ).fetchone()[0]
+    assert final_url == "/renders/zimage/render_abc.png", (
+        "second update must not overwrite — first render wins per turn"
+    )
+
+
+def test_update_scrapbook_image_url_legacy_path_no_event_log_is_noop() -> None:
+    """When handler has no event log, the helper returns False without
+    raising — same shape as `persist_scrapbook_entry`."""
+    from sidequest.server import emitters
+
+    class _Handler:
+        pass
+
+    handler = _Handler()
+    handler._event_log = None
+    assert emitters.update_scrapbook_image_url(handler, 1, "/x.png") is False
+
+
 def test_persist_scrapbook_entry_legacy_path_no_event_log_is_noop(
     session_handler_factory,
 ) -> None:

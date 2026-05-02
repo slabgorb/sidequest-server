@@ -265,6 +265,25 @@ def create_app(
             render_dir,
             handshake_source,
         )
+        # Self-healing across daemon restarts: when the daemon dies and
+        # respawns, the new daemon picks a fresh ``tempfile.mkdtemp(prefix=
+        # "sq-daemon-")`` and the prior ``sq-daemon-XXX`` dir survives on
+        # disk until the OS reaps it. URLs the UI cached from prior
+        # renders point into those orphan dirs and 404 against the current
+        # mount alone. Pre-register every sibling ``sq-daemon-*`` dir so
+        # cached URLs continue to resolve as long as the temp tree exists.
+        # Idempotent inside ``register_root``; failures are logged, never
+        # raised — orphan scan must not crash startup.
+        try:
+            from sidequest.server.render_mounts import register_daemon_temp_orphans
+
+            register_daemon_temp_orphans(app, render_dir.parent)
+        except Exception as exc:
+            logger.warning(
+                "render_assets.orphan_scan_failed parent=%s error=%s",
+                render_dir.parent,
+                exc,
+            )
     else:
         logger.warning(
             "render_assets.mount_skipped reason=no_env_no_handshake — "

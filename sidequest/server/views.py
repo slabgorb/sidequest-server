@@ -384,7 +384,17 @@ def party_member_from_character(
     )
 
     location_nbs: NonBlankString | None = None
-    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, sd.snapshot.location)
+    # Playtest 2026-05-02 [BUG]: prefer this character's last-known
+    # location over the party-level snapshot.location so the multiplayer
+    # PARTY_STATUS frame carries each member's own scene rather than
+    # whichever player narrated most recently. Falls back to
+    # ``snapshot.location`` for legacy saves and pre-first-narration
+    # turns where ``character_locations`` is still empty for this PC.
+    raw_location = (
+        sd.snapshot.character_locations.get(character.core.name)
+        or sd.snapshot.location
+    )
+    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, raw_location)
     if loc_display:
         try:
             location_nbs = NonBlankString(loc_display)

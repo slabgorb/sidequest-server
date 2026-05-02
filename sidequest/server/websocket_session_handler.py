@@ -1496,6 +1496,22 @@ class WebSocketSessionHandler:
         # to chargen instead of auto-claiming an existing PC.
         if sd.player_id and character.core.name:
             sd.snapshot.player_seats[sd.player_id] = character.core.name
+            # Playtest 2026-05-02 [BUG] (round 2): seed
+            # ``character_locations[char_name]`` with the current
+            # ``snapshot.location`` so a joiner whose opening narration
+            # gets suppressed (mp_joiner_opening_suppressed_at_consume) or
+            # whose opening doesn't emit ``result.location`` still has a
+            # last-known location entry. Without this, the next narration
+            # apply's pre-clobber seed loop catches them — but a
+            # PARTY_STATUS frame between chargen and the first apply would
+            # leak the global location into the joiner's header
+            # incorrectly. Belt + suspenders: seed at every entry point
+            # where a PC's location is known.
+            if (
+                sd.snapshot.location
+                and character.core.name not in sd.snapshot.character_locations
+            ):
+                sd.snapshot.character_locations[character.core.name] = sd.snapshot.location
             span.add_event(
                 "session.player_seat_bound",
                 {
@@ -1858,6 +1874,7 @@ class WebSocketSessionHandler:
                         opposed_player_d20=opposed_player_d20,
                         opposed_player_beat_id=opposed_player_beat_id,
                         opposed_player_actor=dice_actor,
+                        acting_character_name=_resolve_acting_character_name(sd, sd._room),
                     )
                     # Phase 5 (Story 47-3): drain magic-confrontation
                     # outbound queues. ``narration_apply.apply_magic_working``
@@ -2984,14 +3001,64 @@ class WebSocketSessionHandler:
                     if sd.snapshot.characters
                     else (sd.player_name or "the new arrival")
                 )
+                # Playtest 2026-05-02 [BUG-LOW]: joiner-orientation drifted
+                # off the established scene (host on the Kestrel cockpit;
+                # joiner improvised at Vaskov Centrum East Freight Stair).
+                # The chargen confirmation epilogue promises "the crew is
+                # the crew" — both PCs aboard the same chassis at session
+                # start — and the canned MP opening (mp_galley_jumprest)
+                # anchors the host aboard the Kestrel. Anchor the joiner
+                # explicitly to the location the host's prior turn already
+                # established so the narrator does not invent a new place
+                # for the second PC. Falls back to "the same scene the
+                # other player(s) are in" when ``snapshot.location`` is
+                # still empty (degenerate path, but defensible).
+                host_location = (sd.snapshot.location or "").strip()
+                where_clause = (
+                    f"into the location the prior turn established ({host_location!r})"
+                    if host_location
+                    else "into the same scene the other player(s) are already in"
+                )
                 action = (
                     f"{joiner_char_name} steps into the scene and orients to "
-                    "the surroundings — describe their arrival from their "
-                    "point of view in a brief grounding paragraph. Do not "
-                    "generate dialogue, decisions, or new actions for any "
-                    "other PC already present."
+                    f"the surroundings — describe their arrival {where_clause} "
+                    "from their point of view in a brief grounding paragraph. "
+                    "Do NOT relocate them to a new location. Do NOT generate "
+                    "dialogue, decisions, or new actions for any other PC "
+                    "already present."
                 )
                 source_tier = "mp_joiner_orientation"
+                # OTEL: surface the anchor decision so the GM panel can
+                # verify the joiner's prompt actually carried the host's
+                # location (CLAUDE.md OTEL principle — Sebastien's
+                # lie-detector). Mirror the watcher_publish payload as a
+                # span.add_event so OTLP exporters (Jaeger / in-memory
+                # test exporter) see it without needing
+                # SIDEQUEST_WATCHER_AS_SPANS=1.
+                anchor_kind = "host_location" if host_location else "fallback_same_scene"
+                _watcher_publish(
+                    "mp_joiner_orientation_anchored",
+                    {
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "joiner_char_name": joiner_char_name,
+                        "host_location": host_location or None,
+                        "anchor_kind": anchor_kind,
+                    },
+                    component="opening_hook",
+                    severity="info",
+                )
+                span.add_event(
+                    "mp_joiner_orientation_anchored",
+                    {
+                        "event": "mp_joiner_orientation_anchored",
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "joiner_char_name": joiner_char_name,
+                        "host_location": host_location or "",
+                        "anchor_kind": anchor_kind,
+                    },
+                )
         else:
             action = sd.opening_seed or "I look around and take in my surroundings."
             source_tier = "world_or_genre_hook" if sd.opening_seed else "fallback"
@@ -3259,12 +3326,43 @@ class WebSocketSessionHandler:
 
         render_id = provisional_render_id
         tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
+
+        # `sd.snapshot.location` is free-form narrator prose
+        # (e.g. "The Kestrel — Galley, Mid-Coast", "Engine Bay"), not a
+        # `where:<slug>` PlaceCatalog ref. The daemon's PromptComposer
+        # `_resolve_location` accepts an empty location (transient setting,
+        # subject prose carries it) and rejects anything else with
+        # ValueError → COMPOSE_FAILED. Sanitize once, centrally, before
+        # the per-tier branches: only true `where:<slug>` refs survive.
+        # Free-form prose is dropped to "" with a loud watcher event so
+        # the GM panel can see the contract gap (per CLAUDE.md "no silent
+        # fallbacks" + OTEL observability principle).
+        raw_location = (sd.snapshot.location or "").strip()
+        sanitized_location = (
+            raw_location if raw_location.startswith("where:") else ""
+        )
+        if raw_location and not sanitized_location:
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "location_dropped",
+                    "reason": "free_form_prose_no_catalog_ref",
+                    "raw_location": raw_location[:120],
+                    "tier": tier,
+                    "render_id": render_id,
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+                severity="info",
+            )
+
         params: dict[str, object] = {
             "tier": tier,
             "subject": visual.subject,
             "mood": visual.mood or "",
             "tags": list(visual.tags or []),
-            "location": sd.snapshot.location or "",
+            "location": sanitized_location,
             "narration": result.narration,
             "genre": sd.genre_slug,
             # Catalog-injected compose wiring (slice 1): the daemon scopes
@@ -3308,14 +3406,6 @@ class WebSocketSessionHandler:
             # the-wire field is `characters` for both tiers; the daemon
             # routes to portrait/illustration recipes by tier.
             params["characters"] = [f"pc:{pc_slug}"]
-            # `sd.snapshot.location` is free-form narrator prose
-            # (e.g. "Engine Bay", "Corridor Deck Three"), not a
-            # `where:<slug>` ref. The daemon's PromptComposer rejects
-            # non-`where:` location refs at PlaceCatalog.get(). Until the
-            # server tracks slug-aware locations, send empty so
-            # _resolve_location takes its by-design "transient location"
-            # path and the action prose (subject) carries the setting.
-            params["location"] = ""
             descriptor = _build_pc_descriptor(sd, pc_slug)
             if descriptor is not None:
                 params["pc_descriptor"] = descriptor
@@ -3326,6 +3416,11 @@ class WebSocketSessionHandler:
         # that may have gone stale across a reconnect.
         room_slug = self._room.slug if self._room is not None else None
         player_id = sd.player_id
+        # Playtest 2026-05-02: capture the dispatch-time turn_id so the
+        # render-completed handler can backfill the matching
+        # scrapbook_entries row's image_url (the live broadcast is
+        # ephemeral; replay-on-reload misses every IMAGE without this).
+        dispatch_turn_id = int(sd.snapshot.turn_manager.interaction)
 
         logger.info(
             "render.dispatched render_id=%s tier=%s subject=%r",
@@ -3367,6 +3462,7 @@ class WebSocketSessionHandler:
                 room_slug,
                 player_id,
                 legacy_queue,
+                dispatch_turn_id,
             )
         )
         # ADR-050 — record the dispatch *after* the task is created so the
@@ -3538,6 +3634,7 @@ class WebSocketSessionHandler:
         room_slug: str | None,
         player_id: str,
         legacy_queue: asyncio.Queue[object] | None,
+        dispatch_turn_id: int,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
         enqueues an IMAGE message or logs a failure. Never raises; any
@@ -3808,6 +3905,31 @@ class WebSocketSessionHandler:
                 logger.warning("render.outbound_queue_full render_id=%s", render_id)
                 return
             recipients_count = 1
+
+        # Playtest 2026-05-02: persist the URL into the matching
+        # scrapbook_entries row so `slug_connect.replay` can JOIN it back
+        # into the SCRAPBOOK_ENTRY payload on reconnect. The IMAGE
+        # broadcast above is ephemeral; without this UPDATE every browser
+        # reload turns 1/3 of the scrapbook into placeholder cards.
+        from sidequest.server.emitters import update_scrapbook_image_url
+
+        scrapbook_updated = update_scrapbook_image_url(
+            self,
+            dispatch_turn_id,
+            served_url,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "scrapbook",
+                "op": "image_url_backfilled",
+                "render_id": render_id,
+                "turn_id": dispatch_turn_id,
+                "url": served_url,
+                "row_updated": scrapbook_updated,
+            },
+            component="scrapbook",
+        )
 
         logger.info(
             "render.completed render_id=%s url=%s elapsed_ms=%d recipients=%d broadcast=%s",
