@@ -8,6 +8,15 @@ from pathlib import Path
 import pytest
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-snapshots",
+        action="store_true",
+        default=False,
+        help="Refresh recorded SVG snapshots in tests/orbital/snapshots/.",
+    )
+
+
 @pytest.fixture(scope="session")
 def content_dir() -> Path:
     """Path to the sidequest-content repo (genre packs, worlds)."""
