@@ -191,6 +191,15 @@ def _attach_body_id(elem: svgwrite.base.BaseElement, body_id: str) -> svgwrite.b
     return elem
 
 
+def _drillable_body_ids(orbits: OrbitsConfig) -> set[str]:
+    """Bodies that have at least one child — eligible for cluster-glyph drill-in."""
+    return {
+        bid
+        for bid in orbits.bodies
+        if any(b.parent == bid for b in orbits.bodies.values())
+    }
+
+
 def _render_engraved_layer(
     orbits: OrbitsConfig,
     center_id: str,
@@ -199,6 +208,27 @@ def _render_engraved_layer(
 ) -> svgwrite.container.Group:
     g = svgwrite.container.Group(id="layer-engraved")
     center = orbits.bodies[center_id]
+
+    if center.parent is not None:
+        if center.parent not in orbits.bodies:
+            raise ValueError(
+                f"center {center_id!r} has parent {center.parent!r} not in bodies"
+            )
+        parent = orbits.bodies[center.parent]
+        parent_label = parent.label or center.parent.upper()
+        edge = svgwrite.container.Group()
+        edge.attribs["data-action"] = "drill_out"
+        edge.attribs["data-parent-id"] = center.parent
+        edge.add(
+            svgwrite.text.Text(
+                f"← {parent_label} SYSTEM",
+                insert=(-vp.half + 20, 0),
+                fill="yellow",
+                font_family="monospace",
+                font_size=10,
+            )
+        )
+        g.add(edge)
 
     g.add(_body_glyph(center, x=0, y=0, body_id=center_id))
     if center.label:
@@ -212,6 +242,8 @@ def _render_engraved_layer(
                 font_size=14,
             )
         )
+
+    drillable_ids = _drillable_body_ids(orbits)
 
     for body_id, body in orbits.bodies.items():
         if body.parent != center_id:
@@ -231,7 +263,36 @@ def _render_engraved_layer(
             )
         )
         x, y = _polar_to_cartesian(au, theta, vp.au_to_px)
-        g.add(_body_glyph(body, x=x, y=y, body_id=body_id))
+        if body_id in drillable_ids:
+            cluster = svgwrite.container.Group()
+            cluster.attribs["data-action"] = f"drill_in:{body_id}"
+            cluster.attribs["data-body-id"] = body_id
+            cluster.add(
+                svgwrite.shapes.Circle(
+                    center=(x, y),
+                    r=8,
+                    fill="none",
+                    stroke="yellow",
+                    stroke_dasharray="2,2",
+                    stroke_width=0.6,
+                )
+            )
+            cluster.add(_body_glyph(body, x=x, y=y, body_id=body_id))
+            child_count = sum(
+                1 for c in orbits.bodies.values() if c.parent == body_id
+            )
+            cluster.add(
+                svgwrite.text.Text(
+                    f"+{child_count}",
+                    insert=(x + 14, y + 4),
+                    fill="yellow",
+                    font_family="monospace",
+                    font_size=8,
+                )
+            )
+            g.add(cluster)
+        else:
+            g.add(_body_glyph(body, x=x, y=y, body_id=body_id))
         if body.label:
             g.add(
                 svgwrite.text.Text(
