@@ -228,27 +228,76 @@ def ensure_render_mount(app: FastAPI, image_path: str) -> str | None:
     if url is not None:
         return url
 
-    # Walk up the path looking for a parent directory we can mount.
-    # Strategy: mount the daemon's output-dir root — typically two
-    # parents up (``.../sq-daemon-XXX/zimage/render_abc.png`` →
-    # ``.../sq-daemon-XXX/``). Walking from the file ensures we don't
-    # over-mount (e.g. ``/var/folders``).
-    candidate = resolved.parent
-    # Cap the climb at 4 levels — daemon paths are
-    # ``<tmp-root>/sq-daemon-XXX/zimage/render_abc.png`` which is 2
-    # parents from the file; cap protects against a malformed path
+    # Mount the daemon's output-dir root so URL scheme stays consistent
+    # across daemon restarts. Daemon writes
+    # ``<sq-daemon-XXX>/zimage/render_abc.png`` and the handshake-time
+    # mount is at ``<sq-daemon-XXX>/`` — yielding URLs of the form
+    # ``/renders/zimage/<file>``. Walk the resolved path until we find a
+    # ``sq-daemon-*`` ancestor; register THAT (not the immediate parent)
+    # so the new mount produces the same URL scheme as the original.
+    # Cap the walk at 6 levels — protects against a malformed path
     # walking us up to ``/``.
-    for _ in range(4):
-        try:
-            register_root(app, candidate)
+    daemon_root: Path | None = None
+    candidate = resolved.parent
+    for _ in range(6):
+        if candidate.name.startswith("sq-daemon-"):
+            daemon_root = candidate
             break
+        if candidate.parent == candidate:  # reached filesystem root
+            break
+        candidate = candidate.parent
+    if daemon_root is None:
+        # Fallback: register the immediate parent directory. Loses URL
+        # scheme symmetry with the original handshake mount but at least
+        # the new render is reachable.
+        try:
+            register_root(app, resolved.parent)
         except FileNotFoundError:
-            candidate = candidate.parent
-            continue
+            return None
     else:
-        return None
+        try:
+            register_root(app, daemon_root)
+        except FileNotFoundError:
+            return None
 
     return url_for_path(app, image_path)
+
+
+def register_daemon_temp_orphans(app: FastAPI, temp_parent: str | os.PathLike[str]) -> int:
+    """Walk ``temp_parent`` for ``sq-daemon-*`` subdirectories and
+    register each one as a render-asset root. Used at server startup so
+    URLs from prior daemon processes continue to resolve as long as the
+    OS hasn't reaped the temp dirs.
+
+    Returns the number of *new* roots registered (idempotent — already-
+    known roots are skipped). Logs each registration.
+    """
+    parent = _resolve(temp_parent)
+    if not parent.is_dir():
+        return 0
+    registered = 0
+    for child in parent.iterdir():
+        if not child.is_dir():
+            continue
+        if not child.name.startswith("sq-daemon-"):
+            continue
+        try:
+            if register_root(app, child):
+                registered += 1
+        except (FileNotFoundError, OSError) as exc:
+            logger.warning(
+                "render_assets.orphan_scan_skipped dir=%s error=%s",
+                child,
+                exc,
+            )
+            continue
+    if registered > 0:
+        logger.info(
+            "render_assets.orphan_scan_complete parent=%s new_roots=%d",
+            parent,
+            registered,
+        )
+    return registered
 
 
 def _publish_remount(root: Path, *, source: str, first: bool) -> None:
