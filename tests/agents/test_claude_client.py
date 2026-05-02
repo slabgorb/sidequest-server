@@ -78,7 +78,11 @@ def make_spawn_fn(
 
 
 class FakeStreamingProcess:
-    """FakeProcess variant that emits stdout line-by-line for streaming tests."""
+    """FakeProcess variant that emits stdout line-by-line for streaming tests.
+
+    returncode starts as None (like a live subprocess) and is set to the
+    configured exit code by wait(), matching asyncio.subprocess.Process semantics.
+    """
 
     def __init__(
         self,
@@ -88,7 +92,8 @@ class FakeStreamingProcess:
         stderr: bytes = b"",
     ) -> None:
         self._lines = lines
-        self.returncode = returncode
+        self._final_returncode = returncode
+        self.returncode: int | None = None  # None until wait() is called
         self._per_line_delay = per_line_delay
         self._stderr = stderr
         self._killed = False
@@ -114,7 +119,8 @@ class FakeStreamingProcess:
         self._killed = True
 
     async def wait(self) -> int:
-        return self.returncode
+        self.returncode = self._final_returncode
+        return self._final_returncode
 
 
 def make_streaming_spawn_fn(

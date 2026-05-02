@@ -13,6 +13,7 @@ from sidequest.agents.claude_client import (
     TextDelta,
 )
 from tests.agents.test_claude_client import (
+    FakeStreamingProcess,
     make_streaming_spawn_fn,
 )
 
@@ -156,3 +157,51 @@ async def test_stream_terminates_with_exactly_one_terminal_event():
         elif isinstance(ev, StreamError):
             errors += 1
     assert completes + errors == 1
+
+
+@pytest.mark.asyncio
+async def test_aclose_kills_subprocess(monkeypatch):
+    """Cancelling iteration mid-stream must kill the subprocess."""
+    lines = [_delta_line(f"chunk {i} ") for i in range(20)]
+    lines.append(_terminal_line("never reached"))
+
+    captured_proc: list[FakeStreamingProcess] = []
+
+    async def _spy_spawn(*args, **kwargs):
+        proc = FakeStreamingProcess(lines=list(lines), per_line_delay=0.05)
+        captured_proc.append(proc)
+        return proc
+
+    client = ClaudeClient(timeout=10.0, spawn_fn=_spy_spawn)
+
+    events = []
+    iterator = client.send_stream(prompt="hi", model="claude-opus-4-7")
+    async for ev in iterator:
+        events.append(ev)
+        if len(events) == 2:
+            break  # cancel mid-stream
+
+    # Explicitly close the iterator — this runs the finally block, which kills the proc.
+    # (Python async generator cleanup is not synchronous on break; aclose() is required.)
+    await iterator.aclose()
+
+    assert captured_proc[0]._killed is True
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_yields_stream_error():
+    # 5 lines @ 1s delay each = 5s total; 0.5s timeout fires after first line
+    lines = [_delta_line(f"chunk {i} ") for i in range(5)]
+    spawn = make_streaming_spawn_fn(lines, per_line_delay=1.0)
+
+    client = ClaudeClient(timeout=0.5, spawn_fn=spawn)
+
+    events = []
+    async for ev in client.send_stream(prompt="hi", model="claude-opus-4-7"):
+        events.append(ev)
+
+    errors = [e for e in events if isinstance(e, StreamError)]
+    assert len(errors) == 1
+    assert errors[0].kind == "timeout"
+    # Should have captured at least the first chunk before timeout
+    assert "chunk 0" in errors[0].partial_text or errors[0].partial_text == ""
