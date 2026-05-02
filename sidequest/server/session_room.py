@@ -7,17 +7,26 @@ and re-seat).
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 import sidequest.telemetry.watcher_hub as _hub
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
+from sidequest.orbital.loader import (
+    OrbitalContent,
+    OrbitalContentMissingError,
+    load_orbital_content,
+)
 from sidequest.server.session import Session
+
+_log = logging.getLogger(__name__)
 
 # Imported lazily inside the typing block to avoid an import cycle —
 # Orchestrator's module imports from sidequest.game (transitively),
@@ -146,6 +155,7 @@ class SessionRoom:
         *,
         snapshot: GameSnapshot,
         store: SqliteStore,
+        world_dir: Path | None = None,
     ) -> None:
         """Bind canonical snapshot + store to the room. Idempotent.
 
@@ -154,13 +164,34 @@ class SessionRoom:
         existing binding via the ``snapshot`` / ``store`` properties and
         do not call ``bind_world`` themselves; this idempotency is
         defense for any path that does retry the bind.
+
+        ``world_dir`` is the resolved path to the bound world. When
+        provided, attempts to load the orbital tier (``orbits.yaml`` +
+        optional ``chart.yaml``) and exposes it via
+        ``room.session.orbital_content``. Worlds without an orbital
+        tier (no ``orbits.yaml``) bind cleanly with
+        ``orbital_content=None``; malformed orbital data fails loud.
         """
+        orbital_content: OrbitalContent | None = None
+        if world_dir is not None:
+            try:
+                orbital_content = load_orbital_content(world_dir)
+            except OrbitalContentMissingError:
+                # Orbital tier is optional — caverns_and_claudes,
+                # victoria, etc. have no orbits.yaml. Bind without
+                # orbital content; chart UI will not be available.
+                orbital_content = None
+                _log.debug(
+                    "session.no_orbital_tier slug=%s world_dir=%s",
+                    self.slug,
+                    world_dir,
+                )
         with self._lock:
             if self._snapshot is not None:
                 return
             self._snapshot = snapshot
             self._store = store
-            self._session = Session(snapshot)
+            self._session = Session(snapshot, orbital_content=orbital_content)
 
     @property
     def snapshot(self) -> GameSnapshot | None:

@@ -465,6 +465,12 @@ class GameSnapshot(BaseModel):
         ),
     )
 
+    # Party orbital location (orbital map Task 15). Body id from
+    # the world's orbits.yaml; distinct from ``location`` which is a
+    # free-text place name used in narrator prompts. None when the
+    # world has no orbital tier or the party hasn't been placed yet.
+    party_body_id: str | None = None
+
     # Session metadata
     last_saved_at: datetime | None = None
 

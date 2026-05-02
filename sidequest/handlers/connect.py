@@ -281,6 +281,10 @@ class ConnectHandler:
             try:
                 loader = GenreLoader(search_paths=session._search_paths)
                 genre_pack = loader.load(row.genre_slug)
+                # World directory used by orbital-tier loader at room
+                # bind time. ``loader.find`` raises if the pack is gone,
+                # but the ``loader.load`` above already validated it.
+                world_dir = loader.find(row.genre_slug) / "worlds" / row.world_slug
             except Exception as exc:
                 logger.error(
                     "session.genre_load_failed genre=%s slug=%s error=%s",
@@ -449,7 +453,7 @@ class ConnectHandler:
                 # room BEFORE the rename-save below. Idempotent — if a peer
                 # got here first, our load is discarded and we observe the
                 # already-bound snapshot.
-                room.bind_world(snapshot=snapshot, store=store)
+                room.bind_world(snapshot=snapshot, store=store, world_dir=world_dir)
                 # All subsequent reads must come from the canonical room
                 # binding (which may differ from our local ``snapshot`` if
                 # we lost the bind race).
@@ -487,7 +491,7 @@ class ConnectHandler:
                 store.init_session(row.genre_slug, row.world_slug)
                 # ADR-037 Python port: bind the fresh snapshot to the room
                 # so the second-connect handler observes the same object.
-                room.bind_world(snapshot=snapshot, store=store)
+                room.bind_world(snapshot=snapshot, store=store, world_dir=world_dir)
                 snapshot = room.snapshot  # type: ignore[assignment]
                 has_character = False
                 logger.info(
