@@ -55,6 +55,7 @@ from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.protocol.messages import (
     ConfrontationMessage,
     ConfrontationPayload,
+    NarrationDelta,
     NarrationMessage,
     ScrapbookEntryMessage,
     ScrapbookEntryPayload,
@@ -137,6 +138,9 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "CONFRONTATION": ConfrontationMessage,
     "SECRET_NOTE": SecretNoteMessage,
     "SCRAPBOOK_ENTRY": ScrapbookEntryMessage,
+    # Ephemeral streaming delta — NOT event-sourced, NOT replayed on reconnect.
+    # Registered here for protocol-catalog completeness only.
+    "narration.delta": NarrationDelta,
 }
 
 # Kinds persisted to the events table by side-channel writers (e.g.
@@ -223,8 +227,6 @@ def _rename_resumed_character_if_uuid(
             character.core.name = display_name
             renamed = True
     return renamed
-
-
 
 
 def _build_pc_descriptor(sd: _SessionData, pc_slug: str) -> dict | None:
@@ -538,8 +540,6 @@ class _SessionData:
 # ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
