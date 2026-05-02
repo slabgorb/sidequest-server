@@ -68,3 +68,84 @@ def test_extract_terminal_metadata_handles_missing_usage():
     assert meta.input_tokens is None
     assert meta.output_tokens is None
     assert meta.session_id is None
+
+
+# ---------------------------------------------------------------------------
+# Fixture-driven integration tests — locked against real `claude -p --output-format stream-json --verbose` output
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+FIXTURE = Path(__file__).parent / "fixtures" / "claude_stream_sample.ndjson"
+
+
+def _load_events() -> list[dict]:
+    events = []
+    with FIXTURE.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                # Skip non-JSON lines (e.g., stderr leaked into stdout)
+                continue
+    return events
+
+
+def test_real_fixture_yields_at_least_one_text_delta():
+    events = _load_events()
+    deltas = [extract_text_delta(e) for e in events]
+    text_chunks = [d for d in deltas if d is not None]
+    assert len(text_chunks) > 0
+    # Concatenated chunks should contain "hello" (case-insensitive)
+    assert "hello" in "".join(text_chunks).lower()
+
+
+def test_real_fixture_has_exactly_one_terminal_event():
+    events = _load_events()
+    terminals = [e for e in events if is_terminal_event(e)]
+    assert len(terminals) == 1
+
+
+def test_real_fixture_terminal_metadata_has_usage():
+    events = _load_events()
+    [terminal] = [e for e in events if is_terminal_event(e)]
+    meta = extract_terminal_metadata(terminal)
+    assert meta.input_tokens is not None
+    assert meta.output_tokens is not None
+    assert meta.full_text != ""
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tests flagged by prior reviewer
+# ---------------------------------------------------------------------------
+
+
+def test_extract_text_delta_joins_multiple_text_blocks():
+    multi_block = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Hello "},
+                {"type": "text", "text": "world."},
+            ],
+        },
+    }
+    assert extract_text_delta(multi_block) == "Hello world."
+
+
+def test_extract_text_delta_returns_none_for_content_with_no_text_blocks():
+    tool_only = {
+        "type": "assistant",
+        "message": {"content": [{"type": "tool_use", "id": "x", "name": "y"}]},
+    }
+    assert extract_text_delta(tool_only) is None
+
+
+def test_extract_terminal_metadata_handles_missing_result_field():
+    no_result = {"type": "result"}
+    meta = extract_terminal_metadata(no_result)
+    assert meta.full_text == ""
