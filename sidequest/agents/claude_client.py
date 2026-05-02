@@ -17,7 +17,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -533,6 +533,148 @@ class ClaudeClient:
         start = time.monotonic()
         proc = await self._spawn_subprocess(args, env)
         return await self._collect_response(proc, span, start)
+
+    async def _iterate_stream(
+        self,
+        proc: Any,
+        span: object,
+        start: float,
+    ) -> AsyncIterator[StreamEvent]:
+        """Consume the subprocess stdout as NDJSON events; yield StreamEvents.
+
+        Always terminates with exactly one StreamComplete or StreamError.
+        Cancel-safety (kill subprocess on aclose) and timeout enforcement
+        are added in Task 6.
+        """
+        from sidequest.agents.claude_stream_parser import (
+            extract_terminal_metadata,
+            extract_text_delta,
+            is_terminal_event,
+        )
+
+        accumulated = ""
+        terminal_meta = None  # TerminalMetadata | None
+
+        async for raw_line in proc.stdout:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("claude_cli.stream.malformed_line line=%r", line[:200])
+                continue
+
+            delta_text = extract_text_delta(event)
+            if delta_text is not None:
+                accumulated += delta_text
+                yield TextDelta(text=delta_text)
+                continue
+
+            if is_terminal_event(event):
+                terminal_meta = extract_terminal_metadata(event)
+                continue
+            # Unknown event kind — ignore, forward-compat.
+
+        await proc.wait()
+        elapsed = time.monotonic() - start
+        returncode = proc.returncode
+
+        if returncode != 0:
+            yield StreamError(
+                kind="subprocess_failed",
+                elapsed_seconds=elapsed,
+                partial_text=accumulated,
+                detail=f"claude CLI exited with code {returncode}",
+                exit_code=returncode,
+            )
+            return
+
+        if not accumulated and terminal_meta is None:
+            yield StreamError(
+                kind="empty",
+                elapsed_seconds=elapsed,
+                partial_text="",
+                detail="claude CLI returned no output",
+                exit_code=returncode,
+            )
+            return
+
+        if terminal_meta is None:
+            yield StreamComplete(
+                full_text=accumulated,
+                input_tokens=None,
+                output_tokens=None,
+                cache_creation_input_tokens=None,
+                cache_read_input_tokens=None,
+                session_id=None,
+                elapsed_seconds=elapsed,
+            )
+            return
+
+        yield StreamComplete(
+            full_text=terminal_meta.full_text or accumulated,
+            input_tokens=terminal_meta.input_tokens,
+            output_tokens=terminal_meta.output_tokens,
+            cache_creation_input_tokens=terminal_meta.cache_creation_input_tokens,
+            cache_read_input_tokens=terminal_meta.cache_read_input_tokens,
+            session_id=terminal_meta.session_id,
+            elapsed_seconds=elapsed,
+        )
+
+    async def send_stream(
+        self,
+        prompt: str,
+        model: str,
+        session_id: str | None = None,
+        system_prompt: str | None = None,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Streaming variant of send_with_session.
+
+        Spawns claude with --output-format stream-json, parses NDJSON line-by-line,
+        yields TextDelta events as they arrive. Terminates with StreamComplete
+        on success or StreamError on failure.
+        """
+        allowed = allowed_tools or []
+        env = env_vars or {}
+
+        with agent_call_session_span(
+            model=model, prompt_len=len(prompt), backend="claude-cli"
+        ) as span:
+            if not prompt.strip():
+                yield StreamError(
+                    kind="empty",
+                    elapsed_seconds=0.0,
+                    partial_text="",
+                    detail="empty prompt",
+                    exit_code=None,
+                )
+                return
+
+            args: list[str] = ["--model", model]
+            is_resume = session_id is not None
+            if is_resume and session_id:
+                args += ["--resume", session_id]
+            else:
+                new_id = str(uuid.uuid4())
+                args += ["--session-id", new_id]
+                if system_prompt:
+                    args += ["--system-prompt", system_prompt]
+
+            if allowed:
+                args.append("--allowedTools")
+                args.extend(allowed)
+
+            args += ["-p", prompt, "--output-format", "stream-json"]
+
+            process_env = self._build_env(env)
+            start = time.monotonic()
+            proc = await self._spawn_subprocess(args, process_env)
+
+            async for event in self._iterate_stream(proc, span, start):
+                yield event
 
 
 # ---------------------------------------------------------------------------
