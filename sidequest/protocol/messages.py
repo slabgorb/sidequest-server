@@ -37,6 +37,7 @@ from sidequest.protocol.models import (
     RolledStat,
     StateDelta,
 )
+from sidequest.protocol.orbital_intent import OrbitalIntent, OrbitalIntentResponse
 from sidequest.protocol.types import NonBlankString
 
 # ---------------------------------------------------------------------------
@@ -746,6 +747,26 @@ class DiceResultMessage(ProtocolBase):
     player_id: str = ""
 
 
+class OrbitalIntentMessage(ProtocolBase):
+    """GameMessage::OrbitalIntent — UI requests a chart render or scope change.
+
+    Payload is the discriminated ``OrbitalIntent`` root model — see
+    ``sidequest.protocol.orbital_intent`` for the kind-tagged union.
+    """
+
+    type: Literal[MessageType.ORBITAL_INTENT] = MessageType.ORBITAL_INTENT
+    payload: OrbitalIntent
+    player_id: str = ""
+
+
+class OrbitalChartMessage(ProtocolBase):
+    """GameMessage::OrbitalChart — server response carrying a rendered SVG."""
+
+    type: Literal[MessageType.ORBITAL_CHART] = MessageType.ORBITAL_CHART
+    payload: OrbitalIntentResponse
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -773,6 +794,8 @@ _Phase1Variant = Annotated[
     | DiceRequestMessage
     | DiceThrowMessage
     | DiceResultMessage
+    | OrbitalIntentMessage
+    | OrbitalChartMessage
     | YieldMessage,
     Field(discriminator="type"),
 ]

@@ -69,6 +69,11 @@ class MessageType(StrEnum):
     DISPATCH_PACKAGE = "DISPATCH_PACKAGE"
     NARRATOR_DIRECTIVE_USED = "NARRATOR_DIRECTIVE_USED"
     VERDICT_OVERRIDE = "VERDICT_OVERRIDE"
+    # Orbital chart UI (orbital-map plan Task 15). Inbound intent
+    # carries a discriminated OrbitalIntent payload; the server
+    # responds with an ORBITAL_CHART message carrying a fresh SVG.
+    ORBITAL_INTENT = "ORBITAL_INTENT"
+    ORBITAL_CHART = "ORBITAL_CHART"
 
 
 class NarratorVerbosity(StrEnum):
