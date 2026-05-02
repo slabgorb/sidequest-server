@@ -523,6 +523,66 @@ async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
 
 
 @pytest.mark.asyncio
+async def test_landscape_dispatch_strips_free_form_location(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Playtest 2026-05-02 fix: ``tier=landscape`` was the last dispatch
+    branch still forwarding ``sd.snapshot.location`` as free-form prose.
+    Every Coyote Star landscape render replied COMPOSE_FAILED because the
+    daemon's PlaceCatalog requires a ``where:<slug>`` ref. The fix hoists
+    the sanitize step above the per-tier branches so every tier honours
+    the documented contract: only ``where:`` refs survive into the
+    daemon request; anything else is dropped to ``""`` so the daemon's
+    by-design "transient location" path engages.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "render_landscape.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 4200,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()  # snapshot.location = "Tood's Dome — Nest Crack"
+    result = NarrationTurnResult(
+        narration="The dome opens.",
+        visual_scene=VisualScene(
+            subject="a high desert dome under brass-orrery skies",
+            tier="landscape",
+            mood="vast",
+            tags=["desert", "sky"],
+        ),
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["params"]
+    assert params["tier"] == "landscape"
+    assert params["location"] == "", (
+        "landscape must NOT forward free-form snapshot.location as a place "
+        "ref — daemon's PlaceCatalog rejects non-`where:` refs and replies "
+        "COMPOSE_FAILED. Pre-fix every landscape render in single-player "
+        "Coyote Star failed this way."
+    )
+
+
+@pytest.mark.asyncio
 async def test_render_skipped_when_flag_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

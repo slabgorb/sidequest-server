@@ -3259,12 +3259,43 @@ class WebSocketSessionHandler:
 
         render_id = provisional_render_id
         tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
+
+        # `sd.snapshot.location` is free-form narrator prose
+        # (e.g. "The Kestrel — Galley, Mid-Coast", "Engine Bay"), not a
+        # `where:<slug>` PlaceCatalog ref. The daemon's PromptComposer
+        # `_resolve_location` accepts an empty location (transient setting,
+        # subject prose carries it) and rejects anything else with
+        # ValueError → COMPOSE_FAILED. Sanitize once, centrally, before
+        # the per-tier branches: only true `where:<slug>` refs survive.
+        # Free-form prose is dropped to "" with a loud watcher event so
+        # the GM panel can see the contract gap (per CLAUDE.md "no silent
+        # fallbacks" + OTEL observability principle).
+        raw_location = (sd.snapshot.location or "").strip()
+        sanitized_location = (
+            raw_location if raw_location.startswith("where:") else ""
+        )
+        if raw_location and not sanitized_location:
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "location_dropped",
+                    "reason": "free_form_prose_no_catalog_ref",
+                    "raw_location": raw_location[:120],
+                    "tier": tier,
+                    "render_id": render_id,
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                },
+                component="render",
+                severity="info",
+            )
+
         params: dict[str, object] = {
             "tier": tier,
             "subject": visual.subject,
             "mood": visual.mood or "",
             "tags": list(visual.tags or []),
-            "location": sd.snapshot.location or "",
+            "location": sanitized_location,
             "narration": result.narration,
             "genre": sd.genre_slug,
             # Catalog-injected compose wiring (slice 1): the daemon scopes
@@ -3308,14 +3339,6 @@ class WebSocketSessionHandler:
             # the-wire field is `characters` for both tiers; the daemon
             # routes to portrait/illustration recipes by tier.
             params["characters"] = [f"pc:{pc_slug}"]
-            # `sd.snapshot.location` is free-form narrator prose
-            # (e.g. "Engine Bay", "Corridor Deck Three"), not a
-            # `where:<slug>` ref. The daemon's PromptComposer rejects
-            # non-`where:` location refs at PlaceCatalog.get(). Until the
-            # server tracks slug-aware locations, send empty so
-            # _resolve_location takes its by-design "transient location"
-            # path and the action prose (subject) carries the setting.
-            params["location"] = ""
             descriptor = _build_pc_descriptor(sd, pc_slug)
             if descriptor is not None:
                 params["pc_descriptor"] = descriptor
