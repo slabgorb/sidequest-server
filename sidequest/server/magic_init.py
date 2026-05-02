@@ -33,7 +33,12 @@ from pathlib import Path
 
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.magic_loader import LoaderError, load_world_magic
+from sidequest.magic.confrontations import (
+    ConfrontationLoaderError,
+    load_confrontations,
+)
 from sidequest.magic.state import MagicState
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,56 @@ def init_magic_state_for_session(
     # the canonical-snapshot model (room-owned shared world state).
     if snapshot.magic_state is None:
         state = MagicState.from_config(config)
+        # Phase 5 (Story 47-3): on first commit, also load the world's
+        # named magic confrontations. The file is optional — worlds
+        # without ``confrontations.yaml`` simply have an empty list, so
+        # the auto-fire evaluator (called inside ``apply_magic_working``)
+        # is a no-op for them.
+        #
+        # When the file exists but fails to load (malformed YAML, missing
+        # branch, schema error), this function follows the same
+        # graceful-degrade pattern as the magic.yaml LoaderError catch
+        # above: log at ERROR + emit a watcher event, then proceed with
+        # ``state.confrontations = []``. This is a deliberate design
+        # decision (chargen has already produced a character; refusing
+        # to confirm would orphan the commit), NOT compliance with
+        # CLAUDE.md "no silent fallback" — the subsystem visibly
+        # degrades, which is a fallback. The watcher event surfaces the
+        # degradation to the GM panel so it is not invisible. A
+        # follow-up story should consider promoting this to a hard
+        # failure once chargen rollback is wired.
+        confrontations_yaml = (
+            genre_pack_source_dir / "worlds" / world_slug / "confrontations.yaml"
+        )
+        if confrontations_yaml.exists():
+            try:
+                state.confrontations = load_confrontations(confrontations_yaml)
+            except ConfrontationLoaderError as conf_exc:
+                # Explicit reset — the comment above promises
+                # ``state.confrontations = []`` on this path; defends
+                # against any future code path that pre-populates the
+                # field on ``MagicState.from_config`` (Westley round 2
+                # comment-analyzer finding: comment claimed an explicit
+                # assignment that did not exist).
+                state.confrontations = []
+                logger.error(
+                    "magic.confrontations_init_failed world=%s yaml=%s error=%s",
+                    world_slug,
+                    confrontations_yaml,
+                    conf_exc,
+                )
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "magic_state",
+                        "op": "confrontations_load_failed",
+                        "world_slug": world_slug,
+                        "yaml": str(confrontations_yaml),
+                        "error": str(conf_exc),
+                    },
+                    component="magic",
+                    severity="error",
+                )
         snapshot.magic_state = state
         first_commit = True
     else:

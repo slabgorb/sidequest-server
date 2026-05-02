@@ -185,17 +185,20 @@ def test_message_type_yield_wire_string() -> None:
 
 
 def test_message_type_complete_count() -> None:
-    """All 41 GameMessage variants must be represented.
+    """All 44 GameMessage variants must be represented.
 
     Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
     Group D Task 7 reserved DISPATCH_PACKAGE, NARRATOR_DIRECTIVE_USED,
     VERDICT_OVERRIDE for corpus going-forward capture; bumped 38 → 41.
     Task 23 (dual-track momentum Phase 3) added YIELD; bumped 41 → 42.
     Cartography removal 2026-04-28 dropped MAP_UPDATE; back to 41.
+    Voice protocol additions (VOICE_SIGNAL, VOICE_TEXT) bumped 41 → 43.
+    Story 47-3 added CONFRONTATION_OUTCOME (Phase 5 reveal dispatch);
+    bumped 43 → 44.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 41
+    assert len(MessageType) == 44
 
 
 # ===========================================================================

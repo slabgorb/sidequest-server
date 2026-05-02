@@ -33,6 +33,10 @@ class MessageType(StrEnum):
     TURN_STATUS = "TURN_STATUS"
     PARTY_STATUS = "PARTY_STATUS"
     CONFRONTATION = "CONFRONTATION"
+    # Phase 5 (Story 47-3): magic-confrontation outcome dispatch. Carries
+    # the resolved branch + mandatory_outputs so the client overlay
+    # surfaces the reveal panel and the LedgerPanel updates.
+    CONFRONTATION_OUTCOME = "CONFRONTATION_OUTCOME"
     RENDER_QUEUED = "RENDER_QUEUED"
     IMAGE = "IMAGE"
     AUDIO_CUE = "AUDIO_CUE"

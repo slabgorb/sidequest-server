@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from sidequest.magic.confrontations import ConfrontationDefinition
 from sidequest.magic.models import LedgerBarSpec, MagicWorking, WorldMagicConfig
 
 _log = logging.getLogger(__name__)
@@ -101,6 +102,21 @@ class MagicState(BaseModel):
     # Ledger registry. Dict-key serialized for json compat.
     ledger: dict[str, LedgerBar] = Field(default_factory=dict)
     working_log: list[WorkingRecord] = Field(default_factory=list)
+    # Phase 5 (Story 47-3): named confrontations loaded from
+    # ``worlds/<world>/confrontations.yaml`` at session init. The
+    # auto-fire evaluator + outcome dispatcher both read this list.
+    confrontations: list[ConfrontationDefinition] = Field(default_factory=list)
+    # Phase 5: per-actor innate ``control_tier`` counter, bumped by the
+    # ``control_tier_advance`` mandatory output. Stored on MagicState
+    # rather than the character sheet for v1 — see plan §5.4.
+    control_tier: dict[str, int] = Field(default_factory=dict)
+    # Phase 5: queue of status promotions emitted by mandatory_outputs
+    # (status_add_scratch / status_add_wound / status_add_scar). The
+    # narration_apply pipeline drains this list into ``Character.core.statuses``
+    # at outcome resolution; storing it here keeps ``apply_mandatory_outputs``
+    # observable in MagicState dumps without coupling it to a specific
+    # snapshot character lookup.
+    pending_status_promotions: list[dict[str, str]] = Field(default_factory=list)
 
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:

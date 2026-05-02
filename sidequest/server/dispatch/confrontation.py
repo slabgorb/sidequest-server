@@ -2,6 +2,11 @@
 
 Port of sidequest-api/crates/sidequest-server/src/dispatch/response.rs
 confrontation-def resolution and payload construction. Story 3.4.
+
+Story 47-3 (Phase 5) extends this with magic-confrontation outcome
+resolution: ``resolve_magic_confrontation`` looks up a magic
+confrontation by id, applies its branch's mandatory_outputs, and
+returns a CONFRONTATION_OUTCOME payload for the WebSocket dispatcher.
 """
 
 from __future__ import annotations
@@ -9,7 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 from sidequest.game.encounter import StructuredEncounter
+from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.rules import ConfrontationDef
+from sidequest.magic.confrontations import BranchName
+from sidequest.magic.outputs import apply_mandatory_outputs
 
 
 def find_confrontation_def(
@@ -61,6 +69,58 @@ def build_confrontation_payload(
         "genre_slug": genre_slug,
         "mood": mood,
         "active": not encounter.resolved,
+    }
+
+
+def resolve_magic_confrontation(
+    *,
+    snapshot: GameSnapshot,
+    confrontation_id: str,
+    branch: BranchName,
+    actor: str,
+) -> dict[str, Any] | None:
+    """Resolve a magic confrontation outcome — Story 47-3.
+
+    Looks up ``confrontation_id`` on ``snapshot.magic_state.confrontations``;
+    if found, applies the branch's mandatory_outputs via
+    ``apply_mandatory_outputs`` and returns a CONFRONTATION_OUTCOME
+    payload dict matching the UI's ``ConfrontationOutcome`` shape:
+
+        {
+          "confrontation_id": str,
+          "label": str,
+          "branch": "clear_win" | "pyrrhic_win" | "clear_loss" | "refused",
+          "mandatory_outputs": list[str],
+        }
+
+    Returns ``None`` when the confrontation is not in MagicState (not a
+    magic confrontation, or magic_state not loaded). Caller decides
+    whether to dispatch ``CONFRONTATION_OUTCOME`` over the WebSocket.
+
+    No silent fallback (CLAUDE.md): a confrontation that exists but
+    lacks the requested branch raises KeyError — that's a content bug
+    in confrontations.yaml, not a runtime fallback decision.
+    """
+    if snapshot.magic_state is None:
+        return None
+    magic_conf = next(
+        (c for c in snapshot.magic_state.confrontations if c.id == confrontation_id),
+        None,
+    )
+    if magic_conf is None:
+        return None
+    branch_def = magic_conf.outcomes[branch]
+    mandatory_outputs = list(branch_def.mandatory_outputs)
+    apply_mandatory_outputs(
+        snapshot=snapshot,
+        outputs=mandatory_outputs,
+        actor=actor,
+    )
+    return {
+        "confrontation_id": confrontation_id,
+        "label": magic_conf.label,
+        "branch": branch,
+        "mandatory_outputs": mandatory_outputs,
     }
 
 

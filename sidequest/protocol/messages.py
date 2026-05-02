@@ -525,6 +525,31 @@ class ConfrontationPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# ConfrontationOutcomePayload — Phase 5 (Story 47-3)
+# ---------------------------------------------------------------------------
+
+
+class ConfrontationOutcomePayload(ProtocolBase):
+    """Payload for CONFRONTATION_OUTCOME — drives the reveal panel.
+
+    Shape mirrors sidequest-ui/src/components/ConfrontationOverlay.tsx
+    ``ConfrontationOutcome``. Sent by the server when a magic
+    confrontation resolves; the UI mounts a branch-explicit reveal
+    panel above the actor portraits with the four-branch outcome
+    coloring + an itemized list of mandatory_outputs (Decision #9:
+    explicit panel callout at outcome time, always shown).
+    """
+
+    confrontation_id: str
+    label: str
+    branch: Literal["clear_win", "pyrrhic_win", "clear_loss", "refused"]
+    mandatory_outputs: list[str] = Field(default_factory=list)
+    # Mirrors ConfrontationPayload.seq — required for EventLog fan-out
+    # to peer sockets via ``_emit_event``.
+    seq: int = 0
+
+
+# ---------------------------------------------------------------------------
 # GamePausedPayload / GameResumedPayload
 # ---------------------------------------------------------------------------
 
@@ -631,6 +656,16 @@ class ConfrontationMessage(ProtocolBase):
 
     type: Literal[MessageType.CONFRONTATION] = MessageType.CONFRONTATION
     payload: ConfrontationPayload
+    player_id: str = ""
+
+
+class ConfrontationOutcomeMessage(ProtocolBase):
+    """GameMessage::ConfrontationOutcome wire representation (Story 47-3)."""
+
+    type: Literal[MessageType.CONFRONTATION_OUTCOME] = (
+        MessageType.CONFRONTATION_OUTCOME
+    )
+    payload: ConfrontationOutcomePayload
     player_id: str = ""
 
 
@@ -814,6 +849,7 @@ _Phase1Variant = Annotated[
     | SessionEventMessage
     | CharacterCreationMessage
     | ConfrontationMessage
+    | ConfrontationOutcomeMessage
     | TurnStatusMessage
     | PartyStatusMessage
     | ChapterMarkerMessage
