@@ -31,16 +31,35 @@ class ConfrontationLoaderError(RuntimeError):
 
 
 class ConfrontationBranch(BaseModel):
+    """One resolved outcome branch of a magic confrontation.
+
+    ``mandatory_outputs`` fire unconditionally when the branch is the
+    chosen resolution; ``optional_outputs`` are narrator hints that may
+    or may not fire depending on prose. Per design Decision #8, every
+    branch must declare at least one mandatory_output (enforced at
+    pydantic validation time via ``min_length=1``).
+    """
+
     model_config = {"extra": "forbid"}
 
     mandatory_outputs: list[str] = Field(min_length=1)
     optional_outputs: list[str] = Field(default_factory=list)
 
 
-_BranchName = Literal["clear_win", "pyrrhic_win", "clear_loss", "refused"]
+BranchName = Literal["clear_win", "pyrrhic_win", "clear_loss", "refused"]
 
 
 class ConfrontationDefinition(BaseModel):
+    """A named magic confrontation loaded from ``confrontations.yaml``.
+
+    Each definition wires a confrontation id (e.g. ``the_bleeding_through``)
+    to its plugin tie-ins, optional auto-fire trigger, four-branch
+    outcome catalog, and resource pool. ``once_per_arc`` suppresses
+    repeat firings within an arc; ``auto_fire`` plus ``auto_fire_trigger``
+    drives the threshold-crossing evaluator
+    (``evaluate_auto_fire_triggers``).
+    """
+
     model_config = {"extra": "forbid"}
 
     id: str
@@ -52,13 +71,13 @@ class ConfrontationDefinition(BaseModel):
     rounds: int
     resource_pool: dict[str, str]
     description: str
-    outcomes: dict[_BranchName, ConfrontationBranch]
+    outcomes: dict[BranchName, ConfrontationBranch]
 
     @field_validator("outcomes")
     @classmethod
     def all_four_branches_present(
-        cls, outcomes: dict[_BranchName, ConfrontationBranch]
-    ) -> dict[_BranchName, ConfrontationBranch]:
+        cls, outcomes: dict[BranchName, ConfrontationBranch]
+    ) -> dict[BranchName, ConfrontationBranch]:
         required = {"clear_win", "pyrrhic_win", "clear_loss", "refused"}
         missing = required - set(outcomes.keys())
         if missing:

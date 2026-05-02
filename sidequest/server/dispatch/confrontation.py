@@ -11,14 +11,13 @@ returns a CONFRONTATION_OUTCOME payload for the WebSocket dispatcher.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.rules import ConfrontationDef
+from sidequest.magic.confrontations import BranchName
 from sidequest.magic.outputs import apply_mandatory_outputs
-
-_BranchName = Literal["clear_win", "pyrrhic_win", "clear_loss", "refused"]
 
 
 def find_confrontation_def(
@@ -77,7 +76,7 @@ def resolve_magic_confrontation(
     *,
     snapshot: GameSnapshot,
     confrontation_id: str,
-    branch: _BranchName,
+    branch: BranchName,
     actor: str,
 ) -> dict[str, Any] | None:
     """Resolve a magic confrontation outcome — Story 47-3.

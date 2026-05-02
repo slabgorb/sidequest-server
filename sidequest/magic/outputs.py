@@ -160,28 +160,6 @@ def _h_hegemony_heat_decrement(snapshot: GameSnapshot, actor: str, ctx: OutputCo
     )
 
 
-def _h_lore_revealed(snapshot: GameSnapshot, actor: str, ctx: OutputContext) -> None:
-    """Mint a LoreFragment via existing minting machinery.
-
-    v1 placeholder: the lore-mint integration is wired in Phase 6 with
-    the cliché-judge pass. The output ID is registered here so a
-    Phase 5 confrontation that emits ``lore_revealed`` does not raise
-    OutputUnknownError; the actual mint is no-op until Phase 6 lands.
-    """
-    return
-
-
-def _h_item_acquired(snapshot: GameSnapshot, actor: str, ctx: OutputContext) -> None:
-    """Add an item to the actor's inventory.
-
-    v1 placeholder: the inventory + per-item bar minting integration is
-    wired in Phase 6. The output ID is registered now so confrontations
-    that emit ``item_acquired`` (the_salvage clear_win, etc.) do not
-    raise OutputUnknownError.
-    """
-    return
-
-
 def _h_sanity_floor_lowered(snapshot: GameSnapshot, actor: str, ctx: OutputContext) -> None:
     _shift_bar(snapshot, bar_id="sanity", owner=actor, amount=-SANITY_FLOOR_LOWERED_DEFAULT)
 
@@ -225,11 +203,16 @@ OUTPUT_HANDLERS: dict[str, OutputHandler] = {
     "status_add_wound": _h_status_add_wound,
     "status_add_scar": _h_status_add_scar,
     "control_tier_advance": _h_control_tier_advance,
-    "lore_revealed": _h_lore_revealed,
-    "lore_revealed_major": _h_lore_revealed,
-    "item_acquired": _h_item_acquired,
-    "item_acquired_alien": _h_item_acquired,
-    "item_acquired_with_low_bond": _h_item_acquired,
+    # Phase 6 (lore + item) integrations. Registered as _noop so
+    # confrontations that emit these IDs do not raise OutputUnknownError;
+    # the apply_mandatory_outputs wrapper still emits a watcher event
+    # per output, so the GM panel sees the firing even without a v1
+    # side-effect.
+    "lore_revealed": _noop,
+    "lore_revealed_major": _noop,
+    "item_acquired": _noop,
+    "item_acquired_alien": _noop,
+    "item_acquired_with_low_bond": _noop,
     "item_history_increment": _noop,
     "bond_increment": _noop,
     "bond_decrement": _noop,

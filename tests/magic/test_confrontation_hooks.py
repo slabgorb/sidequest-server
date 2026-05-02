@@ -195,6 +195,59 @@ def test_sub_threshold_working_does_not_auto_fire(
     assert result.auto_fired == []
 
 
+def test_auto_fire_populates_pending_magic_auto_fires(
+    world_config: WorldMagicConfig,
+) -> None:
+    """Wire-first: each auto-fire stashes a CONFRONTATION payload on the snapshot.
+
+    The session handler drains ``pending_magic_auto_fires`` after the
+    apply pipeline returns and emits one CONFRONTATION WebSocket frame
+    per entry, mounting the overlay on each player's UI. Without the
+    stash, players never see the auto-fired confrontation in the
+    overlay (only OTEL on the GM panel).
+    """
+    from sidequest.game.session import GameSnapshot
+    from sidequest.magic.state import BarKey, MagicState
+    from sidequest.server.narration_apply import apply_magic_working
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    state.set_bar_value(
+        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
+    )
+    state.confrontations = [_bleeding_through()]
+
+    snapshot = GameSnapshot.model_construct(magic_state=state)
+    pre_count = len(snapshot.pending_magic_auto_fires)
+
+    apply_magic_working(
+        snapshot=snapshot,
+        patch_field={
+            "plugin": "innate_v1",
+            "mechanism": "condition",
+            "actor": "sira_mendes",
+            "costs": {"sanity": 0.10},
+            "domain": "psychic",
+            "narrator_basis": "auto-fire-stash test",
+            "flavor": "reflexive",
+            "consent_state": "involuntary",
+        },
+    )
+
+    assert len(snapshot.pending_magic_auto_fires) == pre_count + 1
+    payload = snapshot.pending_magic_auto_fires[-1]
+    assert payload["type"] == "the_bleeding_through"
+    assert payload["label"] == "The Bleeding-Through"
+    assert payload["category"] == "magic_confrontation"
+    assert payload["actors"] == [{"name": "sira_mendes", "role": "channeler"}]
+    assert payload["player_metric"]["name"] == "sanity"
+    # primary bar is sanity; bar value 0.35 → 3 in the 0-10 scale
+    assert payload["player_metric"]["current"] == 3
+    assert payload["player_metric"]["threshold"] == 10
+    assert payload["genre_slug"] == world_config.genre_slug
+    assert payload["active"] is True
+
+
 def test_auto_fire_emits_otel_span(
     world_config: WorldMagicConfig,
     captured_watcher_events: list[dict[str, Any]],

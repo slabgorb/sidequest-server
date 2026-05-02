@@ -371,6 +371,44 @@ class WebSocketSessionHandler:
 
         return emitters.emit_event(self, kind, payload_model)
 
+    def _dispatch_pending_magic_frames(self, snapshot: GameSnapshot) -> None:
+        """Phase 5 (Story 47-3): drain pending magic-confrontation queues.
+
+        ``apply_magic_working`` and ``_resolve_magic_confrontation_if_applicable``
+        populate ``snapshot.pending_magic_auto_fires`` (CONFRONTATION
+        starts) and ``snapshot.pending_magic_confrontation_outcome``
+        (the resolved branch + mandatory_outputs). Both are dispatched
+        here as outbound WebSocket frames; both fields are reset
+        afterwards so the next turn starts clean.
+
+        Frames are emitted via ``self._emit_event(...)`` rather than a
+        direct broadcast so they participate in the EventLog (durable
+        replay) and any per-recipient projection. Errors during
+        dispatch propagate — a broken outbound queue is loud per
+        CLAUDE.md.
+        """
+        # CONFRONTATION starts (one per auto-fire). The payload shape
+        # already matches ``ConfrontationPayload``; emit_event will
+        # dispatch it.
+        if snapshot.pending_magic_auto_fires:
+            from sidequest.protocol.messages import ConfrontationPayload
+
+            for raw in snapshot.pending_magic_auto_fires:
+                payload = ConfrontationPayload(**raw)
+                self._emit_event("CONFRONTATION", payload)
+            snapshot.pending_magic_auto_fires = []
+
+        # CONFRONTATION_OUTCOME (the reveal panel — Decision #9 calls
+        # this "explicit panel callout at outcome time, ALWAYS shown").
+        if snapshot.pending_magic_confrontation_outcome is not None:
+            from sidequest.protocol.messages import ConfrontationOutcomePayload
+
+            outcome_payload = ConfrontationOutcomePayload(
+                **snapshot.pending_magic_confrontation_outcome,
+            )
+            self._emit_event("CONFRONTATION_OUTCOME", outcome_payload)
+            snapshot.pending_magic_confrontation_outcome = None
+
     # ------------------------------------------------------------------
     # Scrapbook entry emission (pingpong 2026-04-26 [S3-REGRESSION])
     # ------------------------------------------------------------------
@@ -1774,6 +1812,15 @@ class WebSocketSessionHandler:
                         opposed_player_beat_id=opposed_player_beat_id,
                         opposed_player_actor=dice_actor,
                     )
+                    # Phase 5 (Story 47-3): drain magic-confrontation
+                    # outbound queues. ``narration_apply.apply_magic_working``
+                    # populates ``pending_magic_auto_fires`` (one CONFRONTATION
+                    # payload per auto-fire); ``_resolve_magic_confrontation_if_applicable``
+                    # populates ``pending_magic_confrontation_outcome``. Both
+                    # are dispatched as outbound WebSocket frames here so the
+                    # UI overlay mounts and the reveal panel surfaces in
+                    # production gameplay (not just in test harnesses).
+                    self._dispatch_pending_magic_frames(snapshot)
                     # Consume the pending outcome — one turn per roll.
                     if dice_outcome is not None and hasattr(sd, "pending_roll_outcome"):
                         sd.pending_roll_outcome = None

@@ -534,6 +534,17 @@ class GameSnapshot(BaseModel):
     # predate magic or on worlds without a magic config.
     magic_state: MagicState | None = None
 
+    # Phase 5 (Story 47-3): outbound magic-confrontation dispatch queue.
+    # Populated by ``narration_apply.apply_magic_working`` (one entry per
+    # auto-fire) and ``_resolve_magic_confrontation_if_applicable`` (the
+    # outcome resolution). Drained by the websocket session handler
+    # after ``_apply_narration_result_to_snapshot`` returns — each entry
+    # becomes one outbound ``CONFRONTATION`` or ``CONFRONTATION_OUTCOME``
+    # WebSocket frame. Both fields are reset to defaults after the
+    # handler dispatches.
+    pending_magic_auto_fires: list[dict] = Field(default_factory=list)
+    pending_magic_confrontation_outcome: dict | None = None
+
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route
     # an unbound player_id to chargen instead of handing them the first

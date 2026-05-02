@@ -146,8 +146,11 @@ def test_returns_pairs_of_definition_and_character(
     fired = evaluate_auto_fire_triggers(
         confs=confs, character_id="rux", bar_values={"sanity": 0.20}
     )
-    assert len(fired) >= 1
+    # The fixture has exactly one matching auto-fire (the_bleeding_through
+    # at sanity ≤ 0.40); pin == 1 to catch over-firing regressions.
+    assert len(fired) == 1
     conf, actor = fired[0]
     assert isinstance(conf, ConfrontationDefinition)
     assert isinstance(actor, str)
     assert actor == "rux"
+    assert conf.id == "the_bleeding_through"

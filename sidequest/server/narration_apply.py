@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
+    from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
 
 from sidequest.game.region_validation import (
@@ -27,6 +28,11 @@ from sidequest.game.session import (
 )
 from sidequest.genre.models.pack import GenrePack
 from sidequest.genre.models.rules import ResolutionMode
+from sidequest.magic.confrontations import (
+    BranchName,
+    evaluate_auto_fire_triggers,
+)
+from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 from sidequest.magic.models import Flag, MagicWorking
 from sidequest.magic.state import ApplyWorkingResult, ThresholdCrossingEvent
 from sidequest.magic.validator import validate as magic_validate
@@ -199,7 +205,9 @@ class MagicApplyResult:
 
     apply: ApplyWorkingResult
     flags: list[Flag]
-    auto_fired: list[tuple] = field(default_factory=list)
+    auto_fired: list[tuple["ConfrontationDefinition", str]] = field(  # noqa: F821 — forward ref resolved at runtime
+        default_factory=list,
+    )
 
     @property
     def crossings(self) -> list[ThresholdCrossingEvent]:
@@ -338,8 +346,6 @@ def apply_magic_working(*, snapshot: GameSnapshot, patch_field: dict) -> MagicAp
     # event so the GM panel sees the trigger engage; the caller iterates
     # ``result.auto_fired`` to dispatch CONFRONTATION_OUTCOME payloads
     # through the confrontation overlay route.
-    from sidequest.magic.confrontations import evaluate_auto_fire_triggers
-
     actor_prefix = f"character|{working.actor}|"
     actor_bar_values: dict[str, float] = {}
     for k, bar in snapshot.magic_state.ledger.items():
@@ -365,8 +371,77 @@ def apply_magic_working(*, snapshot: GameSnapshot, patch_field: dict) -> MagicAp
             },
             component="magic",
         )
+        # Phase 5 wire-first: synthesize a CONFRONTATION payload for
+        # each auto-fire so the UI overlay mounts. Magic confrontations
+        # do not flow through the StructuredEncounter beat-loop in v1
+        # (rounds=1 for the_bleeding_through; the narrator carries the
+        # round prose), so we hand-roll the minimum payload the
+        # ConfrontationOverlay needs. The payload is drained by the
+        # session handler after this turn's apply pipeline returns.
+        snapshot.pending_magic_auto_fires.append(
+            _build_magic_confrontation_payload(
+                conf=conf,
+                actor=character_id,
+                magic_state=snapshot.magic_state,
+            )
+        )
 
     return MagicApplyResult(apply=apply_result, flags=flags, auto_fired=auto_fired)
+
+
+def _build_magic_confrontation_payload(
+    *,
+    conf,  # ConfrontationDefinition
+    actor: str,
+    magic_state,
+) -> dict:
+    """Synthesize a CONFRONTATION payload for a magic-system auto-fire.
+
+    Magic confrontations don't have StructuredEncounter actors / beats;
+    they auto-fire and resolve in narrator prose, and the overlay's
+    role is to surface the *fact* of the confrontation + the four
+    outcome branches the narrator might select. Player and opponent
+    metrics map to the resource_pool primary/secondary; metric values
+    snapshot the actor's current bars (clamped to the 0-1 range as
+    integers in the UI's 0-10 scale).
+    """
+    primary = conf.resource_pool.get("primary", "primary")
+    secondary = conf.resource_pool.get("secondary", "tension")
+
+    def _bar_value(bar_id: str) -> float:
+        from sidequest.magic.state import BarKey
+
+        try:
+            return magic_state.get_bar(
+                BarKey(scope="character", owner_id=actor, bar_id=bar_id)
+            ).value
+        except KeyError:
+            return 0.0
+
+    primary_value = _bar_value(primary)
+    return {
+        "type": conf.id,
+        "label": conf.label,
+        "category": "magic_confrontation",
+        "actors": [{"name": actor, "role": "channeler"}],
+        "player_metric": {
+            "name": primary,
+            "current": int(primary_value * 10),
+            "starting": int(primary_value * 10),
+            "threshold": 10,
+        },
+        "opponent_metric": {
+            "name": secondary,
+            "current": 5,
+            "starting": 0,
+            "threshold": 10,
+        },
+        "beats": [],
+        "secondary_stats": None,
+        "genre_slug": magic_state.config.genre_slug,
+        "mood": "haunted",
+        "active": True,
+    }
 
 
 def _append_status_to_actor(
@@ -1579,15 +1654,15 @@ def _build_resolution_signal(enc: object) -> object:
     )
 
 
-# Phase 5 (Story 47-3): map encounter ``outcome`` strings (legacy from
-# the Rust port: "win", "loss", "refused", etc.) to the four-branch
-# ConfrontationDefinition outcome names. Conservative mapping: the
-# encounter system doesn't surface a separate "pyrrhic" axis in v1, so
-# wins map to clear_win and losses to clear_loss. Future work
-# (architect addendum §6) introduces secondary metrics that would let
-# the system tell pyrrhic apart from clear; for now the magic confrontation
-# narration carries that distinction in its prose layer rather than the
-# branch enum.
+# Phase 5 (Story 47-3): magic-confrontation outcome → branch mapping.
+# Conservative for ambiguous strings ('win', 'loss'): these flatten to
+# clear_win / clear_loss because the encounter system does not yet
+# surface a separate pyrrhic axis. Explicit 'pyrrhic_win' / 'pyrrhic'
+# strings are preserved when narrators or dispatch logic emits them,
+# so the four-branch enum is reachable end-to-end. Architect addendum
+# §6 is the slot for adding a secondary-metric pyrrhic detector later;
+# until then the magic-confrontation narration carries the pyrrhic
+# distinction in prose rather than dispatch metadata.
 _OUTCOME_TO_BRANCH = {
     "win": "clear_win",
     "clear_win": "clear_win",
@@ -1599,6 +1674,104 @@ _OUTCOME_TO_BRANCH = {
     "yield": "refused",
     "yielded": "refused",
 }
+
+
+def _drain_pending_status_promotions(*, snapshot: GameSnapshot) -> None:
+    """Move queued status promotions into ``Character.core.statuses``.
+
+    ``apply_mandatory_outputs`` queues entries onto
+    ``MagicState.pending_status_promotions`` rather than appending to
+    Character.core.statuses directly so the dispatcher stays decoupled
+    from the character roster (the magic state and the snapshot are
+    populated through different paths). This drainer runs at the
+    encounter-resolution seam alongside the CONFRONTATION_OUTCOME
+    dispatch, finds each promotion's actor on the snapshot, and
+    appends a Status with the queued severity + text.
+
+    Promotions whose actor is missing from the roster (NPC magic
+    confrontations, save-state races) are left in the queue and
+    surfaced through a single warning watcher event so the GM panel
+    sees the orphan rather than silently absorbing it.
+    """
+    if snapshot.magic_state is None:
+        return
+    state = snapshot.magic_state
+    if not state.pending_status_promotions:
+        return
+
+    from sidequest.game.status import Status, StatusSeverity
+
+    turn_num = (
+        snapshot.turn_manager.interaction
+        if hasattr(snapshot, "turn_manager")
+        else 0
+    )
+    encounter_type = snapshot.encounter.encounter_type if snapshot.encounter else None
+
+    remaining: list[dict] = []
+    for promotion in state.pending_status_promotions:
+        actor_name = promotion.get("actor", "")
+        text = promotion.get("text", "")
+        severity_str = promotion.get("severity", "")
+        target = next(
+            (c for c in snapshot.characters if c.core.name == actor_name),
+            None,
+        )
+        if target is None:
+            remaining.append(promotion)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "magic_state",
+                    "op": "status_promotion_orphaned",
+                    "actor": actor_name,
+                    "severity": severity_str,
+                    "reason": "actor not in snapshot.characters",
+                },
+                component="magic",
+                severity="warning",
+            )
+            continue
+        try:
+            severity = StatusSeverity(severity_str)
+        except ValueError:
+            remaining.append(promotion)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "magic_state",
+                    "op": "status_promotion_invalid_severity",
+                    "actor": actor_name,
+                    "severity": severity_str,
+                },
+                component="magic",
+                severity="warning",
+            )
+            continue
+        target.core.statuses.append(
+            Status(
+                text=text,
+                severity=severity,
+                absorbed_shifts=0,
+                created_turn=turn_num,
+                created_in_encounter=encounter_type,
+            )
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "status_added",
+                "actor": actor_name,
+                "text": text,
+                "severity": severity.value,
+                "source": "magic_confrontation_outcome",
+                "turn": turn_num,
+                "encounter_type": encounter_type,
+            },
+            component="encounter",
+        )
+    state.pending_status_promotions = remaining
 
 
 def _resolve_magic_confrontation_if_applicable(
@@ -1644,22 +1817,20 @@ def _resolve_magic_confrontation_if_applicable(
 
     from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 
+    # ``branch`` is constrained to the four-branch literal by the .get()
+    # lookup above (None-case returned earlier), so the cast is safe.
+    typed_branch = cast(BranchName, branch)
+
     payload = resolve_magic_confrontation(
         snapshot=snapshot,
         confrontation_id=encounter_type,
-        branch=branch,  # type: ignore[arg-type]
+        branch=typed_branch,
         actor=actor,
     )
     if payload is None:
         return
 
-    # The watcher event is the wire-first contract for the GM panel:
-    # without it Sebastien's mechanical-visibility lens cannot tell the
-    # confrontation outcome from narrator improvisation. The
-    # CONFRONTATION_OUTCOME WebSocket dispatch lands in a follow-up
-    # story (the room-handler integration), and reads ``payload`` off
-    # the watcher feed; for v1 the OTEL emission is the system of
-    # record.
+    # GM-panel watcher event — Sebastien's mechanical-visibility lens.
     _watcher_publish(
         "state_transition",
         {
@@ -1672,6 +1843,20 @@ def _resolve_magic_confrontation_if_applicable(
         },
         component="magic",
     )
+
+    # Stash the payload for the session handler to dispatch as a
+    # CONFRONTATION_OUTCOME WebSocket message. The handler clears the
+    # field after dispatch.
+    snapshot.pending_magic_confrontation_outcome = payload
+
+    # Drain pending_status_promotions into the actor's Character.core.statuses
+    # so the player's Status panel reflects the new Wound/Scar/Boon
+    # alongside the bar updates. Promotions for actors not in
+    # ``snapshot.characters`` (NPC magic confrontations, save-state
+    # races) stay queued; the handler can clear them or surface them as
+    # warnings.
+    if snapshot.magic_state is not None:
+        _drain_pending_status_promotions(snapshot=snapshot)
 
 
 @dataclass

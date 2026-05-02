@@ -102,7 +102,8 @@ def test_sanity_increment_credits_bar(coyote_snapshot) -> None:
     sanity = coyote_snapshot.magic_state.get_bar(
         BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity")
     )
-    assert sanity.value > 0.50
+    # Pin the exact post-increment value (default = 0.10).
+    assert sanity.value == pytest.approx(0.60)
 
 
 def test_unknown_output_raises(coyote_snapshot) -> None:
@@ -132,14 +133,8 @@ def test_multiple_outputs_all_apply(coyote_snapshot) -> None:
 
 
 def test_status_add_wound_records_promotion(coyote_snapshot) -> None:
-    """status_add_wound surfaces somewhere on the character/snapshot.
-
-    The exact storage location is a green-phase choice (Status list on
-    GameSnapshot, MagicState side-channel, etc.). The contract this test
-    asserts is: ``apply_mandatory_outputs(["status_add_wound"], ...)``
-    does *not* silently no-op — observable state changes.
-    """
-    pre_state = coyote_snapshot.magic_state.model_copy(deep=True)
+    """status_add_wound queues a Wound promotion for the actor."""
+    pre_count = len(coyote_snapshot.magic_state.pending_status_promotions)
 
     apply_mandatory_outputs(
         snapshot=coyote_snapshot,
@@ -148,23 +143,17 @@ def test_status_add_wound_records_promotion(coyote_snapshot) -> None:
         status_text="Bleeding through",
     )
 
-    # The handler must change *something* observable. We don't pin the
-    # exact field — just enforce that the call has an effect.
-    post_state = coyote_snapshot.magic_state
-    assert post_state.model_dump() != pre_state.model_dump(), (
-        "status_add_wound must record an observable state change "
-        "(no silent no-op)"
-    )
+    state = coyote_snapshot.magic_state
+    assert len(state.pending_status_promotions) == pre_count + 1
+    promotion = state.pending_status_promotions[-1]
+    assert promotion["actor"] == "sira_mendes"
+    assert promotion["severity"] == "Wound"
+    assert promotion["text"] == "Bleeding through"
 
 
 def test_control_tier_advance_records_increment(coyote_snapshot) -> None:
-    """control_tier_advance bumps the actor's innate control tier.
-
-    Storage location is implementer's choice (per plan §5.4: likely on
-    MagicState as a per-(actor, plugin) tier dict). Regardless, the
-    pre/post state must differ — not a silent no-op.
-    """
-    pre_state = coyote_snapshot.magic_state.model_copy(deep=True)
+    """control_tier_advance increments the actor's innate control_tier counter."""
+    pre_tier = coyote_snapshot.magic_state.control_tier.get("sira_mendes", 0)
 
     apply_mandatory_outputs(
         snapshot=coyote_snapshot,
@@ -172,9 +161,17 @@ def test_control_tier_advance_records_increment(coyote_snapshot) -> None:
         actor="sira_mendes",
     )
 
-    assert coyote_snapshot.magic_state.model_dump() != pre_state.model_dump(), (
-        "control_tier_advance must record an observable state change"
+    assert coyote_snapshot.magic_state.control_tier["sira_mendes"] == pre_tier + 1
+
+
+def test_control_tier_advance_twice_increments_twice(coyote_snapshot) -> None:
+    """Two control_tier_advance outputs in one call apply both increments."""
+    apply_mandatory_outputs(
+        snapshot=coyote_snapshot,
+        outputs=["control_tier_advance", "control_tier_advance"],
+        actor="sira_mendes",
     )
+    assert coyote_snapshot.magic_state.control_tier["sira_mendes"] == 2
 
 
 def test_world_scope_output_uses_world_owner(coyote_snapshot) -> None:
