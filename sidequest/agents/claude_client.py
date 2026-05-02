@@ -19,7 +19,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from sidequest.telemetry.spans import (
     agent_call_session_span,
@@ -132,6 +132,56 @@ class ClaudeResponse:
 
 
 # ---------------------------------------------------------------------------
+# Streaming event types — yielded from ClaudeClient.send_stream()
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEvent:
+    """Base for events yielded from ClaudeClient.send_stream()."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta(StreamEvent):
+    """An incremental chunk of assistant prose.
+
+    Concatenating all TextDelta.text values in stream order yields the
+    final response text.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamComplete(StreamEvent):
+    """Terminal event on success.
+
+    Drop-in metadata equivalent to ClaudeResponse — input_tokens,
+    output_tokens, session_id. Carries the accumulated full_text for
+    callers that want it without re-concatenating deltas.
+    """
+
+    full_text: str
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_creation_input_tokens: int | None
+    cache_read_input_tokens: int | None
+    session_id: str | None
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class StreamError(StreamEvent):
+    """Terminal event on failure. Stream cannot continue."""
+
+    kind: Literal["timeout", "subprocess_failed", "parse_error", "empty"]
+    elapsed_seconds: float
+    partial_text: str
+    detail: str
+    exit_code: int | None
+
+
+# ---------------------------------------------------------------------------
 # Default subprocess spawner
 # ---------------------------------------------------------------------------
 
@@ -235,9 +285,7 @@ class ClaudeClient:
 
         Passes --model <model> before -p <prompt>. Returns stdout on success.
         """
-        return await self._send_impl(
-            prompt, model=model, allowed_tools=[], extra_env={}
-        )
+        return await self._send_impl(prompt, model=model, allowed_tools=[], extra_env={})
 
     async def send_with_session(
         self,
