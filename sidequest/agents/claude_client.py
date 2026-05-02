@@ -17,9 +17,9 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from sidequest.telemetry.spans import (
     agent_call_session_span,
@@ -132,6 +132,56 @@ class ClaudeResponse:
 
 
 # ---------------------------------------------------------------------------
+# Streaming event types — yielded from ClaudeClient.send_stream()
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEvent:
+    """Base for events yielded from ClaudeClient.send_stream()."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta(StreamEvent):
+    """An incremental chunk of assistant prose.
+
+    Concatenating all TextDelta.text values in stream order yields the
+    final response text.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamComplete(StreamEvent):
+    """Terminal event on success.
+
+    Drop-in metadata equivalent to ClaudeResponse — input_tokens,
+    output_tokens, session_id. Carries the accumulated full_text for
+    callers that want it without re-concatenating deltas.
+    """
+
+    full_text: str
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_creation_input_tokens: int | None
+    cache_read_input_tokens: int | None
+    session_id: str | None
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class StreamError(StreamEvent):
+    """Terminal event on failure. Stream cannot continue."""
+
+    kind: Literal["timeout", "subprocess_failed", "parse_error", "empty"]
+    elapsed_seconds: float
+    partial_text: str
+    detail: str
+    exit_code: int | None
+
+
+# ---------------------------------------------------------------------------
 # Default subprocess spawner
 # ---------------------------------------------------------------------------
 
@@ -201,7 +251,7 @@ class ClaudeClient:
             supports_sessions=True,
             supports_tools=True,
             max_context_tokens=200_000,
-            supports_streaming=False,
+            supports_streaming=True,
         )
 
     # ------------------------------------------------------------------
@@ -235,9 +285,7 @@ class ClaudeClient:
 
         Passes --model <model> before -p <prompt>. Returns stdout on success.
         """
-        return await self._send_impl(
-            prompt, model=model, allowed_tools=[], extra_env={}
-        )
+        return await self._send_impl(prompt, model=model, allowed_tools=[], extra_env={})
 
     async def send_with_session(
         self,
@@ -351,25 +399,33 @@ class ClaudeClient:
         base.update(extra_env)
         return base
 
-    async def _run_subprocess(
+    async def _spawn_subprocess(
         self,
         args: list[str],
         env: dict[str, str] | None,
-        span: object,
-    ) -> ClaudeResponse:
-        """Spawn the subprocess and wait for completion with timeout."""
-        start = time.monotonic()
+    ) -> Any:
+        """Spawn the claude CLI subprocess, returning the process handle.
 
+        Caller is responsible for reading stdout/stderr and calling
+        proc.wait() / proc.kill() as appropriate.
+        """
         try:
-            proc = await self._spawn(
-                self._command_path,
-                *args,
-                env=env,
-            )
+            return await self._spawn(self._command_path, *args, env=env)
         except Exception as e:
             logger.error("Failed to spawn subprocess: %s", e)
             raise SubprocessFailed(exit_code=None, stderr=str(e)) from e
 
+    async def _collect_response(
+        self,
+        proc: Any,
+        span: object,
+        start: float,
+    ) -> ClaudeResponse:
+        """Wait for proc to finish, parse the JSON envelope, return ClaudeResponse.
+
+        Used by the synchronous send_*() entry points. The streaming
+        variant uses _iterate_stream() instead.
+        """
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(),
@@ -402,7 +458,21 @@ class ClaudeClient:
         if not trimmed:
             raise EmptyResponse()
 
-        # Parse JSON envelope from --output-format json
+        # Parse JSON envelope from --output-format json (existing logic moved verbatim)
+        return self._parse_json_envelope(trimmed, elapsed, span)
+
+    def _parse_json_envelope(
+        self,
+        trimmed: str,
+        elapsed: float,
+        span: object,
+    ) -> ClaudeResponse:
+        """Parse the JSON envelope returned by claude --output-format json.
+
+        Extracts token usage, session_id, and result text. Used by the
+        synchronous path only — the streaming path produces StreamComplete
+        directly from accumulated NDJSON events.
+        """
         input_tokens: int | None = None
         output_tokens: int | None = None
         response_session_id: str | None = None
@@ -452,6 +522,184 @@ class ClaudeClient:
             session_id=response_session_id,
             backend="claude-cli",
         )
+
+    async def _run_subprocess(
+        self,
+        args: list[str],
+        env: dict[str, str] | None,
+        span: object,
+    ) -> ClaudeResponse:
+        """Spawn + collect — kept as a thin wrapper for the synchronous path."""
+        start = time.monotonic()
+        proc = await self._spawn_subprocess(args, env)
+        return await self._collect_response(proc, span, start)
+
+    async def _iterate_stream(
+        self,
+        proc: Any,
+        span: object,
+        start: float,
+    ) -> AsyncIterator[StreamEvent]:
+        """Consume the subprocess stdout as NDJSON events; yield StreamEvents.
+
+        Always terminates with exactly one StreamComplete or StreamError.
+        On iterator cancellation (aclose / break / raise), the subprocess
+        is killed in the finally block.
+        """
+        from sidequest.agents.claude_stream_parser import (
+            extract_terminal_metadata,
+            extract_text_delta,
+            is_terminal_event,
+        )
+
+        accumulated = ""
+        terminal_meta = None  # TerminalMetadata | None
+
+        try:
+            try:
+                async with asyncio.timeout(self._timeout):
+                    async for raw_line in proc.stdout:
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.warning("claude_cli.stream.malformed_line line=%r", line[:200])
+                            continue
+
+                        delta_text = extract_text_delta(event)
+                        if delta_text is not None:
+                            accumulated += delta_text
+                            yield TextDelta(text=delta_text)
+                            continue
+
+                        if is_terminal_event(event):
+                            terminal_meta = extract_terminal_metadata(event)
+                            continue
+            except builtins.TimeoutError:
+                elapsed = time.monotonic() - start
+                yield StreamError(
+                    kind="timeout",
+                    elapsed_seconds=elapsed,
+                    partial_text=accumulated,
+                    detail=f"claude CLI timed out after {elapsed:.1f}s",
+                    exit_code=None,
+                )
+                return
+
+            await proc.wait()
+            elapsed = time.monotonic() - start
+            returncode = proc.returncode
+
+            if returncode != 0:
+                yield StreamError(
+                    kind="subprocess_failed",
+                    elapsed_seconds=elapsed,
+                    partial_text=accumulated,
+                    detail=f"claude CLI exited with code {returncode}",
+                    exit_code=returncode,
+                )
+                return
+
+            if not accumulated and terminal_meta is None:
+                yield StreamError(
+                    kind="empty",
+                    elapsed_seconds=elapsed,
+                    partial_text="",
+                    detail="claude CLI returned no output",
+                    exit_code=returncode,
+                )
+                return
+
+            if terminal_meta is None:
+                yield StreamComplete(
+                    full_text=accumulated,
+                    input_tokens=None,
+                    output_tokens=None,
+                    cache_creation_input_tokens=None,
+                    cache_read_input_tokens=None,
+                    session_id=None,
+                    elapsed_seconds=elapsed,
+                )
+                return
+
+            yield StreamComplete(
+                full_text=terminal_meta.full_text or accumulated,
+                input_tokens=terminal_meta.input_tokens,
+                output_tokens=terminal_meta.output_tokens,
+                cache_creation_input_tokens=terminal_meta.cache_creation_input_tokens,
+                cache_read_input_tokens=terminal_meta.cache_read_input_tokens,
+                session_id=terminal_meta.session_id,
+                elapsed_seconds=elapsed,
+            )
+        finally:
+            # Cancel-safety: if the consumer abandons us via aclose / break,
+            # the subprocess may still be alive. Reap it.
+            try:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+            except Exception:
+                pass
+
+    async def send_stream(
+        self,
+        prompt: str,
+        model: str,
+        session_id: str | None = None,
+        system_prompt: str | None = None,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Streaming variant of send_with_session.
+
+        Spawns claude with --output-format stream-json, parses NDJSON line-by-line,
+        yields TextDelta events as they arrive. Terminates with StreamComplete
+        on success or StreamError on failure.
+        """
+        allowed = allowed_tools or []
+        env = env_vars or {}
+
+        with agent_call_session_span(
+            model=model, prompt_len=len(prompt), backend="claude-cli"
+        ) as span:
+            if not prompt.strip():
+                yield StreamError(
+                    kind="empty",
+                    elapsed_seconds=0.0,
+                    partial_text="",
+                    detail="empty prompt",
+                    exit_code=None,
+                )
+                return
+
+            args: list[str] = ["--model", model]
+            is_resume = session_id is not None
+            if is_resume and session_id:
+                args += ["--resume", session_id]
+            else:
+                new_id = str(uuid.uuid4())
+                args += ["--session-id", new_id]
+                if system_prompt:
+                    args += ["--system-prompt", system_prompt]
+
+            if allowed:
+                args.append("--allowedTools")
+                args.extend(allowed)
+
+            args += ["-p", prompt, "--output-format", "stream-json"]
+
+            process_env = self._build_env(env)
+            start = time.monotonic()
+            proc = await self._spawn_subprocess(args, process_env)
+
+            inner = self._iterate_stream(proc, span, start)
+            try:
+                async for event in inner:
+                    yield event
+            finally:
+                await inner.aclose()
 
 
 # ---------------------------------------------------------------------------

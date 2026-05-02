@@ -77,6 +77,68 @@ def make_spawn_fn(
     return _spawn
 
 
+class FakeStreamingProcess:
+    """FakeProcess variant that emits stdout line-by-line for streaming tests.
+
+    returncode starts as None (like a live subprocess) and is set to the
+    configured exit code by wait(), matching asyncio.subprocess.Process semantics.
+    """
+
+    def __init__(
+        self,
+        lines: list[bytes],
+        returncode: int = 0,
+        per_line_delay: float = 0.0,
+        stderr: bytes = b"",
+    ) -> None:
+        self._lines = lines
+        self._final_returncode = returncode
+        self.returncode: int | None = None  # None until wait() is called
+        self._per_line_delay = per_line_delay
+        self._stderr = stderr
+        self._killed = False
+        self.stdout = self  # asyncio uses `proc.stdout` as an async iterator
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._killed or not self._lines:
+            raise StopAsyncIteration
+        line = self._lines.pop(0)
+        if self._per_line_delay:
+            await asyncio.sleep(self._per_line_delay)
+        return line
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        all_remaining = b"".join(self._lines)
+        self._lines = []
+        return all_remaining, self._stderr
+
+    def kill(self) -> None:
+        self._killed = True
+
+    async def wait(self) -> int:
+        self.returncode = self._final_returncode
+        return self._final_returncode
+
+
+def make_streaming_spawn_fn(
+    lines: list[bytes],
+    returncode: int = 0,
+    per_line_delay: float = 0.0,
+    raise_exc: Exception | None = None,
+) -> Callable[..., Awaitable[FakeStreamingProcess]]:
+    async def _spawn(*args: object, **kwargs: object) -> FakeStreamingProcess:
+        if raise_exc is not None:
+            raise raise_exc
+        return FakeStreamingProcess(
+            lines=list(lines), returncode=returncode, per_line_delay=per_line_delay
+        )
+
+    return _spawn
+
+
 def json_envelope(
     result: str,
     input_tokens: int = 0,
@@ -374,8 +436,15 @@ def test_llm_client_protocol_requires_capabilities():
         async def send_with_model(self, prompt: str, model: str) -> ClaudeResponse:
             raise NotImplementedError
 
-        async def send_with_session(self, prompt, model, session_id=None, system_prompt=None,
-                                     allowed_tools=None, env_vars=None):
+        async def send_with_session(
+            self,
+            prompt,
+            model,
+            session_id=None,
+            system_prompt=None,
+            allowed_tools=None,
+            env_vars=None,
+        ):
             raise NotImplementedError
 
     # Missing capabilities() means it does NOT satisfy the Protocol.
@@ -403,7 +472,7 @@ def test_claude_client_reports_capabilities():
     caps = client.capabilities()
     assert caps.supports_sessions is True
     assert caps.supports_tools is True
-    assert caps.supports_streaming is False
+    assert caps.supports_streaming is True
     assert caps.max_context_tokens >= 200_000
     assert caps.backend_id == "claude-cli"
 
@@ -430,7 +499,9 @@ def test_claude_response_carries_backend_tag():
 
 
 def test_claude_response_backend_accepts_override():
-    r = ClaudeResponse(text="hi", input_tokens=1, output_tokens=1, session_id=None, backend="ollama")
+    r = ClaudeResponse(
+        text="hi", input_tokens=1, output_tokens=1, session_id=None, backend="ollama"
+    )
     assert r.backend == "ollama"
 
 

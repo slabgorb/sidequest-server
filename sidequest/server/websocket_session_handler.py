@@ -242,9 +242,7 @@ def _populate_opening_directive_on_chargen_complete(
         )
         if chassis is not None:
             npc_by_id = {n.id: n for n in world.authored_npcs}
-            authored_crew = [
-                npc_by_id[i] for i in chassis.crew_npcs if i in npc_by_id
-            ]
+            authored_crew = [npc_by_id[i] for i in chassis.crew_npcs if i in npc_by_id]
             for seed in chassis.bond_seeds:
                 if seed.character_role == "player_character":
                     bond_tier = seed.bond_tier_chassis
@@ -253,9 +251,7 @@ def _populate_opening_directive_on_chargen_complete(
     present_npcs: list = []
     if opening.setting.chassis_instance is None:
         npc_by_id = {n.id: n for n in world.authored_npcs}
-        present_npcs = [
-            npc_by_id[i] for i in opening.setting.present_npcs if i in npc_by_id
-        ]
+        present_npcs = [npc_by_id[i] for i in opening.setting.present_npcs if i in npc_by_id]
 
     per_pc_beat = None
     pc_drive = getattr(pc, "drive", "") or ""
@@ -1097,9 +1093,7 @@ class WebSocketSessionHandler:
             # reach this branch — ``is_first_commit`` is False.
             world_for_authored = sd.genre_pack.worlds.get(sd.world_slug)
             if world_for_authored is not None:
-                preload_authored_npcs(
-                    materialized, list(world_for_authored.authored_npcs)
-                )
+                preload_authored_npcs(materialized, list(world_for_authored.authored_npcs))
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
@@ -1715,7 +1709,9 @@ class WebSocketSessionHandler:
                 # is-None guards skip redaction and the dispatch bank.
 
                 with orchestrator_process_action_span(action_len=len(action)):
-                    result = await sd.orchestrator.run_narration_turn(action, turn_context)
+                    result = await sd.orchestrator.run_narration_turn(
+                        action, turn_context, room=self._room
+                    )
 
                 logger.info(
                     "session.narration_complete genre=%s world=%s degraded=%s duration_ms=%s",
@@ -2977,9 +2973,7 @@ class WebSocketSessionHandler:
         if sd.opening_directive is not None:
             record_opening_played(
                 opening_id=getattr(sd, "_resolved_opening_id", None) or "<unknown>",
-                narrator_session_id=getattr(
-                    sd.orchestrator, "_narrator_session_id", None
-                )
+                narrator_session_id=getattr(sd.orchestrator, "_narrator_session_id", None)
                 or "<unknown>",
                 turn_id=sd.snapshot.turn_manager.interaction,
             )
