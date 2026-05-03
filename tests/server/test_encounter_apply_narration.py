@@ -162,6 +162,73 @@ def test_confrontation_trigger_with_populated_npcs_present_does_not_fire_span(
 
 
 # ---------------------------------------------------------------------------
+# MP bundled-turn confrontation seats every seated PC
+# (pingpong 2026-05-03 [BUG] — confrontation widget missing in-fiction
+# principal in MP)
+# ---------------------------------------------------------------------------
+
+
+def test_mp_bundle_confrontation_seats_all_player_seats(cac_snap) -> None:
+    """Bundled MP turn → narrator confrontation → every seated PC in actors.
+
+    Repro of pingpong 2026-05-03 [BUG]: Itchy + Scratchy both seated and
+    acting; Scratchy's frame fires the barrier (so player_name=Scratchy),
+    narrator initiates a negotiation. The widget showed only Scratchy as the
+    player-side actor; Itchy was missing even though the negotiation was his.
+
+    Fix: ``_apply_narration_result_to_snapshot`` now reads
+    ``snapshot.player_seats.values()`` and threads the non-submitter PC names
+    into ``instantiate_encounter_from_trigger`` as
+    ``additional_player_names``. This test guards the wiring at the apply
+    seam — encounter_lifecycle's own tests guard the constructor.
+    """
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack = cac_snap
+    snap.player_seats = {"player_1": "Itchy", "player_2": "Scratchy"}
+    result = NarrationTurnResult(
+        narration="Inspector Volkova fans the manifest on her desk.",
+        confrontation="combat",
+        npcs_present=[NpcMention(name="Inspector Volkova", role="hostile", is_new=True)],
+    )
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        player_name="Scratchy",  # the action submitter for the barrier-firing frame
+        pack=pack,
+        room=room_for(snap),
+    )
+    assert snap.encounter is not None
+    pc_names = {a.name for a in snap.encounter.actors if a.side == "player"}
+    assert pc_names == {"Itchy", "Scratchy"}, (
+        f"both seated PCs must appear as side=player actors; got {pc_names}"
+    )
+
+
+def test_solo_confrontation_unchanged_when_player_seats_empty(cac_snap) -> None:
+    """Solo / pre-MP saves keep single-PC actor list (additional list empty)."""
+    from sidequest.server.session_handler import _apply_narration_result_to_snapshot
+
+    snap, pack = cac_snap
+    snap.player_seats = {}  # solo / pre-MP shape
+    result = NarrationTurnResult(
+        narration="Goblins leap from the shadows.",
+        confrontation="combat",
+        npcs_present=[NpcMention(name="Goblin pack", role="hostile", is_new=True)],
+    )
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        player_name="Rux",
+        pack=pack,
+        room=room_for(snap),
+    )
+    assert snap.encounter is not None
+    pc_names = [a.name for a in snap.encounter.actors if a.side == "player"]
+    assert pc_names == ["Rux"]
+
+
+# ---------------------------------------------------------------------------
 # Narrator-granted items land on character inventory
 # (pingpong 2026-04-24 — "items_gained=1 on Warden defeat — brass memory
 # core never appears in Inventory")

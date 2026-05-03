@@ -350,6 +350,39 @@ async def test_build_narrator_prompt_full_contains_output_format():
     assert "game_patch" in prompt
 
 
+async def test_build_narrator_prompt_includes_npc_intro_visual_constraint():
+    """Pingpong 2026-05-03 [BUG] — render policy fired NPC_INTRO but the
+    narrator emitted no ``visual_scene`` for the newly introduced NPCs.
+    The fix is a standing prompt guardrail telling the narrator that
+    every ``is_new: true`` entry on ``npcs_met`` requires a matching
+    ``visual_scene``. This test pins the constraint into the prompt.
+
+    Runs every turn (NOT gated on ``is_full``) because new NPCs can
+    appear on any turn.
+    """
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = await orch.build_narrator_prompt(
+        "look around", context, tier=NarratorPromptTier.Full
+    )
+    assert "<npc-intro-visual>" in prompt
+    assert "is_new: true" in prompt
+    assert "visual_scene" in prompt
+
+
+async def test_npc_intro_visual_constraint_present_on_delta_tier():
+    """The constraint runs on Delta tier too — new NPCs land on any turn,
+    not just opening / Full-tier prompts."""
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Kael")
+    prompt, _ = await orch.build_narrator_prompt(
+        "look around", context, tier=NarratorPromptTier.Delta
+    )
+    assert "<npc-intro-visual>" in prompt
+
+
 async def test_build_narrator_prompt_contains_player_action():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)

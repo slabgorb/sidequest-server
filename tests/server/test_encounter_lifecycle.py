@@ -233,3 +233,81 @@ def test_invalid_side_raises_with_span(snapshot_with_pack):
             npcs_present=[bad_npc],
             genre_slug="test_pack",
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Multiplayer additional_player_names — playtest 2026-05-03 [BUG]
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_instantiate_seats_additional_pcs_for_mp_bundle(cac_pack) -> None:
+    """MP bundled turns must seat every PC, not just the action submitter.
+
+    Pingpong 2026-05-03 [BUG]: confrontation widget showed only Scratchy
+    (action submitter) when narrator initiated a negotiation that included
+    Itchy as principal speaker. Both PCs played the bundled turn; both must
+    appear in the actor list with side="player".
+    """
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
+        player_name="Scratchy",
+        npcs_present=[NpcMention(name="Inspector Volkova", side="opponent", role="hostile")],
+        genre_slug="caverns_and_claudes",
+        additional_player_names=["Itchy"],
+    )
+    assert enc is not None
+    pc_names = {a.name for a in enc.actors if a.side == "player"}
+    assert pc_names == {"Scratchy", "Itchy"}, (
+        f"both bundled PCs must be seated as side=player; got {pc_names}"
+    )
+
+
+def test_instantiate_additional_pcs_dedup_against_primary(cac_pack) -> None:
+    """If the caller passes the primary in additional list, dedup."""
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
+        player_name="Scratchy",
+        npcs_present=[],
+        genre_slug="caverns_and_claudes",
+        additional_player_names=["Scratchy", "Itchy", "Itchy"],
+    )
+    assert enc is not None
+    pc_names = [a.name for a in enc.actors if a.side == "player"]
+    assert pc_names == ["Scratchy", "Itchy"], (
+        f"duplicates and primary-in-extras must dedup; got {pc_names}"
+    )
+
+
+def test_instantiate_additional_pcs_default_none_keeps_solo_behavior(cac_pack) -> None:
+    """Solo callers (additional_player_names=None) get a single-PC roster."""
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=cac_pack,
+        encounter_type="combat",
+        player_name="Rux",
+        npcs_present=[],
+        genre_slug="caverns_and_claudes",
+    )
+    assert enc is not None
+    pc_names = [a.name for a in enc.actors if a.side == "player"]
+    assert pc_names == ["Rux"]

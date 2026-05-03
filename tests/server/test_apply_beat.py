@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sidequest.game.beat_kinds import (
     apply_beat,
 )
@@ -245,3 +247,139 @@ def test_per_tier_override_applies_critfail_own_minus_two():
     # CritFail on strike default is 0 own; override drops to -2; ascending dial
     # is clamped at 0 (from spec — never go negative on a side's own dial)
     assert enc.player_metric.current == 0
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Content-tuning regression: space_opera/negotiation deltas must give
+# opponent leverage on Fail/CritFail (playtest 2026-05-03 [BUG] — Edge meters
+# never advance from failed rolls).
+#
+# Two test layers:
+#  - Engine layer: per-tier ``opponent: +N`` override on a strike beat
+#    advances the opponent dial when the player rolls Fail/CritFail.
+#    No filesystem dep — pins the apply_beat seam.
+#  - Content layer: load the real space_opera pack from sidequest-content/
+#    and verify the negotiation beats carry the override. Bypasses the
+#    test conftest's fixture symlink (which redirects ``space_opera`` to
+#    ``test_genre``, a stripped mutant_wasteland clone with no negotiation
+#    confrontation). Skips when the content dir is absent so the suite
+#    stays portable on a sidequest-server-only checkout.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_strike_fail_with_opponent_override_advances_opponent_metric():
+    """Engine seam — verify per-tier ``opponent: +N`` override on strike Fail.
+
+    DEFAULT_DELTAS gives strike ``Fail: 0/0``; a beat that sets
+    ``deltas.fail.opponent = 1`` must override that and credit the opposing
+    side's metric when the actor rolls Fail.
+    """
+    enc = _enc()
+    sam = enc.find_actor("Sam")
+    persuade = BeatDef.model_validate(
+        {
+            "id": "persuade",
+            "label": "Make Your Case",
+            "kind": "strike",
+            "base": 2,
+            "stat_check": "Influence",
+            "deltas": {"fail": {"opponent": 1}, "crit_fail": {"opponent": 2}},
+        }
+    )
+    apply_beat(enc, sam, persuade, RollOutcome.Fail)
+    assert enc.opponent_metric.current == 1
+    assert enc.player_metric.current == 0  # player's own dial unchanged on Fail
+
+
+def test_strike_critfail_opponent_override_outpaces_fail():
+    """CritFail must hit harder than Fail when both have opponent overrides."""
+    persuade = BeatDef.model_validate(
+        {
+            "id": "persuade",
+            "label": "Make Your Case",
+            "kind": "strike",
+            "base": 2,
+            "stat_check": "Influence",
+            "deltas": {"fail": {"opponent": 1}, "crit_fail": {"opponent": 2}},
+        }
+    )
+    enc_fail = _enc()
+    apply_beat(enc_fail, enc_fail.find_actor("Sam"), persuade, RollOutcome.Fail)
+    enc_crit = _enc()
+    apply_beat(enc_crit, enc_crit.find_actor("Sam"), persuade, RollOutcome.CritFail)
+    assert enc_crit.opponent_metric.current > enc_fail.opponent_metric.current
+
+
+def test_angle_fail_with_opponent_override_advances_opponent_metric():
+    """Same seam test for angle (concede_point is a negotiation angle beat)."""
+    enc = _enc()
+    sam = enc.find_actor("Sam")
+    concede = BeatDef.model_validate(
+        {
+            "id": "concede_point",
+            "label": "Concede a Point",
+            "kind": "angle",
+            "target_tag": "Real Goal Revealed",
+            "stat_check": "Influence",
+            "deltas": {"fail": {"opponent": 1}, "crit_fail": {"opponent": 2}},
+        }
+    )
+    apply_beat(enc, sam, concede, RollOutcome.Fail)
+    assert enc.opponent_metric.current == 1
+
+
+def test_push_fail_with_opponent_override_advances_opponent_metric():
+    """Same seam test for push (walk_away is a negotiation push beat)."""
+    enc = _enc()
+    sam = enc.find_actor("Sam")
+    walk_away = BeatDef.model_validate(
+        {
+            "id": "walk_away",
+            "label": "Walk Away",
+            "kind": "push",
+            "stat_check": "Resolve",
+            "deltas": {"fail": {"opponent": 1}, "crit_fail": {"opponent": 2}},
+        }
+    )
+    apply_beat(enc, sam, walk_away, RollOutcome.Fail)
+    assert enc.opponent_metric.current == 1
+
+
+def test_space_opera_negotiation_beats_carry_opponent_overrides():
+    """Content layer — the real space_opera pack must declare the overrides.
+
+    Loads via ``load_genre_pack`` (path-explicit, cache-free) to bypass the
+    test conftest's fixture symlink that redirects ``space_opera`` → frozen
+    ``test_genre`` (a stripped mutant_wasteland clone with no negotiation
+    confrontation). Skips when the content dir is absent.
+    """
+    import pytest
+
+    from sidequest.genre.loader import load_genre_pack
+
+    content = Path(
+        "/Users/slabgorb/Projects/oq-2/sidequest-content/genre_packs/space_opera"
+    )
+    if not content.is_dir():
+        pytest.skip("sidequest-content not on disk in this checkout")
+
+    pack = load_genre_pack(content)
+    negotiation = next(
+        c for c in pack.rules.confrontations if c.confrontation_type == "negotiation"
+    )
+    expected_ids = {"persuade", "threaten", "concede_point", "walk_away"}
+    assert {b.id for b in negotiation.beats} == expected_ids, (
+        "space_opera negotiation beat roster drift — playtest fix expects "
+        "all four beats to carry per-tier opponent overrides"
+    )
+    for beat in negotiation.beats:
+        assert beat.deltas is not None, (
+            f"negotiation beat {beat.id!r} dropped its deltas override — "
+            f"DEFAULT_DELTAS Fail tier is 0/0 so the dial would freeze"
+        )
+        assert "fail" in beat.deltas and "opponent" in beat.deltas["fail"], (
+            f"negotiation beat {beat.id!r} missing fail.opponent override"
+        )
+        assert beat.deltas["fail"]["opponent"] >= 1
+        assert "crit_fail" in beat.deltas
+        assert beat.deltas["crit_fail"]["opponent"] >= beat.deltas["fail"]["opponent"]
