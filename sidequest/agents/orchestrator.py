@@ -519,6 +519,24 @@ class TurnContext:
     # are populated by ``_execute_narration_turn`` at action receipt.
     phase_timings: PhaseTimings = field(default_factory=lambda: PhaseTimings.NULL)
 
+    # Orbital tier fields (plot-a-course). Populated by _build_turn_context
+    # when the world has an orbital tier (orbital_content is not None).
+    # When None/empty, build_narrator_prompt skips the <courses> block —
+    # zero byte leak on non-orbital worlds.
+    #
+    # Types are Any to avoid a circular import on OrbitalContent/Scope;
+    # runtime types are:
+    #   orbital_content: sidequest.orbital.loader.OrbitalContent | None
+    #   orbital_scope:   sidequest.orbital.render.Scope | None
+    #   party_body_id:   str | None  (from snapshot.party_body_id)
+    #   recent_body_mentions: collections.deque[str]  (from Session)
+    #   quest_anchors:   list[str]  (from snapshot.quest_anchors)
+    orbital_content: Any = None
+    orbital_scope: Any = None
+    party_body_id: str | None = None
+    recent_body_mentions: Any = field(default_factory=list)  # deque[str] or list[str]
+    quest_anchors: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -1472,6 +1490,40 @@ class Orchestrator:
                 SectionCategory.Guardrail,
             ),
         )
+
+        # Plot-a-course (plot-a-course design). The narrator can plot a
+        # course to any body in the prompted set; rejection is OTEL-loud
+        # and chart-silent. Block is omitted entirely when the world has
+        # no orbital tier or the party has no body anchor.
+        if context.orbital_content is not None and context.party_body_id:
+            from sidequest.orbital.course import (
+                _bodies_in_scope,
+                compute_courses,
+                format_courses_block,
+            )
+
+            in_scope = _bodies_in_scope(
+                context.orbital_content.orbits,
+                context.orbital_scope,
+            )
+            course_rows = compute_courses(
+                orbits=context.orbital_content.orbits,
+                party_at=context.party_body_id,
+                in_scope_body_ids=in_scope,
+                recent_body_mentions=list(context.recent_body_mentions),
+                quest_anchors=list(context.quest_anchors),
+            )
+            block_text = format_courses_block(course_rows)
+            if block_text:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "courses",
+                        block_text,
+                        AttentionZone.Recency,
+                        SectionCategory.Guardrail,
+                    ),
+                )
 
         # Narrator vocabulary (Late zone, Full tier only)
         if is_full:

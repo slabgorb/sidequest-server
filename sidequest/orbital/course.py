@@ -177,3 +177,74 @@ def compute_courses(
         rows = rows[:COURSES_HARD_CAP]
 
     return dict(rows)
+
+
+def format_courses_block(rows: dict[str, CourseRow]) -> str:
+    """Render the <courses> prompt block from a compute_courses output.
+
+    Empty input → empty string (caller skips registering the section).
+
+    The block contains the narrator instruction and one bullet per
+    course. Format is engineered for one-shot Claude parsing: the
+    instruction is unambiguous, each bullet is one line, body_ids are
+    snake_case so a body_id token cannot collide with prose.
+    """
+    if not rows:
+        return ""
+
+    lines: list[str] = ["<courses>"]
+    lines.append(
+        "You can plot a course to any of these. When the player asks to plot "
+        'a course ("plot a course to X", "Kestrel, lay in a course for X", '
+        '"take us to X"), include the matching course_id in your '
+        "game_patch sidecar:"
+    )
+    lines.append('  {"intent":"plot_course","course_id":"<id>"}')
+    lines.append("")
+    lines.append(
+        "If the player asks for a destination not in this list, say so "
+        'in-fiction ("Kestrel can\'t lock that, captain — say a body within '
+        'scanner range or a known objective"). Do NOT invent course_ids.'
+    )
+    lines.append("")
+    for body_id, row in rows.items():
+        suffix = ""
+        if row.source == CourseSource.QUEST_OBJECTIVE:
+            label = row.label_hint or body_id
+            suffix = f" — quest: {label}"
+        elif row.source == CourseSource.RECENT_MENTION:
+            suffix = " — recently mentioned"
+        # IN_SCOPE: no suffix.
+        lines.append(
+            f"- {body_id} (ETA {row.eta_hours:.0f}h, Δv {row.delta_v:.1f}){suffix}"
+        )
+    lines.append("</courses>")
+    return "\n".join(lines)
+
+
+def _bodies_in_scope(orbits: "OrbitsConfig", scope: "Scope") -> set[str]:
+    """Body ids visible in the current OrbitalIntent scope.
+
+    System-root scope: the system primary body PLUS all of its direct
+    children (bodies whose parent is the primary). Drilled-in scope:
+    the center body PLUS its direct children (parent == center).
+
+    Mirrors the existing render_chart scope semantics: _viewport_for_scope
+    draws direct children of the center body; _draw_body includes the
+    center itself. Consistent with Scope.system_root() → center_body_id
+    == "<root>" sentinel.
+    """
+    if scope.center_body_id == "<root>":
+        # Find the single parent-less body (the system primary).
+        primaries = [bid for bid, b in orbits.bodies.items() if b.parent is None]
+        if not primaries:
+            return set()
+        primary_id = primaries[0]
+        # System root: include the primary and all of its direct children.
+        return {primary_id} | {
+            bid for bid, b in orbits.bodies.items() if b.parent == primary_id
+        }
+    # Drilled-in: center body plus its direct children.
+    return {scope.center_body_id} | {
+        bid for bid, b in orbits.bodies.items() if b.parent == scope.center_body_id
+    }
