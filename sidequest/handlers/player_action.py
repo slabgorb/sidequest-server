@@ -63,6 +63,16 @@ def _broadcast_cleared_to_party(
         )
         msg = ActionRevealMessage(payload=payload)
         room.broadcast(msg, exclude_socket_id=None)
+        _watcher_publish(
+            "action_reveal.cleared",
+            {
+                "slug": room.slug,
+                "player_id": member["player_id"],
+                "round": round_no,
+                "reason": reason,
+            },
+            component="multiplayer",
+        )
 
 
 class PlayerActionHandler:

@@ -26,6 +26,7 @@ from sidequest.orbital.loader import (
     load_orbital_content,
 )
 from sidequest.server.session import Session
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 _log = logging.getLogger(__name__)
 
@@ -68,6 +69,16 @@ def _emit_action_reveal_cleared(
         round=round_no,
     )
     room.broadcast(ActionRevealMessage(payload=payload), exclude_socket_id=None)
+    _watcher_publish(
+        "action_reveal.cleared",
+        {
+            "slug": room.slug,
+            "player_id": player_id,
+            "round": round_no,
+            "reason": reason,
+        },
+        component="multiplayer",
+    )
 
 
 class LobbyState(StrEnum):

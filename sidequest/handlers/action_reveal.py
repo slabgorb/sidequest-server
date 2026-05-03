@@ -17,6 +17,7 @@ from sidequest.protocol.messages import (
     ActionRevealPayload,
     ActionRevealStatus,
 )
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
     from sidequest.protocol import GameMessage
@@ -64,6 +65,7 @@ class ActionRevealHandler:
         if payload.status == ActionRevealStatus.CLEARED:
             return []
 
+        slug = session._room.slug
         round_no = snapshot.turn_manager.round
         socket_id = session._socket_id
         assert socket_id is not None  # set by attach_room_context before dispatch
@@ -85,6 +87,15 @@ class ActionRevealHandler:
             now = time.monotonic()
             last_t = self._last_composing_t.get(socket_id)
             if last_t is not None and (now - last_t) < _COMPOSING_FLOOR_S:
+                _watcher_publish(
+                    "action_reveal.dropped_rate_limit",
+                    {
+                        "slug": slug,
+                        "player_id": sd.player_id,
+                        "round": round_no,
+                    },
+                    component="multiplayer",
+                )
                 return []
             self._last_composing_t[socket_id] = now
 
@@ -104,6 +115,32 @@ class ActionRevealHandler:
         outbound = ActionRevealMessage(payload=stamped, player_id=sd.player_id)
         session._room.broadcast(outbound, exclude_socket_id=socket_id)
         self._last_seq[socket_id] = (round_no, payload.seq)
+
+        if payload.status == ActionRevealStatus.COMPOSING:
+            _watcher_publish(
+                "action_reveal.composing",
+                {
+                    "slug": slug,
+                    "player_id": sd.player_id,
+                    "round": round_no,
+                    "seq": payload.seq,
+                    "text_length": len(payload.action),
+                },
+                component="multiplayer",
+            )
+        else:
+            _watcher_publish(
+                "action_reveal.submitted",
+                {
+                    "slug": slug,
+                    "player_id": sd.player_id,
+                    "round": round_no,
+                    "text_length": len(payload.action),
+                    "aside": payload.aside,
+                },
+                component="multiplayer",
+            )
+
         return []
 
 
