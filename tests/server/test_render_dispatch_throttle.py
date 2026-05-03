@@ -32,11 +32,29 @@ from sidequest.server.session_handler import (
     _SessionData,
 )
 
+
+def _make_eligible_result(**kwargs):
+    """Story 45-30: the render trigger policy gates dispatch on structured
+    signals. These dispatch-mechanics tests test the wire downstream of
+    the policy (URL handling, request payload, broadcasting); they pre-date
+    the policy and don't carry signal kwargs. This wrapper injects a default
+    BeatSelection so the result classifies as BEAT_FIRE and the test exercises
+    its named gate, not the policy.
+
+    Tests asserting the policy itself (test_render_trigger_*) construct
+    NarrationTurnResult directly and bypass this helper.
+    """
+    from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult
+    if "beat_selections" not in kwargs:
+        kwargs["beat_selections"] = [
+            BeatSelection(actor="test", beat_id="dispatch_test")
+        ]
+    return NarrationTurnResult(**kwargs)
+
 # ---------------------------------------------------------------------------
 # Test fixtures — mirror test_render_dispatch.py so the two suites share
 # a vocabulary, but kept local so the throttle test is hermetic.
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
@@ -45,7 +63,6 @@ def short_sock(tmp_path: Path) -> Path:
     yield p
     if p.exists():
         p.unlink()
-
 
 class _CountingFakeDaemon:
     """Counts how many ``render`` requests reach the daemon. Used to
@@ -79,12 +96,10 @@ class _CountingFakeDaemon:
             self._server.close()
             await self._server.wait_closed()
 
-
 def _client_bound_to(path: Path):
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
-
 
 def _make_session_data(
     *,
@@ -113,23 +128,20 @@ def _make_session_data(
         kwargs["image_pacing_throttle"] = throttle
     return _SessionData(**kwargs)
 
-
 def _make_handler_with_queue() -> tuple[WebSocketSessionHandler, asyncio.Queue]:
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/never-used"))
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler._out_queue = queue  # noqa: SLF001 — test wiring
     return handler, queue
 
-
 def _visual_result(subject: str = "a thing") -> NarrationTurnResult:
-    return NarrationTurnResult(
+    return _make_eligible_result(
         narration="...",
         visual_scene=VisualScene(
             subject=subject,
             tier="scene_illustration",
         ),
     )
-
 
 def _capture_watcher_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
@@ -143,11 +155,9 @@ def _capture_watcher_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, A
     )
     return events
 
-
 # ---------------------------------------------------------------------------
 # Wiring tests
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_first_render_passes_throttle_and_reaches_daemon(
@@ -196,7 +206,6 @@ async def test_first_render_passes_throttle_and_reaches_daemon(
     assert decisions[0]["payload"]["reason"] == "first_render"
     assert decisions[0]["payload"]["render_id"] == queued.payload.render_id
     assert decisions[0]["payload"]["cooldown_seconds"] == 30
-
 
 @pytest.mark.asyncio
 async def test_second_render_within_cooldown_is_suppressed_before_daemon(
@@ -250,7 +259,6 @@ async def test_second_render_within_cooldown_is_suppressed_before_daemon(
     # The legacy out_queue must not have received a second IMAGE
     # frame either.
     assert queue.empty()
-
 
 @pytest.mark.asyncio
 async def test_throttle_emits_suppress_decision_otel_event(
@@ -311,7 +319,6 @@ async def test_throttle_emits_suppress_decision_otel_event(
     # the narrator was trying to render.
     assert "render_id" in payload
     assert decisions[0]["kwargs"]["component"] == "render"
-
 
 @pytest.mark.asyncio
 async def test_third_render_after_cooldown_passes(

@@ -138,6 +138,9 @@ CREATE TABLE IF NOT EXISTS scrapbook_entries (
     narrative_excerpt TEXT NOT NULL,
     world_facts TEXT NOT NULL DEFAULT '[]',
     npcs_present TEXT NOT NULL DEFAULT '[]',
+    -- Story 45-30: render trigger policy outcome.
+    -- 'rendered' | 'skipped_policy' | 'failed'.
+    render_status TEXT NOT NULL DEFAULT 'rendered',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_scrapbook_turn ON scrapbook_entries(turn_id);

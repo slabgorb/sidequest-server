@@ -47,8 +47,8 @@ def persist_scrapbook_entry(
         store._conn.execute(
             "INSERT INTO scrapbook_entries "
             "(turn_id, scene_title, scene_type, location, image_url, "
-            " narrative_excerpt, world_facts, npcs_present) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " narrative_excerpt, world_facts, npcs_present, render_status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 payload.turn_id,
                 payload.scene_title,
@@ -58,6 +58,7 @@ def persist_scrapbook_entry(
                 payload.narrative_excerpt,
                 facts_json,
                 npcs_json,
+                payload.render_status,
             ),
         )
 
@@ -286,6 +287,7 @@ def emit_scrapbook_entry(
     sd: _SessionData,
     snapshot,  # GameSnapshot — avoid circular import in TYPE_CHECKING
     result: object,
+    render_status: str = "rendered",
 ) -> None:
     """Persist a scrapbook row + emit a SCRAPBOOK_ENTRY event for one turn.
 
@@ -296,6 +298,12 @@ def emit_scrapbook_entry(
 
     Pure reuse: location from snapshot, excerpt from the narrator's prose,
     NPCs from the orchestrator's structured extraction. No new LLM calls.
+
+    ``render_status`` (Story 45-30): the trigger-policy outcome for this
+    turn — ``rendered`` (policy fired and dispatch proceeded),
+    ``skipped_policy`` (banter / no narrative weight) or ``failed`` (policy
+    fired but daemon refused synchronously). The UI uses this to render
+    distinct affordances per outcome.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
     from sidequest.protocol.messages import ScrapbookEntryNpcRef, ScrapbookEntryPayload
@@ -377,6 +385,7 @@ def emit_scrapbook_entry(
         image_url=None,  # Async — IMAGE frame follows from the daemon
         world_facts=world_facts,
         npcs_present=npc_refs,
+        render_status=render_status,
     )
 
     # Persist to the dedicated scrapbook_entries table — keeps the

@@ -143,6 +143,13 @@ class ScrapbookEntryPayload(ProtocolBase):
     world_facts: list[str] = Field(default_factory=list)
     npcs_present: list[ScrapbookEntryNpcRef] = Field(default_factory=list)
     seq: int = 0
+    # Story 45-30: trigger-policy outcome for this turn's render decision.
+    # ``rendered`` — policy fired and dispatch proceeded.
+    # ``skipped_policy`` — classify_trigger returned NONE_POLICY (banter).
+    # ``failed`` — policy fired but the daemon gate refused synchronously.
+    # The UI uses this to render distinct affordances for "no image because
+    # the policy chose not to" vs "no image because the daemon failed".
+    render_status: str = "rendered"
 
 
 # ---------------------------------------------------------------------------
