@@ -383,6 +383,55 @@ async def test_npc_intro_visual_constraint_present_on_delta_tier():
     assert "<npc-intro-visual>" in prompt
 
 
+async def test_build_narrator_prompt_includes_confrontation_trigger_constraint():
+    """Pingpong 2026-05-03 [BUG] — narrator wrote a textbook chase-firing
+    beat ("patrol cutter spinning her reactor up from cold-soak. She isn't
+    moving yet. She's asking the tower whether to.") but emitted
+    ``confrontation=None``. No encounter fired; the lie-detector pattern
+    fired in fiction without mechanical follow-through. The schema-block
+    instruction in narrator.py says "MUST emit confrontation" on triggers,
+    but lives deep in the System zone where attention has decayed by
+    turn 20+.
+
+    This test pins the per-turn Recency-zone Guardrail PromptSection that
+    restates the rule with concrete trigger language and the
+    must-not-defer constraint. Same shape as
+    ``npc_intro_visual_constraint`` above.
+    """
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Itchy")
+    prompt, _ = await orch.build_narrator_prompt(
+        "watch the gantry", context, tier=NarratorPromptTier.Full
+    )
+    assert "<confrontation-trigger>" in prompt
+    # Concrete trigger phrases the narrator just missed
+    assert "spinning" in prompt
+    assert "permission to engage" in prompt
+    # The deferral failure mode is called out explicitly
+    assert "no retroactive crediting" in prompt
+    # Genre-specific encounter types are referenced so the narrator picks
+    # ``ship_combat`` or ``dogfight`` rather than defaulting to ``combat``
+    assert "ship_combat" in prompt
+    assert "dogfight" in prompt
+
+
+async def test_confrontation_trigger_constraint_present_on_delta_tier():
+    """The constraint runs on Delta tier too — encounter triggers can land
+    on any turn, not just opening / Full-tier prompts. The original bug
+    fired at turn 20 (deep in a Delta-tier window), so the Delta-tier
+    presence is the one that matters most for this fix.
+    """
+    client = make_canned_client("narration")
+    orch = Orchestrator(client=client)
+    context = TurnContext(character_name="Itchy")
+    prompt, _ = await orch.build_narrator_prompt(
+        "watch the gantry", context, tier=NarratorPromptTier.Delta
+    )
+    assert "<confrontation-trigger>" in prompt
+    assert "no retroactive crediting" in prompt
+
+
 async def test_build_narrator_prompt_contains_player_action():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)

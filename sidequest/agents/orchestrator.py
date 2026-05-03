@@ -1481,8 +1481,8 @@ class Orchestrator:
                     "entry in ``npcs_met`` — your game_patch MUST also "
                     "include a ``visual_scene`` whose ``subject`` describes "
                     "that NPC (their appearance, posture, and the moment "
-                    "the player is meeting them). Use tier ``\"portrait\"`` "
-                    "for a single character close-up, or ``\"landscape\"`` "
+                    'the player is meeting them). Use tier ``"portrait"`` '
+                    'for a single character close-up, or ``"landscape"`` '
                     "when the introduction is inseparable from the place "
                     "(a foreman silhouetted against the rig, a customs "
                     "officer at the freight stair). If multiple NPCs are "
@@ -1549,6 +1549,64 @@ class Orchestrator:
                         SectionCategory.Guardrail,
                     ),
                 )
+
+        # Pingpong 2026-05-03 [BUG] — narrator wrote a textbook chase-firing
+        # beat ("patrol cutter spinning her reactor up from cold-soak. She
+        # isn't moving yet. She's asking the tower whether to.") but the
+        # game_patch carried ``confrontation=None`` — no encounter was
+        # instantiated. The schema-block instruction in narrator.py:188-201
+        # says "MUST emit confrontation" on trigger events, but lives deep
+        # in the System zone where attention has decayed by turn 20.
+        # Same disease as ``npc_intro_visual_constraint`` above; same cure:
+        # restate the rule per-turn in Recency-zone Guardrail attention.
+        # The lie-detector in narration_apply._scan_for_confrontation_trigger_
+        # keywords stays loud if the narrator skips again — together they
+        # close the gap without taking the architectural step of server-side
+        # auto-firing (which would be a silent fallback).
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "confrontation_trigger_constraint",
+                (
+                    "<confrontation-trigger>\n"
+                    "If your prose this turn describes any oppositional "
+                    "engagement — a hostile chassis spinning its reactor "
+                    "up, a patrol or pursuer requesting permission to "
+                    "engage, weapons drawn / charged / going hot, an "
+                    "intercept order, a boarding action, an antagonist "
+                    "drawing a weapon, opening fire, or otherwise making "
+                    "a hostile commit against the party — your "
+                    "``game_patch`` MUST populate ``confrontation`` with "
+                    "the matching type from AVAILABLE ENCOUNTER TYPES "
+                    "(e.g. ``chase``, ``ship_combat``, ``dogfight``, "
+                    "``combat``, ``negotiation``). Pick the most specific "
+                    "type the genre offers; never default to a generic "
+                    "``combat`` when ``ship_combat`` or ``dogfight`` "
+                    "applies.\n"
+                    "The mechanical commit belongs to the turn the "
+                    "trigger appears in fiction. Do NOT defer it to the "
+                    "next turn — there is no retroactive crediting. If "
+                    "the cutter spins up THIS turn, fire ``chase`` THIS "
+                    "turn. If a hostile draws a weapon THIS turn, fire "
+                    "``combat`` THIS turn. The system handles "
+                    "de-escalation gracefully if the resolution swerves; "
+                    "an unfired encounter cannot be created later.\n"
+                    "Edge cases: if the engagement is described as the "
+                    "uniform / pursuer ASKING someone else (a tower, a "
+                    "command channel) for permission — fire the "
+                    "encounter NOW. The asking IS the trigger. Waiting "
+                    'for the explicit "go" produces a turn of prose '
+                    "with no mechanical track, and the Diamonds-and-Coal "
+                    "promise is broken (ADR-014).\n"
+                    "Only emit ``confrontation`` on the turn the "
+                    "encounter STARTS; once it is active, use "
+                    "``beat_selections`` for subsequent rounds."
+                    "\n</confrontation-trigger>"
+                ),
+                AttentionZone.Recency,
+                SectionCategory.Guardrail,
+            ),
+        )
 
         # Narrator vocabulary (Late zone, Full tier only)
         if is_full:
