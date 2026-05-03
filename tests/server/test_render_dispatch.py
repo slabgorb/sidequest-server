@@ -738,3 +738,612 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
     finally:
         render_mounts.reset_for_app(app)
         render_mounts.set_active_app(None)
+
+
+# ---------------------------------------------------------------------------
+# Story 45-30: Render trigger policy contract + OTEL render.trigger reasons
+#
+# The pre-story behaviour gates render dispatch on the narrator's optional
+# `visual_scene` block — a single `visual is None or not subject.strip()`
+# check at the top of `_maybe_dispatch_render`. Felix's 71-turn Playtest 3
+# (2026-04-19) exposed the consequence: 6–8 renders out of 71 turns, with
+# selection driven by Claude's improvisation rather than narrative weight.
+#
+# These tests drive `_maybe_dispatch_render` end-to-end and assert that
+# the trigger decision is governed by an explicit five-value policy whose
+# reason lands on a `render.trigger` watcher event. The wire under test is
+# the call site in WebSocketSessionHandler — not the pure classifier
+# (covered by tests/server/test_render_trigger_policy.py).
+#
+# AC mapping:
+#   AC1/AC3 (positive reasons) → test_render_trigger_emits_<reason>_*
+#   AC2/AC3 (banter/none_policy) → test_render_trigger_banter_emits_none_policy_skip
+#   AC2 (priority order)         → test_render_trigger_priority_beat_fire_over_npc_intro
+#   AC3 SPAN_ROUTES registration → test_render_trigger_span_route_registered
+#   AC6 Felix-shape replay       → test_felix_shape_replay_eight_turn_sequence
+# ---------------------------------------------------------------------------
+
+
+def _capture_watcher_events() -> "tuple[object, list[dict]]":
+    """Subscribe a fake socket to ``watcher_hub`` for the current loop and
+    return ``(capture, events)`` so a test can inspect emitted events."""
+    import asyncio as _asyncio
+
+    from sidequest.telemetry.watcher_hub import watcher_hub
+
+    watcher_hub.bind_loop(_asyncio.get_running_loop())
+
+    class _Cap:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    return _Cap(), []  # caller uses .events on the cap object
+
+
+def _watcher_events_matching(
+    cap: object, *, field: str | None = None, op: str | None = None
+) -> list[dict]:
+    """Filter ``cap.events`` for the typed watcher event fields the GM
+    panel parses. Per ADR-031 every routed span lands as a
+    ``state_transition`` whose ``fields`` carries the route's component
+    metadata."""
+    out: list[dict] = []
+    for ev in cap.events:  # type: ignore[attr-defined]
+        if ev.get("event_type") != "state_transition":
+            continue
+        fields = ev.get("fields", {}) or {}
+        if field is not None and fields.get("field") != field:
+            continue
+        if op is not None and fields.get("op") != op:
+            continue
+        out.append(ev)
+    return out
+
+
+async def _bind_capture() -> object:
+    """Bind a ``_Cap`` to ``watcher_hub`` and return it."""
+    import asyncio as _asyncio
+
+    from sidequest.telemetry.watcher_hub import watcher_hub
+
+    watcher_hub.bind_loop(_asyncio.get_running_loop())
+    async with watcher_hub._lock:  # noqa: SLF001
+        watcher_hub._subscribers.clear()  # noqa: SLF001
+
+    class _Cap:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def send_json(self, data: dict) -> None:
+            self.events.append(data)
+
+    cap = _Cap()
+    await watcher_hub.subscribe(cap)  # type: ignore[arg-type]
+    return cap
+
+
+def _visual_scene_for_turn() -> "VisualScene":
+    """A canonical scene_illustration ``VisualScene`` — used so the
+    pre-story short-circuit (`visual is None or not subject.strip()`)
+    cannot mask the new policy gate. Tests still expect dispatch only
+    when a positive trigger reason fires, even with a visual_scene
+    present."""
+    return VisualScene(
+        subject="Felix at the lip of the crater",
+        tier="scene_illustration",
+        mood="watchful",
+        tags=["wasteland"],
+    )
+
+
+def _visual_scene_or_none(*, with_visual: bool) -> "VisualScene | None":
+    return _visual_scene_for_turn() if with_visual else None
+
+
+@pytest.mark.asyncio
+async def test_render_trigger_span_route_registered() -> None:
+    """AC3: ``render.trigger`` is a real route on ``SPAN_ROUTES`` so the
+    GM panel parses it as a typed watcher event (component=render).
+    Without registration the span fires but never reaches the panel —
+    ADR-031 requires every render decision to surface."""
+    from sidequest.telemetry.spans._core import SPAN_ROUTES
+
+    assert "render.trigger" in SPAN_ROUTES, (
+        "render.trigger missing from SPAN_ROUTES — GM panel cannot "
+        "render the trigger reason and the lie-detector loses its "
+        "primary render signal (CLAUDE.md OTEL Observability Principle)"
+    )
+    route = SPAN_ROUTES["render.trigger"]
+    assert route.event_type == "state_transition"
+    assert route.component == "render"
+
+    assert "render.policy_skip" in SPAN_ROUTES, (
+        "render.policy_skip missing from SPAN_ROUTES — the GM panel "
+        "needs a focused filter for the silent-by-design banter case"
+    )
+    skip_route = SPAN_ROUTES["render.policy_skip"]
+    assert skip_route.event_type == "state_transition"
+    assert skip_route.component == "render"
+
+
+def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
+    """Yields (reason_name, NarrationTurnResult kwargs) — one positive
+    fixture per trigger reason. Each kwargs dict produces a result whose
+    ONLY positive signal is the named reason; the others are absent so
+    the priority-ordering test below has clean signal isolation.
+
+    The fixture deliberately sets ``visual_scene`` so this test cannot be
+    silently passed by the legacy ``visual is None`` short-circuit — the
+    new policy must actively classify the reason."""
+    from sidequest.agents.orchestrator import (
+        BeatSelection,
+        NpcMention,
+    )
+
+    # The shared snapshot location stays "Tood's Dome — Nest Crack".
+    # SCENE_CHANGE flips it via the dispatch-time pre-snapshot location
+    # (passed to the classifier), not by mutating the snapshot here.
+    return [
+        (
+            "beat_fire",
+            {
+                "narration": "Felix triggers the trap.",
+                "visual_scene": _visual_scene_for_turn(),
+                "beat_selections": [
+                    BeatSelection(actor="Felix", beat_id="trap_sprung")
+                ],
+            },
+        ),
+        (
+            "scene_change",
+            {
+                "narration": "The dust gives way to glassed sand.",
+                "visual_scene": _visual_scene_for_turn(),
+                "location": "The Glass Flats",  # != snapshot.location
+            },
+        ),
+        (
+            "npc_intro",
+            {
+                "narration": "Across the rubble, a stranger.",
+                "visual_scene": _visual_scene_for_turn(),
+                "npcs_present": [NpcMention(name="Sallow Dree", is_new=True)],
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason,result_kwargs",
+    _reason_drives_dispatch_params(),
+    ids=[r[0] for r in _reason_drives_dispatch_params()],
+)
+async def test_render_trigger_emits_reason_and_dispatches(
+    reason: str,
+    result_kwargs: dict,
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1 + AC2 + AC3 (positive path): a ``NarrationTurnResult`` carrying
+    ONLY the named trigger reason (a) reaches dispatch, and (b) emits
+    ``render.trigger`` with the matching ``reason`` attribute.
+
+    Wire under test is ``_maybe_dispatch_render`` — the test asserts on
+    the watcher event the GM panel actually receives, not on a
+    library-internal span. If this passes but the GM panel never sees
+    the event (e.g. the span was emitted but the route was missing),
+    `test_render_trigger_span_route_registered` catches that.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / f"render_{reason}.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    cap = await _bind_capture()
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    result = NarrationTurnResult(**result_kwargs)
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None, (
+        f"reason={reason} fixture did not dispatch — the policy gate "
+        "rejected an eligible turn"
+    )
+
+    # Drain the background daemon round-trip so we don't leak the task.
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    triggers = _watcher_events_matching(cap, field="render", op="trigger")
+    assert len(triggers) == 1, (
+        f"reason={reason}: expected exactly one render.trigger "
+        f"watcher event, got {len(triggers)} — events: {cap.events!r}"
+    )
+    fields = triggers[0]["fields"]
+    assert fields.get("reason") == reason, (
+        f"render.trigger fired with reason={fields.get('reason')!r}; "
+        f"expected {reason!r}"
+    )
+    assert fields.get("eligible") is True
+    assert fields.get("queued") is True
+    assert fields.get("turn_number") == sd.snapshot.turn_manager.interaction
+
+
+@pytest.mark.asyncio
+async def test_render_trigger_resolved_encounter_emits_resolved(
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: ``ENCOUNTER_RESOLVED`` is the only trigger reason whose
+    signal is NOT carried on ``NarrationTurnResult`` — it's a boolean
+    derived in ``narration_apply`` when a confrontation transitions to
+    a terminal state. The dispatch seam must accept this signal as an
+    out-of-band parameter; threading it through is part of the wiring
+    this story must land.
+
+    The test asserts the contract: when the call site signals an
+    encounter resolution, ``render.trigger`` fires with reason="resolved"
+    and the turn dispatches. If the implementation cannot accept the
+    boolean at the call site, the test fails with a ``TypeError`` —
+    which is a *correct* RED signal that the wire is missing.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "render_resolved.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    cap = await _bind_capture()
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    result = NarrationTurnResult(
+        narration="The bandit goes down hard.",
+        visual_scene=_visual_scene_for_turn(),
+        confrontation="bandit_ambush",
+    )
+
+    # The wire-first contract: ``encounter_resolved_this_turn`` is
+    # threaded into the dispatch seam. The keyword name is part of the
+    # wire that Dev must implement — if Dev exposes it under another
+    # name, this test fails loudly and that's the right RED signal.
+    queued = handler._maybe_dispatch_render(  # noqa: SLF001
+        sd, result, encounter_resolved_this_turn=True
+    )
+    assert queued is not None
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    triggers = _watcher_events_matching(cap, field="render", op="trigger")
+    assert len(triggers) == 1
+    assert triggers[0]["fields"].get("reason") == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_render_trigger_banter_emits_none_policy_skip(
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2: a banter turn — narrator emitted a ``visual_scene`` but the
+    structured signals are empty — must NOT dispatch and must emit
+    ``render.trigger`` with reason="none_policy".
+
+    The negative case is the load-bearing one: pre-story the dispatch
+    *would* have fired (because ``visual_scene`` is present), and the
+    GM panel got no signal. After the wire lands, the GM panel must
+    see exactly one ``render.trigger`` event with ``queued=False`` AND
+    one ``render.policy_skip`` event."""
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "should_not_fire.png"),
+            "width": 1,
+            "height": 1,
+            "elapsed_ms": 1,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    cap = await _bind_capture()
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    # Banter turn: visual_scene present, but ZERO structured signals.
+    # location matches the snapshot, no beats, no new NPCs, no
+    # encounter resolution.
+    result = NarrationTurnResult(
+        narration="They share a cigarette.",
+        visual_scene=_visual_scene_for_turn(),
+        location=sd.snapshot.location,
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is None, (
+        "banter turn dispatched — the policy gate failed open. The pre-"
+        "story behavior dispatched on visual_scene presence; if this "
+        "passes None, the new gate is in place"
+    )
+
+    # The daemon should never receive a request. Give the loop a tick to
+    # settle so the assertion below isn't racing a pending coroutine.
+    await asyncio.sleep(0.1)
+    assert daemon.requests == [], (
+        f"banter turn produced {len(daemon.requests)} daemon request(s) "
+        "— policy gate is bypassed"
+    )
+    await daemon.stop()
+
+    triggers = _watcher_events_matching(cap, field="render", op="trigger")
+    assert len(triggers) == 1, (
+        f"banter turn must emit exactly one render.trigger "
+        f"(reason=none_policy); got {len(triggers)}"
+    )
+    fields = triggers[0]["fields"]
+    assert fields.get("reason") == "none_policy"
+    assert fields.get("eligible") is False
+    assert fields.get("queued") is False
+    assert fields.get("had_visual_scene") is True, (
+        "had_visual_scene must reflect that the narrator DID emit a "
+        "visual_scene — distinguishes 'narrator didn't try' from "
+        "'narrator tried but no policy match'"
+    )
+
+    skips = _watcher_events_matching(cap, field="render", op="policy_skip")
+    assert len(skips) == 1, (
+        f"banter turn must emit one render.policy_skip; got {len(skips)}"
+    )
+    skip_fields = skips[0]["fields"]
+    assert skip_fields.get("reason") == "none_policy"
+    assert skip_fields.get("narrator_emitted_subject") is True
+
+
+@pytest.mark.asyncio
+async def test_render_trigger_priority_beat_fire_over_npc_intro(
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: a single turn carrying multiple positive signals reports the
+    HIGHEST-PRIORITY enum value. Priority order per the story context:
+    BEAT_FIRE > SCENE_CHANGE > NPC_INTRO > ENCOUNTER_RESOLVED > NONE_POLICY.
+
+    Test pair (BEAT_FIRE vs NPC_INTRO) is the realistic case — many
+    encounter beats also introduce a fresh NPC. Without a deterministic
+    priority the GM panel sees noisy reasons and Sebastien can't
+    correlate dispatches to mechanical events.
+    """
+    from sidequest.agents.orchestrator import BeatSelection, NpcMention
+
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "priority.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    cap = await _bind_capture()
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    result = NarrationTurnResult(
+        narration="The trap springs as a stranger ducks into view.",
+        visual_scene=_visual_scene_for_turn(),
+        beat_selections=[BeatSelection(actor="Felix", beat_id="trap_sprung")],
+        npcs_present=[NpcMention(name="Sallow Dree", is_new=True)],
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    triggers = _watcher_events_matching(cap, field="render", op="trigger")
+    assert len(triggers) == 1
+    assert triggers[0]["fields"].get("reason") == "beat_fire", (
+        "priority order broken: BEAT_FIRE must outrank NPC_INTRO so the "
+        "GM panel reports the mechanical event, not the NPC mention"
+    )
+
+
+@pytest.mark.asyncio
+async def test_felix_shape_replay_eight_turn_sequence(
+    tmp_path: Path,
+    short_sock: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6: replay a synthetic 8-turn Felix-shaped sequence — one of each
+    positive trigger reason plus four banter turns. Assert four dispatches
+    and four ``none_policy`` spans; assert the watcher stream reflects all
+    eight decisions in order. This is the scenario that motivated the
+    story; if it doesn't hold end-to-end, AC1-AC4 individually passing
+    cannot save us.
+    """
+    from sidequest.agents.orchestrator import BeatSelection, NpcMention
+
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "replay.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 10,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    cap = await _bind_capture()
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    base_location = sd.snapshot.location
+
+    # Order matters: assert watcher events arrive in this order.
+    sequence: list[tuple[str, NarrationTurnResult]] = [
+        (
+            "beat_fire",
+            NarrationTurnResult(
+                narration="The trap springs.",
+                visual_scene=_visual_scene_for_turn(),
+                location=base_location,
+                beat_selections=[
+                    BeatSelection(actor="Felix", beat_id="trap_sprung"),
+                ],
+            ),
+        ),
+        (
+            "none_policy",
+            NarrationTurnResult(
+                narration="Felix dusts himself off, muttering.",
+                visual_scene=_visual_scene_for_turn(),
+                location=base_location,
+            ),
+        ),
+        (
+            "scene_change",
+            NarrationTurnResult(
+                narration="The corridor opens into glasswork.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+            ),
+        ),
+        (
+            "none_policy",
+            NarrationTurnResult(
+                narration="He picks his teeth with a thorn.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+            ),
+        ),
+        (
+            "npc_intro",
+            NarrationTurnResult(
+                narration="A figure unfolds from the rubble.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+                npcs_present=[NpcMention(name="Sallow Dree", is_new=True)],
+            ),
+        ),
+        (
+            "none_policy",
+            NarrationTurnResult(
+                narration="They trade names. Pleasantries.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+                npcs_present=[
+                    NpcMention(name="Sallow Dree", is_new=False),
+                ],
+            ),
+        ),
+        (
+            "resolved",
+            NarrationTurnResult(
+                narration="Sallow Dree dies under the lamp.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+                confrontation="ambush_in_glassflats",
+            ),
+        ),
+        (
+            "none_policy",
+            NarrationTurnResult(
+                narration="Felix sits with the body.",
+                visual_scene=_visual_scene_for_turn(),
+                location="The Glass Flats",
+            ),
+        ),
+    ]
+
+    # Each dispatch advances the snapshot's location to mirror the
+    # narration_apply effect — the next turn's scene_change classifier
+    # compares against the post-apply location.
+    dispatched_count = 0
+    for idx, (expected_reason, result) in enumerate(sequence):
+        encounter_resolved = expected_reason == "resolved"
+        queued = handler._maybe_dispatch_render(  # noqa: SLF001
+            sd, result, encounter_resolved_this_turn=encounter_resolved
+        )
+        if expected_reason == "none_policy":
+            assert queued is None, (
+                f"turn {idx} ({expected_reason}) dispatched — should have "
+                "been suppressed"
+            )
+        else:
+            assert queued is not None, (
+                f"turn {idx} ({expected_reason}) failed to dispatch"
+            )
+            dispatched_count += 1
+            await asyncio.wait_for(queue.get(), timeout=2.0)
+        # Advance the snapshot's location for the next turn so the
+        # classifier compares against the right baseline.
+        if result.location:
+            sd.snapshot.location = result.location
+
+    await daemon.stop()
+
+    triggers = _watcher_events_matching(cap, field="render", op="trigger")
+    assert len(triggers) == 8, (
+        f"expected 8 render.trigger events (one per turn), got {len(triggers)}"
+    )
+    actual_reasons = [t["fields"].get("reason") for t in triggers]
+    expected_reasons = [r for r, _ in sequence]
+    assert actual_reasons == expected_reasons, (
+        f"watcher event ordering / reasons do not match the turn "
+        f"sequence.\n  expected: {expected_reasons}\n  actual:   "
+        f"{actual_reasons}"
+    )
+    assert dispatched_count == 4
+    none_policy_triggers = [t for t in triggers if t["fields"].get("reason") == "none_policy"]
+    assert len(none_policy_triggers) == 4

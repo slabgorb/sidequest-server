@@ -250,3 +250,202 @@ async def test_reconnecting_client_replays_prior_scrapbook_entry(
     payload = scrapbook_msgs[0].payload
     assert getattr(payload, "location", "") != ""
     assert getattr(payload, "narrative_excerpt", "")
+
+
+# ---------------------------------------------------------------------------
+# Story 45-30: ``render_status`` discriminator on ScrapbookEntryPayload
+#
+# AC4 / AC5: the scrapbook payload carries a discriminator the UI uses to
+# render distinct affordances for "rendered" vs "skipped by policy" vs
+# "dispatched but failed". Pre-story the UI flips on ``hasImage`` only —
+# it cannot tell a banter turn (no image was ever requested) from a
+# daemon-down turn (image was requested and failed). The new field closes
+# that gap.
+# ---------------------------------------------------------------------------
+
+
+_SLUG_RENDER_STATUS_BANTER = "scrapbook-render-status-banter"
+_SLUG_RENDER_STATUS_RENDERED = "scrapbook-render-status-rendered"
+
+
+def _banter_narration_result():
+    """Banter turn — narrator emitted a visual_scene but ZERO structured
+    signals (no beat, no scene change, no new NPC, no encounter
+    resolution). The new render trigger policy must classify this as
+    ``none_policy`` and the scrapbook payload must record that with
+    ``render_status="skipped_policy"``."""
+    from sidequest.agents.orchestrator import (
+        NarrationTurnResult,
+        VisualScene,
+    )
+
+    return NarrationTurnResult(
+        narration=(
+            "Thorn stretches their shoulders against the cold and says little."
+        ),
+        visual_scene=VisualScene.from_dict(
+            {
+                "subject": "fighter rolls shoulders by lantern light",
+                "tier": "scene_illustration",
+                "mood": "quiet",
+                "tags": ["pause"],
+            }
+        ),
+        # Deliberately empty: no location, no beats, no NPCs, no
+        # confrontation. This is the load-bearing negative — pre-story the
+        # render would have fired purely because visual_scene was set.
+        is_degraded=False,
+        agent_duration_ms=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
+    tmp_path: Path,
+) -> None:
+    """AC4: banter turn produces a SCRAPBOOK_ENTRY whose
+    ``render_status`` is ``"skipped_policy"``. The entry still persists
+    (the story still wants to remember the turn) but the UI must be
+    able to render the eligible-but-skipped indicator distinctly from
+    the daemon-failed indicator."""
+    _seed_with_character(tmp_path, _SLUG_RENDER_STATUS_BANTER)
+    handler = WebSocketSessionHandler(
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
+    )
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=RoomRegistry(),
+        socket_id="sock-banter",
+        out_queue=queue,
+    )
+
+    connect = GameMessage.model_validate(
+        {
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG_RENDER_STATUS_BANTER,
+                "last_seen_seq": 0,
+            },
+        }
+    )
+    with patch(
+        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+        new=AsyncMock(return_value=_banter_narration_result()),
+    ):
+        await handler.handle_message(connect)
+        action = GameMessage.model_validate(
+            {
+                "type": "PLAYER_ACTION",
+                "player_id": "alice",
+                "payload": {"action": "I take a moment to breathe."},
+            }
+        )
+        outbound = await handler.handle_message(action)
+
+    scrapbook_frames = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.SCRAPBOOK_ENTRY
+    ]
+    assert scrapbook_frames, (
+        "banter turn must still emit a SCRAPBOOK_ENTRY — the story "
+        "remembers the turn even when no image was rendered"
+    )
+    payload = scrapbook_frames[0].payload
+    actual = getattr(payload, "render_status", None)
+    assert actual == "skipped_policy", (
+        f"banter turn render_status={actual!r} (expected 'skipped_policy') "
+        "— the UI cannot distinguish this from a daemon failure without "
+        "the discriminator"
+    )
+
+    # The persisted row must carry the same value so reconnect replay
+    # surfaces it.
+    db = db_path_for_slug(tmp_path, _SLUG_RENDER_STATUS_BANTER)
+    store = SqliteStore(db)
+    store.initialize()
+    try:
+        rows = store._conn.execute(
+            "SELECT render_status FROM scrapbook_entries"
+        ).fetchall()
+        assert rows, "expected a row in scrapbook_entries"
+        assert rows[0][0] == "skipped_policy", (
+            f"persisted render_status={rows[0][0]!r}; "
+            "must match the wire payload so reconnects replay correctly"
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_scrapbook_render_status_rendered_for_eligible_turn(
+    tmp_path: Path,
+) -> None:
+    """AC4: an eligible turn (here: NPC intro) produces a SCRAPBOOK_ENTRY
+    with ``render_status="rendered"`` even though the daemon path is
+    not actually called in this test fixture — the discriminator
+    reflects the POLICY decision (was a render dispatched), not whether
+    the bytes have arrived from the daemon yet. The async IMAGE arrival
+    is a separate downstream signal."""
+    _seed_with_character(tmp_path, _SLUG_RENDER_STATUS_RENDERED)
+    handler = WebSocketSessionHandler(
+        save_dir=tmp_path,
+        genre_pack_search_paths=[_FIXTURE_PACKS],
+    )
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    handler.attach_room_context(
+        registry=RoomRegistry(),
+        socket_id="sock-rendered",
+        out_queue=queue,
+    )
+
+    connect = GameMessage.model_validate(
+        {
+            "type": "SESSION_EVENT",
+            "player_id": "alice",
+            "payload": {
+                "event": "connect",
+                "game_slug": _SLUG_RENDER_STATUS_RENDERED,
+                "last_seen_seq": 0,
+            },
+        }
+    )
+    # The eligible-turn fixture from the existing test is reused — it
+    # carries an NpcMention with default is_new=False, so we override.
+    from sidequest.agents.orchestrator import NpcMention
+
+    eligible = _fake_narration_result()
+    eligible.npcs_present = [
+        NpcMention(name="Caretaker Eldrin", is_new=True, side="neutral")
+    ]
+
+    with patch(
+        "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
+        new=AsyncMock(return_value=eligible),
+    ):
+        await handler.handle_message(connect)
+        action = GameMessage.model_validate(
+            {
+                "type": "PLAYER_ACTION",
+                "player_id": "alice",
+                "payload": {"action": "I greet the caretaker."},
+            }
+        )
+        outbound = await handler.handle_message(action)
+
+    scrapbook_frames = [
+        m for m in outbound if getattr(m, "type", None) == MessageType.SCRAPBOOK_ENTRY
+    ]
+    assert scrapbook_frames
+    payload = scrapbook_frames[0].payload
+    # Acceptable terminal values for an eligible turn whose async image
+    # has not yet arrived: "rendered" (policy dispatched) or "failed"
+    # (daemon refused at the gate). NOT "skipped_policy" — the eligible
+    # NPC intro must NOT be classified as banter.
+    actual = getattr(payload, "render_status", None)
+    assert actual in {"rendered", "failed"}, (
+        f"eligible (NPC intro) turn render_status={actual!r} — must be "
+        "'rendered' (policy dispatched) or 'failed' (daemon gate refused), "
+        "never 'skipped_policy'"
+    )
