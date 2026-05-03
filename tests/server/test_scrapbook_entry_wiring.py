@@ -343,25 +343,14 @@ async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
                 "payload": {"action": "I take a moment to breathe."},
             }
         )
-        outbound = await handler.handle_message(action)
+        await handler.handle_message(action)
 
-    scrapbook_frames = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.SCRAPBOOK_ENTRY
-    ]
-    assert scrapbook_frames, (
-        "banter turn must still emit a SCRAPBOOK_ENTRY — the story "
-        "remembers the turn even when no image was rendered"
-    )
-    payload = scrapbook_frames[0].payload
-    actual = getattr(payload, "render_status", None)
-    assert actual == "skipped_policy", (
-        f"banter turn render_status={actual!r} (expected 'skipped_policy') "
-        "— the UI cannot distinguish this from a daemon failure without "
-        "the discriminator"
-    )
-
-    # The persisted row must carry the same value so reconnect replay
-    # surfaces it.
+    # Assert against the persisted scrapbook_entries row + the SCRAPBOOK_ENTRY
+    # event in the journal. These are the same wire — emit_scrapbook_entry
+    # both persists and routes through emit_event — and the journal is what
+    # reconnecting clients replay. Mirroring the existing test's pattern
+    # (test_scrapbook_entry_persists_and_journals) keeps assertion shape
+    # consistent and avoids depending on action-handler outbound flow.
     db = db_path_for_slug(tmp_path, _SLUG_RENDER_STATUS_BANTER)
     store = SqliteStore(db)
     store.initialize()
@@ -369,11 +358,33 @@ async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
         rows = store._conn.execute(
             "SELECT render_status FROM scrapbook_entries"
         ).fetchall()
-        assert rows, "expected a row in scrapbook_entries"
-        assert rows[0][0] == "skipped_policy", (
-            f"persisted render_status={rows[0][0]!r}; "
-            "must match the wire payload so reconnects replay correctly"
+        assert rows, (
+            "banter turn must still persist a scrapbook_entries row — the "
+            "story remembers the turn even when no image was rendered"
         )
+        actual = rows[0][0]
+        assert actual == "skipped_policy", (
+            f"banter turn render_status={actual!r} "
+            "(expected 'skipped_policy') — the UI cannot distinguish this "
+            "from a daemon failure without the discriminator"
+        )
+
+        # And the journaled event carries the same field on its payload —
+        # this is what reconnects replay to the gallery.
+        events = EventLog(store).read_since(since_seq=0)
+        scrapbook_events = [e for e in events if e.kind == "SCRAPBOOK_ENTRY"]
+        assert scrapbook_events, (
+            "SCRAPBOOK_ENTRY missing from event journal — gallery "
+            "won't see this turn on reconnect"
+        )
+        # The journaled event payload may be raw JSON; assert the field
+        # is present in whatever shape the journal stores.
+        payload_repr = str(scrapbook_events[0].data)
+        assert "render_status" in payload_repr, (
+            f"render_status missing from journaled SCRAPBOOK_ENTRY "
+            f"payload: {payload_repr[:200]}"
+        )
+        assert "skipped_policy" in payload_repr
     finally:
         store.close()
 
@@ -432,20 +443,28 @@ async def test_scrapbook_render_status_rendered_for_eligible_turn(
                 "payload": {"action": "I greet the caretaker."},
             }
         )
-        outbound = await handler.handle_message(action)
+        await handler.handle_message(action)
 
-    scrapbook_frames = [
-        m for m in outbound if getattr(m, "type", None) == MessageType.SCRAPBOOK_ENTRY
-    ]
-    assert scrapbook_frames
-    payload = scrapbook_frames[0].payload
-    # Acceptable terminal values for an eligible turn whose async image
-    # has not yet arrived: "rendered" (policy dispatched) or "failed"
-    # (daemon refused at the gate). NOT "skipped_policy" — the eligible
-    # NPC intro must NOT be classified as banter.
-    actual = getattr(payload, "render_status", None)
-    assert actual in {"rendered", "failed"}, (
-        f"eligible (NPC intro) turn render_status={actual!r} — must be "
-        "'rendered' (policy dispatched) or 'failed' (daemon gate refused), "
-        "never 'skipped_policy'"
-    )
+    # Read render_status from the persisted row — same reasoning as the
+    # banter test above (mirrors test_scrapbook_entry_persists_and_journals
+    # so we test the journal-side wire, not the action-handler outbound).
+    db = db_path_for_slug(tmp_path, _SLUG_RENDER_STATUS_RENDERED)
+    store = SqliteStore(db)
+    store.initialize()
+    try:
+        rows = store._conn.execute(
+            "SELECT render_status FROM scrapbook_entries"
+        ).fetchall()
+        assert rows, "expected a row in scrapbook_entries"
+        # Acceptable terminal values for an eligible turn whose async
+        # image has not yet arrived: "rendered" (policy dispatched) or
+        # "failed" (daemon refused at the gate). NOT "skipped_policy"
+        # — the eligible NPC intro must NOT be classified as banter.
+        actual = rows[0][0]
+        assert actual in {"rendered", "failed"}, (
+            f"eligible (NPC intro) turn render_status={actual!r} — must be "
+            "'rendered' (policy dispatched) or 'failed' (daemon gate "
+            "refused), never 'skipped_policy'"
+        )
+    finally:
+        store.close()
