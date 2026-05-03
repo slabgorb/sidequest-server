@@ -65,7 +65,8 @@ class ActionRevealHandler:
             return []
 
         round_no = snapshot.turn_manager.round
-        socket_id = session._socket_id or ""
+        socket_id = session._socket_id
+        assert socket_id is not None  # set by attach_room_context before dispatch
 
         # seq monotonicity per (socket_id, round). On round advance,
         # the prior round's tuple is replaced, naturally resetting seq.
@@ -106,4 +107,5 @@ class ActionRevealHandler:
         return []
 
 
+# Stateful singleton — per-socket dicts bounded by active connection count.
 HANDLER = ActionRevealHandler()

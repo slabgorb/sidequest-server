@@ -250,3 +250,27 @@ async def test_rate_limit_counter_per_socket_independent() -> None:
 
     session_a._room.broadcast.assert_called_once()
     session_b._room.broadcast.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_clears_on_round_advance(monkeypatch) -> None:
+    """First composing event of a new round is never throttled by the prior round's timestamp."""
+    handler = ActionRevealHandler()
+    session = _make_session(round=7)
+    fake_now = [1000.0]
+    monkeypatch.setattr(
+        "sidequest.handlers.action_reveal.time.monotonic",
+        lambda: fake_now[0],
+    )
+
+    await handler.handle(session, _make_msg(status=ActionRevealStatus.COMPOSING, seq=0))
+    # Advance round — time has NOT advanced past the floor.
+    snapshot = session._room.snapshot.return_value
+    snapshot.turn_manager.round = 8
+    # Same timestamp — would be throttled if rate-limit was not cleared.
+    await handler.handle(
+        session,
+        _make_msg(status=ActionRevealStatus.COMPOSING, seq=0, round=8),
+    )
+
+    assert session._room.broadcast.call_count == 2
