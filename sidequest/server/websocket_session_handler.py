@@ -203,17 +203,49 @@ def _populate_opening_directive_on_chargen_complete(
     §2.4 + §2.6.
     """
     if getattr(session_data, "opening_directive", None) is not None:
-        return  # already populated — idempotent
+        return  # already populated — idempotent (no event: silent on replay)
+
+    # Loud-fail bail-out paths (playtest 2026-05-03 — opening narration
+    # skips Kestrel beat). Each ``return`` previously was a silent
+    # ``# defensive`` bail; the GM panel had no signal that the canned
+    # opening was even attempted. Now every skip emits an
+    # ``opening.skipped`` watcher event so Sebastien sees the lie-
+    # detector fire when the narrator improvises in place of the
+    # canned opening. Severity=warning because the resolver running and
+    # finding no match is the exact bug that surfaces as "PCs land in
+    # Vaskov Centrum customs instead of the Kestrel galley".
+    _genre_slug = getattr(session_data, "genre_slug", "")
+    _world_slug = getattr(session_data, "world_slug", world_slug)
+
+    def _emit_skip(reason: str, **extra: object) -> None:
+        _watcher_publish(
+            "opening.skipped",
+            {
+                "reason": reason,
+                "genre": _genre_slug,
+                "world": _world_slug,
+                "characters_committed": len(snapshot.characters),
+                **extra,
+            },
+            component="opening_hook",
+            severity="warning",
+        )
 
     if not snapshot.characters:
-        return  # defensive — chargen should have appended one
+        _emit_skip("empty_snapshot")
+        return
 
     pc = snapshot.characters[0]
     pc_background = getattr(pc, "background", "") or ""
 
     world = pack.worlds.get(world_slug)
     if world is None or not world.openings:
-        return  # validator-7 should make this unreachable
+        _emit_skip(
+            "world_or_openings_missing",
+            world_present=world is not None,
+            opening_bank_size=len(getattr(world, "openings", []) or []) if world else 0,
+        )
+        return
 
     mode_str = mode.value if hasattr(mode, "value") else str(mode)
     try:
@@ -224,8 +256,22 @@ def _populate_opening_directive_on_chargen_complete(
             pc_background=pc_background,
             world_slug=world_slug,
         )
-    except OpeningResolutionError:
-        return  # validator-7+8 should prevent — span already emitted by resolver
+    except OpeningResolutionError as exc:
+        # The active cause of the Kestrel-skip bug: ``mp_galley_jumprest``
+        # declares ``min_players: 2`` and the resolver runs at first
+        # commit when only 1 PC is seated. The deferral gate
+        # (``_should_fire_opening_narration``) catches this and waits
+        # for the second commit; the skip event tells Sebastien
+        # *why* the resolver gave up.
+        _emit_skip(
+            "resolution_failed",
+            mode=mode_str,
+            player_count=len(snapshot.characters),
+            pc_background=pc_background,
+            opening_bank_size=len(world.openings),
+            error=str(exc),
+        )
+        return
 
     # Chassis lookup — World may not store chassis_instances directly
     # (loader populates them as a sibling structure for validators).
@@ -283,6 +329,55 @@ def _populate_opening_directive_on_chargen_complete(
     session_data.opening_seed = opening.first_turn_invitation
     session_data.opening_directive = directive
     session_data._resolved_opening_id = opening.id
+
+
+def _should_fire_opening_narration(session_data: object, room: object) -> bool:
+    """Decide whether to run opening narration on this chargen.complete.
+
+    Playtest 2026-05-03: in MP, the canned ``mp_galley_jumprest`` opening
+    declares ``min_players: 2`` but the populator runs at FIRST commit
+    when only 1 PC is seated. Resolution fails → no directive → narrator
+    improvises Vaskov Centrum customs instead of the Kestrel galley. The
+    second committer hits ``mp_joiner_opening_suppressed_at_consume``
+    and gets joiner-orientation anchored on the (improvised) host
+    location — the canned MP opening is never used.
+
+    Fix: the populator is now called on every commit (idempotent — bails
+    if directive already set). This gate decides whether to *fire* the
+    opening narration based on whether the party is complete enough
+    that the canned opening can resolve. Solo paths fire on first
+    commit (preserves prior behavior). MP first committers DEFER until
+    the last committer can re-run the populator with the full party
+    seated.
+
+    Returns ``True`` when:
+      - There is no MP room (solo headless path).
+      - Room reports ``non_abandoned_player_count <= 1`` (solo via room).
+      - The directive is already populated (resolver succeeded —
+        either because we're solo or because this is the last
+        committer and the party is complete).
+      - All non-abandoned seats have committed chargen
+        (``len(characters) >= non_abandoned_player_count``) — fire as a
+        belt-and-suspenders fallback even if the populator hasn't
+        managed to set the directive (e.g. world has no openings — the
+        narrator's "I look around" fallback still beats silence).
+
+    Returns ``False`` only in the explicit MP-defer case: room exists,
+    >1 seat expected, party not complete, and no directive populated.
+    """
+    if room is None:
+        return True
+    try:
+        seat_count = int(room.non_abandoned_player_count())
+    except Exception:  # noqa: BLE001 — fail open to current behavior on contract drift
+        return True
+    if seat_count <= 1:
+        return True
+    if getattr(session_data, "opening_directive", None) is not None:
+        return True
+    snapshot = getattr(session_data, "snapshot", None)
+    chars = getattr(snapshot, "characters", []) if snapshot is not None else []
+    return len(chars) >= seat_count
 
 
 class WebSocketSessionHandler:
@@ -1518,10 +1613,7 @@ class WebSocketSessionHandler:
             # leak the global location into the joiner's header
             # incorrectly. Belt + suspenders: seed at every entry point
             # where a PC's location is known.
-            if (
-                sd.snapshot.location
-                and character.core.name not in sd.snapshot.character_locations
-            ):
+            if sd.snapshot.location and character.core.name not in sd.snapshot.character_locations:
                 sd.snapshot.character_locations[character.core.name] = sd.snapshot.location
             span.add_event(
                 "session.player_seat_bound",
@@ -1688,27 +1780,91 @@ class WebSocketSessionHandler:
             )
 
         # Canned-openings Phase 4 (Task 19): resolve + stash the
-        # opening directive at chargen-completion. First-commit only —
-        # MP joiners (a peer's PC already on the snapshot) skip this,
-        # which makes the consume-time MP-joiner suppression in
-        # ``_run_opening_turn_narration`` a defense-in-depth fallback
-        # rather than the primary guard. The seed/directive populated
-        # here are consumed by ``_run_opening_turn_narration`` on the
-        # very next call.
-        if is_first_commit:
-            _populate_opening_directive_on_chargen_complete(
-                session_data=sd,
-                snapshot=sd.snapshot,
-                pack=sd.genre_pack,
-                world_slug=sd.world_slug,
-                mode=sd.mode,
-            )
+        # opening directive at chargen-completion.
+        #
+        # Playtest 2026-05-03 [BUG] Opening narration skips Kestrel
+        # beat: previously gated on ``is_first_commit``, which fired
+        # the resolver when only 1 PC was seated in MP — the canned
+        # ``mp_galley_jumprest`` opening declares ``min_players: 2``
+        # so resolution always failed and the narrator improvised
+        # Vaskov Centrum customs. Now the populator runs on EVERY
+        # commit (idempotent — bails when ``opening_directive`` is
+        # already set, emits ``opening.skipped`` watcher events
+        # otherwise), so the second committer's call succeeds with
+        # the full party seated.
+        _populate_opening_directive_on_chargen_complete(
+            session_data=sd,
+            snapshot=sd.snapshot,
+            pack=sd.genre_pack,
+            world_slug=sd.world_slug,
+            mode=sd.mode,
+        )
 
         # Opening-turn bootstrap (Slice H / connect.rs:2270). Fires
         # narrator with opening_seed + opening_directive (Early zone),
         # consumed once so subsequent turns run directive-free.
-        opening_messages = await self._run_opening_turn_narration(sd, player_id, span)
-        out.extend(opening_messages)
+        #
+        # Deferral gate (playtest 2026-05-03): in MP, skip the opening
+        # narration on first commit so the canned MP opening can
+        # resolve at second commit with full party context. The last
+        # committer's narration is broadcast to peers below so the
+        # first committer still sees the opening.
+        if _should_fire_opening_narration(sd, self._room):
+            opening_messages = await self._run_opening_turn_narration(sd, player_id, span)
+            out.extend(opening_messages)
+            # MP: broadcast opening narration to peers so the earlier
+            # committer (whose chargen.complete was deferred) sees the
+            # canned opening when it finally fires here. Solo path
+            # (room is None or seat_count <= 1) skips the broadcast.
+            from sidequest.game.persistence import (  # noqa: PLC0415 — break import cycle
+                GameMode as _GameMode2,
+            )
+
+            if (
+                self._room is not None
+                and sd.mode == _GameMode2.MULTIPLAYER
+                and self._socket_id is not None
+                and opening_messages
+            ):
+                for _msg in opening_messages:
+                    self._room.broadcast(_msg, exclude_socket_id=self._socket_id)
+                _watcher_publish(
+                    "opening.broadcast_to_peers",
+                    {
+                        "genre": sd.genre_slug,
+                        "world": sd.world_slug,
+                        "player_id": player_id,
+                        "message_count": len(opening_messages),
+                    },
+                    component="opening_hook",
+                    severity="info",
+                )
+        else:
+            # Defer: don't fire opening narration yet — the next
+            # committer will populate the directive and fire it for
+            # everyone via the broadcast path above.
+            seat_count = self._room.non_abandoned_player_count() if self._room is not None else 0
+            _watcher_publish(
+                "opening.deferred_party_incomplete",
+                {
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "player_id": player_id,
+                    "characters_committed": len(sd.snapshot.characters),
+                    "non_abandoned_seats": seat_count,
+                },
+                component="opening_hook",
+                severity="info",
+            )
+            logger.info(
+                "opening.deferred_party_incomplete genre=%s world=%s player=%s "
+                "committed=%d expected=%d",
+                sd.genre_slug,
+                sd.world_slug,
+                sd.player_name,
+                len(sd.snapshot.characters),
+                seat_count,
+            )
         return out
 
     # ---- helper: next scene message OR confirmation summary -------------
@@ -1883,8 +2039,7 @@ class WebSocketSessionHandler:
                     # transition signal would be lost.
                     snapshot_location_before_apply = snapshot.location
                     encounter_unresolved_before = (
-                        snapshot.encounter is not None
-                        and not snapshot.encounter.resolved
+                        snapshot.encounter is not None and not snapshot.encounter.resolved
                     )
                     _apply_narration_result_to_snapshot(
                         snapshot,
@@ -3308,9 +3463,7 @@ class WebSocketSessionHandler:
 
         visual = result.visual_scene
         had_visual_scene = visual is not None
-        subject_present = (
-            had_visual_scene and bool(getattr(visual, "subject", "").strip())
-        )
+        subject_present = had_visual_scene and bool(getattr(visual, "subject", "").strip())
 
         # Policy gate (Story 45-30) — classify the trigger reason from the
         # structured signals already on NarrationTurnResult plus the
@@ -3507,9 +3660,7 @@ class WebSocketSessionHandler:
         # the GM panel can see the contract gap (per CLAUDE.md "no silent
         # fallbacks" + OTEL observability principle).
         raw_location = (sd.snapshot.location or "").strip()
-        sanitized_location = (
-            raw_location if raw_location.startswith("where:") else ""
-        )
+        sanitized_location = raw_location if raw_location.startswith("where:") else ""
         if raw_location and not sanitized_location:
             _watcher_publish(
                 "state_transition",
