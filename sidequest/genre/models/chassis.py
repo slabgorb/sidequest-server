@@ -58,6 +58,22 @@ class CrewRoleSpec(BaseModel):
     default_seat: str | None = None
 
 
+class StationSpec(BaseModel):
+    """A crew station — a console inside an interior room.
+
+    Stations are role-coded but not role-gated. Anyone can man any
+    station; ``preferred_role`` is a soft hint the narrator can use to
+    bias outcomes (Firefly skill curve — Zoe can fly, Wash is just
+    better at it).
+    """
+
+    model_config = {"extra": "forbid"}
+    id: str
+    display_name: str
+    room: str  # must reference an InteriorRoomSpec.id on the same ChassisClass
+    preferred_role: str | None = None
+
+
 class ChassisClass(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
     id: str
@@ -72,6 +88,7 @@ class ChassisClass(BaseModel):
     default_voice: ChassisVoiceSpec | None = None
     interior_rooms: list[InteriorRoomSpec] = Field(default_factory=list)
     crew_roles: list[CrewRoleSpec] = Field(default_factory=list)
+    stations: list[StationSpec] = Field(default_factory=list)
 
 
 class ChassisClassesConfig(BaseModel):
