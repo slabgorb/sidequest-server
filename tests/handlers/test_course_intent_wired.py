@@ -145,3 +145,34 @@ def test_handle_cancel_course_when_no_plot_is_no_op() -> None:
     assert result.accepted is True
     assert result.was_already_clear is True
     assert snap.plotted_course is None
+
+
+def test_course_span_helpers_emit_without_error() -> None:
+    """Smoke wiring test: span functions can be called without raising.
+
+    Real assertions on attribute values belong in OTEL test infrastructure
+    (search for tests/telemetry/ for the project's pattern). This smoke
+    is sufficient to catch missing imports / arg signature drift."""
+    from sidequest.orbital.course import CourseSource, PlottedCourse
+    from sidequest.telemetry.spans.course import (
+        emit_course_compute,
+        emit_course_plot_accepted,
+        emit_course_plot_rejected,
+        emit_course_cancel,
+        emit_course_render_overlay,
+    )
+
+    pc = PlottedCourse(
+        to_body_id="mid",
+        eta_hours=30.0,
+        delta_v=1.0,
+        plotted_at_t_hours=42.0,
+        source=CourseSource.IN_SCOPE,
+    )
+    emit_course_compute(course_count=4, in_scope=2, recent=1, quest=1, dropped_by_cap=0)
+    emit_course_plot_accepted(from_body="near", course=pc)
+    emit_course_plot_rejected(
+        course_id="bogus", reason="not_in_scope", available_ids=["mid", "far"]
+    )
+    emit_course_cancel(was_already_clear=False)
+    emit_course_render_overlay(to_body="mid", bezier_control_offset_au=0.4)

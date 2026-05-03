@@ -1520,6 +1520,24 @@ class Orchestrator:
                 recent_body_mentions=list(context.recent_body_mentions),
                 quest_anchors=list(context.quest_anchors),
             )
+            from sidequest.telemetry.spans.course import emit_course_compute
+
+            in_scope_n = sum(
+                1 for r in course_rows.values() if r.source.value == "in_scope"
+            )
+            recent_n = sum(
+                1 for r in course_rows.values() if r.source.value == "recent_mention"
+            )
+            quest_n = sum(
+                1 for r in course_rows.values() if r.source.value == "quest_objective"
+            )
+            emit_course_compute(
+                course_count=len(course_rows),
+                in_scope=in_scope_n,
+                recent=recent_n,
+                quest=quest_n,
+                dropped_by_cap=0,  # cap-counted in compute_courses if we extend the API
+            )
             block_text = format_courses_block(course_rows)
             if block_text:
                 registry.register_section(
