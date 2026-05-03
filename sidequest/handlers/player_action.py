@@ -31,6 +31,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _broadcast_cleared_to_party(
+    room: object,
+    party_members: list[dict[str, str]],
+    *,
+    round_no: int,
+    reason: str,
+) -> None:
+    """Emit ACTION_REVEAL cleared for every party member.
+
+    Called at barrier-fire (reason="dispatch") and on disconnect
+    (reason="disconnect"). reason flows into OTEL only — the wire payload
+    is identical regardless of cause. Sent with exclude_socket_id=None
+    because the last-submitter's own row also needs to clear.
+    """
+    from sidequest.protocol.messages import (
+        ActionRevealMessage,
+        ActionRevealPayload,
+        ActionRevealStatus,
+    )
+
+    for member in party_members:
+        payload = ActionRevealPayload(
+            player_id=member["player_id"],
+            character_name=member["character_name"],
+            status=ActionRevealStatus.CLEARED,
+            action="",
+            aside=False,
+            seq=0,
+            round=round_no,
+        )
+        msg = ActionRevealMessage(payload=payload)
+        room.broadcast(msg, exclude_socket_id=None)
+
+
 class PlayerActionHandler:
     """Handle a PLAYER_ACTION message (player narration submission).
 
@@ -284,6 +318,20 @@ class PlayerActionHandler:
                     round((time.monotonic() - barrier_wait_started_at) * 1000),
                 )
                 timings.record_phase("mp_barrier_wait", wait_ms)
+
+            # ADR-036 Action Visibility Model: clear all peer reveal rows
+            # before narrator dispatch. Send to everyone — even the last
+            # submitter, whose own row needs to clear.
+            party_members = [
+                {"player_id": pid, "character_name": p.character_name}
+                for pid, p in pending
+            ]
+            _broadcast_cleared_to_party(
+                session._room,
+                party_members,
+                round_no=snapshot.turn_manager.round,
+                reason="dispatch",
+            )
 
             _watcher_publish(
                 "mp.round_dispatched",
