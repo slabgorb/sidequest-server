@@ -293,6 +293,13 @@ class NarrationTurnResult:
     # narrator does NOT invoke a magic working (the common case).
     magic_working: dict[str, Any] | None = None
 
+    # Raw game_patch dict (plot-a-course Bundle 5). Carries the full parsed
+    # game_patch JSON so narration_apply can dispatch sidecar intents (e.g.
+    # plot_course / cancel_course) that aren't individually extracted fields.
+    # Empty dict when the narrator emits no game_patch block or it fails to
+    # parse (both treated as "no sidecar" by downstream handlers).
+    game_patch_dict: dict[str, Any] = field(default_factory=dict)
+
     # OTEL / telemetry
     agent_name: str | None = None
     agent_duration_ms: int | None = None
@@ -2090,6 +2097,7 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=input_tokens,
@@ -2295,6 +2303,7 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,

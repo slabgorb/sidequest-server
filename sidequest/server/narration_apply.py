@@ -629,6 +629,108 @@ def promote_crossings_to_status_changes(
     return promotions
 
 
+def _apply_course_sidecar(
+    *,
+    snapshot: GameSnapshot,
+    result: object,
+    room: "SessionRoom",
+) -> None:
+    """Parse and apply a plot_course / cancel_course sidecar from game_patch_dict.
+
+    Called from _apply_narration_result_to_snapshot before the encounter
+    lifecycle block. Skips silently when:
+    - result has no game_patch_dict (non-NarrationTurnResult or empty patch)
+    - game_patch_dict carries no course intent (parse_course_sidecar returns None)
+    - room.session has no orbital_content (non-orbital world)
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+    patch_dict = result.game_patch_dict
+    if not patch_dict:
+        return
+
+    from sidequest.handlers.course_intent import handle_course_sidecar
+    from sidequest.orbital.course import _bodies_in_scope, compute_courses
+    from sidequest.protocol.course_intent import (
+        CancelCourseSidecar,
+        PlotCourseSidecar,
+        parse_course_sidecar,
+    )
+    from sidequest.telemetry.spans.course import (
+        emit_course_cancel,
+        emit_course_plot_accepted,
+        emit_course_plot_rejected,
+    )
+
+    course_sidecar = parse_course_sidecar(patch_dict)
+    if course_sidecar is None:
+        return
+
+    session = room.session
+    if session.orbital_content is None:
+        logger.debug(
+            "course_sidecar.skipped intent=%s reason=no_orbital_content",
+            course_sidecar.intent,
+        )
+        return
+
+    in_scope = _bodies_in_scope(
+        session.orbital_content.orbits,
+        session.orbital_scope,
+    )
+    available = compute_courses(
+        orbits=session.orbital_content.orbits,
+        party_at=snapshot.party_body_id,
+        in_scope_body_ids=in_scope,
+        recent_body_mentions=list(session.recent_body_mentions),
+        quest_anchors=list(snapshot.quest_anchors),
+    )
+    handler_result = handle_course_sidecar(
+        sidecar=course_sidecar,
+        snapshot=snapshot,
+        available_courses=available,
+    )
+
+    if isinstance(course_sidecar, PlotCourseSidecar):
+        if handler_result.accepted:
+            emit_course_plot_accepted(
+                from_body=snapshot.party_body_id,
+                course=snapshot.plotted_course,
+            )
+            logger.info(
+                "course.plot.accepted course_id=%r from_body=%r eta_hours=%s dv=%s",
+                course_sidecar.course_id,
+                snapshot.party_body_id,
+                snapshot.plotted_course.eta_hours if snapshot.plotted_course else None,
+                snapshot.plotted_course.delta_v if snapshot.plotted_course else None,
+            )
+        else:
+            emit_course_plot_rejected(
+                course_id=course_sidecar.course_id,
+                reason=handler_result.reason,
+                available_ids=sorted(available.keys()),
+            )
+            logger.warning(
+                "course.plot.rejected course_id=%r reason=%s available=%s",
+                course_sidecar.course_id,
+                handler_result.reason,
+                sorted(available.keys()),
+            )
+            # NOTE: reactions-hint injection skipped — add_reaction_for_next_turn
+            # does not exist on Session. See task instructions: escalated to
+            # Bundle 6 / dedicated reactions mechanism bundle.
+    elif isinstance(course_sidecar, CancelCourseSidecar):
+        emit_course_cancel(
+            was_already_clear=handler_result.was_already_clear,
+        )
+        logger.info(
+            "course.cancel was_already_clear=%s",
+            handler_result.was_already_clear,
+        )
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -1304,6 +1406,15 @@ def _apply_narration_result_to_snapshot(
                 existing.pronouns = npc_mention.pronouns
             if npc_mention.appearance and not existing.appearance:
                 existing.appearance = npc_mention.appearance
+
+    # Plot-a-course: parse course sidecar variants out of the
+    # game_patch payload and apply them to the snapshot. Other
+    # sidecar handlers (dice, encounter trigger) ignore course
+    # intents — parse_course_sidecar returns None for those.
+    # NOTE: reactions-hint injection on rejection (add_reaction_for_next_turn)
+    # is not yet implemented — no reactions mechanism exists on Session.
+    # Escalated: Bundle 6 or a dedicated reactions bundle should wire that path.
+    _apply_course_sidecar(snapshot=snapshot, result=result, room=room)
 
     # Encounter lifecycle (dual-track momentum, spec 2026-04-25)
     if pack is not None:
