@@ -35,6 +35,24 @@ from sidequest.server.session_handler import (
 )
 
 
+def _make_eligible_result(**kwargs):
+    """Story 45-30: the render trigger policy gates dispatch on structured
+    signals. These dispatch-mechanics tests test the wire downstream of
+    the policy (URL handling, request payload, broadcasting); they pre-date
+    the policy and don't carry signal kwargs. This wrapper injects a default
+    BeatSelection so the result classifies as BEAT_FIRE and the test exercises
+    its named gate, not the policy.
+
+    Tests asserting the policy itself (test_render_trigger_*) construct
+    NarrationTurnResult directly and bypass this helper.
+    """
+    from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult
+    if "beat_selections" not in kwargs:
+        kwargs["beat_selections"] = [
+            BeatSelection(actor="test", beat_id="dispatch_test")
+        ]
+    return NarrationTurnResult(**kwargs)
+
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
     """Short Unix-socket path (macOS caps sun_path ~104 bytes; pytest's
@@ -44,7 +62,6 @@ def short_sock(tmp_path: Path) -> Path:
     yield p
     if p.exists():
         p.unlink()
-
 
 class _FakeDaemon:
     """Unix-domain echo server matching the daemon protocol."""
@@ -79,7 +96,6 @@ class _FakeDaemon:
             self._server.close()
             await self._server.wait_closed()
 
-
 def _make_session_data(player_id: str = "p-1") -> _SessionData:
     from unittest.mock import MagicMock
 
@@ -102,7 +118,6 @@ def _make_session_data(player_id: str = "p-1") -> _SessionData:
         orchestrator=MagicMock(),
     )
     return sd
-
 
 def _make_session_data_with_pc(
     player_name: str = "Rux",
@@ -151,13 +166,11 @@ def _make_session_data_with_pc(
     )
     return sd
 
-
 def _make_handler_with_queue() -> tuple[WebSocketSessionHandler, asyncio.Queue]:
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/never-used"))
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler._out_queue = queue  # noqa: SLF001 — test wiring
     return handler, queue
-
 
 @pytest.mark.asyncio
 async def test_render_dispatch_fires_daemon_and_enqueues_image(
@@ -183,7 +196,7 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
 
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="The crack yawns open.",
         visual_scene=VisualScene(
             subject="a jagged fissure in red rock",
@@ -243,7 +256,6 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
         "back to a styleless raw prompt"
     )
 
-
 @pytest.mark.asyncio
 async def test_render_dispatch_otel_includes_genre_and_world(
     tmp_path: Path,
@@ -296,7 +308,7 @@ async def test_render_dispatch_otel_includes_genre_and_world(
 
     handler, _queue = _make_handler_with_queue()
     sd = _make_session_data()
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="...",
         visual_scene=VisualScene(subject="x", tier="scene_illustration"),
     )
@@ -324,7 +336,6 @@ async def test_render_dispatch_otel_includes_genre_and_world(
         "render.dispatched event missing ``world`` — GM panel can't "
         "spot a styleless silent fallback before the image arrives"
     )
-
 
 @pytest.mark.asyncio
 async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
@@ -371,7 +382,7 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
 
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data_with_pc(player_name="Roxie Two-Tongues")
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="Roxie's silhouette against the sodium lamps.",
         visual_scene=VisualScene(
             subject="a wiry rover lit by sodium lamps",
@@ -404,7 +415,6 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
     # An apostrophe (e.g. "O'Connor") would be dropped, but here the test
     # name has only the hyphen which is preserved.
     assert "-" in descriptor["id"]
-
 
 @pytest.mark.asyncio
 async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
@@ -440,7 +450,7 @@ async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
 
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data_with_pc(player_name="Hokulea")
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="Hokulea pries open the sprung locker.",
         visual_scene=VisualScene(
             subject="a sprung exploration locker in red corridor light",
@@ -474,7 +484,6 @@ async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
     # Descriptor still flows through so the daemon can register the PC.
     assert params["pc_descriptor"]["id"] == "hokulea"
 
-
 @pytest.mark.asyncio
 async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
     tmp_path: Path,
@@ -506,7 +515,7 @@ async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
 
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data(player_id="p-2")  # no characters on snapshot
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="...",
         visual_scene=VisualScene(subject="a face in shadow", tier="portrait"),
     )
@@ -520,7 +529,6 @@ async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
     # Ref still ships — daemon's try_compose handles the catalog miss.
     assert params["characters"] == ["pc:rux"]
     assert "pc_descriptor" not in params
-
 
 @pytest.mark.asyncio
 async def test_landscape_dispatch_strips_free_form_location(
@@ -555,7 +563,7 @@ async def test_landscape_dispatch_strips_free_form_location(
 
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()  # snapshot.location = "Tood's Dome — Nest Crack"
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="The dome opens.",
         visual_scene=VisualScene(
             subject="a high desert dome under brass-orrery skies",
@@ -581,7 +589,6 @@ async def test_landscape_dispatch_strips_free_form_location(
         "Coyote Star failed this way."
     )
 
-
 @pytest.mark.asyncio
 async def test_render_skipped_when_flag_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -589,13 +596,12 @@ async def test_render_skipped_when_flag_disabled(
     monkeypatch.delenv("SIDEQUEST_RENDER_ENABLED", raising=False)
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="...",
         visual_scene=VisualScene(subject="x", tier="scene_illustration"),
     )
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
-
 
 @pytest.mark.asyncio
 async def test_render_skipped_when_no_visual_scene(
@@ -604,10 +610,9 @@ async def test_render_skipped_when_no_visual_scene(
     monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
-    result = NarrationTurnResult(narration="flat text turn")
+    result = _make_eligible_result(narration="flat text turn")
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
-
 
 @pytest.mark.asyncio
 async def test_render_skipped_when_daemon_socket_missing(
@@ -621,13 +626,12 @@ async def test_render_skipped_when_daemon_socket_missing(
     )
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
-    result = NarrationTurnResult(
+    result = _make_eligible_result(
         narration="...",
         visual_scene=VisualScene(subject="x", tier="scene_illustration"),
     )
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
-
 
 def _client_bound_to(path: Path):
     """Return a DaemonClient fixed on a given socket path — used to swap
@@ -635,7 +639,6 @@ def _client_bound_to(path: Path):
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
-
 
 @pytest.mark.asyncio
 async def test_render_dispatch_self_heals_after_daemon_restart(
@@ -704,7 +707,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
 
         handler, queue = _make_handler_with_queue()
         sd = _make_session_data()
-        result = NarrationTurnResult(
+        result = _make_eligible_result(
             narration="The new tmpdir's pixels.",
             visual_scene=VisualScene(
                 subject="post-restart scene",
@@ -739,7 +742,6 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
         render_mounts.reset_for_app(app)
         render_mounts.set_active_app(None)
 
-
 # ---------------------------------------------------------------------------
 # Story 45-30: Render trigger policy contract + OTEL render.trigger reasons
 #
@@ -763,8 +765,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
 #   AC6 Felix-shape replay       → test_felix_shape_replay_eight_turn_sequence
 # ---------------------------------------------------------------------------
 
-
-def _capture_watcher_events() -> "tuple[object, list[dict]]":
+def _capture_watcher_events() -> tuple[object, list[dict]]:
     """Subscribe a fake socket to ``watcher_hub`` for the current loop and
     return ``(capture, events)`` so a test can inspect emitted events."""
     import asyncio as _asyncio
@@ -781,7 +782,6 @@ def _capture_watcher_events() -> "tuple[object, list[dict]]":
             self.events.append(data)
 
     return _Cap(), []  # caller uses .events on the cap object
-
 
 def _watcher_events_matching(
     cap: object, *, field: str | None = None, op: str | None = None
@@ -801,7 +801,6 @@ def _watcher_events_matching(
             continue
         out.append(ev)
     return out
-
 
 async def _bind_capture() -> object:
     """Bind a ``_Cap`` to ``watcher_hub`` and return it."""
@@ -824,8 +823,7 @@ async def _bind_capture() -> object:
     await watcher_hub.subscribe(cap)  # type: ignore[arg-type]
     return cap
 
-
-def _visual_scene_for_turn() -> "VisualScene":
+def _visual_scene_for_turn() -> VisualScene:
     """A canonical scene_illustration ``VisualScene`` — used so the
     pre-story short-circuit (`visual is None or not subject.strip()`)
     cannot mask the new policy gate. Tests still expect dispatch only
@@ -838,10 +836,8 @@ def _visual_scene_for_turn() -> "VisualScene":
         tags=["wasteland"],
     )
 
-
-def _visual_scene_or_none(*, with_visual: bool) -> "VisualScene | None":
+def _visual_scene_or_none(*, with_visual: bool) -> VisualScene | None:
     return _visual_scene_for_turn() if with_visual else None
-
 
 @pytest.mark.asyncio
 async def test_render_trigger_span_route_registered() -> None:
@@ -867,7 +863,6 @@ async def test_render_trigger_span_route_registered() -> None:
     skip_route = SPAN_ROUTES["render.policy_skip"]
     assert skip_route.event_type == "state_transition"
     assert skip_route.component == "render"
-
 
 def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
     """Yields (reason_name, NarrationTurnResult kwargs) — one positive
@@ -914,7 +909,6 @@ def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
             },
         ),
     ]
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -986,7 +980,6 @@ async def test_render_trigger_emits_reason_and_dispatches(
     assert fields.get("queued") is True
     assert fields.get("turn_number") == sd.snapshot.turn_manager.interaction
 
-
 @pytest.mark.asyncio
 async def test_render_trigger_resolved_encounter_emits_resolved(
     tmp_path: Path,
@@ -1047,7 +1040,6 @@ async def test_render_trigger_resolved_encounter_emits_resolved(
     triggers = _watcher_events_matching(cap, field="render", op="trigger")
     assert len(triggers) == 1
     assert triggers[0]["fields"].get("reason") == "resolved"
-
 
 @pytest.mark.asyncio
 async def test_render_trigger_banter_emits_none_policy_skip(
@@ -1133,7 +1125,6 @@ async def test_render_trigger_banter_emits_none_policy_skip(
     assert skip_fields.get("reason") == "none_policy"
     assert skip_fields.get("narrator_emitted_subject") is True
 
-
 @pytest.mark.asyncio
 async def test_render_trigger_priority_beat_fire_over_npc_intro(
     tmp_path: Path,
@@ -1191,7 +1182,6 @@ async def test_render_trigger_priority_beat_fire_over_npc_intro(
         "GM panel reports the mechanical event, not the NPC mention"
     )
 
-
 @pytest.mark.asyncio
 async def test_felix_shape_replay_eight_turn_sequence(
     tmp_path: Path,
@@ -1229,6 +1219,28 @@ async def test_felix_shape_replay_eight_turn_sequence(
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
     base_location = sd.snapshot.location
+
+    # Disable the ADR-050 image pacing throttle for this test — we are
+    # testing the trigger POLICY in isolation, and the throttle's default
+    # cooldown would suppress turns 2-7 after turn 0 fires (the test runs
+    # in milliseconds, well below the cooldown). The throttle has its own
+    # tests under test_render_dispatch_throttle.py.
+    class _AlwaysAllow:
+        cooldown_seconds = 0
+
+        def should_render(self):
+            from sidequest.server.image_pacing import ThrottleDecision
+
+            return ThrottleDecision(
+                allowed=True,
+                reason="test_disabled",
+                cooldown_remaining_seconds=0,
+            )
+
+        def record_render(self):
+            pass
+
+    sd.image_pacing_throttle = _AlwaysAllow()
 
     # Order matters: assert watcher events arrive in this order.
     sequence: list[tuple[str, NarrationTurnResult]] = [
@@ -1331,6 +1343,9 @@ async def test_felix_shape_replay_eight_turn_sequence(
         if result.location:
             sd.snapshot.location = result.location
 
+    # Give the event loop a tick so async watcher publishes from the final
+    # turn (which had no `await queue.get()` to drain) reach the capture.
+    await asyncio.sleep(0.1)
     await daemon.stop()
 
     triggers = _watcher_events_matching(cap, field="render", op="trigger")

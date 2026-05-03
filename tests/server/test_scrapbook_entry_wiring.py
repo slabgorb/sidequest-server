@@ -377,9 +377,10 @@ async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
             "SCRAPBOOK_ENTRY missing from event journal — gallery "
             "won't see this turn on reconnect"
         )
-        # The journaled event payload may be raw JSON; assert the field
-        # is present in whatever shape the journal stores.
-        payload_repr = str(scrapbook_events[0].data)
+        # The journal stores payloads as JSON strings — assert the field
+        # is present and carries the correct value in whatever shape the
+        # journal stores. ``payload_json`` is the canonical column.
+        payload_repr = scrapbook_events[0].payload_json
         assert "render_status" in payload_repr, (
             f"render_status missing from journaled SCRAPBOOK_ENTRY "
             f"payload: {payload_repr[:200]}"

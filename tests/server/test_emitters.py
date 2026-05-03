@@ -224,8 +224,8 @@ def test_emit_scrapbook_entry_delegate_calls_module_function(
     sd, handler = session_handler_factory()
     captured: list[tuple] = []
 
-    def _spy(h, *, sd, snapshot, result):
-        captured.append((h, sd, snapshot, result))
+    def _spy(h, *, sd, snapshot, result, render_status="rendered"):
+        captured.append((h, sd, snapshot, result, render_status))
 
     monkeypatch.setattr(emitters, "emit_scrapbook_entry", _spy)
 
@@ -233,4 +233,6 @@ def test_emit_scrapbook_entry_delegate_calls_module_function(
     sentinel_result = object()
     handler._emit_scrapbook_entry(sd=sd, snapshot=snap, result=sentinel_result)
 
-    assert captured == [(handler, sd, snap, sentinel_result)]
+    # Default render_status="rendered" — the delegate threads the kwarg
+    # through unmodified (Story 45-30).
+    assert captured == [(handler, sd, snap, sentinel_result, "rendered")]

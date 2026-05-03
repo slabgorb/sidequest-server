@@ -466,15 +466,26 @@ class WebSocketSessionHandler:
         sd: _SessionData,
         snapshot: GameSnapshot,
         result: object,
+        render_status: str = "rendered",
     ) -> None:
         """Persist + emit a scrapbook entry. Delegates to ``emitters.emit_scrapbook_entry``.
 
         Phase 1 of session_handler decomposition (see
         docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+
+        ``render_status`` (Story 45-30) — passed through to the emitter and
+        persisted on the scrapbook payload so the UI can distinguish
+        skipped-by-policy from daemon-failed.
         """
         from sidequest.server import emitters
 
-        emitters.emit_scrapbook_entry(self, sd=sd, snapshot=snapshot, result=result)
+        emitters.emit_scrapbook_entry(
+            self,
+            sd=sd,
+            snapshot=snapshot,
+            result=result,
+            render_status=render_status,
+        )
 
     def _persist_scrapbook_entry(self, payload: ScrapbookEntryPayload) -> None:
         """Insert a scrapbook row. Delegates to ``emitters.persist_scrapbook_entry``.
@@ -1863,6 +1874,18 @@ class WebSocketSessionHandler:
                             "_apply_narration_result_to_snapshot: sd._room "
                             "is None — slug-connect wiring missing"
                         )
+                    # Story 45-30: capture pre-apply state so the render
+                    # trigger policy classifier can detect SCENE_CHANGE
+                    # (location differs from prior turn) and ENCOUNTER_RESOLVED
+                    # (encounter transitioned from unresolved to resolved this
+                    # turn). After apply, ``snapshot.location`` and
+                    # ``snapshot.encounter`` reflect the new state and the
+                    # transition signal would be lost.
+                    snapshot_location_before_apply = snapshot.location
+                    encounter_unresolved_before = (
+                        snapshot.encounter is not None
+                        and not snapshot.encounter.resolved
+                    )
                     _apply_narration_result_to_snapshot(
                         snapshot,
                         result,
@@ -1875,6 +1898,9 @@ class WebSocketSessionHandler:
                         opposed_player_beat_id=opposed_player_beat_id,
                         opposed_player_actor=dice_actor,
                         acting_character_name=_resolve_acting_character_name(sd, sd._room),
+                    )
+                    encounter_resolved_this_turn = encounter_unresolved_before and (
+                        snapshot.encounter is None or snapshot.encounter.resolved
                     )
                     # Phase 5 (Story 47-3): drain magic-confrontation
                     # outbound queues. ``narration_apply.apply_magic_working``
@@ -2161,11 +2187,36 @@ class WebSocketSessionHandler:
                 # LLM calls. Fields come from the orchestrator result and the
                 # snapshot the narrator just stamped.
                 with timings.phase("dispatch_post"):
+                    # Story 45-30: classify the render trigger reason once so
+                    # the scrapbook entry's render_status field reflects the
+                    # SAME policy decision that ``_maybe_dispatch_render``
+                    # below will reach. ``classify_trigger`` is a pure
+                    # function so the two call sites converge on the same
+                    # value without coordination — but doing it here ensures
+                    # the SCRAPBOOK_ENTRY frame always carries the right
+                    # discriminator for the UI gallery.
+                    from sidequest.server.render_trigger import (
+                        RenderTriggerReason,
+                        classify_trigger,
+                    )
+
+                    _trigger_reason = classify_trigger(
+                        result,
+                        snapshot_location_before=snapshot_location_before_apply,
+                        encounter_resolved_this_turn=encounter_resolved_this_turn,
+                    )
+                    _render_status = (
+                        "skipped_policy"
+                        if _trigger_reason is RenderTriggerReason.NONE_POLICY
+                        else "rendered"
+                    )
+
                     try:
                         self._emit_scrapbook_entry(
                             sd=sd,
                             snapshot=snapshot,
                             result=result,
+                            render_status=_render_status,
                         )
                     except Exception as exc:  # noqa: BLE001 — scrapbook must never crash a turn
                         logger.warning(
@@ -2684,7 +2735,12 @@ class WebSocketSessionHandler:
                 # when: render flag off, no visual scene, daemon socket missing,
                 # or outbound queue unavailable (test configurations that don't
                 # attach room context).
-                render_queued = self._maybe_dispatch_render(sd, result)
+                render_queued = self._maybe_dispatch_render(
+                    sd,
+                    result,
+                    encounter_resolved_this_turn=encounter_resolved_this_turn,
+                    snapshot_location_before=snapshot_location_before_apply,
+                )
                 if render_queued is not None:
                     outbound.append(render_queued)
 
@@ -3211,36 +3267,149 @@ class WebSocketSessionHandler:
         self,
         sd: _SessionData,
         result: object,
+        *,
+        encounter_resolved_this_turn: bool = False,
+        snapshot_location_before: str | None = None,
     ) -> RenderQueuedMessage | None:
-        """Fire a render request at the media daemon if the narrator flagged
-        a visual scene and the pipeline is enabled.
+        """Fire a render request at the media daemon if the trigger policy
+        classifies this turn as eligible (Story 45-30).
 
         Returns a ``RenderQueuedMessage`` to append to the turn's outbound
-        frames, or ``None`` when nothing was dispatched (no scene, feature
-        flag off, daemon offline, or no outbound queue).
+        frames, or ``None`` when nothing was dispatched (policy chose
+        none_policy, feature flag off, daemon offline, or no outbound queue).
 
         The actual daemon round-trip runs on a background task; the IMAGE
         reply lands on ``self._out_queue`` whenever the render completes.
         Failures are swallowed with OTEL spans + watcher events so that no
         render error ever crashes a turn.
+
+        Args:
+            encounter_resolved_this_turn: ``True`` when an active encounter
+                transitioned to ``resolved`` on this turn. Threaded from
+                the ``narration_apply`` seam — the caller compares pre- and
+                post-apply state to derive this signal. Default ``False``
+                lets test fixtures and the throttled-by-other-gates code
+                path call without rewiring.
+            snapshot_location_before: ``snapshot.location`` BEFORE
+                ``_apply_narration_result_to_snapshot`` mutated it. The
+                production caller captures this; tests that call directly
+                may omit it (defaults to ``sd.snapshot.location``, which
+                is correct when the test never applies narration). The
+                classifier needs the pre-apply value to detect SCENE_CHANGE.
         """
         from sidequest.agents.orchestrator import NarrationTurnResult
+        from sidequest.server.render_trigger import (
+            RenderTriggerReason,
+            classify_trigger,
+        )
 
         if not isinstance(result, NarrationTurnResult):
             return None
+
         visual = result.visual_scene
-        if visual is None or not getattr(visual, "subject", "").strip():
+        had_visual_scene = visual is not None
+        subject_present = (
+            had_visual_scene and bool(getattr(visual, "subject", "").strip())
+        )
+
+        # Policy gate (Story 45-30) — classify the trigger reason from the
+        # structured signals already on NarrationTurnResult plus the
+        # out-of-band ``encounter_resolved_this_turn`` boolean. The
+        # narrator's ``visual_scene`` block is NOT a signal; pre-story
+        # behaviour gated on it and let banter turns render while named-
+        # NPC introductions did not.
+        location_before = (
+            snapshot_location_before
+            if snapshot_location_before is not None
+            else sd.snapshot.location
+        )
+        reason = classify_trigger(
+            result,
+            snapshot_location_before=location_before,
+            encounter_resolved_this_turn=encounter_resolved_this_turn,
+        )
+
+        turn_number = sd.snapshot.turn_manager.interaction
+
+        # NONE_POLICY: emit both render.trigger (with eligible=False,
+        # queued=False) AND the focused render.policy_skip event. Per
+        # CLAUDE.md OTEL Observability Principle, silence is the bug —
+        # the GM panel needs the negative confirmation that the policy
+        # ran on this turn. Pattern matches the existing render
+        # throttle_decision watcher events: event_type=state_transition,
+        # field=render, op=<route key>. The SPAN_ROUTES entry for
+        # render.trigger is a static registry check (asserts the route
+        # is declared); the actual emission happens here so it works
+        # without an OTEL span being opened.
+        if reason is RenderTriggerReason.NONE_POLICY:
             _watcher_publish(
                 "state_transition",
                 {
                     "field": "render",
-                    "op": "skipped",
-                    "reason": "no_visual_scene",
-                    "turn_number": sd.snapshot.turn_manager.interaction,
+                    "op": "trigger",
+                    "reason": reason.value,
+                    "eligible": False,
+                    "queued": False,
+                    "turn_number": turn_number,
+                    "player_id": sd.player_id,
+                    "had_visual_scene": had_visual_scene,
+                    "subject_present": subject_present,
+                },
+                component="render",
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "policy_skip",
+                    "reason": reason.value,
+                    "turn_number": turn_number,
+                    "player_id": sd.player_id,
+                    # Distinguishes "narrator didn't even try" from
+                    # "narrator emitted a subject but no policy match".
+                    "narrator_emitted_subject": subject_present,
                 },
                 component="render",
             )
             return None
+
+        # Eligible — emit the trigger event before any downstream gate so
+        # the GM panel sees the policy decision even when the feature
+        # flag / daemon / queue refuses below.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "render",
+                "op": "trigger",
+                "reason": reason.value,
+                "eligible": True,
+                # ``queued`` reflects whether dispatch will actually proceed.
+                # We set True optimistically here; if a downstream gate
+                # refuses synchronously, that path emits its own watcher
+                # event and we don't retroactively edit this one.
+                "queued": True,
+                "turn_number": turn_number,
+                "player_id": sd.player_id,
+                "had_visual_scene": had_visual_scene,
+                "subject_present": subject_present,
+            },
+            component="render",
+        )
+
+        # Eligible turns still need a visual_scene to actually compose a
+        # prompt — the policy says "the narrative weight earned a render"
+        # but the prompt-building code requires a subject string. When
+        # the narrator didn't emit one (narrative weight present but
+        # subject missing), we cannot dispatch — log loudly and return.
+        if not subject_present:
+            logger.warning(
+                "render.eligible_no_subject reason=%s turn=%d — "
+                "policy fired but narrator emitted no visual_scene subject",
+                reason.value,
+                turn_number,
+            )
+            return None
+
         if not render_enabled():
             logger.info("render.skipped reason=feature_flag_disabled")
             _watcher_publish(
