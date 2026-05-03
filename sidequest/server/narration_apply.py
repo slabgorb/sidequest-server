@@ -7,6 +7,7 @@ Re-exported by session_handler for back-compat.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -59,6 +60,90 @@ from sidequest.telemetry.spans import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+# Pingpong 2026-05-03 [BUG] — narrator described "patrol cutter spinning
+# her reactor up from cold-soak" with confrontation=None; no encounter
+# fired. High-precision regex set targeting the prose patterns the
+# narrator uses for combat / chase / boarding triggers — these are the
+# shapes that should ALWAYS pair with a ``confrontation`` emission.
+# Negotiation triggers are intentionally excluded: persuasion vocabulary
+# overlaps too heavily with ordinary dialogue prose to scan reliably,
+# and the playtest evidence is that the narrator *over*-fires negotiation,
+# not under-fires it. If a future playtest shows negotiation under-firing,
+# add patterns here.
+#
+# Each entry is (label, compiled_pattern). The label surfaces in the
+# warning + watcher event so Sebastien's GM panel can see WHY the
+# detector fired.
+_CONFRONTATION_TRIGGER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # Dogfight / chase preludes — hostile chassis preparing to pursue
+    (
+        "reactor_spin_up",
+        re.compile(
+            r"\bspin(?:ning|s)?\s+(?:her\s+|his\s+|their\s+|its\s+|the\s+)?"
+            r"(?:reactor|drive|engine)s?\s+up\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("intercept", re.compile(r"\bintercept(?:ing|ion|s)?\b", re.IGNORECASE)),
+    ("pursuit", re.compile(r"\bpursu(?:e|ed|er|ers|ing|it)\b", re.IGNORECASE)),
+    ("boarding", re.compile(r"\bboarding\b", re.IGNORECASE)),
+    (
+        "weapons_hot",
+        re.compile(r"\bweapons?\s+(?:hot|drawn|charged|live)\b", re.IGNORECASE),
+    ),
+    (
+        "permission_to_engage",
+        re.compile(r"\bpermission\s+to\s+(?:engage|fire|pursue|board)\b", re.IGNORECASE),
+    ),
+    (
+        "chase_keyword",
+        re.compile(r"\bchas(?:e|ed|ing|er|es)\b", re.IGNORECASE),
+    ),
+    # Combat preludes — antagonist actively committing
+    ("opens_fire", re.compile(r"\bopens?\s+fire\b", re.IGNORECASE)),
+    (
+        "weapon_drawn",
+        re.compile(
+            r"\bdraws?\s+(?:a\s+|her\s+|his\s+|their\s+|its\s+|the\s+)?"
+            r"(?:knife|sword|gun|pistol|sidearm|blade|rifle|blaster|"
+            r"weapon|firearm)s?\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "weapon_leveled",
+        re.compile(
+            r"\blevels?\s+(?:a\s+|her\s+|his\s+|their\s+|its\s+|the\s+)?"
+            r"(?:gun|pistol|rifle|sidearm|blaster|weapon|firearm)s?\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _scan_for_confrontation_trigger_keywords(narration: str) -> list[str]:
+    """Return labels of any high-precision confrontation-trigger phrases
+    in ``narration``. Empty list ⇔ no trigger keywords matched.
+
+    The lie-detector at ``_apply_narration_result_to_snapshot`` calls
+    this when ``result.confrontation`` is None; a non-empty return value
+    means the prose described an engagement that should have fired an
+    encounter. The labels surface in the watcher event so the GM panel
+    shows WHY the detector flagged the turn.
+
+    Pattern set is conservative (high-precision over high-recall) — false
+    positives erode the GM panel signal and would pressure a re-prompt
+    loop that may be unnecessary. False negatives (genuine triggers that
+    don't match) are addressed by adding patterns when later playtests
+    surface them.
+    """
+    if not narration:
+        return []
+    return [
+        label for label, pattern in _CONFRONTATION_TRIGGER_PATTERNS if pattern.search(narration)
+    ]
 
 
 def _gate_applies_to_encounter(encounter, pack) -> bool:
@@ -1429,6 +1514,44 @@ def _apply_narration_result_to_snapshot(
             encounter_resolved_span,
         )
 
+        # Pingpong 2026-05-03 [BUG] — narrator wrote a chase-firing beat
+        # ("patrol cutter spinning her reactor up from cold-soak") with
+        # confrontation=None and no encounter fired. The architectural
+        # commitment is narrator-emission (ADR-033, ADR-077) — we don't
+        # auto-fire from server-side keyword inference because that is
+        # exactly the silent fallback CLAUDE.md prohibits. Instead, scan
+        # for high-precision trigger phrases when the narrator skipped
+        # emission AND no encounter is currently active, and fire the
+        # lie-detector so the GM panel and Sebastien can see the gap. The
+        # paired prompt fix (``confrontation_trigger_constraint``) is
+        # what closes the loop; this warning surfaces regressions if the
+        # narrator drifts again.
+        if (
+            not result.confrontation
+            and (snapshot.encounter is None or snapshot.encounter.resolved)
+            and result.narration
+        ):
+            matched_triggers = _scan_for_confrontation_trigger_keywords(result.narration)
+            if matched_triggers:
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "confrontation",
+                        "op": "skipped_with_trigger_keywords",
+                        "matched_keywords": matched_triggers,
+                        "player_name": player_name,
+                    },
+                    component="confrontation",
+                    severity="warning",
+                )
+                logger.warning(
+                    "confrontation.skipped_with_trigger_keywords keywords=%s player=%s — "
+                    "narrator described a confrontation trigger in prose but emitted "
+                    "confrontation=None; encounter not instantiated",
+                    matched_triggers,
+                    player_name,
+                )
+
         # (a) Narrator-initiated encounter
         if result.confrontation and (snapshot.encounter is None or snapshot.encounter.resolved):
             if not result.npcs_present:
@@ -1452,9 +1575,7 @@ def _apply_narration_result_to_snapshot(
             # sessions and pre-MP saves pass an empty list (single-PC actor
             # array, identical to prior behavior).
             additional_pc_names = [
-                name
-                for name in snapshot.player_seats.values()
-                if name and name != player_name
+                name for name in snapshot.player_seats.values() if name and name != player_name
             ]
             instantiate_encounter_from_trigger(
                 snapshot=snapshot,
@@ -1907,11 +2028,7 @@ def _drain_pending_status_promotions(*, snapshot: GameSnapshot) -> None:
 
     from sidequest.game.status import Status, StatusSeverity
 
-    turn_num = (
-        snapshot.turn_manager.interaction
-        if hasattr(snapshot, "turn_manager")
-        else 0
-    )
+    turn_num = snapshot.turn_manager.interaction if hasattr(snapshot, "turn_manager") else 0
     encounter_type = snapshot.encounter.encounter_type if snapshot.encounter else None
 
     remaining: list[dict] = []
