@@ -27,8 +27,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 
 def test_diagnostic_module_is_importable() -> None:
     """The diagnostics writer lives in

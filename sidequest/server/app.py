@@ -185,6 +185,36 @@ def create_app(
         provider.add_span_processor(WatcherSpanProcessor(watcher_hub))
         logger.info("watcher.span_processor_registered")
 
+    # Story 45-31: spin up the daemon heartbeat listener so the
+    # process-wide DaemonStateMirror starts populating from the
+    # daemon's heartbeat stream. Without this, the dispatcher's
+    # UNRESPONSIVE-fallback branch is unreachable and the Felix
+    # anti-13-minute-silence contract never engages in production.
+    @app.on_event("startup")
+    async def _start_heartbeat_listener() -> None:
+        import asyncio as _asyncio
+
+        from sidequest.daemon_client import DaemonClient
+
+        client = DaemonClient()
+        task = _asyncio.create_task(
+            client.heartbeat_listener(),
+            name="daemon-heartbeat-listener",
+        )
+        app.state.heartbeat_listener_task = task
+        logger.info("daemon.heartbeat_listener_started socket=%s", client.socket_path)
+
+    @app.on_event("shutdown")
+    async def _stop_heartbeat_listener() -> None:
+        import contextlib as _contextlib
+
+        task = getattr(app.state, "heartbeat_listener_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            with _contextlib.suppress(Exception):
+                await task
+            logger.info("daemon.heartbeat_listener_stopped")
+
     # --- /health ---
     @app.get("/health")
     async def health() -> dict[str, str]:

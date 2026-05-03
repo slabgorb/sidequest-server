@@ -144,13 +144,18 @@ class ScrapbookEntryPayload(ProtocolBase):
     world_facts: list[str] = Field(default_factory=list)
     npcs_present: list[ScrapbookEntryNpcRef] = Field(default_factory=list)
     seq: int = 0
-    # Story 45-30: trigger-policy outcome for this turn's render decision.
-    # ``rendered`` — policy fired and dispatch proceeded.
-    # ``skipped_policy`` — classify_trigger returned NONE_POLICY (banter).
-    # ``failed`` — policy fired but the daemon gate refused synchronously.
-    # The UI uses this to render distinct affordances for "no image because
-    # the policy chose not to" vs "no image because the daemon failed".
-    render_status: str = "rendered"
+    # Trigger-policy outcome (Story 45-30) extended with daemon-liveness
+    # outcome (Story 45-31). Per 45-31 spec: "render_status field is shared
+    # with story 45-30. If 45-30 lands first, this story extends the enum
+    # with 'unavailable'." 45-30 landed first.
+    #   ``rendered``       — policy fired, dispatch proceeded, image landed.
+    #   ``skipped_policy`` — classify_trigger returned NONE_POLICY (banter).
+    #   ``failed``         — policy fired, daemon gate refused synchronously.
+    #   ``unavailable``    — daemon UNRESPONSIVE per heartbeat mirror;
+    #                        dispatcher took the 45-31 fallback path.
+    render_status: Literal[
+        "rendered", "skipped_policy", "failed", "unavailable"
+    ] = "rendered"
 
 
 # ---------------------------------------------------------------------------

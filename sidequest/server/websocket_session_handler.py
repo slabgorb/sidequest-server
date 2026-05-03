@@ -703,6 +703,70 @@ class WebSocketSessionHandler:
                 )
             except Exception as exc:
                 logger.error("session.disconnect_save_failed error=%s", exc)
+
+            # Story 45-31: post-session render diagnostic. Writes a
+            # JSON snapshot of the render worker's lifetime so the
+            # next Felix-style 13-minute silence can be diagnosed
+            # without reproducing the crash. Best-effort — diagnostic
+            # write must never raise back to the WebSocket layer.
+            try:
+                from datetime import UTC
+                from datetime import datetime as _dt
+
+                from sidequest.daemon_client.state_mirror import get_mirror
+                from sidequest.server.render_diagnostics import (
+                    write_session_diagnostic,
+                )
+
+                room_slug_for_diag: str | None = None
+                if self._room is not None:
+                    room_slug_for_diag = getattr(self._room, "slug", None)
+                if not room_slug_for_diag:
+                    # Legacy/no-slug path — namespace by genre+player so
+                    # the diagnostic file remains greppable.
+                    room_slug_for_diag = (
+                        f"{self._session_data.genre_slug or 'unknown'}-"
+                        f"{self._session_data.player_id or 'unknown'}"
+                    ).replace("/", "-").replace("\\", "-")
+
+                _mirror = get_mirror()
+                snapshot_payload = {
+                    "heartbeat_history": [
+                        {
+                            "queue": q,
+                            "state": _mirror.state(q).value,
+                            "queue_depth": _mirror.queue_depth(q),
+                        }
+                        for q in ("image", "embed")
+                    ],
+                    "enqueue_count": int(self._session_data.render_enqueue_count),
+                    "backpressure_warn_count": int(
+                        self._session_data.render_backpressure_warn_count
+                    ),
+                    "unresponsive_windows": [
+                        {
+                            "count": int(
+                                self._session_data.render_unresponsive_window_count
+                            ),
+                        }
+                    ] if self._session_data.render_unresponsive_window_count else [],
+                    "last_successful_render_id": (
+                        self._session_data.last_successful_render_id
+                    ),
+                    "last_successful_render_ts": (
+                        self._session_data.last_successful_render_ts_iso
+                    ),
+                    "last_heartbeat_ts": _mirror.last_heartbeat_ts(),
+                }
+                write_session_diagnostic(
+                    room_slug=room_slug_for_diag,
+                    session_end_iso=_dt.now(UTC).isoformat(),
+                    snapshot=snapshot_payload,
+                )
+            except Exception as _diag_exc:  # noqa: BLE001 — diagnostic must never crash teardown
+                logger.warning(
+                    "render.session_diagnostic_failed err=%s", _diag_exc
+                )
             finally:
                 # ADR-037 Python port: when the session is bound to a room,
                 # the room owns the SqliteStore lifecycle — every WS session
@@ -3579,6 +3643,71 @@ class WebSocketSessionHandler:
             )
             return None
         client = DaemonClient()
+        # Story 45-31: consult the daemon-state mirror BEFORE the
+        # legacy socket-on-disk check. Once the heartbeat reader has
+        # populated the mirror, ``is_unresponsive`` is the authoritative
+        # liveness signal — a daemon whose heartbeat stopped 8 minutes
+        # ago still has its socket file on disk, but the dispatcher
+        # MUST surface the degradation, not silently absorb it. We only
+        # gate on the mirror once it has actually seen heartbeats; on
+        # cold start (no heartbeats ever) we fall through to the
+        # legacy socket check so existing unit-tests that don't wire
+        # the mirror keep working.
+        from sidequest.daemon_client.state_mirror import get_mirror
+
+        _mirror = get_mirror()
+        if (
+            _mirror.last_heartbeat_ts() is not None
+            and _mirror.is_unresponsive()
+        ):
+            sd.render_unresponsive_window_count += 1
+            logger.warning(
+                "render.unavailable reason=heartbeat_lost last_ts=%s turn=%d",
+                _mirror.last_heartbeat_ts(),
+                sd.snapshot.turn_manager.interaction,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "unavailable",
+                    "reason": "heartbeat_lost",
+                    "last_heartbeat_ts": _mirror.last_heartbeat_ts(),
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                    "player_id": sd.player_id,
+                },
+                component="render",
+                severity="warning",
+            )
+            # Persist a scrapbook row marked render_status=unavailable
+            # so the UI shows a placeholder badge instead of a silent
+            # gap. The dispatcher owns the row here because the normal
+            # post-narration scrapbook emit has already happened
+            # without the degradation marker; we substitute by writing
+            # the marker directly through the persistence path.
+            try:
+                from sidequest.protocol.messages import ScrapbookEntryPayload
+                from sidequest.server.emitters import persist_scrapbook_entry
+
+                excerpt = (result.narration or "").strip() or "(render unavailable)"
+                if len(excerpt) > 320:
+                    excerpt = excerpt[:317].rstrip() + "..."
+                persist_scrapbook_entry(
+                    self,
+                    ScrapbookEntryPayload(
+                        turn_id=int(sd.snapshot.turn_manager.interaction),
+                        location=(sd.snapshot.location or "Unknown"),
+                        narrative_excerpt=excerpt,
+                        scene_title=(visual.subject or "")[:120] or None,
+                        scene_type=visual.tier or None,
+                        render_status="unavailable",
+                    ),
+                )
+            except Exception as _exc:  # noqa: BLE001 — fallback row must never crash a turn
+                logger.warning(
+                    "render.unavailable_scrapbook_persist_failed err=%s", _exc
+                )
+            return None
         if not client.is_available():
             logger.warning(
                 "render.skipped reason=daemon_unavailable socket=%s",
@@ -3797,6 +3926,43 @@ class WebSocketSessionHandler:
             component="render",
         )
 
+        # Story 45-31: backpressure check — orthogonal to ADR-050 throttle.
+        # The throttle gates time-since-last-dispatch; backpressure gates
+        # concurrent in-flight depth so a daemon already swamped with
+        # renders gets a loud warn (and counter increment) before the
+        # 4th render piles in. Default threshold = 3; warn-mode lets
+        # the request through, conservative-tunable reject-mode is left
+        # for a follow-up.
+        sd.render_enqueue_count += 1
+        in_flight_after = sd.render_in_flight + 1
+        backpressure_threshold = 3
+        if in_flight_after > backpressure_threshold:
+            sd.render_backpressure_warn_count += 1
+            logger.warning(
+                "render.enqueue.backpressure render_id=%s queue_depth=%d threshold=%d",
+                render_id,
+                in_flight_after,
+                backpressure_threshold,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "enqueue.backpressure",
+                    "decision": "warn",
+                    "queue_depth": in_flight_after,
+                    "threshold": backpressure_threshold,
+                    "render_id": render_id,
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                    "player_id": sd.player_id,
+                },
+                component="render",
+                severity="warning",
+            )
+        # Increment the in-flight counter; ``_run_render`` decrements
+        # it in the background task's finally block.
+        sd.render_in_flight = in_flight_after
+
         # Capture the legacy out_queue only as a fallback for the
         # pre-room-context test/legacy path. When `_room` is set (the
         # production slug-connect path) the completion handler looks the
@@ -3811,6 +3977,7 @@ class WebSocketSessionHandler:
                 player_id,
                 legacy_queue,
                 dispatch_turn_id,
+                sd,
             )
         )
         # ADR-050 — record the dispatch *after* the task is created so the
@@ -3983,6 +4150,7 @@ class WebSocketSessionHandler:
         player_id: str,
         legacy_queue: asyncio.Queue[object] | None,
         dispatch_turn_id: int,
+        sd: _SessionData | None = None,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
         enqueues an IMAGE message or logs a failure. Never raises; any
@@ -3993,7 +4161,39 @@ class WebSocketSessionHandler:
         RoomRegistry — so a reconnect mid-render still gets its image.
         ``legacy_queue`` is the pre-room-context fallback for
         constructions that haven't joined a room (used by older tests
-        and the deprecated genre/world connect path)."""
+        and the deprecated genre/world connect path).
+
+        ``sd`` is optional for backwards compatibility with legacy
+        call sites; when provided, the in-flight render counter
+        (story 45-31) is decremented in the finally block so the
+        backpressure gate sees an accurate concurrent depth."""
+        try:
+            await self._run_render_inner(
+                client, params, render_id, room_slug, player_id,
+                legacy_queue, dispatch_turn_id, sd,
+            )
+        finally:
+            if sd is not None:
+                # Decrement is unconditional — a render that completed,
+                # failed, or raised all release the in-flight slot.
+                sd.render_in_flight = max(0, sd.render_in_flight - 1)
+
+    async def _run_render_inner(
+        self,
+        client: DaemonClient,
+        params: dict[str, object],
+        render_id: str,
+        room_slug: str | None,
+        player_id: str,
+        legacy_queue: asyncio.Queue[object] | None,
+        dispatch_turn_id: int,
+        sd: _SessionData | None = None,
+    ) -> None:
+        """Inner body of ``_run_render`` — does the actual daemon
+        round-trip and IMAGE-frame fan-out. Split from ``_run_render``
+        so the counter decrement (story 45-31) lives in a single
+        finally block instead of being repeated at every return site.
+        """
         try:
             reply = await client.render(params)
         except DaemonUnavailableError as exc:
@@ -4320,3 +4520,12 @@ class WebSocketSessionHandler:
             },
             component="render",
         )
+        # Story 45-31: stamp the per-session diagnostic counters with
+        # the most-recent successful render so the post-session
+        # snapshot can quote the last image the player actually saw.
+        if sd is not None:
+            from datetime import UTC
+            from datetime import datetime as _dt
+
+            sd.last_successful_render_id = render_id
+            sd.last_successful_render_ts_iso = _dt.now(UTC).isoformat()

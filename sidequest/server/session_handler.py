@@ -526,6 +526,21 @@ class _SessionData:
     # NOTE: per-process state. Multi-worker uvicorn would split the throttle
     # across workers; revisit with a shared backing store if we go there.
     image_pacing_throttle: ImagePacingThrottle = field(default_factory=ImagePacingThrottle.for_solo)
+    # Story 45-31: in-flight render counter for the backpressure check.
+    # Incremented at enqueue time; decremented in the background render
+    # task on completion or failure. The dispatcher reads this before
+    # accepting a new render so the warn fires when concurrent depth
+    # exceeds ``render_backpressure_threshold``.
+    render_in_flight: int = 0
+    # Story 45-31: per-session diagnostic counters used by the
+    # post-session render diagnostic writer. Updated by the dispatcher
+    # alongside the watcher events so the JSON snapshot captures the
+    # session's render lifetime without re-walking the watcher stream.
+    render_enqueue_count: int = 0
+    render_backpressure_warn_count: int = 0
+    render_unresponsive_window_count: int = 0
+    last_successful_render_id: str | None = None
+    last_successful_render_ts_iso: str | None = None
     # Story 45-19: parsed history chapters cached at chargen so the
     # arc-recompute tick doesn't re-parse history.yaml on every turn.
     # Populated alongside the chargen-time materialization in

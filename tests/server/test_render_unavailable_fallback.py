@@ -29,10 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import uuid
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -164,8 +162,10 @@ async def test_unresponsive_daemon_emits_render_unavailable_event(
         from sidequest.daemon_client.state_mirror import get_mirror
 
         mirror = get_mirror()
-        # Force a recorded heartbeat well in the past relative to the
-        # default interval so the mirror reports UNRESPONSIVE.
+        mirror.clear_for_test()
+        # Seed a recorded heartbeat then force UNRESPONSIVE so the
+        # last_heartbeat_ts attribute on render.unavailable is non-null
+        # while is_unresponsive() returns True deterministically.
         mirror.record_heartbeat(
             queue="image",
             state="ready",
@@ -254,8 +254,8 @@ async def test_unresponsive_fallback_marks_scrapbook_row_unavailable(
         # Capture scrapbook payloads written through the persistence
         # path. The dispatcher's fallback MUST emit a row with
         # render_status=unavailable, replacing the silent miss.
-        from sidequest.server import emitters as _emitters
         from sidequest.protocol.messages import ScrapbookEntryPayload
+        from sidequest.server import emitters as _emitters
 
         persisted: list[ScrapbookEntryPayload] = []
 
@@ -288,9 +288,13 @@ async def test_unresponsive_fallback_marks_scrapbook_row_unavailable(
 
 
 def test_scrapbook_payload_schema_has_render_status_field() -> None:
-    """The protocol schema must expose ``render_status`` as an optional
-    field with the documented enum values
-    (``available`` | ``unavailable`` | ``error``).
+    """The protocol schema must expose ``render_status`` with the unified
+    enum spanning Story 45-30 (trigger-policy outcome) and Story 45-31
+    (daemon-liveness outcome): ``rendered`` | ``skipped_policy`` |
+    ``failed`` | ``unavailable``.
+
+    Per 45-31 context: "If 45-30 lands first, this story extends the
+    enum with 'unavailable'." 45-30 landed first.
 
     Wiring guard — the daemon-side, the UI, and the persistence layer
     all key on this field name. If the schema rejects the value, the
@@ -306,8 +310,7 @@ def test_scrapbook_payload_schema_has_render_status_field() -> None:
     )
     assert payload.render_status == "unavailable"
 
-    # Other valid values:
-    for value in ("available", "error"):
+    for value in ("rendered", "skipped_policy", "failed"):
         payload = ScrapbookEntryPayload(
             turn_id=1,
             location="Tood's Dome",
@@ -316,13 +319,12 @@ def test_scrapbook_payload_schema_has_render_status_field() -> None:
         )
         assert payload.render_status == value
 
-    # Default when omitted.
+    # Default when omitted — per the unified enum's default, "rendered"
+    # (matches the develop behavior 45-30 shipped; existing rows that
+    # pre-date the discriminator continue to read as the happy path).
     payload = ScrapbookEntryPayload(
         turn_id=1,
         location="Tood's Dome",
         narrative_excerpt="...",
     )
-    # Per ADR-006 graceful degradation: an unstamped row defaults to
-    # the historical "available" semantic so existing rows remain
-    # backwards-compatible.
-    assert payload.render_status in (None, "available")
+    assert payload.render_status == "rendered"

@@ -183,17 +183,30 @@ async def test_backpressure_warn_event_fires_past_threshold(
     # on the unavailable-fallback path. The mirror's exact API is the
     # subject of test_daemon_state_mirror.py — here we just need a clean
     # READY signal so we exercise the backpressure branch in isolation.
+    # Use a current monotonic reading so is_unresponsive() reports False.
+    import time as _time
+
     from sidequest.daemon_client.state_mirror import get_mirror
 
     mirror = get_mirror()
+    mirror.clear_for_test()
     mirror.record_heartbeat(
-        queue="image", state="ready", queue_depth=0, ts_monotonic=1.0
+        queue="image",
+        state="ready",
+        queue_depth=0,
+        ts_monotonic=_time.monotonic(),
     )
 
     captured, _cap = await _capture_watcher_events(asyncio.get_running_loop())
 
     handler, _queue = _make_handler()
     sd = _make_session_data()
+    # Disable the ADR-050 image-pacing throttle for this test — we are
+    # exercising the orthogonal backpressure gate; the throttle is a
+    # separate, time-based gate covered by test_render_dispatch.py.
+    # Without disabling, the second through fourth dispatch calls would
+    # be throttle-suppressed and never reach the backpressure check.
+    sd.image_pacing_throttle.set_cooldown_seconds(0)
 
     caplog.set_level(logging.WARNING, logger="sidequest.server.websocket_session_handler")
 
@@ -270,16 +283,24 @@ async def test_backpressure_below_threshold_emits_no_event(
         lambda: _client_bound_to(short_sock),
     )
 
+    import time as _time
+
     from sidequest.daemon_client.state_mirror import get_mirror
 
-    get_mirror().record_heartbeat(
-        queue="image", state="ready", queue_depth=0, ts_monotonic=1.0
+    mirror = get_mirror()
+    mirror.clear_for_test()
+    mirror.record_heartbeat(
+        queue="image",
+        state="ready",
+        queue_depth=0,
+        ts_monotonic=_time.monotonic(),
     )
 
     captured, _cap = await _capture_watcher_events(asyncio.get_running_loop())
 
     handler, _queue = _make_handler()
     sd = _make_session_data()
+    sd.image_pacing_throttle.set_cooldown_seconds(0)
 
     # Drive only 3 enqueues — exactly at threshold, must not warn.
     for n in range(3):
