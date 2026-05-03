@@ -833,6 +833,11 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     chassis_classes: ChassisClassesConfig | None = _load_yaml_optional(
         path / "chassis_classes.yaml", ChassisClassesConfig
     )
+    if chassis_classes is not None:
+        from sidequest.interior.loader import validate_chassis_stations
+
+        for cc in chassis_classes.classes:
+            validate_chassis_stations(cc)
     voice_presets: VoicePresets | None = _load_yaml_optional(
         path / "voice_presets.yaml", VoicePresets
     )
