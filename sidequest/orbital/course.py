@@ -104,3 +104,76 @@ class PlottedCourse(BaseModel):
     delta_v: float
     plotted_at_t_hours: float
     source: CourseSource
+
+
+COURSES_HARD_CAP = 12
+"""Token-budget guardrail. ~12 entries × ~20 tokens each = ~250 tokens
+of <courses> block, well under what we can afford in the Recency zone.
+If selection exceeds 12, drop in priority order keeping the highest."""
+
+
+def compute_courses(
+    *,
+    orbits: OrbitsConfig,
+    party_at: str | None,
+    in_scope_body_ids: set[str],
+    recent_body_mentions: list[str],
+    quest_anchors: list[str],
+) -> dict[str, CourseRow]:
+    """Build the <courses> selection for one prompt assembly.
+
+    Selection rule: a body is included if it appears in any of
+    ``in_scope_body_ids``, ``recent_body_mentions``, or
+    ``quest_anchors``. Source priority resolves multi-membership:
+    quest > recent > in_scope.
+
+    Hard cap: 12 entries. Drops are applied in *reverse* priority
+    order, so quest objectives and recent mentions are preserved at
+    the expense of in-scope-only bodies.
+
+    Determinism: dict iteration order is sorted by
+    (priority desc, eta_hours asc, body_id asc).
+
+    Returns ``{}`` if ``party_at`` is None or unknown — there's no
+    place to plot from.
+    """
+    if party_at is None or party_at not in orbits.bodies:
+        return {}
+
+    party_body = orbits.bodies[party_at]
+
+    candidates: dict[str, CourseSource] = {}
+    # Lowest priority first; later writes override.
+    for bid in in_scope_body_ids:
+        if bid != party_at and bid in orbits.bodies:
+            candidates[bid] = CourseSource.IN_SCOPE
+    for bid in recent_body_mentions:
+        if bid != party_at and bid in orbits.bodies:
+            candidates[bid] = CourseSource.RECENT_MENTION
+    for bid in quest_anchors:
+        if bid != party_at and bid in orbits.bodies:
+            candidates[bid] = CourseSource.QUEST_OBJECTIVE
+
+    rows: list[tuple[str, CourseRow]] = []
+    for bid, source in candidates.items():
+        eta, dv = compute_eta_and_dv(party_body, orbits.bodies[bid], orbits)
+        rows.append(
+            (
+                bid,
+                CourseRow(
+                    to_body_id=bid,
+                    eta_hours=eta,
+                    delta_v=dv,
+                    source=source,
+                    label_hint=None,
+                ),
+            )
+        )
+
+    # Sort: priority desc, then eta asc, then body_id asc for stability.
+    rows.sort(key=lambda kv: (-kv[1].source.priority, kv[1].eta_hours, kv[0]))
+
+    if len(rows) > COURSES_HARD_CAP:
+        rows = rows[:COURSES_HARD_CAP]
+
+    return dict(rows)
