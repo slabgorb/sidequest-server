@@ -293,6 +293,13 @@ class NarrationTurnResult:
     # narrator does NOT invoke a magic working (the common case).
     magic_working: dict[str, Any] | None = None
 
+    # Raw game_patch dict (plot-a-course Bundle 5). Carries the full parsed
+    # game_patch JSON so narration_apply can dispatch sidecar intents (e.g.
+    # plot_course / cancel_course) that aren't individually extracted fields.
+    # Empty dict when the narrator emits no game_patch block or it fails to
+    # parse (both treated as "no sidecar" by downstream handlers).
+    game_patch_dict: dict[str, Any] = field(default_factory=dict)
+
     # OTEL / telemetry
     agent_name: str | None = None
     agent_duration_ms: int | None = None
@@ -518,6 +525,24 @@ class TurnContext:
     # continue to work without provisioning a real timer. Real instances
     # are populated by ``_execute_narration_turn`` at action receipt.
     phase_timings: PhaseTimings = field(default_factory=lambda: PhaseTimings.NULL)
+
+    # Orbital tier fields (plot-a-course). Populated by _build_turn_context
+    # when the world has an orbital tier (orbital_content is not None).
+    # When None/empty, build_narrator_prompt skips the <courses> block —
+    # zero byte leak on non-orbital worlds.
+    #
+    # Types are Any to avoid a circular import on OrbitalContent/Scope;
+    # runtime types are:
+    #   orbital_content: sidequest.orbital.loader.OrbitalContent | None
+    #   orbital_scope:   sidequest.orbital.render.Scope | None
+    #   party_body_id:   str | None  (from snapshot.party_body_id)
+    #   recent_body_mentions: collections.deque[str]  (from Session)
+    #   quest_anchors:   list[str]  (from snapshot.quest_anchors)
+    orbital_content: Any = None
+    orbital_scope: Any = None
+    party_body_id: str | None = None
+    recent_body_mentions: Any = field(default_factory=list)  # deque[str] or list[str]
+    quest_anchors: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1473,6 +1498,58 @@ class Orchestrator:
             ),
         )
 
+        # Plot-a-course (plot-a-course design). The narrator can plot a
+        # course to any body in the prompted set; rejection is OTEL-loud
+        # and chart-silent. Block is omitted entirely when the world has
+        # no orbital tier or the party has no body anchor.
+        if context.orbital_content is not None and context.party_body_id:
+            from sidequest.orbital.course import (
+                _bodies_in_scope,
+                compute_courses,
+                format_courses_block,
+            )
+
+            in_scope = _bodies_in_scope(
+                context.orbital_content.orbits,
+                context.orbital_scope,
+            )
+            course_rows = compute_courses(
+                orbits=context.orbital_content.orbits,
+                party_at=context.party_body_id,
+                in_scope_body_ids=in_scope,
+                recent_body_mentions=list(context.recent_body_mentions),
+                quest_anchors=list(context.quest_anchors),
+            )
+            from sidequest.telemetry.spans.course import emit_course_compute
+
+            in_scope_n = sum(
+                1 for r in course_rows.values() if r.source.value == "in_scope"
+            )
+            recent_n = sum(
+                1 for r in course_rows.values() if r.source.value == "recent_mention"
+            )
+            quest_n = sum(
+                1 for r in course_rows.values() if r.source.value == "quest_objective"
+            )
+            emit_course_compute(
+                course_count=len(course_rows),
+                in_scope=in_scope_n,
+                recent=recent_n,
+                quest=quest_n,
+                dropped_by_cap=0,  # cap-counted in compute_courses if we extend the API
+            )
+            block_text = format_courses_block(course_rows)
+            if block_text:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "courses",
+                        block_text,
+                        AttentionZone.Recency,
+                        SectionCategory.Guardrail,
+                    ),
+                )
+
         # Narrator vocabulary (Late zone, Full tier only)
         if is_full:
             registry.register_section(
@@ -2038,6 +2115,7 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=input_tokens,
@@ -2243,6 +2321,7 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
                 token_count_in=response.input_tokens,

@@ -11,7 +11,9 @@ inbound message router.
 from __future__ import annotations
 
 from sidequest.orbital.conjunction import next_conjunction
+from sidequest.orbital.course_render import render_course_overlay
 from sidequest.orbital.render import Scope, render_chart
+from sidequest.telemetry.spans.course import emit_course_render_overlay
 from sidequest.protocol.orbital_intent import (
     ConjunctionEventPayload,
     DrillInIntent,
@@ -66,6 +68,26 @@ def handle_orbital_intent(session: Session, intent: OrbitalIntent) -> OrbitalInt
         t_hours=session.clock.t_hours,
         party_at=session.party_body_id,
     )
+
+    plotted_course = session._snapshot.plotted_course
+    if plotted_course is not None:
+        dropped = (
+            session.party_body_id is None
+            or session.party_body_id not in content.orbits.bodies
+            or plotted_course.to_body_id not in content.orbits.bodies
+        )
+        emit_course_render_overlay(
+            to_body=plotted_course.to_body_id,
+            bezier_control_offset_au=0.3,
+            dropped_invalid_target=dropped,
+        )
+        svg = render_course_overlay(
+            chart_svg=svg,
+            course=plotted_course,
+            orbits=content.orbits,
+            party_body_id=session.party_body_id,
+            t_hours=session.clock.t_hours,
+        )
 
     session.orbital_scope = scope
 

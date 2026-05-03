@@ -369,6 +369,23 @@ def _build_turn_context(
 
     state_summary_json = json.dumps(state_summary_payload, indent=2)
 
+    # Orbital tier fields — populated from Session when the room has one.
+    # When room is None (test fixtures, legacy paths) the fields default
+    # to None/empty, which causes build_narrator_prompt to skip the
+    # <courses> block entirely — zero byte leak, no silent fallback.
+    orbital_content = None
+    orbital_scope = None
+    party_body_id = None
+    recent_body_mentions: list[str] = []
+    quest_anchors: list[str] = []
+    if room is not None:
+        sess = room.session
+        orbital_content = sess.orbital_content
+        orbital_scope = sess.orbital_scope  # always returns Scope (never None)
+        party_body_id = sess.party_body_id
+        recent_body_mentions = list(sess.recent_body_mentions)
+        quest_anchors = list(snapshot.quest_anchors)
+
     return TurnContext(
         in_combat=in_combat,
         in_chase=in_chase,
@@ -396,6 +413,11 @@ def _build_turn_context(
         lethality_policy=sd.genre_pack.lethality_policy,
         pc_cores_by_player=pc_cores_by_player,
         npc_cores_by_name=npc_cores_by_name,
+        orbital_content=orbital_content,
+        orbital_scope=orbital_scope,
+        party_body_id=party_body_id,
+        recent_body_mentions=recent_body_mentions,
+        quest_anchors=quest_anchors,
     )
 
 
