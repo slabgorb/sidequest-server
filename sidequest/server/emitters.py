@@ -299,11 +299,15 @@ def emit_scrapbook_entry(
     Pure reuse: location from snapshot, excerpt from the narrator's prose,
     NPCs from the orchestrator's structured extraction. No new LLM calls.
 
-    ``render_status`` (Story 45-30): the trigger-policy outcome for this
-    turn — ``rendered`` (policy fired and dispatch proceeded),
-    ``skipped_policy`` (banter / no narrative weight) or ``failed`` (policy
-    fired but daemon refused synchronously). The UI uses this to render
-    distinct affordances per outcome.
+    ``render_status`` carries the unified Story 45-30 + Story 45-31
+    discriminator: ``"rendered"`` (happy path), ``"skipped_policy"``
+    (45-30 — trigger policy returned NONE_POLICY for banter / no
+    narrative weight), ``"failed"`` (daemon refused synchronously),
+    ``"unavailable"`` (45-31 — daemon-state mirror reported UNRESPONSIVE
+    before this emit fired so the dispatcher will skip the round-trip).
+    The discriminator lands on the SCRAPBOOK_ENTRY event on first emit
+    so clients see the right badge live and replay rebuilds it from
+    the event payload — no separate row, no JOIN.
     """
     from sidequest.agents.orchestrator import NarrationTurnResult
     from sidequest.protocol.messages import ScrapbookEntryNpcRef, ScrapbookEntryPayload

@@ -1,19 +1,20 @@
 """Server-side mirror of the daemon's per-queue worker state.
 
-Story 45-31: replaces the binary ``client.is_available()`` (socket-on-disk)
-check at ``websocket_session_handler.py:3210`` with a continuous
-liveness signal. The daemon publishes ``{"event":"heartbeat",
-"queue":..., "state":..., "queue_depth":..., "ts_monotonic":...}``
-events; ``DaemonClient.heartbeat_listener`` reads them and feeds this
-mirror via :meth:`DaemonStateMirror.record_heartbeat`. The dispatcher
-calls :meth:`DaemonStateMirror.is_unresponsive` to decide whether to
-short-circuit the daemon round-trip and surface a
-``render.unavailable`` event with a degradation marker on the
-scrapbook row (the explicit Felix anti-13-minute-silence contract).
+Story 45-31: augments the binary ``client.is_available()`` socket-on-
+disk check in ``websocket_session_handler._maybe_dispatch_render``
+with a continuous liveness signal. The daemon publishes
+``{"event":"heartbeat", "queue":..., "state":..., "queue_depth":...,
+"ts_monotonic":...}`` events; ``DaemonClient.heartbeat_listener``
+reads them and feeds this mirror via
+:meth:`DaemonStateMirror.record_heartbeat`. The dispatcher's upstream
+turn pipeline calls :meth:`DaemonStateMirror.is_unresponsive` to
+decide whether to stamp the SCRAPBOOK_ENTRY's ``render_status`` field
+with ``"unavailable"`` (the explicit Felix anti-13-minute-silence
+contract).
 
 The module exposes :func:`get_mirror` — a process-wide singleton — so
 the heartbeat reader and the dispatcher share state. Tests reset the
-singleton in fixtures via :meth:`DaemonStateMirror.clear`.
+singleton in fixtures via :meth:`DaemonStateMirror.clear_for_test`.
 """
 
 from __future__ import annotations
@@ -61,7 +62,16 @@ class DaemonStateMirror:
         self._lock = threading.Lock()
         self._queue_states: dict[str, DaemonState] = {}
         self._queue_depths: dict[str, int] = {}
-        self._last_heartbeat_ts: float | None = None
+        # Server-side monotonic clock at the moment the most recent
+        # heartbeat was *recorded* by this mirror (i.e. seen on the
+        # wire by the listener). The daemon's ``ts_monotonic`` is
+        # NEVER used for staleness checks because it is a different
+        # process's monotonic clock with a different reference point;
+        # subtracting it from server's time.monotonic() gives garbage
+        # (story 45-31 review H3). The daemon's ts_monotonic stays in
+        # ``_last_daemon_ts_monotonic`` for diagnostic logging only.
+        self._last_received_monotonic: float | None = None
+        self._last_daemon_ts_monotonic: float | None = None
         # When set, ``is_unresponsive`` returns True regardless of the
         # wall clock. Used by the unavailable-fallback test to drive
         # the dispatcher into the degradation branch deterministically.
@@ -78,12 +88,21 @@ class DaemonStateMirror:
         state: str,
         queue_depth: int,
         ts_monotonic: float,
+        now_monotonic: float | None = None,
     ) -> None:
         """Record one heartbeat from the daemon.
 
         Per CLAUDE.md "No Silent Fallbacks": an unknown ``state`` MUST
         raise — silent acceptance of a typo'd state would let a daemon
         bug masquerade as health.
+
+        :param ts_monotonic: The DAEMON's monotonic clock at emit time.
+            Used for diagnostic logging only — never for staleness
+            comparisons (different process = different clock reference).
+        :param now_monotonic: Override for the server-side receive
+            timestamp. Tests pass an explicit value; production passes
+            None and ``time.monotonic()`` is read live (story 45-31
+            review H3).
         """
         if state not in _VALID_HEARTBEAT_STATES:
             raise ValueError(
@@ -96,14 +115,14 @@ class DaemonStateMirror:
         # is still reachable; the dispatcher's threshold check still
         # gates it correctly via queue_depth).
         mirror_state = DaemonState.READY if state == "cold" else DaemonState(state)
+        # Server-side receive timestamp drives staleness; daemon's
+        # ts_monotonic is informational only.
+        received_at = now_monotonic if now_monotonic is not None else time.monotonic()
         with self._lock:
             self._queue_states[queue] = mirror_state
             self._queue_depths[queue] = queue_depth
-            if (
-                self._last_heartbeat_ts is None
-                or ts_monotonic > self._last_heartbeat_ts
-            ):
-                self._last_heartbeat_ts = ts_monotonic
+            self._last_received_monotonic = received_at
+            self._last_daemon_ts_monotonic = ts_monotonic
 
     # ------------------------------------------------------------------
     # Outputs (dispatcher → mirror)
@@ -123,28 +142,53 @@ class DaemonStateMirror:
             return self._queue_depths.get(queue, 0)
 
     def last_heartbeat_ts(self) -> float | None:
-        """Return the most recent ``ts_monotonic`` across any queue, or
-        ``None`` if no heartbeat was ever recorded."""
+        """Return the daemon's ``ts_monotonic`` from the most recent
+        heartbeat (informational only — different clock reference than
+        the server's monotonic; see ``record_heartbeat`` docstring).
+        Returns ``None`` if no heartbeat was ever recorded.
+
+        Surfaced on the ``render.unavailable`` watcher event so the GM
+        panel can display the daemon's self-reported timestamp; not
+        used in any staleness arithmetic.
+        """
         with self._lock:
-            return self._last_heartbeat_ts
+            return self._last_daemon_ts_monotonic
+
+    def last_received_at(self) -> float | None:
+        """Return the SERVER-side monotonic clock value at the moment
+        the most recent heartbeat was received. ``None`` if no
+        heartbeat has been recorded.
+
+        This is the value used by ``is_unresponsive`` for staleness
+        comparisons because it shares a clock reference with
+        ``time.monotonic()`` calls on the same server process.
+        """
+        with self._lock:
+            return self._last_received_monotonic
 
     def is_unresponsive(self, *, now_monotonic: float | None = None) -> bool:
-        """Return True if the elapsed gap since the last heartbeat
-        exceeds ``2 × heartbeat_interval`` (the explicit Felix
-        13-minute-silence window).
+        """Return True if the elapsed gap since the last heartbeat was
+        *received* exceeds ``2 × heartbeat_interval`` (the explicit
+        Felix 13-minute-silence window).
+
+        Compares the server's monotonic clock against the server-side
+        receive timestamp recorded by ``record_heartbeat`` — never the
+        daemon's ``ts_monotonic``. The daemon and server are separate
+        processes with independent monotonic clock references; mixing
+        them produces garbage (review H3).
 
         :param now_monotonic: override for tests; defaults to
-            ``time.monotonic()``.
+            ``time.monotonic()`` on the server.
         """
         if self._force_unresponsive:
             return True
         with self._lock:
-            last = self._last_heartbeat_ts
-        if last is None:
+            last_received = self._last_received_monotonic
+        if last_received is None:
             return True
         if now_monotonic is None:
             now_monotonic = time.monotonic()
-        return (now_monotonic - last) > (2.0 * self._heartbeat_interval)
+        return (now_monotonic - last_received) > (2.0 * self._heartbeat_interval)
 
     # ------------------------------------------------------------------
     # Test hooks
@@ -163,7 +207,8 @@ class DaemonStateMirror:
         with self._lock:
             self._queue_states.clear()
             self._queue_depths.clear()
-            self._last_heartbeat_ts = None
+            self._last_received_monotonic = None
+            self._last_daemon_ts_monotonic = None
             self._force_unresponsive = False
 
 

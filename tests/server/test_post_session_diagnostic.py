@@ -27,6 +27,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 def test_diagnostic_module_is_importable() -> None:
     """The diagnostics writer lives in
@@ -190,24 +192,47 @@ def test_diagnostic_writer_emits_watcher_event_once(
     assert "unresponsive_window_count" in fields
 
 
-def test_diagnostic_path_traversal_is_blocked(tmp_path, monkeypatch) -> None:
-    """Defense: a malicious or buggy ``room_slug`` containing path
-    separators MUST NOT escape ``~/.sidequest/diagnostics/``. Without
-    the guard, a slug of ``../../etc`` would land on
-    ``~/.sidequest/etc-...json`` (or worse). The writer must either
-    reject the slug or sanitize it; either way the file MUST stay
-    inside the diagnostics dir."""
+@pytest.mark.parametrize(
+    "bad_slug",
+    [
+        "../../escape",      # classic POSIX traversal
+        "..",                # bare-parent component
+        "room/../../etc",    # mid-string traversal
+        "..\\win",           # Windows-style backslash + ..
+        "room\\path",        # Windows-style backslash separator
+        "/etc/passwd",       # absolute POSIX path
+        "evil\x00.json",     # embedded NUL (CWE-78)
+    ],
+    ids=[
+        "posix-traversal",
+        "bare-parent",
+        "mid-string-traversal",
+        "windows-traversal",
+        "windows-separator",
+        "absolute-posix",
+        "embedded-nul",
+    ],
+)
+def test_diagnostic_path_traversal_is_blocked(tmp_path, monkeypatch, bad_slug) -> None:
+    """Defense (review M5 + M9): every traversal vector must either
+    raise ``ValueError`` at the validation boundary, OR produce a
+    resolved path that stays inside ``~/.sidequest/diagnostics/``. A
+    single test case (``../../escape``) only proved one vector was
+    caught; the parameterized table covers the full perimeter."""
     monkeypatch.setenv("HOME", str(tmp_path))
+
+    import pytest as _pytest
 
     from sidequest.server.render_diagnostics import write_session_diagnostic
 
     diagnostics_root = Path(tmp_path) / ".sidequest" / "diagnostics"
 
-    # Either the call rejects with ValueError, or the resulting file is
-    # confined to diagnostics_root.
+    # Acceptable outcomes:
+    #   1. ValueError at the validation boundary (preferred — fails loud)
+    #   2. The resolved path is confined to diagnostics_root
     try:
         path = write_session_diagnostic(
-            room_slug="../../escape",
+            room_slug=bad_slug,
             session_end_iso="2026-05-03T14:56:00Z",
             snapshot={
                 "heartbeat_history": [],
@@ -219,10 +244,18 @@ def test_diagnostic_path_traversal_is_blocked(tmp_path, monkeypatch) -> None:
             },
         )
     except ValueError:
-        return  # Acceptable: rejected outright.
+        return  # Acceptable — rejected outright.
+    except _pytest.fail.Exception:
+        raise
+    except Exception as exc:  # noqa: BLE001 — final-bracket safety net
+        # Embedded NUL may also surface as OSError or ValueError from
+        # path.write_text; either is acceptable as long as no file was
+        # written outside the diagnostics dir. Fall through to the
+        # confinement check below.
+        if "null" in str(exc).lower() or "embedded" in str(exc).lower():
+            return
+        raise
 
-    # If it didn't reject, the resolved path MUST stay inside the
-    # diagnostics dir. ``Path.is_relative_to`` is the cheap guard.
     resolved = path.resolve()
     assert resolved.is_relative_to(diagnostics_root.resolve()), (
         f"diagnostic file escaped diagnostics dir: {resolved} not under "

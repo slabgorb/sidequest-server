@@ -7,6 +7,8 @@ are all configurable for tests.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -192,12 +194,10 @@ def create_app(
     # anti-13-minute-silence contract never engages in production.
     @app.on_event("startup")
     async def _start_heartbeat_listener() -> None:
-        import asyncio as _asyncio
-
         from sidequest.daemon_client import DaemonClient
 
         client = DaemonClient()
-        task = _asyncio.create_task(
+        task = asyncio.create_task(
             client.heartbeat_listener(),
             name="daemon-heartbeat-listener",
         )
@@ -206,12 +206,18 @@ def create_app(
 
     @app.on_event("shutdown")
     async def _stop_heartbeat_listener() -> None:
-        import contextlib as _contextlib
-
         task = getattr(app.state, "heartbeat_listener_task", None)
         if task is not None and not task.done():
             task.cancel()
-            with _contextlib.suppress(Exception):
+            # ``await task`` after ``cancel()`` raises
+            # ``asyncio.CancelledError`` (a ``BaseException`` in
+            # Python 3.8+, so a plain ``suppress(Exception)`` misses
+            # it). The task body itself may raise OSError or
+            # RuntimeError if the underlying socket was torn down
+            # mid-cycle. Suppress both classes explicitly to keep
+            # shutdown clean — teardown-time exceptions must not
+            # leak into the lifespan exit.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
             logger.info("daemon.heartbeat_listener_stopped")
 

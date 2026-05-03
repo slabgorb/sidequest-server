@@ -198,8 +198,8 @@ class DaemonClient:
     async def heartbeat_listener(
         self,
         *,
-        poll_interval_seconds: float = 30.0,
-        max_idle_seconds: float = 60.0,
+        poll_interval_seconds: float = 5.0,
+        max_idle_seconds: float = 15.0,
     ) -> None:
         """Long-running coroutine that opens a connection to the daemon
         and feeds incoming heartbeat events into
@@ -209,6 +209,18 @@ class DaemonClient:
         starts populating as soon as the server boots. Without this
         wiring, the dispatcher's UNRESPONSIVE branch is unreachable and
         the Felix anti-13-minute-silence fallback never engages.
+
+        Cadence rationale (review H2): the daemon-side
+        ``start_periodic_heartbeat`` is *defined* but is NOT wired
+        into ``_run_daemon`` — periodic emit broadcast is a deferred
+        follow-up. Until that lands, the only sources of fresh
+        heartbeats are (a) per-request connections during active
+        gameplay and (b) this listener's reconnect cycle. The default
+        ``max_idle_seconds=15s`` keeps the per-connection cadence at
+        roughly 4× faster than the default unresponsive threshold
+        (``2 × 30s = 60s``), so the mirror sees a fresh receive ts
+        well inside the staleness window even during quiet idle
+        stretches.
 
         :param poll_interval_seconds: How long to wait between
             re-connection attempts when the daemon is unreachable.
@@ -233,15 +245,22 @@ class DaemonClient:
                 await asyncio.sleep(poll_interval_seconds)
                 continue
 
-            # Send a `status` request so the daemon's _handle_client
-            # opens its accept-time heartbeat path. The status reply
-            # is harmless; we discard it. The point is to keep the
-            # connection open long enough to receive heartbeats.
+            # Send a `status` request to keep the connection active past
+            # the daemon's read loop. The accept-time heartbeat fires
+            # unconditionally before any request is read; the status
+            # reply itself is harmless and we discard it. Keeping the
+            # connection open lets the daemon emit additional heartbeats
+            # if a render or embed lock cycles while we're listening.
             try:
                 req = json.dumps({"id": "heartbeat-listener", "method": "status", "params": {}}) + "\n"
                 writer.write(req.encode())
                 await writer.drain()
             except (ConnectionResetError, BrokenPipeError, OSError):
+                # Best-effort close on a writer we've already lost.
+                # The connection is broken; close() may itself raise
+                # OSError on the dead transport. Eating the close
+                # error here is safe — the next reconnect attempt
+                # establishes a fresh socket.
                 with contextlib.suppress(Exception):
                     writer.close()
                 await asyncio.sleep(poll_interval_seconds)
@@ -265,7 +284,17 @@ class DaemonClient:
                         continue
                     try:
                         obj = json.loads(line)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as exc:
+                        # No silent fallback: surface daemon protocol
+                        # corruption (post-port shape drift, partial
+                        # flush mid-crash) loudly so the GM panel can
+                        # see it. Continue reading — one bad line must
+                        # not crash the listener.
+                        logger.warning(
+                            "heartbeat_listener.invalid_json line=%r error=%s",
+                            line[:200],
+                            exc,
+                        )
                         continue
                     if obj.get("event") == "heartbeat":
                         try:
@@ -282,6 +311,12 @@ class DaemonClient:
                             logger.warning("heartbeat_listener.invalid_event %s", obj)
             finally:
                 writer.close()
+                # ``wait_closed()`` after ``close()`` can raise
+                # CancelledError (when the listener task is being
+                # cancelled at shutdown) or OSError (when the
+                # transport is already gone). Both are expected
+                # teardown outcomes — suppress to keep the listener
+                # exit clean.
                 with contextlib.suppress(Exception):
                     await writer.wait_closed()
 

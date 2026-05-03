@@ -9,8 +9,11 @@ JSON-on-disk is the v1 surface — story scope explicitly excludes
 migrating into the events journal (a follow-up may absorb it).
 
 The writer is also responsible for:
-- emitting the ``daemon.session_diagnostic_written`` watcher event
-  exactly once per write so the GM panel sees the substitution;
+- emitting a ``state_transition`` watcher event with
+  ``op="session_diagnostic_written"`` exactly once per write so the
+  GM panel sees the substitution; (review M2: the *event_type* on
+  the wire is ``state_transition``, not ``daemon.session_diagnostic_written``;
+  filter on ``fields.op`` to find these);
 - refusing to escape the diagnostics directory on a malicious or
   buggy ``room_slug`` (path-traversal guard, no silent fallback).
 """
@@ -60,7 +63,17 @@ def _validate_room_slug(room_slug: str) -> str:
     """Reject path-traversal slugs. Per CLAUDE.md "No Silent
     Fallbacks": fail loud on a slug that would escape the diagnostics
     dir, rather than silently sanitize it (which could mask a bug
-    feeding the writer the wrong field)."""
+    feeding the writer the wrong field).
+
+    Vectors blocked:
+    - empty / non-string slug
+    - path separators (``/``, ``\\``)
+    - traversal sequences (``..``)
+    - null bytes (``\\x00``) — would terminate the filename early at
+      the C-level filesystem call (CWE-78). The OS layer catches this
+      with ValueError, but defense-in-depth requires explicit
+      validation at the perimeter (review M5).
+    """
     if not room_slug:
         raise ValueError("room_slug must be non-empty")
     if "/" in room_slug or "\\" in room_slug or ".." in room_slug:
@@ -68,6 +81,11 @@ def _validate_room_slug(room_slug: str) -> str:
             f"room_slug {room_slug!r} contains path separators or "
             f"traversal sequences — refusing to write outside the "
             f"diagnostics dir"
+        )
+    if "\x00" in room_slug:
+        raise ValueError(
+            "room_slug contains a null byte — refusing to construct "
+            "a filename with embedded NUL"
         )
     return room_slug
 
@@ -110,7 +128,10 @@ def write_session_diagnostic(
 
     body = dict(snapshot)
     body["written_at_iso"] = datetime.now(UTC).isoformat()
-    path.write_text(json.dumps(body, indent=2, sort_keys=True))
+    path.write_text(
+        json.dumps(body, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
     logger.info(
         "render.session_diagnostic_written path=%s heartbeat_count=%d",

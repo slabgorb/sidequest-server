@@ -568,9 +568,15 @@ class WebSocketSessionHandler:
         Phase 1 of session_handler decomposition (see
         docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
 
-        ``render_status`` (Story 45-30) — passed through to the emitter and
-        persisted on the scrapbook payload so the UI can distinguish
-        skipped-by-policy from daemon-failed.
+        ``render_status`` carries the unified Story 45-30 + Story 45-31
+        discriminator: ``"rendered"`` (happy path), ``"skipped_policy"``
+        (45-30 — trigger policy returned NONE_POLICY), ``"failed"``
+        (daemon errored synchronously), ``"unavailable"`` (45-31 — daemon
+        mirror reports UNRESPONSIVE; the dispatcher will skip the
+        round-trip and the UI shows the placeholder badge live, no
+        replay JOIN). Daemon-unavailable wins over policy decisions —
+        when there's no render coming either way, the user-facing reason
+        is "the daemon is down."
         """
         from sidequest.server import emitters
 
@@ -2408,14 +2414,25 @@ class WebSocketSessionHandler:
                 # LLM calls. Fields come from the orchestrator result and the
                 # snapshot the narrator just stamped.
                 with timings.phase("dispatch_post"):
-                    # Story 45-30: classify the render trigger reason once so
-                    # the scrapbook entry's render_status field reflects the
-                    # SAME policy decision that ``_maybe_dispatch_render``
-                    # below will reach. ``classify_trigger`` is a pure
-                    # function so the two call sites converge on the same
-                    # value without coordination — but doing it here ensures
-                    # the SCRAPBOOK_ENTRY frame always carries the right
-                    # discriminator for the UI gallery.
+                    # Story 45-31 first: consult the daemon-state mirror so
+                    # the dispatcher below can skip its round-trip when the
+                    # daemon is UNRESPONSIVE. ``sd.render_unavailable_pending``
+                    # is the shared flag the dispatcher reads.
+                    from sidequest.daemon_client.state_mirror import (
+                        get_mirror as _get_mirror,
+                    )
+
+                    _hb_mirror = _get_mirror()
+                    sd.render_unavailable_pending = (
+                        _hb_mirror.last_heartbeat_ts() is not None
+                        and _hb_mirror.is_unresponsive()
+                    )
+
+                    # Story 45-30: classify the render trigger reason once
+                    # so the same value lands in both the SCRAPBOOK_ENTRY
+                    # render_status discriminator and the dispatcher below.
+                    # ``classify_trigger`` is pure so the two call sites
+                    # converge without coordination.
                     from sidequest.server.render_trigger import (
                         RenderTriggerReason,
                         classify_trigger,
@@ -2426,11 +2443,18 @@ class WebSocketSessionHandler:
                         snapshot_location_before=snapshot_location_before_apply,
                         encounter_resolved_this_turn=encounter_resolved_this_turn,
                     )
-                    _render_status = (
-                        "skipped_policy"
-                        if _trigger_reason is RenderTriggerReason.NONE_POLICY
-                        else "rendered"
-                    )
+
+                    # Unified render_status (Story 45-30 + 45-31) — daemon-
+                    # unavailable wins over policy decisions because no
+                    # render is coming either way; the user-facing reason
+                    # is "the daemon is down." Then policy decides
+                    # skipped_policy vs rendered.
+                    if sd.render_unavailable_pending:
+                        _render_status = "unavailable"
+                    elif _trigger_reason is RenderTriggerReason.NONE_POLICY:
+                        _render_status = "skipped_policy"
+                    else:
+                        _render_status = "rendered"
 
                     try:
                         self._emit_scrapbook_entry(
@@ -3643,23 +3667,19 @@ class WebSocketSessionHandler:
             )
             return None
         client = DaemonClient()
-        # Story 45-31: consult the daemon-state mirror BEFORE the
-        # legacy socket-on-disk check. Once the heartbeat reader has
-        # populated the mirror, ``is_unresponsive`` is the authoritative
-        # liveness signal — a daemon whose heartbeat stopped 8 minutes
-        # ago still has its socket file on disk, but the dispatcher
-        # MUST surface the degradation, not silently absorb it. We only
-        # gate on the mirror once it has actually seen heartbeats; on
-        # cold start (no heartbeats ever) we fall through to the
-        # legacy socket check so existing unit-tests that don't wire
-        # the mirror keep working.
-        from sidequest.daemon_client.state_mirror import get_mirror
+        # Story 45-31: the turn pipeline already consulted the
+        # daemon-state mirror immediately before the scrapbook emit
+        # and stamped ``sd.render_unavailable_pending`` accordingly.
+        # The SCRAPBOOK_ENTRY for this turn already carries
+        # ``render_status="unavailable"`` (live broadcast + DB row in
+        # one shot — no duplicate row, no separate replay JOIN).
+        # All this branch needs to do is: emit the watcher event so
+        # the GM panel sees the substitution, increment counters, and
+        # return None to skip the daemon round-trip.
+        if sd.render_unavailable_pending:
+            from sidequest.daemon_client.state_mirror import get_mirror as _get_mirror
 
-        _mirror = get_mirror()
-        if (
-            _mirror.last_heartbeat_ts() is not None
-            and _mirror.is_unresponsive()
-        ):
+            _mirror = _get_mirror()
             sd.render_unresponsive_window_count += 1
             logger.warning(
                 "render.unavailable reason=heartbeat_lost last_ts=%s turn=%d",
@@ -3679,34 +3699,6 @@ class WebSocketSessionHandler:
                 component="render",
                 severity="warning",
             )
-            # Persist a scrapbook row marked render_status=unavailable
-            # so the UI shows a placeholder badge instead of a silent
-            # gap. The dispatcher owns the row here because the normal
-            # post-narration scrapbook emit has already happened
-            # without the degradation marker; we substitute by writing
-            # the marker directly through the persistence path.
-            try:
-                from sidequest.protocol.messages import ScrapbookEntryPayload
-                from sidequest.server.emitters import persist_scrapbook_entry
-
-                excerpt = (result.narration or "").strip() or "(render unavailable)"
-                if len(excerpt) > 320:
-                    excerpt = excerpt[:317].rstrip() + "..."
-                persist_scrapbook_entry(
-                    self,
-                    ScrapbookEntryPayload(
-                        turn_id=int(sd.snapshot.turn_manager.interaction),
-                        location=(sd.snapshot.location or "Unknown"),
-                        narrative_excerpt=excerpt,
-                        scene_title=(visual.subject or "")[:120] or None,
-                        scene_type=visual.tier or None,
-                        render_status="unavailable",
-                    ),
-                )
-            except Exception as _exc:  # noqa: BLE001 — fallback row must never crash a turn
-                logger.warning(
-                    "render.unavailable_scrapbook_persist_failed err=%s", _exc
-                )
             return None
         if not client.is_available():
             logger.warning(

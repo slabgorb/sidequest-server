@@ -541,6 +541,12 @@ class _SessionData:
     render_unresponsive_window_count: int = 0
     last_successful_render_id: str | None = None
     last_successful_render_ts_iso: str | None = None
+    # Story 45-31: set in the turn pipeline immediately before the
+    # scrapbook emit when the daemon-state mirror reports UNRESPONSIVE.
+    # The dispatcher reads this in ``_maybe_dispatch_render`` to skip
+    # the daemon round-trip (the scrapbook row already carries
+    # ``render_status="unavailable"``, no second persist needed).
+    render_unavailable_pending: bool = False
     # Story 45-19: parsed history chapters cached at chargen so the
     # arc-recompute tick doesn't re-parse history.yaml on every turn.
     # Populated alongside the chargen-time materialization in
