@@ -7,6 +7,10 @@ import from here; nothing imports those upward.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict
+
 from sidequest.orbital.course_geometry import chord_angular_distance_deg
 from sidequest.orbital.models import BodyDef, OrbitsConfig
 
@@ -45,3 +49,58 @@ def compute_eta_and_dv(
     eta_hours = (chord_au * TRAVEL_HOURS_PER_AU) / orbits.travel.travel_speed_factor
     delta_v = chord_au * DELTA_V_BASE + radial_au * DELTA_V_RADIAL_FACTOR
     return eta_hours, delta_v
+
+
+class CourseSource(StrEnum):
+    """Why a course was offered. Drives the 12-cap priority ordering."""
+
+    IN_SCOPE = "in_scope"
+    RECENT_MENTION = "recent_mention"
+    QUEST_OBJECTIVE = "quest_objective"
+
+    @property
+    def priority(self) -> int:
+        """Higher = keep when capping. Quest > recent > in-scope."""
+        return _SOURCE_PRIORITY[self]
+
+
+_SOURCE_PRIORITY: dict[CourseSource, int] = {
+    CourseSource.IN_SCOPE: 1,
+    CourseSource.RECENT_MENTION: 2,
+    CourseSource.QUEST_OBJECTIVE: 3,
+}
+
+
+class CourseRow(BaseModel):
+    """One precomputed course exposed to narrator + GM panel.
+
+    Labelled "row" because the prompt block renders these as one bullet
+    each. Distinct from PlottedCourse, which is the snapshot field
+    representing the *committed* (well, plotted) course.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_body_id: str
+    eta_hours: float
+    delta_v: float
+    source: CourseSource
+    label_hint: str | None = None  # quest objective name when source=QUEST_OBJECTIVE
+
+
+class PlottedCourse(BaseModel):
+    """The snapshot's persistent course state — drawn on the chart.
+
+    Cleared by replace, cancel, or arrival (party_body_id == to_body_id).
+    Survives save/load and WebSocket disconnect by virtue of being a
+    snapshot field.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_body_id: str
+    label: str | None = None
+    eta_hours: float
+    delta_v: float
+    plotted_at_t_hours: float
+    source: CourseSource
