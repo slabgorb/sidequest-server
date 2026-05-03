@@ -31,17 +31,33 @@ class ActionRevealHandler:
         session: WebSocketSessionHandler,
         msg: GameMessage,
     ) -> list[object]:
-        assert isinstance(msg, ActionRevealMessage)
-        payload: ActionRevealPayload = msg.payload
+        sd = session._session_data
+        if sd is None:
+            return []
 
         snapshot = session._room.snapshot()
+        if snapshot is None:
+            logger.warning(
+                "action_reveal received before room bound to world; dropping"
+            )
+            return []
+
+        payload: ActionRevealPayload = msg.payload  # type: ignore[attr-defined]
+        round_no = snapshot.turn_manager.round
+        logger.debug(
+            "action_reveal handle status=%s player_id=%s round=%d",
+            payload.status,
+            sd.player_id,
+            round_no,
+        )
+
         stamped = payload.model_copy(
             update={
-                "round": snapshot.turn_manager.round,
-                "player_id": session._player_id,
+                "round": round_no,
+                "player_id": sd.player_id,
             }
         )
-        outbound = ActionRevealMessage(payload=stamped, player_id=session._player_id)
+        outbound = ActionRevealMessage(payload=stamped, player_id=sd.player_id)
         session._room.broadcast(outbound, exclude_socket_id=session._socket_id)
         return []
 

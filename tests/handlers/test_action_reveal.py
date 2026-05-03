@@ -18,7 +18,8 @@ def _make_session(player_id: str = "p1", socket_id: str = "s1", round: int = 7):
     session._room.broadcast = MagicMock(return_value=[])
     session._room.slug = "test-slug"
     session._socket_id = socket_id
-    session._player_id = player_id
+    # Player identity lives on _session_data, not _player_id.
+    session._session_data.player_id = player_id
     snapshot = MagicMock()
     snapshot.turn_manager.round = round
     session._room.snapshot.return_value = snapshot
@@ -93,7 +94,7 @@ async def test_server_stamps_round_authoritative() -> None:
 
 @pytest.mark.asyncio
 async def test_server_stamps_player_id_authoritative() -> None:
-    """Client-supplied player_id in payload is overwritten by session._player_id."""
+    """Client-supplied player_id in payload is overwritten by session_data.player_id."""
     handler = ActionRevealHandler()
     session = _make_session(player_id="real-player")
     # Client lies about player_id — server overwrites
@@ -107,6 +108,34 @@ async def test_server_stamps_player_id_authoritative() -> None:
 
     sent_msg = session._room.broadcast.call_args.args[0]
     assert sent_msg.payload.player_id == "real-player"
+
+
+@pytest.mark.asyncio
+async def test_no_session_data_drops_silently() -> None:
+    handler = ActionRevealHandler()
+    session = _make_session()
+    session._session_data = None  # not authenticated yet
+    msg = _make_msg(status=ActionRevealStatus.COMPOSING, action="x", seq=0)
+
+    result = await handler.handle(session, msg)
+
+    assert result == []
+    session._room.broadcast.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unbound_snapshot_drops_with_warning(caplog) -> None:
+    handler = ActionRevealHandler()
+    session = _make_session()
+    session._room.snapshot.return_value = None  # room not bound yet
+    msg = _make_msg(status=ActionRevealStatus.COMPOSING, action="x", seq=0)
+
+    with caplog.at_level("WARNING"):
+        result = await handler.handle(session, msg)
+
+    assert result == []
+    session._room.broadcast.assert_not_called()
+    assert any("not bound" in r.message or "before room bound" in r.message for r in caplog.records)
 
 
 def test_module_exports_handler_singleton() -> None:
