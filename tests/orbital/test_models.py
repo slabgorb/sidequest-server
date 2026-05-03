@@ -118,3 +118,36 @@ def test_chart_config_loads_list():
         ],
     )
     assert len(cfg.annotations) == 2
+
+
+def test_unknown_annotation_kind_fails_at_load():
+    """Per CLAUDE.md no-silent-fallbacks: an unknown annotation kind must
+    raise at chart-load, not silently disappear at render time. The render
+    layer is the wrong place to find this — by the time a chart reaches the
+    renderer it should be valid."""
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown annotation kind"):
+        Annotation(kind="freeform_chalk", text="?")
+
+
+def test_all_known_annotation_kinds_load():
+    """Forward-compat reminder: when adding a new annotation kind to the
+    renderer, also add it to KNOWN_ANNOTATION_KINDS — and this test will
+    let you verify both halves landed together."""
+    from sidequest.orbital.models import KNOWN_ANNOTATION_KINDS
+
+    expected = {
+        "engraved_label",
+        "glyph",
+        "scale_ruler",
+        "bearing_marks",
+        "anomaly_marker",
+        "lagrange_point",
+        "flight_corridor",
+    }
+    assert expected == KNOWN_ANNOTATION_KINDS, (
+        "KNOWN_ANNOTATION_KINDS drifted from this test's expectation. "
+        "If a new kind is intentional, update both this test AND ensure "
+        "_render_annotation in render.py handles it."
+    )

@@ -54,6 +54,7 @@ class BodyDef(BaseModel):
     hazard_table: str | None = None
     label: str | None = None
     label_color: str | None = None
+    subtype: str | None = None  # e.g. "gas_giant", "rocky" — drives glyph variant
 
     @model_validator(mode="after")
     def _validate_orbital_params(self) -> BodyDef:
@@ -85,6 +86,24 @@ class OrbitsConfig(BaseModel):
         return self
 
 
+KNOWN_ANNOTATION_KINDS: frozenset[str] = frozenset(
+    {
+        "engraved_label",
+        "glyph",
+        "scale_ruler",
+        "bearing_marks",
+        "anomaly_marker",
+        "lagrange_point",
+        "flight_corridor",
+    }
+)
+"""Annotation kinds the renderer knows how to draw. Per CLAUDE.md "no silent
+fallbacks", an unknown kind raises at chart-load rather than disappearing
+silently at render time. Add new kinds here AND in `render._render_annotation`
+together — keeping the registry alongside the validator catches the half-wired
+case at load."""
+
+
 class Annotation(BaseModel):
     """Chart-only flavor element. `kind` selects renderer behavior;
     other fields are per-kind (validated leniently — renderer asserts
@@ -100,6 +119,15 @@ class Annotation(BaseModel):
     body_ref: str | None = None
     bearings: list[float] | None = None
     label: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_known_kind(self) -> Annotation:
+        if self.kind not in KNOWN_ANNOTATION_KINDS:
+            raise ValueError(
+                f"unknown annotation kind {self.kind!r}; "
+                f"known kinds: {sorted(KNOWN_ANNOTATION_KINDS)}"
+            )
+        return self
 
 
 class ChartConfig(BaseModel):
