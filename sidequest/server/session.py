@@ -11,6 +11,7 @@ Per spec docs/superpowers/specs/2026-05-01-session-aggregate-design.md.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING
 
 from sidequest.orbital.beats import StoryBeat, StoryBeatKind, advance_clock_via_beat
@@ -21,6 +22,12 @@ from sidequest.server.status_clear import clear_scratch_on_scene_end
 if TYPE_CHECKING:
     from sidequest.game.session import GameSnapshot
     from sidequest.orbital.loader import OrbitalContent
+
+
+RECENT_BODY_MENTIONS_LEN = 4
+"""Plot-a-course ring buffer size. Bodies named in the last N turns
+get surfaced into <courses> as RECENT_MENTION. Larger = more forgiving
+across digressions; smaller = tighter focus on the current scene."""
 
 
 class Session:
@@ -42,6 +49,7 @@ class Session:
         # Orbital scope is transient session UI state — defaults to system
         # root on each connect rather than persisting across reconnects.
         self._orbital_scope: Scope | None = None
+        self._recent_body_mentions: deque[str] = deque(maxlen=RECENT_BODY_MENTIONS_LEN)
 
     @property
     def clock(self) -> Clock:
@@ -92,6 +100,30 @@ class Session:
     @orbital_scope.setter
     def orbital_scope(self, scope: Scope) -> None:
         self._orbital_scope = scope
+
+    @property
+    def recent_body_mentions(self) -> deque[str]:
+        """Read-only-ish view of the recent body-mention buffer.
+
+        Returns the actual deque (not a copy); callers should not
+        mutate it. Iterate or list() it for a snapshot.
+        """
+        return self._recent_body_mentions
+
+    def note_body_mentioned(self, body_id: str) -> None:
+        """Record a body name as mentioned this turn.
+
+        Dedupe-and-refresh: if the body is already in the buffer,
+        remove and re-append so it sits at the most-recent end and
+        survives subsequent evictions. This keeps a body the player
+        keeps referencing in scope across many turns.
+        """
+        if body_id in self._recent_body_mentions:
+            try:
+                self._recent_body_mentions.remove(body_id)
+            except ValueError:
+                pass
+        self._recent_body_mentions.append(body_id)
 
     @property
     def party_body_id(self) -> str | None:
