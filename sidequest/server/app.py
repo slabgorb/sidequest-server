@@ -64,6 +64,7 @@ def create_app(
     claude_client_factory: Callable[[], LlmClient] | None = None,
     genre_pack_search_paths: list[Path] | None = None,
     save_dir: Path | None = None,
+    ui_dist: Path | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -74,6 +75,11 @@ def create_app(
             genre packs. Defaults to DEFAULT_GENRE_PACK_SEARCH_PATHS.
         save_dir: Root directory for SQLite save files.
             Defaults to ``~/.sidequest/saves``.
+        ui_dist: Built UI dist directory (Vite ``dist/``) to serve at the
+            root path with SPA fallback. Defaults to ``SIDEQUEST_UI_DIST``
+            env. When unset OR pointing at a missing directory, the UI
+            mount is skipped — local Vite dev (5173) handles serving;
+            the tunneled production-style path requires this to be set.
     """
     resolved_save_dir: Path = save_dir or (Path.home() / ".sidequest" / "saves")
     resolved_search_paths: list[Path] = (
@@ -312,21 +318,82 @@ def create_app(
             _render_mounts.publish_url_404(request.url.path)
         return response
 
-    # --- Static UI mount — built sidequest-ui served from `/` for prod/tunnel. ---
-    # Last mount on purpose: more specific routes (/api, /ws, /genre, /renders,
-    # /dashboard, /health) are already registered above and win path resolution.
-    # Localhost dev does not set SIDEQUEST_UI_DIST and continues to serve UI
-    # from the Vite dev server on :5173.
-    ui_dist = _os.environ.get("SIDEQUEST_UI_DIST")
-    if ui_dist:
-        ui_path = Path(ui_dist)
-        if ui_path.is_dir():
-            app.mount("/", StaticFiles(directory=str(ui_path), html=True), name="ui")
-            logger.info("ui.mount_registered dir=%s", ui_path)
-        else:
-            logger.warning("ui.mount_skipped reason=missing_dir dir=%s", ui_path)
+    # --- UI dist + SPA fallback (must register LAST so it only catches
+    # paths no other route claims). ---
+    # Production / tunnel path: serve the built React UI under ``/`` with
+    # a catch-all that returns ``index.html`` for any unmatched GET so
+    # client-side router paths (``/play/<slug>``, ``/lobby``, etc.)
+    # resolve. Replaces the prior ``StaticFiles(html=True)`` mount from
+    # PR #179 — that flag only handles the directory-root case; bookmarks,
+    # shared session URLs, and direct deep-links to client-side routes
+    # require a full SPA fallback (playtest 2026-05-03 [BUG] tunnel
+    # deep-links 404).
+    #
+    # Source-of-truth precedence:
+    #   1. ``ui_dist`` constructor arg (test injection).
+    #   2. ``SIDEQUEST_UI_DIST`` env (prod / tunnel deployments).
+    #   3. Skip the mount entirely (Vite dev on :5173 handles serving).
+    resolved_ui_dist: Path | None = ui_dist
+    if resolved_ui_dist is None:
+        env_ui = _os.environ.get("SIDEQUEST_UI_DIST")
+        if env_ui:
+            resolved_ui_dist = Path(env_ui)
+    if resolved_ui_dist is not None and resolved_ui_dist.is_dir():
+        _install_spa_fallback(app, resolved_ui_dist)
+    elif resolved_ui_dist is not None:
+        # Loud-fail: env set but dir missing. No silent fallback.
+        logger.warning(
+            "ui_dist.mount_skipped reason=missing_directory path=%s",
+            resolved_ui_dist,
+        )
 
     return app
+
+
+def _install_spa_fallback(app: FastAPI, ui_dist: Path) -> None:
+    """Mount ``ui_dist/assets`` as static + register a GET catch-all that
+    serves real files from ``ui_dist`` when present, falling through to
+    ``index.html`` for client-side router paths.
+
+    Registration order: this runs LAST in ``create_app``, so all other
+    routes (``/health``, ``/api/*``, ``/genre/*``, ``/renders/*``,
+    ``/dashboard``, ``/ws``) win on prefix match. The catch-all only
+    fires for paths that nothing else claimed.
+    """
+    from fastapi.responses import FileResponse, Response
+
+    index_path = ui_dist / "index.html"
+    assets_dir = ui_dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="ui_assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> Response:
+        # Try a literal file under ui_dist first (covers favicon.ico,
+        # manifest.json, robots.txt, and any other root-level static).
+        if full_path:
+            candidate = (ui_dist / full_path).resolve()
+            try:
+                # is_relative_to guards against ``..`` escaping the dist
+                # root even though Starlette normalizes the URL upstream.
+                candidate.relative_to(ui_dist.resolve())
+            except ValueError:
+                pass
+            else:
+                if candidate.is_file():
+                    return FileResponse(candidate)
+        # Otherwise serve the SPA shell so React Router can take over.
+        if index_path.is_file():
+            return FileResponse(index_path)
+        # ui_dist exists but no index.html — caller misconfigured the
+        # build output. 404 loudly rather than serve a blank.
+        return Response(
+            content="ui_dist missing index.html",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    logger.info("ui_dist.mount_registered path=%s", ui_dist)
 
 
 def main() -> None:
