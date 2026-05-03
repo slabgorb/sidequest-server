@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 from typing import Final
 
+from sidequest.telemetry.spans.asset_url import asset_url_resolved_span
+
 _DEFAULT_BASE: Final[str] = "https://cdn.slabgorb.com"
 
 _LOCAL_PREFIX_MAP: Final[dict[str, str]] = {
@@ -59,6 +61,8 @@ def resolve_asset_url(relative_path: str) -> str:
         url = f"{base.rstrip('/')}/{rel}"
         mode = "cdn"
 
-    # OTEL span emission added in Task 9.
-    _ = mode  # keep variable used; deleted with Task 9 wiring
+    with asset_url_resolved_span(
+        relative_path=rel, base_url=base or "", mode=mode
+    ):
+        pass
     return url
