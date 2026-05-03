@@ -495,6 +495,47 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
             ),
         )
 
+    def register_chassis_position_section(
+        self,
+        agent_name: str,
+        positions: dict[str, str | None],
+    ) -> None:
+        """Inject per-PC chassis-interior position into the narrator prompt.
+
+        The Ship-tab map mirrors ``character.current_room``; the narrator is
+        the source of truth, so the prompt must (a) tell the narrator where
+        each PC currently is, and (b) instruct the narrator to emit a
+        ``state_patch`` updating ``current_room`` whenever the prose moves a
+        character between rooms.
+
+        ``positions`` is ``{character_name: current_room | None}``. Entries
+        with ``None`` are filtered (PC has no chassis position yet — usually
+        means they haven't boarded). Empty filtered dict produces no section
+        (zero-byte-leak discipline).
+        """
+        live = {name: room for name, room in positions.items() if room}
+        if not live:
+            return
+
+        lines = ["## CREW POSITIONS — chassis interior (narrator-tracked)"]
+        for name, room in live.items():
+            lines.append(f"- {name} is in the {room}.")
+        lines.append(
+            "When your narration moves a character to a different room, emit "
+            "a ``state_patch`` updating ``/characters/<name>/current_room`` so "
+            "the Ship tab stays in sync. The map cannot move people on its own."
+        )
+
+        self.register_section(
+            agent_name,
+            PromptSection.new(
+                "chassis_positions",
+                "\n".join(lines),
+                AttentionZone.Early,
+                SectionCategory.State,
+            ),
+        )
+
     def register_party_peer_section(
         self,
         agent_name: str,

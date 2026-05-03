@@ -119,6 +119,12 @@ class Character(BaseModel):
     last_name: str = ""
     nickname: str = ""
 
+    # Position on the chassis interior (narrator-tracked, optional).
+    # Set via state_patch when the narrator moves a character between
+    # rooms; rendered on the Ship tab. Stays None until the narrator
+    # sets it; the renderer falls back to a chassis-default room.
+    current_room: str | None = None
+
     @field_validator("backstory")
     @classmethod
     def backstory_non_blank(cls, v: str) -> str:

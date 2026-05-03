@@ -115,6 +115,10 @@ class Npc(BaseModel):
     voice_id: int | None = None
     disposition: int = 0
     location: str | None = None
+    # Position on a chassis interior (narrator-tracked, optional).
+    # Orthogonal to ``location`` (which is general-world); ``current_room``
+    # is meaningful only when the NPC is aboard a chassis.
+    current_room: str | None = None
     pronouns: str | None = None
     appearance: str | None = None
     age: str | None = None

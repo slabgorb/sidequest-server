@@ -203,6 +203,11 @@ def create_app(
     rest_router = create_rest_router()
     app.include_router(rest_router)
 
+    # --- Chassis interior map (Ship tab) ---
+    from sidequest.interior.dispatch import interior_router
+
+    app.include_router(interior_router)
+
     # --- /dashboard — OTEL dashboard HTML (browser opens its own WS). ---
     app.include_router(dashboard_router)
 
