@@ -40,11 +40,29 @@ class OrbitalIntent(RootModel[_AnyIntent]):
     """Polymorphic root for any orbital chart intent message."""
 
 
+class ConjunctionEventPayload(BaseModel):
+    """Wire shape of a scheduled conjunction event for the chart HUD strip."""
+
+    model_config = ConfigDict(extra="forbid")
+    body_a_id: str
+    body_b_id: str
+    label: str
+    t_hours_event: float
+    t_hours_until: float
+
+
 class OrbitalIntentResponse(BaseModel):
-    """Server response to an orbital intent — full SVG + scope metadata."""
+    """Server response to an orbital intent — full SVG + scope metadata.
+
+    Fields beyond `svg` drive the React-side HUD overlays per spec §10:
+      - `t_hours` + `epoch_days`: top strip stardate readout
+      - `next_conjunction`: bottom strip countdown (None hides the panel)
+    """
 
     model_config = ConfigDict(extra="forbid")
     scope_center: str
     svg: str
     t_hours: float
+    epoch_days: float = 0.0
     party_at: str | None = None
+    next_conjunction: ConjunctionEventPayload | None = None

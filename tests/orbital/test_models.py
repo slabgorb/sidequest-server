@@ -11,10 +11,21 @@ from sidequest.orbital.models import (
     BodyType,
     ChartConfig,
     ClockConfig,
+    ConjunctionPair,
     OrbitsConfig,
     TravelConfig,
     TravelRealism,
 )
+
+
+def _orbiting(parent: str, period: float = 100.0, phase: float = 0.0) -> BodyDef:
+    return BodyDef(
+        type=BodyType.HABITAT,
+        parent=parent,
+        semi_major_au=1.0,
+        period_days=period,
+        epoch_phase_deg=phase,
+    )
 
 
 def test_minimal_orbits_config_loads():
@@ -118,3 +129,112 @@ def test_chart_config_loads_list():
         ],
     )
     assert len(cfg.annotations) == 2
+
+
+def test_unknown_annotation_kind_fails_at_load():
+    """Per CLAUDE.md no-silent-fallbacks: an unknown annotation kind must
+    raise at chart-load, not silently disappear at render time. The render
+    layer is the wrong place to find this — by the time a chart reaches the
+    renderer it should be valid."""
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown annotation kind"):
+        Annotation(kind="freeform_chalk", text="?")
+
+
+def test_conjunctions_default_empty():
+    """A world without authored conjunctions still loads cleanly."""
+    cfg = OrbitsConfig(
+        version="0.1.0",
+        clock=ClockConfig(epoch_days=0),
+        travel=TravelConfig(),
+        bodies={"sun": BodyDef(type=BodyType.STAR)},
+    )
+    assert cfg.conjunctions == []
+
+
+def test_conjunction_pair_loads_with_valid_bodies():
+    cfg = OrbitsConfig(
+        version="0.1.0",
+        clock=ClockConfig(epoch_days=0),
+        travel=TravelConfig(),
+        bodies={
+            "sun": BodyDef(type=BodyType.STAR),
+            "alpha": _orbiting("sun"),
+            "beta": _orbiting("sun", period=200, phase=30),
+        },
+        conjunctions=[ConjunctionPair(body_a="alpha", body_b="beta", label="A↔B")],
+    )
+    assert len(cfg.conjunctions) == 1
+    assert cfg.conjunctions[0].label == "A↔B"
+
+
+def test_conjunction_pair_rejects_unknown_body():
+    with pytest.raises(ValidationError, match="not in bodies"):
+        OrbitsConfig(
+            version="0.1.0",
+            clock=ClockConfig(epoch_days=0),
+            travel=TravelConfig(),
+            bodies={
+                "sun": BodyDef(type=BodyType.STAR),
+                "alpha": _orbiting("sun"),
+            },
+            conjunctions=[ConjunctionPair(body_a="alpha", body_b="ghost")],
+        )
+
+
+def test_conjunction_pair_rejects_self_pair():
+    """A body cannot conjunct with itself."""
+    with pytest.raises(ValidationError, match="two different bodies"):
+        OrbitsConfig(
+            version="0.1.0",
+            clock=ClockConfig(epoch_days=0),
+            travel=TravelConfig(),
+            bodies={
+                "sun": BodyDef(type=BodyType.STAR),
+                "alpha": _orbiting("sun"),
+            },
+            conjunctions=[ConjunctionPair(body_a="alpha", body_b="alpha")],
+        )
+
+
+def test_conjunction_pair_rejects_bodies_with_no_common_ancestor():
+    """Bodies in disjoint orbital subtrees can't have a meaningful angular
+    separation. The validator must catch this at load."""
+    with pytest.raises(ValidationError, match="common ancestor"):
+        OrbitsConfig(
+            version="0.1.0",
+            clock=ClockConfig(epoch_days=0),
+            travel=TravelConfig(),
+            bodies={
+                # Two independent root systems (impossible IRL, but the
+                # validator should catch the mistake at load time anyway).
+                "sun_a": BodyDef(type=BodyType.STAR),
+                "sun_b": BodyDef(type=BodyType.STAR),
+                "alpha": _orbiting("sun_a"),
+                "beta": _orbiting("sun_b"),
+            },
+            conjunctions=[ConjunctionPair(body_a="alpha", body_b="beta")],
+        )
+
+
+def test_all_known_annotation_kinds_load():
+    """Forward-compat reminder: when adding a new annotation kind to the
+    renderer, also add it to KNOWN_ANNOTATION_KINDS — and this test will
+    let you verify both halves landed together."""
+    from sidequest.orbital.models import KNOWN_ANNOTATION_KINDS
+
+    expected = {
+        "engraved_label",
+        "glyph",
+        "scale_ruler",
+        "bearing_marks",
+        "anomaly_marker",
+        "lagrange_point",
+        "flight_corridor",
+    }
+    assert expected == KNOWN_ANNOTATION_KINDS, (
+        "KNOWN_ANNOTATION_KINDS drifted from this test's expectation. "
+        "If a new kind is intentional, update both this test AND ensure "
+        "_render_annotation in render.py handles it."
+    )
