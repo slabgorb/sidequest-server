@@ -1269,8 +1269,18 @@ class Orchestrator:
         # or their pronouns/race/class drift save-to-save (playtest 3:
         # Blutka he/him in own save became she/her in Orin's save).
         if context.party_peers:
+            # ``peer_count`` is the count of OTHER PCs (party_peers excludes
+            # self). Pre-fix the field was named ``party_size`` which read as
+            # full-party headcount; in a 2-player session the log line said
+            # ``party_size=1`` (1 peer) and looked like a count-off-by-one
+            # bug to anyone tailing the log without the context. Renamed
+            # 2026-05-03 [OBS]; the test in
+            # ``tests/server/test_party_peer_identity.py`` accepts both old
+            # and new spellings during the cutover so external GM-panel
+            # filters keep working until they're audited and updated to
+            # the new key.
             logger.info(
-                "orchestrator.party_peer_injection party_size=%d current_player=%s",
+                "orchestrator.party_peer_injection peer_count=%d current_player=%s",
                 len(context.party_peers),
                 context.character_name,
             )
@@ -1416,6 +1426,52 @@ class Orchestrator:
                     SectionCategory.Guardrail,
                 ),
             )
+
+        # NPC introduction visual constraint (Recency zone, every turn).
+        # Playtest 2026-05-03 [BUG] — render policy fired NPC_INTRO for two
+        # newly auto-registered NPCs (Inspector Volkova, Drilled door clerk)
+        # but the narrator emitted no visual_scene for either, so
+        # ``render.eligible_no_subject reason=npc_intro`` warned and the
+        # render dispatcher bailed. Two named NPCs introduced in detail with
+        # zero portrait or scene image — exactly the OTEL-lie-detector
+        # pattern from CLAUDE.md (the prose surface and the visual surface
+        # disagreed on whether anything happened).
+        #
+        # This constraint runs EVERY turn (no ``is_full`` gate) because new
+        # NPCs can appear on any turn, not just the opening. The Diamonds
+        # and Coal principle (ADR-014) treats first-introduction prose as a
+        # diamond — the visual is part of that diamond, not optional. The
+        # render trigger policy (server/render_trigger.py) already
+        # classifies this turn as NPC_INTRO whenever any NpcMention has
+        # ``is_new=True``; this section makes the narrator hold up its end
+        # of the contract by always including the matching visual_scene.
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "npc_intro_visual_constraint",
+                (
+                    "<npc-intro-visual>\n"
+                    "When you introduce a NEW named NPC for the first time "
+                    "this session — i.e. you set ``is_new: true`` on their "
+                    "entry in ``npcs_met`` — your game_patch MUST also "
+                    "include a ``visual_scene`` whose ``subject`` describes "
+                    "that NPC (their appearance, posture, and the moment "
+                    "the player is meeting them). Use tier ``\"portrait\"`` "
+                    "for a single character close-up, or ``\"landscape\"`` "
+                    "when the introduction is inseparable from the place "
+                    "(a foreman silhouetted against the rig, a customs "
+                    "officer at the freight stair). If multiple NPCs are "
+                    "introduced in the same turn, pick the one whose "
+                    "introduction carries the most narrative weight — the "
+                    "visual is the diamond on that introduction. Recurring "
+                    "NPCs (``is_new: false``) do NOT require a fresh "
+                    "visual_scene; this rule fires only on the first reveal.\n"
+                    "</npc-intro-visual>"
+                ),
+                AttentionZone.Recency,
+                SectionCategory.Guardrail,
+            ),
+        )
 
         # Narrator vocabulary (Late zone, Full tier only)
         if is_full:

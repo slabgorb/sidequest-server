@@ -1331,6 +1331,20 @@ def _apply_narration_result_to_snapshot(
                         result.confrontation,
                         player_name,
                     )
+            # Playtest 2026-05-03 [BUG] — confrontation widget showed only
+            # the action-submitter PC even though both PCs played the bundled
+            # MP turn. Bundled-action narration produces ONE narrator call
+            # but every seated PC is in the round by construction, so seat
+            # the other seated PCs as side="player" actors alongside the
+            # submitter. ``player_seats`` maps player_id → character.core.name;
+            # values() is the canonical PC roster for the session. Solo
+            # sessions and pre-MP saves pass an empty list (single-PC actor
+            # array, identical to prior behavior).
+            additional_pc_names = [
+                name
+                for name in snapshot.player_seats.values()
+                if name and name != player_name
+            ]
             instantiate_encounter_from_trigger(
                 snapshot=snapshot,
                 pack=pack,
@@ -1338,6 +1352,7 @@ def _apply_narration_result_to_snapshot(
                 player_name=player_name,
                 npcs_present=result.npcs_present,
                 genre_slug=snapshot.genre_slug,
+                additional_player_names=additional_pc_names,
             )
 
         # (b) Apply beat selections (dice-replay turns short-circuit)

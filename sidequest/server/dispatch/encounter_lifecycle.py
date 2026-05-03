@@ -165,6 +165,7 @@ def instantiate_encounter_from_trigger(
     player_name: str,
     npcs_present: list,
     genre_slug: str | None,
+    additional_player_names: list[str] | None = None,
 ) -> StructuredEncounter | None:
     """Create a StructuredEncounter when the narrator emits ``confrontation=T``.
 
@@ -181,6 +182,19 @@ def instantiate_encounter_from_trigger(
     The encounter's dual dials are taken from the matched ConfrontationDef.
     Actors are assigned side="player" for the calling player and side read from
     each NpcMention's ``side`` field (validated against {player, opponent, neutral}).
+
+    Multiplayer (playtest 2026-05-03 [BUG] — confrontation widget missing
+    in-fiction principal): a bundled MP turn produces ONE narrator call with
+    both PCs' actions concatenated, but the trigger only carries one
+    ``player_name`` — the action submitter for the barrier-firing frame. The
+    other PCs in the bundle never reached the actor roster, so the client
+    widget rendered only one PC even though both played the round. Pass
+    ``additional_player_names`` (typically every other PC in
+    ``snapshot.player_seats.values()`` minus ``player_name``) to seat them as
+    side="player" actors. Solo callers and tests can leave it as ``None`` for
+    back-compat. Sealed-letter (commit-reveal duel) encounters keep the
+    strict 1-PC red / 1-NPC blue pairing — the resolver looks up actors by
+    role tag and a third PC there would break role lookup.
 
     When ``npcs_present`` is empty the constructor falls back to NPCs from
     ``snapshot.npc_registry`` whose ``last_seen_location`` matches the
@@ -262,6 +276,11 @@ def instantiate_encounter_from_trigger(
             actors = [
                 EncounterActor(name=player_name, role=role, side="player"),
             ]
+            seen_pc_names = {player_name}
+            for extra in additional_player_names or []:
+                if extra and extra not in seen_pc_names:
+                    actors.append(EncounterActor(name=extra, role=role, side="player"))
+                    seen_pc_names.add(extra)
             for npc in npcs_present:
                 npc_name = getattr(npc, "name", None) or str(npc)
                 side_raw = getattr(npc, "side", None) or "neutral"
@@ -279,6 +298,19 @@ def instantiate_encounter_from_trigger(
         _init_span.set_attribute(
             "combatant_names",
             ",".join(a.name for a in actors),
+        )
+        # Playtest 2026-05-03 [BUG] — confrontation widget missing in-fiction
+        # principal in MP. The GM panel needs to see how many side="player"
+        # actors landed (sealed-letter is always 1; non-sealed-letter scales
+        # with seated PC count). A regression to "always 1 PC" in MP shows up
+        # here without grepping logs.
+        _init_span.set_attribute(
+            "pc_actor_count",
+            sum(1 for a in actors if a.side == "player"),
+        )
+        _init_span.set_attribute(
+            "pc_actor_names",
+            ",".join(a.name for a in actors if a.side == "player"),
         )
 
         pm = cdef.player_metric

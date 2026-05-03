@@ -30,8 +30,24 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("sidequest.daemon_client")
 
 DEFAULT_SOCKET_PATH = Path("/tmp/sidequest-renderer.sock")
-DEFAULT_TIMEOUT_SECONDS = 180.0
-"""Z-Image renders take 10-60s on M-series; 3 min is a generous cap."""
+DEFAULT_TIMEOUT_SECONDS = 600.0
+"""Per-call cap for the daemon round-trip.
+
+Sized for high-fidelity Z-Image (base 1.0, 20 steps) at ~108-125s per
+render (per ``sidequest_daemon/media/zimage_config.py``) plus daemon
+queue depth — in multiplayer the queue is hotter (2+ players → more
+``visual_scene`` requests per wall-clock minute), so a render that
+arrives behind 3 queued peers waits ~3×125s before its own ~125s job
+runs, which the prior 180s cap silently dropped (playtest 2026-05-03
+[BUG]: ``render.reply_unavailable error=daemon did not reply within
+180.0s`` — the daemon completed and saved the PNG but the server had
+already given up, orphaning the asset). 600s covers 4-5 queued
+high-fidelity renders before the cap fires; bump again or drop to
+``fidelity="turbo"`` per-call if MP throughput grows past that.
+
+Per CLAUDE.md durable-retention principle: timing out here does NOT
+cancel the daemon — orphaned PNGs are kept on disk for future repair.
+"""
 
 MAX_EMBED_BYTES = 32_768
 """Upper bound on embed() text payload (UTF-8 bytes).
