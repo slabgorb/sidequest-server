@@ -939,6 +939,22 @@ def _apply_narration_result_to_snapshot(
                         component="game",
                     )
         snapshot.location = result.location
+        # Story 47-4: rig-coupled auto-fire hook. Any narrator-emitted
+        # location change runs through process_room_entry, which resolves
+        # bare world-name rooms ("Galley") against chassis.interior_rooms
+        # and dispatches eligible auto-fire confrontations (e.g. the_tea_brew
+        # on Galley entry with bond_tier >= familiar). Non-chassis rooms are
+        # silent no-ops on this path — the legacy room-graph machinery
+        # (init_room_graph_location, region graph) handles those.
+        if acting_character_name and snapshot.chassis_registry:
+            from sidequest.game.room_movement import process_room_entry
+
+            process_room_entry(
+                snapshot,
+                character_id=acting_character_name,
+                room_id=result.location,
+                current_turn=snapshot.turn_manager.interaction,
+            )
         # Bind this turn's location to the acting character so views.py
         # can build per-player PARTY_STATUS frames with the right scene
         # per member. Solo sessions populate a single entry that equals

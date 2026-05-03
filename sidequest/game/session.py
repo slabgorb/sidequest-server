@@ -508,6 +508,23 @@ class GameSnapshot(BaseModel):
     # into `npc_registry` so narrator name-continuity sees the chassis.
     chassis_registry: dict[str, ChassisInstance] = Field(default_factory=dict)
 
+    # World confrontations (Story 47-4): loaded from
+    # `worlds/<world>/confrontations.yaml` alongside chassis_registry so the
+    # rig-coupled room-entry auto-fire evaluator has a snapshot-local source
+    # of truth without depending on `magic_state` being initialized first.
+    # Bar-DSL confrontations also live on `magic_state.confrontations`; the
+    # two collections are independently populated and the rig path reads
+    # from this one. Type kept loose (``list``) here to avoid a circular
+    # import — populated with `ConfrontationDefinition` instances by
+    # `init_chassis_registry`.
+    world_confrontations: list = Field(default_factory=list)
+
+    # Story 47-4: per-(chassis_id, confrontation_id) last-fired turn for the
+    # rig-coupled cooldown gate (`fire_conditions.cooldown_turns`). Stored on
+    # the snapshot so the cooldown survives serialization. Tuple keys are
+    # not JSON-serializable — flat dict keyed by `f"{chassis_id}:{conf_id}"`.
+    chassis_autofire_cooldowns: dict[str, int] = Field(default_factory=dict)
+
     # P5-deferred: genie wishes (consequence engine, F9)
     genie_wishes: list[GenieWish] = Field(default_factory=list)
 

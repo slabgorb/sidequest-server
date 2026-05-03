@@ -191,6 +191,94 @@ def _noop(snapshot: GameSnapshot, actor: str, ctx: OutputContext) -> None:  # no
     return
 
 
+# ---------------------------------------------------------------------------
+# Story 47-4: rig-coupled outputs (the_tea_brew → bond growth + lineage)
+# ---------------------------------------------------------------------------
+
+# Bond deltas for intimate-register clear_win. Asymmetric by design: the
+# chassis's growth toward the character is larger than the character's
+# growth toward the chassis (the chassis's frame of reference is the one
+# the rig taxonomy cares about; player-side is a softer, slower track).
+BOND_INTIMATE_DELTA_CHARACTER = 0.04
+BOND_INTIMATE_DELTA_CHASSIS = 0.06
+
+
+def _h_bond_strength_growth_via_intimacy(
+    snapshot: GameSnapshot, actor: str, ctx: OutputContext
+) -> None:
+    """Grow bond on the chassis named in ``ctx['chassis_id']`` and emit
+    rig.bond_event (and rig.voice_register_change if a tier crosses)."""
+    from sidequest.game.chassis import apply_bond_event
+    from sidequest.telemetry.spans.rig import (
+        emit_rig_bond_event,
+        emit_rig_voice_register_change,
+    )
+
+    chassis_id = ctx.get("chassis_id")
+    confrontation_id = ctx.get("confrontation_id")
+    register = ctx.get("register", "")
+    turn_id = ctx.get("turn_id", 0)
+    if chassis_id is None:
+        raise ValueError(
+            "bond_strength_growth_via_intimacy requires chassis_id in context"
+        )
+    chassis = snapshot.chassis_registry[chassis_id]
+
+    result = apply_bond_event(
+        chassis=chassis,
+        character_id=actor,
+        delta_character=BOND_INTIMATE_DELTA_CHARACTER,
+        delta_chassis=BOND_INTIMATE_DELTA_CHASSIS,
+        reason=f"{confrontation_id} clear_win",
+        confrontation_id=confrontation_id,
+        turn_id=turn_id,
+    )
+    emit_rig_bond_event(
+        chassis_id=chassis_id,
+        actor_id=actor,
+        side="both",
+        delta_character=BOND_INTIMATE_DELTA_CHARACTER,
+        delta_chassis=BOND_INTIMATE_DELTA_CHASSIS,
+        tier_character_before=result.tier_character_before,
+        tier_character_after=result.tier_character_after,
+        tier_chassis_before=result.tier_chassis_before,
+        tier_chassis_after=result.tier_chassis_after,
+        confrontation_id=confrontation_id,
+        register=register,
+    )
+    if result.tier_chassis_crossed:
+        emit_rig_voice_register_change(
+            chassis_id=chassis_id,
+            actor_id=actor,
+            register_before=result.tier_chassis_before,
+            register_after=result.tier_chassis_after,
+            triggering_event=confrontation_id or "",
+        )
+
+
+def _h_chassis_lineage_intimate(
+    snapshot: GameSnapshot, actor: str, ctx: OutputContext
+) -> None:
+    """Append an ``intimate``-kind lineage entry to the named chassis."""
+    from sidequest.game.chassis import apply_chassis_lineage_intimate
+
+    chassis_id = ctx.get("chassis_id")
+    confrontation_id = ctx.get("confrontation_id")
+    turn_id = ctx.get("turn_id", 0)
+    narrative_seed = ctx.get("narrative_seed", "")
+    if chassis_id is None:
+        raise ValueError(
+            "chassis_lineage_intimate requires chassis_id in context"
+        )
+    chassis = snapshot.chassis_registry[chassis_id]
+    apply_chassis_lineage_intimate(
+        chassis=chassis,
+        narrative_seed=narrative_seed,
+        turn_id=turn_id,
+        confrontation_id=confrontation_id,
+    )
+
+
 # Registry — extend as more outputs land. Unknown ID → OutputUnknownError.
 OUTPUT_HANDLERS: dict[str, OutputHandler] = {
     "sanity_decrement": _h_sanity_decrement,
@@ -221,6 +309,9 @@ OUTPUT_HANDLERS: dict[str, OutputHandler] = {
     "character_scar_extracted": _h_status_add_scar,
     "sanity_floor_lowered": _h_sanity_floor_lowered,
     "status_clear_bleeding_through": _h_status_clear_bleeding_through,
+    # Story 47-4 — rig-coupled intimate outputs.
+    "bond_strength_growth_via_intimacy": _h_bond_strength_growth_via_intimacy,
+    "chassis_lineage_intimate": _h_chassis_lineage_intimate,
 }
 
 
@@ -253,4 +344,23 @@ def apply_mandatory_outputs(
                 "actor": actor,
             },
             component="magic",
+        )
+
+    # Story 47-4 (AC6): emit rig.confrontation_outcome on every rig-coupled
+    # outcome resolution. Triggered when the caller has supplied the rig
+    # framing (chassis_id + confrontation_id + branch). Magic Phase-5
+    # outcomes that don't fill these keys are pre-rig and stay span-silent
+    # on this path; their watcher events above remain the GM-panel signal.
+    chassis_id = context.get("chassis_id")
+    confrontation_id = context.get("confrontation_id")
+    branch = context.get("branch")
+    if chassis_id is not None and confrontation_id is not None and branch is not None:
+        from sidequest.telemetry.spans.rig import emit_rig_confrontation_outcome
+
+        emit_rig_confrontation_outcome(
+            chassis_id=chassis_id,
+            confrontation_id=confrontation_id,
+            register=context.get("register", ""),
+            branch=branch,
+            outputs=list(outputs),
         )

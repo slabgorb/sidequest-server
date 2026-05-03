@@ -176,9 +176,10 @@ def test_malformed_yaml_fails_loud(tmp_path: Path) -> None:
 def test_loads_real_coyote_star_yaml() -> None:
     """Wiring test: the production Coyote Star confrontations.yaml loads.
 
-    All five named confrontations must parse from the real genre-pack
-    file. This is the wire-first signal — the loader must accept the
-    actual content authored at
+    The five magic-Phase-5 named confrontations plus the rig-Phase-C
+    intimate ``the_tea_brew`` (Story 47-4) must parse from the real
+    genre-pack file. This is the wire-first signal — the loader must
+    accept the actual content authored at
     ``sidequest-content/genre_packs/space_opera/worlds/coyote_star/confrontations.yaml``.
     """
     repo_root = Path(__file__).resolve().parents[3]
@@ -200,4 +201,5 @@ def test_loads_real_coyote_star_yaml() -> None:
         "the_bleeding_through",
         "the_quiet_word",
         "the_long_resident",
-    }, f"expected the five named confrontations, got {ids}"
+        "the_tea_brew",
+    }, f"expected the six named confrontations, got {ids}"

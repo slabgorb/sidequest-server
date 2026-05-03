@@ -219,6 +219,19 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     raw = yaml.safe_load(rigs_path.read_text(encoding="utf-8"))
     cfg = RigsWorldConfig.model_validate(raw)
 
+    # Story 47-4: alongside chassis_registry materialization, populate the
+    # world_confrontations cache so the rig-coupled room-entry auto-fire
+    # evaluator (process_room_entry) doesn't depend on magic_init having
+    # run first. Confrontations.yaml is optional; world without one keeps
+    # snapshot.world_confrontations empty.
+    confrontations_path = (
+        genre_pack.source_dir / "worlds" / snapshot.world_slug / "confrontations.yaml"
+    )
+    if confrontations_path.exists():
+        from sidequest.magic.confrontations import load_confrontations
+
+        snapshot.world_confrontations = load_confrontations(confrontations_path)
+
     for inst_cfg in cfg.chassis_instances:
         bond_seeds = [
             BondLedgerEntry(
