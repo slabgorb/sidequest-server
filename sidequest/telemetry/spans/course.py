@@ -108,14 +108,20 @@ def emit_course_render_overlay(
     *,
     to_body: str,
     bezier_control_offset_au: float,
+    dropped_invalid_target: bool = False,
 ) -> None:
-    """Emit a ``course.render_overlay`` span on every chart re-render that
-    draws a course overlay."""
+    """Emit a ``course.render_overlay`` span on every chart re-render.
+
+    Fires whether the overlay was drawn or dropped. When ``dropped_invalid_target``
+    is True the course body id was not present in orbits and the SVG was
+    returned unchanged — the GM panel can surface this as a config warning.
+    """
     with Span.open(
         SPAN_COURSE_RENDER_OVERLAY,
         attrs={
             "to_body": to_body,
             "bezier_control_offset_au": float(bezier_control_offset_au),
+            "dropped_invalid_target": bool(dropped_invalid_target),
         },
     ):
         pass
