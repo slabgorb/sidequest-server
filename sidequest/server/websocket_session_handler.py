@@ -3526,6 +3526,30 @@ class WebSocketSessionHandler:
                 severity="info",
             )
 
+        # R2 migration Task 20: propagate the session id into the daemon's
+        # render params so the artifact upload key
+        # ``artifacts/<world>/<session>/<kind>/<sha>.<ext>`` carries the
+        # real session segment. The daemon's zimage worker reads
+        # ``params["session_id"]`` and falls back to the literal
+        # ``"unknown"`` when missing — defeating per-session bucketing,
+        # save-aware sweeping, and operational forensics. The slug-connect
+        # path (the only production render-eligible path) always populates
+        # ``sd.game_slug``; ``sd._room.slug`` is the same value and used
+        # as the source of truth so we don't depend on an optional field.
+        # Per "No Silent Fallbacks" we refuse to dispatch with a missing
+        # session id rather than papering over it with a placeholder —
+        # the dispatch-eligible code path is always inside an active room.
+        if self._room is not None:
+            session_id = self._room.slug
+        elif sd.game_slug is not None:
+            session_id = sd.game_slug
+        else:
+            raise RuntimeError(
+                "render dispatch fired without a bound session id "
+                "(no room and no sd.game_slug) — slug-connect path "
+                "should have populated this. Refusing to dispatch with "
+                "a fallback that would corrupt R2 artifact keying."
+            )
         params: dict[str, object] = {
             "tier": tier,
             "subject": visual.subject,
@@ -3549,6 +3573,8 @@ class WebSocketSessionHandler:
             # world-scoped ``visual_style.yaml::positive_suffix`` actually
             # lands in the ART_SENSIBILITY.WORLD slot.
             "world": sd.world_slug,
+            # R2 migration Task 20 — see preamble above.
+            "session_id": session_id,
         }
         # Portrait initials overlay (story 37-30 AC-4): the daemon's
         # portrait composer needs the character's display name to draw
