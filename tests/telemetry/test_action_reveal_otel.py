@@ -23,7 +23,7 @@ def _session(socket_id: str = "s1", player_id: str = "p1", round_no: int = 7):
     s._session_data.player_id = player_id
     snapshot = MagicMock()
     snapshot.turn_manager.round = round_no
-    s._room.snapshot.return_value = snapshot
+    s._room.snapshot = snapshot
     s._room.broadcast.return_value = []
     return s
 

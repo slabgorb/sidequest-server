@@ -22,7 +22,7 @@ def _make_session(player_id: str = "p1", socket_id: str = "s1", round: int = 7):
     session._session_data.player_id = player_id
     snapshot = MagicMock()
     snapshot.turn_manager.round = round
-    session._room.snapshot.return_value = snapshot
+    session._room.snapshot = snapshot
     return session
 
 
@@ -127,7 +127,7 @@ async def test_no_session_data_drops_silently() -> None:
 async def test_unbound_snapshot_drops_with_warning(caplog) -> None:
     handler = ActionRevealHandler()
     session = _make_session()
-    session._room.snapshot.return_value = None  # room not bound yet
+    session._room.snapshot = None  # room not bound yet
     msg = _make_msg(status=ActionRevealStatus.COMPOSING, action="x", seq=0)
 
     with caplog.at_level("WARNING"):
@@ -191,7 +191,7 @@ async def test_seq_resets_on_new_round() -> None:
     await handler.handle(session, first)
 
     # Advance the snapshot's round.
-    snapshot = session._room.snapshot.return_value
+    snapshot = session._room.snapshot
     snapshot.turn_manager.round = 8
     new_round = _make_msg(
         status=ActionRevealStatus.COMPOSING, action="x", seq=0, round=8
@@ -265,7 +265,7 @@ async def test_rate_limit_clears_on_round_advance(monkeypatch) -> None:
 
     await handler.handle(session, _make_msg(status=ActionRevealStatus.COMPOSING, seq=0))
     # Advance round — time has NOT advanced past the floor.
-    snapshot = session._room.snapshot.return_value
+    snapshot = session._room.snapshot
     snapshot.turn_manager.round = 8
     # Same timestamp — would be throttled if rate-limit was not cleared.
     await handler.handle(

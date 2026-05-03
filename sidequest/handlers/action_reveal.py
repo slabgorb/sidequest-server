@@ -51,7 +51,7 @@ class ActionRevealHandler:
         if sd is None:
             return []
 
-        snapshot = session._room.snapshot()
+        snapshot = session._room.snapshot
         if snapshot is None:
             logger.warning(
                 "action_reveal received before room bound to world; dropping"
