@@ -73,12 +73,29 @@ def process_room_entry(
     the rig framing keys are present, plus inside the bond/lineage
     handlers themselves.
     """
-    if ":" not in room_id:
-        return
-    chassis_id, room_local_id = room_id.split(":", 1)
-    chassis = snap.chassis_registry.get(chassis_id)
-    if chassis is None:
-        return
+    # Resolve room_id to (chassis_id, room_local_id). Two formats accepted:
+    #   1. Chassis-prefixed: "<chassis_id>:<room_local>" — explicit form used
+    #      by tests and by callers that already know the chassis context.
+    #   2. Bare world-name: "Galley", "Cockpit" — narrator-emitted location
+    #      strings. Resolved against `chassis.interior_rooms` (case-
+    #      insensitive). World-locations that match no chassis interior room
+    #      are non-rig and silent no-op on this path; map-graph rooms are
+    #      handled by the legacy room-graph machinery.
+    if ":" in room_id:
+        chassis_id, room_local_id = room_id.split(":", 1)
+        chassis = snap.chassis_registry.get(chassis_id)
+        if chassis is None:
+            return
+    else:
+        room_local_id = room_id.strip().lower().replace(" ", "_")
+        chassis = None
+        for c in snap.chassis_registry.values():
+            normalized = {r.lower() for r in c.interior_rooms}
+            if room_local_id in normalized:
+                chassis = c
+                break
+        if chassis is None:
+            return
 
     bond = chassis.bond_for(character_id)
     if bond is None:
