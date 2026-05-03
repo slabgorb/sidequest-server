@@ -37,6 +37,7 @@ from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.turn import TurnManager
 from sidequest.genre.models.rules import ResourceDeclaration
 from sidequest.magic.state import MagicState
+from sidequest.orbital.course import PlottedCourse
 
 # ---------------------------------------------------------------------------
 # NarrativeEntry — narrative log entries
@@ -471,6 +472,18 @@ class GameSnapshot(BaseModel):
     # free-text place name used in narrator prompts. None when the
     # world has no orbital tier or the party hasn't been placed yet.
     party_body_id: str | None = None
+
+    # Course plot (plot-a-course design). None when no course is plotted.
+    # Set by narrator-emitted plot_course sidecar intent; cleared by
+    # cancel_course intent, replacement plot, or arrival
+    # (party_body_id == plotted_course.to_body_id). Survives save/load.
+    plotted_course: PlottedCourse | None = None
+
+    # Quest anchor body ids (plot-a-course MVP — narrator-managed via
+    # state patch). Surfaced into compute_courses() as
+    # source=QUEST_OBJECTIVE, regardless of orbital scope. Future:
+    # superseded by ScenarioState body-anchored clue mechanism.
+    quest_anchors: list[str] = Field(default_factory=list)
 
     # Session metadata
     last_saved_at: datetime | None = None
