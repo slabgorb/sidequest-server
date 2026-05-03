@@ -342,9 +342,9 @@ class ActionRevealPayload(ProtocolBase):
     Sealed-letter barrier and CAS dispatcher are unaffected.
     """
 
-    player_id: str
+    player_id: NonBlankString
     """Player whose action this reveal describes."""
-    character_name: str
+    character_name: NonBlankString
     """Display name of the player's character."""
     status: ActionRevealStatus
     """composing | submitted | cleared. Clients send composing/submitted; server emits cleared."""

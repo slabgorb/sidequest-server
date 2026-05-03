@@ -8,10 +8,11 @@ from sidequest.protocol.messages import (
     ActionRevealMessage,
     ActionRevealPayload,
     ActionRevealStatus,
+    GameMessage,
 )
 
 
-def test_composing_payload_round_trips():
+def test_composing_payload_round_trips() -> None:
     payload = ActionRevealPayload(
         player_id="p1",
         character_name="Alex",
@@ -30,7 +31,7 @@ def test_composing_payload_round_trips():
     assert rehydrated.payload.action == "I creep along the rafters"
 
 
-def test_status_must_be_known_value():
+def test_status_must_be_known_value() -> None:
     with pytest.raises(ValidationError):
         ActionRevealPayload(
             player_id="p1",
@@ -43,7 +44,7 @@ def test_status_must_be_known_value():
         )
 
 
-def test_action_can_be_empty_when_cleared():
+def test_action_can_be_empty_when_cleared() -> None:
     payload = ActionRevealPayload(
         player_id="p1",
         character_name="Alex",
@@ -56,7 +57,7 @@ def test_action_can_be_empty_when_cleared():
     assert payload.action == ""
 
 
-def test_seq_must_be_non_negative():
+def test_seq_must_be_non_negative() -> None:
     with pytest.raises(ValidationError):
         ActionRevealPayload(
             player_id="p1",
@@ -67,3 +68,23 @@ def test_seq_must_be_non_negative():
             seq=-1,
             round=0,
         )
+
+
+def test_action_reveal_routes_through_game_message_union() -> None:
+    raw = {
+        "type": "ACTION_REVEAL",
+        "payload": {
+            "player_id": "p1",
+            "character_name": "Alex",
+            "status": "composing",
+            "action": "I creep along the rafters",
+            "aside": False,
+            "seq": 0,
+            "round": 1,
+        },
+        "player_id": "p1",
+    }
+    parsed = GameMessage.model_validate(raw)
+    assert parsed.type == MessageType.ACTION_REVEAL
+    assert isinstance(parsed.root, ActionRevealMessage)
+    assert parsed.payload.status == ActionRevealStatus.COMPOSING
