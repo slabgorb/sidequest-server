@@ -11,9 +11,8 @@ inbound message router.
 from __future__ import annotations
 
 from sidequest.orbital.conjunction import next_conjunction
-from sidequest.orbital.course_render import render_course_overlay
+from sidequest.orbital.course_render import _resolve_drop_reason, render_course_overlay
 from sidequest.orbital.render import Scope, render_chart
-from sidequest.telemetry.spans.course import emit_course_render_overlay
 from sidequest.protocol.orbital_intent import (
     ConjunctionEventPayload,
     DrillInIntent,
@@ -23,6 +22,7 @@ from sidequest.protocol.orbital_intent import (
     ViewMapIntent,
 )
 from sidequest.server.session import Session
+from sidequest.telemetry.spans.course import emit_course_render_overlay
 
 
 class OrbitalContentUnavailableError(RuntimeError):
@@ -71,15 +71,15 @@ def handle_orbital_intent(session: Session, intent: OrbitalIntent) -> OrbitalInt
 
     plotted_course = session._snapshot.plotted_course
     if plotted_course is not None:
-        dropped = (
-            session.party_body_id is None
-            or session.party_body_id not in content.orbits.bodies
-            or plotted_course.to_body_id not in content.orbits.bodies
+        drop_reason = _resolve_drop_reason(
+            course=plotted_course,
+            orbits=content.orbits,
+            party_body_id=session.party_body_id,
         )
         emit_course_render_overlay(
             to_body=plotted_course.to_body_id,
             bezier_control_offset_au=0.3,
-            dropped_invalid_target=dropped,
+            drop_reason=drop_reason,
         )
         svg = render_course_overlay(
             chart_svg=svg,

@@ -8,13 +8,21 @@ spans so the GM dashboard can verify the lie-detector pattern
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ._core import FLAT_ONLY_SPANS
 from .span import Span
 
 if TYPE_CHECKING:
     from sidequest.orbital.course import PlottedCourse
+
+
+CourseRenderDropReason = Literal[
+    "none_course",
+    "unknown_party",
+    "unknown_destination",
+    "root_party",
+]
 
 SPAN_COURSE_COMPUTE = "course.compute"
 SPAN_COURSE_PLOT = "course.plot"
@@ -59,7 +67,7 @@ def emit_course_compute(
 def emit_course_plot_accepted(
     *,
     from_body: str | None,
-    course: "PlottedCourse | None",
+    course: PlottedCourse | None,
 ) -> None:
     """Emit a ``course.plot`` span when a plot_course state patch is accepted."""
     attrs: dict[str, object] = {"from_body": from_body or ""}
@@ -108,20 +116,21 @@ def emit_course_render_overlay(
     *,
     to_body: str,
     bezier_control_offset_au: float,
-    dropped_invalid_target: bool = False,
+    drop_reason: CourseRenderDropReason | None = None,
 ) -> None:
     """Emit a ``course.render_overlay`` span on every chart re-render.
 
-    Fires whether the overlay was drawn or dropped. When ``dropped_invalid_target``
-    is True the course body id was not present in orbits and the SVG was
-    returned unchanged — the GM panel can surface this as a config warning.
+    Fires whether the overlay was drawn or dropped. ``drop_reason=None``
+    indicates a successful render. Any non-None value means the overlay
+    was skipped; the GM dashboard splits on the string so the four
+    failure modes graph independently.
     """
-    with Span.open(
-        SPAN_COURSE_RENDER_OVERLAY,
-        attrs={
-            "to_body": to_body,
-            "bezier_control_offset_au": float(bezier_control_offset_au),
-            "dropped_invalid_target": bool(dropped_invalid_target),
-        },
-    ):
+    attrs: dict[str, object] = {
+        "to_body": to_body,
+        "bezier_control_offset_au": float(bezier_control_offset_au),
+        "dropped": drop_reason is not None,
+    }
+    if drop_reason is not None:
+        attrs["drop_reason"] = drop_reason
+    with Span.open(SPAN_COURSE_RENDER_OVERLAY, attrs=attrs):
         pass
