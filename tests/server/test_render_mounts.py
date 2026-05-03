@@ -364,3 +364,31 @@ def test_create_app_registers_active_app(tmp_path: Path, monkeypatch) -> None:
         assert render_mounts.get_active_app() is app
     finally:
         render_mounts.reset_for_app(app)
+
+
+# ---------------------------------------------------------------------------
+# resolve_artifact_url — R2 migration (Task 11)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_artifact_url_none_passthrough() -> None:
+    """None / empty input returns None — callers must surface that as
+    image_unavailable. Per CLAUDE.md no-silent-fallbacks: we don't
+    invent a URL when the daemon didn't tell us where the artifact
+    lives."""
+    from sidequest.server.render_mounts import resolve_artifact_url
+
+    assert resolve_artifact_url(None) is None
+    assert resolve_artifact_url("") is None
+
+
+def test_resolve_artifact_url_routes_through_asset_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wiring test: resolve_artifact_url must hand off to
+    resolve_asset_url so the CDN/local seam stays single-pointed."""
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
+    from sidequest.server.render_mounts import resolve_artifact_url
+
+    url = resolve_artifact_url("artifacts/w/s/portraits/abc.png")
+    assert url == "https://cdn.slabgorb.com/artifacts/w/s/portraits/abc.png"

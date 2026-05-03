@@ -3870,24 +3870,37 @@ class WebSocketSessionHandler:
             return
 
         image_url = str(reply.get("image_url") or "")
-        # Self-healing render mount (S4-BUG): if the daemon restarted
-        # mid-session its tmp dir changed; ensure_render_mount appends
-        # the new dir to the live StaticFiles mount so /renders/* keeps
-        # serving without a server restart. Falls back to the legacy
-        # env-based rewriter so single-root paths (and unit tests that
-        # don't wire app singleton) continue to work.
+        # R2 migration (Task 11): when the daemon uploaded the artifact
+        # to R2 (Task 13+) the reply carries an ``r2_key`` field. Prefer
+        # that path through the asset_urls seam — it returns the CDN
+        # URL the UI should fetch. When ``r2_key`` is absent we're on
+        # the legacy local-tmpdir flow, which still needs the
+        # self-healing render mount described below.
+        #
+        # Self-healing render mount (S4-BUG, legacy path): if the
+        # daemon restarted mid-session its tmp dir changed;
+        # ensure_render_mount appends the new dir to the live
+        # StaticFiles mount so /renders/* keeps serving without a
+        # server restart. Falls back to the legacy env-based rewriter
+        # so single-root paths (and unit tests that don't wire app
+        # singleton) continue to work.
         from sidequest.server.render_mounts import (
             ensure_render_mount,
             get_active_app,
+            resolve_artifact_url,
         )
 
-        active_app = get_active_app()
-        healed: str | None = (
-            ensure_render_mount(active_app, image_url)
-            if active_app is not None and image_url
-            else None
-        )
-        served_url = healed if healed is not None else _render_url_from_path(image_url)
+        r2_key = reply.get("r2_key")
+        if r2_key:
+            served_url = resolve_artifact_url(str(r2_key)) or ""
+        else:
+            active_app = get_active_app()
+            healed: str | None = (
+                ensure_render_mount(active_app, image_url)
+                if active_app is not None and image_url
+                else None
+            )
+            served_url = healed if healed is not None else _render_url_from_path(image_url)
         width = int(reply.get("width") or 0) or None
         height = int(reply.get("height") or 0) or None
         elapsed = int(reply.get("elapsed_ms") or 0)
