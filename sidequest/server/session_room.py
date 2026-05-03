@@ -40,6 +40,36 @@ class SoloSlotConflict(Exception):
     """Raised when a second player tries to connect to a solo game."""
 
 
+def _emit_action_reveal_cleared(
+    room: SessionRoom,
+    *,
+    player_id: str,
+    character_name: str,
+    round_no: int,
+    reason: str,
+) -> None:
+    """Broadcast ACTION_REVEAL cleared for one player.
+
+    reason is OTEL-only — wire payload is identical regardless of cause.
+    """
+    from sidequest.protocol.messages import (
+        ActionRevealMessage,
+        ActionRevealPayload,
+        ActionRevealStatus,
+    )
+
+    payload = ActionRevealPayload(
+        player_id=player_id,
+        character_name=character_name,
+        status=ActionRevealStatus.CLEARED,
+        action="",
+        aside=False,
+        seq=0,
+        round=round_no,
+    )
+    room.broadcast(ActionRevealMessage(payload=payload), exclude_socket_id=None)
+
+
 class LobbyState(StrEnum):
     """Lifecycle of a peer's lobby slot (Story 45-2).
 
@@ -349,6 +379,26 @@ class SessionRoom:
                 EVENT_LOBBY_SEAT_ABANDONED,
                 abandon_payload,
                 component="lobby",
+            )
+        # ADR-036 Action Visibility Model: clear the departed player's
+        # reveal row from peers so they don't see a frozen "composing"
+        # with no sender.
+        if player_id is not None:
+            snapshot = self.snapshot
+            round_no = snapshot.turn_manager.round if snapshot is not None else 0
+            seat = self._seated.get(player_id)
+            # _Seat has no character_name (it's pre-chargen); fall back to
+            # player_id so NonBlankString requirement on ActionRevealPayload
+            # is satisfied even when the character hasn't been named yet.
+            character_name = player_id
+            if seat is not None and getattr(seat, "character_name", None):
+                character_name = seat.character_name
+            _emit_action_reveal_cleared(
+                self,
+                player_id=player_id,
+                character_name=character_name,
+                round_no=round_no,
+                reason="disconnect",
             )
         return player_id
 
