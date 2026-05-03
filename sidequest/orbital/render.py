@@ -252,9 +252,14 @@ def render_chart(
             fill=palette.BG,
         )
     )
-    dwg.add(_render_engraved_layer(orbits, center_id, viewport, t_hours))
-    dwg.add(_render_flavor_layer(chart, viewport))
-    dwg.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
+    # Layers nest inside a single viewport group so the UI can imperatively
+    # set transform="translate(...) scale(...)" on it without re-rendering.
+    # Per spec §10: pan/zoom never round-trips to the server.
+    viewport_g = svgwrite.container.Group(id="viewport")
+    viewport_g.add(_render_engraved_layer(orbits, center_id, viewport, t_hours))
+    viewport_g.add(_render_flavor_layer(chart, viewport))
+    viewport_g.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
+    dwg.add(viewport_g)
     output = dwg.tostring()
     emit_chart_render(
         scope_center=center_id,

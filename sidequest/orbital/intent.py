@@ -10,8 +10,10 @@ inbound message router.
 
 from __future__ import annotations
 
+from sidequest.orbital.conjunction import next_conjunction
 from sidequest.orbital.render import Scope, render_chart
 from sidequest.protocol.orbital_intent import (
+    ConjunctionEventPayload,
     DrillInIntent,
     DrillOutIntent,
     OrbitalIntent,
@@ -71,11 +73,27 @@ def handle_orbital_intent(session: Session, intent: OrbitalIntent) -> OrbitalInt
         scope.center_body_id if scope.center_body_id != "<root>" else _system_primary_id(content)
     )
 
+    event = next_conjunction(content.orbits, session.clock.t_hours)
+    next_conj_payload: ConjunctionEventPayload | None
+    next_conj_payload = (
+        ConjunctionEventPayload(
+            body_a_id=event.body_a_id,
+            body_b_id=event.body_b_id,
+            label=event.label,
+            t_hours_event=event.t_hours_event,
+            t_hours_until=event.t_hours_until,
+        )
+        if event is not None
+        else None
+    )
+
     return OrbitalIntentResponse(
         scope_center=actual_center,
         svg=svg,
         t_hours=session.clock.t_hours,
+        epoch_days=content.orbits.clock.epoch_days,
         party_at=session.party_body_id,
+        next_conjunction=next_conj_payload,
     )
 
 

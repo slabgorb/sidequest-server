@@ -67,12 +67,26 @@ class BodyDef(BaseModel):
         return self
 
 
+class ConjunctionPair(BaseModel):
+    """A pair of bodies whose alignment events the chart watches.
+
+    The renderer surfaces the soonest event across all pairs as the
+    "NEXT CONJUNCTION" countdown in the chart HUD. Per spec §11 AC2.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    body_a: str
+    body_b: str
+    label: str | None = None  # display name; defaults to "{a.label} ↔ {b.label}"
+
+
 class OrbitsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str
     clock: ClockConfig
     travel: TravelConfig
     bodies: dict[str, BodyDef]
+    conjunctions: list[ConjunctionPair] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_parent_refs(self) -> OrbitsConfig:
@@ -84,6 +98,48 @@ class OrbitsConfig(BaseModel):
                     f"available bodies: {sorted(ids)}"
                 )
         return self
+
+    @model_validator(mode="after")
+    def _validate_conjunctions(self) -> OrbitsConfig:
+        ids = set(self.bodies.keys())
+        for pair in self.conjunctions:
+            if pair.body_a == pair.body_b:
+                raise ValueError(
+                    f"conjunction pair must reference two different bodies; "
+                    f"both are {pair.body_a!r}"
+                )
+            for side, body_id in (("body_a", pair.body_a), ("body_b", pair.body_b)):
+                if body_id not in ids:
+                    raise ValueError(
+                        f"conjunction {pair.body_a}↔{pair.body_b} {side}={body_id!r} "
+                        f"is not in bodies; available: {sorted(ids)}"
+                    )
+            # Both bodies must share a common ancestor for angular separation
+            # to be meaningful (otherwise we'd be measuring across coordinate
+            # systems with no shared origin).
+            ancestors_a = _ancestor_chain(self.bodies, pair.body_a)
+            ancestors_b = _ancestor_chain(self.bodies, pair.body_b)
+            common = ancestors_a & ancestors_b
+            if not common:
+                raise ValueError(
+                    f"conjunction pair {pair.body_a}↔{pair.body_b} bodies have no "
+                    f"common ancestor; angular separation would be ill-defined"
+                )
+        return self
+
+
+def _ancestor_chain(bodies: dict[str, BodyDef], body_id: str) -> set[str]:
+    """Return body_id and all its ancestors (parent, grandparent, …)."""
+    chain: set[str] = {body_id}
+    current = bodies[body_id].parent
+    seen: set[str] = set()
+    while current is not None and current not in seen:
+        chain.add(current)
+        seen.add(current)
+        if current not in bodies:
+            break
+        current = bodies[current].parent
+    return chain
 
 
 KNOWN_ANNOTATION_KINDS: frozenset[str] = frozenset(

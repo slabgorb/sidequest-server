@@ -453,11 +453,7 @@ def test_eccentric_orbit_renders_as_ellipse_with_unequal_axes():
     for tag in ellipse_tags:
         rx_match = re.search(r'rx="([\-\d.]+)"', tag)
         ry_match = re.search(r'ry="([\-\d.]+)"', tag)
-        if (
-            rx_match
-            and ry_match
-            and abs(float(rx_match.group(1)) - float(ry_match.group(1))) > 0.5
-        ):
+        if rx_match and ry_match and abs(float(rx_match.group(1)) - float(ry_match.group(1))) > 0.5:
             eccentric_found = True
             break
     assert eccentric_found, (
