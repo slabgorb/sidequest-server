@@ -415,6 +415,13 @@ class TurnContext:
     # we keep the zero-byte-leak discipline (see NPC roster for parallel).
     party_peers: list[PartyPeer] = field(default_factory=list)
 
+    # Chassis-interior positions for every PC in the session
+    # (``character_name -> current_room``). Renders into the narrator
+    # prompt as the "CREW POSITIONS" section so the narrator knows where
+    # each PC is on the Kestrel and can state-patch movements. Empty dict
+    # (no chassis aboard) registers no section — zero-byte-leak.
+    pc_positions: dict[str, str | None] = field(default_factory=dict)
+
     # PacingHint from TensionTracker (Late zone — Rust parity at
     # sidequest-api/crates/sidequest-agents/src/prompt_framework/mod.rs:108).
     # Story 42-3 / ADR-082 Phase 3. When ``None``, no pacing section is
@@ -1268,6 +1275,11 @@ class Orchestrator:
                 context.character_name,
             )
             registry.register_party_peer_section(agent_name, context.party_peers)
+
+        # Chassis interior positions — renders the Ship-tab source of truth
+        # into the narrator prompt + the state-patch instruction.
+        if context.pc_positions:
+            registry.register_chassis_position_section(agent_name, context.pc_positions)
 
         # Game state (Valley zone)
         if context.state_summary:
@@ -2249,6 +2261,15 @@ async def run_narration_turn(
         PartyPeer.from_character(pc) for pc in session.characters if pc.core.name != char_name
     ]
 
+    # Ship-tab positions: render every PC's current_room (when set) into the
+    # narrator prompt so the narrator knows where they are on the chassis
+    # interior and can state-patch movements.
+    pc_positions: dict[str, str | None] = {
+        pc.core.name: pc.current_room
+        for pc in session.characters
+        if getattr(pc, "current_room", None)
+    }
+
     # Task 18 (dual-track momentum): build per-actor status map from session
     # characters so the live encounter zone can render Status objects per actor.
     statuses_by_actor = {ch.core.name: list(ch.core.statuses) for ch in session.characters}
@@ -2275,6 +2296,7 @@ async def run_narration_turn(
         npcs=list(session.npcs),
         chassis_registry=dict(session.chassis_registry),
         party_peers=party_peers,
+        pc_positions=pc_positions,
         statuses_by_actor=statuses_by_actor,
         pending_resolution_signal=pending_signal,
         magic_state=session.magic_state,
