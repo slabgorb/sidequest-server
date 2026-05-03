@@ -132,6 +132,10 @@ def _make_session_data(*, player_id: str, world_slug: str = "grimvault") -> _Ses
         store=MagicMock(),
         genre_pack=MagicMock(),
         orchestrator=MagicMock(),
+        # R2 migration Task 20: production slug-connect always populates
+        # game_slug; provide a default so the render dispatcher's
+        # session_id propagation has a value to forward.
+        game_slug=f"test-session-{player_id}",
     )
 
 def _slug(sd: _SessionData) -> str:

@@ -3526,6 +3526,30 @@ class WebSocketSessionHandler:
                 severity="info",
             )
 
+        # R2 migration Task 20: propagate the session id into the daemon's
+        # render params so the artifact upload key
+        # ``artifacts/<world>/<session>/<kind>/<sha>.<ext>`` carries the
+        # real session segment. The daemon's zimage worker reads
+        # ``params["session_id"]`` and falls back to the literal
+        # ``"unknown"`` when missing — defeating per-session bucketing,
+        # save-aware sweeping, and operational forensics. The slug-connect
+        # path (the only production render-eligible path) always populates
+        # ``sd.game_slug``; ``sd._room.slug`` is the same value and used
+        # as the source of truth so we don't depend on an optional field.
+        # Per "No Silent Fallbacks" we refuse to dispatch with a missing
+        # session id rather than papering over it with a placeholder —
+        # the dispatch-eligible code path is always inside an active room.
+        if self._room is not None:
+            session_id = self._room.slug
+        elif sd.game_slug is not None:
+            session_id = sd.game_slug
+        else:
+            raise RuntimeError(
+                "render dispatch fired without a bound session id "
+                "(no room and no sd.game_slug) — slug-connect path "
+                "should have populated this. Refusing to dispatch with "
+                "a fallback that would corrupt R2 artifact keying."
+            )
         params: dict[str, object] = {
             "tier": tier,
             "subject": visual.subject,
@@ -3549,6 +3573,8 @@ class WebSocketSessionHandler:
             # world-scoped ``visual_style.yaml::positive_suffix`` actually
             # lands in the ART_SENSIBILITY.WORLD slot.
             "world": sd.world_slug,
+            # R2 migration Task 20 — see preamble above.
+            "session_id": session_id,
         }
         # Portrait initials overlay (story 37-30 AC-4): the daemon's
         # portrait composer needs the character's display name to draw
@@ -3870,24 +3896,37 @@ class WebSocketSessionHandler:
             return
 
         image_url = str(reply.get("image_url") or "")
-        # Self-healing render mount (S4-BUG): if the daemon restarted
-        # mid-session its tmp dir changed; ensure_render_mount appends
-        # the new dir to the live StaticFiles mount so /renders/* keeps
-        # serving without a server restart. Falls back to the legacy
-        # env-based rewriter so single-root paths (and unit tests that
-        # don't wire app singleton) continue to work.
+        # R2 migration (Task 11): when the daemon uploaded the artifact
+        # to R2 (Task 13+) the reply carries an ``r2_key`` field. Prefer
+        # that path through the asset_urls seam — it returns the CDN
+        # URL the UI should fetch. When ``r2_key`` is absent we're on
+        # the legacy local-tmpdir flow, which still needs the
+        # self-healing render mount described below.
+        #
+        # Self-healing render mount (S4-BUG, legacy path): if the
+        # daemon restarted mid-session its tmp dir changed;
+        # ensure_render_mount appends the new dir to the live
+        # StaticFiles mount so /renders/* keeps serving without a
+        # server restart. Falls back to the legacy env-based rewriter
+        # so single-root paths (and unit tests that don't wire app
+        # singleton) continue to work.
         from sidequest.server.render_mounts import (
             ensure_render_mount,
             get_active_app,
+            resolve_artifact_url,
         )
 
-        active_app = get_active_app()
-        healed: str | None = (
-            ensure_render_mount(active_app, image_url)
-            if active_app is not None and image_url
-            else None
-        )
-        served_url = healed if healed is not None else _render_url_from_path(image_url)
+        r2_key = reply.get("r2_key")
+        if r2_key:
+            served_url = resolve_artifact_url(str(r2_key)) or ""
+        else:
+            active_app = get_active_app()
+            healed: str | None = (
+                ensure_render_mount(active_app, image_url)
+                if active_app is not None and image_url
+                else None
+            )
+            served_url = healed if healed is not None else _render_url_from_path(image_url)
         width = int(reply.get("width") or 0) or None
         height = int(reply.get("height") or 0) or None
         elapsed = int(reply.get("elapsed_ms") or 0)

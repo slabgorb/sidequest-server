@@ -798,6 +798,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     progression = _load_yaml(path / "progression.yaml", ProgressionConfig)
     axes = _load_yaml(path / "axes.yaml", AxesConfig)
     audio = _load_yaml(path / "audio.yaml", AudioConfig)
+    _resolve_audio_urls(audio, genre_slug=path.name)
     cultures_raw = _load_yaml_raw(path / "cultures.yaml")
     cultures: list[Culture] = (
         [Culture.model_validate(c) for c in cultures_raw] if isinstance(cultures_raw, list) else []
@@ -1014,6 +1015,47 @@ class GenreLoader:
         """
         path = self.find(code)
         return load_genre_pack(path)
+
+
+def _resolve_audio_urls(audio: AudioConfig, *, genre_slug: str) -> None:
+    """In-place: rewrite every relative path in audio config to an absolute URL.
+
+    Audio YAML stores paths relative to the genre-pack root, e.g.
+    ``audio/music/combat.ogg``. The UI fetches these directly, so the server
+    publishes them as full URLs at load time. Routing through
+    :func:`resolve_asset_url` makes the cutover one env var.
+
+    Path-bearing fields covered (per ``sidequest.genre.models.audio``):
+
+    * ``mood_tracks[mood][i].path`` — :class:`MoodTrack`
+    * ``sfx_library[bucket][i]`` — bare strings
+    * ``themes[i].variations[j].path`` — :class:`AudioVariation`
+    * ``faction_themes[i].track.path`` — :class:`MoodTrack`
+
+    If new path-bearing fields are added to ``AudioConfig`` later, audit-extend
+    here AND add a parallel test in
+    ``tests/genre/test_audio_url_resolution.py`` (per CLAUDE.md "Verify
+    Wiring").
+    """
+    from sidequest.server.asset_urls import resolve_asset_url
+
+    def _fix(rel: str) -> str:
+        if not rel:
+            return rel
+        if rel.startswith(("http://", "https://", "/")):
+            return rel  # already resolved (e.g. test fixtures)
+        return resolve_asset_url(f"genre_packs/{genre_slug}/{rel}")
+
+    for tracks in audio.mood_tracks.values():
+        for track in tracks:
+            track.path = _fix(track.path)
+    for bucket, paths in audio.sfx_library.items():
+        audio.sfx_library[bucket] = [_fix(p) for p in paths]
+    for theme in audio.themes:
+        for variation in theme.variations:
+            variation.path = _fix(variation.path)
+    for faction_theme in audio.faction_themes:
+        faction_theme.track.path = _fix(faction_theme.track.path)
 
 
 def find_pack_dir(code: str | GenreCode, search_paths: list[Path]) -> Path:

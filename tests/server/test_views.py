@@ -12,9 +12,16 @@ this file's surface is:
    test_visibility_wiring.py, test_multiplayer_party_status.py, and
    test_perception_rewriter_wiring.py — those tests now call the
    ``views.*`` functions directly rather than through delegates).
+3. ``test_portrait_url_via_resolver_*`` — pin the contract that any
+   future portrait_url emission MUST go through resolve_asset_url so
+   the CDN/local seam stays single-pointed (R2 migration, Task 10).
 """
 
 from __future__ import annotations
+
+import pytest
+
+from sidequest.server.asset_urls import resolve_asset_url
 
 
 def test_views_module_exposes_required_functions() -> None:
@@ -58,3 +65,20 @@ def test_is_hidden_status_list_matches_hidden_tokens() -> None:
         views.is_hidden_status_list([Status(text="hiddenly", severity=StatusSeverity.Scratch)])
         is False
     )
+
+
+def test_portrait_url_via_resolver_default_is_cdn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default config (no SIDEQUEST_ASSET_BASE_URL) emits a CDN URL for
+    an artifacts-relative portrait path. This pins the contract that
+    portrait_url emission must funnel through resolve_asset_url."""
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
+    rel = "artifacts/dungeon_survivor/abc123/portraits/deadbeef.png"
+    assert resolve_asset_url(rel) == f"https://cdn.slabgorb.com/{rel}"
+
+
+def test_portrait_url_via_resolver_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local-serve mode rewrites artifacts/ to the /renders/artifacts/
+    static mount — the rollback path for offline dev."""
+    monkeypatch.setenv("SIDEQUEST_ASSET_BASE_URL", "local")
+    rel = "artifacts/dungeon_survivor/abc123/portraits/deadbeef.png"
+    assert resolve_asset_url(rel) == f"/renders/{rel}"

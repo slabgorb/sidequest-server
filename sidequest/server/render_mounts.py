@@ -319,6 +319,21 @@ def _publish_remount(root: Path, *, source: str, first: bool) -> None:
     )
 
 
+def resolve_artifact_url(relative_artifact_path: str | None) -> str | None:
+    """New code path: daemon returns an R2-relative path
+    (``artifacts/<world>/<session>/...``), server hands UI an absolute URL
+    via the asset_urls seam.
+
+    Returns None for a None/empty input — callers must surface that as an
+    image_unavailable event (no silent fallback).
+    """
+    if not relative_artifact_path:
+        return None
+    from sidequest.server.asset_urls import resolve_asset_url
+
+    return resolve_asset_url(relative_artifact_path)
+
+
 def publish_url_404(url: str) -> None:
     """Emit a watcher event the first time we observe a 404 on
     ``/renders/*``. Forensics-only — should be rare post-fix.

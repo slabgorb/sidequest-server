@@ -116,6 +116,10 @@ def _make_session_data(player_id: str = "p-1") -> _SessionData:
         store=MagicMock(),
         genre_pack=MagicMock(),
         orchestrator=MagicMock(),
+        # R2 migration Task 20: production slug-connect always populates
+        # game_slug; tests pre-dating that path get a default so the render
+        # dispatcher's session_id propagation has a value to forward.
+        game_slug=f"test-session-{player_id}",
     )
     return sd
 
@@ -163,6 +167,8 @@ def _make_session_data_with_pc(
         store=MagicMock(),
         genre_pack=MagicMock(),
         orchestrator=MagicMock(),
+        # R2 migration Task 20: see _make_session_data.
+        game_slug=f"test-session-{player_id}",
     )
     return sd
 
@@ -587,6 +593,77 @@ async def test_landscape_dispatch_strips_free_form_location(
         "ref — daemon's PlaceCatalog rejects non-`where:` refs and replies "
         "COMPOSE_FAILED. Pre-fix every landscape render in single-player "
         "Coyote Star failed this way."
+    )
+
+@pytest.mark.asyncio
+async def test_render_dispatch_includes_session_id_for_r2_keying(
+    tmp_path: Path, short_sock: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2 migration Task 20 — server propagates session_id to daemon params.
+
+    The R2 artifact path layout is
+    ``artifacts/<world>/<session>/<kind>/<sha>.<ext>``. The daemon's zimage
+    worker reads ``session_id`` from the inbound params dict and falls back
+    to the literal string ``"unknown"`` when missing — defeating per-session
+    bucketing in production. This wiring test pins that the server's render
+    dispatch carries ``session_id`` (sourced from the bound game slug, which
+    is the canonical session identifier for the room) so the daemon's R2
+    upload keys correctly without needing the fallback.
+
+    Pins:
+      * ``params["session_id"]`` is present in the request to the daemon.
+      * Its value is the session's ``game_slug`` — the same identifier
+        already persisted in the SQLite store and used everywhere else the
+        server needs to name the session.
+    """
+    sock = short_sock
+    daemon = _FakeDaemon(
+        reply_payload={
+            "image_url": str(tmp_path / "render_session.png"),
+            "width": 1024,
+            "height": 768,
+            "elapsed_ms": 50,
+        }
+    )
+    await daemon.start(sock)
+
+    monkeypatch.setenv("SIDEQUEST_RENDER_ENABLED", "1")
+    monkeypatch.setenv("SIDEQUEST_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sidequest.server.websocket_session_handler.DaemonClient",
+        lambda: _client_bound_to(sock),
+    )
+
+    handler, queue = _make_handler_with_queue()
+    sd = _make_session_data()
+    sd.game_slug = "abc123-test-session"
+    result = _make_eligible_result(
+        narration="...",
+        visual_scene=VisualScene(
+            subject="a jagged fissure in red rock",
+            tier="scene_illustration",
+            mood="ominous",
+            tags=["desert"],
+        ),
+    )
+
+    queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
+    assert queued is not None
+
+    await asyncio.wait_for(queue.get(), timeout=2.0)
+    await daemon.stop()
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["params"]
+    assert "session_id" in params, (
+        "render request missing ``session_id`` — daemon's R2 upload will "
+        "fall back to the literal ``unknown`` segment, breaking the "
+        "per-session artifact bucketing the R2 migration spec promises"
+    )
+    assert params["session_id"] == "abc123-test-session", (
+        f"render request session_id={params['session_id']!r} should match "
+        "the bound game_slug — the canonical session identifier the rest "
+        "of the server uses to name the session"
     )
 
 @pytest.mark.asyncio

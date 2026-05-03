@@ -123,6 +123,10 @@ def _make_session_data(
         store=MagicMock(),
         genre_pack=MagicMock(),
         orchestrator=MagicMock(),
+        # R2 migration Task 20: production slug-connect always populates
+        # game_slug; provide a default so the render dispatcher's
+        # session_id propagation has a value to forward.
+        game_slug=f"test-session-{player_id}",
     )
     if throttle is not None:
         kwargs["image_pacing_throttle"] = throttle
