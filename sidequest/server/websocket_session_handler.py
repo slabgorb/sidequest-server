@@ -636,6 +636,7 @@ class WebSocketSessionHandler:
         """
         registry = getattr(cls, "_MESSAGE_HANDLERS", None)
         if registry is None:
+            from sidequest.handlers.action_reveal import HANDLER as ACTION_REVEAL_HANDLER
             from sidequest.handlers.character_creation import HANDLER as CHARACTER_CREATION_HANDLER
             from sidequest.handlers.dice_throw import HANDLER as DICE_THROW_HANDLER
             from sidequest.handlers.orbital_intent import HANDLER as ORBITAL_INTENT_HANDLER
@@ -652,6 +653,7 @@ class WebSocketSessionHandler:
                 "DICE_THROW": DICE_THROW_HANDLER,
                 "YIELD": YIELD_HANDLER,
                 "ORBITAL_INTENT": ORBITAL_INTENT_HANDLER,
+                "ACTION_REVEAL": ACTION_REVEAL_HANDLER,
             }
             cls._MESSAGE_HANDLERS = registry
         return registry.get(msg_type)
