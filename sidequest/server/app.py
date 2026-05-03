@@ -103,6 +103,7 @@ def create_app(
         allow_origins=[
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "https://sidequest.slabgorb.com",
         ],
         allow_credentials=True,
         allow_methods=["*"],
@@ -310,6 +311,20 @@ def create_app(
         if response.status_code == 404 and request.url.path.startswith("/renders/"):
             _render_mounts.publish_url_404(request.url.path)
         return response
+
+    # --- Static UI mount — built sidequest-ui served from `/` for prod/tunnel. ---
+    # Last mount on purpose: more specific routes (/api, /ws, /genre, /renders,
+    # /dashboard, /health) are already registered above and win path resolution.
+    # Localhost dev does not set SIDEQUEST_UI_DIST and continues to serve UI
+    # from the Vite dev server on :5173.
+    ui_dist = _os.environ.get("SIDEQUEST_UI_DIST")
+    if ui_dist:
+        ui_path = Path(ui_dist)
+        if ui_path.is_dir():
+            app.mount("/", StaticFiles(directory=str(ui_path), html=True), name="ui")
+            logger.info("ui.mount_registered dir=%s", ui_path)
+        else:
+            logger.warning("ui.mount_skipped reason=missing_dir dir=%s", ui_path)
 
     return app
 
