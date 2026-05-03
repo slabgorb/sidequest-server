@@ -4,11 +4,11 @@ Per spec §6: renderer produces a complete SVG document per (world, scope,
 t_hours, party_at, plot_state). Layers: engraved (orbits + bodies + scale +
 bearings), flavor (chart.yaml annotations), party (current location), plot
 (when active). Output is deterministic for fixed inputs — snapshot tests
-pin canonical outputs in Task 13.
+pin canonical outputs.
 
-Position math is deliberately simple in this plan: circular orbits only,
-theta = epoch_phase + 360 * t_days / period. Plan 2 (Track C) brings in
-the full position() module that will be a drop-in replacement here.
+Position math is now Kepler-correct via `sidequest.orbital.position`.
+For e=0 bodies the output is bit-identical to the prior circular formula,
+so `eccentricity=0` fixtures don't drift.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from sidequest.orbital.models import (
     ChartConfig,
     OrbitsConfig,
 )
+from sidequest.orbital.position import ellipse_geometry, kepler_position
 from sidequest.telemetry.spans.chart import emit_chart_render
 
 # svgwrite's built-in validators reject attributes that aren't in their
@@ -88,17 +89,11 @@ class Scope:
 def _body_position_au_polar(body: BodyDef, t_hours: float) -> tuple[float, float]:
     """Return (au, theta_deg) of a body relative to its parent at story-time t.
 
-    Circular-orbit approximation. Plan 2 (Track C) replaces this with the
-    full `position()` module that supports eccentric orbits.
+    Thin shim onto `position.kepler_position`. Kept as a private function
+    for grep-locality — every "where is body X right now" question lands
+    at the same call site, easy to OTEL-instrument later.
     """
-    if body.parent is None:
-        return (0.0, 0.0)
-    t_days = t_hours / 24.0
-    assert body.semi_major_au is not None
-    assert body.period_days is not None
-    assert body.epoch_phase_deg is not None
-    theta = (body.epoch_phase_deg + 360.0 * t_days / body.period_days) % 360.0
-    return (body.semi_major_au, theta)
+    return kepler_position(body, t_hours)
 
 
 def _polar_to_cartesian(au: float, theta_deg: float, scale: float) -> tuple[float, float]:
@@ -394,12 +389,15 @@ def _render_engraved_layer(
             continue
 
         au, theta = _body_position_au_polar(body, t_hours)
-        radius_px = au * vp.au_to_px
+        # Orbit ellipse: focus at parent (origin), center offset by -c=-a·e
+        # along +x. For e=0 this reduces to a centered circle, so existing
+        # circular-orbit fixtures don't drift.
+        ell = ellipse_geometry(body, vp.au_to_px)
         g.add(
             _attach_body_id(
-                svgwrite.shapes.Circle(
-                    center=(0, 0),
-                    r=radius_px,
+                svgwrite.shapes.Ellipse(
+                    center=(ell.center_x_px, ell.center_y_px),
+                    r=(ell.semi_major_px, ell.semi_minor_px),
                     fill="none",
                     stroke=palette.BRASS,
                     stroke_width=0.6,
