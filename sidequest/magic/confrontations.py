@@ -49,15 +49,42 @@ class ConfrontationBranch(BaseModel):
 BranchName = Literal["clear_win", "pyrrhic_win", "clear_loss", "refused"]
 
 
+class FireConditions(BaseModel):
+    """Room/bond/cooldown gates for rig-coupled auto-fire (Story 47-4).
+
+    Distinct from ``auto_fire_trigger`` (the bar-DSL evaluator that drives
+    sanity/notice threshold crossings). ``fire_conditions`` is consulted
+    by the room-entry hook in ``sidequest.game.room_movement``: a
+    confrontation is eligible when the player enters a room matching
+    ``interior_room_present`` on a chassis whose chassis-side bond_tier
+    is at or above ``bond_tier_min`` and ``cooldown_turns`` have elapsed
+    since the last firing.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    interior_room_present: str
+    bond_tier_min: str
+    cooldown_turns: int
+
+
 class ConfrontationDefinition(BaseModel):
     """A named magic confrontation loaded from ``confrontations.yaml``.
 
     Each definition wires a confrontation id (e.g. ``the_bleeding_through``)
-    to its plugin tie-ins, optional auto-fire trigger, four-branch
-    outcome catalog, and resource pool. ``once_per_arc`` suppresses
-    repeat firings within an arc; ``auto_fire`` plus ``auto_fire_trigger``
-    drives the threshold-crossing evaluator
-    (``evaluate_auto_fire_triggers``).
+    to its plugin tie-ins, optional auto-fire trigger, outcome catalog, and
+    resource pool. ``once_per_arc`` suppresses repeat firings within an
+    arc; ``auto_fire`` plus ``auto_fire_trigger`` drives the
+    threshold-crossing evaluator (``evaluate_auto_fire_triggers``);
+    ``register=intimate`` plus ``fire_conditions`` drives the rig-coupled
+    room-entry evaluator (``find_eligible_room_autofire``).
+
+    The four-branch invariant (``clear_win``, ``pyrrhic_win``,
+    ``clear_loss``, ``refused``) holds for the standard combat/social
+    register. ``register="intimate"`` confrontations (e.g. ``the_tea_brew``)
+    are by design two-branch (``clear_win`` / ``refused``) — the failure
+    modes pyrrhic_win and clear_loss don't apply to consensual intimate
+    rituals.
     """
 
     model_config = {"extra": "forbid"}
@@ -65,8 +92,11 @@ class ConfrontationDefinition(BaseModel):
     id: str
     label: str
     plugin_tie_ins: list[str]
+    register: str | None = None
+    rig_tie_ins: list[str] = Field(default_factory=list)
     auto_fire: bool = False
     auto_fire_trigger: str | None = None
+    fire_conditions: FireConditions | None = None
     once_per_arc: bool = False
     rounds: int
     resource_pool: dict[str, str]
@@ -75,10 +105,14 @@ class ConfrontationDefinition(BaseModel):
 
     @field_validator("outcomes")
     @classmethod
-    def all_four_branches_present(
-        cls, outcomes: dict[BranchName, ConfrontationBranch]
+    def required_branches_present(
+        cls, outcomes: dict[BranchName, ConfrontationBranch], info
     ) -> dict[BranchName, ConfrontationBranch]:
-        required = {"clear_win", "pyrrhic_win", "clear_loss", "refused"}
+        register = (info.data or {}).get("register")
+        if register == "intimate":
+            required = {"clear_win", "refused"}
+        else:
+            required = {"clear_win", "pyrrhic_win", "clear_loss", "refused"}
         missing = required - set(outcomes.keys())
         if missing:
             raise ValueError(f"missing branch(es): {sorted(missing)}")
@@ -151,3 +185,71 @@ def evaluate_auto_fire_triggers(
         if matched:
             fired.append((c, character_id))
     return fired
+
+
+# ---------------------------------------------------------------------------
+# Story 47-4: rig-coupled room-entry auto-fire eligibility (the_tea_brew)
+# ---------------------------------------------------------------------------
+
+# Bond tier ladder ordered weakest → strongest. Index lookup gives ordinal
+# comparison for ``bond_tier_min`` checks. Mirrors the ladder in
+# ``sidequest.game.chassis._TIER_THRESHOLDS`` — kept duplicated here rather
+# than imported so the magic module doesn't reach into game internals; if
+# the ladder changes both must be updated (covered by tests).
+_BOND_TIER_ORDER: tuple[str, ...] = (
+    "severed",
+    "hostile",
+    "strained",
+    "neutral",
+    "familiar",
+    "trusted",
+    "fused",
+)
+
+
+def _bond_tier_at_or_above(actual: str, minimum: str) -> bool:
+    if actual not in _BOND_TIER_ORDER:
+        raise ValueError(f"unknown bond_tier {actual!r}")
+    if minimum not in _BOND_TIER_ORDER:
+        raise ValueError(f"unknown bond_tier_min {minimum!r}")
+    return _BOND_TIER_ORDER.index(actual) >= _BOND_TIER_ORDER.index(minimum)
+
+
+def find_eligible_room_autofire(
+    *,
+    confrontations: list[ConfrontationDefinition],
+    chassis_id: str,
+    room_local_id: str,
+    bond_tier_chassis: str,
+    current_turn: int,
+    cooldown_ledger: dict[tuple[str, str], int],
+) -> list[ConfrontationDefinition]:
+    """Filter ``confrontations`` to those with ``fire_conditions`` matching
+    a player room-entry on the given chassis.
+
+    Eligible iff:
+      * ``c.auto_fire`` and ``c.fire_conditions`` are set;
+      * ``fire_conditions.interior_room_present == room_local_id``;
+      * ``bond_tier_chassis >= fire_conditions.bond_tier_min``;
+      * ``current_turn - cooldown_ledger[(chassis_id, c.id)] >=
+        fire_conditions.cooldown_turns``, or no prior firing recorded.
+
+    Returns the ConfrontationDefinitions, in YAML order, in a list so the
+    caller can dispatch each in turn (typical case is one — the slice's
+    ``the_tea_brew`` — but multiple intimate-register confrontations could
+    coexist on the same room in a future world).
+    """
+    eligible: list[ConfrontationDefinition] = []
+    for c in confrontations:
+        if not c.auto_fire or c.fire_conditions is None:
+            continue
+        fc = c.fire_conditions
+        if fc.interior_room_present != room_local_id:
+            continue
+        if not _bond_tier_at_or_above(bond_tier_chassis, fc.bond_tier_min):
+            continue
+        last_fired = cooldown_ledger.get((chassis_id, c.id))
+        if last_fired is not None and (current_turn - last_fired) < fc.cooldown_turns:
+            continue
+        eligible.append(c)
+    return eligible
