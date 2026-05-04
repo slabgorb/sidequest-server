@@ -42,7 +42,6 @@ from sidequest.game.opposed_check import resolve_opposed_check
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 from sidequest.protocol.dice import RollOutcome
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures: minimal cdef + beat for the resolver
 # ---------------------------------------------------------------------------

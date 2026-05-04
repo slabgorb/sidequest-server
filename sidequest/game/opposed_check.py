@@ -12,12 +12,12 @@ This module is the third branch (``ResolutionMode.opposed_check``):
 
 1. Both sides roll d20 + ability modifier.
 2. ``shift = player_roll_with_mod - opponent_roll_with_mod``.
-3. Tier comes from the shift bands::
+3. Tier comes from the shift bands (calibrated per ADR-093)::
 
        shift >= +10  → CritSuccess
-       shift >= +3   → Success
-       shift in [-2, +2] → Tie
-       shift <= -3   → Fail
+       shift >= +2   → Success
+       shift in [-1, +1] → Tie
+       shift <= -2   → Fail
        shift <= -10  → CritFail
 
 4. The derived tier feeds the existing ``apply_beat()`` once for each side.
@@ -48,22 +48,24 @@ from sidequest.protocol.dice import RollOutcome
 
 # Shift bands. Inclusive thresholds. Order matters in ``_tier_from_shift``:
 # CritSuccess and CritFail are checked first because the bands are nested
-# (any +10 is also a +3, any -10 is also a -3).
+# (any +10 is also a +2, any -10 is also a -2). Calibrated per ADR-093:
+# tie band narrowed from ±2 to ±1 to reduce the inert-tie rate and let
+# the player's mod advantage actually move the dial.
 _CRIT_SUCCESS_SHIFT = 10
-_SUCCESS_SHIFT = 3
-_FAIL_SHIFT = -3
+_SUCCESS_SHIFT = 2
+_FAIL_SHIFT = -2
 _CRIT_FAIL_SHIFT = -10
 
 
 def _tier_from_shift(shift: int) -> RollOutcome:
-    """Map a numeric shift to a ``RollOutcome`` per the spec's bands.
+    """Map a numeric shift to a ``RollOutcome`` per the calibrated bands (ADR-093).
 
     Bands are::
 
         shift >= +10  → CritSuccess
-        shift >= +3   → Success
-        shift in [-2, +2] → Tie
-        shift <= -3   → Fail
+        shift >= +2   → Success
+        shift in [-1, +1] → Tie
+        shift <= -2   → Fail
         shift <= -10  → CritFail
     """
     if shift >= _CRIT_SUCCESS_SHIFT:

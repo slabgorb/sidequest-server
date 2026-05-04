@@ -34,9 +34,10 @@ def test_instantiate_combat_creates_encounter(cac_pack) -> None:
     assert "Rux" in actor_names
     assert "Goblin" in actor_names
     # caverns_and_claudes combat dual-dial: player_metric and opponent_metric.
+    # Threshold 7 per ADR-093 calibration (was 10 pre-calibration).
     assert enc.player_metric.name == "momentum"
     assert enc.player_metric.starting == 0
-    assert enc.player_metric.threshold == 10
+    assert enc.player_metric.threshold == 7
 
 
 def test_instantiate_unknown_type_raises(cac_pack) -> None:

@@ -85,9 +85,7 @@ def test_opponent_default_stats_no_parity_12_remains(pack_name: str):
         for stat_name, value in ods.items():
             if not isinstance(value, int):
                 continue
-            if value == PRE_CALIBRATION_PARITY_STAT:
-                offending.append((ctype, stat_name, value))
-            elif value > CALIBRATED_OPPONENT_STAT_CEILING:
+            if value == PRE_CALIBRATION_PARITY_STAT or value > CALIBRATED_OPPONENT_STAT_CEILING:
                 offending.append((ctype, stat_name, value))
 
     assert not offending, (
