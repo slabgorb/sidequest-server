@@ -1030,8 +1030,60 @@ def _resolve_anchor(
 def _emit_textpath_label(
     d: LabelDecision, viewport: _Viewport
 ) -> svgwrite.base.BaseElement:
-    """PLACEHOLDER stub — Task 21 implements."""
-    return svgwrite.text.Text(d.text)
+    """Emit a textPath label per ADR-094 textpath strategy.
+
+    Mirrors `_engraved_label_textpath`'s register-driven styling but
+    consumes a `LabelDecision` (so the strategy dispatch can call it
+    without re-resolving the path).
+    """
+    assert d.textpath_path_id is not None
+    decorated = f"— {d.text} —"
+    register = d.register
+    if register == "prose":
+        font_family = palette.LABEL_PROSE_FONT
+        font_size: int = palette.LABEL_PROSE_FONT_SIZE
+        font_style: str | None = "italic"
+        font_weight: int | None = None
+        opacity: float | None = palette.LABEL_PROSE_OPACITY
+        letter_spacing: int | None = None
+    elif register == "chalk":
+        font_family = palette.LABEL_CHALK_FONT
+        font_size = 11
+        font_style = None
+        font_weight = palette.LABEL_CHALK_WEIGHT
+        opacity = palette.ORBIT_OPACITY_CHALK
+        letter_spacing = palette.LABEL_CHALK_LETTER_SPACING
+    else:
+        font_family = palette.LABEL_ENGRAVED_FONT
+        font_size = 12
+        font_style = "italic"
+        font_weight = palette.LABEL_ENGRAVED_WEIGHT
+        opacity = None
+        letter_spacing = palette.LABEL_ENGRAVED_LETTER_SPACING
+
+    elem = svgwrite.text.Text(
+        "",
+        fill=palette.BRASS,
+        font_family=font_family,
+        font_size=font_size,
+        text_anchor="middle",
+    )
+    elem["stroke"] = palette.BG
+    elem["stroke-width"] = 3
+    elem["stroke-linejoin"] = "round"
+    elem["paint-order"] = "stroke"
+    if font_style is not None:
+        elem["font-style"] = font_style
+    if font_weight is not None:
+        elem["font-weight"] = font_weight
+    if letter_spacing is not None:
+        elem["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        elem["opacity"] = opacity
+    tp = svgwrite.text.TextPath(path=f"#{d.textpath_path_id}", text=decorated)
+    tp["startOffset"] = "50%"
+    elem.add(tp)
+    return elem
 
 
 def _emit_radial_label(

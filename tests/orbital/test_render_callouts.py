@@ -110,3 +110,19 @@ class TestStrategyDispatch:
         assert "MOON Z-1" in svg
         assert "MOON Z-2" in svg
         assert "HABITAT WITH MOONS SYSTEM" not in svg
+
+
+class TestEmitTextpathLabel:
+    def test_textpath_uses_resolved_path_id(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        # _resolve_curve_along's path id convention is `curve_orbit_<body_id>`
+        # for orbit references (per render._resolve_curve_along).
+        assert 'href="#curve_orbit_outer_world"' in svg or \
+               'xlink:href="#curve_orbit_outer_world"' in svg
+        assert "— OUTER WORLD —" in svg
