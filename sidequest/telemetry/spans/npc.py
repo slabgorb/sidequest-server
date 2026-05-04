@@ -64,6 +64,26 @@ SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
     },
 )
 
+# Wave 2A (story 45-47): every narrator-cite of an NPC name fires this span.
+# ``match_strategy`` is the lie-detector dial: ``npcs_hit`` means the cited
+# name had an active stateful Npc; ``pool_hit`` means the cite matched a
+# known pool member; ``invented`` means the narrator made up a name not in
+# either store. Per-session counts of ``invented`` tell the GM panel when
+# the pool wasn't deep enough or wasn't seeded for the scene.
+SPAN_NPC_REFERENCED = "npc.referenced"
+SPAN_ROUTES[SPAN_NPC_REFERENCED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "referenced",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "match_strategy": (span.attributes or {}).get("match_strategy", ""),
+        "pool_origin": (span.attributes or {}).get("pool_origin", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 # Story 45-21: combat-stats write into npc_registry entry.
 # Fired when an encounter handshake (or other combat-stats emit) publishes
 # HP/max_hp into a registry entry so HP-check subsystems can see real data
