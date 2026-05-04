@@ -218,21 +218,23 @@ def _bond_tier_at_or_above(actual: str, minimum: str) -> bool:
 def find_eligible_room_autofire(
     *,
     confrontations: list[ConfrontationDefinition],
-    chassis_id: str,
     room_local_id: str,
     bond_tier_chassis: str,
-    current_turn: int,
-    cooldown_ledger: dict[tuple[str, str], int],
 ) -> list[ConfrontationDefinition]:
-    """Filter ``confrontations`` to those with ``fire_conditions`` matching
-    a player room-entry on the given chassis.
+    """Filter ``confrontations`` to those whose ``fire_conditions`` match
+    a player room-entry on the given chassis — *before* cooldown filtering.
 
     Eligible iff:
       * ``c.auto_fire`` and ``c.fire_conditions`` are set;
       * ``fire_conditions.interior_room_present == room_local_id``;
-      * ``bond_tier_chassis >= fire_conditions.bond_tier_min``;
-      * ``current_turn - cooldown_ledger[(chassis_id, c.id)] >=
-        fire_conditions.cooldown_turns``, or no prior firing recorded.
+      * ``bond_tier_chassis >= fire_conditions.bond_tier_min``.
+
+    Story 47-6: cooldown is NOT filtered here — the caller applies the
+    cooldown gate so the OTEL ``room.entry_evaluated`` span can
+    distinguish ``eligible_count`` (matched the room+bond+autofire
+    predicate) from ``fired_count`` (matched AND off cooldown). Without
+    this split, the GM panel can't tell "no confrontation matched" from
+    "matched but on cooldown" — the playtest reproduction's whole point.
 
     Returns the ConfrontationDefinitions, in YAML order, in a list so the
     caller can dispatch each in turn (typical case is one — the slice's
@@ -247,9 +249,6 @@ def find_eligible_room_autofire(
         if fc.interior_room_present != room_local_id:
             continue
         if not _bond_tier_at_or_above(bond_tier_chassis, fc.bond_tier_min):
-            continue
-        last_fired = cooldown_ledger.get((chassis_id, c.id))
-        if last_fired is not None and (current_turn - last_fired) < fc.cooldown_turns:
             continue
         eligible.append(c)
     return eligible

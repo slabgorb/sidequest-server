@@ -60,22 +60,32 @@ def process_room_entry(
     """Post-room-entry hook: dispatch any rig-coupled auto-fire confrontations
     eligible at the entered room.
 
-    ``room_id`` is chassis-scoped — ``"<chassis_id>:<room_local>"``. Rooms
-    that aren't chassis-scoped (no colon, or colon-prefix not matching a
-    chassis_registry key) are no-ops on this path; map-graph rooms are
-    handled by the legacy room-graph machinery.
+    ``room_id`` accepts three forms:
 
-    Story 47-4 (Rig MVP Phase C): wires Galley entry → ``the_tea_brew``.
-    Iterates ``snap.world_confrontations`` filtered by the chassis's
-    interior_rooms, evaluates ``fire_conditions`` (room match,
-    bond_tier_min, cooldown_turns), and dispatches eligible firings via
-    ``apply_mandatory_outputs`` on the ``clear_win`` branch — the auto-fire
-    default; the narrator may override to ``refused`` later through
-    explicit dispatch (out of slice scope).
+    1. Chassis-prefixed ``"<chassis_id>:<room_local>"`` — explicit form
+       used by tests and callers that already know the chassis context.
+    2. Chassis-qualified narrator form ``"<Chassis Name> — <Display>"``
+       (em-dash with surrounding spaces) — what the narrator actually
+       emits as ``location``. Stripped via ``rsplit`` and resolved by
+       falling through to (3).
+    3. Bare world-name like ``"Galley"`` — case-insensitive match
+       against ``chassis.interior_rooms`` across all registered chassis.
 
-    OTEL: span emission happens inside ``apply_mandatory_outputs`` when
-    the rig framing keys are present, plus inside the bond/lineage
-    handlers themselves.
+    Inputs that match none of these resolve to no chassis and emit
+    ``room.entry_skipped`` (reason ``not_chassis_room`` or
+    ``chassis_not_found``); map-graph rooms are handled by the legacy
+    room-graph machinery upstream of this hook.
+
+    Story 47-4 wires Galley entry → ``the_tea_brew``. Story 47-6 adds the
+    em-dash matcher, OTEL on every silent-return path, and splits the
+    cooldown gate out of ``find_eligible_room_autofire`` so the
+    ``room.entry_evaluated`` span can distinguish ``eligible_count``
+    (matched room+bond) from ``fired_count`` (matched AND off cooldown).
+
+    OTEL: every return path emits either ``room.entry_skipped`` (with
+    ``reason``) or ``room.entry_evaluated`` (with ``eligible_count`` and
+    ``fired_count``); per-firing ``rig.confrontation_outcome`` and
+    ``rig.bond_event`` come from inside ``apply_mandatory_outputs``.
     """
     # Resolve room_id to (chassis_id, room_local_id). Three formats accepted:
     #   1. Chassis-prefixed: "<chassis_id>:<room_local>" — explicit form used
@@ -128,23 +138,25 @@ def process_room_entry(
     from sidequest.magic.confrontations import find_eligible_room_autofire
     from sidequest.magic.outputs import apply_mandatory_outputs
 
-    cooldown_view: dict[tuple[str, str], int] = {}
-    for key, turn in snap.chassis_autofire_cooldowns.items():
-        if ":" not in key:
-            continue
-        c_id, conf_id = key.split(":", 1)
-        cooldown_view[(c_id, conf_id)] = turn
-
     eligible = find_eligible_room_autofire(
         confrontations=snap.world_confrontations,
-        chassis_id=chassis.id,
         room_local_id=room_local_id,
         bond_tier_chassis=bond.bond_tier_chassis,
-        current_turn=current_turn,
-        cooldown_ledger=cooldown_view,
     )
 
+    fired_count = 0
     for cdef in eligible:
+        # Per-confrontation cooldown gate. Eligible entries that fail
+        # the cooldown still count toward ``eligible_count`` so the GM
+        # panel sees "matched but on cooldown" vs "no match".
+        cooldown_key = f"{chassis.id}:{cdef.id}"
+        last_fired = snap.chassis_autofire_cooldowns.get(cooldown_key)
+        cooldown_turns = (
+            cdef.fire_conditions.cooldown_turns if cdef.fire_conditions else 0
+        )
+        if last_fired is not None and (current_turn - last_fired) < cooldown_turns:
+            continue
+
         outputs = cdef.outcomes["clear_win"].mandatory_outputs
         apply_mandatory_outputs(
             snapshot=snap,
@@ -157,13 +169,14 @@ def process_room_entry(
             turn_id=current_turn,
             narrative_seed=f"auto_fire:{room_local_id}",
         )
-        snap.chassis_autofire_cooldowns[f"{chassis.id}:{cdef.id}"] = current_turn
+        snap.chassis_autofire_cooldowns[cooldown_key] = current_turn
+        fired_count += 1
 
     emit_room_entry_evaluated(
         chassis_id=chassis.id,
         room_local_id=room_local_id,
         eligible_count=len(eligible),
-        fired_count=len(eligible),
+        fired_count=fired_count,
     )
 
 

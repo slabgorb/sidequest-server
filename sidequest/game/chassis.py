@@ -13,11 +13,15 @@ are deferred fields and not authored here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from sidequest.genre.models.chassis import BondTier, ChassisVoiceSpec
 from sidequest.genre.models.rigs_world import OceanScores
+
+if TYPE_CHECKING:
+    from sidequest.game.session import GameSnapshot
 
 _TIER_THRESHOLDS: list[tuple[float, BondTier]] = [
     (-0.85, "severed"),
@@ -190,7 +194,9 @@ def _project_chassis_to_npc_entry(chassis: ChassisInstance):
     )
 
 
-def rebind_chassis_bonds_to_character(snapshot, character_id: str) -> None:
+def rebind_chassis_bonds_to_character(
+    snapshot: GameSnapshot, character_id: str
+) -> None:
     """Replace the ``"player_character"`` placeholder seed with the real
     chargen character id across every chassis in ``snapshot.chassis_registry``.
 
