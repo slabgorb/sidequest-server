@@ -26,9 +26,12 @@ def test_init_chassis_registry_loads_kestrel() -> None:
         pytest.skip("space_opera content pack not present")
     from sidequest.game.chassis import init_chassis_registry
     from sidequest.genre.loader import load_genre_pack
+    from sidequest.magic.state import MagicState
 
     pack = load_genre_pack(SPACE_OPERA)
     snap = _make_snapshot("space_opera", "coyote_star")
+    # S1 invariant (2026-05-04): magic_state initialized first.
+    snap.magic_state = MagicState.from_config(_make_coyote_star_magic_config())
     init_chassis_registry(snap, pack)
 
     assert "kestrel" in snap.chassis_registry
@@ -48,9 +51,12 @@ def test_init_chassis_registry_projects_to_npc_registry() -> None:
         pytest.skip("space_opera content pack not present")
     from sidequest.game.chassis import init_chassis_registry
     from sidequest.genre.loader import load_genre_pack
+    from sidequest.magic.state import MagicState
 
     pack = load_genre_pack(SPACE_OPERA)
     snap = _make_snapshot("space_opera", "coyote_star")
+    # S1 invariant (2026-05-04): magic_state initialized first.
+    snap.magic_state = MagicState.from_config(_make_coyote_star_magic_config())
     init_chassis_registry(snap, pack)
 
     # Projection: npc_registry now has a Kestrel entry so narrator prose

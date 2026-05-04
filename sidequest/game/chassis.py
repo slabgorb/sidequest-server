@@ -219,18 +219,31 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     raw = yaml.safe_load(rigs_path.read_text(encoding="utf-8"))
     cfg = RigsWorldConfig.model_validate(raw)
 
-    # Story 47-4: alongside chassis_registry materialization, populate the
-    # world_confrontations cache so the rig-coupled room-entry auto-fire
-    # evaluator (process_room_entry) doesn't depend on magic_init having
-    # run first. Confrontations.yaml is optional; world without one keeps
-    # snapshot.world_confrontations empty.
+    # S1 step 2 — magic_state.confrontations is the canonical home for
+    # confrontation defs. The legacy world_confrontations cache is gone;
+    # this loader writes directly into magic_state. magic_state MUST be
+    # initialized before init_chassis_registry runs (invariant established
+    # by the snapshot split-brain cleanup, 2026-05-04). The bind path in
+    # session_room is responsible for the ordering.
     confrontations_path = (
         genre_pack.source_dir / "worlds" / snapshot.world_slug / "confrontations.yaml"
     )
     if confrontations_path.exists():
+        if snapshot.magic_state is None:
+            raise RuntimeError(
+                "init_chassis_registry: magic_state must be initialized before "
+                "chassis registry when worlds/<world>/confrontations.yaml exists. "
+                "Bind-path ordering invariant — see design spec "
+                "2026-05-04-snapshot-split-brain-cleanup-design.md S1."
+            )
         from sidequest.magic.confrontations import load_confrontations
 
-        snapshot.world_confrontations = load_confrontations(confrontations_path)
+        loaded = load_confrontations(confrontations_path)
+        existing_ids = {c.id for c in snapshot.magic_state.confrontations}
+        for cdef in loaded:
+            if cdef.id not in existing_ids:
+                snapshot.magic_state.confrontations.append(cdef)
+                existing_ids.add(cdef.id)
 
     for inst_cfg in cfg.chassis_instances:
         bond_seeds = [
