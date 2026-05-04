@@ -95,6 +95,12 @@ class BodyDef(BaseModel):
             raise ValueError("body with type=arc_belt requires arc_extent_deg; got None")
         return self
 
+    @model_validator(mode="after")
+    def _validate_label_not_blank(self) -> BodyDef:
+        if self.label is not None and not self.label.strip():
+            raise ValueError("label must be non-empty if provided")
+        return self
+
 
 class ConjunctionPair(BaseModel):
     """A pair of bodies whose alignment events the chart watches.
