@@ -102,7 +102,14 @@ class TestStoryYSnapshot:
         assert svg == baseline, "Snapshot mismatch — re-baseline if intentional"
 
     def test_callout_count_lower_bound(self, coyote_star_world, otel_capture):
-        """AC-Y3: ≥9 forced_moon_band callouts (6 red_prospect + tethys + 2 deep_root)."""
+        """AC-Y3: ≥8 forced_moon_band callouts.
+
+        6 red_prospect habitats + tethys_watch (under far_landing) +
+        lower_kerel (under deep_root_world). kerel_eye is elided at
+        system scope per the design's `show_at_system_scope: false`
+        decision in story 45-42, so it does not contribute a callout
+        at this scope.
+        """
         from sidequest.orbital.render import Scope, render_chart
         from sidequest.telemetry.spans.chart import (
             SPAN_CHART_LABEL_DISTRIBUTION,
@@ -122,6 +129,6 @@ class TestStoryYSnapshot:
             if s.name == SPAN_CHART_LABEL_STRATEGY
             and dict(s.attributes).get("selection_reason") == "forced_moon_band"
         ]
-        assert len(forced) >= 9, f"expected ≥9 forced_moon_band, got {len(forced)}"
+        assert len(forced) >= 8, f"expected ≥8 forced_moon_band, got {len(forced)}"
         a = _last_span_attrs(otel_capture, SPAN_CHART_LABEL_DISTRIBUTION)
-        assert a["bodies_callout"] >= 9
+        assert a["bodies_callout"] >= 8
