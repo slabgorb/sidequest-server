@@ -191,3 +191,27 @@ class TestEmitCalloutBlock:
             f'stroke-width="{palette.LEADER_STROKE_WIDTH_PX}"' in svg
             or f"stroke-width='{palette.LEADER_STROKE_WIDTH_PX}'" in svg
         )
+
+
+class TestSnapshotRegression:
+    def test_world_callout_strategy_byte_identical(self, world_callout_strategy):
+        """AC-X1: byte-identical snapshot regression."""
+        from sidequest.orbital.render import Scope, render_chart
+
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0,
+            party_at=None,
+        )
+        baseline = (SNAPSHOTS / "world_callout_strategy_t0.svg").read_text()
+        assert svg == baseline, (
+            "Snapshot mismatch — re-baseline if intentional with:\n"
+            "  uv run python -c 'from pathlib import Path; "
+            "from sidequest.orbital.loader import load_orbital_content; "
+            "from sidequest.orbital.render import Scope, render_chart; "
+            "w = load_orbital_content(Path(\"tests/orbital/fixtures/world_callout_strategy\")); "
+            "Path(\"tests/orbital/snapshots/world_callout_strategy_t0.svg\").write_text("
+            "render_chart(orbits=w.orbits, chart=w.chart, scope=Scope.system_root(), t_hours=0.0, party_at=None))'"
+        )
