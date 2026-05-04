@@ -81,3 +81,47 @@ class TestCoyoteStarWiring:
             + a["bodies_callout"] + a["bodies_unlabeled"]
             == a["bodies_total"]
         )
+
+
+class TestStoryYSnapshot:
+    def test_coyote_star_callouts_byte_identical(self, coyote_star_world):
+        """AC-Y4: post-Story-Y campaign world snapshot regression."""
+        from sidequest.orbital.render import Scope, render_chart
+
+        svg = render_chart(
+            orbits=coyote_star_world.orbits,
+            chart=coyote_star_world.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0,
+            party_at=None,
+        )
+        snapshot_path = (
+            Path(__file__).parent / "snapshots" / "coyote_star_callouts_system_t0.svg"
+        )
+        baseline = snapshot_path.read_text()
+        assert svg == baseline, "Snapshot mismatch — re-baseline if intentional"
+
+    def test_callout_count_lower_bound(self, coyote_star_world, otel_capture):
+        """AC-Y3: ≥9 forced_moon_band callouts (6 red_prospect + tethys + 2 deep_root)."""
+        from sidequest.orbital.render import Scope, render_chart
+        from sidequest.telemetry.spans.chart import (
+            SPAN_CHART_LABEL_DISTRIBUTION,
+            SPAN_CHART_LABEL_STRATEGY,
+        )
+
+        render_chart(
+            orbits=coyote_star_world.orbits,
+            chart=coyote_star_world.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0,
+            party_at=None,
+        )
+        forced = [
+            s
+            for s in otel_capture.get_finished_spans()
+            if s.name == SPAN_CHART_LABEL_STRATEGY
+            and dict(s.attributes).get("selection_reason") == "forced_moon_band"
+        ]
+        assert len(forced) >= 9, f"expected ≥9 forced_moon_band, got {len(forced)}"
+        a = _last_span_attrs(otel_capture, SPAN_CHART_LABEL_DISTRIBUTION)
+        assert a["bodies_callout"] >= 9
