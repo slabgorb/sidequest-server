@@ -1372,20 +1372,14 @@ class WebSocketSessionHandler:
             # same authoritative object — including any peer session
             # already bound to this slug.
             sd.snapshot.replace_with(materialized)
-            init_chassis_registry(sd.snapshot, sd.genre_pack)
-            span.add_event(
-                "character_creation.world_materialized",
-                {
-                    "event": "world_materialized",
-                    "genre": sd.genre_slug,
-                    "world": sd.world_slug,
-                    "chapters_applied": len(materialized.world_history),
-                    "maturity": materialized.campaign_maturity,
-                    "trigger": "new_player_chargen",
-                    "player_id": player_id,
-                },
-            )
 
+            # S1 (2026-05-04 split-brain cleanup): magic_state MUST be
+            # initialized before init_chassis_registry runs, because the
+            # chassis loader now writes confrontations directly into
+            # snapshot.magic_state.confrontations (the canonical home).
+            # The legacy world_confrontations stash is gone — see design
+            # spec 2026-05-04-snapshot-split-brain-cleanup-design.md S1.
+            #
             # Magic Phase 4: instantiate MagicState on the canonical
             # snapshot for worlds that ship a magic.yaml pair (genre +
             # world). This is the production hook that pairs Phase 1's
@@ -1400,6 +1394,20 @@ class WebSocketSessionHandler:
                 genre_pack_source_dir=sd.genre_pack.source_dir,
                 world_slug=sd.world_slug,
                 character_id=character.core.name,
+            )
+
+            init_chassis_registry(sd.snapshot, sd.genre_pack)
+            span.add_event(
+                "character_creation.world_materialized",
+                {
+                    "event": "world_materialized",
+                    "genre": sd.genre_slug,
+                    "world": sd.world_slug,
+                    "chapters_applied": len(materialized.world_history),
+                    "maturity": materialized.campaign_maturity,
+                    "trigger": "new_player_chargen",
+                    "player_id": player_id,
+                },
             )
 
             # Scenario binding (Slice D / connect.rs:1948). No-op without

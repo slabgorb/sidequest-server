@@ -58,6 +58,10 @@ def _bootstrap_coyote_star_snapshot() -> GameSnapshot:
     snap.npc_registry = []
     snap.characters = []
     snap.encounter = None
+    # S1 invariant (2026-05-04): magic_state initialized before chassis.
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
+
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     return snap
 

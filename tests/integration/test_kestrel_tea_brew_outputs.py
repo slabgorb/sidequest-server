@@ -45,12 +45,16 @@ def _bootstrap_coyote_star_snapshot() -> GameSnapshot:
     """Boot a snapshot with Kestrel materialized, pre-bonded to trusted."""
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
+
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
         world_slug="coyote_star",
         location="Galley",
     )
+    # S1 invariant: magic_state initialized before chassis registry.
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     return snap
 

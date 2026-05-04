@@ -25,6 +25,50 @@ FLAT_ONLY_SPANS.update(
 
 
 # ---------------------------------------------------------------------------
+# Snapshot canonicalize — sidequest/game/migrations.py
+# Emitted by ``SqliteStore.load`` when ``migrate_legacy_snapshot`` rewrote
+# any field. Per-field migration markers are span attributes (e.g.
+# ``s1_world_confrontations_merged: int``). Lie-detector hook for the GM
+# panel — Sebastien sees which legacy split-brain shapes are still in the
+# wild.
+#
+# Honesty rule: the extractor only forwards keys that an actual migration
+# sub-function emits. S4 (Python class rename) and S5 (``Field(exclude=True)``)
+# are NOT per-save migrations — they leave no on-disk trace and have no
+# sub-function. Reporting hardcoded ``s4_encounter_tag_renamed: false`` /
+# ``s5_pending_queues_dropped: 0`` would lie to the GM panel. When/if a
+# future migration sub-function legitimately emits an attribute, extend
+# this dict alongside the sub-function — never before.
+# ---------------------------------------------------------------------------
+SPAN_SNAPSHOT_CANONICALIZE = "snapshot.canonicalize"
+
+
+def _extract_snapshot_canonicalize(span: Any) -> dict[str, Any]:
+    """Forward only the per-field migration attributes the span carries.
+
+    No defaulted keys: if a sub-function did not register an attribute for
+    this load, the GM panel must not see a value for it. Otherwise the
+    extractor invents zero/false markers for migrations that never ran.
+    """
+    payload: dict[str, Any] = {"field": "snapshot", "op": "canonicalize"}
+    attrs = span.attributes or {}
+    for key in (
+        "s1_world_confrontations_merged",
+        "s1_world_confrontations_dropped_no_target",
+    ):
+        if key in attrs:
+            payload[key] = attrs[key]
+    return payload
+
+
+SPAN_ROUTES[SPAN_SNAPSHOT_CANONICALIZE] = SpanRoute(
+    event_type="state_transition",
+    component="persistence",
+    extract=_extract_snapshot_canonicalize,
+)
+
+
+# ---------------------------------------------------------------------------
 # Session lifecycle — sidequest/game/persistence.py
 # Fires every time SqliteStore.init_session() runs — including on a fresh
 # slot — so the GM panel gets the negative confirmation that reinit ran

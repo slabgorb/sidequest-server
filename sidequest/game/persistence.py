@@ -8,6 +8,9 @@ ADR-023: Auto-save after every turn, atomic writes via SQLite transactions.
 
 from __future__ import annotations
 
+import json
+import logging
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,9 +19,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from sidequest.game.migrations import migrate_legacy_snapshot
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from sidequest.telemetry.spans import SPAN_SESSION_SLOT_REINITIALIZED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+logger = logging.getLogger(__name__)
 
 # Per-slot tables that ``init_session()`` clears on reinit. ``games``
 # (slug-keyed) and ``scenario_archive`` (session_id-keyed) are global
@@ -381,7 +387,44 @@ class SqliteStore:
             return None
 
         try:
-            snapshot = GameSnapshot.model_validate_json(row[0])
+            raw = json.loads(row[0])
+        except json.JSONDecodeError as exc:
+            raise SaveSchemaIncompatibleError(
+                save_path=self._path or Path("<in-memory>"),
+                underlying=ValidationError.from_exception_data(
+                    title="invalid_save_json", line_errors=[]
+                ),
+            ) from exc
+        migrated = migrate_legacy_snapshot(raw)
+
+        # Architect amendment 2026-05-04: sibling-file safety net.
+        # If migration rewrote anything and we have a real on-disk save,
+        # copy the .db to <save>.db.canonicalize.bak ONCE. The .bak is
+        # never reaped — durable retention per Keith's playstyle.
+        #
+        # WAL note: PRAGMA journal_mode=WAL means uncheckpointed writes
+        # live in <save>.db-wal until a checkpoint runs. A naked
+        # ``shutil.copy2`` of the .db alone copies a file that may be
+        # missing the most recent rows. We force a TRUNCATE checkpoint
+        # before the copy so the .bak is a single self-contained file
+        # (matching how Keith would expect to recover from one — no
+        # WAL/SHM siblings to keep track of).
+        if migrated != raw and self._path is not None:
+            bak_path = self._path.with_suffix(self._path.suffix + ".canonicalize.bak")
+            if not bak_path.exists():
+                try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    shutil.copy2(self._path, bak_path)
+                except (OSError, sqlite3.Error) as bak_exc:
+                    # Defense-in-depth, not primary gate: don't block load.
+                    logger.warning(
+                        "snapshot.canonicalize backup failed for %s: %s",
+                        self._path,
+                        bak_exc,
+                    )
+
+        try:
+            snapshot = GameSnapshot.model_validate(migrated)
         except ValidationError as exc:
             raise SaveSchemaIncompatibleError(
                 save_path=self._path or Path("<in-memory>"),
