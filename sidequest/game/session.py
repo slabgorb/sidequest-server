@@ -44,8 +44,16 @@ from sidequest.orbital.course import PlottedCourse
 # ---------------------------------------------------------------------------
 
 
-class EncounterTag(BaseModel):
-    """NPC encounter tag within a narrative entry (story F3)."""
+class NpcEncounterLogTag(BaseModel):
+    """NPC encounter tag within a narrative entry (story F3).
+
+    Renamed from ``EncounterTag`` (S4 of the snapshot split-brain cleanup,
+    2026-05-04) to disambiguate from
+    :class:`sidequest.game.encounter_tag.EncounterTag`, which is a
+    different model (scene-momentum tag with leverage/target/fleeting per
+    ADR-078). The old name remains as an alias in
+    :mod:`sidequest.game.__init__` for one release window.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -79,7 +87,7 @@ class NarrativeEntry(BaseModel):
     author: str
     content: str = ""
     tags: list[str] = Field(default_factory=list)
-    encounter_tags: list[EncounterTag] = Field(default_factory=list)
+    encounter_tags: list[NpcEncounterLogTag] = Field(default_factory=list)
     speaker: str | None = None
     entry_type: str | None = None
 

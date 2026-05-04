@@ -86,12 +86,12 @@ from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
     DiscoveredFact,
-    EncounterTag,
     GameSnapshot,
     GenieWish,
     HistoryChapter,
     NarrativeEntry,
     Npc,
+    NpcEncounterLogTag,
     NpcPatch,
     NpcRegistryEntry,
     TropeState,
@@ -165,12 +165,12 @@ __all__ = [
     "AchievementTracker",
     "AxisValue",
     "DiscoveredFact",
-    "EncounterTag",
     "GameSnapshot",
     "GenieWish",
     "HistoryChapter",
     "NarrativeEntry",
     "Npc",
+    "NpcEncounterLogTag",
     "NpcPatch",
     "NpcRegistryEntry",
     "TropeState",
@@ -180,3 +180,10 @@ __all__ = [
     "TurnManager",
     "TurnPhase",
 ]
+
+
+# S4 deprecation alias — drop in the release after this one. External
+# saves and pre-cleanup test fixtures still reference EncounterTag at this
+# import path; keeping the alias one release prevents a hard cutover.
+EncounterTag = NpcEncounterLogTag
+__all__.append("EncounterTag")
