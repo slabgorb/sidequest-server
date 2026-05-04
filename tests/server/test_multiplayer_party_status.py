@@ -108,6 +108,10 @@ def test_party_peers_excludes_acting_pc_in_multiplayer() -> None:
     room.seat("p:laverne", character_slot="Laverne")
     room.seat("p:shirley", character_slot="Shirley")
 
+    # Bind the room so _build_turn_context can read room.session.
+    snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    room.bind_world(snapshot=snap, store=MagicMock())
+
     # Player 2's session: party_peers should be [Laverne], not [Shirley]
     sd = _sd("p:shirley", "Shirley", [laverne, shirley])
     ctx = _build_turn_context(sd, room=room)

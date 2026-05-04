@@ -7,6 +7,7 @@ applied. Read by ``Orchestrator`` when assembling the <courses> block.
 """
 from __future__ import annotations
 
+from sidequest.orbital.loader import OrbitalContent
 from sidequest.orbital.models import (
     BodyDef,
     BodyType,
@@ -15,8 +16,6 @@ from sidequest.orbital.models import (
     TravelConfig,
     TravelRealism,
 )
-from sidequest.orbital.loader import OrbitalContent
-from sidequest.orbital.render import Scope
 
 
 def _content() -> OrbitalContent:

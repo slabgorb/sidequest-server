@@ -99,9 +99,22 @@ def test_audit_live_tree_reports_named_thin_corpora_resolved() -> None:
     Pre-fix, all three named corpora appear; post-fix (corpus
     expansion), they appear under their consuming cultures with OK
     status. Either way, they show up.
+
+    Note: Span Aristocracy / Vaal-Kesh / Makhani live in
+    ``genre_workshopping/space_opera/worlds/aureate_span/`` (relocated
+    from ``genre_packs/`` in commit acc89a3 — see the workshopping skip
+    comment in tests/game/test_wire_genre_resources.py). The audit's
+    default ``--path`` is ``genre_packs/``; we run it twice — once on
+    each root — and combine the output so both production-canonical and
+    in-development cultures get coverage. When the aureate_span pack
+    graduates back to genre_packs, the second invocation becomes
+    redundant but the assertion still passes.
     """
-    result = _run_audit()
-    out = result.stdout
+    workshopping_path = REPO_ROOT / "sidequest-content" / "genre_workshopping"
+
+    result_packs = _run_audit()
+    result_workshopping = _run_audit("--path", str(workshopping_path))
+    out = result_packs.stdout + "\n" + result_workshopping.stdout
 
     # Every named-thin corpus shows up in the report — pre-fix as THIN,
     # post-fix as OK. We don't assert status here (that's the

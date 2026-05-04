@@ -65,7 +65,6 @@ def test_orchestrator_registers_courses_section_when_orbital_world() -> None:
     # See tests/agents/test_orchestrator.py for the existing fixture
     # patterns. Implementation note for the dev: the simplest assertion
     # is `"courses" in registry.section_ids()`.
-    from sidequest.agents.orchestrator import Orchestrator
     from sidequest.agents.prompt_framework.types import (
         AttentionZone,
     )

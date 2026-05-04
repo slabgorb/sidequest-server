@@ -1,6 +1,8 @@
 """Tests for compute_courses + PlottedCourse model."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from sidequest.orbital.course import (
@@ -8,6 +10,9 @@ from sidequest.orbital.course import (
     CourseSource,
     PlottedCourse,
 )
+
+if TYPE_CHECKING:
+    from sidequest.orbital.models import OrbitsConfig
 
 
 def test_plotted_course_construction() -> None:
@@ -24,7 +29,9 @@ def test_plotted_course_construction() -> None:
 
 
 def test_plotted_course_rejects_extra_fields() -> None:
-    with pytest.raises(Exception):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
         PlottedCourse(
             to_body_id="x",
             eta_hours=0.0,
@@ -90,7 +97,7 @@ def test_game_snapshot_round_trip_with_plotted_course() -> None:
     assert restored.quest_anchors == ["deep_root", "the_gate"]
 
 
-def _mini_orbits() -> "OrbitsConfig":
+def _mini_orbits() -> OrbitsConfig:
     """Tiny orbits config: coyote + 4 habitats at 1, 2, 3, 4 AU."""
     from sidequest.orbital.models import (
         BodyDef,

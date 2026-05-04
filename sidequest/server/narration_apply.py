@@ -718,7 +718,7 @@ def _apply_course_sidecar(
     *,
     snapshot: GameSnapshot,
     result: object,
-    room: "SessionRoom",
+    room: SessionRoom,
 ) -> None:
     """Parse and apply a plot_course / cancel_course sidecar from game_patch_dict.
 

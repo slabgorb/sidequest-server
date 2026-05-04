@@ -1,14 +1,12 @@
 """Geometry helpers for course rendering — pure math, no SideQuest deps."""
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from sidequest.orbital.course_geometry import (
+    bezier_control_offset,
     chord_angular_distance_deg,
     prograde_sign,
-    bezier_control_offset,
 )
 
 
