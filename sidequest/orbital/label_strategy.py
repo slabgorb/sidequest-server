@@ -20,6 +20,7 @@ body with a non-empty label is forced to callout regardless of parent type
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
@@ -299,3 +300,213 @@ def _apply_decision_tree(inp: _StrategyInput) -> LabelDecision:
         path_circumference_px=None,
         callout_tag=inp.callout_tag,
     )
+
+
+def _group_callouts_by_parent(
+    decisions: list[LabelDecision],
+    semi_major_by_id: dict[str, float],
+) -> list[tuple[LabelDecision, ...]]:
+    """Group callout decisions by parent_id; ≥CALLOUT_GROUP_MIN_MEMBERS form
+    a single grouped block, fewer remain as singletons. Within a group,
+    members sort by semi_major_au ascending (innermost first, AC-G3).
+    """
+    by_parent: dict[str | None, list[LabelDecision]] = {}
+    for d in decisions:
+        by_parent.setdefault(d.parent_id, []).append(d)
+
+    groups: list[tuple[LabelDecision, ...]] = []
+    for parent_id, members in by_parent.items():
+        if parent_id is not None and len(members) >= palette.CALLOUT_GROUP_MIN_MEMBERS:
+            sorted_members = sorted(
+                members,
+                key=lambda d: semi_major_by_id.get(d.body_id, 0.0),
+            )
+            groups.append(tuple(sorted_members))
+        else:
+            for m in members:
+                groups.append((m,))
+    return groups
+
+
+def _block_height_px(
+    members: tuple[LabelDecision, ...],
+    *,
+    is_grouped: bool,
+) -> float:
+    """Vertical height of a callout block in pixels."""
+    h = 2.0 * palette.CALLOUT_BLOCK_PADDING_PX
+    if is_grouped:
+        h += palette.CALLOUT_GROUP_TITLE_HEIGHT_PX
+        h += len(members) * palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+    else:
+        # Singleton — exactly one member; tag adds an extra line.
+        assert len(members) == 1
+        h += palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+        if members[0].callout_tag is not None:
+            h += palette.CALLOUT_BLOCK_TAG_LINE_HEIGHT_PX
+    return h
+
+
+def _side_for_bearing(bearing_deg: float) -> Literal["right", "left"]:
+    """Right gutter for bearings 270°→90° (sweeping through 0°);
+    left gutter for bearings 90°→270°. Boundary convention:
+    bearing == 90° goes left, bearing == 270° goes right.
+    """
+    b = bearing_deg % 360.0
+    if b >= 270.0 or b < 90.0:
+        return "right"
+    return "left"
+
+
+def _segments_intersect(
+    p1: tuple[float, float], p2: tuple[float, float],
+    p3: tuple[float, float], p4: tuple[float, float],
+) -> bool:
+    """True if open segments p1-p2 and p3-p4 cross (excluding shared endpoints)."""
+    if {p1, p2} & {p3, p4}:
+        return False
+
+    def ccw(a, b, c):
+        return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
+
+    return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
+
+
+def _leader_segments_for_block(b: CalloutBlock) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return the (anchor → label-block-edge) line segment endpoints.
+    Approximation: straight line from anchor to block-center on near edge.
+    Real renderer draws orthogonal with one bend; for crossing detection a
+    straight approximation is sufficient — the eye reads the same crossings.
+    """
+    edge_x = b.block_x if b.anchor_x < b.block_x else b.block_x + b.block_width_px
+    edge_y = b.block_y + b.block_height_px / 2.0
+    return ((b.anchor_x, b.anchor_y), (edge_x, edge_y))
+
+
+def _count_cross_group_crossings(blocks: list[CalloutBlock]) -> int:
+    """Pairwise leader-segment crossings between distinct groups.
+    Within-group crossings are forbidden by construction (bearing-sort);
+    this counts cross-group crossings only.
+    """
+    segs = [(_leader_segments_for_block(b), id(b.members)) for b in blocks]
+    n = 0
+    for i in range(len(segs)):
+        (p1, p2), gid_i = segs[i]
+        for j in range(i + 1, len(segs)):
+            (p3, p4), gid_j = segs[j]
+            if gid_i == gid_j:
+                continue
+            if _segments_intersect(p1, p2, p3, p4):
+                n += 1
+    return n
+
+
+def lay_out_gutter(
+    *,
+    decisions: list[LabelDecision],
+    anchor_by_id: dict[str, tuple[float, float, float]],
+    semi_major_by_id: dict[str, float],
+    viewport,
+) -> GutterLayout:
+    """Group, side-assign, sort, and pack callout blocks. Pure function.
+
+    `viewport` must expose chart_min_x/max_x/top_y/bottom_y, svg_min_x/max_x.
+    `anchor_by_id` maps body_id -> (x, y, bearing_deg).
+    """
+    callout_decisions = [d for d in decisions if d.strategy == LabelStrategy.CALLOUT]
+    if not callout_decisions:
+        return GutterLayout(blocks=(), inset_fallback_count=0, cross_group_crossing_count=0)
+
+    groups = _group_callouts_by_parent(callout_decisions, semi_major_by_id)
+
+    annotated: list[
+        tuple[Literal["right", "left"], float, tuple[LabelDecision, ...], float, float, float]
+    ] = []
+    for g in groups:
+        first = g[0]
+        ax, ay, abear = anchor_by_id[first.body_id]
+        is_grouped = len(g) >= palette.CALLOUT_GROUP_MIN_MEMBERS
+        height = _block_height_px(g, is_grouped=is_grouped)
+        side = _side_for_bearing(abear)
+        annotated.append((side, abear, g, ax, ay, height))
+
+    # Sort by vertical screen-position (top-down). SVG y-down; bearing 90°
+    # → top of chart (y < 0); bearing 270° → bottom (y > 0). Sort key
+    # = -sin(bearing_rad), which is small (negative) at top and large
+    # (positive) at bottom — matches the renderer's _polar_to_cartesian.
+    def sort_key(item):
+        _, bearing, *_ = item
+        return -math.sin(math.radians(bearing))
+
+    annotated.sort(key=sort_key)
+
+    blocks: list[CalloutBlock] = []
+    inset_count = 0
+
+    chart_top = viewport.chart_top_y
+    chart_bottom = viewport.chart_bottom_y
+    gap = palette.CALLOUT_BLOCK_INTER_BLOCK_GAP_PX
+
+    cursor: dict[str, float] = {"right": chart_top, "left": chart_top}
+    block_x_for_side: dict[str, float] = {
+        "right": viewport.chart_max_x + palette.GUTTER_INNER_MARGIN_PX,
+        "left": viewport.chart_min_x - palette.GUTTER_INNER_MARGIN_PX - palette.GUTTER_WIDTH_PX,
+    }
+    block_width_px = palette.GUTTER_WIDTH_PX - 2 * palette.GUTTER_INNER_MARGIN_PX
+
+    for side, bearing, members, ax, ay, height in annotated:
+        primary_side: Literal["right", "left"] = side
+        opposite: Literal["right", "left"] = "left" if side == "right" else "right"
+
+        chosen_side: Literal["right", "left", "inset"] | None = None
+        chosen_x = chosen_y = 0.0
+
+        for candidate in (primary_side, opposite):
+            if cursor[candidate] + height <= chart_bottom:
+                chosen_side = candidate
+                chosen_y = cursor[candidate]
+                chosen_x = block_x_for_side[candidate]
+                cursor[candidate] = chosen_y + height + gap
+                break
+
+        if chosen_side is None:
+            chosen_side = "inset"
+            chosen_x = -block_width_px / 2.0
+            chosen_y = -height / 2.0 + (inset_count * (height + gap))
+            inset_count += 1
+
+        is_grouped = len(members) >= palette.CALLOUT_GROUP_MIN_MEMBERS
+        parent_label = members[0].parent_id if is_grouped else None
+
+        blocks.append(CalloutBlock(
+            anchor_x=ax,
+            anchor_y=ay,
+            anchor_bearing_deg=bearing,
+            side=chosen_side,
+            parent_label=parent_label,
+            members=members,
+            block_x=chosen_x,
+            block_y=chosen_y,
+            block_width_px=block_width_px,
+            block_height_px=height,
+        ))
+
+    crossings = _count_cross_group_crossings(blocks)
+    return GutterLayout(
+        blocks=tuple(blocks),
+        inset_fallback_count=inset_count,
+        cross_group_crossing_count=crossings,
+    )
+
+
+def select_label_strategies(
+    *,
+    inputs: list[_StrategyInput],
+) -> list[LabelDecision]:
+    """Run the decision tree per body. Pure function.
+
+    OTEL emission of chart.label_strategy spans happens in the renderer
+    after this returns (the renderer has the trace context). This keeps
+    label_strategy.py side-effect-free and trivially testable.
+    """
+    return [_apply_decision_tree(inp) for inp in inputs]
