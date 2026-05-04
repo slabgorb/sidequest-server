@@ -345,6 +345,50 @@ async def test_unknown_cli_error_resets_and_retries():
 
 
 @pytest.mark.asyncio
+async def test_rebuild_prompt_build_failure_falls_back_to_unrecoverable(otel_capture):
+    """A failure in build_narrator_prompt during recovery must emit
+    narrator.unrecoverable and return a graceful stall, not propagate.
+
+    Same bug class as the original Playtest 3 crash: an uncaught exception
+    in the narrator pipeline. The recovery contract is "always return a
+    response or stall" — that must include the build_narrator_prompt call,
+    not just the send_with_session call.
+    """
+    spawn = _make_scripted_spawn([("fail", "context_window_full")])
+    orch = _orchestrator_with(spawn)
+    orch.set_narrator_session_id("session-warm")
+
+    # Force build_narrator_prompt to fail on the rebuild path. The first
+    # call (the failed initial attempt) builds normally; we monkeypatch to
+    # raise on subsequent calls only. Use a counter via closure.
+    original_build = orch.build_narrator_prompt
+    state = {"calls": 0}
+
+    async def failing_build(*args: Any, **kwargs: Any):
+        state["calls"] += 1
+        if state["calls"] >= 2:
+            raise RuntimeError("simulated PromptRegistry composition error")
+        return await original_build(*args, **kwargs)
+
+    orch.build_narrator_prompt = failing_build  # type: ignore[method-assign]
+
+    result = await orch.run_narration_turn(
+        "look around",
+        TurnContext(character_name="Kael", current_location="The Throat"),
+    )
+
+    assert result.is_degraded
+    assert "The Throat" in result.narration
+    assert "holds its breath" in result.narration
+
+    span_names = [s.name for s in otel_capture.get_finished_spans()]
+    assert "narrator.unrecoverable" in span_names, (
+        f"Build-side failure during recovery must emit "
+        f"narrator.unrecoverable; saw {span_names}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_double_failure_emits_unrecoverable_and_stalls(otel_capture):
     """ADR-066 §8 — if recovery itself fails, emit narrator.unrecoverable + stall."""
     spawn = _make_scripted_spawn(

@@ -992,15 +992,20 @@ class Orchestrator:
         rebuild_header = self._compose_rebuild_header()
         recap_chars = len(rebuild_header) if rebuild_header else 0
 
-        rebuild_prompt_text, _registry = await self.build_narrator_prompt(
-            action,
-            context,
-            tier=NarratorPromptTier.Full,
-            rebuild_header=rebuild_header,
-        )
-
+        # Both build_narrator_prompt and send_with_session must run inside
+        # the guard — a failure in either reaches the caller as the same
+        # "uncaught exception in narrator pipeline" bug class this story
+        # is fixing. rebuild_prompt_text is seeded so the stall response
+        # has a non-None prompt_text even on a build-side failure.
+        rebuild_prompt_text: str = original_prompt_text
         rebuild_start = time.monotonic()
         try:
+            rebuild_prompt_text, _registry = await self.build_narrator_prompt(
+                action,
+                context,
+                tier=NarratorPromptTier.Full,
+                rebuild_header=rebuild_header,
+            )
             # Recovery turn establishes a fresh session. Send the entire
             # composed prompt as the user message so the [SESSION
             # CONTINUATION] frame anchors the turn the model is responding
