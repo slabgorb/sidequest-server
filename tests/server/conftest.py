@@ -260,6 +260,20 @@ def _fixture_pack_search_paths(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_daemon_state_mirror():
+    """Autouse guard (story 45-31): reset the process-wide daemon state
+    mirror between tests so a force_unresponsive_for_test() call in one
+    test does not leak its UNRESPONSIVE state into the next test's
+    dispatch path. The mirror is a builtins-pinned singleton, so
+    ordinary fixtures cannot scope it without explicit clearing."""
+    from sidequest.daemon_client.state_mirror import get_mirror
+
+    get_mirror().clear_for_test()
+    yield
+    get_mirror().clear_for_test()
+
+
+@pytest.fixture(autouse=True)
 def _default_archetype_hints(monkeypatch):
     """Autouse guard: defeat the chargen archetype gate (Story 45-6) for
     every server test that drives chargen confirmation without walking

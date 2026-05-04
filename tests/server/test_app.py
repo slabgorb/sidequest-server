@@ -10,6 +10,8 @@ start without any code changes.
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
 from sidequest.server.app import create_app
 
 
@@ -109,3 +111,33 @@ def test_validator_starts_with_app() -> None:
         assert validator.is_running()
     # On exit, the TestClient's shutdown lifespan triggers shutdown.
     assert not validator.is_running()
+
+
+def test_heartbeat_listener_starts_with_app() -> None:
+    """Story 45-31 wiring guard (review M6): create_app() registers a
+    startup hook that boots ``DaemonClient.heartbeat_listener`` as a
+    background task on ``app.state.heartbeat_listener_task``. Without
+    this wiring the daemon-state mirror is never populated, the
+    dispatcher's UNRESPONSIVE branch is unreachable, and the Felix
+    anti-13-minute-silence contract never engages.
+
+    Verifies (a) the task exists on app.state after startup, (b) it's
+    actually running (not done immediately), (c) the shutdown hook
+    cancels it cleanly."""
+    app = create_app()
+    with TestClient(app):
+        task = getattr(app.state, "heartbeat_listener_task", None)
+        assert task is not None, (
+            "app.state.heartbeat_listener_task missing after startup — "
+            "the heartbeat_listener wiring in app.py did not run"
+        )
+        assert not task.done(), (
+            "heartbeat_listener_task finished immediately after startup — "
+            "the listener body must be a long-running loop, not a "
+            "single-shot coroutine"
+        )
+    # On TestClient exit, the shutdown hook runs — task must be cancelled.
+    assert task.done(), (
+        "heartbeat_listener_task still alive after app shutdown — "
+        "_stop_heartbeat_listener did not cancel it"
+    )

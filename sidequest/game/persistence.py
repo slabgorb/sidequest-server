@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS scrapbook_entries (
     narrative_excerpt TEXT NOT NULL,
     world_facts TEXT NOT NULL DEFAULT '[]',
     npcs_present TEXT NOT NULL DEFAULT '[]',
-    -- Story 45-30: render trigger policy outcome.
-    -- 'rendered' | 'skipped_policy' | 'failed'.
+    -- Unified render outcome (Story 45-30 + 45-31):
+    -- 'rendered' | 'skipped_policy' | 'failed' | 'unavailable'.
     render_status TEXT NOT NULL DEFAULT 'rendered',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -273,7 +273,28 @@ class SqliteStore:
 
     def _init_schema(self) -> None:
         self._conn.executescript(SCHEMA_SQL)
+        self._apply_migrations()
         self._conn.commit()
+
+    def _apply_migrations(self) -> None:
+        """Idempotent column adds for tables that pre-existed before a
+        new field was introduced. ``CREATE TABLE IF NOT EXISTS`` is
+        a no-op on an existing table, so older DBs miss columns added
+        in the schema literal. SQLite has no ``ADD COLUMN IF NOT EXISTS``
+        prior to 3.35, but ``ALTER TABLE ... ADD COLUMN`` raises a
+        catchable ``OperationalError`` on a duplicate column — we
+        treat that as the success case.
+        """
+        # Story 45-31: scrapbook_entries.render_status — degradation
+        # marker for the unavailable-fallback path. Older DBs created
+        # before this column existed need it added.
+        try:
+            self._conn.execute(
+                "ALTER TABLE scrapbook_entries ADD COLUMN render_status TEXT"
+            )
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
     def initialize(self) -> None:
         """Public alias for _init_schema — re-runs schema creation (idempotent)."""
