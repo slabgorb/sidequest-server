@@ -7,8 +7,6 @@ plain floats.
 
 from __future__ import annotations
 
-import math
-
 
 def chord_angular_distance_deg(phase_a_deg: float, phase_b_deg: float) -> float:
     """Short-arc angular distance between two phase angles, in degrees.

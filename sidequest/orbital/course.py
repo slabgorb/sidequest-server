@@ -8,11 +8,15 @@ import from here; nothing imports those upward.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
 from sidequest.orbital.course_geometry import chord_angular_distance_deg
 from sidequest.orbital.models import BodyDef, OrbitsConfig
+
+if TYPE_CHECKING:
+    from sidequest.orbital.render import Scope
 
 # Calibration constants — tuned so Far Landing → Tethys Watch ≈ 12h,
 # Far Landing → The Gate ≈ 90h. See cost-model section of the design.
@@ -222,7 +226,7 @@ def format_courses_block(rows: dict[str, CourseRow]) -> str:
     return "\n".join(lines)
 
 
-def _bodies_in_scope(orbits: "OrbitsConfig", scope: "Scope") -> set[str]:
+def _bodies_in_scope(orbits: OrbitsConfig, scope: Scope) -> set[str]:
     """Body ids visible in the current OrbitalIntent scope.
 
     System-root scope: the system primary body PLUS all of its direct

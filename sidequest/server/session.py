@@ -118,11 +118,11 @@ class Session:
         survives subsequent evictions. This keeps a body the player
         keeps referencing in scope across many turns.
         """
+        import contextlib
+
         if body_id in self._recent_body_mentions:
-            try:
+            with contextlib.suppress(ValueError):
                 self._recent_body_mentions.remove(body_id)
-            except ValueError:
-                pass
         self._recent_body_mentions.append(body_id)
 
     @property

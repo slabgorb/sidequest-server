@@ -226,10 +226,18 @@ def main(argv: list[str] | None = None) -> int:
     all_entries: list[CorpusEntry] = []
     for pack_dir in pack_dirs:
         # Only audit directories that look like packs — must have at
-        # least a cultures.yaml (no cultures = no Markov corpora to
-        # audit). Skips stray files like README.md without flagging
-        # them.
-        if not (pack_dir / "cultures.yaml").is_file():
+        # least one cultures.yaml at genre tier OR at a world tier
+        # (worlds/<world>/cultures.yaml). Layered-content packs may
+        # author cultures only at the world tier (e.g. workshopping
+        # space_opera has aureate_span world cultures but no genre-
+        # tier cultures.yaml). Skips stray files and corpus-only dirs
+        # without flagging them.
+        has_genre_cultures = (pack_dir / "cultures.yaml").is_file()
+        worlds_dir = pack_dir / "worlds"
+        has_world_cultures = worlds_dir.is_dir() and any(
+            (w / "cultures.yaml").is_file() for w in worlds_dir.iterdir() if w.is_dir()
+        )
+        if not (has_genre_cultures or has_world_cultures):
             continue
         all_entries.extend(_audit_pack(pack_dir))
 

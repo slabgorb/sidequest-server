@@ -41,7 +41,7 @@ async def test_live_turn_does_not_invoke_local_dm(
     monkeypatch.setattr(LocalDM, "decompose", _async_explode)
 
     # Fake narrator so the test doesn't stall on a real Opus subprocess.
-    async def fake_run_narration_turn(action, context):
+    async def fake_run_narration_turn(action, context, *, room=None):
         return _make_minimal_narration_turn_result(narration="ok")
 
     with patch.object(
