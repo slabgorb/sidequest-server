@@ -35,7 +35,7 @@ FLAT_ONLY_SPANS.update(
         SPAN_TURN_SYSTEM_TICK_TROPES,
         SPAN_TURN_SYSTEM_TICK_BEAT_CONTEXT,
         SPAN_TURN_MEDIA,
-        SPAN_TURN_TROPES,
+        # SPAN_TURN_TROPES moved to SPAN_ROUTES below (Story 45-27).
         SPAN_TURN_PHASE_TRANSITION,
         SPAN_TURN_SLASH_COMMAND,
         SPAN_TURN_PREPROCESS_LLM,
@@ -43,6 +43,27 @@ FLAT_ONLY_SPANS.update(
         SPAN_TURN_PREPROCESS_WISH_CHECK,
         SPAN_TURN_ASSEMBLE,
     }
+)
+
+
+# Story 45-27 — per-turn aggregate carrying the three GM-panel-named
+# metrics (active_trope_count, progression_max, progression_avg) plus
+# diagnostic queued_count and cooldown_active. Fires every turn,
+# including silent ones (active_trope_count=0) — silence on the wire
+# would look identical to the engine never running. Routed under
+# component="tropes" so the panel groups it with the per-trope spans.
+SPAN_ROUTES[SPAN_TURN_TROPES] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "active_trope_count": (span.attributes or {}).get("active_trope_count", 0),
+        "progression_max": (span.attributes or {}).get("progression_max", 0.0),
+        "progression_avg": (span.attributes or {}).get("progression_avg", 0.0),
+        "queued_count": (span.attributes or {}).get("queued_count", 0),
+        "cooldown_active": (span.attributes or {}).get("cooldown_active", False),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
 )
 
 # ---------------------------------------------------------------------------

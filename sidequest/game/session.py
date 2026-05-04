@@ -299,7 +299,12 @@ class WorldStatePatch(BaseModel):
 class TropeState(BaseModel):
     """Active trope state (minimal, for JSON round-tripping).
 
-    P2-deferred full port.
+    Story 45-27 adds ``fire_cooldown_until`` and ``last_fired_turn``
+    for the cooldown predicate. Cooldown is observed globally
+    (`max(t.fire_cooldown_until for t in active_tropes) > now_turn`),
+    so per-trope storage is sufficient and round-trips through
+    save/reload without a sidecar dict. ``extra="ignore"`` keeps old
+    saves loadable when the new fields are absent.
     """
 
     model_config = {"extra": "ignore"}
@@ -308,6 +313,8 @@ class TropeState(BaseModel):
     status: str = "dormant"
     progress: float = 0.0
     beats_fired: int = 0
+    fire_cooldown_until: int | None = None
+    last_fired_turn: int | None = None
 
 
 class GenieWish(BaseModel):

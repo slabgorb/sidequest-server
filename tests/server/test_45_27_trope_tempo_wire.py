@@ -187,6 +187,13 @@ class TestDispatchSeamCapBlocks:
 class TestDispatchSeamCooldown:
     """Cooldown is multi-turn — proving it requires more than one turn
     through the dispatch seam.
+
+    Trope ids match the test-fixture pack
+    (``tests/fixtures/packs/test_genre/tropes.yaml`` — frozen subset of
+    mutant_wasteland; the conftest autouse fixture redirects every
+    genre slug to it). ``ruin_fever`` (rate=0.0125, threshold ladder
+    starting at 0.2) and ``mutation_tide`` (rate=0.008) are the
+    canonical pair for these tests.
     """
 
     @pytest.mark.asyncio
@@ -198,35 +205,39 @@ class TestDispatchSeamCooldown:
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
         sd.orchestrator.run_narration_turn = _quiet_orchestrator()
 
-        # Keeper poised to cross 0.25 threshold on turn 1 → fires →
-        # cooldown starts. extraction_panic is a dormant candidate;
-        # cooldown blocks for FIRE_COOLDOWN_TURNS turns.
-        _seed_trope(sd, "the_keeper_stirs", "progressing", 0.21)
-        _seed_trope(sd, "extraction_panic", "dormant", 0.30)
+        # ruin_fever seeded at threshold (0.20) with beats_fired=0 →
+        # tick advances and fires beat 1 retroactively → cooldown
+        # starts. mutation_tide is a dormant candidate; cooldown blocks
+        # it for FIRE_COOLDOWN_TURNS turns past the fire turn.
+        _seed_trope(sd, "ruin_fever", "progressing", 0.20)
+        _seed_trope(sd, "mutation_tide", "dormant", 0.30)
 
-        # Turn 1 — keeper fires.
+        # Turn 1 — ruin_fever fires.
         turn_context_1 = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I push deeper.", turn_context_1)
 
-        panic_after_1 = next(
-            t for t in sd.snapshot.active_tropes if t.id == "extraction_panic"
+        tide_after_1 = next(
+            t for t in sd.snapshot.active_tropes if t.id == "mutation_tide"
         )
-        assert panic_after_1.status == "dormant", (
+        assert tide_after_1.status == "dormant", (
             "Cooldown failed on the same turn the beat fired; "
-            f"panic.status={panic_after_1.status!r}"
+            f"mutation_tide.status={tide_after_1.status!r}"
         )
 
-        # Run further turns within the cooldown window.
-        for _ in range(FIRE_COOLDOWN_TURNS):
+        # Run further turns within the cooldown window. The window
+        # extends through fire_turn + FIRE_COOLDOWN_TURNS (inclusive),
+        # so iterations 1..FIRE_COOLDOWN_TURNS must all see dormant.
+        for offset in range(1, FIRE_COOLDOWN_TURNS + 1):
             sd.orchestrator.run_narration_turn = _quiet_orchestrator()
             ctx = _build_turn_context_for_test(sd)
             await handler._execute_narration_turn(sd, "I wait.", ctx)
-            panic = next(
-                t for t in sd.snapshot.active_tropes if t.id == "extraction_panic"
+            tide = next(
+                t for t in sd.snapshot.active_tropes if t.id == "mutation_tide"
             )
-            assert panic.status == "dormant", (
-                "Cooldown window violated mid-turn; "
-                f"panic.status={panic.status!r}"
+            assert tide.status == "dormant", (
+                f"Cooldown window violated at offset={offset}; "
+                f"mutation_tide.status={tide.status!r} "
+                f"(FIRE_COOLDOWN_TURNS={FIRE_COOLDOWN_TURNS})"
             )
 
     @pytest.mark.asyncio
@@ -236,16 +247,16 @@ class TestDispatchSeamCooldown:
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
         sd.orchestrator.run_narration_turn = _quiet_orchestrator()
 
-        _seed_trope(sd, "the_keeper_stirs", "progressing", 0.21)
-        _seed_trope(sd, "extraction_panic", "dormant", 0.30)
+        _seed_trope(sd, "ruin_fever", "progressing", 0.20)
+        _seed_trope(sd, "mutation_tide", "dormant", 0.30)
 
-        # Turn 1 — keeper fires, cooldown begins.
+        # Turn 1 — ruin_fever fires, cooldown begins.
         ctx1 = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I push deeper.", ctx1)
 
-        # Turn 2 — extraction_panic is candidate, cooldown blocks. We
-        # only assert on this turn's spans so cap_blocked from turn 1
-        # doesn't muddle the count.
+        # Turn 2 — mutation_tide is candidate, cooldown blocks. We
+        # only assert on this turn's spans so spans from turn 1 don't
+        # muddle the count.
         otel_capture.clear()
         sd.orchestrator.run_narration_turn = _quiet_orchestrator()
         ctx2 = _build_turn_context_for_test(sd)
@@ -576,21 +587,25 @@ class TestTickIsCalledOncePerTurn:
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
         sd.orchestrator.run_narration_turn = _quiet_orchestrator()
 
-        # Use a content trope whose YAML rate is known
-        # (the_keeper_stirs: rate_per_turn=0.02 in the genre pack).
-        _seed_trope(sd, "the_keeper_stirs", "progressing", 0.10)
+        # ruin_fever rate=0.0125 in the test fixture pack
+        # (tests/fixtures/packs/test_genre/tropes.yaml). Seeded at
+        # progress=0.10 so a single tick advances it without crossing
+        # any beat threshold (0.20 is the first one).
+        _seed_trope(sd, "ruin_fever", "progressing", 0.10)
 
         ctx = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "Continue.", ctx)
 
-        keeper = next(
-            t for t in sd.snapshot.active_tropes if t.id == "the_keeper_stirs"
+        ruin = next(
+            t for t in sd.snapshot.active_tropes if t.id == "ruin_fever"
         )
-        # the_keeper_stirs rate is 0.02 in the pack; multiplied by the
-        # tuning brake it is 0.02 * PROGRESSION_RATE_MULTIPLIER.
-        expected = 0.10 + 0.02 * PROGRESSION_RATE_MULTIPLIER
-        assert keeper.progress == pytest.approx(expected, abs=1e-6), (
-            f"progress={keeper.progress}, expected≈{expected}. Either "
+        # rate_per_turn (0.0125) * PROGRESSION_RATE_MULTIPLIER, plus
+        # the seed value 0.10. Computing the formula in-test rather
+        # than hardcoding the result so future tuning of the multiplier
+        # does not silently invalidate this assertion.
+        expected = 0.10 + 0.0125 * PROGRESSION_RATE_MULTIPLIER
+        assert ruin.progress == pytest.approx(expected, abs=1e-6), (
+            f"progress={ruin.progress}, expected≈{expected}. Either "
             "the tick fired more than once (double-advance) or did not "
             "fire at all (no advance)."
         )

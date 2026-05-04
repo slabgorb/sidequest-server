@@ -369,6 +369,28 @@ def _build_turn_context(
 
     state_summary_json = json.dumps(state_summary_payload, indent=2)
 
+    # Story 45-27 — trope foreground / background prompt zones.
+    # ``pending_trope_context`` is the Early-zone load-bearing block
+    # (FOREGROUND_K most-active tropes, full beat directives);
+    # ``active_trope_summary`` is the Valley-zone summary (remaining
+    # progressing tropes, one line each). Both default to None when
+    # there are no progressing tropes so the orchestrator's prompt-
+    # section registry skips registration entirely (zero-byte-leak
+    # discipline matching the state_summary pattern at
+    # orchestrator.py:1320).
+    from sidequest.game.trope_tick import (  # noqa: PLC0415
+        render_background_block,
+        render_foreground_block,
+        select_foreground_tropes,
+    )
+
+    foreground_tropes, background_tropes = select_foreground_tropes(snapshot.active_tropes)
+    pack_tropes_by_id = {td.id: td for td in (sd.genre_pack.tropes or []) if td.id is not None}
+    foreground_block = render_foreground_block(foreground_tropes, pack_tropes_by_id)
+    background_block = render_background_block(background_tropes, pack_tropes_by_id)
+    pending_trope_context = foreground_block or None
+    active_trope_summary = background_block or None
+
     # Orbital tier fields — populated from Session when the room has one.
     # When room is None (test fixtures, legacy paths) the fields default
     # to None/empty, which causes build_narrator_prompt to skip the
@@ -418,6 +440,8 @@ def _build_turn_context(
         party_body_id=party_body_id,
         recent_body_mentions=recent_body_mentions,
         quest_anchors=quest_anchors,
+        pending_trope_context=pending_trope_context,
+        active_trope_summary=active_trope_summary,
     )
 
 

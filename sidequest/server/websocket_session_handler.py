@@ -731,9 +731,13 @@ class WebSocketSessionHandler:
                     # Legacy/no-slug path — namespace by genre+player so
                     # the diagnostic file remains greppable.
                     room_slug_for_diag = (
-                        f"{self._session_data.genre_slug or 'unknown'}-"
-                        f"{self._session_data.player_id or 'unknown'}"
-                    ).replace("/", "-").replace("\\", "-")
+                        (
+                            f"{self._session_data.genre_slug or 'unknown'}-"
+                            f"{self._session_data.player_id or 'unknown'}"
+                        )
+                        .replace("/", "-")
+                        .replace("\\", "-")
+                    )
 
                 _mirror = get_mirror()
                 snapshot_payload = {
@@ -751,17 +755,13 @@ class WebSocketSessionHandler:
                     ),
                     "unresponsive_windows": [
                         {
-                            "count": int(
-                                self._session_data.render_unresponsive_window_count
-                            ),
+                            "count": int(self._session_data.render_unresponsive_window_count),
                         }
-                    ] if self._session_data.render_unresponsive_window_count else [],
-                    "last_successful_render_id": (
-                        self._session_data.last_successful_render_id
-                    ),
-                    "last_successful_render_ts": (
-                        self._session_data.last_successful_render_ts_iso
-                    ),
+                    ]
+                    if self._session_data.render_unresponsive_window_count
+                    else [],
+                    "last_successful_render_id": (self._session_data.last_successful_render_id),
+                    "last_successful_render_ts": (self._session_data.last_successful_render_ts_iso),
                     "last_heartbeat_ts": _mirror.last_heartbeat_ts(),
                 }
                 write_session_diagnostic(
@@ -770,9 +770,7 @@ class WebSocketSessionHandler:
                     snapshot=snapshot_payload,
                 )
             except Exception as _diag_exc:  # noqa: BLE001 — diagnostic must never crash teardown
-                logger.warning(
-                    "render.session_diagnostic_failed err=%s", _diag_exc
-                )
+                logger.warning("render.session_diagnostic_failed err=%s", _diag_exc)
             finally:
                 # ADR-037 Python port: when the session is bound to a room,
                 # the room owns the SqliteStore lifecycle — every WS session
@@ -2223,6 +2221,23 @@ class WebSocketSessionHandler:
                                 ):
                                     pass
 
+                    # Story 45-27: trope progression tick. Advances passive
+                    # progression, fires staggered beats, gates new
+                    # activations through cap + cooldown. Wired here so
+                    # ``now_turn`` (interaction) is the post-bump value
+                    # and so any engine-driven resolution flows into the
+                    # 45-20 handshake's diff below — the handshake's
+                    # baseline was captured at the top of this method
+                    # before any apply step, so a fresh resolved status
+                    # set by the tick is visible to the diff.
+                    from sidequest.game.trope_tick import tick_tropes  # noqa: PLC0415
+
+                    tick_tropes(
+                        snapshot,
+                        sd.genre_pack,
+                        now_turn=snapshot.turn_manager.interaction,
+                    )
+
                     # Story 45-20: trope-resolution handshake. Diffs the
                     # baseline captured at the top of this method against
                     # the post-recompute snapshot to detect any trope that
@@ -2432,8 +2447,7 @@ class WebSocketSessionHandler:
 
                     _hb_mirror = _get_mirror()
                     sd.render_unavailable_pending = (
-                        _hb_mirror.last_heartbeat_ts() is not None
-                        and _hb_mirror.is_unresponsive()
+                        _hb_mirror.last_heartbeat_ts() is not None and _hb_mirror.is_unresponsive()
                     )
 
                     # Story 45-30: classify the render trigger reason once
@@ -4169,8 +4183,14 @@ class WebSocketSessionHandler:
         backpressure gate sees an accurate concurrent depth."""
         try:
             await self._run_render_inner(
-                client, params, render_id, room_slug, player_id,
-                legacy_queue, dispatch_turn_id, sd,
+                client,
+                params,
+                render_id,
+                room_slug,
+                player_id,
+                legacy_queue,
+                dispatch_turn_id,
+                sd,
             )
         finally:
             if sd is not None:
