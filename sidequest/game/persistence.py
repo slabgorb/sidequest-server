@@ -8,6 +8,9 @@ ADR-023: Auto-save after every turn, atomic writes via SQLite transactions.
 
 from __future__ import annotations
 
+import json
+import logging
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +23,8 @@ from sidequest.game.migrations import migrate_legacy_snapshot
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from sidequest.telemetry.spans import SPAN_SESSION_SLOT_REINITIALIZED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+logger = logging.getLogger(__name__)
 
 # Per-slot tables that ``init_session()`` clears on reinit. ``games``
 # (slug-keyed) and ``scenario_archive`` (session_id-keyed) are global
@@ -381,8 +386,6 @@ class SqliteStore:
         if row is None:
             return None
 
-        import json
-
         try:
             raw = json.loads(row[0])
         except json.JSONDecodeError as exc:
@@ -393,6 +396,24 @@ class SqliteStore:
                 ),
             ) from exc
         migrated = migrate_legacy_snapshot(raw)
+
+        # Architect amendment 2026-05-04: sibling-file safety net.
+        # If migration rewrote anything and we have a real on-disk save,
+        # copy the .db to <save>.db.canonicalize.bak ONCE. The .bak is
+        # never reaped — durable retention per Keith's playstyle.
+        if migrated != raw and self._path is not None:
+            bak_path = self._path.with_suffix(self._path.suffix + ".canonicalize.bak")
+            if not bak_path.exists():
+                try:
+                    shutil.copy2(self._path, bak_path)
+                except OSError as bak_exc:
+                    # Defense-in-depth, not primary gate: don't block load.
+                    logger.warning(
+                        "snapshot.canonicalize backup failed for %s: %s",
+                        self._path,
+                        bak_exc,
+                    )
+
         try:
             snapshot = GameSnapshot.model_validate(migrated)
         except ValidationError as exc:
