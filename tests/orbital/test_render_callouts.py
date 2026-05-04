@@ -27,7 +27,6 @@ def world_callout_strategy():
     return load_orbital_content(FIXTURES / "world_callout_strategy")
 
 
-@pytest.mark.xfail(reason="awaits Task 20 dispatch")
 class TestMoonBandForcedCalloutSurface:
     def test_moon_band_children_with_labels_surface_to_strategy(
         self, world_callout_strategy
@@ -47,3 +46,67 @@ class TestMoonBandForcedCalloutSurface:
         assert "<g class=\"moon-band\"" in svg or "class=\"moon-band\"" in svg
         assert "HABITAT X-1" in svg
         assert "MOON Z-1" in svg
+
+
+class TestStrategyDispatch:
+    """End-to-end via render_chart against world_callout_strategy fixture."""
+
+    def test_outer_world_renders_textpath(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "<textPath" in svg
+        assert "OUTER WORLD" in svg
+
+    @pytest.mark.xfail(reason="Task 23 implements callout SVG emission")
+    def test_spread_alpha_renders_callout_via_explicit(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "SPREAD ALPHA" in svg
+        assert "habitat · 3.0 AU" in svg
+
+    @pytest.mark.xfail(reason="Task 23 implements callout SVG emission")
+    def test_companion_children_grouped_block(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "COMPANION DWARF SYSTEM" in svg
+        assert "HABITAT X-1" in svg
+        assert "HABITAT X-2" in svg
+        assert "HABITAT X-3" in svg
+
+    def test_lonely_companion_singleton_callout(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "HABITAT Y-1" in svg
+        assert "LONELY COMPANION SYSTEM" not in svg
+
+    def test_habitat_with_moons_grouping(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "MOON Z-1" in svg
+        assert "MOON Z-2" in svg
+        assert "HABITAT WITH MOONS SYSTEM" not in svg
