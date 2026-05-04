@@ -1089,8 +1089,58 @@ def _emit_textpath_label(
 def _emit_radial_label(
     d: LabelDecision, p: _BodyPlacement, viewport: _Viewport
 ) -> svgwrite.base.BaseElement:
-    """PLACEHOLDER stub — Task 22 implements."""
-    return svgwrite.text.Text(d.text)
+    """Emit a radial-out body label at p.anchor_x/y.
+
+    Mirrors `_label_text` styling but driven by the strategy decision so
+    the dispatch loop is the single emission path.
+    """
+    register = d.register
+    if register == "prose":
+        font_family = palette.LABEL_PROSE_FONT
+        font_size: int = palette.LABEL_PROSE_FONT_SIZE
+        font_weight: int | None = None
+        font_style: str | None = "italic"
+        letter_spacing: int | None = None
+        opacity: float | None = palette.LABEL_PROSE_OPACITY
+    elif register == "chalk":
+        font_family = palette.LABEL_CHALK_FONT
+        font_size = 10
+        font_weight = palette.LABEL_CHALK_WEIGHT
+        font_style = None
+        letter_spacing = palette.LABEL_CHALK_LETTER_SPACING
+        opacity = None
+    else:
+        font_family = palette.LABEL_ENGRAVED_FONT
+        font_size = 10
+        font_weight = palette.LABEL_ENGRAVED_WEIGHT
+        font_style = None
+        letter_spacing = palette.LABEL_ENGRAVED_LETTER_SPACING
+        opacity = None
+
+    fill = p.body.label_color or palette.BRASS
+    elem = svgwrite.text.Text(
+        d.text,
+        x=[p.anchor_x],
+        y=[p.anchor_y],
+        fill=fill,
+        font_family=font_family,
+        font_size=font_size,
+        text_anchor=p.text_anchor,
+    )
+    elem["stroke"] = palette.BG
+    elem["stroke-width"] = 3
+    elem["stroke-linejoin"] = "round"
+    elem["paint-order"] = "stroke"
+    if font_weight is not None:
+        elem["font-weight"] = font_weight
+    if font_style is not None:
+        elem["font-style"] = font_style
+    if letter_spacing is not None:
+        elem["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        elem["opacity"] = opacity
+    elem["class"] = "radial-label"
+    return elem
 
 
 def _emit_callout_block(

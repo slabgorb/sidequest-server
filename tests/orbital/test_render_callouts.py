@@ -126,3 +126,23 @@ class TestEmitTextpathLabel:
         assert 'href="#curve_orbit_outer_world"' in svg or \
                'xlink:href="#curve_orbit_outer_world"' in svg
         assert "— OUTER WORLD —" in svg
+
+
+class TestEmitRadialLabel:
+    def test_radial_label_at_anchor_position(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "SPREAD BETA" in svg
+        # Radial-label class is present and the element carries x= / y= coords
+        # (svgwrite orders attrs alphabetically, so x= isn't necessarily first).
+        assert "radial-label" in svg
+        # The text element rendering "SPREAD BETA" should have positional attrs.
+        import re
+        m = re.search(r'<text [^>]*radial-label[^>]*>SPREAD BETA</text>', svg)
+        assert m is not None, "expected SPREAD BETA inside a radial-label <text>"
+        assert ' x="' in m.group(0) and ' y="' in m.group(0)
