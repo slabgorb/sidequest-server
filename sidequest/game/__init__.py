@@ -185,5 +185,26 @@ __all__ = [
 # S4 deprecation alias — drop in the release after this one. External
 # saves and pre-cleanup test fixtures still reference EncounterTag at this
 # import path; keeping the alias one release prevents a hard cutover.
-EncounterTag = NpcEncounterLogTag
+#
+# Reviewer finding 2026-05-04 (LOW): the bare alias had no removal timer
+# and no warning surface. Module ``__getattr__`` lets us emit a
+# DeprecationWarning on every legacy import while still resolving to
+# ``NpcEncounterLogTag`` — the deprecation is now visible to callers and
+# to the test suite (``-W error::DeprecationWarning`` in CI would fail
+# the moment a stale import sneaks in). Removal is tracked as a Wave 2
+# chore story.
 __all__.append("EncounterTag")
+
+
+def __getattr__(name: str):  # pragma: no cover - thin shim
+    if name == "EncounterTag":
+        import warnings
+
+        warnings.warn(
+            "sidequest.game.EncounterTag was renamed to NpcEncounterLogTag in "
+            "story 45-43 (Wave 1); the legacy name will be removed in Wave 2.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return NpcEncounterLogTag
+    raise AttributeError(f"module 'sidequest.game' has no attribute {name!r}")

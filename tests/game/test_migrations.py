@@ -127,6 +127,59 @@ def test_s1_empty_world_confrontations_still_strips_field() -> None:
     assert "world_confrontations" not in migrated
 
 
+# ---------------------------------------------------------------------------
+# OTEL extractor honesty (Reviewer finding 2026-05-04 — MEDIUM)
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_extract_only_forwards_keys_from_active_migrations() -> None:
+    """The lie-detector must not invent zero/false defaults for migrations
+    that never ran. Only keys produced by an actual sub-function may appear
+    in the routed payload — otherwise Sebastien sees ``s4_encounter_tag_renamed:
+    false`` on every load even though there is no S4 migration.
+
+    Wave 1 has exactly one per-field migration: S1 ``world_confrontations``.
+    S4 (Python class rename) and S5 (``Field(exclude=True)``) leave no
+    on-disk trace and emit nothing — they MUST NOT appear in the payload.
+    """
+    from types import SimpleNamespace
+
+    from sidequest.telemetry.spans._core import SPAN_ROUTES
+
+    route = SPAN_ROUTES["snapshot.canonicalize"]
+
+    # Case 1: S1 fired — only S1 attrs and the constant tag/op show.
+    span_s1 = SimpleNamespace(
+        name="snapshot.canonicalize",
+        attributes={
+            "s1_world_confrontations_merged": 3,
+            "s1_world_confrontations_dropped_no_target": 0,
+        },
+    )
+    payload_s1 = route.extract(span_s1)
+    assert payload_s1 == {
+        "field": "snapshot",
+        "op": "canonicalize",
+        "s1_world_confrontations_merged": 3,
+        "s1_world_confrontations_dropped_no_target": 0,
+    }
+    # No invented S4/S5 keys.
+    assert "s4_encounter_tag_renamed" not in payload_s1
+    assert "s5_pending_queues_dropped" not in payload_s1
+
+    # Case 2: no migration attrs on the span (empty dict). The extractor
+    # must NOT manufacture s1/s4/s5 zero defaults — only the constant
+    # ``field``/``op`` tag is forwarded.
+    span_empty = SimpleNamespace(name="snapshot.canonicalize", attributes={})
+    payload_empty = route.extract(span_empty)
+    assert payload_empty == {"field": "snapshot", "op": "canonicalize"}
+
+    # Case 3: attributes=None (defensive — opentelemetry can hand us None).
+    span_none = SimpleNamespace(name="snapshot.canonicalize", attributes=None)
+    payload_none = route.extract(span_none)
+    assert payload_none == {"field": "snapshot", "op": "canonicalize"}
+
+
 def test_s1_no_magic_state_creates_one_when_world_confrontations_present() -> None:
     legacy = {
         "genre_slug": "g",

@@ -91,18 +91,43 @@ def test_legacy_load_creates_backup_once(tmp_path: Path) -> None:
 
 
 def test_backup_is_idempotent(tmp_path: Path) -> None:
-    """A second load on a save that already has a .bak does not overwrite it."""
+    """A legacy load whose ``.bak`` already exists does not overwrite it.
+
+    Reviewer finding 2026-05-04: the previous version of this test seeded a
+    CANONICAL snapshot, so ``migrated == raw`` was true and the entire
+    ``.bak`` code path was skipped — the SENTINEL survival proved nothing
+    about the ``if not bak_path.exists():`` guard. This version seeds a
+    LEGACY snapshot (with ``world_confrontations``), pre-writes SENTINEL
+    bytes to the ``.bak``, and then asserts that loading runs the migration
+    AND preserves the existing backup.
+    """
     db_path = tmp_path / "save.db"
     bak_path = tmp_path / "save.db.canonicalize.bak"
 
-    # Pre-seed the .bak with sentinel content.
-    db_path.write_bytes(b"")  # placeholder to satisfy SqliteStore init
-    store = SqliteStore(db_path)
-    store.save(GameSnapshot(genre_slug="test", world_slug="t"))
+    # Step 1 — seed a legacy-shaped save the same way
+    # ``test_legacy_load_creates_backup_once`` does. Empty list still
+    # triggers the migration via the field-presence gate.
+    legacy = {
+        "genre_slug": "test",
+        "world_slug": "t",
+        "characters": [],
+        "npcs": [],
+        "narrative_log": [],
+        "world_confrontations": [],
+    }
+    _write_raw_save(db_path, legacy)
+
+    # Step 2 — pre-write SENTINEL to the .bak BEFORE the load runs. This
+    # is the case the guard exists to protect: a prior canonicalize already
+    # captured the pre-migration state, so a later load must not clobber it.
     bak_path.write_text("SENTINEL — pre-existing backup")
 
-    # Even if we forced a migration here, the .bak should remain SENTINEL.
-    store2 = SqliteStore(db_path)
-    _ = store2.load()
+    # Step 3 — load. The migration WILL run (legacy field present), so we
+    # are exercising the ``if not bak_path.exists():`` branch under
+    # conditions where the rest of the .bak code path would otherwise fire.
+    store = SqliteStore(db_path)
+    loaded = store.load()
+    assert loaded is not None
 
+    # Step 4 — the guard held. The pre-existing .bak survives byte-for-byte.
     assert bak_path.read_text() == "SENTINEL — pre-existing backup"
