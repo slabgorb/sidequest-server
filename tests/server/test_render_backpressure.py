@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from sidequest.agents.orchestrator import NarrationTurnResult, VisualScene
+from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult, VisualScene
 from sidequest.server.session_handler import (
     WebSocketSessionHandler,
     _SessionData,
@@ -111,6 +111,10 @@ def _make_session_data() -> _SessionData:
         store=MagicMock(),
         genre_pack=MagicMock(),
         orchestrator=MagicMock(),
+        # R2 migration Task 20: production slug-connect always populates
+        # game_slug; tests pre-dating that path get a default so the
+        # render dispatcher's session_id propagation has a value.
+        game_slug="test-backpressure-session",
     )
 
 
@@ -128,6 +132,10 @@ def _make_handler() -> tuple[WebSocketSessionHandler, asyncio.Queue]:
 
 
 def _make_visual_result(seq: int) -> NarrationTurnResult:
+    # Story 45-30 added a render-trigger policy gate that runs before
+    # the backpressure check. Inject a BeatSelection so the result
+    # classifies as BEAT_FIRE — the test exercises the backpressure
+    # path, not 45-30's policy decision.
     return NarrationTurnResult(
         narration=f"turn {seq}",
         visual_scene=VisualScene(
@@ -136,6 +144,9 @@ def _make_visual_result(seq: int) -> NarrationTurnResult:
             mood="neutral",
             tags=[],
         ),
+        beat_selections=[
+            BeatSelection(actor="test", beat_id=f"backpressure_test_{seq}")
+        ],
     )
 
 

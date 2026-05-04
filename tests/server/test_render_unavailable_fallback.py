@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from sidequest.agents.orchestrator import NarrationTurnResult, VisualScene
+from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult, VisualScene
 from sidequest.server.session_handler import (
     WebSocketSessionHandler,
     _SessionData,
@@ -80,6 +80,13 @@ def _make_handler() -> WebSocketSessionHandler:
 
 
 def _make_visual_result() -> NarrationTurnResult:
+    # Story 45-30 added a render-trigger policy gate that runs ahead of
+    # the 45-31 unavailable-fallback branch. A bare NarrationTurnResult
+    # with no structured signals classifies as NONE_POLICY and the
+    # dispatcher returns at the policy gate before reaching the
+    # unavailable check. Inject a BeatSelection so the result classifies
+    # as BEAT_FIRE — the test exercises 45-31's degradation path, not
+    # 45-30's policy decision.
     return NarrationTurnResult(
         narration="The crack yawns open. A pale glow pulses behind it.",
         visual_scene=VisualScene(
@@ -88,6 +95,9 @@ def _make_visual_result() -> NarrationTurnResult:
             mood="ominous",
             tags=["desert", "ruin"],
         ),
+        beat_selections=[
+            BeatSelection(actor="test", beat_id="unavailable_fallback_test")
+        ],
     )
 
 
