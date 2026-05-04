@@ -52,19 +52,18 @@ def test_legacy_load_creates_backup_once(tmp_path: Path) -> None:
     db_path = tmp_path / "save.db"
     bak_path = tmp_path / "save.db.canonicalize.bak"
 
-    # Seed a legacy-shaped snapshot — uses an unknown field that the migration
-    # would strip, OR (better) a real legacy field once Tasks 4/5/6/7 land.
-    # For Task 1.5 itself we use a stub: insert any change that
-    # migrate_legacy_snapshot will rewrite. Since Task 1 is scaffold-only,
-    # this test SKIPS until at least one per-field migration is registered.
+    # Seed a legacy-shaped snapshot with the S1 ``world_confrontations``
+    # field — that's the per-field migration registered in Task 4 that
+    # makes ``migrated != raw`` and triggers the .bak copy. The empty
+    # list still strips the field (covered by
+    # test_s1_empty_world_confrontations_still_strips_field).
     legacy = {
         "genre_slug": "test",
         "world_slug": "t",
         "characters": [],
         "npcs": [],
         "narrative_log": [],
-        # Once S5 lands, the line below makes this concrete:
-        # "pending_magic_auto_fires": [{"...": "..."}],
+        "world_confrontations": [],
     }
     _write_raw_save(db_path, legacy)
 

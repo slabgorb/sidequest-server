@@ -401,12 +401,21 @@ class SqliteStore:
         # If migration rewrote anything and we have a real on-disk save,
         # copy the .db to <save>.db.canonicalize.bak ONCE. The .bak is
         # never reaped — durable retention per Keith's playstyle.
+        #
+        # WAL note: PRAGMA journal_mode=WAL means uncheckpointed writes
+        # live in <save>.db-wal until a checkpoint runs. A naked
+        # ``shutil.copy2`` of the .db alone copies a file that may be
+        # missing the most recent rows. We force a TRUNCATE checkpoint
+        # before the copy so the .bak is a single self-contained file
+        # (matching how Keith would expect to recover from one — no
+        # WAL/SHM siblings to keep track of).
         if migrated != raw and self._path is not None:
             bak_path = self._path.with_suffix(self._path.suffix + ".canonicalize.bak")
             if not bak_path.exists():
                 try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                     shutil.copy2(self._path, bak_path)
-                except OSError as bak_exc:
+                except (OSError, sqlite3.Error) as bak_exc:
                     # Defense-in-depth, not primary gate: don't block load.
                     logger.warning(
                         "snapshot.canonicalize backup failed for %s: %s",

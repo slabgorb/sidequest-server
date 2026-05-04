@@ -6,8 +6,6 @@ external save files and any unmigrated test fixtures keep round-tripping.
 
 from __future__ import annotations
 
-import warnings
-
 
 def test_npc_encounter_log_tag_importable_under_new_name() -> None:
     from sidequest.game.session import NpcEncounterLogTag
