@@ -25,3 +25,25 @@ SNAPSHOTS = Path(__file__).parent / "snapshots"
 def world_callout_strategy():
     """The synthetic fixture exercising every selection rule."""
     return load_orbital_content(FIXTURES / "world_callout_strategy")
+
+
+@pytest.mark.xfail(reason="awaits Task 20 dispatch")
+class TestMoonBandForcedCalloutSurface:
+    def test_moon_band_children_with_labels_surface_to_strategy(
+        self, world_callout_strategy
+    ):
+        # Render at system scope. Companion-children (habitat_x1..x3) and
+        # the habitat-moons (moon_z1, moon_z2) all have labels and should
+        # appear in chart.label_distribution.bodies_callout.
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0,
+            party_at=None,
+        )
+        # Spot-check the callout block is present in SVG output.
+        assert "<g class=\"moon-band\"" in svg or "class=\"moon-band\"" in svg
+        assert "HABITAT X-1" in svg
+        assert "MOON Z-1" in svg

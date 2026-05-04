@@ -1061,8 +1061,10 @@ def _render_moon_band(
     """Render moons of `parent_id` as a moon band at system-scope.
 
     Returns the moon-band group (or None if no visible moons / overflow
-    beyond MOON_BAND_MAX) and a list of placements for downstream label
-    de-collision.
+    beyond MOON_BAND_MAX) and a list of placements for forced-callout
+    strategy candidates (ADR-094 §9 — any moon-band child with a
+    non-empty `label:` is forced into the callout strategy because its
+    sub-pixel render position has no radial space).
     """
     moons: list[tuple[str, BodyDef]] = [
         (bid, b)
@@ -1100,7 +1102,9 @@ def _render_moon_band(
         mx = parent_x + r_px * math.cos(rad)
         my = parent_y - r_px * math.sin(rad)
         g.add(_moon_dot_glyph(body, mx, my, body_id))
-        # Track placement for label de-collision
+        # Forced-callout surfacing: any moon-band child with a non-empty
+        # `label:` becomes a candidate for the strategy pass per ADR-094 §9.
+        # Children without `label:` remain unlabeled (existing behavior).
         bearing = _bearing_from_center(mx, my)
         placements.append(
             _BodyPlacement(
@@ -1268,6 +1272,9 @@ def _render_engraved_layer(
 
     # Phase 3: render direct-child orbits + glyphs (and possibly moon bands)
     moon_band_placements: list[_BodyPlacement] = []
+    # ADR-094: labeled moon-band children are forced into the callout strategy
+    # (sub-pixel render position has no radial space).
+    forced_callout_placements: list[_BodyPlacement] = []
     parents_with_visible_moons: set[str] = {
         p.body_id
         for p in placements
@@ -1348,6 +1355,11 @@ def _render_engraved_layer(
                     if moon_band is not None:
                         wrapper.add(moon_band)
                         moon_band_placements.extend(child_placements)
+                        # ADR-094 §9: surface labeled moon-band children to
+                        # the forced-callout list for the strategy pass.
+                        for cp in child_placements:
+                            if cp.body.label and cp.body.label.strip():
+                                forced_callout_placements.append(cp)
                 g.add(wrapper)
             else:
                 g.add(_body_glyph(body, x=p.body_x, y=p.body_y, body_id=p.body_id))
