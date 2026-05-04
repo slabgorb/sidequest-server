@@ -66,6 +66,33 @@ def init_tracer(service_name: str = "sidequest-server") -> None:
         )
         logger.info("otel.otlp_exporter_registered endpoint=%s", otlp_endpoint)
 
+        # The OTLP exporter only catches spans started via
+        # ``tracer().start_as_current_span(...)``. Watcher-published
+        # semantic events (NPC reinventions, render gaps, confrontation
+        # triggers, ...) reach the exporter only when the
+        # publish_event→span bridge is also enabled. Without it the
+        # operator gets a half-wired Jaeger trail that hides exactly
+        # the events the GM panel exists to surface — exactly the
+        # silent-fallback failure CLAUDE.md's OTEL Observability
+        # Principle was written to prevent. Warn loudly at startup.
+        if os.environ.get("SIDEQUEST_WATCHER_AS_SPANS") != "1":
+            logger.warning(
+                "otel.watcher_bridge_disabled — OTLP exporter is on but "
+                "SIDEQUEST_WATCHER_AS_SPANS is unset; semantic watcher events "
+                "(publish_event calls) will NOT reach Jaeger. "
+                "Set SIDEQUEST_WATCHER_AS_SPANS=1 for the full semantic stream."
+            )
+    else:
+        # Loud-fail when no OTLP endpoint is configured. Without this
+        # the operator can't distinguish "nothing interesting happened"
+        # from "the wire was never plugged in" by reading the server
+        # log — and that ambiguity is the bug Story 45-41 fixes.
+        logger.warning(
+            "otel.otlp_dormant — SIDEQUEST_OTLP_ENDPOINT is unset; no spans "
+            "will leave this process. Set SIDEQUEST_OTLP_ENDPOINT=host:port "
+            "(e.g. localhost:4317) to flow traces to a collector like Jaeger."
+        )
+
     trace.set_tracer_provider(provider)
 
     _initialized = True
