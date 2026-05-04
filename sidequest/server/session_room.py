@@ -510,8 +510,8 @@ class SessionRoom:
         phantom-peer pressure). The raw `seated_player_count()` is not
         suitable because it counts ABANDONED slots — historical
         chargen-failure orphans that shouldn't inflate the lobby count.
-        Sibling to `playing_player_count()` which filters in the other
-        direction (only PLAYING).
+        Sibling to `playing_player_count()`, which requires `state ==
+        PLAYING`; a CHARGEN seat is counted here but not there.
         """
         with self._lock:
             return sum(1 for seat in self._seated.values() if seat.state != LobbyState.ABANDONED)
