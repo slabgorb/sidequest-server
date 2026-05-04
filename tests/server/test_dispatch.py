@@ -79,8 +79,10 @@ def test_apply_lore_established_no_duplicates():
     assert "The crystal glows at night." in snapshot.lore_established
 
 
-def test_apply_npc_registry_new_npc():
-    """New NPCs from npcs_present are added to the NPC registry."""
+def test_apply_npc_pool_new_npc():
+    """Wave 2A (story 45-47): new NPCs from npcs_present are added to
+    ``snapshot.npc_pool`` with ``drawn_from='narrator_invented'`` (replaces
+    the pre-Wave-2A npc_registry write path)."""
     from sidequest.agents.orchestrator import NpcMention
 
     snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Tavern")
@@ -91,32 +93,38 @@ def test_apply_npc_registry_new_npc():
 
     _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
-    assert len(snapshot.npc_registry) == 1
-    assert snapshot.npc_registry[0].name == "Zara"
-    assert snapshot.npc_registry[0].role == "barkeep"
+    assert len(snapshot.npc_pool) == 1
+    assert snapshot.npc_pool[0].name == "Zara"
+    assert snapshot.npc_pool[0].role == "barkeep"
+    assert snapshot.npc_pool[0].drawn_from == "narrator_invented"
 
 
-def test_apply_npc_registry_existing_is_additive_only():
-    """Existing NPCs are not duplicated, and canonical fields are frozen.
+def test_apply_npc_pool_existing_is_additive_only():
+    """Wave 2A (story 45-47): existing pool members are not duplicated, and
+    canonical fields are frozen.
 
-    Story 37-44 reviewer fix: once a canonical field (role, pronouns,
+    Story 37-44 reviewer discipline: once a canonical field (role, pronouns,
     appearance) is set, a narrator re-mention MUST NOT overwrite it — that
     was the exact drift path (Frandrew she/her captain → he/him grease
     monkey). Narrator-driven reinterpretation is detected by
-    `_detect_npc_identity_drift` and logged as `npc.reinvented`, but the
+    ``_detect_npc_identity_drift`` and logged as ``npc.reinvented``, but the
     canonical value stays.
 
-    Fields that are still empty on the existing entry CAN be filled in
-    additively (first-time population is not drift).
+    Fields that are still empty on the existing pool member CAN be filled
+    in additively (first-time population is not drift).
     """
     from sidequest.agents.orchestrator import NpcMention
-    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.game.npc_pool import NpcPoolMember
 
     snapshot = GameSnapshot(
         genre_slug="test",
         world_slug="test",
         location="Tavern",
-        npc_registry=[NpcRegistryEntry(name="Zara", role="stranger", last_seen_turn=1)],
+        npc_pool=[
+            NpcPoolMember(
+                name="Zara", role="stranger", drawn_from="legacy_registry"
+            )
+        ],
     )
     result = _make_result(
         narration="Zara speaks.",
@@ -126,13 +134,13 @@ def test_apply_npc_registry_existing_is_additive_only():
     _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
     # Still 1 entry (no duplicate)
-    assert len(snapshot.npc_registry) == 1
-    entry = snapshot.npc_registry[0]
+    assert len(snapshot.npc_pool) == 1
+    member = snapshot.npc_pool[0]
     # Canonical role is frozen — not overwritten by narrator re-interpretation
-    assert entry.role == "stranger"
-    # Pronouns were empty on the existing entry, so the additive-update
-    # path fills them in on first assertion
-    assert entry.pronouns == "she/her"
+    assert member.role == "stranger"
+    # Pronouns were empty on the existing member, so the additive-update
+    # path fills them in on first assertion.
+    assert member.pronouns == "she/her"
 
 
 def test_apply_no_mutation_on_empty_result():

@@ -46,7 +46,14 @@ def test_init_chassis_registry_loads_kestrel() -> None:
     assert "dry as bonemeal" in kestrel.voice.vocal_tics
 
 
-def test_init_chassis_registry_projects_to_npc_registry() -> None:
+def test_init_chassis_registry_does_not_project_into_npc_pool() -> None:
+    """Wave 2A (story 45-47): the chassis-into-npc-registry projection has
+    been REMOVED. Chassis surface in the narrator prompt via the dedicated
+    ``register_chassis_voice_section`` (covered by
+    ``tests/agents/test_chassis_voice_section.py``), NOT by being injected
+    into the NPC roster zone. This test is the inverse-of-the-original
+    guard: chassis names must NOT appear in ``snapshot.npc_pool``.
+    """
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
     from sidequest.game.chassis import init_chassis_registry
@@ -55,14 +62,14 @@ def test_init_chassis_registry_projects_to_npc_registry() -> None:
 
     pack = load_genre_pack(SPACE_OPERA)
     snap = _make_snapshot("space_opera", "coyote_star")
-    # S1 invariant (2026-05-04): magic_state initialized first.
     snap.magic_state = MagicState.from_config(_make_coyote_star_magic_config())
     init_chassis_registry(snap, pack)
 
-    # Projection: npc_registry now has a Kestrel entry so narrator prose
-    # that already reads npc_registry sees the chassis.
-    names = {entry.name for entry in snap.npc_registry}
-    assert "Kestrel" in names
+    # Chassis is in chassis_registry…
+    assert "Kestrel" in {c.name for c in snap.chassis_registry.values()}
+    # …but NOT in the NPC pool. Voice section handles its narrator surfacing.
+    pool_names = {member.name for member in snap.npc_pool}
+    assert "Kestrel" not in pool_names
 
 
 def test_init_chassis_registry_world_without_rigs_is_noop() -> None:

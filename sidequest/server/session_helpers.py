@@ -20,7 +20,6 @@ from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.session import (
-    NpcRegistryEntry,
     PartyPeer,
 )
 from sidequest.game.shared_world_delta import (
@@ -427,6 +426,7 @@ def _build_turn_context(
         ),
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
         npc_registry=list(snapshot.npc_registry),
+        npc_pool=list(snapshot.npc_pool),
         npcs=list(snapshot.npcs),
         party_peers=party_peers,
         opening_directive=opening_directive,
@@ -574,7 +574,10 @@ def _publish_image_unavailable(image_path: str, *, reason: str) -> None:
 
 
 def _detect_npc_identity_drift(
-    existing: NpcRegistryEntry,
+    *,
+    existing_name: str,
+    existing_role: str | None,
+    existing_pronouns: str | None,
     mention: NpcMention,
     turn_num: int,
 ) -> None:
@@ -582,10 +585,14 @@ def _detect_npc_identity_drift(
 
     Story 37-44. Empty fields on the mention = "no opinion"; only explicit
     disagreement triggers. Side-effect only (logger.warning + watcher).
+
+    Wave 2A (story 45-47): refactored to take primitive fields rather than
+    a typed registry entry, since callers may now hold either an ``Npc``
+    or an ``NpcPoolMember``.
     """
     for field, m_val, e_val in (
-        ("pronouns", mention.pronouns, existing.pronouns),
-        ("role", mention.role, existing.role),
+        ("pronouns", mention.pronouns, existing_pronouns),
+        ("role", mention.role, existing_role),
     ):
         if m_val and e_val and m_val.strip().lower() != e_val.strip().lower():
             # Span emission replaces the prior direct ``_watcher_publish`` —
@@ -593,7 +600,7 @@ def _detect_npc_identity_drift(
             # ``SPAN_ROUTES[SPAN_NPC_REINVENTED]`` and propagates the
             # ``severity="warning"`` attribute set by the helper.
             with npc_reinvented_span(
-                npc_name=existing.name,
+                npc_name=existing_name,
                 drift_field=field,
                 expected=e_val,
                 narrator=m_val,
@@ -601,7 +608,7 @@ def _detect_npc_identity_drift(
             ):
                 logger.warning(
                     "npc.reinvented name=%r field=%s expected=%r narrator=%r turn=%d",
-                    existing.name,
+                    existing_name,
                     field,
                     e_val,
                     m_val,

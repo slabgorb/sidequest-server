@@ -35,9 +35,11 @@ def test_kestrel_materializes_with_voice_and_bond() -> None:
     assert kestrel.voice is not None
     assert kestrel.voice.name_forms_by_bond_tier["trusted"] == "{first_name}"
 
-    # Projection visible in npc_registry
-    names = {entry.name for entry in snap.npc_registry}
-    assert "Kestrel" in names
+    # Wave 2A (story 45-47): chassis no longer projects into npc_registry
+    # or npc_pool. The chassis voice section handles its narrator surfacing
+    # (see test_kestrel_voice_section_renders_in_narrator_prompt below).
+    pool_names = {member.name for member in snap.npc_pool}
+    assert "Kestrel" not in pool_names
 
 
 @pytest.mark.integration

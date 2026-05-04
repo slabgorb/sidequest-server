@@ -45,6 +45,7 @@ from sidequest.agents.prompt_framework.types import (
 )
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
@@ -405,8 +406,15 @@ class TurnContext:
     # Active trope summary for background context (Valley zone)
     active_trope_summary: str | None = None
 
-    # NPC registry entries (for merchant context injection — Phase 1 slice: skipped)
+    # NPC registry entries — DEPRECATED Wave 2A (story 45-47). Kept on the
+    # context for transitional compatibility with subsystem callers that
+    # still consume it (e.g. ``run_npc_agency``); the prompt-rendering path
+    # now reads from ``npc_pool`` + ``npcs.last_seen_*`` instead.
     npc_registry: list[NpcRegistryEntry] = field(default_factory=list)
+
+    # NPC pool — identity-only members the narrator can cite (Wave 2A).
+    # Replaces the legacy registry as the cast-pool projection channel.
+    npc_pool: list[NpcPoolMember] = field(default_factory=list)
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
     npcs: list[Npc] = field(default_factory=list)
@@ -1270,11 +1278,19 @@ class Orchestrator:
             )
 
         # NPC roster — canonical identity anchor (Early zone). Story 37-44.
-        # Without this the narrator cannot see the registry and reinvents
+        # Without this the narrator cannot see who exists and reinvents
         # pronouns/role each turn (playtest 3: Frandrew she/her captain →
         # he/him grease monkey in 10 turns).
-        if context.npc_registry:
-            registry.register_npc_roster_section(agent_name, context.npc_registry)
+        # Wave 2A (story 45-47): reads from ``npc_pool`` + ``npcs`` rather
+        # than the deprecated ``npc_registry``; gaslight-preserving format
+        # makes pool members and stateful Npcs indistinguishable to the
+        # narrator.
+        if context.npc_pool or context.npcs:
+            registry.register_npc_roster_section(
+                agent_name,
+                npc_pool=context.npc_pool,
+                npcs=context.npcs,
+            )
 
         # Chassis voices — chassis as named speakers with bond-tier name-form.
         # See register_chassis_voice_section docstring; mirrors npc_roster
@@ -2486,6 +2502,7 @@ async def run_narration_turn(
         current_location=session.location or "Unknown",
         available_sfx=available_sfx,
         npc_registry=list(session.npc_registry),
+        npc_pool=list(session.npc_pool),
         npcs=list(session.npcs),
         chassis_registry=dict(session.chassis_registry),
         party_peers=party_peers,

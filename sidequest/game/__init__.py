@@ -62,6 +62,7 @@ from sidequest.game.encounter import (
     StatValue,
     StructuredEncounter,
 )
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.persistence import (
     DatabaseError,
     NotFoundError,
@@ -172,6 +173,7 @@ __all__ = [
     "Npc",
     "NpcEncounterLogTag",
     "NpcPatch",
+    "NpcPoolMember",
     "NpcRegistryEntry",
     "TropeState",
     "WorldStatePatch",
