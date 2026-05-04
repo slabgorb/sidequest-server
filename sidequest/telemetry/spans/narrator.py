@@ -1,11 +1,4 @@
-"""Narrator spans — sealed-round emission and session lifecycle events.
-
-ADR-066 §10 (2026-05-04 amendment): every narrator session rotation
-(proactive watchdog or reactive recovery) emits ``narrator.session_rotated``
-so the GM panel can verify the fix is engaged. If recovery itself fails,
-``narrator.unrecoverable`` fires as the last-resort signal before the
-player sees an in-fiction stall.
-"""
+"""Narrator OTEL spans: sealed-round emission and session-rotation lifecycle (ADR-066 §10)."""
 
 from __future__ import annotations
 
@@ -52,18 +45,7 @@ def narrator_session_rotated_span(
     cli_error_signature: str | None = None,
     _tracer: trace.Tracer | None = None,
 ) -> Iterator[trace.Span]:
-    """Emit ``narrator.session_rotated`` (ADR-066 §10).
-
-    ``reason`` is one of:
-      * ``cli_error`` — context-overflow or other CLI failure (reactive)
-      * ``session_expired`` — CLI says session not found / expired (reactive)
-      * ``token_threshold`` — proactive watchdog (story 45-48)
-      * ``unknown`` — catch-all for unexpected errors
-
-    Optional fields are only set on applicable reasons:
-      * ``threshold`` — only on proactive (``token_threshold``)
-      * ``cli_error_signature`` — only on reactive failures
-    """
+    """Emit narrator.session_rotated; reason ∈ {cli_error, session_expired, token_threshold, unknown}."""
     attrs: dict[str, Any] = {
         "reason": reason,
         "cumulative_tokens": cumulative_tokens,
@@ -88,13 +70,7 @@ def narrator_unrecoverable_span(
     turn_number: int,
     _tracer: trace.Tracer | None = None,
 ) -> Iterator[trace.Span]:
-    """Emit ``narrator.unrecoverable`` when recovery itself fails (ADR-066 §8).
-
-    The companion event to ``narrator.session_rotated``: a rotation fired
-    but the rebuild turn also failed. The orchestrator returns a graceful
-    in-fiction stall to the player; this span lets the GM panel see the
-    double-failure without log diving.
-    """
+    """Emit narrator.unrecoverable when session rotation succeeds but the rebuild also fails (ADR-066 §8)."""
     attrs: dict[str, Any] = {
         "reason": reason,
         "first_error_signature": first_error_signature,

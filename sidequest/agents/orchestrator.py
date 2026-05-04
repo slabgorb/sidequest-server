@@ -818,12 +818,9 @@ class Orchestrator:
                     If None, creates a default ClaudeClient.
             soul_data: Optional SoulData for SOUL.md principle injection.
                        If None, SOUL.md is loaded from CWD (if present).
-            recap_provider: Optional callable returning a markdown recap of
-                       recent narration (typically wired to
-                       ``SessionStore.generate_recap``). Used to build the
-                       warm-reboot frame on session rotation per ADR-066 §9.
-                       If None, recovery still works but the rebuild prompt
-                       carries no [PREVIOUSLY ON] section.
+            recap_provider: Callable returning a markdown recap for the
+                       warm-reboot frame on session rotation (ADR-066 §9);
+                       None means no [PREVIOUSLY ON] section.
         """
         self._client: LlmClient = client if client is not None else ClaudeClient()
         self._narrator = NarratorAgent()
@@ -876,19 +873,12 @@ class Orchestrator:
             self._narrator_session_id = session_id
 
     # ------------------------------------------------------------------
-    # Reactive crash recovery (ADR-066 §8 — story 45-47)
+    # Reactive crash recovery (ADR-066 §8)
     # ------------------------------------------------------------------
 
     @staticmethod
     def _classify_narrator_error(exc: Exception) -> str:
-        """Classify a narrator subprocess failure per ADR-066 §8.
-
-        Returns one of:
-          * ``transient`` — network/spawn/timeout, retry-once on same session
-          * ``cli_error`` — context-overflow / token cap, rotate immediately
-          * ``session_expired`` — CLI lost the session, rotate immediately
-          * ``unknown`` — catch-all, rotate (recovery may still succeed)
-        """
+        """Map a narrator failure to one of: transient, cli_error, session_expired, unknown."""
         if isinstance(exc, _ClaudeTimeoutError):
             return "transient"
         if isinstance(exc, SubprocessFailed):
@@ -905,11 +895,7 @@ class Orchestrator:
 
     @staticmethod
     def _narrator_error_signature(exc: Exception) -> str:
-        """Extract a short, stable signature from a narrator failure for OTEL.
-
-        Prefers known stderr markers (context_window_full, etc); falls back
-        to a truncated stderr snippet or the exception type name.
-        """
+        """Return a short stable identifier for a narrator failure, for OTEL attributes."""
         if isinstance(exc, SubprocessFailed):
             stderr = (exc.stderr or "").lower()
             for marker in (
@@ -923,13 +909,8 @@ class Orchestrator:
             return (exc.stderr or "subprocess_failed")[:100]
         return type(exc).__name__
 
-    def _compose_rebuild_header(self) -> str | None:
-        """Build the warm-reboot frame for a rotation rebuild prompt (§9).
-
-        Wraps ``recap_provider()`` output in the [SESSION CONTINUATION] /
-        [PREVIOUSLY ON] frame from ADR-066 §9. Returns None only if the
-        provider is missing (recovery still works without a recap).
-        """
+    def _compose_rebuild_header(self) -> str:
+        """Return the [SESSION CONTINUATION] warm-reboot frame, including [PREVIOUSLY ON] when a recap is available."""
         recap: str | None = None
         if self._recap_provider is not None:
             try:
@@ -963,13 +944,7 @@ class Orchestrator:
         original_prompt_text: str,
         original_tier: str,
     ) -> tuple[ClaudeResponse, str, str, int] | NarrationTurnResult:
-        """Apply ADR-066 §8 recovery routing to a narrator subprocess failure.
-
-        On success returns ``(response, tier, prompt_text, elapsed_ms)`` for
-        the caller to splice into its happy path. On unrecoverable failure
-        returns a degraded ``NarrationTurnResult`` (in-fiction stall) and
-        emits ``narrator.unrecoverable`` so the GM panel sees the event.
-        """
+        """Route a narrator failure through retry or rotation per ADR-066 §8; return rebuild result or a degraded NarrationTurnResult."""
         classification = self._classify_narrator_error(first_error)
         rotation_error: Exception = first_error
 
@@ -1069,9 +1044,8 @@ class Orchestrator:
                 secret_routes=list(self._last_secret_routes),
             )
 
-        # Recovery succeeded — emit narrator.session_rotated for the GM panel.
-        # ``cumulative_tokens`` is wired in story 45-48 (proactive watchdog);
-        # for now we report 0 since the reactive path doesn't track it yet.
+        # cumulative_tokens: not tracked on the reactive path; the proactive
+        # watchdog wires the live meter in per ADR-066 §10.
         with narrator_session_rotated_span(
             reason=reason,
             cumulative_tokens=0,
@@ -1171,6 +1145,9 @@ class Orchestrator:
 
         Returns (prompt_text, registry) so callers can inspect zone breakdown.
         This is the Phase 1 port of build_narrator_prompt_tiered() in orchestrator.rs.
+
+        ``rebuild_header`` is the warm-reboot frame prepended in the
+        Primacy zone on session-rotation recovery turns (ADR-066 §9).
 
         Phase 1 omissions (all deferred):
           - LoreFilter world-graph injection (Phase 2 — story 23-4)

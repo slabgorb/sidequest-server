@@ -1,21 +1,9 @@
-"""Story 45-47 — ADR-066 §8 reactive narrator session crash recovery.
+"""ADR-066 §8 reactive narrator session crash recovery — orchestrator tests.
 
-Tests the orchestrator's behavior when ``claude --resume`` fails:
-
-* Context-overflow → reset session + Full-tier retry with recap header
-* Session-not-found → same recovery path
-* Network/transient → retry once on same session before triggering rotation
-* Unknown error → reset + retry; if recovery also fails, emit
-  ``narrator.unrecoverable`` and return graceful in-fiction stall
-
-Also exercises ADR-066 §9 (warm-reboot prompt frame splicing) and §10
-(``narrator.session_rotated`` OTEL span emission) since those primitives
-ride along with §8 and are shared with story 45-48.
-
-The Playtest 3 root cause was the orchestrator propagating the CLI
-context-overflow as an unhandled exception, which crashed the server
-~1h 45m into the session. After this story lands, that error path must
-recover silently.
+Covers the four recovery error classes (context-overflow, session-not-found,
+transient, unknown), the §9 warm-reboot frame splicing into the Full-tier
+prompt builder, and the §10 ``narrator.session_rotated`` /
+``narrator.unrecoverable`` OTEL span emission.
 """
 
 from __future__ import annotations
@@ -128,9 +116,6 @@ def _orchestrator_with(
     """
     client = ClaudeClient(spawn_fn=spawn_fn)
     recap_provider = (lambda: recap) if recap is not None else (lambda: None)
-    # New constructor parameter introduced by story 45-47:
-    # ``recap_provider`` — used to build the [PREVIOUSLY ON] block
-    # of the warm-reboot frame on session rebuild (ADR-066 §9).
     return Orchestrator(client=client, recap_provider=recap_provider)  # type: ignore[call-arg]
 
 
