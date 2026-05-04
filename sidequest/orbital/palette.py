@@ -137,3 +137,42 @@ LABEL_TIER_MAX = 3  # cap; beyond this, accept collision and warn
 # for players who can't distinguish red from yellow.
 HAZARD_GLYPH_DASH = "3 2"
 HAZARD_GLYPH_STROKE_WIDTH = 1.4
+
+# ---- ADR-094 callout strategy (label_strategy.py) ----------------------
+
+# Text-width estimator — calibrated upper-bound char widths per register.
+# Bias toward overestimate: if text genuinely fits radial we still pick
+# callout, which is the safe failure mode (visible-and-correct vs.
+# overlapping). Calibrated against UI-rendered bbox at LABEL_*_FONT_SIZE.
+LABEL_ENGRAVED_CHAR_WIDTH_PX: float = 8.5  # Orbitron 700 + letter-spacing 2
+LABEL_CHALK_CHAR_WIDTH_PX: float = 9.0     # Orbitron 600 + letter-spacing 3
+LABEL_PROSE_CHAR_WIDTH_PX: float = 6.5     # VT323 italic at LABEL_PROSE_FONT_SIZE
+
+# Safety factors per ADR-094 §Decision rule 2 ("× 1.2") and the same-or-larger
+# recommendation for arc-length fit.
+TEXTPATH_FIT_SAFETY: float = 1.2
+ARC_FIT_SAFETY: float = 1.2
+
+# Callout block geometry.
+CALLOUT_BLOCK_PADDING_PX: float = 4.0
+CALLOUT_BLOCK_LINE_HEIGHT_PX: float = 12.0
+CALLOUT_BLOCK_TAG_LINE_HEIGHT_PX: float = 10.0
+CALLOUT_BLOCK_INTER_BLOCK_GAP_PX: float = 6.0
+CALLOUT_GROUP_BORDER_PX: float = 0.6
+CALLOUT_GROUP_TITLE_HEIGHT_PX: float = 14.0
+
+# Leader-line geometry.
+LEADER_STROKE_WIDTH_PX: float = 1.0
+LEADER_TERMINATOR_SIZE_PX: float = 3.0
+
+# Gutter zone — width and minimum-viability threshold.
+GUTTER_WIDTH_PX: float = 120.0
+GUTTER_MIN_VIABLE_WIDTH_PX: float = 60.0  # below this, gutter is unavailable
+GUTTER_INNER_MARGIN_PX: float = 8.0       # space between chart bbox and gutter
+
+# Tag-line max length per ADR §Label-block content rule.
+CALLOUT_TAG_MAX_CHARS: int = 24
+
+# Sibling-group threshold — N or more children in a moon band form a
+# grouped <PARENT> SYSTEM block; below this they are singleton callouts.
+CALLOUT_GROUP_MIN_MEMBERS: int = 3
