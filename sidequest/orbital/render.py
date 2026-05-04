@@ -449,13 +449,19 @@ def _resolve_curve_along(
     orbits: OrbitsConfig,
     center_id: str,
     vp: _Viewport,
-) -> tuple[str, str]:
-    """Resolve a `curve_along` reference to (path_id, path_d).
+) -> tuple[str, str, str]:
+    """Resolve a `curve_along` reference to (path_id, path_d, resolved_body_id).
 
     Per spec §4.1:
       - `orbit_outermost` → outermost direct child's orbit ellipse
       - `orbit_<body_id>` → that body's orbit ellipse
       - `body:<body_id>` → that arc_belt body's own arc (raises for non-belt)
+
+    The third return value is the body id whose orbit/arc was resolved.
+    Callers use it to (a) inherit that body's `label_register` for
+    textPath styling per AC #6 and (b) suppress that body's own
+    radial-out label when the annotation duplicates it (§4.1: "If both
+    exist, prefer the annotation").
 
     The path starts at the top of the ring and sweeps clockwise (sweep-flag=1)
     so textPath letters stay upright in the player's reading direction.
@@ -504,7 +510,7 @@ def _resolve_curve_along(
             f"A {rx} {ry} 0 0 1 {cx} {cy + ry} "
             f"A {rx} {ry} 0 0 1 {cx} {cy - ry}"
         )
-        return path_id, path_d
+        return path_id, path_d, body_id
 
     if value.startswith("body:"):
         body_id = value[len("body:") :]
@@ -534,7 +540,7 @@ def _resolve_curve_along(
         path_d = (
             f"M {x1} {y1} A {radius_px} {radius_px} 0 {large_arc} 1 {x2} {y2}"
         )
-        return path_id, path_d
+        return path_id, path_d, body_id
 
     raise ValueError(
         f"curve_along={value!r}: unknown reference scheme; "
@@ -546,19 +552,48 @@ def _engraved_label_textpath(
     text: str,
     *,
     path_id: str,
+    register: _RegisterValue = "engraved",
     fill: str = palette.BRASS,
-    font_size: int = 12,
 ) -> svgwrite.text.Text:
     """Engraved label rendered along a curve via textPath.
 
     Per spec §4.1: em-dashes baked by renderer (`— text —`); content
     authors store plain strings.
+
+    Per spec AC #6 + §4.4: the textPath inherits the resolved body's
+    effective label_register. `prose` produces VT323 italic at opacity
+    0.85 (matching the design's lowercase prose treatment for
+    last_drift); `chalk` is Orbitron weight-600 with chalk
+    letter-spacing; `engraved` is Orbitron weight-700 italic, the
+    default cartographic register.
     """
     decorated = f"— {text} —"
+    if register == "prose":
+        font_family = palette.LABEL_PROSE_FONT
+        font_size = palette.LABEL_PROSE_FONT_SIZE
+        font_style = "italic"
+        font_weight: int | None = None
+        opacity: float | None = palette.LABEL_PROSE_OPACITY
+        letter_spacing: int | None = None
+    elif register == "chalk":
+        font_family = palette.LABEL_CHALK_FONT
+        font_size = 11
+        font_style = None
+        font_weight = palette.LABEL_CHALK_WEIGHT
+        opacity = palette.ORBIT_OPACITY_CHALK
+        letter_spacing = palette.LABEL_CHALK_LETTER_SPACING
+    else:  # engraved (default)
+        font_family = palette.LABEL_ENGRAVED_FONT
+        font_size = 12
+        font_style = "italic"
+        font_weight = palette.LABEL_ENGRAVED_WEIGHT
+        opacity = None
+        letter_spacing = palette.LABEL_ENGRAVED_LETTER_SPACING
+
     elem = svgwrite.text.Text(
         "",
         fill=fill,
-        font_family=palette.FONT_DISPLAY,
+        font_family=font_family,
         font_size=font_size,
         text_anchor="middle",
     )
@@ -566,13 +601,61 @@ def _engraved_label_textpath(
     elem["stroke-width"] = 3
     elem["stroke-linejoin"] = "round"
     elem["paint-order"] = "stroke"
-    elem["font-style"] = "italic"
-    # textPath child references the path id. svgwrite's TextPath wraps the
-    # textPath element; we insert raw to keep startOffset/href control.
+    if font_style is not None:
+        elem["font-style"] = font_style
+    if font_weight is not None:
+        elem["font-weight"] = font_weight
+    if letter_spacing is not None:
+        elem["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        elem["opacity"] = opacity
+    # textPath child references the path id.
     tp = svgwrite.text.TextPath(path=f"#{path_id}", text=decorated)
     tp["startOffset"] = "50%"
     elem.add(tp)
     return elem
+
+
+# ---------------------------------------------------------------------------
+# Body-label suppression — §4.1 last paragraph
+# ---------------------------------------------------------------------------
+
+
+def _arc_belt_bodies_with_textpath_annotation(
+    chart: ChartConfig,
+    orbits: OrbitsConfig,
+    center_id: str,
+    vp: _Viewport,
+) -> set[str]:
+    """Set of arc_belt body ids whose orbit is referenced by an
+    `engraved_label` annotation in chart.yaml at this scope.
+
+    Per spec §4.1: "If both exist, prefer the annotation." When an
+    arc_belt body has both a `body.label` and a chart.yaml engraved_label
+    that wraps its orbit, we suppress the body's own radial-out label —
+    the textPath IS the label. (Restricted to arc_belt bodies because
+    point-bodies can legitimately carry both a textPath wrapping the
+    ring and a radial-out label at the body's current position.)
+    """
+    suppressed: set[str] = set()
+    for annot in chart.annotations:
+        if annot.kind != "engraved_label" or annot.curve_along is None:
+            continue
+        try:
+            _, _, resolved_body_id = _resolve_curve_along(
+                annot.curve_along, orbits, center_id, vp
+            )
+        except (_CurveScopeMismatch, ValueError):
+            # Off-scope or malformed — annotation won't render, so no
+            # suppression needed. Malformed annotations are caught by
+            # the flavor-layer render path's own error handling.
+            continue
+        body = orbits.bodies.get(resolved_body_id)
+        if body is None:
+            continue
+        if body.type == BodyType.ARC_BELT:
+            suppressed.add(resolved_body_id)
+    return suppressed
 
 
 # ---------------------------------------------------------------------------
@@ -605,8 +688,13 @@ def render_chart(
             fill=palette.BG,
         )
     )
+    suppressed_label_ids = _arc_belt_bodies_with_textpath_annotation(
+        chart, orbits, center_id, viewport
+    )
     viewport_g = svgwrite.container.Group(id="viewport")
-    engraved_layer, stats = _render_engraved_layer(orbits, center_id, scope, viewport, t_hours)
+    engraved_layer, stats = _render_engraved_layer(
+        orbits, center_id, scope, viewport, t_hours, suppressed_label_ids
+    )
     viewport_g.add(engraved_layer)
     viewport_g.add(_render_flavor_layer(chart, orbits, center_id, viewport, t_hours))
     viewport_g.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
@@ -1052,6 +1140,7 @@ def _render_engraved_layer(
     scope: Scope,
     vp: _Viewport,
     t_hours: float,
+    suppressed_label_ids: set[str] | None = None,
 ) -> tuple[svgwrite.container.Group, _RenderStats]:
     g = svgwrite.container.Group(id="layer-engraved")
     stats = _RenderStats()
@@ -1273,9 +1362,19 @@ def _render_engraved_layer(
     for p in all_placements:
         _resolve_anchor(p, apply_rose_clearance=scope_is_root)
 
+    suppressed_ids = suppressed_label_ids or set()
     for p in all_placements:
         body = p.body
         if body.label is None:
+            continue
+        # §4.1: arc_belt body labels yield to chart.yaml engraved_label
+        # annotations that wrap their orbit. Skip the radial-out body
+        # label so we don't duplicate the textPath.
+        if p.body_id in suppressed_ids:
+            # Still account moon-register stats for moons (none of which
+            # are arc_belt anyway, but keep the bookkeeping symmetric).
+            if p in moon_band_placements:
+                _accumulate_register(stats, body, is_moon=True)
             continue
         # Moons get prose register auto-applied (override label_register only if not set).
         if p in moon_band_placements and body.label_register is None:
@@ -1344,7 +1443,7 @@ def _render_annotation(
             return None
         if annot.curve_along is not None:
             try:
-                path_id, path_d = _resolve_curve_along(
+                path_id, path_d, body_id = _resolve_curve_along(
                     annot.curve_along, orbits, center_id, vp
                 )
             except _CurveScopeMismatch:
@@ -1352,8 +1451,14 @@ def _render_annotation(
                 # Silent skip is correct — there is no orbit to attach the
                 # textPath to. (Truly unknown bodies still raise upstream.)
                 return None
+            # Inherit the resolved body's effective label_register so the
+            # textPath styling matches the body it represents (AC #6 — last
+            # drift's textPath renders in prose register, not Orbitron).
+            register = _effective_label_register(orbits.bodies[body_id])
             return (
-                _engraved_label_textpath(annot.text, path_id=path_id),
+                _engraved_label_textpath(
+                    annot.text, path_id=path_id, register=register
+                ),
                 (path_id, path_d),
             )
         # Fallback: fixed top-center placement (backward compat).
