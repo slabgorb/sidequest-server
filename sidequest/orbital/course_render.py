@@ -62,10 +62,14 @@ _COURSE_STROKE_WIDTH = 1.6
 # from solid orbit ring engravings and from outer-system dashed rings.
 _COURSE_DASH = "8 6 2 6"
 
-_RETICLE_OUTER_R = 13.0
-_RETICLE_INNER_R = 7.0
-_RETICLE_TICK_INNER = 9.0
-_RETICLE_TICK_OUTER = 15.0
+# Reticle radii — shared vocabulary lives in palette.py per AC #16 of the
+# orrery-v2 spec. Star reticle (palette.STAR_RETICLE_*) and course reticle
+# share the dash pattern + name family, but the radii differ (course is
+# smaller because course-target bodies are far from chart center).
+_RETICLE_OUTER_R = palette.COURSE_RETICLE_OUTER_R
+_RETICLE_INNER_R = palette.COURSE_RETICLE_INNER_R
+_RETICLE_TICK_INNER = palette.COURSE_RETICLE_TICK_INNER
+_RETICLE_TICK_OUTER = palette.COURSE_RETICLE_TICK_OUTER
 
 _CHIP_LABEL_FONT_SIZE = 11
 _CHIP_DETAIL_FONT_SIZE = 13

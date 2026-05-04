@@ -8,7 +8,7 @@ directory and are loaded by `sidequest.orbital.loader`.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -41,6 +41,16 @@ class TravelConfig(BaseModel):
     hazard_arc_density: float = Field(default=0.0, ge=0.0)
 
 
+Register = Literal["engraved", "chalk", "prose"]
+"""Cartographic register — drives both orbit and label styling per spec §4.4.
+
+- `engraved`: stamped, official, certain. Solid brass orbit + Orbitron CAPS label.
+- `chalk`: hand-charted, frontier. Dashed orbit + Orbitron weight-600 CAPS label.
+- `prose`: in-world flavor. (Default-derived) inherits parent's orbit register;
+  label is VT323 italic monospace. Used for moons and "prose" name overrides.
+"""
+
+
 class BodyDef(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: BodyType
@@ -55,6 +65,25 @@ class BodyDef(BaseModel):
     label: str | None = None
     label_color: str | None = None
     subtype: str | None = None  # e.g. "gas_giant", "rocky" — drives glyph variant
+
+    # ---- Spec §4.4 — register and label_register ----
+    # `register` drives both orbit stroke styling and (default) label styling.
+    # `label_register` is an opt-in override for the rare case where the
+    # cartographic register of the *orbit* differs from the *label* — e.g.
+    # `last_drift` has a chalk-drawn orbit but its label is in prose register
+    # (lowercase italic). When None, label inherits from `register`.
+    register: Register = "engraved"
+    label_register: Register | None = None
+
+    # ---- Spec §4.6 — moon-band display at system-root scope ----
+    # `moon_display_radius_px` pins the moon's pixel radius around its parent
+    # at system-root scope. None = auto-allocate (closest first at MOON_BAND_INNER_PX,
+    # step outward by MOON_BAND_STEP_PX).
+    moon_display_radius_px: int | None = None
+    # `show_at_system_scope=False` elides a moon from system-root rendering
+    # entirely (still visible at drill-in scope). For trivia bodies the
+    # designer doesn't want cluttering the chart.
+    show_at_system_scope: bool = True
 
     @model_validator(mode="after")
     def _validate_orbital_params(self) -> BodyDef:

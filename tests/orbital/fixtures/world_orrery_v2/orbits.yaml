@@ -1,0 +1,124 @@
+# Synthetic fixture for the Orrery v2 visual restoration spec.
+# Spec: docs/superpowers/specs/2026-05-04-orrery-v2-visual-restoration.md
+#
+# Designed to exercise every new code path in one chart:
+#   - Inner cluster (alpha/beta/gamma at au≈1, within 25° arc) to drive
+#     the §5.3 peer-collision tier (tier 0/1/2).
+#   - Hazard body (trap) for AC#11 dashed-outline non-color signal.
+#   - Gas giant with multiple moons (giant + moon_a/b/hidden) to drive
+#     §4.6 system-scope moon-band rendering, including
+#     show_at_system_scope=false elision.
+#   - Outer chalk register (outpost) for AC#5 dashed orbit.
+#   - Outermost arc-belt with chalk orbit + prose label override (drift)
+#     for AC#5/§4.4 label_register decoupling and AC#21.
+
+version: "0.1.0"
+
+clock:
+  epoch_days: 0
+
+travel:
+  realism: orbital
+  travel_speed_factor: 1.0
+  danger_density: 0.0
+  hazard_arc_density: 0.0
+
+bodies:
+  sun:
+    type: star
+    label: SUN
+    label_color: red
+
+  # ---- Inner cluster — 3 bodies within 25° for peer-collision test ----
+  alpha:
+    type: habitat
+    parent: sun
+    semi_major_au: 1.00
+    period_days: 365.0
+    epoch_phase_deg: 60       # tier 0
+    label: ALPHA
+
+  beta:
+    type: habitat
+    parent: sun
+    semi_major_au: 1.05
+    period_days: 380.0
+    epoch_phase_deg: 70       # 10° from alpha → tier 1
+    label: BETA
+
+  gamma:
+    type: habitat
+    parent: sun
+    semi_major_au: 1.10
+    period_days: 395.0
+    epoch_phase_deg: 80       # 20° from alpha → tier 2
+    label: GAMMA
+
+  # ---- Hazard body ----
+  trap:
+    type: habitat
+    parent: sun
+    semi_major_au: 0.80
+    period_days: 280.0
+    epoch_phase_deg: 270
+    hazard: true
+    label: TRAP
+
+  # ---- Gas giant with moons (drives §4.6 moon band) ----
+  giant:
+    type: habitat
+    subtype: gas_giant
+    parent: sun
+    semi_major_au: 4.00
+    period_days: 2920.0
+    epoch_phase_deg: 180
+    label: GIANT
+
+  moon_a:
+    type: habitat
+    parent: giant
+    semi_major_au: 0.005
+    period_days: 5.0
+    epoch_phase_deg: 0
+    label: "moon a"
+    moon_display_radius_px: 38
+
+  moon_b:
+    type: habitat
+    parent: giant
+    semi_major_au: 0.010
+    period_days: 12.0
+    epoch_phase_deg: 90
+    label: "moon b"
+    moon_display_radius_px: 54
+
+  moon_hidden:
+    type: habitat
+    parent: giant
+    semi_major_au: 0.015
+    period_days: 18.0
+    epoch_phase_deg: 180
+    label: "hidden moon"
+    show_at_system_scope: false
+
+  # ---- Outer: chalk register ----
+  outpost:
+    type: gate
+    parent: sun
+    semi_major_au: 7.00
+    period_days: 6500.0
+    epoch_phase_deg: 150
+    label: OUTPOST
+    register: chalk
+
+  # ---- Outermost: chalk orbit + prose label override ----
+  drift:
+    type: arc_belt
+    parent: sun
+    semi_major_au: 10.00
+    period_days: 11500.0
+    epoch_phase_deg: 0
+    arc_extent_deg: 360
+    label: "Outer Drift"
+    register: chalk
+    label_register: prose
