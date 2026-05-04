@@ -30,7 +30,6 @@ import pytest
 
 from sidequest.game.migrations import migrate_legacy_snapshot
 
-
 _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "legacy_snapshots"
 
 

@@ -54,7 +54,7 @@ def _make_orchestrator() -> Orchestrator:
     return Orchestrator(client=client)
 
 
-def _frandrew_captain() -> NpcRegistryEntry:
+def _frandrew_captain() -> NpcPoolMember:
     """The canonical identity the narrator must not drift away from."""
     return NpcPoolMember(
         name="Frandrew",
@@ -66,7 +66,7 @@ def _frandrew_captain() -> NpcRegistryEntry:
 
 
 async def _build_prompt_with_registry(
-    registry_entries: list[NpcRegistryEntry],
+    registry_entries: list[NpcPoolMember],
 ) -> tuple[str, object]:
     orch = _make_orchestrator()
     context = TurnContext(

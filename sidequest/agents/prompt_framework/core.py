@@ -27,7 +27,7 @@ from sidequest.agents.prompt_framework.types import (
 if TYPE_CHECKING:
     from sidequest.game.chassis import ChassisInstance
     from sidequest.game.npc_pool import NpcPoolMember
-    from sidequest.game.session import Npc, NpcRegistryEntry, PartyPeer
+    from sidequest.game.session import Npc, PartyPeer
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,6 @@ from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.session import (
-    NpcRegistryEntry,
     PartyPeer,
 )
 from sidequest.game.shared_world_delta import (

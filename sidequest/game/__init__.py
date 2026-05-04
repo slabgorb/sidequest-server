@@ -62,6 +62,7 @@ from sidequest.game.encounter import (
     StatValue,
     StructuredEncounter,
 )
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.persistence import (
     DatabaseError,
     NotFoundError,
@@ -82,7 +83,6 @@ from sidequest.game.resource_pool import (
     UnknownResource,
     mint_threshold_lore,
 )
-from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,

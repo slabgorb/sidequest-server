@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
 
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.region_validation import (
     canonicalize_region_name,
     validate_region_name,
 )
-from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import (
     ContainerState,
     GameSnapshot,

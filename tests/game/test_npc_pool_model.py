@@ -27,7 +27,6 @@ from sidequest.game.creature_core import CreatureCore
 from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import GameSnapshot, Npc
 
-
 # ---------------------------------------------------------------------------
 # NpcPoolMember model contract
 # ---------------------------------------------------------------------------
