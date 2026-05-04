@@ -144,6 +144,33 @@ def test_calibrated_distribution_meets_adr_093_targets():
     cdef = _calibrated_cdef()
     beat = _attack_beat()
 
+    # Wiring guard for both calibration levers. Without this assertion, the
+    # ±5pp tolerance on Success-or-better cannot distinguish "narrow band +
+    # calibrated stats" (47.50%) from "narrow band + parity stats at 12"
+    # (42.75% — also within the ±5pp window). Pinning both modifiers makes
+    # the distribution test refuse to pass when only one of the two levers
+    # has fired.
+    sentinel = resolve_opposed_check(
+        player_actor=player,
+        opponent_actor=opponent,
+        player_beat=beat,
+        opponent_beat=beat,
+        cdef=cdef,
+        player_roll=10,
+        opponent_roll=10,
+    )
+    assert sentinel.player_mod == 1, (
+        f"Player modifier must be +1 (score {PLAYER_SCORE}); got "
+        f"{sentinel.player_mod}. Calibration assumes player point-buy "
+        "average mod of +1."
+    )
+    assert sentinel.opponent_mod == 0, (
+        f"Opponent modifier must be 0 (score {OPPONENT_SCORE}); got "
+        f"{sentinel.opponent_mod}. If this fails, opponent_default_stats "
+        "was not lowered from 12 — distribution assertions below will pass "
+        "vacuously without this guard."
+    )
+
     success_or_better = 0
     tie = 0
     fail_or_worse = 0
@@ -267,6 +294,10 @@ def test_calibrated_distribution_player_edge_is_real():
         (12, 10, 8, 11, RollOutcome.Fail),
         # Player crit on 20, opponent on 11 → shift +10 → CritSuccess (boundary unchanged).
         (12, 10, 20, 11, RollOutcome.CritSuccess),
+        # Player rolls 1, opponent rolls 11 → shift -9 → Fail (one above CritFail boundary).
+        (12, 10, 1, 11, RollOutcome.Fail),
+        # Player rolls 1, opponent rolls 12 → shift -10 → CritFail (boundary unchanged).
+        (12, 10, 1, 12, RollOutcome.CritFail),
     ],
 )
 def test_calibrated_band_geometry(

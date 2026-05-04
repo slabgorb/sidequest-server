@@ -21,8 +21,13 @@ calibrated tie-band geometry must use the calibrated threshold.
    thresholds. This test asserts no negotiation threshold collapses below
    5 by accident (would over-shorten social scenes).
 
-Pack list mirrors ADR-093: caverns_and_claudes, elemental_harmony,
-mutant_wasteland, space_opera, victoria.
+Pack list covers the four packs calibrated by ADR-093 (caverns_and_claudes,
+elemental_harmony, mutant_wasteland, space_opera) plus victoria. Victoria is
+included because it is social-only by design (no opposed_check
+confrontations) — its parametrize rows pass trivially today, but inclusion
+ensures any future addition of an opposed_check confrontation to victoria
+gets caught automatically. The COMBAT_PACKS list (below) is the per-pack
+wiring guard's stricter set, excluding victoria.
 """
 
 from __future__ import annotations
@@ -44,6 +49,20 @@ SHIPPED_PACKS = [
     "mutant_wasteland",
     "space_opera",
     "victoria",
+]
+
+# Packs that MUST expose at least one opposed_check confrontation. victoria is
+# excluded because it is social-only by design (negotiation, trial, auction,
+# social_duel, scandal — all beat_selection mode). The per-pack wiring test
+# enforces that each combat pack still has at least one opposed_check
+# confrontation; without this, the parametrized calibration tests would pass
+# vacuously for any pack whose combat confrontations were accidentally
+# removed.
+COMBAT_PACKS = [
+    "caverns_and_claudes",
+    "elemental_harmony",
+    "mutant_wasteland",
+    "space_opera",
 ]
 
 CALIBRATED_THRESHOLD = 7
@@ -174,30 +193,24 @@ def test_negotiation_thresholds_not_collapsed_below_5(pack_name: str):
     )
 
 
-def test_at_least_one_pack_exposes_an_opposed_check_confrontation():
-    """Wiring-test guard: at least one shipped pack must expose an
-    opposed_check confrontation, otherwise the calibration assertions
-    above are vacuous (parametrize loops over packs that have no
-    opposed_check entries to enforce against).
+@pytest.mark.parametrize("pack_name", COMBAT_PACKS)
+def test_combat_pack_exposes_at_least_one_opposed_check_confrontation(pack_name: str):
+    """Per-pack wiring guard: every COMBAT_PACKS entry must expose at least
+    one ``resolution_mode: opposed_check`` confrontation. Without this, a
+    pack whose combat confrontation was accidentally deleted would still
+    pass test_opposed_check_thresholds_calibrated_to_7 vacuously (empty
+    `offending` list because no opposed_check entries to check).
 
-    Failing this means either (a) the pack list drifted away from
-    ADR-093 or (b) someone removed all opposed_check confrontations.
-    Both require human review.
+    Excludes victoria deliberately — it is social-only by design and has
+    no opposed_check confrontations. See COMBAT_PACKS comment.
     """
-    found_any = False
-    for pack_name in SHIPPED_PACKS:
-        rules_path = GENRE_PACKS_DIR / pack_name / "rules.yaml"
-        if not rules_path.exists():
-            continue
-        with rules_path.open(encoding="utf-8") as fh:
-            rules = yaml.safe_load(fh)
-        for cdef in rules.get("confrontations", []):
-            if cdef.get("resolution_mode") == OPPOSED_CHECK_MODE:
-                found_any = True
-                break
-        if found_any:
-            break
-    assert found_any, (
-        "No shipped pack exposes an opposed_check confrontation — the "
-        f"calibration tests are vacuous. Pack list: {SHIPPED_PACKS}"
+    rules = _load_rules_yaml(pack_name)
+    confrontations = rules.get("confrontations", [])
+    has_opposed_check = any(
+        cdef.get("resolution_mode") == OPPOSED_CHECK_MODE for cdef in confrontations
+    )
+    assert has_opposed_check, (
+        f"Pack '{pack_name}' has no opposed_check confrontation — the "
+        f"calibration tests for this pack would pass vacuously. Combat "
+        f"pack list: {COMBAT_PACKS}"
     )

@@ -1,6 +1,11 @@
 """Unit tests for opposed_check resolver — shift bands, stat sourcing, errors.
 
-Spec: ``.archive/handoffs/opposed-checks-design.md`` (Architect, 2026-04-26).
+Spec: ``docs/adr/093-confrontation-difficulty-calibration.md`` (ADR-093,
+2026-05-04). The earlier ``.archive/handoffs/opposed-checks-design.md``
+design doc (Architect, 2026-04-26) established the resolver's structure
+but used pre-calibration band values (±2 tie band, ±3 Success threshold);
+those are superseded by ADR-093.
+
 The resolver is the heart of combat fairness — every combat encounter now
 runs through it. These tests lock the contract:
 
