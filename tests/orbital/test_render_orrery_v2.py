@@ -1033,18 +1033,10 @@ class TestHazardNonColorSignal:
             }
         )
         svg = _render_root(orbits)
-        # Find the polygon (hazard habitat = diamond, brass→red fill).
-        # The hazard signal: the polygon's stroke-dasharray is set (or a
-        # dashed outline ring is drawn around it).
-        # Accept either approach — assert at least one element bound to the
-        # trap body has a stroke-dasharray.
-        trap_segment = re.search(
-            r'(<(?:polygon|circle|g)[^>]*data-body-id="trap"[^>]*?>(?:[^<]|<(?!/svg))*?)(?=<g|</g|<text|<svg|</svg)',
-            svg,
-            re.DOTALL,
-        )
-        # Simpler: just check there's any element with body_id=trap that
-        # also carries stroke-dasharray nearby.
+        # The hazard signal: the polygon glyph's stroke-dasharray is set
+        # (or a dashed outline element appears nearby for grouped glyphs).
+        # Find any element with body_id=trap and check for stroke-dasharray
+        # on the tag itself or in a small window around it.
         body_id_match = re.search(
             r'<[^>]*data-body-id="trap"[^>]*>',
             svg,
