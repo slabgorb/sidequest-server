@@ -130,6 +130,44 @@ def npc_auto_registered_span(
 
 
 @contextmanager
+def npc_referenced_span(
+    *,
+    npc_name: str,
+    match_strategy: str,
+    pool_origin: str | None,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wave 2A (story 45-47): emitted on every narrator-cite of an NPC name.
+
+    ``match_strategy`` is the lie-detector dial — ``npcs_hit`` means the
+    name resolved to an active stateful ``Npc``; ``pool_hit`` means it
+    matched a known ``NpcPoolMember``; ``invented`` means the narrator
+    made up a name not in either store. Per-session counts of
+    ``invented`` tell the GM panel when the pool wasn't seeded for the
+    scene.
+
+    ``pool_origin`` is the ``NpcPoolMember.name`` the resulting/existing
+    ``Npc`` was promoted from, or ``None`` for narrator-invented or
+    legacy-without-provenance NPCs.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "match_strategy": match_strategy,
+        "pool_origin": pool_origin if pool_origin is not None else "",
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_REFERENCED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
 def npc_pc_name_skipped_span(
     *,
     npc_name: str,

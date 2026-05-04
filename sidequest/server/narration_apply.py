@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ValidationError
 
@@ -21,9 +21,11 @@ from sidequest.game.region_validation import (
     canonicalize_region_name,
     validate_region_name,
 )
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import (
     ContainerState,
     GameSnapshot,
+    Npc,
     NpcRegistryEntry,
     RoomState,
 )
@@ -52,6 +54,7 @@ from sidequest.telemetry.spans import (
     magic_working_span,
     npc_auto_registered_span,
     npc_pc_name_skipped_span,
+    npc_referenced_span,
     quest_update_span,
     region_entry_canonicalized_dedup_span,
     region_entry_rejected_span,
@@ -712,6 +715,166 @@ def promote_crossings_to_status_changes(
             )
         )
     return promotions
+
+
+def _apply_npc_mentions(
+    *,
+    snapshot: GameSnapshot,
+    mentions: list[Any],
+    turn_num: int,
+) -> None:
+    """Apply narrator NPC mentions via 3-step lookup (Wave 2A, story 45-47).
+
+    Order:
+      0. PC-name pre-filter (existing). PC names skip the loop entirely.
+      1. ``snapshot.npcs`` (case-folded name match). On hit: update
+         ``Npc.last_seen_*``; run drift detection. Do NOT overwrite Npc
+         identity fields — those have authoritative state of their own.
+      2. ``snapshot.npc_pool`` (case-folded name match). On hit: additive
+         upsert role/pronouns/appearance onto the pool member; existing
+         values win on conflict. Pool members are not consumed — re-citable.
+      3. Novel name. Append a new ``NpcPoolMember(drawn_from=
+         "narrator_invented")`` to ``snapshot.npc_pool``.
+
+    Every cite (after PC skip) emits ``SPAN_NPC_REFERENCED`` with
+    ``match_strategy ∈ {npcs_hit, pool_hit, invented}`` and ``pool_origin``.
+    The novel branch ALSO emits the existing ``SPAN_NPC_AUTO_REGISTERED``
+    span (preserved from pre-Wave-2A telemetry — registry_len now reports
+    pool length).
+    """
+    pc_name_lookup = {
+        c.core.name.lower(): c.core.name
+        for c in snapshot.characters
+        if getattr(getattr(c, "core", None), "name", None)
+    }
+
+    for mention in mentions:
+        matched_pc = pc_name_lookup.get(mention.name.lower())
+        if matched_pc is not None:
+            with npc_pc_name_skipped_span(
+                npc_name=mention.name,
+                matched_pc=matched_pc,
+                turn_number=turn_num,
+            ):
+                logger.info(
+                    "npc.pc_name_skipped name=%r matched_pc=%r turn=%d",
+                    mention.name,
+                    matched_pc,
+                    turn_num,
+                )
+            continue
+
+        name_key = mention.name.casefold()
+
+        # Step 1: existing Npc shadows everything else.
+        npc_hit: Npc | None = None
+        for npc in snapshot.npcs:
+            if npc.core.name.casefold() == name_key:
+                npc_hit = npc
+                break
+        if npc_hit is not None:
+            # ``Npc`` has no string ``role`` field (only the archetype-id
+            # ``npc_role_id``, which is not narrator-cited prose). Pass
+            # ``None`` so the drift detector skips the role check; pronouns
+            # drift is still meaningful.
+            _detect_npc_identity_drift(
+                existing_name=npc_hit.core.name,
+                existing_role=None,
+                existing_pronouns=npc_hit.pronouns,
+                mention=mention,
+                turn_num=turn_num,
+            )
+            if snapshot.location:
+                npc_hit.last_seen_location = snapshot.location
+            npc_hit.last_seen_turn = turn_num
+            with npc_referenced_span(
+                npc_name=mention.name,
+                match_strategy="npcs_hit",
+                pool_origin=npc_hit.pool_origin,
+                turn_number=turn_num,
+            ):
+                logger.info(
+                    "npc.referenced name=%r match=npcs_hit pool_origin=%r turn=%d",
+                    mention.name,
+                    npc_hit.pool_origin,
+                    turn_num,
+                )
+            continue
+
+        # Step 2: pool member match.
+        pool_hit: NpcPoolMember | None = None
+        for member in snapshot.npc_pool:
+            if member.name.casefold() == name_key:
+                pool_hit = member
+                break
+        if pool_hit is not None:
+            _detect_npc_identity_drift(
+                existing_name=pool_hit.name,
+                existing_role=pool_hit.role,
+                existing_pronouns=pool_hit.pronouns,
+                mention=mention,
+                turn_num=turn_num,
+            )
+            # Additive upsert — fill empty identity fields from the mention,
+            # never overwrite a value already set.
+            if mention.role and not pool_hit.role:
+                pool_hit.role = mention.role
+            if mention.pronouns and not pool_hit.pronouns:
+                pool_hit.pronouns = mention.pronouns
+            if mention.appearance and not pool_hit.appearance:
+                pool_hit.appearance = mention.appearance
+            with npc_referenced_span(
+                npc_name=mention.name,
+                match_strategy="pool_hit",
+                pool_origin=pool_hit.name,
+                turn_number=turn_num,
+            ):
+                logger.info(
+                    "npc.referenced name=%r match=pool_hit turn=%d",
+                    mention.name,
+                    turn_num,
+                )
+            continue
+
+        # Step 3: novel — narrator invented a name not in any store.
+        new_member = NpcPoolMember(
+            name=mention.name,
+            role=mention.role or None,
+            pronouns=mention.pronouns or None,
+            appearance=mention.appearance or None,
+            archetype_id=None,
+            drawn_from="narrator_invented",
+        )
+        snapshot.npc_pool.append(new_member)
+        with npc_referenced_span(
+            npc_name=mention.name,
+            match_strategy="invented",
+            pool_origin=None,
+            turn_number=turn_num,
+        ):
+            logger.info(
+                "npc.referenced name=%r match=invented turn=%d",
+                mention.name,
+                turn_num,
+            )
+        # Preserve pre-Wave-2A auto-registered telemetry — the
+        # ``WatcherSpanProcessor`` re-emits the state_transition event
+        # via ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]``. ``registry_len``
+        # now reflects pool length.
+        with npc_auto_registered_span(
+            npc_name=mention.name,
+            pronouns=mention.pronouns or "",
+            role=mention.role or "",
+            turn_number=turn_num,
+            registry_len=len(snapshot.npc_pool),
+        ):
+            logger.info(
+                "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
+                mention.name,
+                mention.pronouns or "",
+                mention.role or "",
+                turn_num,
+            )
 
 
 def _apply_course_sidecar(
@@ -1443,70 +1606,11 @@ def _apply_narration_result_to_snapshot(
     # Once a PC is in the NPC registry, downstream beat-selection and party
     # state queries treat them as fungible with NPCs — the narrator and the
     # mechanical layer both stop knowing the player exists as a player.
-    pc_name_lookup = {
-        c.core.name.lower(): c.core.name
-        for c in snapshot.characters
-        if getattr(getattr(c, "core", None), "name", None)
-    }
-    for npc_mention in result.npcs_present:
-        matched_pc = pc_name_lookup.get(npc_mention.name.lower())
-        if matched_pc is not None:
-            with npc_pc_name_skipped_span(
-                npc_name=npc_mention.name,
-                matched_pc=matched_pc,
-                turn_number=turn_num,
-            ):
-                logger.info(
-                    "npc.pc_name_skipped name=%r matched_pc=%r turn=%d",
-                    npc_mention.name,
-                    matched_pc,
-                    turn_num,
-                )
-            continue
-        existing = next(
-            (e for e in snapshot.npc_registry if e.name.lower() == npc_mention.name.lower()),
-            None,
-        )
-        if existing is None:
-            snapshot.npc_registry.append(
-                NpcRegistryEntry(
-                    name=npc_mention.name,
-                    role=npc_mention.role or None,
-                    pronouns=npc_mention.pronouns or None,
-                    appearance=npc_mention.appearance or None,
-                    last_seen_location=snapshot.location or None,
-                    last_seen_turn=turn_num,
-                )
-            )
-            # Span emission replaces the prior direct ``_watcher_publish`` —
-            # ``WatcherSpanProcessor`` re-emits the same ``state_transition``
-            # event via ``SPAN_ROUTES[SPAN_NPC_AUTO_REGISTERED]``.
-            with npc_auto_registered_span(
-                npc_name=npc_mention.name,
-                pronouns=npc_mention.pronouns or "",
-                role=npc_mention.role or "",
-                turn_number=turn_num,
-                registry_len=len(snapshot.npc_registry),
-            ):
-                logger.info(
-                    "npc.auto_registered name=%r pronouns=%r role=%r turn=%d",
-                    npc_mention.name,
-                    npc_mention.pronouns or "",
-                    npc_mention.role or "",
-                    turn_num,
-                )
-        else:
-            _detect_npc_identity_drift(existing, npc_mention, turn_num)
-            existing.last_seen_turn = turn_num
-            existing.last_seen_location = snapshot.location or None
-            # Additive-only upsert: never overwrite a canonical field once set.
-            # Without this, drift logs once then silently canonicalizes.
-            if npc_mention.role and not existing.role:
-                existing.role = npc_mention.role
-            if npc_mention.pronouns and not existing.pronouns:
-                existing.pronouns = npc_mention.pronouns
-            if npc_mention.appearance and not existing.appearance:
-                existing.appearance = npc_mention.appearance
+    _apply_npc_mentions(
+        snapshot=snapshot,
+        mentions=list(result.npcs_present),
+        turn_num=turn_num,
+    )
 
     # Plot-a-course: parse course sidecar variants out of the
     # game_patch payload and apply them to the snapshot. Other

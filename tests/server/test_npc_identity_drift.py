@@ -39,7 +39,8 @@ from sidequest.agents.prompt_framework.types import (
     AttentionZone,
     SectionCategory,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry
+from sidequest.game.npc_pool import NpcPoolMember
+from sidequest.game.session import GameSnapshot
 from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 from tests._helpers.session_room import room_for
 
@@ -55,13 +56,12 @@ def _make_orchestrator() -> Orchestrator:
 
 def _frandrew_captain() -> NpcRegistryEntry:
     """The canonical identity the narrator must not drift away from."""
-    return NpcRegistryEntry(
+    return NpcPoolMember(
         name="Frandrew",
         role="captain",
         pronouns="she/her",
         appearance="tall, scarred eyebrow, grease-stained jacket",
-        last_seen_location="Bridge",
-        last_seen_turn=17,
+        drawn_from="legacy_registry",
     )
 
 
@@ -72,7 +72,7 @@ async def _build_prompt_with_registry(
     context = TurnContext(
         character_name="Felix",
         genre="space_opera",
-        npc_registry=registry_entries,
+        npc_pool=registry_entries,
     )
     return await orch.build_narrator_prompt("look around", context)
 
@@ -134,7 +134,7 @@ async def test_empty_npc_registry_produces_no_dossier_section():
     context = TurnContext(
         character_name="Felix",
         genre="space_opera",
-        npc_registry=[],
+        npc_pool=[],
     )
     _, registry = await orch.build_narrator_prompt("look around", context)
 
@@ -155,7 +155,7 @@ async def test_npc_roster_section_uses_valley_or_early_zone():
     context = TurnContext(
         character_name="Felix",
         genre="space_opera",
-        npc_registry=[_frandrew_captain()],
+        npc_pool=[_frandrew_captain()],
     )
     _, registry = await orch.build_narrator_prompt("look around", context)
 
@@ -177,7 +177,7 @@ async def test_npc_roster_section_is_state_category():
     orch = _make_orchestrator()
     context = TurnContext(
         character_name="Felix",
-        npc_registry=[_frandrew_captain()],
+        npc_pool=[_frandrew_captain()],
     )
     _, registry = await orch.build_narrator_prompt("look around", context)
 
@@ -193,9 +193,9 @@ async def test_multiple_npcs_all_rendered():
     Tchesla (1) — a real roster. Losing any of them is drift.
     """
     entries = [
-        NpcRegistryEntry(name="Frandrew", role="captain", pronouns="she/her"),
-        NpcRegistryEntry(name="Vey", role="engineer", pronouns="he/him"),
-        NpcRegistryEntry(name="Marrien", role="scout", pronouns="they/them"),
+        NpcPoolMember(name="Frandrew", role="captain", pronouns="she/her", drawn_from="legacy_registry"),
+        NpcPoolMember(name="Vey", role="engineer", pronouns="he/him", drawn_from="legacy_registry"),
+        NpcPoolMember(name="Marrien", role="scout", pronouns="they/them", drawn_from="legacy_registry"),
     ]
     prompt, _ = await _build_prompt_with_registry(entries)
     for name in ("Frandrew", "Vey", "Marrien"):
@@ -246,7 +246,7 @@ async def test_wiring_turn_n_registry_lands_in_turn_n_plus_1_prompt():
     context = TurnContext(
         character_name="Felix",
         genre="space_opera",
-        npc_registry=list(snapshot.npc_registry),
+        npc_pool=list(snapshot.npc_pool),
     )
     prompt_n_plus_1, _ = await orch.build_narrator_prompt("I salute the captain", context)
 
@@ -311,7 +311,7 @@ async def test_multi_turn_registry_persistence_in_prompt():
     context = TurnContext(
         character_name="Felix",
         genre="space_opera",
-        npc_registry=list(snapshot.npc_registry),
+        npc_pool=list(snapshot.npc_pool),
     )
     prompt, _ = await orch.build_narrator_prompt("I nod to Frandrew", context)
 
@@ -338,13 +338,13 @@ def test_bare_name_re_mention_does_not_overwrite_canonical_fields():
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="Frandrew",
                 role="captain",
                 pronouns="she/her",
                 appearance="tall, scarred eyebrow",
-                last_seen_turn=1,
+                drawn_from="legacy_registry",
             )
         ],
     )
@@ -361,7 +361,7 @@ def test_bare_name_re_mention_does_not_overwrite_canonical_fields():
         room=room_for(snapshot),
     )
 
-    entry = snapshot.npc_registry[0]
+    entry = snapshot.npc_pool[0]
     assert entry.role == "captain", "Bare-name re-mention wiped the role — identity drift bug."
     assert entry.pronouns == "she/her", "Bare-name re-mention wiped pronouns — identity drift bug."
     assert entry.appearance == "tall, scarred eyebrow"
@@ -495,12 +495,12 @@ def test_drift_detector_fires_on_pronoun_mismatch(caplog, monkeypatch):
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="Frandrew",
                 role="captain",
                 pronouns="she/her",
-                last_seen_turn=17,
+                drawn_from="legacy_registry",
             )
         ],
     )
@@ -541,13 +541,13 @@ def test_explicit_drift_does_not_overwrite_canonical_pronouns(caplog, monkeypatc
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="Frandrew",
                 role="captain",
                 pronouns="she/her",
                 appearance="tall, scarred eyebrow",
-                last_seen_turn=17,
+                drawn_from="legacy_registry",
             )
         ],
     )
@@ -576,7 +576,7 @@ def test_explicit_drift_does_not_overwrite_canonical_pronouns(caplog, monkeypatc
     )
 
     # Canonical fields MUST remain untouched
-    entry = snapshot.npc_registry[0]
+    entry = snapshot.npc_pool[0]
     assert entry.pronouns == "she/her", (
         f"Canonical pronouns overwritten by drifted value: got {entry.pronouns!r}, "
         "expected 'she/her'. Drift detection is theatre if the drifted value "
@@ -604,12 +604,12 @@ def test_drift_detector_fires_on_role_mismatch(caplog, monkeypatch):
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="Frandrew",
                 role="captain",
                 pronouns="she/her",
-                last_seen_turn=17,
+                drawn_from="legacy_registry",
             )
         ],
     )
@@ -655,18 +655,18 @@ async def test_run_narration_turn_passes_npc_registry_to_turn_context(monkeypatc
     from sidequest.agents import orchestrator as orch_module
 
     registry_entries = [
-        NpcRegistryEntry(
+        NpcPoolMember(
             name="Frandrew",
             role="captain",
             pronouns="she/her",
-            last_seen_turn=17,
+            drawn_from="legacy_registry",
         )
     ]
     session = GameSnapshot(
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=registry_entries,
+        npc_pool=registry_entries,
     )
     client = MagicMock(spec=ClaudeClient)
 
@@ -695,11 +695,11 @@ async def test_run_narration_turn_passes_npc_registry_to_turn_context(monkeypatc
     assert "context" in captured, (
         "Orchestrator.run_narration_turn was not invoked — wrapper short-circuited."
     )
-    assert captured["context"].npc_registry == registry_entries, (
-        "Module-level run_narration_turn dropped session.npc_registry when "
-        "building TurnContext. orchestrator.py:1324 refactored away the "
-        "npc_registry= kwarg — NPC identity drift (playtest-3 Frandrew bug) "
-        f"will return. Got npc_registry={captured['context'].npc_registry!r}, "
+    assert captured["context"].npc_pool == registry_entries, (
+        "Module-level run_narration_turn dropped session.npc_pool when "
+        "building TurnContext (Wave 2A — story 45-47 replaced npc_registry "
+        "with npc_pool). NPC identity drift (playtest-3 Frandrew bug) will "
+        f"return. Got npc_pool={captured['context'].npc_pool!r}, "
         f"expected {registry_entries!r}."
     )
 
@@ -716,12 +716,12 @@ def test_case_insensitive_comparison_does_not_fire_drift(caplog, monkeypatch):
         genre_slug="space_opera",
         world_slug="aureate_span",
         location="Bridge",
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="Frandrew",
                 role="Captain",
                 pronouns="She/Her",
-                last_seen_turn=17,
+                drawn_from="legacy_registry",
             )
         ],
     )
