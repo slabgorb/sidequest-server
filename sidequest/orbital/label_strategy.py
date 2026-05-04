@@ -102,3 +102,29 @@ def estimate_text_width_px(text: str, register: Register) -> float:
     else:
         raise ValueError(f"unknown register: {register!r}")
     return float(len(text)) * char_width
+
+
+@dataclass(frozen=True)
+class _StrategyInput:
+    """Per-body context the rule functions consume.
+
+    Built once per render by the driver from orbits/chart/placements.
+    Pure data: rule functions don't need the renderer.
+    """
+    body_id: str
+    parent_id: str | None
+    parent_type: str | None       # str rather than BodyType to avoid orbital→models→here cycle
+    text: str                     # the label text (already stripped)
+    register: Register
+    text_width_px: float
+    is_moon_band_child: bool      # body is rendered inside a moon band
+    callout_label_annotation: object | None   # Annotation if explicit override exists, else None
+    textpath_path_id: str | None  # set if engraved_label with curve_along resolves to this body
+    path_circumference_px: float | None  # resolved path length when textpath_path_id set
+    arc_to_neighbor_px: float | None     # smallest applicable arc to a peer's label edge
+    radial_tier: int              # tier from existing _assign_collision_tiers (0..LABEL_TIER_MAX+1)
+    # Anchor data (used by SVG handler later, threaded through unchanged):
+    anchor_x: float
+    anchor_y: float
+    anchor_bearing_deg: float
+    callout_tag: str | None       # for explicit callout_label, the tag line
