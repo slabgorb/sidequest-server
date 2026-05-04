@@ -26,7 +26,7 @@ Orrery v2 (Story 45-42) adds:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 import svgwrite
@@ -1036,15 +1036,16 @@ def _allocated_moon_radii(
     # Auto-allocate by ascending real semi_major_au
     auto.sort(key=lambda kv: kv[1].semi_major_au or 0.0)
     radii = dict(pinned)
-    used = sorted(pinned.values())
+    # `used` is a membership set — we only check `next_auto in used` to
+    # skip slots already pinned. Sort order is irrelevant.
+    used: set[float] = set(pinned.values())
     next_auto = palette.MOON_BAND_INNER_PX
     for bid, _b in auto:
         # Skip past any pinned radii that overlap
         while next_auto in used:
             next_auto += palette.MOON_BAND_STEP_PX
         radii[bid] = float(next_auto)
-        used.append(float(next_auto))
-        used.sort()
+        used.add(float(next_auto))
         next_auto += palette.MOON_BAND_STEP_PX
     return radii
 
