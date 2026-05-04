@@ -77,12 +77,6 @@ def captured_provider(monkeypatch: pytest.MonkeyPatch) -> dict[str, TracerProvid
     return captured
 
 
-def _attach_in_memory_exporter(provider: TracerProvider) -> InMemorySpanExporter:
-    exporter = InMemorySpanExporter()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return exporter
-
-
 def _install_in_memory_exporter_on_global() -> InMemorySpanExporter:
     """Cooperate with whatever global provider OTEL has and add an exporter.
 
