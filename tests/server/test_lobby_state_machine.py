@@ -464,12 +464,10 @@ def test_transition_to_playing_emits_state_transition_span() -> None:
     )
     payload = transitions[0][1]
     assert payload.get("player_id") == "rux"
-    assert payload.get("from_state") in ("chargen", "CHARGEN"), (
+    assert payload.get("from_state") == "chargen", (
         f"from_state must be 'chargen' (the prior _Seat state); got {payload}"
     )
-    assert payload.get("to_state") in ("playing", "PLAYING"), (
-        f"to_state must be 'playing'; got {payload}"
-    )
+    assert payload.get("to_state") == "playing", f"to_state must be 'playing'; got {payload}"
     assert payload.get("reason") == "chargen_complete", (
         f"reason must be 'chargen_complete' so the GM panel can distinguish "
         f"this transition from PLAYER_SEAT-driven transitions; got {payload}"

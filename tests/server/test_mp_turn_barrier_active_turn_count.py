@@ -425,10 +425,13 @@ async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
       mp.barrier_fired.player_count == 1
       mp.round_dispatched.player_count == 1
 
-    RED today: mp.round_dispatched.player_count == 4 because
-    session_handler.py:3302 still calls seated_player_count(). The fix
-    is a one-line edit to use `playing_count` (already in scope as a
-    local variable from line 3240).
+    GREEN: Story 45-2 wired `mp.round_dispatched.player_count` to
+    `playing_count` (the same value the barrier itself used) at
+    `sidequest/handlers/player_action.py:356`. This test pins that
+    invariant so a future regression — switching back to
+    `seated_player_count()` or any other source — would surface here
+    instead of silently telling the GM panel two different numbers
+    about the same dispatch.
     """
     from sidequest.server.session_room import LobbyState  # type: ignore[attr-defined]
 
@@ -498,8 +501,8 @@ async def test_mp_round_dispatched_player_count_matches_barrier_predicate(
         f"mp.round_dispatched.player_count must equal "
         f"barrier.wait.active_turn_count for the same round. Got "
         f"{dispatched_count} (vs active_turn_count={active_turn_count}). "
-        f"If this is 4, session_handler.py:3302 is still reading "
-        f"seated_player_count() instead of playing_count — the post-barrier "
-        f"OTEL event will tell Sebastien a different number than the "
-        f"barrier itself just used."
+        f"If this is 4, sidequest/handlers/player_action.py:356 has "
+        f"regressed to reading seated_player_count() (or any source other "
+        f"than `playing_count`) — the post-barrier OTEL event will tell "
+        f"Sebastien a different number than the barrier itself just used."
     )
