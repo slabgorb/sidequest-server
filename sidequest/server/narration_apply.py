@@ -1522,6 +1522,7 @@ def _apply_narration_result_to_snapshot(
         from sidequest.game.beat_kinds import apply_beat
         from sidequest.server.dispatch.confrontation import find_confrontation_def
         from sidequest.server.dispatch.encounter_lifecycle import (
+            NoOpponentAvailableError,
             instantiate_encounter_from_trigger,
         )
         from sidequest.telemetry.spans import (
@@ -1593,15 +1594,38 @@ def _apply_narration_result_to_snapshot(
             additional_pc_names = [
                 name for name in snapshot.player_seats.values() if name and name != player_name
             ]
-            instantiate_encounter_from_trigger(
-                snapshot=snapshot,
-                pack=pack,
-                encounter_type=result.confrontation,
-                player_name=player_name,
-                npcs_present=result.npcs_present,
-                genre_slug=snapshot.genre_slug,
-                additional_player_names=additional_pc_names,
-            )
+            # Story 45-33 (CLAUDE.md "strict helper, lenient caller"): the
+            # lifecycle raises ValueError with an OTEL span when a
+            # category=combat encounter resolves to zero opponents
+            # post-fallback (no narrator npcs AND no registry NPCs at the
+            # player's location). The OTEL span is the lie-detector
+            # signal — the wrapper catches the exception so the narration
+            # turn stays resilient (no crashed turn for an LLM extraction
+            # gap). The encounter is not created and the
+            # ``encounter_empty_actor_list_span`` above already logged the
+            # gap; the GM panel sees both spans and can correlate.
+            try:
+                instantiate_encounter_from_trigger(
+                    snapshot=snapshot,
+                    pack=pack,
+                    encounter_type=result.confrontation,
+                    player_name=player_name,
+                    npcs_present=result.npcs_present,
+                    genre_slug=snapshot.genre_slug,
+                    additional_player_names=additional_pc_names,
+                )
+            except NoOpponentAvailableError as exc:
+                # Narrowly scoped: only the Story 45-33 no-opponent guard is
+                # caught here. The sealed-letter validator's "exactly one
+                # opponent" ValueError and the unknown-encounter-type / bad-side
+                # ValueErrors all PROPAGATE — those are config/extraction errors
+                # that the existing test suite asserts crash the turn.
+                logger.warning(
+                    "encounter.no_opponent_available confrontation=%s player=%s reason=%s",
+                    result.confrontation,
+                    player_name,
+                    exc,
+                )
 
         # (b) Apply beat selections (dice-replay turns short-circuit)
         enc = snapshot.encounter

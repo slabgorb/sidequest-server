@@ -60,6 +60,7 @@ def test_instantiate_unknown_type_raises(cac_pack) -> None:
 
 def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     """A resolved prior encounter does not block a new one."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.game.encounter import EncounterActor, EncounterMetric
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
@@ -74,12 +75,16 @@ def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     )
     prior.resolved = True
     snap.encounter = prior
+    # Story 45-33: combat now requires an opponent post-fallback. The original
+    # test fixture passed npcs_present=[] because the focus is the resolved
+    # encounter replacement, not opponent supply — adding an explicit
+    # opponent preserves the test's intent.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Rux",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
     )
     assert snap.encounter is enc
@@ -273,17 +278,21 @@ def test_instantiate_seats_additional_pcs_for_mp_bundle(cac_pack) -> None:
 
 def test_instantiate_additional_pcs_dedup_against_primary(cac_pack) -> None:
     """If the caller passes the primary in additional list, dedup."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
 
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    # Story 45-33: combat requires an opponent post-fallback; this test's
+    # focus is PC-list dedup, so supply a stub opponent and assert against
+    # only the player-side actors.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Scratchy",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
         additional_player_names=["Scratchy", "Itchy", "Itchy"],
     )
@@ -296,19 +305,513 @@ def test_instantiate_additional_pcs_dedup_against_primary(cac_pack) -> None:
 
 def test_instantiate_additional_pcs_default_none_keeps_solo_behavior(cac_pack) -> None:
     """Solo callers (additional_player_names=None) get a single-PC roster."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
 
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    # Story 45-33: combat requires an opponent. The test's focus is the
+    # solo-PC roster shape (no MP bundle), not opponent supply.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Rux",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
     )
     assert enc is not None
     pc_names = [a.name for a in enc.actors if a.side == "player"]
     assert pc_names == ["Rux"]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Story 45-33 — adversarial-review follow-ups on Story 45-18 (PR #98).
+#
+# Two correctness gaps the merged 45-18 work left exposed:
+#
+#   AC1 — Sealed-letter bypass guard (encounter_lifecycle.py:226) has zero
+#         regression coverage. A regression that flipped `!=` to `==` or
+#         dropped the guard would compile, lint, pass the existing 2685
+#         tests, and silently break sealed-letter (commit-reveal) duels by
+#         leaking bystander registry NPCs into the actor list.
+#
+#   AC2 — Empty narrator `npcs_present` + empty registry fallback for a
+#         combat encounter currently produces ``actors=[player only]`` —
+#         the exact Playtest 3 (Orin) bug shape 45-18 was meant to fix.
+#         CLAUDE.md "No Silent Fallbacks" demands a loud failure here:
+#         category=combat that resolves to zero opponents post-fallback
+#         must raise (with an OTEL span) so the GM panel sees the lie.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def sealed_letter_pack():
+    """Synthetic pack with one sealed-letter ConfrontationDef.
+
+    Built locally so the test does not depend on space_opera content
+    layout (the dogfight pack is the only on-disk sealed-letter today;
+    binding to it would couple this regression test to genre content).
+    Uses MagicMock(spec=GenrePack) for the same reason
+    ``synthetic_two_dial_pack`` does in ``conftest.py``: only the
+    ``rules.confrontations`` lookup is exercised.
+    """
+    from unittest.mock import MagicMock
+
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import (
+        ConfrontationDef,
+        InteractionCell,
+        InteractionTable,
+        MetricDef,
+        ResolutionMode,
+        RulesConfig,
+    )
+
+    table = InteractionTable(
+        version="0.1.0",
+        starting_state="merge",
+        maneuvers_consumed=["straight", "loop"],
+        cells=[
+            InteractionCell(
+                pair=["straight", "loop"],
+                name="Blue scores",
+                shape="passive vs offense",
+                red_view={"target_bearing": "06", "closure": "opening", "gun_solution": False},
+                blue_view={"target_bearing": "12", "closure": "opening", "gun_solution": True},
+                narration_hint="Blue lines up the shot.",
+            ),
+        ],
+    )
+    from sidequest.genre.models.rules import BeatDef
+
+    cdef = ConfrontationDef(
+        type="duel",
+        label="Sealed-Letter Duel",
+        category="combat",
+        resolution_mode=ResolutionMode.sealed_letter_lookup,
+        player_metric=MetricDef(name="energy", starting=0, threshold=30),
+        opponent_metric=MetricDef(name="energy", starting=0, threshold=30),
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "straight",
+                    "label": "Straight",
+                    "kind": "push",
+                    "stat_check": "DEX",
+                }
+            ),
+        ],
+        interaction_table=table,
+    )
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+    return pack
+
+
+@pytest.fixture
+def combat_only_pack():
+    """Synthetic pack with one beat-selection combat ConfrontationDef.
+
+    Used to drive AC2 tests where the encounter category=combat must raise
+    when no opponent can be sourced (neither narrator nor registry).
+    """
+    from unittest.mock import MagicMock
+
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import (
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
+        RulesConfig,
+    )
+
+    cdef = ConfrontationDef(
+        type="brawl",
+        label="Brawl",
+        category="combat",
+        player_metric=MetricDef(name="momentum", starting=0, threshold=10),
+        opponent_metric=MetricDef(name="momentum", starting=0, threshold=10),
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            ),
+        ],
+    )
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+    return pack
+
+
+@pytest.fixture
+def non_combat_pack():
+    """Synthetic pack with one non-combat ConfrontationDef.
+
+    AC2's no-opponent guard MUST be combat-only — non-combat encounters
+    (negotiation, chase, social_duel) can legitimately resolve with a
+    solo player while the narrator works the scene one-on-one.
+    """
+    from unittest.mock import MagicMock
+
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import (
+        BeatDef,
+        ConfrontationDef,
+        MetricDef,
+        RulesConfig,
+    )
+
+    cdef = ConfrontationDef(
+        type="parley",
+        label="Parley",
+        category="social",
+        player_metric=MetricDef(name="rapport", starting=0, threshold=10),
+        opponent_metric=MetricDef(name="rapport", starting=0, threshold=10),
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "appeal",
+                    "label": "Appeal",
+                    "kind": "push",
+                    "stat_check": "CHA",
+                }
+            ),
+        ],
+    )
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+    return pack
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AC1 — Sealed-letter bypass guard regression coverage
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
+    """Story 45-33 AC1 (primary).
+
+    A sealed-letter encounter with one explicit opponent must NOT also pull
+    a same-location NPC out of ``snapshot.npc_registry`` into the actor
+    list. The registry fallback (``_registry_fallback_npcs``) is gated at
+    ``encounter_lifecycle.py:226`` to non-sealed-letter modes precisely so
+    the duel's 1-PC red / 1-NPC blue pairing stays inviolate.
+
+    This test also asserts the OTEL ``encounter.confrontation_initiated``
+    span carries ``actor_count=2`` so the GM panel can confirm the seal
+    held end-to-end (CLAUDE.md OTEL principle).
+
+    Regression catch: dropping the guard or flipping ``!=`` to ``==`` would
+    let a registry bystander shadow the named opponent — the duel would
+    proceed against the wrong actor and the existing 2685 tests would
+    still pass.
+    """
+    import opentelemetry.trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+
+    try:
+        snap = GameSnapshot(genre_slug="test_pack", location="Hangar Bay 7")
+        # Bystander at the same location — would be pulled into a non-sealed-letter
+        # encounter via the registry fallback. Must NOT be pulled into the duel.
+        snap.npc_registry.append(
+            NpcRegistryEntry(
+                name="Deck Crew Chief",
+                role="bystander",
+                last_seen_location="Hangar Bay 7",
+                last_seen_turn=2,
+            )
+        )
+        explicit_opponent = NpcMention(
+            name="Vulture",
+            side="opponent",
+            role="hostile",
+        )
+
+        enc = instantiate_encounter_from_trigger(
+            snapshot=snap,
+            pack=sealed_letter_pack,
+            encounter_type="duel",
+            player_name="Maverick",
+            npcs_present=[explicit_opponent],
+            genre_slug="test_pack",
+        )
+
+        assert enc is not None
+        actor_names = [a.name for a in enc.actors]
+        assert "Maverick" in actor_names
+        assert "Vulture" in actor_names
+        assert "Deck Crew Chief" not in actor_names, (
+            "registry bystander leaked into sealed-letter duel — "
+            "the bypass guard at encounter_lifecycle.py:226 regressed. "
+            f"actors={actor_names!r}"
+        )
+        assert len(enc.actors) == 2, (
+            f"sealed-letter duel must be exactly red+blue; got {actor_names!r}"
+        )
+
+        spans_by_name = {s.name: s for s in exporter.get_finished_spans()}
+        init_span = spans_by_name.get("encounter.confrontation_initiated")
+        assert init_span is not None, (
+            f"expected encounter.confrontation_initiated span; "
+            f"got {sorted(spans_by_name)!r}"
+        )
+        attrs = dict(init_span.attributes or {})
+        assert attrs.get("actor_count") == 2, (
+            f"sealed-letter init must report actor_count=2; got {attrs.get('actor_count')!r}"
+        )
+    finally:
+        processor.shutdown()
+
+
+def test_sealed_letter_empty_npcs_present_raises_without_consuming_registry(
+    sealed_letter_pack,
+):
+    """Story 45-33 AC1 (defensive).
+
+    When the narrator's ``npcs_present`` is EMPTY for a sealed-letter
+    encounter AND a same-location NPC sits in ``npc_registry``, the
+    sealed-letter validator at ``encounter_lifecycle.py:256`` must raise
+    "got 0 npcs_present". The registry fallback must NOT be consulted —
+    even in this degenerate empty path the bystander is not promoted into
+    the duel as a substitute opponent.
+
+    Regression catch: dropping the resolution_mode guard at line 226
+    while keeping the validator length check would silently fall back to
+    the registry, then pass the validator with the wrong NPC — the test
+    above would catch the wrong-NPC path; this test catches the
+    "fallback ran at all" path.
+    """
+    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="test_pack", location="Hangar Bay 7")
+    snap.npc_registry.append(
+        NpcRegistryEntry(
+            name="Deck Crew Chief",
+            role="bystander",
+            last_seen_location="Hangar Bay 7",
+            last_seen_turn=2,
+        )
+    )
+
+    with pytest.raises(ValueError, match="got 0 npcs_present"):
+        instantiate_encounter_from_trigger(
+            snapshot=snap,
+            pack=sealed_letter_pack,
+            encounter_type="duel",
+            player_name="Maverick",
+            npcs_present=[],
+            genre_slug="test_pack",
+        )
+
+    # No encounter must have been written. If the guard regressed and the
+    # registry was consumed, the encounter would have been instantiated
+    # with the bystander as the blue actor before any later rollback.
+    assert snap.encounter is None, (
+        f"snapshot.encounter must remain None when sealed-letter validator "
+        f"rejects empty npcs_present; got {snap.encounter!r}"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AC2 — Empty + empty path must raise for combat (CLAUDE.md No Silent
+# Fallbacks). Non-combat is allowed to remain a solo-actor encounter.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_combat_with_empty_npcs_and_empty_registry_fallback_raises(combat_only_pack):
+    """Story 45-33 AC2 (primary).
+
+    The Playtest 3 (Orin) bug shape: narrator emits ``confrontation=combat``
+    with empty ``npcs_present``, the registry has no NPCs at the player's
+    location (or no location at all), and the encounter is currently
+    instantiated with ``actors=[player only]`` — a combat with nobody to
+    fight.
+
+    Per CLAUDE.md "No Silent Fallbacks", this must raise. A combat
+    encounter with zero opponents post-fallback is a configuration
+    failure — the pipeline should refuse to advance rather than emit a
+    stub encounter that the dial subsystem will later silently drop
+    opponent beats from.
+
+    Currently failing: the function returns a player-only encounter
+    instead of raising. Dev (green phase) adds the no-opponent guard.
+    """
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="test_pack", location="The Pit")
+    # Registry is empty — the fallback returns []; combined with empty
+    # narrator npcs_present this is the "empty + empty" Playtest 3 shape.
+
+    with pytest.raises(ValueError, match=r"(?i)no opponent"):
+        instantiate_encounter_from_trigger(
+            snapshot=snap,
+            pack=combat_only_pack,
+            encounter_type="brawl",
+            player_name="Orin",
+            npcs_present=[],
+            genre_slug="test_pack",
+        )
+
+    assert snap.encounter is None, (
+        f"snapshot.encounter must remain None when combat resolves to zero "
+        f"opponents; got {snap.encounter!r}"
+    )
+
+
+def test_combat_with_no_location_and_empty_npcs_raises(combat_only_pack):
+    """Story 45-33 AC2 (location=None variant).
+
+    ``_registry_fallback_npcs`` short-circuits when ``snapshot.location``
+    is falsy — returning ``[]``. Combined with empty narrator
+    ``npcs_present``, this is the second known empty+empty path. Same
+    expectation: combat with zero opponents must raise.
+    """
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="test_pack")  # no location
+    assert snap.location in (None, "")
+
+    with pytest.raises(ValueError, match=r"(?i)no opponent"):
+        instantiate_encounter_from_trigger(
+            snapshot=snap,
+            pack=combat_only_pack,
+            encounter_type="brawl",
+            player_name="Orin",
+            npcs_present=[],
+            genre_slug="test_pack",
+        )
+
+
+def test_combat_no_opponent_emits_otel_span(combat_only_pack):
+    """Story 45-33 AC2 — OTEL lie-detector signal.
+
+    Per CLAUDE.md OTEL principle: every backend fix that touches a
+    subsystem must add an OTEL span the GM panel can read. The
+    no-opponent guard fires on a real configuration failure; the GM
+    panel needs to see ``encounter.no_opponent_available`` in the
+    dashboard so Sebastien (the mechanical-first player) can confirm
+    the guard engaged rather than the narrator improvising around an
+    empty encounter.
+
+    Span attributes required:
+        - encounter_type
+        - genre_slug
+        - player_name
+        - category (= "combat")
+    """
+    import opentelemetry.trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider)
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+
+    try:
+        snap = GameSnapshot(genre_slug="test_pack", location="The Pit")
+        with pytest.raises(ValueError, match=r"(?i)no opponent"):
+            instantiate_encounter_from_trigger(
+                snapshot=snap,
+                pack=combat_only_pack,
+                encounter_type="brawl",
+                player_name="Orin",
+                npcs_present=[],
+                genre_slug="test_pack",
+            )
+
+        spans_by_name = {s.name: s for s in exporter.get_finished_spans()}
+        no_opp_span = spans_by_name.get("encounter.no_opponent_available")
+        assert no_opp_span is not None, (
+            f"expected encounter.no_opponent_available span; "
+            f"got {sorted(spans_by_name)!r}"
+        )
+        attrs = dict(no_opp_span.attributes or {})
+        assert attrs.get("encounter_type") == "brawl", (
+            f"span missing encounter_type=brawl; attrs={sorted(attrs)!r}"
+        )
+        assert attrs.get("genre_slug") == "test_pack"
+        assert attrs.get("player_name") == "Orin"
+        assert attrs.get("category") == "combat", (
+            f"no-opponent span must scope by category=combat; attrs={sorted(attrs)!r}"
+        )
+    finally:
+        processor.shutdown()
+
+
+def test_non_combat_with_empty_npcs_and_empty_registry_does_not_raise(non_combat_pack):
+    """Story 45-33 AC2 (negative test — guard is combat-only).
+
+    A social/parley encounter with no opponents is legitimate — the
+    narrator may be opening a one-on-one negotiation where the NPC enters
+    on a later beat, or running a scene of self-talk. The no-opponent
+    guard must NOT fire for ``category != "combat"``; it would be a false
+    alarm and would block legitimate non-combat scenes.
+
+    Encounter is created with ``actors=[player only]`` and the existing
+    ``encounter_empty_actor_list_span`` carries the (still legitimate)
+    "narrator named no NPCs" signal.
+    """
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        instantiate_encounter_from_trigger,
+    )
+
+    snap = GameSnapshot(genre_slug="test_pack", location="Drawing Room")
+
+    enc = instantiate_encounter_from_trigger(
+        snapshot=snap,
+        pack=non_combat_pack,
+        encounter_type="parley",
+        player_name="Ada",
+        npcs_present=[],
+        genre_slug="test_pack",
+    )
+
+    assert enc is not None
+    actor_names = [a.name for a in enc.actors]
+    assert actor_names == ["Ada"], (
+        f"non-combat empty encounter should produce solo-player roster; "
+        f"got {actor_names!r}"
+    )

@@ -67,6 +67,25 @@ SPAN_ROUTES[SPAN_ENCOUNTER_EMPTY_ACTOR_LIST] = SpanRoute(
         "player_name": (span.attributes or {}).get("player_name", ""),
     },
 )
+# Story 45-33: a combat encounter that resolves to zero opponents post-fallback
+# is the original Playtest 3 (Orin) bug shape — narrator emits ``confrontation=combat``
+# but neither the explicit ``npcs_present`` nor the location-scoped registry
+# fallback yields an opponent. CLAUDE.md "No Silent Fallbacks" requires the
+# pipeline to refuse this state and surface the lie-detector signal here so
+# the GM panel can show Sebastien the guard engaged rather than the narrator
+# improvising around an empty encounter.
+SPAN_ENCOUNTER_NO_OPPONENT_AVAILABLE = "encounter.no_opponent_available"
+SPAN_ROUTES[SPAN_ENCOUNTER_NO_OPPONENT_AVAILABLE] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.no_opponent_available",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "category": (span.attributes or {}).get("category", ""),
+    },
+)
 SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
 SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH] = SpanRoute(
     event_type="state_transition",
@@ -273,6 +292,39 @@ def encounter_empty_actor_list_span(
             "encounter_type": encounter_type,
             "genre_slug": genre_slug,
             "player_name": player_name,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_no_opponent_available_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    player_name: str,
+    category: str,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 45-33: combat encounter has no opponent post-fallback — guard fired.
+
+    Distinct from ``encounter_empty_actor_list_span`` which fires when the
+    narrator named adversaries in prose but the JSON extraction dropped
+    them. This span fires the layer above: the entire instantiation path
+    (explicit ``npcs_present`` AND the location-scoped registry fallback)
+    produced zero opponents for a category=combat encounter, and the
+    pipeline is refusing to advance.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_NO_OPPONENT_AVAILABLE,
+        {
+            "encounter_type": encounter_type,
+            "genre_slug": genre_slug,
+            "player_name": player_name,
+            "category": category,
             **attrs,
         },
         tracer_override=_tracer,
