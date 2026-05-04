@@ -598,8 +598,15 @@ class GameSnapshot(BaseModel):
     # becomes one outbound ``CONFRONTATION`` or ``CONFRONTATION_OUTCOME``
     # WebSocket frame. Both fields are reset to defaults after the
     # handler dispatches.
-    pending_magic_auto_fires: list[dict] = Field(default_factory=list)
-    pending_magic_confrontation_outcome: dict | None = None
+    # S5 — Transient outbound dispatch queues. ``exclude=True`` keeps them
+    # out of ``model_dump_json``, so a save mid-handler cannot persist a
+    # partial queue. They re-initialize empty on load — correct because
+    # auto-fires and outcomes are derivable from snapshot state on the
+    # next narration turn (``apply_magic_working`` /
+    # ``_resolve_magic_confrontation_if_applicable`` recompute from
+    # ``magic_state``, not from the queue).
+    pending_magic_auto_fires: list[dict] = Field(default_factory=list, exclude=True)
+    pending_magic_confrontation_outcome: dict | None = Field(default=None, exclude=True)
 
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route

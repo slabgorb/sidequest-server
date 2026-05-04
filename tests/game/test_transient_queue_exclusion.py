@@ -32,15 +32,36 @@ def test_pending_magic_confrontation_outcome_excluded_from_dump() -> None:
     assert "pending_magic_confrontation_outcome" not in parsed
 
 
+def _make_minimal_world_magic_config():
+    """Plan deviation 2026-05-04: the plan snippet uses
+    ``WorldMagicConfig(world_slug="w", ledger_bars=[])`` but the current
+    pydantic model requires several additional fields (genre_slug,
+    world_knowledge, hard_limits, cost_types, narrator_register, etc.).
+    Mirror the helper TEA added in tests/game/test_chassis_init.py."""
+    from sidequest.magic.models import WorldKnowledge, WorldMagicConfig
+
+    return WorldMagicConfig(
+        world_slug="w",
+        genre_slug="g",
+        allowed_sources=[],
+        active_plugins=[],
+        intensity=0.0,
+        world_knowledge=WorldKnowledge(primary="classified", local_register="folkloric"),
+        visibility={"primary": "feared", "local_register": "dismissed"},
+        hard_limits=[],
+        cost_types=[],
+        ledger_bars=[],
+        narrator_register="test",
+    )
+
+
 def test_pending_status_promotions_excluded_from_dump() -> None:
     """MagicState.pending_status_promotions is also excluded — it lives on
     MagicState rather than directly on the snapshot, but the persistence
     boundary is still ``GameSnapshot.model_dump_json``."""
-    from sidequest.magic.models import WorldMagicConfig
     from sidequest.magic.state import MagicState
 
-    config = WorldMagicConfig(world_slug="w", ledger_bars=[])
-    state = MagicState.from_config(config)
+    state = MagicState.from_config(_make_minimal_world_magic_config())
     state.pending_status_promotions.append({"actor": "a", "text": "Bleeding", "severity": "Wound"})
 
     snap = GameSnapshot(genre_slug="g", world_slug="w", magic_state=state)
