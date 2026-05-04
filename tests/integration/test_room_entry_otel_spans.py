@@ -206,6 +206,17 @@ def test_evaluated_span_emitted_with_fired_zero_when_cooldown_blocks(
         f"expected ≥2 room.entry_evaluated spans; saw {len(attrs_list)}"
     )
     second = attrs_list[1]
+    # Story 47-6 review finding (cross-confirmed by 3 reviewer subagents):
+    # the span's stated purpose is to let the GM panel distinguish
+    # "no confrontation matched" (eligible_count==0, fired_count==0)
+    # from "matched but cooldown-gated" (eligible_count>=1, fired_count==0).
+    # Asserting only fired_count==0 lets a broken implementation pass —
+    # eligible_count==0 also satisfies it. Both fields must be checked.
+    assert second.get("eligible_count", 0) >= 1, (
+        f"second entry should still SEE the confrontation as a match — "
+        f"the cooldown-blocking distinction relies on eligible_count "
+        f"reflecting matched-before-cooldown candidates. saw {second}"
+    )
     assert second.get("fired_count", -1) == 0, (
         f"second entry should be cooldown-blocked (fired_count==0); "
         f"saw {second}"
