@@ -1,24 +1,38 @@
 """Server-side SVG renderer for the orbital chart.
 
-Per spec §6: renderer produces a complete SVG document per (world, scope,
-t_hours, party_at, plot_state). Layers: engraved (orbits + bodies + scale +
-bearings), flavor (chart.yaml annotations), party (current location), plot
-(when active). Output is deterministic for fixed inputs — snapshot tests
-pin canonical outputs.
+Per spec §6 of the original visual-restoration design and the orrery-v2
+spec (docs/superpowers/specs/2026-05-04-orrery-v2-visual-restoration.md):
+renderer produces a complete SVG document per (world, scope, t_hours,
+party_at). Layers: engraved (bearing rose + orbits + bodies + scale +
+moon band), flavor (chart.yaml annotations including textPath labels),
+party (current location).
 
-Position math is now Kepler-correct via `sidequest.orbital.position`.
+Position math is Kepler-correct via `sidequest.orbital.position`.
 For e=0 bodies the output is bit-identical to the prior circular formula,
 so `eccentricity=0` fixtures don't drift.
+
+Orrery v2 (Story 45-42) adds:
+  - Bearing rose at chart center (system_root only).
+  - Star-as-reticle for STAR-typed centered bodies.
+  - Register-driven orbit + label styling (engraved/chalk/prose).
+  - Moons rendered at system-root scope in a fixed-radius band around
+    their parent (with auto-allocated or pinned `moon_display_radius_px`).
+  - `curve_along` honored on engraved_label annotations via SVG textPath.
+  - Radial-out label anchor + bearing-rose clearance + peer-collision tier.
+  - Non-color hazard signal (dashed glyph stroke).
+  - OTEL chart.render attrs for register / moon / label-density counts.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 import svgwrite
 import svgwrite.base
 import svgwrite.container
+import svgwrite.path
 import svgwrite.shapes
 import svgwrite.text
 import svgwrite.validator2
@@ -37,11 +51,24 @@ from sidequest.telemetry.spans.chart import emit_chart_render
 # svgwrite's built-in validators reject attributes that aren't in their
 # (somewhat outdated) allowlists. We need:
 #   - `data-*` for click-routing on rendered bodies
-#   - `paint-order` for the haloed-text trick (stroke-then-fill on a single
-#     text element, used everywhere instead of feMorphology+feGaussianBlur
-#     which the `tiny` profile rejects)
+#   - `paint-order` for the haloed-text trick
 #   - `class` so we can mark drillable groups for client-side hover styling
-_PASSTHROUGH_ATTRS = frozenset({"paint-order", "class"})
+#   - `href` and `xlink:href` for textPath references
+#   - `letter-spacing` for register-styled labels
+#   - `font-weight` for register-styled labels
+#   - `startOffset` for textPath positioning
+#   - `fill-opacity`, `stroke-opacity`, `opacity` for register dimming
+_PASSTHROUGH_ATTRS = frozenset(
+    {
+        "paint-order",
+        "class",
+        "href",
+        "xlink:href",
+        "letter-spacing",
+        "font-weight",
+        "startOffset",
+    }
+)
 
 _orig_is_valid_attribute = svgwrite.validator2.Full11Validator.is_valid_svg_attribute
 
@@ -75,6 +102,11 @@ svgwrite.validator2.Tiny12Validator.check_svg_attribute_value = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Public API: Scope, render_chart
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class Scope:
     """Render scope — which body is centered."""
@@ -85,14 +117,34 @@ class Scope:
     def system_root(cls) -> Scope:
         return cls(center_body_id="<root>")
 
+    @property
+    def is_system_root(self) -> bool:
+        return self.center_body_id == "<root>"
+
+
+@dataclass
+class _RenderStats:
+    """Accumulator for OTEL chart.render attribute counts.
+
+    Populated by `_render_engraved_layer` as it walks bodies; passed back
+    to `render_chart` so the chart.render span has accurate per-register
+    body counts and label-density signals.
+    """
+
+    body_count_engraved: int = 0
+    body_count_chalk: int = 0
+    body_count_prose: int = 0
+    body_count_moons_rendered: int = 0
+    label_collision_tier_max: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Position math (thin shims onto sidequest.orbital.position)
+# ---------------------------------------------------------------------------
+
 
 def _body_position_au_polar(body: BodyDef, t_hours: float) -> tuple[float, float]:
-    """Return (au, theta_deg) of a body relative to its parent at story-time t.
-
-    Thin shim onto `position.kepler_position`. Kept as a private function
-    for grep-locality — every "where is body X right now" question lands
-    at the same call site, easy to OTEL-instrument later.
-    """
+    """Return (au, theta_deg) of a body relative to its parent at story-time t."""
     return kepler_position(body, t_hours)
 
 
@@ -108,6 +160,11 @@ def _polar_to_cartesian(au: float, theta_deg: float, scale: float) -> tuple[floa
     return (x, y)
 
 
+# ---------------------------------------------------------------------------
+# Text helper — haloed text with optional register styling
+# ---------------------------------------------------------------------------
+
+
 def _haloed_text(
     content: str,
     *,
@@ -117,14 +174,11 @@ def _haloed_text(
     font_size: int = 10,
     text_anchor: str = "start",
     font_style: str | None = None,
+    font_weight: int | None = None,
+    letter_spacing: int | None = None,
+    opacity: float | None = None,
 ) -> svgwrite.text.Text:
-    """Text with a dark halo via paint-order=stroke. Tiny-profile-safe.
-
-    The stroke renders first (creating a silhouette outline), then the fill
-    paints over it — leaving a halo of background color around the visible
-    glyph. Cheaper than an feMorphology+feGaussianBlur filter (which the
-    `tiny` profile rejects) and works at any zoom.
-    """
+    """Text with a dark halo via paint-order=stroke. Tiny-profile-safe."""
     text = svgwrite.text.Text(
         content,
         insert=insert,
@@ -139,29 +193,91 @@ def _haloed_text(
     text["paint-order"] = "stroke"
     if font_style is not None:
         text["font-style"] = font_style
+    if font_weight is not None:
+        text["font-weight"] = font_weight
+    if letter_spacing is not None:
+        text["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        text["opacity"] = opacity
     return text
 
 
-def _star_glyph(x: float, y: float) -> svgwrite.container.Group:
-    """Star: red disk with concentric corona halos. Tiny-safe (no gradients)."""
+# ---------------------------------------------------------------------------
+# Body glyphs
+# ---------------------------------------------------------------------------
+
+
+def _star_reticle(x: float, y: float) -> svgwrite.container.Group:
+    """Star: red dashed outer ring + red solid inner ring + crosshair ticks
+    + brass core. Replaces the legacy concentric corona disks per §4.3.
+
+    Conveys "the players are *inside* this thing" — a target reticle on
+    the central authority, not a glowing sphere off to the side.
+    """
     g = svgwrite.container.Group()
-    # Outer dim corona
-    g.add(svgwrite.shapes.Circle(center=(x, y), r=18, fill=palette.RED, fill_opacity=0.12))
-    # Inner bright corona
-    g.add(svgwrite.shapes.Circle(center=(x, y), r=14, fill=palette.RED, fill_opacity=0.30))
-    g.add(svgwrite.shapes.Circle(center=(x, y), r=10, fill=palette.RED))
+    # Outer dashed ring
+    outer = svgwrite.shapes.Circle(
+        center=(x, y),
+        r=palette.STAR_RETICLE_OUTER_R,
+        fill="none",
+        stroke=palette.RED,
+        stroke_width=palette.STAR_RETICLE_OUTER_STROKE,
+    )
+    outer["stroke-dasharray"] = palette.RETICLE_DASH_PATTERN
+    g.add(outer)
+    # Inner solid ring
+    g.add(
+        svgwrite.shapes.Circle(
+            center=(x, y),
+            r=palette.STAR_RETICLE_INNER_R,
+            fill="none",
+            stroke=palette.RED,
+            stroke_width=palette.STAR_RETICLE_INNER_STROKE,
+        )
+    )
+    # Crosshair ticks at N/E/S/W
+    tick_in = palette.STAR_RETICLE_TICK_INNER
+    tick_out = palette.STAR_RETICLE_TICK_OUTER
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        g.add(
+            svgwrite.shapes.Line(
+                start=(x + dx * tick_in, y + dy * tick_in),
+                end=(x + dx * tick_out, y + dy * tick_out),
+                stroke=palette.RED,
+                stroke_width=1.4,
+            )
+        )
+    # Brass core
+    g.add(
+        svgwrite.shapes.Circle(
+            center=(x, y),
+            r=palette.STAR_RETICLE_CORE_R,
+            fill=palette.BRASS,
+            stroke=palette.BRASS,
+        )
+    )
     return g
 
 
-def _habitat_glyph(x: float, y: float, *, fill: str) -> svgwrite.shapes.Polygon:
-    """Habitat: brass diamond (square rotated 45°). Reads as 'man-made'."""
+def _habitat_glyph(
+    x: float, y: float, *, fill: str, hazard: bool = False
+) -> svgwrite.shapes.Polygon:
+    """Habitat: brass diamond. With hazard=True, adds dashed-stroke signal
+    (AC #11 — non-color cue for color-blind players)."""
     pts = [(x, y - 5), (x + 5, y), (x, y + 5), (x - 5, y)]
-    return svgwrite.shapes.Polygon(points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1)
+    poly = svgwrite.shapes.Polygon(
+        points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1
+    )
+    if hazard:
+        poly["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
+        poly["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
+    return poly
 
 
-def _gate_glyph(x: float, y: float, *, fill: str) -> svgwrite.shapes.Polygon:
-    """Gate: hexagon outline. Reads as 'infrastructure'."""
-    # Pointy-top hexagon, r=6
+def _gate_glyph(
+    x: float, y: float, *, fill: str, hazard: bool = False
+) -> svgwrite.shapes.Polygon:
+    """Gate: hexagon outline."""
     r = 6
     pts = [
         (x, y - r),
@@ -171,23 +287,31 @@ def _gate_glyph(x: float, y: float, *, fill: str) -> svgwrite.shapes.Polygon:
         (x - r * 0.866, y + r * 0.5),
         (x - r * 0.866, y - r * 0.5),
     ]
-    return svgwrite.shapes.Polygon(points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1)
+    poly = svgwrite.shapes.Polygon(
+        points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1
+    )
+    if hazard:
+        poly["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
+        poly["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
+    return poly
 
 
 def _wreck_glyph(x: float, y: float) -> svgwrite.container.Group:
-    """Wreck: jagged 5-point asterisk in dim brass. Reads as 'dead'."""
+    """Wreck: jagged 5-point asterisk in DIM brass."""
     g = svgwrite.container.Group()
     r = 5
     for i in range(5):
         theta = math.radians(90 + i * 72)
         x2 = x + r * math.cos(theta)
         y2 = y - r * math.sin(theta)
-        g.add(svgwrite.shapes.Line(start=(x, y), end=(x2, y2), stroke=palette.DIM, stroke_width=1))
+        g.add(
+            svgwrite.shapes.Line(start=(x, y), end=(x2, y2), stroke=palette.DIM, stroke_width=1)
+        )
     return g
 
 
 def _gas_giant_overlay(x: float, y: float, body_radius: float) -> svgwrite.container.Group:
-    """Three horizontal banding lines across a body disk for gas-giant subtype."""
+    """Three horizontal banding lines for gas-giant subtype."""
     g = svgwrite.container.Group()
     for dy in (-body_radius * 0.4, 0.0, body_radius * 0.4):
         g.add(
@@ -212,10 +336,8 @@ def _dotted_arc(
     color: str,
     dot_spacing_px: float = 4.0,
 ) -> svgwrite.container.Group:
-    """Arc rendered as a series of small dots. Tiny-profile-safe (no path
-    stroke-dasharray dependence on path arc support)."""
+    """Arc rendered as a series of small dots. Tiny-profile-safe."""
     g = svgwrite.container.Group()
-    # Number of dots so spacing ≈ dot_spacing_px along the arc circumference.
     arc_len_px = abs(extent_deg) * math.pi / 180.0 * radius
     n = max(2, int(arc_len_px / dot_spacing_px))
     for i in range(n):
@@ -225,6 +347,237 @@ def _dotted_arc(
         y = cy - radius * math.sin(rad)
         g.add(svgwrite.shapes.Circle(center=(x, y), r=0.8, fill=color))
     return g
+
+
+# ---------------------------------------------------------------------------
+# Bearing rose (§4.2)
+# ---------------------------------------------------------------------------
+
+
+def _render_bearing_rose() -> svgwrite.container.Group:
+    """Engraved bearing dial at chart center. System-root scope only.
+
+    Two thin engraved rings + 36 tick marks (longer at every 30°, longest
+    at every 90°) + cardinal numerals (000/090/180/270) + intermediate
+    numerals (030/060/120/150/210/240/300/330).
+    """
+    g = svgwrite.container.Group(id="bearing-rose")
+    inner_r = palette.BEARING_ROSE_INNER_PX
+    outer_r = palette.BEARING_ROSE_OUTER_PX
+    # Two thin rings
+    g.add(
+        svgwrite.shapes.Circle(
+            center=(0, 0), r=inner_r, fill="none", stroke=palette.BRASS, stroke_width=0.5
+        )
+    )
+    g.add(
+        svgwrite.shapes.Circle(
+            center=(0, 0), r=outer_r, fill="none", stroke=palette.BRASS, stroke_width=0.5
+        )
+    )
+    # 36 tick marks at every 10°
+    for theta_deg in range(0, 360, 10):
+        if theta_deg % 90 == 0:
+            tick_len = palette.BEARING_ROSE_TICK_LEN_90
+        elif theta_deg % 30 == 0:
+            tick_len = palette.BEARING_ROSE_TICK_LEN_30
+        else:
+            tick_len = palette.BEARING_ROSE_TICK_LEN_10
+        rad = math.radians(theta_deg)
+        x_in = outer_r * math.cos(rad)
+        y_in = -outer_r * math.sin(rad)
+        x_out = (outer_r + tick_len) * math.cos(rad)
+        y_out = -(outer_r + tick_len) * math.sin(rad)
+        g.add(
+            svgwrite.shapes.Line(
+                start=(x_in, y_in), end=(x_out, y_out), stroke=palette.BRASS, stroke_width=0.6
+            )
+        )
+    # Cardinal numerals at 000/090/180/270 (font 9, brass)
+    cardinal_radius = outer_r + palette.BEARING_ROSE_TICK_LEN_90 + 8
+    for theta_deg in (0, 90, 180, 270):
+        rad = math.radians(theta_deg)
+        x = cardinal_radius * math.cos(rad)
+        y = -cardinal_radius * math.sin(rad)
+        g.add(
+            _haloed_text(
+                f"{theta_deg:03d}",
+                insert=(x, y + 3),
+                fill=palette.BRASS,
+                font_size=palette.BEARING_ROSE_CARDINAL_FONT_SIZE,
+                text_anchor="middle",
+            )
+        )
+    # Intermediate numerals (font 7, dim brass)
+    intermediate_radius = outer_r + palette.BEARING_ROSE_TICK_LEN_30 + 6
+    for theta_deg in (30, 60, 120, 150, 210, 240, 300, 330):
+        rad = math.radians(theta_deg)
+        x = intermediate_radius * math.cos(rad)
+        y = -intermediate_radius * math.sin(rad)
+        g.add(
+            _haloed_text(
+                f"{theta_deg:03d}",
+                insert=(x, y + 2),
+                fill=palette.DIM,
+                font_size=palette.BEARING_ROSE_INTERMEDIATE_FONT_SIZE,
+                text_anchor="middle",
+            )
+        )
+    return g
+
+
+# ---------------------------------------------------------------------------
+# Curve-along resolution for engraved_label (§4.1)
+# ---------------------------------------------------------------------------
+
+
+class _CurveScopeMismatch(ValueError):
+    """Raised when curve_along references a body that exists in the orbits
+    config but isn't visible at the current render scope.
+
+    Distinct from a true unknown-body error so `_render_annotation` can
+    silently skip annotations that don't apply at this scope (e.g. the
+    chart.yaml has `curve_along: orbit_grand_gate` but the renderer is
+    drilled into Red Prospect — there's no orbit to attach to). Silent
+    skip is correct here because the annotation has nowhere to render;
+    raising would crash legitimate drill-in scopes.
+    """
+
+
+def _resolve_curve_along(
+    value: str,
+    orbits: OrbitsConfig,
+    center_id: str,
+    vp: _Viewport,
+) -> tuple[str, str]:
+    """Resolve a `curve_along` reference to (path_id, path_d).
+
+    Per spec §4.1:
+      - `orbit_outermost` → outermost direct child's orbit ellipse
+      - `orbit_<body_id>` → that body's orbit ellipse
+      - `body:<body_id>` → that arc_belt body's own arc (raises for non-belt)
+
+    The path starts at the top of the ring and sweeps clockwise (sweep-flag=1)
+    so textPath letters stay upright in the player's reading direction.
+
+    Raises:
+      ValueError: unknown reference scheme, body doesn't exist anywhere,
+        or wrong body type.
+      _CurveScopeMismatch: body exists but isn't visible at this scope.
+        Caller should treat as "skip annotation at this scope".
+    """
+    if value.startswith("orbit_"):
+        target = value[len("orbit_") :]
+        if target == "outermost":
+            # Outermost direct child of the current center
+            children = [
+                (bid, b)
+                for bid, b in orbits.bodies.items()
+                if b.parent == center_id and b.semi_major_au is not None
+            ]
+            if not children:
+                raise ValueError(
+                    f"curve_along='orbit_outermost' but center {center_id!r} has no children"
+                )
+            children.sort(key=lambda kv: kv[1].semi_major_au or 0.0, reverse=True)
+            body_id, body = children[0]
+        else:
+            body_id = target
+            if body_id not in orbits.bodies:
+                raise ValueError(
+                    f"curve_along={value!r}: orbit_{body_id!r} references nonexistent body"
+                )
+            body = orbits.bodies[body_id]
+            if body.parent != center_id:
+                raise _CurveScopeMismatch(
+                    f"curve_along={value!r}: body {body_id!r} is not a direct child of "
+                    f"center {center_id!r}"
+                )
+        ell = ellipse_geometry(body, vp.au_to_px)
+        cx, cy = ell.center_x_px, ell.center_y_px
+        rx, ry = ell.semi_major_px, ell.semi_minor_px
+        path_id = f"curve_orbit_{body_id}"
+        # Start at top of the ellipse (cx, cy - ry); sweep clockwise (sweep-flag=1)
+        # in two arcs to wrap the full ring. SVG: M ax,ay A rx,ry rot lf sf bx,by
+        path_d = (
+            f"M {cx} {cy - ry} "
+            f"A {rx} {ry} 0 0 1 {cx} {cy + ry} "
+            f"A {rx} {ry} 0 0 1 {cx} {cy - ry}"
+        )
+        return path_id, path_d
+
+    if value.startswith("body:"):
+        body_id = value[len("body:") :]
+        if body_id not in orbits.bodies:
+            raise ValueError(
+                f"curve_along={value!r}: body:{body_id!r} references nonexistent body"
+            )
+        body = orbits.bodies[body_id]
+        if body.type != BodyType.ARC_BELT:
+            raise ValueError(
+                f"curve_along={value!r}: body:{body_id!r} is type={body.type.value!r}, "
+                f"only arc_belt bodies have a meaningful body arc"
+            )
+        if body.semi_major_au is None or body.epoch_phase_deg is None or body.arc_extent_deg is None:
+            raise ValueError(
+                f"curve_along={value!r}: body:{body_id!r} missing arc geometry "
+                f"(semi_major_au / epoch_phase_deg / arc_extent_deg)"
+            )
+        radius_px = body.semi_major_au * vp.au_to_px
+        from_deg = body.epoch_phase_deg
+        to_deg = from_deg + body.arc_extent_deg
+        x1, y1 = _polar_to_cartesian(body.semi_major_au, from_deg, vp.au_to_px)
+        x2, y2 = _polar_to_cartesian(body.semi_major_au, to_deg, vp.au_to_px)
+        # Clockwise sweep along the arc (sweep-flag=1).
+        large_arc = 1 if abs(body.arc_extent_deg) > 180 else 0
+        path_id = f"curve_body_{body_id}"
+        path_d = (
+            f"M {x1} {y1} A {radius_px} {radius_px} 0 {large_arc} 1 {x2} {y2}"
+        )
+        return path_id, path_d
+
+    raise ValueError(
+        f"curve_along={value!r}: unknown reference scheme; "
+        f"expected 'orbit_outermost', 'orbit_<body_id>', or 'body:<body_id>'"
+    )
+
+
+def _engraved_label_textpath(
+    text: str,
+    *,
+    path_id: str,
+    fill: str = palette.BRASS,
+    font_size: int = 12,
+) -> svgwrite.text.Text:
+    """Engraved label rendered along a curve via textPath.
+
+    Per spec §4.1: em-dashes baked by renderer (`— text —`); content
+    authors store plain strings.
+    """
+    decorated = f"— {text} —"
+    elem = svgwrite.text.Text(
+        "",
+        fill=fill,
+        font_family=palette.FONT_DISPLAY,
+        font_size=font_size,
+        text_anchor="middle",
+    )
+    elem["stroke"] = palette.BG
+    elem["stroke-width"] = 3
+    elem["stroke-linejoin"] = "round"
+    elem["paint-order"] = "stroke"
+    elem["font-style"] = "italic"
+    # textPath child references the path id. svgwrite's TextPath wraps the
+    # textPath element; we insert raw to keep startOffset/href control.
+    tp = svgwrite.text.TextPath(path=f"#{path_id}", text=decorated)
+    tp["startOffset"] = "50%"
+    elem.add(tp)
+    return elem
+
+
+# ---------------------------------------------------------------------------
+# render_chart — top-level entry
+# ---------------------------------------------------------------------------
 
 
 def render_chart(
@@ -252,12 +605,10 @@ def render_chart(
             fill=palette.BG,
         )
     )
-    # Layers nest inside a single viewport group so the UI can imperatively
-    # set transform="translate(...) scale(...)" on it without re-rendering.
-    # Per spec §10: pan/zoom never round-trips to the server.
     viewport_g = svgwrite.container.Group(id="viewport")
-    viewport_g.add(_render_engraved_layer(orbits, center_id, viewport, t_hours))
-    viewport_g.add(_render_flavor_layer(chart, viewport))
+    engraved_layer, stats = _render_engraved_layer(orbits, center_id, scope, viewport, t_hours)
+    viewport_g.add(engraved_layer)
+    viewport_g.add(_render_flavor_layer(chart, orbits, center_id, viewport, t_hours))
     viewport_g.add(_render_party_layer(orbits, center_id, viewport, t_hours, party_at))
     dwg.add(viewport_g)
     output = dwg.tostring()
@@ -267,8 +618,18 @@ def render_chart(
         party_at=party_at,
         body_count=len(orbits.bodies),
         output_size_bytes=len(output.encode("utf-8")),
+        body_count_engraved=stats.body_count_engraved,
+        body_count_chalk=stats.body_count_chalk,
+        body_count_prose=stats.body_count_prose,
+        body_count_moons_rendered=stats.body_count_moons_rendered,
+        label_collision_tier_max=stats.label_collision_tier_max,
     )
     return output
+
+
+# ---------------------------------------------------------------------------
+# Viewport + scope resolution
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -292,7 +653,6 @@ def _resolve_scope_center(orbits: OrbitsConfig, scope: Scope) -> str:
 
 
 def _viewport_for_scope(orbits: OrbitsConfig, center_id: str) -> _Viewport:
-    """Pick a viewport that fits the largest direct child orbit + 20% pad."""
     children = [b for b in orbits.bodies.values() if b.parent == center_id]
     max_au = max((c.semi_major_au or 0.0 for c in children), default=1.0) or 1.0
     size_px = 800
@@ -303,29 +663,406 @@ def _viewport_for_scope(orbits: OrbitsConfig, center_id: str) -> _Viewport:
 
 
 def _attach_body_id(elem: svgwrite.base.BaseElement, body_id: str) -> svgwrite.base.BaseElement:
-    """Set data-body-id directly on attribs to bypass svgwrite's profile validator.
-
-    svgwrite rejects `data-*` attributes under any built-in profile; setting
-    via `attribs[...]` skips validation and emits the attribute verbatim.
-    """
     elem.attribs["data-body-id"] = body_id
     return elem
 
 
 def _drillable_body_ids(orbits: OrbitsConfig) -> set[str]:
-    """Bodies that have at least one child — eligible for cluster-glyph drill-in."""
+    """Bodies with at least one child."""
     return {bid for bid in orbits.bodies if any(b.parent == bid for b in orbits.bodies.values())}
+
+
+# ---------------------------------------------------------------------------
+# Register classification
+# ---------------------------------------------------------------------------
+
+
+_RegisterValue = Literal["engraved", "chalk", "prose"]
+
+
+def _effective_label_register(body: BodyDef) -> _RegisterValue:
+    """Effective label register: explicit override, else fall back to body register."""
+    if body.label_register is not None:
+        return body.label_register
+    return body.register
+
+
+def _orbit_stroke_attrs(register: _RegisterValue) -> dict[str, object]:
+    """SVG attribute kwargs for an orbit ellipse stroke given its register."""
+    if register == "chalk":
+        return {
+            "stroke": palette.BRASS,
+            "stroke_width": palette.ORBIT_STROKE_CHALK,
+            "stroke_opacity": palette.ORBIT_OPACITY_CHALK,
+        }
+    # engraved (default) and prose-on-orbit (no chalk override) — solid
+    return {
+        "stroke": palette.BRASS,
+        "stroke_width": palette.ORBIT_STROKE_ENGRAVED,
+    }
+
+
+def _label_text(
+    body: BodyDef,
+    *,
+    insert: tuple[float, float],
+    fill: str,
+    text_anchor: str,
+) -> svgwrite.text.Text:
+    """Render a body label per its effective register."""
+    if body.label is None:
+        raise ValueError("_label_text called on body with no label")
+    register = _effective_label_register(body)
+    if register == "prose":
+        return _haloed_text(
+            body.label,
+            insert=insert,
+            fill=fill,
+            text_anchor=text_anchor,
+            font_family=palette.LABEL_PROSE_FONT,
+            font_size=palette.LABEL_PROSE_FONT_SIZE,
+            font_style="italic",
+            opacity=palette.LABEL_PROSE_OPACITY,
+        )
+    if register == "chalk":
+        return _haloed_text(
+            body.label,
+            insert=insert,
+            fill=fill,
+            text_anchor=text_anchor,
+            font_family=palette.LABEL_CHALK_FONT,
+            font_size=10,
+            font_weight=palette.LABEL_CHALK_WEIGHT,
+            letter_spacing=palette.LABEL_CHALK_LETTER_SPACING,
+        )
+    # engraved (default)
+    return _haloed_text(
+        body.label,
+        insert=insert,
+        fill=fill,
+        text_anchor=text_anchor,
+        font_family=palette.LABEL_ENGRAVED_FONT,
+        font_size=10,
+        font_weight=palette.LABEL_ENGRAVED_WEIGHT,
+        letter_spacing=palette.LABEL_ENGRAVED_LETTER_SPACING,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Label de-collision (§5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _BodyPlacement:
+    """Resolved label-anchor placement for a body in the engraved layer."""
+
+    body_id: str
+    body: BodyDef
+    body_x: float
+    body_y: float
+    glyph_radius: float
+    bearing_deg: float  # bearing from chart center to body
+    tier: int
+    anchor_x: float
+    anchor_y: float
+    text_anchor: str  # "start" / "middle" / "end"
+
+
+def _bearing_from_center(x: float, y: float) -> float:
+    """Return bearing in degrees (0..360) from chart center to (x, y).
+    0° = right (3 o'clock), 90° = up (12 o'clock) — matches _polar_to_cartesian."""
+    return math.degrees(math.atan2(-y, x)) % 360
+
+
+def _text_anchor_for_bearing(bearing_deg: float) -> str:
+    """text-anchor per radial-out anchor logic (§5.1)."""
+    # Within ±15° of straight up (90°) or straight down (270°): center
+    if abs(bearing_deg - 90) <= 15 or abs(bearing_deg - 270) <= 15:
+        return "middle"
+    # Right half: bearings in (-90°, 90°) i.e. (270°,360] U [0°,90°): start
+    if bearing_deg <= 90 or bearing_deg >= 270:
+        return "start"
+    # Left half: bearings in (90°, 270°): end
+    return "end"
+
+
+def _angular_distance(a: float, b: float) -> float:
+    """Smallest angular distance in degrees between two bearings (0..180)."""
+    diff = abs((a - b) % 360)
+    return min(diff, 360 - diff)
+
+
+def _assign_collision_tiers(
+    placements: list[_BodyPlacement],
+) -> int:
+    """Walk bodies sorted by bearing; bump tier when neighbors are within
+    MIN_ANGULAR_SEPARATION_DEG. Returns the maximum tier assigned.
+
+    Cap tier at LABEL_TIER_MAX; beyond that, accept collision and warn.
+    """
+    if not placements:
+        return 0
+    by_bearing = sorted(placements, key=lambda p: p.bearing_deg)
+    max_tier = 0
+    for i, p in enumerate(by_bearing):
+        if i == 0:
+            p.tier = 0
+            continue
+        prev = by_bearing[i - 1]
+        if _angular_distance(p.bearing_deg, prev.bearing_deg) < palette.MIN_ANGULAR_SEPARATION_DEG:
+            p.tier = min(prev.tier + 1, palette.LABEL_TIER_MAX)
+        else:
+            p.tier = 0
+        max_tier = max(max_tier, p.tier)
+    return max_tier
+
+
+def _resolve_anchor(
+    p: _BodyPlacement,
+    *,
+    apply_rose_clearance: bool,
+) -> None:
+    """Compute and set the radial-out anchor + tier offset + rose clearance
+    for a placement. Mutates p.anchor_x / anchor_y / text_anchor.
+    """
+    bearing_rad = math.radians(p.bearing_deg)
+    body_radial = math.hypot(p.body_x, p.body_y)
+    base_radial = body_radial + p.glyph_radius + palette.LABEL_RADIAL_PADDING_PX
+    tier_offset = p.tier * palette.LABEL_TIER_RADIAL_OFFSET_PX
+    target_radial = base_radial + tier_offset
+    if apply_rose_clearance:
+        min_radial = palette.BEARING_ROSE_OUTER_PX + palette.LABEL_BEARING_ROSE_CLEARANCE
+        target_radial = max(target_radial, min_radial + tier_offset)
+    p.anchor_x = target_radial * math.cos(bearing_rad)
+    p.anchor_y = -target_radial * math.sin(bearing_rad)
+    p.text_anchor = _text_anchor_for_bearing(p.bearing_deg)
+
+
+# ---------------------------------------------------------------------------
+# Engraved layer rendering — orbits, glyphs, moon band, labels
+# ---------------------------------------------------------------------------
+
+
+def _glyph_default_fill(body_type: BodyType) -> str:
+    """Default (non-hazard) fill color for a body type."""
+    if body_type in (BodyType.STAR, BodyType.COMPANION):
+        return palette.RED
+    if body_type == BodyType.WRECK:
+        return palette.DIM
+    return palette.BRASS
+
+
+def _glyph_visual_radius(body: BodyDef) -> float:
+    """Approximate radial extent of the body's glyph (for label padding)."""
+    if body.type == BodyType.STAR:
+        return palette.STAR_RETICLE_OUTER_R
+    if body.type == BodyType.COMPANION:
+        return 6.0
+    if body.type == BodyType.HABITAT and body.subtype == "gas_giant":
+        return 10.0
+    if body.type == BodyType.HABITAT:
+        return 5.0
+    if body.type == BodyType.GATE:
+        return 6.0
+    if body.type == BodyType.WRECK:
+        return 5.0
+    if body.type == BodyType.ARC_BELT:
+        return 1.0
+    return 5.0
+
+
+def _body_glyph(body: BodyDef, *, x: float, y: float, body_id: str) -> svgwrite.base.BaseElement:
+    """Pick the glyph for a body type. Honors hazard + subtype.
+
+    Hazard semantic: red fill PLUS dashed glyph outline (AC #11 non-color signal).
+    """
+    fill = palette.RED if body.hazard else _glyph_default_fill(body.type)
+
+    if body.type == BodyType.STAR:
+        elem: svgwrite.base.BaseElement = _star_reticle(x, y)
+    elif body.type == BodyType.COMPANION:
+        circ = svgwrite.shapes.Circle(center=(x, y), r=6, fill=palette.RED)
+        if body.hazard:
+            circ["stroke"] = palette.BRASS
+            circ["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
+            circ["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
+        elem = circ
+    elif body.type == BodyType.HABITAT:
+        if body.subtype == "gas_giant":
+            group = svgwrite.container.Group()
+            r = 10
+            disk = svgwrite.shapes.Circle(center=(x, y), r=r, fill=fill)
+            if body.hazard:
+                disk["stroke"] = palette.BRASS
+                disk["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
+                disk["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
+            group.add(disk)
+            group.add(_gas_giant_overlay(x, y, body_radius=r))
+            elem = group
+        else:
+            elem = _habitat_glyph(x, y, fill=fill, hazard=body.hazard)
+    elif body.type == BodyType.ARC_BELT:
+        # Belt-as-glyph fallback (engraved layer special-cases ARC_BELT to
+        # render as a dotted arc on the orbit).
+        elem = svgwrite.shapes.Circle(center=(x, y), r=2, fill=palette.BRASS)
+    elif body.type == BodyType.GATE:
+        elem = _gate_glyph(x, y, fill=fill, hazard=body.hazard)
+    elif body.type == BodyType.WRECK:
+        elem = _wreck_glyph(x, y)
+    else:
+        raise ValueError(f"unknown BodyType for body {body_id!r}: {body.type!r}")
+
+    return _attach_body_id(elem, body_id)
+
+
+def _moon_dot_glyph(
+    body: BodyDef, x: float, y: float, body_id: str
+) -> svgwrite.base.BaseElement:
+    """A small moon dot for system-scope moon-band rendering. Hazard moons
+    get red color + dashed-outline non-color signal (AC #11)."""
+    fill = palette.RED if body.hazard else palette.BRASS
+    dot = svgwrite.shapes.Circle(center=(x, y), r=palette.MOON_DOT_R, fill=fill)
+    if body.hazard:
+        dot["stroke"] = palette.BRASS
+        dot["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
+        dot["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
+    return _attach_body_id(dot, body_id)
+
+
+def _allocated_moon_radii(
+    moons: list[tuple[str, BodyDef]],
+) -> dict[str, float]:
+    """Per-moon system-scope band radii. Authorial overrides via
+    `moon_display_radius_px` win; the rest auto-allocate by ascending
+    `semi_major_au` starting at MOON_BAND_INNER_PX with MOON_BAND_STEP_PX
+    spacing."""
+    pinned: dict[str, float] = {
+        bid: float(b.moon_display_radius_px)
+        for bid, b in moons
+        if b.moon_display_radius_px is not None
+    }
+    auto: list[tuple[str, BodyDef]] = [
+        (bid, b) for bid, b in moons if b.moon_display_radius_px is None
+    ]
+    # Auto-allocate by ascending real semi_major_au
+    auto.sort(key=lambda kv: kv[1].semi_major_au or 0.0)
+    radii = dict(pinned)
+    used = sorted(pinned.values())
+    next_auto = palette.MOON_BAND_INNER_PX
+    for bid, _b in auto:
+        # Skip past any pinned radii that overlap
+        while next_auto in used:
+            next_auto += palette.MOON_BAND_STEP_PX
+        radii[bid] = float(next_auto)
+        used.append(float(next_auto))
+        used.sort()
+        next_auto += palette.MOON_BAND_STEP_PX
+    return radii
+
+
+def _render_moon_band(
+    parent_id: str,
+    parent_x: float,
+    parent_y: float,
+    orbits: OrbitsConfig,
+    t_hours: float,
+    stats: _RenderStats,
+) -> tuple[svgwrite.container.Group | None, list[_BodyPlacement]]:
+    """Render moons of `parent_id` as a moon band at system-scope.
+
+    Returns the moon-band group (or None if no visible moons / overflow
+    beyond MOON_BAND_MAX) and a list of placements for downstream label
+    de-collision.
+    """
+    moons: list[tuple[str, BodyDef]] = [
+        (bid, b)
+        for bid, b in orbits.bodies.items()
+        if b.parent == parent_id and b.show_at_system_scope
+    ]
+    if not moons:
+        return None, []
+    if len(moons) > palette.MOON_BAND_MAX:
+        # Overflow: fall back to +N glyph upstream.
+        return None, []
+
+    radii = _allocated_moon_radii(moons)
+    g = svgwrite.container.Group()
+    g.attribs["class"] = "moon-band"
+    g.attribs["data-parent-id"] = parent_id
+
+    placements: list[_BodyPlacement] = []
+    for body_id, body in moons:
+        r_px = radii[body_id]
+        # Concentric dashed orbit ellipse around the parent
+        ring = svgwrite.shapes.Circle(
+            center=(parent_x, parent_y),
+            r=r_px,
+            fill="none",
+            stroke=palette.BRASS,
+            stroke_width=0.4,
+        )
+        ring["stroke-dasharray"] = "2 3"
+        ring["stroke-opacity"] = 0.6
+        g.add(ring)
+        # Moon dot at the moon's own epoch_phase_deg
+        phase = body.epoch_phase_deg or 0.0
+        rad = math.radians(phase)
+        mx = parent_x + r_px * math.cos(rad)
+        my = parent_y - r_px * math.sin(rad)
+        g.add(_moon_dot_glyph(body, mx, my, body_id))
+        # Track placement for label de-collision
+        bearing = _bearing_from_center(mx, my)
+        placements.append(
+            _BodyPlacement(
+                body_id=body_id,
+                body=body,
+                body_x=mx,
+                body_y=my,
+                glyph_radius=palette.MOON_DOT_R,
+                bearing_deg=bearing,
+                tier=0,
+                anchor_x=0.0,
+                anchor_y=0.0,
+                text_anchor="start",
+            )
+        )
+        stats.body_count_moons_rendered += 1
+    return g, placements
+
+
+def _accumulate_register(stats: _RenderStats, body: BodyDef, *, is_moon: bool) -> None:
+    """Bump the appropriate register count. Moons count as prose
+    (per §4.6: 'register: prose auto-applied' on system-scope moons).
+    """
+    if is_moon:
+        stats.body_count_prose += 1
+        return
+    if body.register == "chalk":
+        stats.body_count_chalk += 1
+    elif body.register == "prose":
+        stats.body_count_prose += 1
+    else:
+        stats.body_count_engraved += 1
 
 
 def _render_engraved_layer(
     orbits: OrbitsConfig,
     center_id: str,
+    scope: Scope,
     vp: _Viewport,
     t_hours: float,
-) -> svgwrite.container.Group:
+) -> tuple[svgwrite.container.Group, _RenderStats]:
     g = svgwrite.container.Group(id="layer-engraved")
+    stats = _RenderStats()
     center = orbits.bodies[center_id]
+    scope_is_root = scope.is_system_root
 
+    # Bearing rose at chart center (system_root only)
+    if scope_is_root:
+        g.add(_render_bearing_rose())
+
+    # Drill-out edge label (when centered on a non-root)
     if center.parent is not None:
         if center.parent not in orbits.bodies:
             raise ValueError(f"center {center_id!r} has parent {center.parent!r} not in bodies")
@@ -344,81 +1081,147 @@ def _render_engraved_layer(
         )
         g.add(edge)
 
+    # Center body
     g.add(_body_glyph(center, x=0, y=0, body_id=center_id))
     if center.label:
-        g.add(
-            _haloed_text(
-                center.label,
-                insert=(0, -22),
-                fill=center.label_color or palette.BRASS,
-                text_anchor="middle",
-                font_size=14,
+        # Star center: label inside reticle (per spec §4.3)
+        if center.type == BodyType.STAR:
+            g.add(
+                _haloed_text(
+                    center.label,
+                    insert=(0, -palette.STAR_RETICLE_OUTER_R - 8),
+                    fill=palette.RED,
+                    text_anchor="middle",
+                    font_size=11,
+                    font_weight=700,
+                )
             )
-        )
+        else:
+            g.add(
+                _haloed_text(
+                    center.label,
+                    insert=(0, -22),
+                    fill=center.label_color or palette.BRASS,
+                    text_anchor="middle",
+                    font_size=14,
+                )
+            )
+    # Note: the center body is intentionally NOT counted in the register
+    # body counts. Register drives orbit + label styling — the center has no
+    # orbit at this scope, so its register is meaningless. The OTEL counts
+    # describe the bodies *visible as orbiting children*, which is what the
+    # GM panel cares about ("how many chalk bodies in this view?").
 
+    # Phase 1: collect direct children + their positions
+    direct_children: list[tuple[str, BodyDef]] = [
+        (bid, b) for bid, b in orbits.bodies.items() if b.parent == center_id
+    ]
     drillable_ids = _drillable_body_ids(orbits)
 
-    for body_id, body in orbits.bodies.items():
-        if body.parent != center_id:
-            continue
+    placements: list[_BodyPlacement] = []
+    arc_belt_placements: list[_BodyPlacement] = []  # arc-belts handled separately for orbits
 
-        # ARC_BELT renders as a dotted arc on the orbit radius itself —
-        # not as a body glyph at one position, since a belt has no point.
+    for body_id, body in direct_children:
         if body.type == BodyType.ARC_BELT:
             assert body.semi_major_au is not None
             assert body.epoch_phase_deg is not None
             assert body.arc_extent_deg is not None
-            radius_px = body.semi_major_au * vp.au_to_px
-            arc = _dotted_arc(
-                cx=0,
-                cy=0,
-                radius=radius_px,
-                from_deg=body.epoch_phase_deg,
-                extent_deg=body.arc_extent_deg,
-                color=palette.RED if body.hazard else palette.BRASS,
-            )
-            arc.attribs["data-body-id"] = body_id
-            g.add(arc)
-            if body.label:
-                # Anchor the label at the arc midpoint.
-                mid_deg = body.epoch_phase_deg + body.arc_extent_deg / 2
-                mx, my = _polar_to_cartesian(body.semi_major_au, mid_deg, vp.au_to_px)
-                g.add(
-                    _haloed_text(
-                        body.label,
-                        insert=(mx + 8, my - 6),
-                        fill=body.label_color or palette.BRASS,
-                        font_size=10,
-                    )
+            mid_deg = body.epoch_phase_deg + body.arc_extent_deg / 2
+            mx, my = _polar_to_cartesian(body.semi_major_au, mid_deg, vp.au_to_px)
+            arc_belt_placements.append(
+                _BodyPlacement(
+                    body_id=body_id,
+                    body=body,
+                    body_x=mx,
+                    body_y=my,
+                    glyph_radius=1.0,
+                    bearing_deg=_bearing_from_center(mx, my),
+                    tier=0,
+                    anchor_x=0.0,
+                    anchor_y=0.0,
+                    text_anchor="start",
                 )
-            continue
-
-        au, theta = _body_position_au_polar(body, t_hours)
-        # Orbit ellipse: focus at parent (origin), center offset by -c=-a·e
-        # along +x. For e=0 this reduces to a centered circle, so existing
-        # circular-orbit fixtures don't drift.
-        ell = ellipse_geometry(body, vp.au_to_px)
-        g.add(
-            _attach_body_id(
-                svgwrite.shapes.Ellipse(
-                    center=(ell.center_x_px, ell.center_y_px),
-                    r=(ell.semi_major_px, ell.semi_minor_px),
-                    fill="none",
-                    stroke=palette.BRASS,
-                    stroke_width=0.6,
-                ),
-                body_id,
             )
+        else:
+            au, theta = _body_position_au_polar(body, t_hours)
+            x, y = _polar_to_cartesian(au, theta, vp.au_to_px)
+            placements.append(
+                _BodyPlacement(
+                    body_id=body_id,
+                    body=body,
+                    body_x=x,
+                    body_y=y,
+                    glyph_radius=_glyph_visual_radius(body),
+                    bearing_deg=_bearing_from_center(x, y),
+                    tier=0,
+                    anchor_x=0.0,
+                    anchor_y=0.0,
+                    text_anchor="start",
+                )
+            )
+
+    # Phase 2: render arc-belt orbits/labels
+    for p in arc_belt_placements:
+        body = p.body
+        radius_px = (body.semi_major_au or 0.0) * vp.au_to_px
+        arc = _dotted_arc(
+            cx=0,
+            cy=0,
+            radius=radius_px,
+            from_deg=body.epoch_phase_deg or 0.0,
+            extent_deg=body.arc_extent_deg or 0.0,
+            color=palette.RED if body.hazard else palette.BRASS,
         )
-        x, y = _polar_to_cartesian(au, theta, vp.au_to_px)
-        if body_id in drillable_ids:
+        arc.attribs["data-body-id"] = p.body_id
+        g.add(arc)
+        _accumulate_register(stats, body, is_moon=False)
+
+    # Phase 3: render direct-child orbits + glyphs (and possibly moon bands)
+    moon_band_placements: list[_BodyPlacement] = []
+    parents_with_visible_moons: set[str] = {
+        p.body_id
+        for p in placements
+        if p.body_id in drillable_ids
+        and any(
+            b.parent == p.body_id and b.show_at_system_scope for b in orbits.bodies.values()
+        )
+        and sum(
+            1
+            for b in orbits.bodies.values()
+            if b.parent == p.body_id and b.show_at_system_scope
+        )
+        <= palette.MOON_BAND_MAX
+    }
+
+    for p in placements:
+        body = p.body
+        ell = ellipse_geometry(body, vp.au_to_px)
+        orbit_attrs = _orbit_stroke_attrs(body.register)
+        ellipse = svgwrite.shapes.Ellipse(
+            center=(ell.center_x_px, ell.center_y_px),
+            r=(ell.semi_major_px, ell.semi_minor_px),
+            fill="none",
+            **orbit_attrs,
+        )
+        if body.register == "chalk":
+            ellipse["stroke-dasharray"] = palette.ORBIT_DASH_CHALK
+        g.add(_attach_body_id(ellipse, p.body_id))
+
+        renders_moon_band = (
+            scope_is_root and p.body_id in parents_with_visible_moons
+        )
+
+        if p.body_id in drillable_ids and not renders_moon_band:
+            # Legacy +N drillable cluster — used only when moons aren't being
+            # rendered directly (overflow, drill-in scope, or no children
+            # visible at system scope).
             cluster = svgwrite.container.Group()
-            cluster.attribs["data-action"] = f"drill_in:{body_id}"
-            cluster.attribs["data-body-id"] = body_id
+            cluster.attribs["data-action"] = f"drill_in:{p.body_id}"
+            cluster.attribs["data-body-id"] = p.body_id
             cluster.attribs["class"] = "drillable"
             cluster.add(
                 svgwrite.shapes.Circle(
-                    center=(x, y),
+                    center=(p.body_x, p.body_y),
                     r=12,
                     fill="none",
                     stroke=palette.BRASS,
@@ -426,113 +1229,144 @@ def _render_engraved_layer(
                     stroke_width=0.6,
                 )
             )
-            cluster.add(_body_glyph(body, x=x, y=y, body_id=body_id))
-            child_count = sum(1 for c in orbits.bodies.values() if c.parent == body_id)
+            cluster.add(_body_glyph(body, x=p.body_x, y=p.body_y, body_id=p.body_id))
+            child_count = sum(1 for c in orbits.bodies.values() if c.parent == p.body_id)
             cluster.add(
                 _haloed_text(
                     f"+{child_count}",
-                    insert=(x + 16, y + 4),
+                    insert=(p.body_x + 16, p.body_y + 4),
                     fill=palette.BRASS,
                     font_size=8,
                 )
             )
             g.add(cluster)
         else:
-            g.add(_body_glyph(body, x=x, y=y, body_id=body_id))
-        if body.label:
-            g.add(
-                _haloed_text(
-                    body.label,
-                    insert=(x + 10, y - 8),
-                    fill=body.label_color or palette.BRASS,
-                    font_size=10,
-                )
-            )
+            # Direct body glyph (+ moon band if applicable). For drillable
+            # bodies, the body+band group carries the drill_in affordance
+            # so the click target replaces the legacy +N chip per spec §4.6
+            # ("the affordance becomes 'click anywhere in the moon system'").
+            if p.body_id in drillable_ids:
+                wrapper = svgwrite.container.Group()
+                wrapper.attribs["data-action"] = f"drill_in:{p.body_id}"
+                wrapper.attribs["data-body-id"] = p.body_id
+                wrapper.attribs["class"] = "drillable"
+                wrapper.add(_body_glyph(body, x=p.body_x, y=p.body_y, body_id=p.body_id))
+                if renders_moon_band:
+                    moon_band, child_placements = _render_moon_band(
+                        p.body_id, p.body_x, p.body_y, orbits, t_hours, stats
+                    )
+                    if moon_band is not None:
+                        wrapper.add(moon_band)
+                        moon_band_placements.extend(child_placements)
+                g.add(wrapper)
+            else:
+                g.add(_body_glyph(body, x=p.body_x, y=p.body_y, body_id=p.body_id))
+        _accumulate_register(stats, body, is_moon=False)
 
-    if center.type == BodyType.STAR:
-        for theta_deg in (0, 90, 180, 270):
-            x, y = _polar_to_cartesian(au=0.10, theta_deg=theta_deg, scale=vp.au_to_px)
-            g.add(
-                _haloed_text(
-                    f"{theta_deg:03d}°",
-                    insert=(x, y),
-                    fill=palette.DIM,
-                    text_anchor="middle",
-                    font_family=palette.FONT_NUMERIC,
-                    font_size=8,
-                )
-            )
+    # Phase 4: collision-tier assignment (direct children + moons together)
+    all_placements = placements + arc_belt_placements + moon_band_placements
+    max_tier = _assign_collision_tiers(all_placements)
+    stats.label_collision_tier_max = max_tier
 
-    return g
+    # Phase 5: anchor resolution + label rendering
+    # Bearing-rose clearance applies only at system_root scope.
+    for p in all_placements:
+        _resolve_anchor(p, apply_rose_clearance=scope_is_root)
 
-
-def _body_glyph(body: BodyDef, *, x: float, y: float, body_id: str) -> svgwrite.base.BaseElement:
-    """Pick the glyph for a body type. Honors hazard override + subtype.
-
-    Hazard semantic: any body with `hazard: true` adopts RED fill regardless
-    of type. Subtype semantic: `subtype="gas_giant"` overlays banding lines
-    on a habitat-typed body.
-    """
-    fill = palette.RED if body.hazard else _glyph_default_fill(body.type)
-
-    if body.type == BodyType.STAR:
-        elem: svgwrite.base.BaseElement = _star_glyph(x, y)
-    elif body.type == BodyType.COMPANION:
-        elem = svgwrite.shapes.Circle(center=(x, y), r=6, fill=palette.RED)
-    elif body.type == BodyType.HABITAT:
-        if body.subtype == "gas_giant":
-            # Gas giant: larger brass disk with banding overlay.
-            group = svgwrite.container.Group()
-            r = 10
-            group.add(svgwrite.shapes.Circle(center=(x, y), r=r, fill=fill))
-            group.add(_gas_giant_overlay(x, y, body_radius=r))
-            elem = group
+    for p in all_placements:
+        body = p.body
+        if body.label is None:
+            continue
+        # Moons get prose register auto-applied (override label_register only if not set).
+        if p in moon_band_placements and body.label_register is None:
+            label_body = body.model_copy(update={"label_register": "prose"})
         else:
-            elem = _habitat_glyph(x, y, fill=fill)
-    elif body.type == BodyType.ARC_BELT:
-        # Belt-as-glyph fallback (shouldn't be reached — engraved layer
-        # special-cases ARC_BELT to render as a dotted arc on the orbit).
-        elem = svgwrite.shapes.Circle(center=(x, y), r=2, fill=palette.BRASS)
-    elif body.type == BodyType.GATE:
-        elem = _gate_glyph(x, y, fill=fill)
-    elif body.type == BodyType.WRECK:
-        elem = _wreck_glyph(x, y)
-    else:
-        # Unknown BodyType — fail loud per CLAUDE.md "no silent fallbacks".
-        raise ValueError(f"unknown BodyType for body {body_id!r}: {body.type!r}")
+            label_body = body
+        g.add(
+            _label_text(
+                label_body,
+                insert=(p.anchor_x, p.anchor_y),
+                fill=body.label_color or palette.BRASS,
+                text_anchor=p.text_anchor,
+            )
+        )
+        # Moons accounted for in stats.body_count_moons_rendered, count
+        # the prose register here for body_count_prose.
+        if p in moon_band_placements:
+            _accumulate_register(stats, body, is_moon=True)
 
-    return _attach_body_id(elem, body_id)
-
-
-def _glyph_default_fill(body_type: BodyType) -> str:
-    """Default (non-hazard) fill color for a body type."""
-    if body_type in (BodyType.STAR, BodyType.COMPANION):
-        return palette.RED
-    if body_type == BodyType.WRECK:
-        return palette.DIM
-    return palette.BRASS
+    return g, stats
 
 
-def _render_flavor_layer(chart: ChartConfig, vp: _Viewport) -> svgwrite.container.Group:
+# ---------------------------------------------------------------------------
+# Flavor layer (chart.yaml annotations)
+# ---------------------------------------------------------------------------
+
+
+def _render_flavor_layer(
+    chart: ChartConfig,
+    orbits: OrbitsConfig,
+    center_id: str,
+    vp: _Viewport,
+    t_hours: float,
+) -> svgwrite.container.Group:
     g = svgwrite.container.Group(id="layer-flavor")
+    # Collect path defs for textPath references.
+    defs = svgwrite.container.Defs()
+    defs_used = False
     for annot in chart.annotations:
-        elem = _render_annotation(annot, vp)
-        if elem is not None:
-            g.add(elem)
+        result = _render_annotation(annot, orbits, center_id, vp, t_hours)
+        if result is None:
+            continue
+        elem, path_def = result
+        if path_def is not None:
+            path_id, path_d = path_def
+            path = svgwrite.path.Path(d=path_d, id=path_id, fill="none", stroke="none")
+            defs.add(path)
+            defs_used = True
+        g.add(elem)
+    if defs_used:
+        # Insert defs at the front of the flavor group so textPath refs resolve.
+        g.elements.insert(0, defs)
     return g
 
 
-def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseElement | None:
+def _render_annotation(
+    annot: Annotation,
+    orbits: OrbitsConfig,
+    center_id: str,
+    vp: _Viewport,
+    t_hours: float,
+) -> tuple[svgwrite.base.BaseElement, tuple[str, str] | None] | None:
+    """Render a single annotation. Returns (element, optional path-def for textPath)."""
     if annot.kind == "engraved_label":
         if annot.text is None:
             return None
-        return _haloed_text(
-            annot.text,
-            insert=(0, -vp.half + 30),
-            fill=palette.BRASS,
-            text_anchor="middle",
-            font_size=12,
-            font_style="italic",
+        if annot.curve_along is not None:
+            try:
+                path_id, path_d = _resolve_curve_along(
+                    annot.curve_along, orbits, center_id, vp
+                )
+            except _CurveScopeMismatch:
+                # Annotation references a body not visible at this scope.
+                # Silent skip is correct — there is no orbit to attach the
+                # textPath to. (Truly unknown bodies still raise upstream.)
+                return None
+            return (
+                _engraved_label_textpath(annot.text, path_id=path_id),
+                (path_id, path_d),
+            )
+        # Fallback: fixed top-center placement (backward compat).
+        return (
+            _haloed_text(
+                annot.text,
+                insert=(0, -vp.half + 30),
+                fill=palette.BRASS,
+                text_anchor="middle",
+                font_size=12,
+                font_style="italic",
+            ),
+            None,
         )
     if annot.kind == "glyph":
         if annot.text is None or annot.at is None:
@@ -561,21 +1395,21 @@ def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseEl
                     font_style="italic",
                 )
             )
-        return group
+        return (group, None)
     if annot.kind == "scale_ruler":
         if annot.label is None:
             return None
-        return _haloed_text(
-            annot.label,
-            insert=(0, vp.half - 20),
-            fill=palette.BRASS,
-            text_anchor="middle",
-            font_size=9,
+        return (
+            _haloed_text(
+                annot.label,
+                insert=(0, vp.half - 20),
+                fill=palette.BRASS,
+                text_anchor="middle",
+                font_size=9,
+            ),
+            None,
         )
     if annot.kind == "bearing_marks":
-        # 4 cardinal degree marks on a small radius near the chart center.
-        # Subtler than the auto-emitted star bearings — these are explicit
-        # author intent in chart.yaml.
         bearings = annot.bearings or [0.0, 90.0, 180.0, 270.0]
         group = svgwrite.container.Group()
         for theta_deg in bearings:
@@ -590,10 +1424,8 @@ def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseEl
                     font_size=7,
                 )
             )
-        return group
+        return (group, None)
     if annot.kind == "anomaly_marker":
-        # Hexagon outlined in red with a single-character glyph (e.g. "Ψ").
-        # Placement via `at: { ra_deg, au }`. Caption optional.
         if annot.at is None:
             return None
         ra = float(annot.at.get("ra_deg", 0))
@@ -635,9 +1467,8 @@ def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseEl
                     font_style="italic",
                 )
             )
-        return group
+        return (group, None)
     if annot.kind == "lagrange_point":
-        # Small triangle with L1/L4/L5 label (label field carries the point id).
         if annot.at is None:
             return None
         ra = float(annot.at.get("ra_deg", 0))
@@ -661,10 +1492,8 @@ def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseEl
                     font_size=8,
                 )
             )
-        return group
+        return (group, None)
     if annot.kind == "flight_corridor":
-        # Dashed line between two body coordinates.
-        # `at` carries: { from_ra_deg, from_au, to_ra_deg, to_au }
         if annot.at is None:
             return None
         try:
@@ -687,14 +1516,17 @@ def _render_annotation(annot: Annotation, vp: _Viewport) -> svgwrite.base.BaseEl
             start=(x1, y1), end=(x2, y2), stroke=palette.DIM, stroke_width=0.8
         )
         line["stroke-dasharray"] = "4,4"
-        return line
-    # Unknown kind reached the renderer despite the model-level validator —
-    # something bypassed it. Fail loud.
+        return (line, None)
     raise ValueError(
         f"renderer has no handler for annotation kind {annot.kind!r}; "
         f"either the model validator is out of sync with KNOWN_ANNOTATION_KINDS "
         f"or this code is missing a branch."
     )
+
+
+# ---------------------------------------------------------------------------
+# Party layer (unchanged from prior)
+# ---------------------------------------------------------------------------
 
 
 def _render_party_layer(
@@ -714,7 +1546,6 @@ def _render_party_layer(
         au, theta = _body_position_au_polar(body, t_hours)
         x, y = _polar_to_cartesian(au, theta, vp.au_to_px)
     else:
-        # Cross-scope: off-chart-edge indicator. Refined in Task 12.
         x, y = (vp.half - 16, 0.0)
     marker = svgwrite.container.Group()
     marker.attribs["data-party-at"] = party_at
