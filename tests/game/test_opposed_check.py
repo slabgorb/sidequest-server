@@ -4,7 +4,9 @@ Spec: ``.archive/handoffs/opposed-checks-design.md`` (Architect, 2026-04-26).
 The resolver is the heart of combat fairness — every combat encounter now
 runs through it. These tests lock the contract:
 
-- Shift band thresholds (boundary cases at +9/+10, +2/+3, -2/-3, -9/-10)
+- Shift band thresholds, calibrated per ADR-093 (Tie band is ±1, not ±2;
+  Success threshold ±2; CritSuccess/CritFail unchanged at ±10). Boundary
+  cases at +9/+10, +1/+2, -1/-2, -9/-10.
 - Stat sourcing fallback chain (per_actor → cdef → hard fail)
 - Resolver returns the correct tier for each band
 - Hard-fail-loud when neither source carries the stat (CLAUDE.md rule)
@@ -43,18 +45,28 @@ def test_shift_at_plus_3_is_success():
     assert _tier_from_shift(3) is RollOutcome.Success
 
 
-def test_shift_at_plus_2_is_tie_not_success():
-    """Top of the Tie band."""
-    assert _tier_from_shift(2) is RollOutcome.Tie
+def test_shift_at_plus_2_is_success_not_tie():
+    """Calibrated Tie band is ±1 (ADR-093). Shift +2 is Success, not Tie."""
+    assert _tier_from_shift(2) is RollOutcome.Success
+
+
+def test_shift_at_plus_1_is_tie_top_of_band():
+    """Top of the calibrated Tie band (ADR-093, ±1)."""
+    assert _tier_from_shift(1) is RollOutcome.Tie
 
 
 def test_shift_at_zero_is_tie():
     assert _tier_from_shift(0) is RollOutcome.Tie
 
 
-def test_shift_at_minus_2_is_tie_not_fail():
-    """Bottom of the Tie band."""
-    assert _tier_from_shift(-2) is RollOutcome.Tie
+def test_shift_at_minus_1_is_tie_bottom_of_band():
+    """Bottom of the calibrated Tie band (ADR-093, ±1)."""
+    assert _tier_from_shift(-1) is RollOutcome.Tie
+
+
+def test_shift_at_minus_2_is_fail_not_tie():
+    """Calibrated Tie band is ±1 (ADR-093). Shift -2 is Fail, not Tie."""
+    assert _tier_from_shift(-2) is RollOutcome.Fail
 
 
 def test_shift_at_minus_3_is_fail():
