@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.world import RoomDef
+from sidequest.magic.confrontations import find_eligible_room_autofire
+from sidequest.magic.outputs import apply_mandatory_outputs
 
 
 class RoomGraphInitError(Exception):
@@ -62,8 +64,9 @@ def process_room_entry(
     handled by the legacy room-graph machinery.
 
     Story 47-4 (Rig MVP Phase C): wires Galley entry → ``the_tea_brew``.
-    Iterates ``snap.world_confrontations`` filtered by the chassis's
-    interior_rooms, evaluates ``fire_conditions`` (room match,
+    Iterates ``snap.magic_state.confrontations`` filtered to
+    chassis-coupled entries (``register == "intimate"``), then by the
+    chassis's interior_rooms; evaluates ``fire_conditions`` (room match,
     bond_tier_min, cooldown_turns), and dispatches eligible firings via
     ``apply_mandatory_outputs`` on the ``clear_win`` branch — the auto-fire
     default; the narrator may override to ``refused`` later through
@@ -101,9 +104,6 @@ def process_room_entry(
     if bond is None:
         return
 
-    from sidequest.magic.confrontations import find_eligible_room_autofire
-    from sidequest.magic.outputs import apply_mandatory_outputs
-
     cooldown_view: dict[tuple[str, str], int] = {}
     for key, turn in snap.chassis_autofire_cooldowns.items():
         if ":" not in key:
@@ -111,8 +111,19 @@ def process_room_entry(
         c_id, conf_id = key.split(":", 1)
         cooldown_view[(c_id, conf_id)] = turn
 
+    # S1 — magic_state.confrontations is the canonical store for all
+    # confrontation defs. Pre-filter to chassis-coupled entries
+    # (register == "intimate" per ADR / confrontations.py:112) before
+    # passing to find_eligible_room_autofire. World-scoped (bar-DSL)
+    # entries are driven by the threshold evaluator, not the room-entry
+    # path, and must not appear here.
+    if snap.magic_state is None:
+        return
+    chassis_coupled = [
+        c for c in snap.magic_state.confrontations if c.register == "intimate"
+    ]
     eligible = find_eligible_room_autofire(
-        confrontations=snap.world_confrontations,
+        confrontations=chassis_coupled,
         chassis_id=chassis.id,
         room_local_id=room_local_id,
         bond_tier_chassis=bond.bond_tier_chassis,
