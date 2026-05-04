@@ -25,6 +25,37 @@ FLAT_ONLY_SPANS.update(
 
 
 # ---------------------------------------------------------------------------
+# Snapshot canonicalize — sidequest/game/migrations.py
+# Emitted by ``SqliteStore.load`` when ``migrate_legacy_snapshot`` rewrote
+# any field. Per-field migration markers are span attributes (e.g.
+# ``s1_world_confrontations_merged: int``). Lie-detector hook for the GM
+# panel — Sebastien sees which legacy split-brain shapes are still in the
+# wild.
+# ---------------------------------------------------------------------------
+SPAN_SNAPSHOT_CANONICALIZE = "snapshot.canonicalize"
+SPAN_ROUTES[SPAN_SNAPSHOT_CANONICALIZE] = SpanRoute(
+    event_type="state_transition",
+    component="persistence",
+    extract=lambda span: {
+        "field": "snapshot",
+        "op": "canonicalize",
+        "s1_world_confrontations_merged": (span.attributes or {}).get(
+            "s1_world_confrontations_merged", 0
+        ),
+        "s1_world_confrontations_dropped_no_target": (span.attributes or {}).get(
+            "s1_world_confrontations_dropped_no_target", 0
+        ),
+        "s4_encounter_tag_renamed": (span.attributes or {}).get(
+            "s4_encounter_tag_renamed", False
+        ),
+        "s5_pending_queues_dropped": (span.attributes or {}).get(
+            "s5_pending_queues_dropped", 0
+        ),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
 # Session lifecycle — sidequest/game/persistence.py
 # Fires every time SqliteStore.init_session() runs — including on a fresh
 # slot — so the GM panel gets the negative confirmation that reinit ran

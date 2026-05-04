@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from sidequest.game.migrations import migrate_legacy_snapshot
 from sidequest.game.session import GameSnapshot, NarrativeEntry
 from sidequest.telemetry.spans import SPAN_SESSION_SLOT_REINITIALIZED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
@@ -380,8 +381,20 @@ class SqliteStore:
         if row is None:
             return None
 
+        import json
+
         try:
-            snapshot = GameSnapshot.model_validate_json(row[0])
+            raw = json.loads(row[0])
+        except json.JSONDecodeError as exc:
+            raise SaveSchemaIncompatibleError(
+                save_path=self._path or Path("<in-memory>"),
+                underlying=ValidationError.from_exception_data(
+                    title="invalid_save_json", line_errors=[]
+                ),
+            ) from exc
+        migrated = migrate_legacy_snapshot(raw)
+        try:
+            snapshot = GameSnapshot.model_validate(migrated)
         except ValidationError as exc:
             raise SaveSchemaIncompatibleError(
                 save_path=self._path or Path("<in-memory>"),
