@@ -7,6 +7,8 @@ are all configurable for tests.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -184,6 +186,40 @@ def create_app(
 
         provider.add_span_processor(WatcherSpanProcessor(watcher_hub))
         logger.info("watcher.span_processor_registered")
+
+    # Story 45-31: spin up the daemon heartbeat listener so the
+    # process-wide DaemonStateMirror starts populating from the
+    # daemon's heartbeat stream. Without this, the dispatcher's
+    # UNRESPONSIVE-fallback branch is unreachable and the Felix
+    # anti-13-minute-silence contract never engages in production.
+    @app.on_event("startup")
+    async def _start_heartbeat_listener() -> None:
+        from sidequest.daemon_client import DaemonClient
+
+        client = DaemonClient()
+        task = asyncio.create_task(
+            client.heartbeat_listener(),
+            name="daemon-heartbeat-listener",
+        )
+        app.state.heartbeat_listener_task = task
+        logger.info("daemon.heartbeat_listener_started socket=%s", client.socket_path)
+
+    @app.on_event("shutdown")
+    async def _stop_heartbeat_listener() -> None:
+        task = getattr(app.state, "heartbeat_listener_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            # ``await task`` after ``cancel()`` raises
+            # ``asyncio.CancelledError`` (a ``BaseException`` in
+            # Python 3.8+, so a plain ``suppress(Exception)`` misses
+            # it). The task body itself may raise OSError or
+            # RuntimeError if the underlying socket was torn down
+            # mid-cycle. Suppress both classes explicitly to keep
+            # shutdown clean — teardown-time exceptions must not
+            # leak into the lifespan exit.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            logger.info("daemon.heartbeat_listener_stopped")
 
     # --- /health ---
     @app.get("/health")

@@ -51,12 +51,18 @@ SPACE_OPERA = REPO_ROOT / "sidequest-content" / "genre_packs" / "space_opera"
 def _bootstrap_coyote_star_snapshot() -> GameSnapshot:
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
+
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
         world_slug="coyote_star",
         location="Cockpit",  # start NOT in Galley
     )
+    # S1 invariant (2026-05-04): magic_state must be initialized before
+    # init_chassis_registry. The chassis loader writes confrontations
+    # directly into snapshot.magic_state.confrontations now.
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     return snap
 

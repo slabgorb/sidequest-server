@@ -118,7 +118,18 @@ async def test_chargen_confirmation_transitions_seat_to_playing(
         }
     )
     out = await handler.handle_message(connect_msg)
-    assert out, "connect must produce SESSION_CONNECTED"
+    # The slug-connect handler emits a SESSION_EVENT with payload.event ==
+    # "connected" (sidequest/handlers/connect.py:738). Verify that specific
+    # message rather than a bare truthy `assert out` — otherwise any
+    # response (including an error envelope) would silently pass.
+    assert any(
+        getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "connected"
+        for m in out
+    ), (
+        "connect must produce a SESSION_EVENT with payload.event='connected'; "
+        f"got {[(getattr(m, 'type', None), getattr(getattr(m, 'payload', None), 'event', None)) for m in out]}"
+    )
 
     # 2. PLAYER_SEAT — seat goes to CHARGEN.
     seat_msg = GameMessage.model_validate(

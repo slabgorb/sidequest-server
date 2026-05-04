@@ -73,10 +73,13 @@ def test_narrator_confrontation_trigger_creates_encounter(cac_snap) -> None:
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
     snap, pack = cac_snap
+    # Story 45-33: combat now requires an opponent post-fallback. This test's
+    # focus is "narrator-emitted confrontation creates an encounter," so
+    # supplying an explicit opponent preserves the original intent.
     result = NarrationTurnResult(
         narration="Goblins leap from the shadows.",
         confrontation="combat",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin pack", role="hostile", is_new=True)],
     )
     _apply_narration_result_to_snapshot(
         snap,
@@ -98,9 +101,18 @@ def test_narrator_confrontation_trigger_creates_encounter(cac_snap) -> None:
 def test_confrontation_trigger_with_empty_npcs_present_fires_empty_actor_list_span(
     cac_snap, otel_capture: InMemorySpanExporter
 ) -> None:
-    """Narrator emits confrontation but no npcs_present → encounter is
-    instantiated with only the player, and the lie-detector span fires so the
-    GM panel can surface that the extraction dropped the adversary list.
+    """Narrator emits combat confrontation but no npcs_present and no NPCs at
+    the player's location → both lie-detector spans fire and the encounter
+    is NOT created.
+
+    Story 45-33 changed this contract: the wrapper still emits the
+    ``encounter.empty_actor_list`` span (lie-detector for the narrator-side
+    extraction gap), the lifecycle then emits ``encounter.no_opponent_available``
+    and raises (CLAUDE.md No Silent Fallbacks — combat with no opponent is a
+    refused state), and the wrapper catches the ValueError so the turn stays
+    resilient (CLAUDE.md "strict helper, lenient caller"). Net result: the
+    GM panel sees both signals and the snapshot is left without a fabricated
+    solo encounter.
     """
     from sidequest.server.session_handler import _apply_narration_result_to_snapshot
 
@@ -119,19 +131,29 @@ def test_confrontation_trigger_with_empty_npcs_present_fires_empty_actor_list_sp
         room=room_for(snap),
     )
 
-    # Encounter still instantiated (with player-only combatant list)
-    assert snap.encounter is not None
-    assert snap.encounter.encounter_type == "combat"
+    # Story 45-33: encounter must NOT be created when combat resolves to
+    # zero opponents post-fallback.
+    assert snap.encounter is None
 
-    # Lie-detector span fired
+    # Wrapper still emits the narrator-extraction lie-detector.
     spans_by_name = {s.name: s for s in otel_capture.get_finished_spans()}
     assert "encounter.empty_actor_list" in spans_by_name, (
-        f"expected encounter.empty_actor_list span; got {list(spans_by_name)}"
+        f"expected encounter.empty_actor_list span; got {sorted(spans_by_name)}"
     )
-    s = spans_by_name["encounter.empty_actor_list"]
-    assert s.attributes["encounter_type"] == "combat"
-    assert s.attributes["player_name"] == "Rux"
-    assert s.attributes["genre_slug"] == "caverns_and_claudes"
+    eal = spans_by_name["encounter.empty_actor_list"]
+    assert eal.attributes["encounter_type"] == "combat"
+    assert eal.attributes["player_name"] == "Rux"
+    assert eal.attributes["genre_slug"] == "caverns_and_claudes"
+
+    # Story 45-33: the lifecycle-layer guard also fires its own span.
+    assert "encounter.no_opponent_available" in spans_by_name, (
+        f"expected encounter.no_opponent_available span (Story 45-33 guard); "
+        f"got {sorted(spans_by_name)}"
+    )
+    noa = spans_by_name["encounter.no_opponent_available"]
+    assert noa.attributes["encounter_type"] == "combat"
+    assert noa.attributes["player_name"] == "Rux"
+    assert noa.attributes["category"] == "combat"
 
 
 def test_confrontation_trigger_with_populated_npcs_present_does_not_fire_span(

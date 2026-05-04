@@ -18,6 +18,7 @@ Payloads with deny_unknown_fields in Rust use model_config = {"extra": "forbid"}
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, RootModel
@@ -143,13 +144,18 @@ class ScrapbookEntryPayload(ProtocolBase):
     world_facts: list[str] = Field(default_factory=list)
     npcs_present: list[ScrapbookEntryNpcRef] = Field(default_factory=list)
     seq: int = 0
-    # Story 45-30: trigger-policy outcome for this turn's render decision.
-    # ``rendered`` — policy fired and dispatch proceeded.
-    # ``skipped_policy`` — classify_trigger returned NONE_POLICY (banter).
-    # ``failed`` — policy fired but the daemon gate refused synchronously.
-    # The UI uses this to render distinct affordances for "no image because
-    # the policy chose not to" vs "no image because the daemon failed".
-    render_status: str = "rendered"
+    # Trigger-policy outcome (Story 45-30) extended with daemon-liveness
+    # outcome (Story 45-31). Per 45-31 spec: "render_status field is shared
+    # with story 45-30. If 45-30 lands first, this story extends the enum
+    # with 'unavailable'." 45-30 landed first.
+    #   ``rendered``       — policy fired, dispatch proceeded, image landed.
+    #   ``skipped_policy`` — classify_trigger returned NONE_POLICY (banter).
+    #   ``failed``         — policy fired, daemon gate refused synchronously.
+    #   ``unavailable``    — daemon UNRESPONSIVE per heartbeat mirror;
+    #                        dispatcher took the 45-31 fallback path.
+    render_status: Literal[
+        "rendered", "skipped_policy", "failed", "unavailable"
+    ] = "rendered"
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +324,43 @@ class TurnStatusPayload(ProtocolBase):
     """'active' = this player's turn, 'resolved' = turn complete."""
     state_delta: StateDelta | None = None
     """Optional state delta."""
+
+
+# ---------------------------------------------------------------------------
+# ActionRevealStatus / ActionRevealPayload
+# ---------------------------------------------------------------------------
+
+
+class ActionRevealStatus(StrEnum):
+    """Lifecycle state of a player's in-progress action visible to peers."""
+
+    COMPOSING = "composing"
+    SUBMITTED = "submitted"
+    CLEARED = "cleared"
+
+
+class ActionRevealPayload(ProtocolBase):
+    """Per-player live action visibility update.
+
+    See ADR-036 (Action Visibility Model). Broadcast to all party members
+    except the sender so peers can coordinate during cinematic-mode rounds.
+    Sealed-letter barrier and CAS dispatcher are unaffected.
+    """
+
+    player_id: NonBlankString
+    """Player whose action this reveal describes."""
+    character_name: NonBlankString
+    """Display name of the player's character."""
+    status: ActionRevealStatus
+    """composing | submitted | cleared. Clients send composing/submitted; server emits cleared."""
+    action: str = ""
+    """Current action text. Empty string when status=cleared."""
+    aside: bool = False
+    """OOC aside flag, mirrors PlayerActionPayload.aside."""
+    seq: int = Field(ge=0)
+    """Monotonic per (player_id, round). Receivers drop non-monotonic seq within a round."""
+    round: int = Field(ge=0)
+    """Round counter (ADR-051). Server stamps; clients' values are overwritten."""
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +727,14 @@ class TurnStatusMessage(ProtocolBase):
     player_id: str = ""
 
 
+class ActionRevealMessage(ProtocolBase):
+    """GameMessage::ActionReveal wire representation."""
+
+    type: Literal[MessageType.ACTION_REVEAL] = MessageType.ACTION_REVEAL
+    payload: ActionRevealPayload
+    player_id: str = ""
+
+
 class PartyStatusMessage(ProtocolBase):
     """GameMessage::PartyStatus wire representation."""
 
@@ -861,6 +912,7 @@ _Phase1Variant = Annotated[
     | PartyStatusMessage
     | ChapterMarkerMessage
     | ActionQueueMessage
+    | ActionRevealMessage
     | ErrorMessage
     | PlayerPresenceMessage
     | PlayerSeatMessage

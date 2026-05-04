@@ -161,6 +161,10 @@ class _StubRoom:
 
     def __init__(self) -> None:
         self.broadcasts: list[tuple[object, str | None]] = []
+        from sidequest.game.session import GameSnapshot
+        from sidequest.server.session import Session
+
+        self.session = Session(GameSnapshot(genre_slug="caverns_and_claudes"))
 
     def broadcast(
         self,
@@ -574,6 +578,7 @@ async def test_post_narration_confrontation_emit_fans_out_with_event_log(
     # CONFRONTATION fan-out lands only on the peer's queue.
     registry = RoomRegistry()
     room = registry.get_or_create(slug=slug, mode=GameMode.MULTIPLAYER)
+    room.bind_world(snapshot=sd.snapshot, store=store)
     socket_ids = {"actor": "sock-actor", "peer": "sock-peer"}
     queues: dict[str, _asyncio.Queue[object]] = {pid: _asyncio.Queue() for pid in socket_ids}
     for pid, sid in socket_ids.items():

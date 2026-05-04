@@ -195,6 +195,131 @@ class DaemonClient:
             latency_ms=latency_ms,
         )
 
+    async def heartbeat_listener(
+        self,
+        *,
+        poll_interval_seconds: float = 5.0,
+        max_idle_seconds: float = 15.0,
+    ) -> None:
+        """Long-running coroutine that opens a connection to the daemon
+        and feeds incoming heartbeat events into
+        :func:`sidequest.daemon_client.state_mirror.get_mirror`.
+
+        Story 45-31. Wired into the FastAPI startup hook so the mirror
+        starts populating as soon as the server boots. Without this
+        wiring, the dispatcher's UNRESPONSIVE branch is unreachable and
+        the Felix anti-13-minute-silence fallback never engages.
+
+        Cadence rationale (review H2): the daemon-side
+        ``start_periodic_heartbeat`` is *defined* but is NOT wired
+        into ``_run_daemon`` — periodic emit broadcast is a deferred
+        follow-up. Until that lands, the only sources of fresh
+        heartbeats are (a) per-request connections during active
+        gameplay and (b) this listener's reconnect cycle. The default
+        ``max_idle_seconds=15s`` keeps the per-connection cadence at
+        roughly 4× faster than the default unresponsive threshold
+        (``2 × 30s = 60s``), so the mirror sees a fresh receive ts
+        well inside the staleness window even during quiet idle
+        stretches.
+
+        :param poll_interval_seconds: How long to wait between
+            re-connection attempts when the daemon is unreachable.
+        :param max_idle_seconds: After this many seconds without any
+            line on the socket, the listener forces a reconnect — the
+            daemon may have hung mid-byte and silently stopped emitting.
+        """
+        from sidequest.daemon_client.state_mirror import get_mirror
+
+        mirror = get_mirror()
+
+        while True:
+            if not self.is_available():
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_unix_connection(path=str(self._socket_path)),
+                    timeout=poll_interval_seconds,
+                )
+            except (FileNotFoundError, ConnectionRefusedError, OSError, TimeoutError):
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+
+            # Send a `status` request to keep the connection active past
+            # the daemon's read loop. The accept-time heartbeat fires
+            # unconditionally before any request is read; the status
+            # reply itself is harmless and we discard it. Keeping the
+            # connection open lets the daemon emit additional heartbeats
+            # if a render or embed lock cycles while we're listening.
+            try:
+                req = json.dumps({"id": "heartbeat-listener", "method": "status", "params": {}}) + "\n"
+                writer.write(req.encode())
+                await writer.drain()
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                # Best-effort close on a writer we've already lost.
+                # The connection is broken; close() may itself raise
+                # OSError on the dead transport. Eating the close
+                # error here is safe — the next reconnect attempt
+                # establishes a fresh socket.
+                with contextlib.suppress(Exception):
+                    writer.close()
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+
+            try:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(
+                            reader.readline(), timeout=max_idle_seconds
+                        )
+                    except TimeoutError:
+                        # No heartbeat or reply for the full window —
+                        # the mirror's is_unresponsive() will fire from
+                        # the absence of fresh heartbeats. Reconnect.
+                        break
+                    if not raw:
+                        break
+                    line = raw.decode().strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        # No silent fallback: surface daemon protocol
+                        # corruption (post-port shape drift, partial
+                        # flush mid-crash) loudly so the GM panel can
+                        # see it. Continue reading — one bad line must
+                        # not crash the listener.
+                        logger.warning(
+                            "heartbeat_listener.invalid_json line=%r error=%s",
+                            line[:200],
+                            exc,
+                        )
+                        continue
+                    if obj.get("event") == "heartbeat":
+                        try:
+                            mirror.record_heartbeat(
+                                queue=str(obj.get("queue", "")),
+                                state=str(obj.get("state", "")),
+                                queue_depth=int(obj.get("queue_depth") or 0),
+                                ts_monotonic=float(obj.get("ts_monotonic") or 0.0),
+                            )
+                        except (ValueError, TypeError):
+                            # Malformed heartbeat — log and keep
+                            # reading; never let one bad event crash
+                            # the listener.
+                            logger.warning("heartbeat_listener.invalid_event %s", obj)
+            finally:
+                writer.close()
+                # ``wait_closed()`` after ``close()`` can raise
+                # CancelledError (when the listener task is being
+                # cancelled at shutdown) or OSError (when the
+                # transport is already gone). Both are expected
+                # teardown outcomes — suppress to keep the listener
+                # exit clean.
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+
     async def _call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = uuid.uuid4().hex[:12]
         with tracer.start_as_current_span("daemon_client.request") as span:
@@ -226,21 +351,57 @@ class DaemonClient:
                 req_line = json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
                 writer.write(req_line.encode())
                 await writer.drain()
-                try:
-                    raw = await asyncio.wait_for(reader.readline(), timeout=self._timeout)
-                except TimeoutError as exc:
-                    span.set_attribute("daemon.outcome", "reply_timeout")
-                    raise DaemonUnavailableError(
-                        f"daemon did not reply within {self._timeout}s"
-                    ) from exc
-                if not raw:
-                    span.set_attribute("daemon.outcome", "eof_before_reply")
-                    raise DaemonUnavailableError("daemon closed socket before sending a reply")
-                try:
-                    reply = json.loads(raw.decode().strip())
-                except json.JSONDecodeError as exc:
-                    span.set_attribute("daemon.outcome", "invalid_json")
-                    raise DaemonUnavailableError(f"daemon sent non-JSON reply: {exc}") from exc
+                # Story 45-31: the daemon emits per-queue heartbeat
+                # lines on connection accept and around the lock
+                # acquire/release. Drain those into the mirror, then
+                # keep reading until we hit the actual reply (id +
+                # result/error). Heartbeats and replies are
+                # mutually-exclusive shapes: heartbeats have an
+                # ``event`` key, replies have ``id`` + ``result`` /
+                # ``error``.
+                from sidequest.daemon_client.state_mirror import get_mirror
+
+                _mirror = get_mirror()
+                reply: dict[str, Any] | None = None
+                while reply is None:
+                    try:
+                        raw = await asyncio.wait_for(
+                            reader.readline(), timeout=self._timeout
+                        )
+                    except TimeoutError as exc:
+                        span.set_attribute("daemon.outcome", "reply_timeout")
+                        raise DaemonUnavailableError(
+                            f"daemon did not reply within {self._timeout}s"
+                        ) from exc
+                    if not raw:
+                        span.set_attribute("daemon.outcome", "eof_before_reply")
+                        raise DaemonUnavailableError(
+                            "daemon closed socket before sending a reply"
+                        )
+                    line = raw.decode().strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        span.set_attribute("daemon.outcome", "invalid_json")
+                        raise DaemonUnavailableError(
+                            f"daemon sent non-JSON reply: {exc}"
+                        ) from exc
+                    if obj.get("event") == "heartbeat":
+                        try:
+                            _mirror.record_heartbeat(
+                                queue=str(obj.get("queue", "")),
+                                state=str(obj.get("state", "")),
+                                queue_depth=int(obj.get("queue_depth") or 0),
+                                ts_monotonic=float(obj.get("ts_monotonic") or 0.0),
+                            )
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "daemon_client.invalid_heartbeat %s", obj
+                            )
+                        continue
+                    reply = obj
                 if "error" in reply and reply["error"] is not None:
                     code = str(reply["error"].get("code", "UNKNOWN"))
                     msg = str(reply["error"].get("message", ""))

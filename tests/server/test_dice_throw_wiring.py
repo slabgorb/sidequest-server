@@ -117,6 +117,10 @@ class _StubRoom:
 
     def __init__(self) -> None:
         self.broadcasts: list[tuple[object, str | None]] = []
+        from sidequest.game.session import GameSnapshot
+        from sidequest.server.session import Session
+
+        self.session = Session(GameSnapshot(genre_slug="caverns_and_claudes"))
 
     def broadcast(self, msg: object, *, exclude_socket_id: str | None = None) -> None:
         self.broadcasts.append((msg, exclude_socket_id))

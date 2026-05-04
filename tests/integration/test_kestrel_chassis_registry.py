@@ -18,6 +18,7 @@ def test_kestrel_materializes_with_voice_and_bond() -> None:
     from sidequest.game.chassis import init_chassis_registry
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import load_genre_pack
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
 
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
@@ -25,6 +26,7 @@ def test_kestrel_materializes_with_voice_and_bond() -> None:
         world_slug="coyote_star",
         location="Unknown",
     )
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
 
     assert "kestrel" in snap.chassis_registry
@@ -33,9 +35,11 @@ def test_kestrel_materializes_with_voice_and_bond() -> None:
     assert kestrel.voice is not None
     assert kestrel.voice.name_forms_by_bond_tier["trusted"] == "{first_name}"
 
-    # Projection visible in npc_registry
-    names = {entry.name for entry in snap.npc_registry}
-    assert "Kestrel" in names
+    # Wave 2A (story 45-47): chassis no longer projects into npc_registry
+    # or npc_pool. The chassis voice section handles its narrator surfacing
+    # (see test_kestrel_voice_section_renders_in_narrator_prompt below).
+    pool_names = {member.name for member in snap.npc_pool}
+    assert "Kestrel" not in pool_names
 
 
 @pytest.mark.integration
@@ -54,6 +58,7 @@ def test_kestrel_voice_section_renders_in_narrator_prompt() -> None:
     from sidequest.game.chassis import init_chassis_registry
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import load_genre_pack
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
 
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
@@ -61,6 +66,7 @@ def test_kestrel_voice_section_renders_in_narrator_prompt() -> None:
         world_slug="coyote_star",
         location="Unknown",
     )
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
 
     registry = PromptRegistry()

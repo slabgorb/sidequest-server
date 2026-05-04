@@ -1,11 +1,16 @@
-"""Trope engine spans — tick + activation/resolution + resolution handshake.
+"""Trope engine spans — tick + activation/resolution + tempo aggregate.
 
 Story 45-20 promoted ``SPAN_TROPE_RESOLVE`` out of ``FLAT_ONLY_SPANS`` into
 ``SPAN_ROUTES`` so the typed Subsystems feed sees existing trope-resolution
 events alongside the new handshake. The handshake itself fires from
-``_handshake_resolved_tropes`` (sidequest/server/narration_apply.py) and
-documents the durable-record write that updates ``quest_log`` /
-``active_stakes`` when a trope's status flips into ``"resolved"``.
+``_handshake_resolved_tropes`` (sidequest/server/narration_apply.py).
+
+Story 45-27 takes the next step: every trope-engine span now routes to
+the GM panel's typed feed under ``component="tropes"`` so Sebastien's
+lie-detector sees the engine's full per-turn behavior — tick deltas,
+activations, cap refusals, cooldown refusals, and the per-turn aggregate
+``turn.tropes`` carrying the three story-named metrics
+(``active_trope_count``, ``progression_max``, ``progression_avg``).
 """
 
 from __future__ import annotations
@@ -28,33 +33,44 @@ SPAN_TROPE_CROSS_SESSION = "trope.cross_session"
 SPAN_TROPE_EVALUATE_TRIGGERS = "trope.evaluate_triggers"
 SPAN_TROPE_RESOLUTION_HANDSHAKE = "trope.resolution_handshake"
 
+# Story 45-27 — diagnostic spans for activation refusals so the GM
+# panel can chart "engine refused to activate this" distinctly from
+# "engine never engaged".
+SPAN_TROPE_CAP_BLOCKED = "trope.cap_blocked"
+SPAN_TROPE_COOLDOWN_BLOCKED = "trope.cooldown_blocked"
+
+# Spans that stay flat-only — these are diagnostic / dev-time only and
+# do not need typed Subsystems-tab routing.
 FLAT_ONLY_SPANS.update(
     {
         SPAN_TROPE_TICK,
-        SPAN_TROPE_TICK_PER,
         SPAN_TROPE_ROOM_TICK,
-        SPAN_TROPE_ACTIVATE,
         SPAN_TROPE_CROSS_SESSION,
         SPAN_TROPE_EVALUATE_TRIGGERS,
     }
 )
 
-# Story 45-20 — promoted out of FLAT_ONLY_SPANS so the GM panel's typed
-# state_transition feed surfaces trope resolution events.
+
+# Story 45-20 — resolved-trope durable record.
+# Story 45-27 — extend extract to surface ``cooldown_until_turn`` so
+# the GM panel can render the cooldown bar starting at resolution.
 SPAN_ROUTES[SPAN_TROPE_RESOLVE] = SpanRoute(
     event_type="state_transition",
-    component="trope",
+    component="tropes",
     extract=lambda span: {
         "field": "active_tropes",
         "trope_id": (span.attributes or {}).get("trope_id", ""),
         "interaction": (span.attributes or {}).get("interaction", 0),
         "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+        "final_progress": (span.attributes or {}).get("final_progress", 0.0),
+        "beats_fired_total": (span.attributes or {}).get("beats_fired_total", 0),
+        "cooldown_until_turn": (span.attributes or {}).get("cooldown_until_turn", 0),
     },
 )
 
+
 # Story 45-20 — handshake span fires on every detection of a resolved
-# trope at the post-record_interaction site, INCLUDING idempotent
-# re-detects (no double-write but the panel sees the path engaged).
+# trope at the post-record_interaction site.
 SPAN_ROUTES[SPAN_TROPE_RESOLUTION_HANDSHAKE] = SpanRoute(
     event_type="state_transition",
     component="trope",
@@ -71,6 +87,65 @@ SPAN_ROUTES[SPAN_TROPE_RESOLUTION_HANDSHAKE] = SpanRoute(
 )
 
 
+# Story 45-27 — per-trope tick. The panel renders a per-trope
+# progression sparkline alongside the aggregate so the GM can see
+# *which* trope moved this turn, not just that something did.
+SPAN_ROUTES[SPAN_TROPE_TICK_PER] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "trope_id": (span.attributes or {}).get("trope_id", ""),
+        "progress_before": (span.attributes or {}).get("progress_before", 0.0),
+        "progress_after": (span.attributes or {}).get("progress_after", 0.0),
+        "delta": (span.attributes or {}).get("delta", 0.0),
+        "accelerator_hits": (span.attributes or {}).get("accelerator_hits", 0),
+        "decelerator_hits": (span.attributes or {}).get("decelerator_hits", 0),
+    },
+)
+
+
+# Story 45-27 — dormant→progressing transition. ``cap_used`` lets the
+# panel show "3 of 3 slots used" alongside the activation event.
+SPAN_ROUTES[SPAN_TROPE_ACTIVATE] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "trope_id": (span.attributes or {}).get("trope_id", ""),
+        "from_status": (span.attributes or {}).get("from_status", ""),
+        "to_status": (span.attributes or {}).get("to_status", ""),
+        "cap_used": (span.attributes or {}).get("cap_used", 0),
+    },
+)
+
+
+# Story 45-27 — diagnostic: cap held back a candidate.
+SPAN_ROUTES[SPAN_TROPE_CAP_BLOCKED] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "trope_id": (span.attributes or {}).get("trope_id", ""),
+        "current_active_count": (span.attributes or {}).get("current_active_count", 0),
+        "cap": (span.attributes or {}).get("cap", 0),
+    },
+)
+
+
+# Story 45-27 — diagnostic: cooldown held back a candidate.
+SPAN_ROUTES[SPAN_TROPE_COOLDOWN_BLOCKED] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "trope_id": (span.attributes or {}).get("trope_id", ""),
+        "cooldown_until_turn": (span.attributes or {}).get("cooldown_until_turn", 0),
+        "current_turn": (span.attributes or {}).get("current_turn", 0),
+    },
+)
+
+
 @contextmanager
 def trope_tick_span(
     trope_count: int,
@@ -79,6 +154,13 @@ def trope_tick_span(
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
+    """Open the legacy aggregate span (kept for cross_session/room_tick).
+
+    Story 45-27 introduces the new ``turn.tropes`` aggregate (helper in
+    ``sidequest/telemetry/spans/turn.py``) — prefer that for per-turn
+    tempo emission. This helper remains for the legacy room_tick /
+    cross_session call sites that pre-date the per-turn aggregate.
+    """
     with Span.open(
         SPAN_TROPE_TICK,
         {"trope_count": trope_count, "multiplier": multiplier, **attrs},
@@ -100,13 +182,7 @@ def trope_resolution_handshake_span(
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Emit one ``trope.resolution_handshake`` span per detected resolution.
-
-    Fires for every trope whose current status is ``"resolved"``, even when
-    the prior status was already ``"resolved"`` (idempotent re-detect:
-    ``active_stakes_appended=False``). The lie-detector signal: the panel
-    needs the path-engaged record even on no-op turns.
-    """
+    """Emit one ``trope.resolution_handshake`` span per detected resolution."""
 
     attributes: dict[str, Any] = {
         "trope_id": trope_id,

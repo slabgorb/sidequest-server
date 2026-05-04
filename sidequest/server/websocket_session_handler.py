@@ -572,9 +572,15 @@ class WebSocketSessionHandler:
         Phase 1 of session_handler decomposition (see
         docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
 
-        ``render_status`` (Story 45-30) — passed through to the emitter and
-        persisted on the scrapbook payload so the UI can distinguish
-        skipped-by-policy from daemon-failed.
+        ``render_status`` carries the unified Story 45-30 + Story 45-31
+        discriminator: ``"rendered"`` (happy path), ``"skipped_policy"``
+        (45-30 — trigger policy returned NONE_POLICY), ``"failed"``
+        (daemon errored synchronously), ``"unavailable"`` (45-31 — daemon
+        mirror reports UNRESPONSIVE; the dispatcher will skip the
+        round-trip and the UI shows the placeholder badge live, no
+        replay JOIN). Daemon-unavailable wins over policy decisions —
+        when there's no render coming either way, the user-facing reason
+        is "the daemon is down."
         """
         from sidequest.server import emitters
 
@@ -640,6 +646,7 @@ class WebSocketSessionHandler:
         """
         registry = getattr(cls, "_MESSAGE_HANDLERS", None)
         if registry is None:
+            from sidequest.handlers.action_reveal import HANDLER as ACTION_REVEAL_HANDLER
             from sidequest.handlers.character_creation import HANDLER as CHARACTER_CREATION_HANDLER
             from sidequest.handlers.dice_throw import HANDLER as DICE_THROW_HANDLER
             from sidequest.handlers.orbital_intent import HANDLER as ORBITAL_INTENT_HANDLER
@@ -656,6 +663,7 @@ class WebSocketSessionHandler:
                 "DICE_THROW": DICE_THROW_HANDLER,
                 "YIELD": YIELD_HANDLER,
                 "ORBITAL_INTENT": ORBITAL_INTENT_HANDLER,
+                "ACTION_REVEAL": ACTION_REVEAL_HANDLER,
             }
             cls._MESSAGE_HANDLERS = registry
         return registry.get(msg_type)
@@ -705,6 +713,68 @@ class WebSocketSessionHandler:
                 )
             except Exception as exc:
                 logger.error("session.disconnect_save_failed error=%s", exc)
+
+            # Story 45-31: post-session render diagnostic. Writes a
+            # JSON snapshot of the render worker's lifetime so the
+            # next Felix-style 13-minute silence can be diagnosed
+            # without reproducing the crash. Best-effort — diagnostic
+            # write must never raise back to the WebSocket layer.
+            try:
+                from datetime import UTC
+                from datetime import datetime as _dt
+
+                from sidequest.daemon_client.state_mirror import get_mirror
+                from sidequest.server.render_diagnostics import (
+                    write_session_diagnostic,
+                )
+
+                room_slug_for_diag: str | None = None
+                if self._room is not None:
+                    room_slug_for_diag = getattr(self._room, "slug", None)
+                if not room_slug_for_diag:
+                    # Legacy/no-slug path — namespace by genre+player so
+                    # the diagnostic file remains greppable.
+                    room_slug_for_diag = (
+                        (
+                            f"{self._session_data.genre_slug or 'unknown'}-"
+                            f"{self._session_data.player_id or 'unknown'}"
+                        )
+                        .replace("/", "-")
+                        .replace("\\", "-")
+                    )
+
+                _mirror = get_mirror()
+                snapshot_payload = {
+                    "heartbeat_history": [
+                        {
+                            "queue": q,
+                            "state": _mirror.state(q).value,
+                            "queue_depth": _mirror.queue_depth(q),
+                        }
+                        for q in ("image", "embed")
+                    ],
+                    "enqueue_count": int(self._session_data.render_enqueue_count),
+                    "backpressure_warn_count": int(
+                        self._session_data.render_backpressure_warn_count
+                    ),
+                    "unresponsive_windows": [
+                        {
+                            "count": int(self._session_data.render_unresponsive_window_count),
+                        }
+                    ]
+                    if self._session_data.render_unresponsive_window_count
+                    else [],
+                    "last_successful_render_id": (self._session_data.last_successful_render_id),
+                    "last_successful_render_ts": (self._session_data.last_successful_render_ts_iso),
+                    "last_heartbeat_ts": _mirror.last_heartbeat_ts(),
+                }
+                write_session_diagnostic(
+                    room_slug=room_slug_for_diag,
+                    session_end_iso=_dt.now(UTC).isoformat(),
+                    snapshot=snapshot_payload,
+                )
+            except Exception as _diag_exc:  # noqa: BLE001 — diagnostic must never crash teardown
+                logger.warning("render.session_diagnostic_failed err=%s", _diag_exc)
             finally:
                 # ADR-037 Python port: when the session is bound to a room,
                 # the room owns the SqliteStore lifecycle — every WS session
@@ -1304,6 +1374,30 @@ class WebSocketSessionHandler:
             # same authoritative object — including any peer session
             # already bound to this slug.
             sd.snapshot.replace_with(materialized)
+
+            # S1 (2026-05-04 split-brain cleanup): magic_state MUST be
+            # initialized before init_chassis_registry runs, because the
+            # chassis loader now writes confrontations directly into
+            # snapshot.magic_state.confrontations (the canonical home).
+            # The legacy world_confrontations stash is gone — see design
+            # spec 2026-05-04-snapshot-split-brain-cleanup-design.md S1.
+            #
+            # Magic Phase 4: instantiate MagicState on the canonical
+            # snapshot for worlds that ship a magic.yaml pair (genre +
+            # world). This is the production hook that pairs Phase 1's
+            # loader with Phase 2's snapshot field — without it,
+            # snapshot.magic_state stays None and the LedgerPanel never
+            # surfaces bars even though the engine can apply workings
+            # correctly. ``add_character`` instantiates per-character
+            # bars (sanity / notice / vitality on Coyote Star) keyed
+            # to the actor name the narrator emits in magic_working.
+            init_magic_state_for_session(
+                snapshot=sd.snapshot,
+                genre_pack_source_dir=sd.genre_pack.source_dir,
+                world_slug=sd.world_slug,
+                character_id=character.core.name,
+            )
+
             init_chassis_registry(sd.snapshot, sd.genre_pack)
             # Story 47-6: bond_seeds in rigs.yaml use the
             # ``"player_character"`` placeholder. Rewrite every chassis's
@@ -1330,22 +1424,6 @@ class WebSocketSessionHandler:
                     "trigger": "new_player_chargen",
                     "player_id": player_id,
                 },
-            )
-
-            # Magic Phase 4: instantiate MagicState on the canonical
-            # snapshot for worlds that ship a magic.yaml pair (genre +
-            # world). This is the production hook that pairs Phase 1's
-            # loader with Phase 2's snapshot field — without it,
-            # snapshot.magic_state stays None and the LedgerPanel never
-            # surfaces bars even though the engine can apply workings
-            # correctly. ``add_character`` instantiates per-character
-            # bars (sanity / notice / vitality on Coyote Star) keyed
-            # to the actor name the narrator emits in magic_working.
-            init_magic_state_for_session(
-                snapshot=sd.snapshot,
-                genre_pack_source_dir=sd.genre_pack.source_dir,
-                world_slug=sd.world_slug,
-                character_id=character.core.name,
             )
 
             # Scenario binding (Slice D / connect.rs:1948). No-op without
@@ -2161,6 +2239,23 @@ class WebSocketSessionHandler:
                                 ):
                                     pass
 
+                    # Story 45-27: trope progression tick. Advances passive
+                    # progression, fires staggered beats, gates new
+                    # activations through cap + cooldown. Wired here so
+                    # ``now_turn`` (interaction) is the post-bump value
+                    # and so any engine-driven resolution flows into the
+                    # 45-20 handshake's diff below — the handshake's
+                    # baseline was captured at the top of this method
+                    # before any apply step, so a fresh resolved status
+                    # set by the tick is visible to the diff.
+                    from sidequest.game.trope_tick import tick_tropes  # noqa: PLC0415
+
+                    tick_tropes(
+                        snapshot,
+                        sd.genre_pack,
+                        now_turn=snapshot.turn_manager.interaction,
+                    )
+
                     # Story 45-20: trope-resolution handshake. Diffs the
                     # baseline captured at the top of this method against
                     # the post-recompute snapshot to detect any trope that
@@ -2360,14 +2455,24 @@ class WebSocketSessionHandler:
                 # LLM calls. Fields come from the orchestrator result and the
                 # snapshot the narrator just stamped.
                 with timings.phase("dispatch_post"):
-                    # Story 45-30: classify the render trigger reason once so
-                    # the scrapbook entry's render_status field reflects the
-                    # SAME policy decision that ``_maybe_dispatch_render``
-                    # below will reach. ``classify_trigger`` is a pure
-                    # function so the two call sites converge on the same
-                    # value without coordination — but doing it here ensures
-                    # the SCRAPBOOK_ENTRY frame always carries the right
-                    # discriminator for the UI gallery.
+                    # Story 45-31 first: consult the daemon-state mirror so
+                    # the dispatcher below can skip its round-trip when the
+                    # daemon is UNRESPONSIVE. ``sd.render_unavailable_pending``
+                    # is the shared flag the dispatcher reads.
+                    from sidequest.daemon_client.state_mirror import (
+                        get_mirror as _get_mirror,
+                    )
+
+                    _hb_mirror = _get_mirror()
+                    sd.render_unavailable_pending = (
+                        _hb_mirror.last_heartbeat_ts() is not None and _hb_mirror.is_unresponsive()
+                    )
+
+                    # Story 45-30: classify the render trigger reason once
+                    # so the same value lands in both the SCRAPBOOK_ENTRY
+                    # render_status discriminator and the dispatcher below.
+                    # ``classify_trigger`` is pure so the two call sites
+                    # converge without coordination.
                     from sidequest.server.render_trigger import (
                         RenderTriggerReason,
                         classify_trigger,
@@ -2378,11 +2483,18 @@ class WebSocketSessionHandler:
                         snapshot_location_before=snapshot_location_before_apply,
                         encounter_resolved_this_turn=encounter_resolved_this_turn,
                     )
-                    _render_status = (
-                        "skipped_policy"
-                        if _trigger_reason is RenderTriggerReason.NONE_POLICY
-                        else "rendered"
-                    )
+
+                    # Unified render_status (Story 45-30 + 45-31) — daemon-
+                    # unavailable wins over policy decisions because no
+                    # render is coming either way; the user-facing reason
+                    # is "the daemon is down." Then policy decides
+                    # skipped_policy vs rendered.
+                    if sd.render_unavailable_pending:
+                        _render_status = "unavailable"
+                    elif _trigger_reason is RenderTriggerReason.NONE_POLICY:
+                        _render_status = "skipped_policy"
+                    else:
+                        _render_status = "rendered"
 
                     try:
                         self._emit_scrapbook_entry(
@@ -3595,6 +3707,39 @@ class WebSocketSessionHandler:
             )
             return None
         client = DaemonClient()
+        # Story 45-31: the turn pipeline already consulted the
+        # daemon-state mirror immediately before the scrapbook emit
+        # and stamped ``sd.render_unavailable_pending`` accordingly.
+        # The SCRAPBOOK_ENTRY for this turn already carries
+        # ``render_status="unavailable"`` (live broadcast + DB row in
+        # one shot — no duplicate row, no separate replay JOIN).
+        # All this branch needs to do is: emit the watcher event so
+        # the GM panel sees the substitution, increment counters, and
+        # return None to skip the daemon round-trip.
+        if sd.render_unavailable_pending:
+            from sidequest.daemon_client.state_mirror import get_mirror as _get_mirror
+
+            _mirror = _get_mirror()
+            sd.render_unresponsive_window_count += 1
+            logger.warning(
+                "render.unavailable reason=heartbeat_lost last_ts=%s turn=%d",
+                _mirror.last_heartbeat_ts(),
+                sd.snapshot.turn_manager.interaction,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "unavailable",
+                    "reason": "heartbeat_lost",
+                    "last_heartbeat_ts": _mirror.last_heartbeat_ts(),
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                    "player_id": sd.player_id,
+                },
+                component="render",
+                severity="warning",
+            )
+            return None
         if not client.is_available():
             logger.warning(
                 "render.skipped reason=daemon_unavailable socket=%s",
@@ -3813,6 +3958,43 @@ class WebSocketSessionHandler:
             component="render",
         )
 
+        # Story 45-31: backpressure check — orthogonal to ADR-050 throttle.
+        # The throttle gates time-since-last-dispatch; backpressure gates
+        # concurrent in-flight depth so a daemon already swamped with
+        # renders gets a loud warn (and counter increment) before the
+        # 4th render piles in. Default threshold = 3; warn-mode lets
+        # the request through, conservative-tunable reject-mode is left
+        # for a follow-up.
+        sd.render_enqueue_count += 1
+        in_flight_after = sd.render_in_flight + 1
+        backpressure_threshold = 3
+        if in_flight_after > backpressure_threshold:
+            sd.render_backpressure_warn_count += 1
+            logger.warning(
+                "render.enqueue.backpressure render_id=%s queue_depth=%d threshold=%d",
+                render_id,
+                in_flight_after,
+                backpressure_threshold,
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "render",
+                    "op": "enqueue.backpressure",
+                    "decision": "warn",
+                    "queue_depth": in_flight_after,
+                    "threshold": backpressure_threshold,
+                    "render_id": render_id,
+                    "turn_number": sd.snapshot.turn_manager.interaction,
+                    "player_id": sd.player_id,
+                },
+                component="render",
+                severity="warning",
+            )
+        # Increment the in-flight counter; ``_run_render`` decrements
+        # it in the background task's finally block.
+        sd.render_in_flight = in_flight_after
+
         # Capture the legacy out_queue only as a fallback for the
         # pre-room-context test/legacy path. When `_room` is set (the
         # production slug-connect path) the completion handler looks the
@@ -3827,6 +4009,7 @@ class WebSocketSessionHandler:
                 player_id,
                 legacy_queue,
                 dispatch_turn_id,
+                sd,
             )
         )
         # ADR-050 — record the dispatch *after* the task is created so the
@@ -3999,6 +4182,7 @@ class WebSocketSessionHandler:
         player_id: str,
         legacy_queue: asyncio.Queue[object] | None,
         dispatch_turn_id: int,
+        sd: _SessionData | None = None,
     ) -> None:
         """Background render coroutine — waits for the daemon reply, then
         enqueues an IMAGE message or logs a failure. Never raises; any
@@ -4009,7 +4193,45 @@ class WebSocketSessionHandler:
         RoomRegistry — so a reconnect mid-render still gets its image.
         ``legacy_queue`` is the pre-room-context fallback for
         constructions that haven't joined a room (used by older tests
-        and the deprecated genre/world connect path)."""
+        and the deprecated genre/world connect path).
+
+        ``sd`` is optional for backwards compatibility with legacy
+        call sites; when provided, the in-flight render counter
+        (story 45-31) is decremented in the finally block so the
+        backpressure gate sees an accurate concurrent depth."""
+        try:
+            await self._run_render_inner(
+                client,
+                params,
+                render_id,
+                room_slug,
+                player_id,
+                legacy_queue,
+                dispatch_turn_id,
+                sd,
+            )
+        finally:
+            if sd is not None:
+                # Decrement is unconditional — a render that completed,
+                # failed, or raised all release the in-flight slot.
+                sd.render_in_flight = max(0, sd.render_in_flight - 1)
+
+    async def _run_render_inner(
+        self,
+        client: DaemonClient,
+        params: dict[str, object],
+        render_id: str,
+        room_slug: str | None,
+        player_id: str,
+        legacy_queue: asyncio.Queue[object] | None,
+        dispatch_turn_id: int,
+        sd: _SessionData | None = None,
+    ) -> None:
+        """Inner body of ``_run_render`` — does the actual daemon
+        round-trip and IMAGE-frame fan-out. Split from ``_run_render``
+        so the counter decrement (story 45-31) lives in a single
+        finally block instead of being repeated at every return site.
+        """
         try:
             reply = await client.render(params)
         except DaemonUnavailableError as exc:
@@ -4336,3 +4558,12 @@ class WebSocketSessionHandler:
             },
             component="render",
         )
+        # Story 45-31: stamp the per-session diagnostic counters with
+        # the most-recent successful render so the post-session
+        # snapshot can quote the last image the player actually saw.
+        if sd is not None:
+            from datetime import UTC
+            from datetime import datetime as _dt
+
+            sd.last_successful_render_id = render_id
+            sd.last_successful_render_ts_iso = _dt.now(UTC).isoformat()

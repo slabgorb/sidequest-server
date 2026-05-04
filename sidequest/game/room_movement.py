@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.world import RoomDef
+from sidequest.magic.confrontations import find_eligible_room_autofire
+from sidequest.magic.outputs import apply_mandatory_outputs
 from sidequest.telemetry.spans.rig import (
     emit_room_entry_evaluated,
     emit_room_entry_skipped,
@@ -82,19 +84,16 @@ def process_room_entry(
     ``room.entry_evaluated`` span can distinguish ``eligible_count``
     (matched room+bond) from ``fired_count`` (matched AND off cooldown).
 
+    Story 47-6 + post-merge with 45-43: confrontations are read from
+    ``snap.magic_state.confrontations`` (canonical store after the
+    snapshot split-brain cleanup) filtered to ``register == "intimate"``
+    so world-scoped bar-DSL entries don't appear here.
+
     OTEL: every return path emits either ``room.entry_skipped`` (with
     ``reason``) or ``room.entry_evaluated`` (with ``eligible_count`` and
     ``fired_count``); per-firing ``rig.confrontation_outcome`` and
     ``rig.bond_event`` come from inside ``apply_mandatory_outputs``.
     """
-    # Resolve room_id to (chassis_id, room_local_id). Three formats accepted:
-    #   1. Chassis-prefixed: "<chassis_id>:<room_local>" — explicit form used
-    #      by tests and by callers that already know the chassis context.
-    #   2. Chassis-qualified narrator form: "<Chassis Name> — <Display>" —
-    #      what the narrator actually emits as ``location`` (em-dash with
-    #      surrounding spaces). Strip the prefix and fall through to (3).
-    #   3. Bare world-name: "Galley", "Cockpit" — short location strings.
-    #      Resolved against ``chassis.interior_rooms`` (case-insensitive).
     if ":" in room_id:
         chassis_id, room_local_id = room_id.split(":", 1)
         chassis = snap.chassis_registry.get(chassis_id)
@@ -135,11 +134,22 @@ def process_room_entry(
         )
         return
 
-    from sidequest.magic.confrontations import find_eligible_room_autofire
-    from sidequest.magic.outputs import apply_mandatory_outputs
-
+    # 45-43 (snapshot split-brain): magic_state.confrontations is the
+    # canonical store. World-scoped (bar-DSL) entries are driven by the
+    # threshold evaluator, not this room-entry path; pre-filter to
+    # chassis-coupled (``register == "intimate"``) entries.
+    if snap.magic_state is None:
+        emit_room_entry_skipped(
+            reason="no_magic_state",
+            room_id=room_id,
+            actor_id=character_id,
+        )
+        return
+    chassis_coupled = [
+        c for c in snap.magic_state.confrontations if c.register == "intimate"
+    ]
     eligible = find_eligible_room_autofire(
-        confrontations=snap.world_confrontations,
+        confrontations=chassis_coupled,
         room_local_id=room_local_id,
         bond_tier_chassis=bond.bond_tier_chassis,
     )

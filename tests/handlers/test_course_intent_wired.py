@@ -45,7 +45,9 @@ def test_parse_course_sidecar_returns_none_for_unrelated_payloads() -> None:
 
 
 def test_plot_course_sidecar_forbids_extra_fields() -> None:
-    with pytest.raises(Exception):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
         PlotCourseSidecar.model_validate(
             {"intent": "plot_course", "course_id": "x", "secret": "boom"}
         )
@@ -155,10 +157,10 @@ def test_course_span_helpers_emit_without_error() -> None:
     is sufficient to catch missing imports / arg signature drift."""
     from sidequest.orbital.course import CourseSource, PlottedCourse
     from sidequest.telemetry.spans.course import (
+        emit_course_cancel,
         emit_course_compute,
         emit_course_plot_accepted,
         emit_course_plot_rejected,
-        emit_course_cancel,
         emit_course_render_overlay,
     )
 

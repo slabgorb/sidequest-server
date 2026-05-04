@@ -1,0 +1,1687 @@
+{
+  "genre_slug": "space_opera",
+  "world_slug": "coyote_star",
+  "characters": [
+    {
+      "core": {
+        "name": "Bunjo Jones Esq",
+        "description": "A Colonial Engineer",
+        "personality": "steady",
+        "level": 1,
+        "xp": 310,
+        "inventory": {
+          "items": [
+            {
+              "id": "multitool_engineer",
+              "name": "Engineer's Multitool",
+              "description": "Magnetic ratchet, plasma cutter, diagnostic probe, and wire stripper in one handle.",
+              "category": "tool",
+              "value": 300,
+              "weight": 1.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "repair",
+                "engineering",
+                "shipboard"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "datapad",
+              "name": "Datapad",
+              "description": "Handheld terminal for comms, navigation, and looking busy.",
+              "category": "tool",
+              "value": 100,
+              "weight": 0.5,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "electronic",
+                "comms",
+                "navigation"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "flight_suit",
+              "name": "Flight Suit",
+              "description": "Insulated shipboard suit with light ballistic weave.",
+              "category": "armor",
+              "value": 200,
+              "weight": 2.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "light",
+                "shipboard",
+                "pressure-rated"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "stim_pack",
+              "name": "Stim Pack",
+              "description": "Adrenaline cocktail injector. Keeps you moving when you shouldn't be.",
+              "category": "consumable",
+              "value": 40,
+              "weight": 0.1,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "stimulant",
+                "medical",
+                "single-use"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "narrator:coreward_bourbon_(tumbler_bottle)",
+              "name": "Coreward Bourbon (tumbler-bottle)",
+              "description": "A small tumbler-bottle of Coreward bourbon from the Kestrel's galley cabinet \u2014 a private drink for the burn.",
+              "category": "consumable",
+              "value": 0,
+              "weight": 0.0,
+              "rarity": "common",
+              "narrative_weight": 0.5,
+              "tags": [],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            }
+          ],
+          "gold": 400
+        },
+        "statuses": [
+          {
+            "text": "Tipsy",
+            "severity": "Scratch",
+            "absorbed_shifts": 0,
+            "created_turn": 24,
+            "created_in_encounter": "negotiation"
+          }
+        ],
+        "edge": {
+          "current": 10,
+          "max": 10,
+          "base_max": 10,
+          "recovery_triggers": [
+            "OnResolution"
+          ],
+          "thresholds": []
+        },
+        "acquired_advancements": []
+      },
+      "backstory": "You were born on the dust. You know which streets in Vaskov Centrum wash out in the rains, which Compact foreman pays in scrip and which pays in ore, which dust storm warnings to ignore. The Reach is the only place you've ever been and you'd still rather be here than somewhere with too much sky. Compact Hand \u2014 drillers, riggers, the people who fix the harness when the methane breach happens. You know the smell of bad atmosphere and the sound a hull makes thirty seconds before it gives up. You can keep something running on parts it shouldn't be running on. That has value out here. Not money. A promise broken back where you came from, an oath you couldn't keep, a body you owe somebody for. You thought the Reach was far enough. It might be. Or it might not \u2014 you've started watching the inbound jump traffic in a way that means you haven't decided yet. When everything goes wrong, you get calm. Not brave \u2014 calm. The panic doesn't reach your hands. People who've worked with you in bad atmosphere or under fire have noticed. They mention it later, usually when they're trying to recruit you.",
+      "narrative_state": "Beginning their adventure",
+      "hooks": [
+        "Relationship: creditor",
+        "Goal: settle_a_debt",
+        "faction: auto-filled from genre pack",
+        "location: auto-filled from genre pack"
+      ],
+      "char_class": "Engineer",
+      "race": "Colonial",
+      "pronouns": "he/him",
+      "stats": {
+        "Physique": 13,
+        "Reflex": 13,
+        "Intellect": 13,
+        "Cunning": 12,
+        "Resolve": 12,
+        "Influence": 12
+      },
+      "abilities": [],
+      "known_facts": [],
+      "affinities": [],
+      "is_friendly": true,
+      "resolved_archetype": "Moana-Teru Elder Hand",
+      "archetype_provenance": {
+        "source_tier": "world",
+        "source_file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+        "merge_trail": [
+          {
+            "tier": "world",
+            "file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+            "contribution": "initial"
+          }
+        ]
+      },
+      "background": "Far Landing Raised Me",
+      "drive": "A Debt That Followed Me Through the Gate",
+      "first_name": "Bunjo",
+      "last_name": "Jones Esq",
+      "nickname": "",
+      "current_room": null
+    },
+    {
+      "core": {
+        "name": "Felix Surrone",
+        "description": "A Coreworlder Engineer",
+        "personality": "loyal",
+        "level": 1,
+        "xp": 0,
+        "inventory": {
+          "items": [
+            {
+              "id": "multitool_engineer",
+              "name": "Engineer's Multitool",
+              "description": "Magnetic ratchet, plasma cutter, diagnostic probe, and wire stripper in one handle.",
+              "category": "tool",
+              "value": 300,
+              "weight": 1.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "repair",
+                "engineering",
+                "shipboard"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "datapad",
+              "name": "Datapad",
+              "description": "Handheld terminal for comms, navigation, and looking busy.",
+              "category": "tool",
+              "value": 100,
+              "weight": 0.5,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "electronic",
+                "comms",
+                "navigation"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "flight_suit",
+              "name": "Flight Suit",
+              "description": "Insulated shipboard suit with light ballistic weave.",
+              "category": "armor",
+              "value": 200,
+              "weight": 2.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "light",
+                "shipboard",
+                "pressure-rated"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "stim_pack",
+              "name": "Stim Pack",
+              "description": "Adrenaline cocktail injector. Keeps you moving when you shouldn't be.",
+              "category": "consumable",
+              "value": 40,
+              "weight": 0.1,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "stimulant",
+                "medical",
+                "single-use"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            }
+          ],
+          "gold": 400
+        },
+        "statuses": [],
+        "edge": {
+          "current": 10,
+          "max": 10,
+          "base_max": 10,
+          "recovery_triggers": [
+            "OnResolution"
+          ],
+          "thresholds": []
+        },
+        "acquired_advancements": []
+      },
+      "backstory": "Grand Gate is just a customs ring and a checkpoint, but you remember the inspector's face when she stamped your manifest like every word on it was a lie. You came through with a duffel and a story and not enough fuel to leave again. That was a year ago. Or five. The Reach does that to time. Compact Hand \u2014 drillers, riggers, the people who fix the harness when the methane breach happens. You know the smell of bad atmosphere and the sound a hull makes thirty seconds before it gives up. You can keep something running on parts it shouldn't be running on. That has value out here. An energy reading that shouldn't have been there. A signal pattern that doesn't match any catalog. A shape against the dark that didn't move like a ship and didn't move like a rock. You filed nothing. You went back twice. You can't stop wanting to go back again. Once you're in, you're in. You don't leave people behind on a breached rig, you don't sell crewmates to customs, and that is not negotiable. It's cost you before \u2014 a job, a faction, a friend who wasn't really. You'd pay it again.",
+      "narrative_state": "Beginning their adventure",
+      "hooks": [
+        "Relationship: wanderlust",
+        "Goal: explore_the_unknown",
+        "faction: auto-filled from genre pack",
+        "location: auto-filled from genre pack"
+      ],
+      "char_class": "Engineer",
+      "race": "Coreworlder",
+      "pronouns": "he/him",
+      "stats": {
+        "Physique": 13,
+        "Reflex": 13,
+        "Intellect": 13,
+        "Cunning": 12,
+        "Resolve": 12,
+        "Influence": 12
+      },
+      "abilities": [],
+      "known_facts": [],
+      "affinities": [],
+      "is_friendly": true,
+      "resolved_archetype": "Moana-Teru Elder Hand",
+      "archetype_provenance": {
+        "source_tier": "world",
+        "source_file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+        "merge_trail": [
+          {
+            "tier": "world",
+            "file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+            "contribution": "initial"
+          }
+        ]
+      },
+      "background": "I Came Through the Gate",
+      "drive": "I Saw Something Out Past the Gas Giant",
+      "first_name": "Felix",
+      "last_name": "Surrone",
+      "nickname": "",
+      "current_room": null
+    },
+    {
+      "core": {
+        "name": "Sideslinger Jakob",
+        "description": "A Coreworlder Smuggler",
+        "personality": "steady",
+        "level": 1,
+        "xp": 0,
+        "inventory": {
+          "items": [
+            {
+              "id": "blaster_sidearm",
+              "name": "Sidearm Blaster",
+              "description": "Standard-issue energy pistol, reliable and unimpressive.",
+              "category": "weapon",
+              "value": 150,
+              "weight": 1.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "ranged",
+                "energy",
+                "one-handed",
+                "sidearm"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "vibroknife",
+              "name": "Vibroknife",
+              "description": "Oscillating blade for close work. Quiet. Personal.",
+              "category": "weapon",
+              "value": 80,
+              "weight": 0.5,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "melee",
+                "blade",
+                "one-handed",
+                "silent"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "datapad",
+              "name": "Datapad",
+              "description": "Handheld terminal for comms, navigation, and looking busy.",
+              "category": "tool",
+              "value": 100,
+              "weight": 0.5,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "electronic",
+                "comms",
+                "navigation"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "flight_suit",
+              "name": "Flight Suit",
+              "description": "Insulated shipboard suit with light ballistic weave.",
+              "category": "armor",
+              "value": 200,
+              "weight": 2.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "light",
+                "shipboard",
+                "pressure-rated"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            }
+          ],
+          "gold": 700
+        },
+        "statuses": [],
+        "edge": {
+          "current": 10,
+          "max": 10,
+          "base_max": 10,
+          "recovery_triggers": [
+            "OnResolution"
+          ],
+          "thresholds": []
+        },
+        "acquired_advancements": []
+      },
+      "backstory": "Grand Gate is just a customs ring and a checkpoint, but you remember the inspector's face when she stamped your manifest like every word on it was a lie. You came through with a duffel and a story and not enough fuel to leave again. That was a year ago. Or five. The Reach does that to time. The cargo that customs doesn't see. The dead-claim drops, the hidden compartments, the manifest that says ten crates and ships twelve. You moved things through the belt that nobody admits existed. Drift Runners look out for each other \u2014 mostly \u2014 and you learned which captains to trust by surviving the ones who weren't. An energy reading that shouldn't have been there. A signal pattern that doesn't match any catalog. A shape against the dark that didn't move like a ship and didn't move like a rock. You filed nothing. You went back twice. You can't stop wanting to go back again. When everything goes wrong, you get calm. Not brave \u2014 calm. The panic doesn't reach your hands. People who've worked with you in bad atmosphere or under fire have noticed. They mention it later, usually when they're trying to recruit you.",
+      "narrative_state": "Beginning their adventure",
+      "hooks": [
+        "Relationship: wanderlust",
+        "Goal: explore_the_unknown",
+        "faction: auto-filled from genre pack",
+        "location: auto-filled from genre pack"
+      ],
+      "char_class": "Smuggler",
+      "race": "Coreworlder",
+      "pronouns": "he/him",
+      "stats": {
+        "Physique": 13,
+        "Reflex": 13,
+        "Intellect": 13,
+        "Cunning": 12,
+        "Resolve": 12,
+        "Influence": 12
+      },
+      "abilities": [],
+      "known_facts": [],
+      "affinities": [],
+      "is_friendly": true,
+      "resolved_archetype": "Far Landing Fixer",
+      "archetype_provenance": {
+        "source_tier": "world",
+        "source_file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+        "merge_trail": [
+          {
+            "tier": "world",
+            "file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+            "contribution": "initial"
+          }
+        ]
+      },
+      "background": "I Came Through the Gate",
+      "drive": "I Saw Something Out Past the Gas Giant",
+      "first_name": "Sideslinger",
+      "last_name": "Jakob",
+      "nickname": "",
+      "current_room": null
+    },
+    {
+      "core": {
+        "name": "Calliope Sam",
+        "description": "A Coreworlder Diplomat",
+        "personality": "quick-witted",
+        "level": 1,
+        "xp": 0,
+        "inventory": {
+          "items": [
+            {
+              "id": "datapad",
+              "name": "Datapad",
+              "description": "Handheld terminal for comms, navigation, and looking busy.",
+              "category": "tool",
+              "value": 100,
+              "weight": 0.5,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "electronic",
+                "comms",
+                "navigation"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "flight_suit",
+              "name": "Flight Suit",
+              "description": "Insulated shipboard suit with light ballistic weave.",
+              "category": "armor",
+              "value": 200,
+              "weight": 2.0,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "light",
+                "shipboard",
+                "pressure-rated"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            },
+            {
+              "id": "medpatch",
+              "name": "Medpatch",
+              "description": "Adhesive trauma patch with coagulant and local anesthetic.",
+              "category": "consumable",
+              "value": 25,
+              "weight": 0.1,
+              "rarity": "common",
+              "narrative_weight": 0.3,
+              "tags": [
+                "healing",
+                "medical",
+                "single-use"
+              ],
+              "equipped": false,
+              "quantity": 1,
+              "uses_remaining": null,
+              "state": "Carried"
+            }
+          ],
+          "gold": 900
+        },
+        "statuses": [],
+        "edge": {
+          "current": 10,
+          "max": 10,
+          "base_max": 10,
+          "recovery_triggers": [
+            "OnResolution"
+          ],
+          "thresholds": []
+        },
+        "acquired_advancements": []
+      },
+      "backstory": "Grand Gate is just a customs ring and a checkpoint, but you remember the inspector's face when she stamped your manifest like every word on it was a lie. You came through with a duffel and a story and not enough fuel to leave again. That was a year ago. Or five. The Reach does that to time. Far Landing Fixer. Hub Intelligence Broker. The person every faction calls when they need something said carefully. You don't carry a side; you carry leverage. You know what Dura Mendes won't say in public and what Rangi Moana-Teru won't put in writing, and you trade those silences for the things you actually need. Not money. A promise broken back where you came from, an oath you couldn't keep, a body you owe somebody for. You thought the Reach was far enough. It might be. Or it might not \u2014 you've started watching the inbound jump traffic in a way that means you haven't decided yet. You talk fast, think faster, and people listen before they realize they've been convinced. It's not charm. It's velocity. A Vaskov inspector once let you walk because you had your story straight before he had his question straight.",
+      "narrative_state": "Beginning their adventure",
+      "hooks": [
+        "Relationship: creditor",
+        "Goal: settle_a_debt",
+        "faction: auto-filled from genre pack",
+        "location: auto-filled from genre pack"
+      ],
+      "char_class": "Diplomat",
+      "race": "Coreworlder",
+      "pronouns": "he/him",
+      "stats": {
+        "Physique": 13,
+        "Reflex": 13,
+        "Intellect": 13,
+        "Cunning": 12,
+        "Resolve": 12,
+        "Influence": 12
+      },
+      "abilities": [],
+      "known_facts": [],
+      "affinities": [],
+      "is_friendly": true,
+      "resolved_archetype": "System Drifter",
+      "archetype_provenance": {
+        "source_tier": "world",
+        "source_file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+        "merge_trail": [
+          {
+            "tier": "world",
+            "file": "space_opera/worlds/coyote_star/archetype_funnels.yaml",
+            "contribution": "initial"
+          }
+        ]
+      },
+      "background": "I Came Through the Gate",
+      "drive": "A Debt That Followed Me Through the Gate",
+      "first_name": "Calliope",
+      "last_name": "Sam",
+      "nickname": "",
+      "current_room": null
+    }
+  ],
+  "npcs": [],
+  "location": "Kestrel \u2014 Cockpit",
+  "time_of_day": "",
+  "quest_log": {},
+  "notes": [],
+  "narrative_log": [],
+  "encounter": {
+    "encounter_type": "negotiation",
+    "player_metric": {
+      "name": "leverage",
+      "current": 6,
+      "starting": 0,
+      "threshold": 10
+    },
+    "opponent_metric": {
+      "name": "leverage",
+      "current": 10,
+      "starting": 0,
+      "threshold": 10
+    },
+    "beat": 10,
+    "structured_phase": "Resolution",
+    "secondary_stats": null,
+    "actors": [
+      {
+        "name": "Felix Surrone",
+        "role": "participant",
+        "side": "player",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Bunjo Jones Esq",
+        "role": "participant",
+        "side": "player",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Sideslinger Jakob",
+        "role": "participant",
+        "side": "player",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Calliope Sam",
+        "role": "participant",
+        "side": "player",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Mendes' Post Bartender",
+        "role": "participant",
+        "side": "neutral",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Pacheco",
+        "role": "participant",
+        "side": "opponent",
+        "withdrawn": false,
+        "per_actor_state": {}
+      },
+      {
+        "name": "Reyes",
+        "role": "participant",
+        "side": "opponent",
+        "withdrawn": false,
+        "per_actor_state": {}
+      }
+    ],
+    "tags": [
+      {
+        "text": "Opening",
+        "created_by": "Bunjo Jones Esq",
+        "target": "Pacheco",
+        "leverage": 1,
+        "fleeting": true,
+        "created_turn": 12
+      },
+      {
+        "text": "Opening",
+        "created_by": "Bunjo Jones Esq",
+        "target": "Pacheco",
+        "leverage": 1,
+        "fleeting": true,
+        "created_turn": 12
+      }
+    ],
+    "outcome": "opponent_victory",
+    "resolved": true,
+    "mood_override": "tension",
+    "narrator_hints": []
+  },
+  "active_tropes": [],
+  "atmosphere": "",
+  "current_region": "far_landing",
+  "discovered_regions": [
+    "far_landing",
+    "Vaskov Centrum \u2014 East Freight Stair",
+    "Kestrel \u2014 Main Hatch",
+    "Kestrel \u2014 Cockpit",
+    "Kestrel \u2014 Galley",
+    "Mendes' Post \u2014 Outer Berth",
+    "Mendes' Post \u2014 Bar Floor"
+  ],
+  "discovered_routes": [],
+  "turn_manager": {
+    "round": 28,
+    "interaction": 28,
+    "phase": "InputCollection",
+    "player_count": 4
+  },
+  "clock_t_hours": 1.0,
+  "party_body_id": null,
+  "plotted_course": null,
+  "quest_anchors": [],
+  "last_saved_at": "2026-05-03T17:39:52.767064Z",
+  "active_stakes": "",
+  "lore_established": [],
+  "turns_since_meaningful": 0,
+  "total_beats_fired": 10,
+  "campaign_maturity": "Mid",
+  "world_history": [],
+  "npc_registry": [
+    {
+      "name": "Kestrel",
+      "role": "ally",
+      "pronouns": "she/her",
+      "appearance": "voidborn freighter chassis, voice over the panel speaker \u2014 dry-warm, knowing",
+      "last_seen_location": "Kestrel \u2014 Cockpit",
+      "last_seen_turn": 3,
+      "hp": null,
+      "max_hp": null
+    },
+    {
+      "name": "Mendes' Post Bartender",
+      "role": "neutral",
+      "pronouns": "she/her",
+      "appearance": "broad-shouldered, sleeves rolled to the elbow, an ore-tag braided into her hair, the unhurried calm of a bar-runner who's seen everyone walk in once",
+      "last_seen_location": "Mendes' Post \u2014 Bar Floor",
+      "last_seen_turn": 11,
+      "hp": null,
+      "max_hp": null
+    },
+    {
+      "name": "Pacheco",
+      "role": "disputant",
+      "pronouns": "he/him",
+      "appearance": "Free Miner in stained coveralls, face-down on his folded coat in a back booth, drunk but not stupid drunk",
+      "last_seen_location": "Mendes' Post \u2014 Bar Floor",
+      "last_seen_turn": 15,
+      "hp": null,
+      "max_hp": null
+    },
+    {
+      "name": "Reyes",
+      "role": "disputant",
+      "pronouns": "she/her",
+      "appearance": "Free Miner \u2014 not yet present in the bar, expected to arrive",
+      "last_seen_location": "Mendes' Post \u2014 Bar Floor",
+      "last_seen_turn": 15,
+      "hp": null,
+      "max_hp": null
+    },
+    {
+      "name": "Drift Runner Tail",
+      "role": "wary observer",
+      "pronouns": "they/them",
+      "appearance": "small unmarked freighter ~2/3 the Kestrel's mass, voidborn-build hull twenty-plus years old, transponder scrubbed, holding station at 2000 km",
+      "last_seen_location": "Kestrel \u2014 Cockpit",
+      "last_seen_turn": 26,
+      "hp": null,
+      "max_hp": null
+    },
+    {
+      "name": "Moana-Teru Scoop Hauler",
+      "role": "background traffic",
+      "pronouns": "she/her",
+      "appearance": "voidborn converted bulk hauler working Red Prospect's storm bands at standard scoop depth, distant on the gas-giant rim",
+      "last_seen_location": "Kestrel \u2014 Cockpit",
+      "last_seen_turn": 26,
+      "hp": null,
+      "max_hp": null
+    }
+  ],
+  "chassis_registry": {
+    "kestrel": {
+      "id": "kestrel",
+      "name": "Kestrel",
+      "class_id": "voidborn_freighter",
+      "OCEAN": {
+        "O": 0.6,
+        "C": 0.7,
+        "E": 0.4,
+        "A": 0.5,
+        "N": 0.5
+      },
+      "voice": {
+        "default_register": "dry_warm",
+        "vocal_tics": [
+          "almost-but-legally-distinct from a laugh",
+          "theatrical sigh exactly long enough to register as judgement",
+          "dry as bonemeal",
+          "drops to a discreet murmur"
+        ],
+        "silence_register": "approving_or_sulking_context_dependent",
+        "name_forms_by_bond_tier": {
+          "severed": "Pilot",
+          "hostile": "Pilot",
+          "strained": "Pilot",
+          "neutral": "Pilot",
+          "familiar": "Mr. {last_name}",
+          "trusted": "{first_name}",
+          "fused": "{nickname}"
+        }
+      },
+      "interior_rooms": [
+        "cockpit",
+        "engineering",
+        "galley",
+        "deck_three_corridor"
+      ],
+      "bond_ledger": [
+        {
+          "character_id": "player_character",
+          "bond_strength_character_to_chassis": 0.45,
+          "bond_strength_chassis_to_character": 0.45,
+          "bond_tier_character": "trusted",
+          "bond_tier_chassis": "trusted",
+          "history": []
+        }
+      ],
+      "lineage": []
+    }
+  },
+  "world_confrontations": [
+    {
+      "id": "the_standoff",
+      "label": "The Standoff",
+      "plugin_tie_ins": [
+        "item_legacy_v1"
+      ],
+      "register": null,
+      "rig_tie_ins": [],
+      "auto_fire": false,
+      "auto_fire_trigger": null,
+      "fire_conditions": null,
+      "once_per_arc": false,
+      "rounds": 3,
+      "resource_pool": {
+        "primary": "notice",
+        "secondary": "bond"
+      },
+      "description": "Frontier-classic at the chokepoint geography. Named gun in named\nhand, the door doesn't open until someone draws.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "item_history_increment",
+            "notice_increment"
+          ],
+          "optional_outputs": []
+        },
+        "pyrrhic_win": {
+          "mandatory_outputs": [
+            "item_history_increment",
+            "notice_increment",
+            "status_add_wound"
+          ],
+          "optional_outputs": []
+        },
+        "clear_loss": {
+          "mandatory_outputs": [
+            "bond_decrement",
+            "status_add_wound",
+            "hegemony_heat_increment"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "item_history_increment",
+            "bond_increment"
+          ],
+          "optional_outputs": []
+        }
+      }
+    },
+    {
+      "id": "the_salvage",
+      "label": "The Salvage",
+      "plugin_tie_ins": [
+        "item_legacy_v1",
+        "innate_v1"
+      ],
+      "register": null,
+      "rig_tie_ins": [],
+      "auto_fire": false,
+      "auto_fire_trigger": null,
+      "fire_conditions": null,
+      "once_per_arc": false,
+      "rounds": 2,
+      "resource_pool": {
+        "primary": "sanity",
+        "secondary": "bond"
+      },
+      "description": "Discovery confrontation. The thing you pulled from the wreck has\nits own opinion about being pulled. May refuse, may bond, may\nwhisper at 0300.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "item_acquired",
+            "item_history_increment"
+          ],
+          "optional_outputs": []
+        },
+        "pyrrhic_win": {
+          "mandatory_outputs": [
+            "item_acquired",
+            "sanity_decrement",
+            "status_add_scratch"
+          ],
+          "optional_outputs": []
+        },
+        "clear_loss": {
+          "mandatory_outputs": [
+            "sanity_decrement",
+            "status_add_wound"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "item_acquired_with_low_bond",
+            "sanity_increment"
+          ],
+          "optional_outputs": []
+        }
+      }
+    },
+    {
+      "id": "the_bleeding_through",
+      "label": "The Bleeding-Through",
+      "plugin_tie_ins": [
+        "innate_v1"
+      ],
+      "register": null,
+      "rig_tie_ins": [],
+      "auto_fire": true,
+      "auto_fire_trigger": "sanity <= 0.40",
+      "fire_conditions": null,
+      "once_per_arc": false,
+      "rounds": 1,
+      "resource_pool": {
+        "primary": "sanity",
+        "secondary": "vitality"
+      },
+      "description": "The character cannot suppress what they're picking up. Voices\nfrom the alien-resonant artifact, the long-resident's whispers,\na name spoken in the wrong language. Mandatory once sanity falls.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "control_tier_advance",
+            "status_clear_bleeding_through"
+          ],
+          "optional_outputs": []
+        },
+        "pyrrhic_win": {
+          "mandatory_outputs": [
+            "control_tier_advance",
+            "status_add_scar",
+            "lore_revealed"
+          ],
+          "optional_outputs": []
+        },
+        "clear_loss": {
+          "mandatory_outputs": [
+            "status_add_scar",
+            "sanity_floor_lowered",
+            "lore_revealed"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "sanity_decrement",
+            "status_add_wound"
+          ],
+          "optional_outputs": []
+        }
+      }
+    },
+    {
+      "id": "the_quiet_word",
+      "label": "The Quiet Word",
+      "plugin_tie_ins": [
+        "innate_v1"
+      ],
+      "register": null,
+      "rig_tie_ins": [],
+      "auto_fire": true,
+      "auto_fire_trigger": "notice >= 0.75",
+      "fire_conditions": null,
+      "once_per_arc": false,
+      "rounds": 2,
+      "resource_pool": {
+        "primary": "notice",
+        "secondary": "hegemony_heat"
+      },
+      "description": "The Hegemony's response when notice rises. A polite agent, a\nquiet ship, an offer that looks like a job and isn't. Player-vs-\nsystem social. Can end a character's frontier life.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "notice_decrement",
+            "hegemony_heat_decrement",
+            "scar_political"
+          ],
+          "optional_outputs": []
+        },
+        "pyrrhic_win": {
+          "mandatory_outputs": [
+            "notice_decrement",
+            "hegemony_heat_increment",
+            "status_add_wound"
+          ],
+          "optional_outputs": []
+        },
+        "clear_loss": {
+          "mandatory_outputs": [
+            "character_scar_extracted",
+            "hegemony_heat_increment"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "notice_increment",
+            "status_add_wound"
+          ],
+          "optional_outputs": []
+        }
+      }
+    },
+    {
+      "id": "the_long_resident",
+      "label": "The Long Resident",
+      "plugin_tie_ins": [
+        "innate_v1",
+        "item_legacy_v1"
+      ],
+      "register": null,
+      "rig_tie_ins": [],
+      "auto_fire": false,
+      "auto_fire_trigger": null,
+      "fire_conditions": null,
+      "once_per_arc": true,
+      "rounds": 3,
+      "resource_pool": {
+        "primary": "sanity",
+        "secondary": "bond"
+      },
+      "description": "The alien species who've been here forever observes you. May\ngive you something. May take something. The encounter is rare\nand weighty; once per arc. Hybrid plugin-tie-in.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "item_acquired_alien",
+            "lore_revealed_major",
+            "control_tier_advance"
+          ],
+          "optional_outputs": []
+        },
+        "pyrrhic_win": {
+          "mandatory_outputs": [
+            "item_acquired_alien",
+            "sanity_floor_lowered",
+            "lore_revealed_major"
+          ],
+          "optional_outputs": []
+        },
+        "clear_loss": {
+          "mandatory_outputs": [
+            "sanity_floor_lowered",
+            "status_add_scar",
+            "lore_revealed"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "bond_increment_to_alien",
+            "lore_revealed"
+          ],
+          "optional_outputs": []
+        }
+      }
+    },
+    {
+      "id": "the_tea_brew",
+      "label": "The Tea Brew",
+      "plugin_tie_ins": [
+        "item_legacy_v1"
+      ],
+      "register": "intimate",
+      "rig_tie_ins": [
+        "voidborn_freighter"
+      ],
+      "auto_fire": true,
+      "auto_fire_trigger": null,
+      "fire_conditions": {
+        "interior_room_present": "galley",
+        "bond_tier_min": "familiar",
+        "cooldown_turns": 6
+      },
+      "once_per_arc": false,
+      "rounds": 1,
+      "resource_pool": {
+        "primary": "bond"
+      },
+      "description": "Site-of-life ritual. Captain offers a personal preference (incense,\nmusic, a tea variety) to the chassis. The chassis registers the\noffering. The room remembers.\n",
+      "outcomes": {
+        "clear_win": {
+          "mandatory_outputs": [
+            "bond_strength_growth_via_intimacy",
+            "chassis_lineage_intimate"
+          ],
+          "optional_outputs": []
+        },
+        "refused": {
+          "mandatory_outputs": [
+            "chassis_lineage_intimate"
+          ],
+          "optional_outputs": []
+        }
+      }
+    }
+  ],
+  "chassis_autofire_cooldowns": {},
+  "genie_wishes": [],
+  "axis_values": [],
+  "achievement_tracker": {
+    "achievements": []
+  },
+  "scenario_state": null,
+  "discovered_rooms": [],
+  "room_states": {},
+  "character_locations": {
+    "Bunjo Jones Esq": "Vaskov Centrum \u2014 East Freight Stair",
+    "Felix Surrone": "Mendes' Post \u2014 Bar Floor",
+    "Sideslinger Jakob": "Kestrel \u2014 Cockpit",
+    "Calliope Sam": "Kestrel \u2014 Cockpit"
+  },
+  "player_dead": false,
+  "resources": {},
+  "pending_resolution_signal": {
+    "encounter_type": "negotiation",
+    "outcome": "opponent_victory",
+    "final_player_metric": 6,
+    "final_opponent_metric": 10,
+    "yielded_actors": [],
+    "edge_refreshed": 0
+  },
+  "magic_state": {
+    "config": {
+      "world_slug": "coyote_star",
+      "genre_slug": "space_opera",
+      "allowed_sources": [
+        "innate",
+        "item_based"
+      ],
+      "active_plugins": [
+        "innate_v1",
+        "item_legacy_v1"
+      ],
+      "intensity": 0.25,
+      "world_knowledge": {
+        "primary": "classified",
+        "local_register": "folkloric"
+      },
+      "visibility": {
+        "primary": "feared",
+        "local_register": "dismissed"
+      },
+      "hard_limits": [
+        {
+          "id": "no_resurrection",
+          "description": "Death is permanent. No one comes back.",
+          "references_plugin": null
+        },
+        {
+          "id": "no_ftl_telepathy",
+          "description": "Psionics is bound to local space; jump distance breaks the link.",
+          "references_plugin": null
+        },
+        {
+          "id": "no_tech_replacement",
+          "description": "Magic does not replace tech; ships still need fuel and reactor mass.",
+          "references_plugin": null
+        },
+        {
+          "id": "no_mind_compulsion",
+          "description": "Influence yes; compulsion no \u2014 players keep agency.",
+          "references_plugin": null
+        },
+        {
+          "id": "psionics_never_decisive",
+          "description": "The Reach's psychic effects are uncanny, not combat-defining.\nPsionics never wins decisively against weapons \u2014 every working that\ncould end a fight cleanly produces an unintended consequence instead.\n",
+          "references_plugin": null
+        }
+      ],
+      "cost_types": [
+        "sanity",
+        "notice",
+        "vitality"
+      ],
+      "ledger_bars": [
+        {
+          "id": "sanity",
+          "scope": "character",
+          "direction": "down",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": null,
+          "threshold_higher": null,
+          "threshold_low": 0.4,
+          "threshold_lower": null,
+          "consequence_on_high_cross": null,
+          "consequence_on_low_cross": "auto-fire The Bleeding-Through confrontation",
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 1.0,
+          "promote_to_status": {
+            "text": "Bleeding through",
+            "severity": "Wound"
+          }
+        },
+        {
+          "id": "notice",
+          "scope": "character",
+          "direction": "up",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": 0.75,
+          "threshold_higher": null,
+          "threshold_low": null,
+          "threshold_lower": null,
+          "consequence_on_high_cross": "auto-fire The Quiet Word confrontation",
+          "consequence_on_low_cross": null,
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 0.0,
+          "promote_to_status": {
+            "text": "Hegemony noticed",
+            "severity": "Wound"
+          }
+        },
+        {
+          "id": "vitality",
+          "scope": "character",
+          "direction": "down",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": null,
+          "threshold_higher": null,
+          "threshold_low": 0.2,
+          "threshold_lower": null,
+          "consequence_on_high_cross": null,
+          "consequence_on_low_cross": "narrator-discretion: visible aging, hair-grey, tremor",
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 1.0,
+          "promote_to_status": {
+            "text": "Aging visibly",
+            "severity": "Wound"
+          }
+        },
+        {
+          "id": "hegemony_heat",
+          "scope": "world",
+          "direction": "up",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": 0.7,
+          "threshold_higher": null,
+          "threshold_low": null,
+          "threshold_lower": null,
+          "consequence_on_high_cross": "narrator-discretion: Hegemony attention escalates",
+          "consequence_on_low_cross": null,
+          "decay_per_session": 0.05,
+          "starts_at_chargen": 0.3,
+          "promote_to_status": null
+        }
+      ],
+      "can_build_caster": false,
+      "can_build_item_user": true,
+      "narrator_register": "The Reach doesn't perform miracles. It bleeds through. A ship's pilot taps\nthe panel that wasn't responding and it answers \u2014 once, never again. A\ngunsmith's last bullet hits a target the shooter never aimed at. Someone\nwakes at 0300 station-time knowing a name they shouldn't. The Hegemony\nclassifies this as Anomaly Class 4 and writes the witnesses' termination\norders. The frontier knows it as Coyote work, and you don't say it out loud.\n"
+    },
+    "ledger": {
+      "world|coyote_star|hegemony_heat": {
+        "spec": {
+          "id": "hegemony_heat",
+          "scope": "world",
+          "direction": "up",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": 0.7,
+          "threshold_higher": null,
+          "threshold_low": null,
+          "threshold_lower": null,
+          "consequence_on_high_cross": "narrator-discretion: Hegemony attention escalates",
+          "consequence_on_low_cross": null,
+          "decay_per_session": 0.05,
+          "starts_at_chargen": 0.3,
+          "promote_to_status": null
+        },
+        "value": 0.3
+      },
+      "character|Bunjo Jones Esq|sanity": {
+        "spec": {
+          "id": "sanity",
+          "scope": "character",
+          "direction": "down",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": null,
+          "threshold_higher": null,
+          "threshold_low": 0.4,
+          "threshold_lower": null,
+          "consequence_on_high_cross": null,
+          "consequence_on_low_cross": "auto-fire The Bleeding-Through confrontation",
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 1.0,
+          "promote_to_status": {
+            "text": "Bleeding through",
+            "severity": "Wound"
+          }
+        },
+        "value": 1.0
+      },
+      "character|Bunjo Jones Esq|notice": {
+        "spec": {
+          "id": "notice",
+          "scope": "character",
+          "direction": "up",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": 0.75,
+          "threshold_higher": null,
+          "threshold_low": null,
+          "threshold_lower": null,
+          "consequence_on_high_cross": "auto-fire The Quiet Word confrontation",
+          "consequence_on_low_cross": null,
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 0.0,
+          "promote_to_status": {
+            "text": "Hegemony noticed",
+            "severity": "Wound"
+          }
+        },
+        "value": 0.0
+      },
+      "character|Bunjo Jones Esq|vitality": {
+        "spec": {
+          "id": "vitality",
+          "scope": "character",
+          "direction": "down",
+          "range": [
+            0.0,
+            1.0
+          ],
+          "threshold_high": null,
+          "threshold_higher": null,
+          "threshold_low": 0.2,
+          "threshold_lower": null,
+          "consequence_on_high_cross": null,
+          "consequence_on_low_cross": "narrator-discretion: visible aging, hair-grey, tremor",
+          "decay_per_session": 0.0,
+          "starts_at_chargen": 1.0,
+          "promote_to_status": {
+            "text": "Aging visibly",
+            "severity": "Wound"
+          }
+        },
+        "value": 1.0
+      }
+    },
+    "working_log": [],
+    "confrontations": [
+      {
+        "id": "the_standoff",
+        "label": "The Standoff",
+        "plugin_tie_ins": [
+          "item_legacy_v1"
+        ],
+        "register": null,
+        "rig_tie_ins": [],
+        "auto_fire": false,
+        "auto_fire_trigger": null,
+        "fire_conditions": null,
+        "once_per_arc": false,
+        "rounds": 3,
+        "resource_pool": {
+          "primary": "notice",
+          "secondary": "bond"
+        },
+        "description": "Frontier-classic at the chokepoint geography. Named gun in named\nhand, the door doesn't open until someone draws.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "item_history_increment",
+              "notice_increment"
+            ],
+            "optional_outputs": []
+          },
+          "pyrrhic_win": {
+            "mandatory_outputs": [
+              "item_history_increment",
+              "notice_increment",
+              "status_add_wound"
+            ],
+            "optional_outputs": []
+          },
+          "clear_loss": {
+            "mandatory_outputs": [
+              "bond_decrement",
+              "status_add_wound",
+              "hegemony_heat_increment"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "item_history_increment",
+              "bond_increment"
+            ],
+            "optional_outputs": []
+          }
+        }
+      },
+      {
+        "id": "the_salvage",
+        "label": "The Salvage",
+        "plugin_tie_ins": [
+          "item_legacy_v1",
+          "innate_v1"
+        ],
+        "register": null,
+        "rig_tie_ins": [],
+        "auto_fire": false,
+        "auto_fire_trigger": null,
+        "fire_conditions": null,
+        "once_per_arc": false,
+        "rounds": 2,
+        "resource_pool": {
+          "primary": "sanity",
+          "secondary": "bond"
+        },
+        "description": "Discovery confrontation. The thing you pulled from the wreck has\nits own opinion about being pulled. May refuse, may bond, may\nwhisper at 0300.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "item_acquired",
+              "item_history_increment"
+            ],
+            "optional_outputs": []
+          },
+          "pyrrhic_win": {
+            "mandatory_outputs": [
+              "item_acquired",
+              "sanity_decrement",
+              "status_add_scratch"
+            ],
+            "optional_outputs": []
+          },
+          "clear_loss": {
+            "mandatory_outputs": [
+              "sanity_decrement",
+              "status_add_wound"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "item_acquired_with_low_bond",
+              "sanity_increment"
+            ],
+            "optional_outputs": []
+          }
+        }
+      },
+      {
+        "id": "the_bleeding_through",
+        "label": "The Bleeding-Through",
+        "plugin_tie_ins": [
+          "innate_v1"
+        ],
+        "register": null,
+        "rig_tie_ins": [],
+        "auto_fire": true,
+        "auto_fire_trigger": "sanity <= 0.40",
+        "fire_conditions": null,
+        "once_per_arc": false,
+        "rounds": 1,
+        "resource_pool": {
+          "primary": "sanity",
+          "secondary": "vitality"
+        },
+        "description": "The character cannot suppress what they're picking up. Voices\nfrom the alien-resonant artifact, the long-resident's whispers,\na name spoken in the wrong language. Mandatory once sanity falls.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "control_tier_advance",
+              "status_clear_bleeding_through"
+            ],
+            "optional_outputs": []
+          },
+          "pyrrhic_win": {
+            "mandatory_outputs": [
+              "control_tier_advance",
+              "status_add_scar",
+              "lore_revealed"
+            ],
+            "optional_outputs": []
+          },
+          "clear_loss": {
+            "mandatory_outputs": [
+              "status_add_scar",
+              "sanity_floor_lowered",
+              "lore_revealed"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "sanity_decrement",
+              "status_add_wound"
+            ],
+            "optional_outputs": []
+          }
+        }
+      },
+      {
+        "id": "the_quiet_word",
+        "label": "The Quiet Word",
+        "plugin_tie_ins": [
+          "innate_v1"
+        ],
+        "register": null,
+        "rig_tie_ins": [],
+        "auto_fire": true,
+        "auto_fire_trigger": "notice >= 0.75",
+        "fire_conditions": null,
+        "once_per_arc": false,
+        "rounds": 2,
+        "resource_pool": {
+          "primary": "notice",
+          "secondary": "hegemony_heat"
+        },
+        "description": "The Hegemony's response when notice rises. A polite agent, a\nquiet ship, an offer that looks like a job and isn't. Player-vs-\nsystem social. Can end a character's frontier life.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "notice_decrement",
+              "hegemony_heat_decrement",
+              "scar_political"
+            ],
+            "optional_outputs": []
+          },
+          "pyrrhic_win": {
+            "mandatory_outputs": [
+              "notice_decrement",
+              "hegemony_heat_increment",
+              "status_add_wound"
+            ],
+            "optional_outputs": []
+          },
+          "clear_loss": {
+            "mandatory_outputs": [
+              "character_scar_extracted",
+              "hegemony_heat_increment"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "notice_increment",
+              "status_add_wound"
+            ],
+            "optional_outputs": []
+          }
+        }
+      },
+      {
+        "id": "the_long_resident",
+        "label": "The Long Resident",
+        "plugin_tie_ins": [
+          "innate_v1",
+          "item_legacy_v1"
+        ],
+        "register": null,
+        "rig_tie_ins": [],
+        "auto_fire": false,
+        "auto_fire_trigger": null,
+        "fire_conditions": null,
+        "once_per_arc": true,
+        "rounds": 3,
+        "resource_pool": {
+          "primary": "sanity",
+          "secondary": "bond"
+        },
+        "description": "The alien species who've been here forever observes you. May\ngive you something. May take something. The encounter is rare\nand weighty; once per arc. Hybrid plugin-tie-in.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "item_acquired_alien",
+              "lore_revealed_major",
+              "control_tier_advance"
+            ],
+            "optional_outputs": []
+          },
+          "pyrrhic_win": {
+            "mandatory_outputs": [
+              "item_acquired_alien",
+              "sanity_floor_lowered",
+              "lore_revealed_major"
+            ],
+            "optional_outputs": []
+          },
+          "clear_loss": {
+            "mandatory_outputs": [
+              "sanity_floor_lowered",
+              "status_add_scar",
+              "lore_revealed"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "bond_increment_to_alien",
+              "lore_revealed"
+            ],
+            "optional_outputs": []
+          }
+        }
+      },
+      {
+        "id": "the_tea_brew",
+        "label": "The Tea Brew",
+        "plugin_tie_ins": [
+          "item_legacy_v1"
+        ],
+        "register": "intimate",
+        "rig_tie_ins": [
+          "voidborn_freighter"
+        ],
+        "auto_fire": true,
+        "auto_fire_trigger": null,
+        "fire_conditions": {
+          "interior_room_present": "galley",
+          "bond_tier_min": "familiar",
+          "cooldown_turns": 6
+        },
+        "once_per_arc": false,
+        "rounds": 1,
+        "resource_pool": {
+          "primary": "bond"
+        },
+        "description": "Site-of-life ritual. Captain offers a personal preference (incense,\nmusic, a tea variety) to the chassis. The chassis registers the\noffering. The room remembers.\n",
+        "outcomes": {
+          "clear_win": {
+            "mandatory_outputs": [
+              "bond_strength_growth_via_intimacy",
+              "chassis_lineage_intimate"
+            ],
+            "optional_outputs": []
+          },
+          "refused": {
+            "mandatory_outputs": [
+              "chassis_lineage_intimate"
+            ],
+            "optional_outputs": []
+          }
+        }
+      }
+    ],
+    "control_tier": {},
+    "pending_status_promotions": []
+  },
+  "pending_magic_auto_fires": [],
+  "pending_magic_confrontation_outcome": null,
+  "player_seats": {
+    "Bunjo Jones Esq": "Bunjo Jones Esq",
+    "Felix Surrone": "Felix Surrone",
+    "Sideslinger Jakob": "Sideslinger Jakob",
+    "Calliope Sam": "Calliope Sam"
+  }
+}

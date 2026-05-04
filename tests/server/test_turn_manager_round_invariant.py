@@ -123,8 +123,11 @@ async def test_round_invariant_span_fires_once_per_narration_turn(
         return_value=_narration_result(),
     )
 
-    turn_context = _build_turn_context_for_test(sd)
     for _ in range(5):
+        # Each narration turn needs a fresh TurnContext (production builds one
+        # per message); reusing a context across turns finalizes PhaseTimings
+        # after the first turn and crashes the second.
+        turn_context = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I look around.", turn_context)
 
     spans = otel_capture.get_finished_spans()
@@ -167,8 +170,9 @@ async def test_round_invariant_gap_is_zero_across_10_turns(
         return_value=_narration_result(),
     )
 
-    turn_context = _build_turn_context_for_test(sd)
     for _ in range(10):
+        # Fresh TurnContext per turn (PhaseTimings finalizes after each call).
+        turn_context = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I press onward.", turn_context)
 
         # Per-tick snapshot/SQL invariant — Felix's bug is that this drifts.
@@ -215,9 +219,8 @@ async def test_round_invariant_span_captures_synthetic_divergence(
         return_value=_narration_result(),
     )
 
-    turn_context = _build_turn_context_for_test(sd)
-
     # Run a clean turn so the narrative_log has at least one row.
+    turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "I begin.", turn_context)
 
     # Synthesize Felix's 7-round gap — roll the display counter backward.
@@ -226,6 +229,8 @@ async def test_round_invariant_span_captures_synthetic_divergence(
     # Clear the exporter so we observe ONLY the second tick's spans.
     otel_capture.clear()
 
+    # Fresh context for the second turn — PhaseTimings finalizes per turn.
+    turn_context = _build_turn_context_for_test(sd)
     await handler._execute_narration_turn(sd, "And press on.", turn_context)
 
     spans = otel_capture.get_finished_spans()

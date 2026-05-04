@@ -54,6 +54,8 @@ def _bootstrap_coyote_star_snapshot(*, location: str = "Cockpit") -> GameSnapsho
     ``location`` (default Cockpit so transitions to Galley are real)."""
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
+    from tests.integration.conftest import make_minimal_coyote_star_magic_state
+
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
@@ -67,6 +69,7 @@ def _bootstrap_coyote_star_snapshot(*, location: str = "Cockpit") -> GameSnapsho
     snap.npc_registry = []
     snap.characters = []
     snap.encounter = None
+    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     return snap
 

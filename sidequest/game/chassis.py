@@ -180,20 +180,6 @@ def apply_chassis_lineage_intimate(
 # ---------------------------------------------------------------------------
 
 
-def _project_chassis_to_npc_entry(chassis: ChassisInstance):
-    """Return an NpcRegistryEntry projection of a ChassisInstance.
-
-    Imports happen lazily to avoid a session→chassis import cycle.
-    """
-    from sidequest.game.session import NpcRegistryEntry
-
-    return NpcRegistryEntry(
-        name=chassis.name,
-        role="ship_ai",
-        pronouns="she/her",
-    )
-
-
 def rebind_chassis_bonds_to_character(
     snapshot: GameSnapshot, character_id: str
 ) -> None:
@@ -226,9 +212,11 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
       - pack.source_dir is None (in-memory pack with no on-disk YAML)
       - the world has no rigs.yaml authored
 
-    Each chassis is added to ``snapshot.chassis_registry`` keyed by its id,
-    and projected into ``snapshot.npc_registry`` so the narrator's existing
-    name-continuity machinery sees the chassis as a named entity.
+    Each chassis is added to ``snapshot.chassis_registry`` keyed by its id.
+    Wave 2A (story 45-47) removed the projection into ``npc_registry`` —
+    chassis surface in the narrator prompt via the dedicated
+    ``register_chassis_voice_section`` (chassis voice zone, separate from
+    the NPC roster).
     """
     import yaml
 
@@ -246,18 +234,31 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     raw = yaml.safe_load(rigs_path.read_text(encoding="utf-8"))
     cfg = RigsWorldConfig.model_validate(raw)
 
-    # Story 47-4: alongside chassis_registry materialization, populate the
-    # world_confrontations cache so the rig-coupled room-entry auto-fire
-    # evaluator (process_room_entry) doesn't depend on magic_init having
-    # run first. Confrontations.yaml is optional; world without one keeps
-    # snapshot.world_confrontations empty.
+    # S1 step 2 — magic_state.confrontations is the canonical home for
+    # confrontation defs. The legacy world_confrontations cache is gone;
+    # this loader writes directly into magic_state. magic_state MUST be
+    # initialized before init_chassis_registry runs (invariant established
+    # by the snapshot split-brain cleanup, 2026-05-04). The bind path in
+    # session_room is responsible for the ordering.
     confrontations_path = (
         genre_pack.source_dir / "worlds" / snapshot.world_slug / "confrontations.yaml"
     )
     if confrontations_path.exists():
+        if snapshot.magic_state is None:
+            raise RuntimeError(
+                "init_chassis_registry: magic_state must be initialized before "
+                "chassis registry when worlds/<world>/confrontations.yaml exists. "
+                "Bind-path ordering invariant — see design spec "
+                "2026-05-04-snapshot-split-brain-cleanup-design.md S1."
+            )
         from sidequest.magic.confrontations import load_confrontations
 
-        snapshot.world_confrontations = load_confrontations(confrontations_path)
+        loaded = load_confrontations(confrontations_path)
+        existing_ids = {c.id for c in snapshot.magic_state.confrontations}
+        for cdef in loaded:
+            if cdef.id not in existing_ids:
+                snapshot.magic_state.confrontations.append(cdef)
+                existing_ids.add(cdef.id)
 
     for inst_cfg in cfg.chassis_instances:
         bond_seeds = [
@@ -283,4 +284,3 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
             bond_ledger=bond_seeds,
         )
         snapshot.chassis_registry[chassis.id] = chassis
-        snapshot.npc_registry.append(_project_chassis_to_npc_entry(chassis))

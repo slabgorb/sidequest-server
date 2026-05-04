@@ -26,7 +26,8 @@ from sidequest.agents.prompt_framework.types import (
 
 if TYPE_CHECKING:
     from sidequest.game.chassis import ChassisInstance
-    from sidequest.game.session import NpcRegistryEntry, PartyPeer
+    from sidequest.game.npc_pool import NpcPoolMember
+    from sidequest.game.session import Npc, PartyPeer
 
 
 # ---------------------------------------------------------------------------
@@ -370,41 +371,60 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
     def register_npc_roster_section(
         self,
         agent_name: str,
-        npc_registry: list[NpcRegistryEntry],
+        *,
+        npc_pool: list[NpcPoolMember],
+        npcs: list[Npc],
     ) -> None:
         """Inject canonical NPC identity data into the narrator prompt.
 
-        Story 37-44: without this section the narrator cannot see the
-        registry and reinvents pronouns / role / appearance each turn
-        (playtest 3: Frandrew drifted from "she/her captain" to "he/him
-        grease monkey" across 10 turns).
+        Story 37-44 wired the original (registry-fed) projection. Wave 2A
+        (story 45-47) splits the source into two stores while preserving
+        the narrator-facing format — the gaslight discipline. The narrator
+        sees one list of "people who exist in this world"; storage shape
+        does not leak.
 
-        Empty registry produces no section (zero-byte leak). Entries are
-        rendered one-per-line with name, pronouns, role, appearance, and
-        last_seen_location so the narrator has ground truth every turn.
+        Sources:
+        - ``npc_pool`` — identity-only ``NpcPoolMember`` entries (regenerable
+          cast pool; no last-seen, no mechanical state).
+        - ``npcs`` — stateful ``Npc`` records. Identity fields plus
+          ``last_seen_location`` line when set.
 
-        Placed in the Early zone (not Valley): identity is acute data,
-        not background lore — if it drifts to Valley the narrator attends
-        to it less over long sessions, which is the exact drift we saw.
+        Placed in the Early zone (not Valley): identity is acute data, not
+        background lore — if it drifts to Valley the narrator attends to it
+        less over long sessions, which is the exact drift the original
+        Story 37-44 fix was for.
         """
-        if not npc_registry:
+        if not npc_pool and not npcs:
             return
 
         lines = ["## KNOWN NPCS — Canonical Identity (do not contradict)"]
-        for entry in npc_registry:
-            parts: list[str] = [entry.name]
+
+        for member in npc_pool:
+            parts: list[str] = [member.name]
             tags: list[str] = []
-            if entry.pronouns:
-                tags.append(entry.pronouns)
-            if entry.role:
-                tags.append(entry.role)
+            if member.pronouns:
+                tags.append(member.pronouns)
+            if member.role:
+                tags.append(member.role)
             if tags:
                 parts.append(f"({', '.join(tags)})")
-            if entry.appearance:
-                parts.append(f"— {entry.appearance}")
-            if entry.last_seen_location:
-                parts.append(f"[last seen: {entry.last_seen_location}]")
+            if member.appearance:
+                parts.append(f"— {member.appearance}")
             lines.append("- " + " ".join(parts))
+
+        for npc in npcs:
+            parts = [npc.core.name]
+            tags = []
+            if npc.pronouns:
+                tags.append(npc.pronouns)
+            if tags:
+                parts.append(f"({', '.join(tags)})")
+            if npc.appearance:
+                parts.append(f"— {npc.appearance}")
+            if npc.last_seen_location:
+                parts.append(f"[last seen: {npc.last_seen_location}]")
+            lines.append("- " + " ".join(parts))
+
         lines.append(
             "Use these exact pronouns and roles. Physical identity is "
             "canonical; only emotional perception is POV."

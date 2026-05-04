@@ -22,6 +22,7 @@ from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_ed
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import LoreStore
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.resolution_signal import ResolutionSignal
 from sidequest.game.resource_pool import (
     NotVoluntary,
@@ -44,8 +45,16 @@ from sidequest.orbital.course import PlottedCourse
 # ---------------------------------------------------------------------------
 
 
-class EncounterTag(BaseModel):
-    """NPC encounter tag within a narrative entry (story F3)."""
+class NpcEncounterLogTag(BaseModel):
+    """NPC encounter tag within a narrative entry (story F3).
+
+    Renamed from ``EncounterTag`` (S4 of the snapshot split-brain cleanup,
+    2026-05-04) to disambiguate from
+    :class:`sidequest.game.encounter_tag.EncounterTag`, which is a
+    different model (scene-momentum tag with leverage/target/fleeting per
+    ADR-078). The old name remains as an alias in
+    :mod:`sidequest.game.__init__` for one release window.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -79,7 +88,7 @@ class NarrativeEntry(BaseModel):
     author: str
     content: str = ""
     tags: list[str] = Field(default_factory=list)
-    encounter_tags: list[EncounterTag] = Field(default_factory=list)
+    encounter_tags: list[NpcEncounterLogTag] = Field(default_factory=list)
     speaker: str | None = None
     entry_type: str | None = None
 
@@ -120,6 +129,21 @@ class Npc(BaseModel):
     # Orthogonal to ``location`` (which is general-world); ``current_room``
     # is meaningful only when the NPC is aboard a chassis.
     current_room: str | None = None
+    # Wave 2A (story 45-47): pool/state split fields.
+    # ``pool_origin`` records the ``NpcPoolMember.name`` this NPC was
+    # promoted from, or ``None`` for narrator-invented NPCs. The Sebastien
+    # lie-detector signal: per-session counts of ``None`` measure how often
+    # the narrator invents off-pool.
+    pool_origin: str | None = None
+    # ``last_seen_location`` is the location string from the most recent
+    # narration that mentioned this NPC. Distinct from ``location`` (current
+    # scene location, set when actively framed) and ``current_room`` (chassis
+    # interior position). Used by the narrator prompt's NPC roster section
+    # for continuity hints.
+    last_seen_location: str | None = None
+    # Interaction turn of the most recent narration mention. ``0`` means
+    # "never mentioned in this session" (turn counter starts at 1).
+    last_seen_turn: int = 0
     pronouns: str | None = None
     appearance: str | None = None
     age: str | None = None
@@ -291,7 +315,12 @@ class WorldStatePatch(BaseModel):
 class TropeState(BaseModel):
     """Active trope state (minimal, for JSON round-tripping).
 
-    P2-deferred full port.
+    Story 45-27 adds ``fire_cooldown_until`` and ``last_fired_turn``
+    for the cooldown predicate. Cooldown is observed globally
+    (`max(t.fire_cooldown_until for t in active_tropes) > now_turn`),
+    so per-trope storage is sufficient and round-trips through
+    save/reload without a sidecar dict. ``extra="ignore"`` keeps old
+    saves loadable when the new fields are absent.
     """
 
     model_config = {"extra": "ignore"}
@@ -300,6 +329,8 @@ class TropeState(BaseModel):
     status: str = "dormant"
     progress: float = 0.0
     beats_fired: int = 0
+    fire_cooldown_until: int | None = None
+    last_fired_turn: int | None = None
 
 
 class GenieWish(BaseModel):
@@ -501,23 +532,28 @@ class GameSnapshot(BaseModel):
     world_history: list[HistoryChapter] = Field(default_factory=list)
 
     # NPC registry (P1-required: narrator uses for name consistency)
+    # DEPRECATED — Wave 2A (story 45-47) replaces this with ``npc_pool``
+    # (identity) + ``Npc.last_seen_*`` (state). Removed in Task 7 of the
+    # Wave 2A plan once all readers are repointed.
     npc_registry: list[NpcRegistryEntry] = Field(default_factory=list)
+
+    # NPC pool — identity-only members the narrator can cite as
+    # "people who exist in this world" (Wave 2A, story 45-47). Replaces
+    # the legacy ``npc_registry`` as the cast-pool channel. Pool members
+    # are promoted to ``Npc`` (in ``self.npcs``) when they engage
+    # mechanically; the pool member remains, shadowed by the ``Npc``
+    # lookup at narration_apply time.
+    npc_pool: list[NpcPoolMember] = Field(default_factory=list)
 
     # Chassis registry (rig MVP slice — fresh-session only). Materialized from
     # `worlds/<world>/rigs.yaml` at connect time. Each entry is also projected
     # into `npc_registry` so narrator name-continuity sees the chassis.
     chassis_registry: dict[str, ChassisInstance] = Field(default_factory=dict)
 
-    # World confrontations (Story 47-4): loaded from
-    # `worlds/<world>/confrontations.yaml` alongside chassis_registry so the
-    # rig-coupled room-entry auto-fire evaluator has a snapshot-local source
-    # of truth without depending on `magic_state` being initialized first.
-    # Bar-DSL confrontations also live on `magic_state.confrontations`; the
-    # two collections are independently populated and the rig path reads
-    # from this one. Type kept loose (``list``) here to avoid a circular
-    # import — populated with `ConfrontationDefinition` instances by
-    # `init_chassis_registry`.
-    world_confrontations: list = Field(default_factory=list)
+    # (S1, 2026-05-04) world_confrontations REMOVED. The duplicate field has
+    # been collapsed into magic_state.confrontations. Saves that carried the
+    # legacy field are migrated on load by
+    # ``sidequest.game.migrations.migrate_legacy_snapshot._migrate_s1_world_confrontations``.
 
     # Story 47-4: per-(chassis_id, confrontation_id) last-fired turn for the
     # rig-coupled cooldown gate (`fire_conditions.cooldown_turns`). Stored on
@@ -590,8 +626,15 @@ class GameSnapshot(BaseModel):
     # becomes one outbound ``CONFRONTATION`` or ``CONFRONTATION_OUTCOME``
     # WebSocket frame. Both fields are reset to defaults after the
     # handler dispatches.
-    pending_magic_auto_fires: list[dict] = Field(default_factory=list)
-    pending_magic_confrontation_outcome: dict | None = None
+    # S5 — Transient outbound dispatch queues. ``exclude=True`` keeps them
+    # out of ``model_dump_json``, so a save mid-handler cannot persist a
+    # partial queue. They re-initialize empty on load — correct because
+    # auto-fires and outcomes are derivable from snapshot state on the
+    # next narration turn (``apply_magic_working`` /
+    # ``_resolve_magic_confrontation_if_applicable`` recompute from
+    # ``magic_state``, not from the queue).
+    pending_magic_auto_fires: list[dict] = Field(default_factory=list, exclude=True)
+    pending_magic_confrontation_outcome: dict | None = Field(default=None, exclude=True)
 
     # Multiplayer per-player chargen binding (playtest 2026-04-25). Maps
     # ``player_id`` → ``character.core.name`` so a slug-resume can route

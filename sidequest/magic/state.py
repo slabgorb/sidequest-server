@@ -116,7 +116,15 @@ class MagicState(BaseModel):
     # at outcome resolution; storing it here keeps ``apply_mandatory_outputs``
     # observable in MagicState dumps without coupling it to a specific
     # snapshot character lookup.
-    pending_status_promotions: list[dict[str, str]] = Field(default_factory=list)
+    # S5 — Transient promotion queue. Drained by
+    # ``narration_apply._drain_pending_status_promotions`` within the same
+    # apply pass that ``magic.outputs._queue_status_promotion`` populates
+    # it. ``exclude=True`` keeps it out of ``MagicState.model_dump`` so a
+    # save mid-handler cannot persist a partial queue. Re-initializes
+    # empty on load.
+    pending_status_promotions: list[dict[str, str]] = Field(
+        default_factory=list, exclude=True
+    )
 
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:

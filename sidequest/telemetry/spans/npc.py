@@ -64,6 +64,26 @@ SPAN_ROUTES[SPAN_NPC_REINVENTED] = SpanRoute(
     },
 )
 
+# Wave 2A (story 45-47): every narrator-cite of an NPC name fires this span.
+# ``match_strategy`` is the lie-detector dial: ``npcs_hit`` means the cited
+# name had an active stateful Npc; ``pool_hit`` means the cite matched a
+# known pool member; ``invented`` means the narrator made up a name not in
+# either store. Per-session counts of ``invented`` tell the GM panel when
+# the pool wasn't deep enough or wasn't seeded for the scene.
+SPAN_NPC_REFERENCED = "npc.referenced"
+SPAN_ROUTES[SPAN_NPC_REFERENCED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "referenced",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "match_strategy": (span.attributes or {}).get("match_strategy", ""),
+        "pool_origin": (span.attributes or {}).get("pool_origin", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 # Story 45-21: combat-stats write into npc_registry entry.
 # Fired when an encounter handshake (or other combat-stats emit) publishes
 # HP/max_hp into a registry entry so HP-check subsystems can see real data
@@ -106,6 +126,44 @@ def npc_auto_registered_span(
         **attrs,
     }
     with Span.open(SPAN_NPC_AUTO_REGISTERED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_referenced_span(
+    *,
+    npc_name: str,
+    match_strategy: str,
+    pool_origin: str | None,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Wave 2A (story 45-47): emitted on every narrator-cite of an NPC name.
+
+    ``match_strategy`` is the lie-detector dial — ``npcs_hit`` means the
+    name resolved to an active stateful ``Npc``; ``pool_hit`` means it
+    matched a known ``NpcPoolMember``; ``invented`` means the narrator
+    made up a name not in either store. Per-session counts of
+    ``invented`` tell the GM panel when the pool wasn't seeded for the
+    scene.
+
+    ``pool_origin`` is the ``NpcPoolMember.name`` the resulting/existing
+    ``Npc`` was promoted from, or ``None`` for narrator-invented or
+    legacy-without-provenance NPCs.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "match_strategy": match_strategy,
+        "pool_origin": pool_origin if pool_origin is not None else "",
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_REFERENCED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
         yield span
 
 

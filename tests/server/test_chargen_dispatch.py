@@ -354,19 +354,66 @@ class TestSliceBOpeningHook:
 
     def test_caverns_connect_resolves_opening_hook(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
-            # caverns_and_claudes ships openings only at the world tier
-            # (grimvault/horden/mawdeep), not at the genre tier. Connect
-            # to a real caverns world so the world-tier list is reached.
-            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
-            sd = handler._session_data  # type: ignore[attr-defined]
-            assert sd.opening_seed is not None, (
-                "opening_seed should be populated after connect for a world that declares openings"
+            # Canned-openings flow (spec: 2026-05-01-canned-openings-design.md)
+            # resolves the opening directive at chargen-completion, not at
+            # connect. Capture sd state inside
+            # ``_populate_opening_directive_on_chargen_complete`` so we can
+            # assert the directive shape at the moment it lands — by the
+            # end of the chargen-confirmation dispatch it has been consumed
+            # by ``_run_opening_turn_narration`` and cleared.
+            import sidequest.server.websocket_session_handler as _wsh
+
+            captured: dict[str, str | None] = {}
+            original_populate = _wsh._populate_opening_directive_on_chargen_complete
+
+            def _capturing_populate(*, session_data, **kw):
+                result = original_populate(session_data=session_data, **kw)
+                if "directive" not in captured and session_data.opening_directive:
+                    captured["seed"] = session_data.opening_seed
+                    captured["directive"] = session_data.opening_directive
+                return result
+
+            _wsh._populate_opening_directive_on_chargen_complete = _capturing_populate
+            try:
+                # caverns_and_claudes ships openings only at the world tier
+                # (grimvault/horden/mawdeep), not at the genre tier. Connect
+                # to a real caverns world so the world-tier list is reached.
+                await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+                sd = handler._session_data  # type: ignore[attr-defined]
+                # Walk chargen to confirmation — that dispatch is what
+                # populates the opening directive.
+                builder = sd.builder
+                assert builder is not None
+                while not builder.is_confirmation():
+                    scene = builder.current_scene()
+                    if scene.choices:
+                        payload = CharacterCreationPayload(phase="scene", choice="1")
+                    elif scene.allows_freeform:
+                        payload = CharacterCreationPayload(phase="scene", choice="Tester")
+                    else:
+                        payload = CharacterCreationPayload(phase="continue")
+                    await handler.handle_message(
+                        CharacterCreationMessage(payload=payload, player_id="pid")
+                    )
+                await handler.handle_message(
+                    CharacterCreationMessage(
+                        payload=CharacterCreationPayload(phase="confirmation"),
+                        player_id="pid",
+                    )
+                )
+            finally:
+                _wsh._populate_opening_directive_on_chargen_complete = original_populate
+
+            assert captured.get("seed") is not None, (
+                "opening_seed should be populated during chargen-completion "
+                "for a world that declares openings"
             )
-            assert sd.opening_directive is not None, (
+            directive = captured.get("directive")
+            assert directive is not None, (
                 "opening_directive should be populated alongside the seed"
             )
-            assert sd.opening_directive.startswith("=== OPENING SCENARIO ===")
-            assert sd.opening_directive.endswith("=== END OPENING ===")
+            assert directive.startswith("=== OPENING SCENARIO ===")
+            assert directive.endswith("=== END OPENING ===")
 
         run(body())
 
@@ -382,7 +429,10 @@ class TestSliceBOpeningHook:
         def _no_openings(*_args, **_kwargs):
             return None
 
-        monkeypatch.setattr("sidequest.server.session_handler.resolve_opening", _no_openings)
+        monkeypatch.setattr(
+            "sidequest.server.websocket_session_handler._resolve_opening_post_chargen",
+            _no_openings,
+        )
 
         async def body() -> None:
             await _connect(handler)

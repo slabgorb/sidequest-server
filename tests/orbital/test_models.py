@@ -232,6 +232,7 @@ def test_all_known_annotation_kinds_load():
         "anomaly_marker",
         "lagrange_point",
         "flight_corridor",
+        "callout_label",
     }
     assert expected == KNOWN_ANNOTATION_KINDS, (
         "KNOWN_ANNOTATION_KINDS drifted from this test's expectation. "

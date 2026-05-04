@@ -265,12 +265,27 @@ class TestOpeningTurnFrames:
         """
 
         async def body() -> None:
-            await _connect(handler)
-            sd = handler._session_data  # type: ignore[attr-defined]
-            sd.opening_seed = None
-            sd.opening_directive = None
+            # Canned-openings flow resolves the opening at chargen-completion
+            # (not at connect). Suppress the populate hook so we can
+            # simulate "no opening hook" through the full chargen walk.
+            import sidequest.server.websocket_session_handler as _wsh
 
-            out = await _walk_and_confirm(handler)
+            original_populate = _wsh._populate_opening_directive_on_chargen_complete
+
+            def _no_populate(**_kwargs):
+                return None
+
+            try:
+                _wsh._populate_opening_directive_on_chargen_complete = _no_populate
+                await _connect(handler)
+                sd = handler._session_data  # type: ignore[attr-defined]
+                sd.opening_seed = None
+                sd.opening_directive = None
+
+                out = await _walk_and_confirm(handler)
+            finally:
+                _wsh._populate_opening_directive_on_chargen_complete = original_populate
+
             narrations = [m for m in out if isinstance(m, NarrationMessage)]
             # Without a seed, only the narrator's response narration fires.
             assert len(narrations) == 1
@@ -293,14 +308,36 @@ class TestOpeningDirectiveInjection:
         so inspecting ``call_args`` reveals the prompt that was built."""
 
         async def body() -> None:
-            await _connect(handler)
-            sd = handler._session_data  # type: ignore[attr-defined]
-            # Sanity: opening hook was resolved at connect.
-            assert sd.opening_seed is not None
-            assert sd.opening_directive is not None
-            captured_directive = sd.opening_directive
+            # Canned-openings flow: opening directive populates at
+            # chargen-completion (in _populate_opening_directive_on_chargen_complete),
+            # then is consumed and cleared by _run_opening_turn_narration in
+            # the same chargen-confirmation dispatch. Capture the directive
+            # the moment it's populated so we can assert its content lands
+            # in the rendered prompt below.
+            import sidequest.server.websocket_session_handler as _wsh
 
-            await _walk_and_confirm(handler)
+            captured: dict[str, str | None] = {}
+            original_populate = _wsh._populate_opening_directive_on_chargen_complete
+
+            def _capturing_populate(*, session_data, **kw):
+                result = original_populate(session_data=session_data, **kw)
+                if "directive" not in captured and session_data.opening_directive:
+                    captured["seed"] = session_data.opening_seed
+                    captured["directive"] = session_data.opening_directive
+                return result
+
+            _wsh._populate_opening_directive_on_chargen_complete = _capturing_populate
+            try:
+                await _connect(handler)
+                await _walk_and_confirm(handler)
+            finally:
+                _wsh._populate_opening_directive_on_chargen_complete = original_populate
+
+            captured_directive = captured.get("directive")
+            assert captured_directive is not None, (
+                "opening directive was never populated during chargen-completion; "
+                "canned-openings flow did not fire"
+            )
 
             # Orchestrator invoked send_with_session at least once for the
             # opening turn. The second positional argument is the rendered
@@ -323,13 +360,32 @@ class TestOpeningDirectiveInjection:
         self, handler: WebSocketSessionHandler
     ) -> None:
         async def body() -> None:
-            await _connect(handler)
-            sd = handler._session_data  # type: ignore[attr-defined]
-            assert sd.opening_seed is not None
-            assert sd.opening_directive is not None
+            # Canned-openings flow: seed/directive populate at chargen-
+            # completion and are consumed inside the same dispatch. Capture
+            # the populate event so we can assert "they were populated then
+            # cleared" rather than "populated at connect, cleared after walk".
+            import sidequest.server.websocket_session_handler as _wsh
 
-            await _walk_and_confirm(handler)
+            populated: dict[str, bool] = {"value": False}
+            original_populate = _wsh._populate_opening_directive_on_chargen_complete
 
+            def _watching_populate(*, session_data, **kw):
+                result = original_populate(session_data=session_data, **kw)
+                if session_data.opening_directive is not None:
+                    populated["value"] = True
+                return result
+
+            _wsh._populate_opening_directive_on_chargen_complete = _watching_populate
+            try:
+                await _connect(handler)
+                sd = handler._session_data  # type: ignore[attr-defined]
+                await _walk_and_confirm(handler)
+            finally:
+                _wsh._populate_opening_directive_on_chargen_complete = original_populate
+
+            assert populated["value"], (
+                "opening_directive was never populated during chargen-completion"
+            )
             assert sd.opening_seed is None
             assert sd.opening_directive is None
 
@@ -418,12 +474,15 @@ class TestMPJoinerRaceSuppression:
             )
             sd.snapshot.characters.append(host)
             sd.snapshot.player_seats["host-id"] = "HostPC"
-            # Sanity: connect-time suppression did NOT fire (this is the
-            # race we're proving the consume-time guard catches).
-            assert sd.opening_seed is not None, (
-                "Test premise: at connect time the snapshot had no "
-                "characters, so connect-time suppression was a no-op"
-            )
+            # Note: pre-canned-openings, this point asserted that
+            # ``sd.opening_seed`` was already populated at connect-time so
+            # the test could prove the consume-time guard catches the race.
+            # Canned-openings (2026-05-01) moved opening resolution to
+            # chargen-completion, so the seed populates inside
+            # ``_walk_and_confirm`` rather than at connect. The consume-time
+            # suppression check below still proves the regression — it
+            # asserts only the narrator-response NARRATION fires (count==1),
+            # not the cold-open seed frame.
 
             out = await _walk_and_confirm(handler)
 
