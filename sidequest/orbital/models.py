@@ -186,6 +186,7 @@ KNOWN_ANNOTATION_KINDS: frozenset[str] = frozenset(
         "anomaly_marker",
         "lagrange_point",
         "flight_corridor",
+        "callout_label",
     }
 )
 """Annotation kinds the renderer knows how to draw. Per CLAUDE.md "no silent
@@ -210,6 +211,7 @@ class Annotation(BaseModel):
     body_ref: str | None = None
     bearings: list[float] | None = None
     label: str | None = None
+    tag: str | None = None  # ADR-094 — only meaningful when kind == "callout_label"
 
     @model_validator(mode="after")
     def _validate_known_kind(self) -> Annotation:
@@ -218,6 +220,24 @@ class Annotation(BaseModel):
                 f"unknown annotation kind {self.kind!r}; "
                 f"known kinds: {sorted(KNOWN_ANNOTATION_KINDS)}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_callout_label(self) -> Annotation:
+        if self.kind != "callout_label":
+            return self
+        if self.text is None or not self.text.strip():
+            raise ValueError("callout_label requires non-empty text")
+        if not self.body_ref:
+            raise ValueError("callout_label requires body_ref")
+        if self.tag is not None:
+            from sidequest.orbital.palette import CALLOUT_TAG_MAX_CHARS
+
+            if len(self.tag) > CALLOUT_TAG_MAX_CHARS:
+                raise ValueError(
+                    f"callout_label tag exceeds {CALLOUT_TAG_MAX_CHARS} chars: "
+                    f"{self.tag!r} ({len(self.tag)} chars)"
+                )
         return self
 
 
