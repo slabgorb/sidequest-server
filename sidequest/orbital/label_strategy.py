@@ -81,3 +81,24 @@ class GutterLayout:
     blocks: tuple[CalloutBlock, ...]
     inset_fallback_count: int
     cross_group_crossing_count: int
+
+
+from sidequest.orbital import palette  # noqa: E402  (kept near consumers)
+
+
+def estimate_text_width_px(text: str, register: Register) -> float:
+    """Upper-bound width estimate using calibrated palette constants.
+
+    Bias: overestimate is the safe failure direction (forces callout
+    instead of letting a tight radial overlap). Calibrated against
+    UI-rendered bbox at the register's standard font size.
+    """
+    if register == "engraved":
+        char_width = palette.LABEL_ENGRAVED_CHAR_WIDTH_PX
+    elif register == "chalk":
+        char_width = palette.LABEL_CHALK_CHAR_WIDTH_PX
+    elif register == "prose":
+        char_width = palette.LABEL_PROSE_CHAR_WIDTH_PX
+    else:
+        raise ValueError(f"unknown register: {register!r}")
+    return float(len(text)) * char_width
