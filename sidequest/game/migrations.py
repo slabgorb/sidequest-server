@@ -22,6 +22,54 @@ from typing import Any
 from sidequest.telemetry.spans import SPAN_SNAPSHOT_CANONICALIZE, Span
 
 
+def _migrate_s1_world_confrontations(out: dict[str, Any]) -> dict[str, Any] | None:
+    """S1 — merge ``world_confrontations`` into ``magic_state.confrontations``.
+
+    Dedupe by ``id``; existing ``magic_state.confrontations`` entries win
+    on collision (magic_state is the canonical home — see design spec).
+    Drops the legacy ``world_confrontations`` field after merge.
+
+    Returns a dict of OTEL attributes when migration occurred, else None.
+    """
+    if "world_confrontations" not in out:
+        return None
+
+    legacy = out.pop("world_confrontations") or []
+
+    if not legacy:
+        return {
+            "s1_world_confrontations_merged": 0,
+            "s1_world_confrontations_dropped_no_target": 0,
+        }
+
+    magic_state = out.get("magic_state")
+    if not isinstance(magic_state, dict):
+        # No magic_state to migrate INTO — drop the entries rather than
+        # synthesize a magic config. CLAUDE.md "No Silent Fallbacks": we
+        # do not invent canonical state from absent inputs.
+        return {
+            "s1_world_confrontations_merged": 0,
+            "s1_world_confrontations_dropped_no_target": len(legacy),
+        }
+
+    existing = magic_state.setdefault("confrontations", [])
+    existing_ids = {c.get("id") for c in existing if isinstance(c, dict)}
+    merged_count = 0
+    for entry in legacy:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("id") in existing_ids:
+            continue  # collision — magic_state's entry wins
+        existing.append(entry)
+        existing_ids.add(entry.get("id"))
+        merged_count += 1
+
+    return {
+        "s1_world_confrontations_merged": merged_count,
+        "s1_world_confrontations_dropped_no_target": 0,
+    }
+
+
 def migrate_legacy_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     """Rewrite a legacy snapshot dict into the canonical shape.
 
@@ -34,7 +82,10 @@ def migrate_legacy_snapshot(data: dict[str, Any]) -> dict[str, Any]:
 
     # Migration sub-functions. Each returns either None (no-op) or a dict
     # of OTEL attributes to merge into the canonicalize span.
-    # No sub-functions registered yet — this is the scaffold-only step.
+    for sub in (_migrate_s1_world_confrontations,):
+        attrs = sub(out)
+        if attrs is not None:
+            attributes.update(attrs)
 
     if attributes:
         with Span.open(SPAN_SNAPSHOT_CANONICALIZE, attributes):
