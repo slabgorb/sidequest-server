@@ -82,6 +82,7 @@ from sidequest.game.resource_pool import (
     UnknownResource,
     mint_threshold_lore,
 )
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import (
     AchievementTracker,
     AxisValue,
@@ -172,6 +173,7 @@ __all__ = [
     "Npc",
     "NpcEncounterLogTag",
     "NpcPatch",
+    "NpcPoolMember",
     "NpcRegistryEntry",
     "TropeState",
     "WorldStatePatch",
