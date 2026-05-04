@@ -176,20 +176,6 @@ def apply_chassis_lineage_intimate(
 # ---------------------------------------------------------------------------
 
 
-def _project_chassis_to_npc_entry(chassis: ChassisInstance):
-    """Return an NpcRegistryEntry projection of a ChassisInstance.
-
-    Imports happen lazily to avoid a session→chassis import cycle.
-    """
-    from sidequest.game.session import NpcRegistryEntry
-
-    return NpcRegistryEntry(
-        name=chassis.name,
-        role="ship_ai",
-        pronouns="she/her",
-    )
-
-
 def init_chassis_registry(snapshot, genre_pack) -> None:
     """Load `worlds/<world_slug>/rigs.yaml` and materialize chassis state.
 
@@ -199,9 +185,11 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
       - pack.source_dir is None (in-memory pack with no on-disk YAML)
       - the world has no rigs.yaml authored
 
-    Each chassis is added to ``snapshot.chassis_registry`` keyed by its id,
-    and projected into ``snapshot.npc_registry`` so the narrator's existing
-    name-continuity machinery sees the chassis as a named entity.
+    Each chassis is added to ``snapshot.chassis_registry`` keyed by its id.
+    Wave 2A (story 45-47) removed the projection into ``npc_registry`` —
+    chassis surface in the narrator prompt via the dedicated
+    ``register_chassis_voice_section`` (chassis voice zone, separate from
+    the NPC roster).
     """
     import yaml
 
@@ -269,4 +257,3 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
             bond_ledger=bond_seeds,
         )
         snapshot.chassis_registry[chassis.id] = chassis
-        snapshot.npc_registry.append(_project_chassis_to_npc_entry(chassis))

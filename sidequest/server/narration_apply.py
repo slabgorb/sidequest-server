@@ -26,7 +26,6 @@ from sidequest.game.session import (
     ContainerState,
     GameSnapshot,
     Npc,
-    NpcRegistryEntry,
     RoomState,
 )
 from sidequest.genre.models.pack import GenrePack
