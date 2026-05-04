@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # turn.tropes — the per-turn aggregate. THE GM panel's tempo chart.
 # ---------------------------------------------------------------------------
@@ -142,8 +141,7 @@ def test_turn_tropes_route_field_is_active_tropes() -> None:
 
     fields = route.extract(_FakeSpan())  # type: ignore[arg-type]
     assert fields.get("field") == "active_tropes", (
-        f"field={fields.get('field')!r}, expected 'active_tropes' for "
-        "panel-side filtering."
+        f"field={fields.get('field')!r}, expected 'active_tropes' for panel-side filtering."
     )
 
 

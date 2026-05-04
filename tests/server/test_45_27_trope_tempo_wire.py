@@ -106,9 +106,7 @@ class TestDispatchSeamCapBlocks:
     """
 
     @pytest.mark.asyncio
-    async def test_dispatch_seam_enforces_cap(
-        self, session_handler_factory
-    ) -> None:
+    async def test_dispatch_seam_enforces_cap(self, session_handler_factory) -> None:
         from sidequest.game.trope_tuning import MAX_SIMULTANEOUS_ACTIVE
 
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
@@ -167,9 +165,7 @@ class TestDispatchSeamCapBlocks:
         await handler._execute_narration_turn(sd, "I look around.", turn_context)
 
         cap_blocked = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "trope.cap_blocked"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.cap_blocked"
         ]
         assert cap_blocked, (
             "Dispatch seam did not emit trope.cap_blocked — Sebastien's "
@@ -197,9 +193,7 @@ class TestDispatchSeamCooldown:
     """
 
     @pytest.mark.asyncio
-    async def test_cooldown_blocks_activation_for_window(
-        self, session_handler_factory
-    ) -> None:
+    async def test_cooldown_blocks_activation_for_window(self, session_handler_factory) -> None:
         from sidequest.game.trope_tuning import FIRE_COOLDOWN_TURNS
 
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
@@ -216,9 +210,7 @@ class TestDispatchSeamCooldown:
         turn_context_1 = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I push deeper.", turn_context_1)
 
-        tide_after_1 = next(
-            t for t in sd.snapshot.active_tropes if t.id == "mutation_tide"
-        )
+        tide_after_1 = next(t for t in sd.snapshot.active_tropes if t.id == "mutation_tide")
         assert tide_after_1.status == "dormant", (
             "Cooldown failed on the same turn the beat fired; "
             f"mutation_tide.status={tide_after_1.status!r}"
@@ -231,9 +223,7 @@ class TestDispatchSeamCooldown:
             sd.orchestrator.run_narration_turn = _quiet_orchestrator()
             ctx = _build_turn_context_for_test(sd)
             await handler._execute_narration_turn(sd, "I wait.", ctx)
-            tide = next(
-                t for t in sd.snapshot.active_tropes if t.id == "mutation_tide"
-            )
+            tide = next(t for t in sd.snapshot.active_tropes if t.id == "mutation_tide")
             assert tide.status == "dormant", (
                 f"Cooldown window violated at offset={offset}; "
                 f"mutation_tide.status={tide.status!r} "
@@ -263,9 +253,7 @@ class TestDispatchSeamCooldown:
         await handler._execute_narration_turn(sd, "I wait.", ctx2)
 
         cooldown_blocked = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "trope.cooldown_blocked"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.cooldown_blocked"
         ]
         assert cooldown_blocked, (
             "trope.cooldown_blocked did not fire from the dispatch seam "
@@ -316,16 +304,13 @@ class TestBuildTurnContextPopulatesTropeFields:
                 f"pending_trope_context={ctx.pending_trope_context!r}"
             )
 
-    def test_background_field_populated_with_overflow(
-        self, session_handler_factory
-    ) -> None:
+    def test_background_field_populated_with_overflow(self, session_handler_factory) -> None:
         from sidequest.game.trope_tuning import FOREGROUND_K, MAX_SIMULTANEOUS_ACTIVE
         from sidequest.server.session_handler import _build_turn_context
 
         if MAX_SIMULTANEOUS_ACTIVE <= FOREGROUND_K:
             pytest.skip(
-                "Test requires cap > FOREGROUND_K so an overflow exists "
-                "for the Valley summary."
+                "Test requires cap > FOREGROUND_K so an overflow exists for the Valley summary."
             )
 
         sd, _ = session_handler_factory(genre="caverns_and_claudes")
@@ -345,9 +330,7 @@ class TestBuildTurnContextPopulatesTropeFields:
             f"active_trope_summary={ctx.active_trope_summary!r}"
         )
 
-    def test_both_fields_none_when_no_progressing_tropes(
-        self, session_handler_factory
-    ) -> None:
+    def test_both_fields_none_when_no_progressing_tropes(self, session_handler_factory) -> None:
         """Zero-byte-leak: the orchestrator's prompt-section registry
         skips registration when the field is None — so the Early /
         Valley sections never appear in a prompt for a world without
@@ -389,9 +372,7 @@ class TestTurnTropesAggregateSpan:
     """
 
     @pytest.mark.asyncio
-    async def test_span_fires_on_every_turn(
-        self, session_handler_factory, otel_capture
-    ) -> None:
+    async def test_span_fires_on_every_turn(self, session_handler_factory, otel_capture) -> None:
         sd, handler = session_handler_factory(genre="caverns_and_claudes")
         sd.orchestrator.run_narration_turn = _quiet_orchestrator()
 
@@ -404,9 +385,7 @@ class TestTurnTropesAggregateSpan:
             ctx = _build_turn_context_for_test(sd)
             await handler._execute_narration_turn(sd, "Continue.", ctx)
 
-        turn_tropes = [
-            s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"
-        ]
+        turn_tropes = [s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"]
         assert len(turn_tropes) == turn_count, (
             f"Expected {turn_count} turn.tropes spans (one per turn); "
             f"got {len(turn_tropes)}. The GM panel chart needs a sample "
@@ -431,9 +410,7 @@ class TestTurnTropesAggregateSpan:
         ctx = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "I wait.", ctx)
 
-        turn_tropes = [
-            s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"
-        ]
+        turn_tropes = [s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"]
         assert len(turn_tropes) == 1, (
             "Silent turn must emit exactly one turn.tropes span; got "
             f"{len(turn_tropes)}. The 'no active tropes' state is itself "
@@ -459,9 +436,7 @@ class TestTurnTropesAggregateSpan:
         ctx = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "Continue.", ctx)
 
-        turn_tropes = [
-            s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"
-        ]
+        turn_tropes = [s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"]
         assert turn_tropes, "turn.tropes span did not fire"
         attrs = dict(turn_tropes[0].attributes or {})
 
@@ -485,8 +460,7 @@ class TestTurnTropesAggregateSpan:
         assert isinstance(progression_avg, float)
         assert 0.0 <= progression_avg <= 1.0
         assert progression_avg <= progression_max, (
-            "average must be ≤ max by definition; "
-            f"avg={progression_avg}, max={progression_max}"
+            f"average must be ≤ max by definition; avg={progression_avg}, max={progression_max}"
         )
 
     @pytest.mark.asyncio
@@ -517,9 +491,7 @@ class TestTurnTropesAggregateSpan:
         ctx = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "Continue.", ctx)
 
-        turn_tropes = [
-            s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"
-        ]
+        turn_tropes = [s for s in otel_capture.get_finished_spans() if s.name == "turn.tropes"]
         assert turn_tropes, "turn.tropes span did not fire"
         attrs = dict(turn_tropes[0].attributes or {})
 
@@ -596,9 +568,7 @@ class TestTickIsCalledOncePerTurn:
         ctx = _build_turn_context_for_test(sd)
         await handler._execute_narration_turn(sd, "Continue.", ctx)
 
-        ruin = next(
-            t for t in sd.snapshot.active_tropes if t.id == "ruin_fever"
-        )
+        ruin = next(t for t in sd.snapshot.active_tropes if t.id == "ruin_fever")
         # rate_per_turn (0.0125) * PROGRESSION_RATE_MULTIPLIER, plus
         # the seed value 0.10. Computing the formula in-test rather
         # than hardcoding the result so future tuning of the multiplier

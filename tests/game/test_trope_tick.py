@@ -53,7 +53,6 @@ from sidequest.genre.models.tropes import (
 )
 from sidequest.telemetry.setup import init_tracer
 
-
 # ---------------------------------------------------------------------------
 # Helpers — fixture pack with tunable rates so these tests do not depend on
 # the caverns_and_claudes content authoring choices.
@@ -74,9 +73,7 @@ def _trope_def(
         category="tension",
         triggers=[],
         narrative_hints=[],
-        escalation=[
-            TropeEscalation(at=t, event=f"beat at {t}", stakes="") for t in thresholds
-        ],
+        escalation=[TropeEscalation(at=t, event=f"beat at {t}", stakes="") for t in thresholds],
         passive_progression=PassiveProgression(rate_per_turn=rate_per_turn),
     )
 
@@ -252,8 +249,7 @@ class TestTropeStateBookkeepingFields:
             "panel cannot anchor cooldown remaining in turns."
         )
         assert ts.last_fired_turn is None, (
-            f"Fresh TropeState should have last_fired_turn=None; got "
-            f"{ts.last_fired_turn!r}"
+            f"Fresh TropeState should have last_fired_turn=None; got {ts.last_fired_turn!r}"
         )
 
     def test_trope_state_round_trips_through_pydantic(self) -> None:
@@ -384,9 +380,7 @@ class TestTickSimultaneousActiveCap:
         # agnostic activation trigger).
         cap = MAX_SIMULTANEOUS_ACTIVE
         n = cap + 1
-        snap = _seed_snapshot(
-            [(f"t{i}", "dormant", 0.30) for i in range(n)]
-        )
+        snap = _seed_snapshot([(f"t{i}", "dormant", 0.30) for i in range(n)])
         pack = _pack_with([_trope_def(f"t{i}", rate_per_turn=0.10) for i in range(n)])
 
         tick_tropes(snap, pack, now_turn=11)
@@ -413,12 +407,8 @@ class TestTickSimultaneousActiveCap:
         from sidequest.game.trope_tuning import MAX_SIMULTANEOUS_ACTIVE
 
         cap = MAX_SIMULTANEOUS_ACTIVE
-        snap = _seed_snapshot(
-            [(f"t{i}", "dormant", 0.30) for i in range(cap + 1)]
-        )
-        pack = _pack_with(
-            [_trope_def(f"t{i}", rate_per_turn=0.10) for i in range(cap + 1)]
-        )
+        snap = _seed_snapshot([(f"t{i}", "dormant", 0.30) for i in range(cap + 1)])
+        pack = _pack_with([_trope_def(f"t{i}", rate_per_turn=0.10) for i in range(cap + 1)])
 
         otel_capture.clear()
         tick_tropes(snap, pack, now_turn=11)
@@ -436,9 +426,7 @@ class TestTickSimultaneousActiveCap:
             f"current_active_count must equal cap; "
             f"attrs.current_active_count={attrs.get('current_active_count')}"
         )
-        assert attrs.get("cap") == cap, (
-            f"cap attribute mismatch; attrs.cap={attrs.get('cap')}"
-        )
+        assert attrs.get("cap") == cap, f"cap attribute mismatch; attrs.cap={attrs.get('cap')}"
 
     def test_cap_does_not_demote_already_progressing_tropes(self) -> None:
         """If cap+1 tropes are *already* progressing on entry (loaded
@@ -452,12 +440,8 @@ class TestTickSimultaneousActiveCap:
 
         cap = MAX_SIMULTANEOUS_ACTIVE
         # cap+1 already progressing at entry.
-        snap = _seed_snapshot(
-            [(f"t{i}", "progressing", 0.20) for i in range(cap + 1)]
-        )
-        pack = _pack_with(
-            [_trope_def(f"t{i}", rate_per_turn=0.10) for i in range(cap + 1)]
-        )
+        snap = _seed_snapshot([(f"t{i}", "progressing", 0.20) for i in range(cap + 1)])
+        pack = _pack_with([_trope_def(f"t{i}", rate_per_turn=0.10) for i in range(cap + 1)])
 
         tick_tropes(snap, pack, now_turn=11)
 
@@ -591,9 +575,7 @@ class TestTickFireCooldown:
         tick_tropes(snap, pack, now_turn=12)
 
         cooldown_blocked = [
-            s
-            for s in otel_capture.get_finished_spans()
-            if s.name == "trope.cooldown_blocked"
+            s for s in otel_capture.get_finished_spans() if s.name == "trope.cooldown_blocked"
         ]
         assert cooldown_blocked, (
             "trope.cooldown_blocked span did not fire on a cooldown-"
@@ -707,12 +689,10 @@ class TestForegroundBackgroundSplit:
         foreground, background = select_foreground_tropes(snap.active_tropes)
 
         assert list(foreground) == [], (
-            f"No progressing tropes → foreground must be empty; got "
-            f"{[t.id for t in foreground]}"
+            f"No progressing tropes → foreground must be empty; got {[t.id for t in foreground]}"
         )
         assert list(background) == [], (
-            f"No progressing tropes → background must be empty; got "
-            f"{[t.id for t in background]}"
+            f"No progressing tropes → background must be empty; got {[t.id for t in background]}"
         )
 
     def test_split_handles_equal_progress_deterministically(self) -> None:
