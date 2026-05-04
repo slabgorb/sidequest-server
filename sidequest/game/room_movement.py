@@ -57,8 +57,8 @@ def process_room_entry(
     room_id: str,
     current_turn: int,
 ) -> None:
-    """Post-room-entry hook: dispatch any rig-coupled auto-fire confrontations
-    eligible at the entered room.
+    """Post-room-entry hook: dispatch any rig-coupled auto-fire
+    confrontations that match the entered room AND pass the cooldown gate.
 
     ``room_id`` accepts three forms:
 
