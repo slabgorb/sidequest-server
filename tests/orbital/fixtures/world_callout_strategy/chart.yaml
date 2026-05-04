@@ -1,0 +1,14 @@
+version: "0.1.0"
+annotations:
+  - kind: engraved_label
+    text: "OUTER WORLD"
+    curve_along: orbit_outer_world
+
+  - kind: engraved_label
+    text: "TINY BELT"
+    curve_along: body:tiny_belt
+
+  - kind: callout_label
+    text: "SPREAD ALPHA"
+    body_ref: spread_alpha
+    tag: "habitat · 3.0 AU"

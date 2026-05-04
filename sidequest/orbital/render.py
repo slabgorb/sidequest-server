@@ -38,6 +38,17 @@ import svgwrite.text
 import svgwrite.validator2
 
 from sidequest.orbital import palette
+from sidequest.orbital.label_strategy import (
+    CalloutBlock,
+    GutterLayout,
+    LabelDecision,
+    LabelStrategy,
+    Register,
+    _StrategyInput,
+    estimate_text_width_px,
+    lay_out_gutter,
+    select_label_strategies,
+)
 from sidequest.orbital.models import (
     Annotation,
     BodyDef,
@@ -46,7 +57,11 @@ from sidequest.orbital.models import (
     OrbitsConfig,
 )
 from sidequest.orbital.position import ellipse_geometry, kepler_position
-from sidequest.telemetry.spans.chart import emit_chart_render
+from sidequest.telemetry.spans.chart import (
+    emit_chart_label_distribution,
+    emit_chart_label_strategy,
+    emit_chart_render,
+)
 
 # svgwrite's built-in validators reject attributes that aren't in their
 # (somewhat outdated) allowlists. We need:
@@ -444,13 +459,19 @@ class _CurveScopeMismatch(ValueError):
     """
 
 
+def _ellipse_perimeter_px(rx: float, ry: float) -> float:
+    """Ramanujan II approximation of an ellipse perimeter (high accuracy)."""
+    h = ((rx - ry) ** 2) / ((rx + ry) ** 2) if (rx + ry) > 0 else 0.0
+    return math.pi * (rx + ry) * (1.0 + (3.0 * h) / (10.0 + math.sqrt(4.0 - 3.0 * h)))
+
+
 def _resolve_curve_along(
     value: str,
     orbits: OrbitsConfig,
     center_id: str,
     vp: _Viewport,
-) -> tuple[str, str, str]:
-    """Resolve a `curve_along` reference to (path_id, path_d, resolved_body_id).
+) -> tuple[str, str, str, float]:
+    """Resolve a `curve_along` reference to (path_id, path_d, resolved_body_id, circumference_px).
 
     Per spec §4.1:
       - `orbit_outermost` → outermost direct child's orbit ellipse
@@ -510,7 +531,8 @@ def _resolve_curve_along(
             f"A {rx} {ry} 0 0 1 {cx} {cy + ry} "
             f"A {rx} {ry} 0 0 1 {cx} {cy - ry}"
         )
-        return path_id, path_d, body_id
+        circumference = _ellipse_perimeter_px(rx, ry)
+        return path_id, path_d, body_id, circumference
 
     if value.startswith("body:"):
         body_id = value[len("body:") :]
@@ -540,7 +562,9 @@ def _resolve_curve_along(
         path_d = (
             f"M {x1} {y1} A {radius_px} {radius_px} 0 {large_arc} 1 {x2} {y2}"
         )
-        return path_id, path_d, body_id
+        # Arc length = r * θ (radians). For arc_belt the path is a single arc.
+        circumference = abs(math.radians(body.arc_extent_deg)) * radius_px
+        return path_id, path_d, body_id, circumference
 
     raise ValueError(
         f"curve_along={value!r}: unknown reference scheme; "
@@ -642,7 +666,7 @@ def _arc_belt_bodies_with_textpath_annotation(
         if annot.kind != "engraved_label" or annot.curve_along is None:
             continue
         try:
-            _, _, resolved_body_id = _resolve_curve_along(
+            _, _, resolved_body_id, _ = _resolve_curve_along(
                 annot.curve_along, orbits, center_id, vp
             )
         except (_CurveScopeMismatch, ValueError):
@@ -692,8 +716,8 @@ def render_chart(
         chart, orbits, center_id, viewport
     )
     viewport_g = svgwrite.container.Group(id="viewport")
-    engraved_layer, stats = _render_engraved_layer(
-        orbits, center_id, scope, viewport, t_hours, suppressed_label_ids
+    engraved_layer, stats, gutter, decisions = _render_engraved_layer(
+        orbits, chart, center_id, scope, viewport, t_hours, suppressed_label_ids
     )
     viewport_g.add(engraved_layer)
     viewport_g.add(_render_flavor_layer(chart, orbits, center_id, viewport, t_hours))
@@ -712,6 +736,28 @@ def render_chart(
         body_count_moons_rendered=stats.body_count_moons_rendered,
         label_collision_tier_max=stats.label_collision_tier_max,
     )
+    # ADR-094 distribution span.
+    counts = {
+        "textpath": sum(1 for d in decisions if d.strategy == LabelStrategy.TEXTPATH),
+        "radial": sum(1 for d in decisions if d.strategy == LabelStrategy.RADIAL),
+        "callout": sum(1 for d in decisions if d.strategy == LabelStrategy.CALLOUT),
+    }
+    bodies_unlabeled = sum(
+        1
+        for b in orbits.bodies.values()
+        if (b.label is None or not b.label.strip()) and b.show_at_system_scope
+    )
+    # AC-O2 sum invariant: textpath + radial + callout + unlabeled == total.
+    # `total` counts every visible-at-scope body, not just labeled ones.
+    emit_chart_label_distribution(
+        bodies_total=len(decisions) + bodies_unlabeled,
+        bodies_textpath=counts["textpath"],
+        bodies_radial=counts["radial"],
+        bodies_callout=counts["callout"],
+        bodies_unlabeled=bodies_unlabeled,
+        gutter_inset_fallbacks=gutter.inset_fallback_count,
+        cross_group_crossings=gutter.cross_group_crossing_count,
+    )
     return output
 
 
@@ -725,6 +771,35 @@ class _Viewport:
     size_px: int
     half: int
     au_to_px: float
+
+    # ADR-094 callout gutter zone — chart-area bbox is the inscribed square
+    # bounded by ±max_au * au_to_px (the orbit envelope), which sits inside
+    # the SVG canvas (svg_min_x / svg_max_x at -half / +half). Gutter blocks
+    # live between chart edge and svg edge.
+    @property
+    def chart_min_x(self) -> float:
+        # Chart area inset by GUTTER_WIDTH + INNER_MARGIN on each side.
+        return -self.half + palette.GUTTER_WIDTH_PX + palette.GUTTER_INNER_MARGIN_PX
+
+    @property
+    def chart_max_x(self) -> float:
+        return self.half - palette.GUTTER_WIDTH_PX - palette.GUTTER_INNER_MARGIN_PX
+
+    @property
+    def chart_top_y(self) -> float:
+        return -self.half + palette.GUTTER_INNER_MARGIN_PX
+
+    @property
+    def chart_bottom_y(self) -> float:
+        return self.half - palette.GUTTER_INNER_MARGIN_PX
+
+    @property
+    def svg_min_x(self) -> float:
+        return -self.half
+
+    @property
+    def svg_max_x(self) -> float:
+        return self.half
 
 
 def _resolve_scope_center(orbits: OrbitsConfig, scope: Scope) -> str:
@@ -906,6 +981,28 @@ def _assign_collision_tiers(
     return max_tier
 
 
+def _arc_to_neighbor_for_placement(
+    p: _BodyPlacement, peers: list[_BodyPlacement]
+) -> float:
+    """Smallest arc length (px) at p's body radius to a peer's bearing.
+
+    Used by ADR-094 strategy selection to know whether a radial label fits
+    without crossing into a peer's space at the same radial distance.
+    """
+    body_radial = math.hypot(p.body_x, p.body_y)
+    best_arc = float("inf")
+    for other in peers:
+        if other.body_id == p.body_id:
+            continue
+        delta_deg = _angular_distance(p.bearing_deg, other.bearing_deg)
+        if delta_deg <= 0:
+            continue
+        arc_px = 2 * math.pi * body_radial * (delta_deg / 360.0)
+        if arc_px < best_arc:
+            best_arc = arc_px
+    return best_arc if best_arc != float("inf") else 1e9
+
+
 def _resolve_anchor(
     p: _BodyPlacement,
     *,
@@ -925,6 +1022,274 @@ def _resolve_anchor(
     p.anchor_x = target_radial * math.cos(bearing_rad)
     p.anchor_y = -target_radial * math.sin(bearing_rad)
     p.text_anchor = _text_anchor_for_bearing(p.bearing_deg)
+
+
+# ---------------------------------------------------------------------------
+# ADR-094 strategy dispatch — SVG handlers (textpath / radial / callout)
+# ---------------------------------------------------------------------------
+
+
+def _emit_textpath_label(
+    d: LabelDecision, viewport: _Viewport
+) -> svgwrite.base.BaseElement:
+    """Emit a textPath label per ADR-094 textpath strategy.
+
+    Mirrors `_engraved_label_textpath`'s register-driven styling but
+    consumes a `LabelDecision` (so the strategy dispatch can call it
+    without re-resolving the path).
+    """
+    assert d.textpath_path_id is not None
+    decorated = f"— {d.text} —"
+    register = d.register
+    if register == "prose":
+        font_family = palette.LABEL_PROSE_FONT
+        font_size: int = palette.LABEL_PROSE_FONT_SIZE
+        font_style: str | None = "italic"
+        font_weight: int | None = None
+        opacity: float | None = palette.LABEL_PROSE_OPACITY
+        letter_spacing: int | None = None
+    elif register == "chalk":
+        font_family = palette.LABEL_CHALK_FONT
+        font_size = 11
+        font_style = None
+        font_weight = palette.LABEL_CHALK_WEIGHT
+        opacity = palette.ORBIT_OPACITY_CHALK
+        letter_spacing = palette.LABEL_CHALK_LETTER_SPACING
+    else:
+        font_family = palette.LABEL_ENGRAVED_FONT
+        font_size = 12
+        font_style = "italic"
+        font_weight = palette.LABEL_ENGRAVED_WEIGHT
+        opacity = None
+        letter_spacing = palette.LABEL_ENGRAVED_LETTER_SPACING
+
+    elem = svgwrite.text.Text(
+        "",
+        fill=palette.BRASS,
+        font_family=font_family,
+        font_size=font_size,
+        text_anchor="middle",
+    )
+    elem["stroke"] = palette.BG
+    elem["stroke-width"] = 3
+    elem["stroke-linejoin"] = "round"
+    elem["paint-order"] = "stroke"
+    if font_style is not None:
+        elem["font-style"] = font_style
+    if font_weight is not None:
+        elem["font-weight"] = font_weight
+    if letter_spacing is not None:
+        elem["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        elem["opacity"] = opacity
+    tp = svgwrite.text.TextPath(path=f"#{d.textpath_path_id}", text=decorated)
+    tp["startOffset"] = "50%"
+    elem.add(tp)
+    return elem
+
+
+def _emit_radial_label(
+    d: LabelDecision, p: _BodyPlacement, viewport: _Viewport
+) -> svgwrite.base.BaseElement:
+    """Emit a radial-out body label at p.anchor_x/y.
+
+    Mirrors `_label_text` styling but driven by the strategy decision so
+    the dispatch loop is the single emission path.
+    """
+    register = d.register
+    if register == "prose":
+        font_family = palette.LABEL_PROSE_FONT
+        font_size: int = palette.LABEL_PROSE_FONT_SIZE
+        font_weight: int | None = None
+        font_style: str | None = "italic"
+        letter_spacing: int | None = None
+        opacity: float | None = palette.LABEL_PROSE_OPACITY
+    elif register == "chalk":
+        font_family = palette.LABEL_CHALK_FONT
+        font_size = 10
+        font_weight = palette.LABEL_CHALK_WEIGHT
+        font_style = None
+        letter_spacing = palette.LABEL_CHALK_LETTER_SPACING
+        opacity = None
+    else:
+        font_family = palette.LABEL_ENGRAVED_FONT
+        font_size = 10
+        font_weight = palette.LABEL_ENGRAVED_WEIGHT
+        font_style = None
+        letter_spacing = palette.LABEL_ENGRAVED_LETTER_SPACING
+        opacity = None
+
+    fill = p.body.label_color or palette.BRASS
+    elem = svgwrite.text.Text(
+        d.text,
+        x=[p.anchor_x],
+        y=[p.anchor_y],
+        fill=fill,
+        font_family=font_family,
+        font_size=font_size,
+        text_anchor=p.text_anchor,
+    )
+    elem["stroke"] = palette.BG
+    elem["stroke-width"] = 3
+    elem["stroke-linejoin"] = "round"
+    elem["paint-order"] = "stroke"
+    if font_weight is not None:
+        elem["font-weight"] = font_weight
+    if font_style is not None:
+        elem["font-style"] = font_style
+    if letter_spacing is not None:
+        elem["letter-spacing"] = letter_spacing
+    if opacity is not None:
+        elem["opacity"] = opacity
+    elem["class"] = "radial-label"
+    return elem
+
+
+def _emit_callout_block(
+    block: CalloutBlock, orbits: OrbitsConfig, viewport: _Viewport
+) -> svgwrite.base.BaseElement:
+    """Emit a callout block: leader line(s) + label rect/border + text lines.
+
+    Singleton: title + optional tag.
+    Grouped:   '<PARENT_LABEL> SYSTEM' title + bordered rect + per-member lines.
+    """
+    g = svgwrite.container.Group()
+    g["class"] = "callout-block"
+    if block.side == "inset":
+        g["data-inset"] = "true"
+
+    is_grouped = len(block.members) >= palette.CALLOUT_GROUP_MIN_MEMBERS
+
+    # Leader stroke color: derive from first member's register.
+    register = block.members[0].register
+    if register == "prose":
+        leader_color = palette.DIM
+    elif register == "chalk":
+        leader_color = palette.PARTY
+    else:
+        leader_color = palette.BRASS
+
+    # --- Leader line(s) ---
+    # Block edge nearest the bend.
+    if block.anchor_x < block.block_x:
+        edge_x = block.block_x
+    else:
+        edge_x = block.block_x + block.block_width_px
+    edge_y = block.block_y + block.block_height_px / 2.0
+
+    leader_origin = (block.anchor_x, block.anchor_y)
+    bend_x = edge_x
+    bend_y = leader_origin[1]
+    path_d = (
+        f"M {leader_origin[0]} {leader_origin[1]} "
+        f"L {bend_x} {bend_y} "
+        f"L {edge_x} {edge_y}"
+    )
+    leader = svgwrite.path.Path(d=path_d, fill="none", stroke=leader_color)
+    leader["stroke-width"] = palette.LEADER_STROKE_WIDTH_PX
+    leader["class"] = "callout-leader"
+    g.add(leader)
+
+    ts = palette.LEADER_TERMINATOR_SIZE_PX
+    term = svgwrite.shapes.Rect(
+        insert=(edge_x - ts / 2.0, edge_y - ts / 2.0),
+        size=(ts, ts),
+        fill=leader_color,
+    )
+    term["class"] = "callout-terminator"
+    g.add(term)
+
+    # --- Label block content ---
+    pad = palette.CALLOUT_BLOCK_PADDING_PX
+    text_x = block.block_x + pad
+
+    if is_grouped:
+        # Border rect.
+        border = svgwrite.shapes.Rect(
+            insert=(block.block_x, block.block_y),
+            size=(block.block_width_px, block.block_height_px),
+            fill="none",
+            stroke=leader_color,
+        )
+        border["stroke-width"] = palette.CALLOUT_GROUP_BORDER_PX
+        border["class"] = "callout-group-border"
+        g.add(border)
+
+        # Title: "<PARENT_LABEL> SYSTEM"
+        parent_id = block.parent_label  # parent_id stashed on block.parent_label
+        parent_body = orbits.bodies.get(parent_id) if parent_id else None
+        parent_label_text = (
+            (parent_body.label if parent_body and parent_body.label else (parent_id or ""))
+            .strip()
+            .upper()
+        )
+        title = svgwrite.text.Text(
+            f"{parent_label_text} SYSTEM",
+            x=[text_x],
+            y=[block.block_y + pad + palette.CALLOUT_GROUP_TITLE_HEIGHT_PX * 0.75],
+            fill=leader_color,
+            font_family=palette.LABEL_ENGRAVED_FONT,
+            font_size=11,
+        )
+        title["class"] = "callout-group-title"
+        g.add(title)
+
+        # One line per member.
+        line_y = block.block_y + pad + palette.CALLOUT_GROUP_TITLE_HEIGHT_PX
+        for m in block.members:
+            line_y += palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+            body = orbits.bodies.get(m.body_id)
+            distance_label = ""
+            if body and body.semi_major_au is not None:
+                if body.semi_major_au >= 0.01:
+                    distance_label = f"{body.semi_major_au:.2f} AU"
+                else:
+                    km = body.semi_major_au * 1.496e8
+                    distance_label = f"{km / 1e6:.2f}M km"
+            line_text = f"{m.text} · {distance_label}" if distance_label else m.text
+            line = svgwrite.text.Text(
+                line_text,
+                x=[text_x],
+                y=[line_y],
+                fill=leader_color,
+                font_family=palette.LABEL_ENGRAVED_FONT,
+                font_size=10,
+            )
+            line["class"] = "callout-group-member"
+            g.add(line)
+    else:
+        # Singleton: title + optional tag.
+        m = block.members[0]
+        title = svgwrite.text.Text(
+            m.text,
+            x=[text_x],
+            y=[block.block_y + pad + palette.CALLOUT_BLOCK_LINE_HEIGHT_PX * 0.75],
+            fill=leader_color,
+            font_family=palette.LABEL_ENGRAVED_FONT,
+            font_size=11,
+        )
+        title["class"] = "callout-singleton-title"
+        g.add(title)
+        if m.callout_tag:
+            tag_y = (
+                block.block_y
+                + pad
+                + palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+                + palette.CALLOUT_BLOCK_TAG_LINE_HEIGHT_PX * 0.75
+            )
+            tag = svgwrite.text.Text(
+                m.callout_tag,
+                x=[text_x],
+                y=[tag_y],
+                fill=palette.DIM,
+                font_family=palette.LABEL_PROSE_FONT,
+                font_size=palette.LABEL_PROSE_FONT_SIZE,
+            )
+            tag["font-style"] = "italic"
+            tag["class"] = "callout-singleton-tag"
+            g.add(tag)
+
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -1061,8 +1426,10 @@ def _render_moon_band(
     """Render moons of `parent_id` as a moon band at system-scope.
 
     Returns the moon-band group (or None if no visible moons / overflow
-    beyond MOON_BAND_MAX) and a list of placements for downstream label
-    de-collision.
+    beyond MOON_BAND_MAX) and a list of placements for forced-callout
+    strategy candidates (ADR-094 §9 — any moon-band child with a
+    non-empty `label:` is forced into the callout strategy because its
+    sub-pixel render position has no radial space).
     """
     moons: list[tuple[str, BodyDef]] = [
         (bid, b)
@@ -1100,7 +1467,9 @@ def _render_moon_band(
         mx = parent_x + r_px * math.cos(rad)
         my = parent_y - r_px * math.sin(rad)
         g.add(_moon_dot_glyph(body, mx, my, body_id))
-        # Track placement for label de-collision
+        # Forced-callout surfacing: any moon-band child with a non-empty
+        # `label:` becomes a candidate for the strategy pass per ADR-094 §9.
+        # Children without `label:` remain unlabeled (existing behavior).
         bearing = _bearing_from_center(mx, my)
         placements.append(
             _BodyPlacement(
@@ -1137,12 +1506,13 @@ def _accumulate_register(stats: _RenderStats, body: BodyDef, *, is_moon: bool) -
 
 def _render_engraved_layer(
     orbits: OrbitsConfig,
+    chart: ChartConfig,
     center_id: str,
     scope: Scope,
     vp: _Viewport,
     t_hours: float,
     suppressed_label_ids: set[str] | None = None,
-) -> tuple[svgwrite.container.Group, _RenderStats]:
+) -> tuple[svgwrite.container.Group, _RenderStats, GutterLayout, list[LabelDecision]]:
     g = svgwrite.container.Group(id="layer-engraved")
     stats = _RenderStats()
     center = orbits.bodies[center_id]
@@ -1268,6 +1638,9 @@ def _render_engraved_layer(
 
     # Phase 3: render direct-child orbits + glyphs (and possibly moon bands)
     moon_band_placements: list[_BodyPlacement] = []
+    # ADR-094: labeled moon-band children are forced into the callout strategy
+    # (sub-pixel render position has no radial space).
+    forced_callout_placements: list[_BodyPlacement] = []
     parents_with_visible_moons: set[str] = {
         p.body_id
         for p in placements
@@ -1348,54 +1721,169 @@ def _render_engraved_layer(
                     if moon_band is not None:
                         wrapper.add(moon_band)
                         moon_band_placements.extend(child_placements)
+                        # ADR-094 §9: surface labeled moon-band children to
+                        # the forced-callout list for the strategy pass.
+                        for cp in child_placements:
+                            if cp.body.label and cp.body.label.strip():
+                                forced_callout_placements.append(cp)
                 g.add(wrapper)
             else:
                 g.add(_body_glyph(body, x=p.body_x, y=p.body_y, body_id=p.body_id))
         _accumulate_register(stats, body, is_moon=False)
 
-    # Phase 4: collision-tier assignment (direct children + moons together)
-    all_placements = placements + arc_belt_placements + moon_band_placements
-    max_tier = _assign_collision_tiers(all_placements)
+    # Phase 4: collision-tier assignment (direct children + arc-belts only).
+    # Moon-band children are forced into callouts (ADR-094 §9), so they don't
+    # need radial-out anchor resolution.
+    radial_candidates = placements + arc_belt_placements
+    max_tier = _assign_collision_tiers(radial_candidates)
     stats.label_collision_tier_max = max_tier
 
-    # Phase 5: anchor resolution + label rendering
+    # Phase 5: anchor resolution for radial candidates.
     # Bearing-rose clearance applies only at system_root scope.
-    for p in all_placements:
+    for p in radial_candidates:
         _resolve_anchor(p, apply_rose_clearance=scope_is_root)
 
     suppressed_ids = suppressed_label_ids or set()
-    for p in all_placements:
-        body = p.body
-        if body.label is None:
-            continue
-        # §4.1: arc_belt body labels yield to chart.yaml engraved_label
-        # annotations that wrap their orbit. Skip the radial-out body
-        # label so we don't duplicate the textPath.
-        if p.body_id in suppressed_ids:
-            # Still account moon-register stats for moons (none of which
-            # are arc_belt anyway, but keep the bookkeeping symmetric).
-            if p in moon_band_placements:
-                _accumulate_register(stats, body, is_moon=True)
-            continue
-        # Moons get prose register auto-applied (override label_register only if not set).
-        if p in moon_band_placements and body.label_register is None:
-            label_body = body.model_copy(update={"label_register": "prose"})
-        else:
-            label_body = body
-        g.add(
-            _label_text(
-                label_body,
-                insert=(p.anchor_x, p.anchor_y),
-                fill=body.label_color or palette.BRASS,
-                text_anchor=p.text_anchor,
-            )
-        )
-        # Moons accounted for in stats.body_count_moons_rendered, count
-        # the prose register here for body_count_prose.
-        if p in moon_band_placements:
-            _accumulate_register(stats, body, is_moon=True)
 
-    return g, stats
+    # Account moon-band register stats — moons render as prose at system scope.
+    for p in moon_band_placements:
+        _accumulate_register(stats, p.body, is_moon=True)
+
+    # Phase 6: ADR-094 strategy dispatch.
+    # Build per-body inputs from chart annotations + placements.
+    callout_label_by_body: dict[str, Annotation] = {}
+    for annot in chart.annotations:
+        if annot.kind == "callout_label" and annot.body_ref:
+            callout_label_by_body[annot.body_ref] = annot
+
+    textpath_by_body: dict[str, tuple[str, float]] = {}
+    for annot in chart.annotations:
+        if annot.kind != "engraved_label" or annot.curve_along is None:
+            continue
+        try:
+            path_id, _path_d, resolved_body_id, circumference = _resolve_curve_along(
+                annot.curve_along, orbits, center_id, vp
+            )
+        except (_CurveScopeMismatch, ValueError):
+            continue
+        textpath_by_body[resolved_body_id] = (path_id, circumference)
+
+    strategy_inputs: list[_StrategyInput] = []
+    anchor_by_id: dict[str, tuple[float, float, float]] = {}
+    semi_major_by_id: dict[str, float] = {}
+    placement_by_body: dict[str, _BodyPlacement] = {}
+
+    def _build_input(
+        p: _BodyPlacement, *, is_moon_band_child: bool
+    ) -> _StrategyInput | None:
+        if p.body.label is None or not p.body.label.strip():
+            return None
+        # Suppression: arc_belt + textpath annotation pairs already handled
+        # via flavor layer; skip dispatch so we don't double-render.
+        if p.body_id in suppressed_ids:
+            return None
+        body = p.body
+        if is_moon_band_child and body.label_register is None:
+            register: Register = "prose"
+        else:
+            register = body.label_register or body.register
+        text = body.label.strip()
+        text_w = estimate_text_width_px(text, register)
+        cl = callout_label_by_body.get(p.body_id)
+        tp = textpath_by_body.get(p.body_id)
+        arc_to_neighbor = (
+            None if is_moon_band_child
+            else _arc_to_neighbor_for_placement(p, radial_candidates)
+        )
+        return _StrategyInput(
+            body_id=p.body_id,
+            parent_id=body.parent,
+            parent_type=(
+                orbits.bodies[body.parent].type.value if body.parent else None
+            ),
+            text=text,
+            register=register,
+            text_width_px=text_w,
+            is_moon_band_child=is_moon_band_child,
+            callout_label_annotation=cl,
+            textpath_path_id=tp[0] if tp else None,
+            path_circumference_px=tp[1] if tp else None,
+            arc_to_neighbor_px=arc_to_neighbor,
+            radial_tier=p.tier,
+            anchor_x=p.anchor_x,
+            anchor_y=p.anchor_y,
+            anchor_bearing_deg=p.bearing_deg,
+            callout_tag=cl.tag if cl else None,
+        )
+
+    for p in radial_candidates:
+        inp = _build_input(p, is_moon_band_child=False)
+        if inp is None:
+            continue
+        strategy_inputs.append(inp)
+        anchor_by_id[p.body_id] = (p.anchor_x, p.anchor_y, p.bearing_deg)
+        placement_by_body[p.body_id] = p
+        if p.body.semi_major_au is not None:
+            semi_major_by_id[p.body_id] = p.body.semi_major_au
+
+    for p in forced_callout_placements:
+        inp = _build_input(p, is_moon_band_child=True)
+        if inp is None:
+            continue
+        strategy_inputs.append(inp)
+        # Anchor for moon-band child is the moon's dot position.
+        anchor_by_id[p.body_id] = (p.body_x, p.body_y, p.bearing_deg)
+        placement_by_body[p.body_id] = p
+        if p.body.semi_major_au is not None:
+            semi_major_by_id[p.body_id] = p.body.semi_major_au
+
+    decisions = select_label_strategies(inputs=strategy_inputs)
+
+    # Per-body OTEL spans.
+    for d in decisions:
+        emit_chart_label_strategy(
+            body_id=d.body_id,
+            parent_id=d.parent_id,
+            parent_type=d.parent_type,
+            strategy_chosen=d.strategy.value,
+            selection_reason=d.reason.value,
+            tier=d.radial_tier,
+            arc_available_px=d.arc_available_px,
+            text_width_px=d.text_width_px,
+            path_circumference_px=d.path_circumference_px,
+        )
+
+    # Gutter layout for callout decisions.
+    gutter = lay_out_gutter(
+        decisions=list(decisions),
+        anchor_by_id=anchor_by_id,
+        semi_major_by_id=semi_major_by_id,
+        viewport=vp,
+    )
+
+    gutter_blocks_by_body: dict[str, CalloutBlock] = {}
+    for blk in gutter.blocks:
+        for m in blk.members:
+            gutter_blocks_by_body[m.body_id] = blk
+
+    emitted_blocks: set[int] = set()
+    for d in decisions:
+        if d.strategy == LabelStrategy.TEXTPATH:
+            g.add(_emit_textpath_label(d, vp))
+        elif d.strategy == LabelStrategy.RADIAL:
+            p = placement_by_body[d.body_id]
+            g.add(_emit_radial_label(d, p, vp))
+        elif d.strategy == LabelStrategy.CALLOUT:
+            block = gutter_blocks_by_body.get(d.body_id)
+            if block is None:
+                continue
+            block_key = id(block)
+            if block_key in emitted_blocks:
+                continue
+            emitted_blocks.add(block_key)
+            g.add(_emit_callout_block(block, orbits, vp))
+
+    return g, stats, gutter, list(decisions)
 
 
 # ---------------------------------------------------------------------------
@@ -1439,12 +1927,18 @@ def _render_annotation(
     t_hours: float,
 ) -> tuple[svgwrite.base.BaseElement, tuple[str, str] | None] | None:
     """Render a single annotation. Returns (element, optional path-def for textPath)."""
+    if annot.kind == "callout_label":
+        # ADR-094 — callout_label annotations are consumed by the engraved
+        # layer's strategy dispatch (force-callout override). Skip here so we
+        # don't duplicate the SVG output; the strategy dispatch is the single
+        # rendering path.
+        return None
     if annot.kind == "engraved_label":
         if annot.text is None:
             return None
         if annot.curve_along is not None:
             try:
-                path_id, path_d, body_id = _resolve_curve_along(
+                path_id, path_d, body_id, _ = _resolve_curve_along(
                     annot.curve_along, orbits, center_id, vp
                 )
             except _CurveScopeMismatch:

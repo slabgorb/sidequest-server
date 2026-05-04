@@ -1,0 +1,136 @@
+version: "0.1.0"
+clock: { epoch_days: 0 }
+travel: { realism: orbital }
+
+bodies:
+  primary_star:
+    type: star
+    label: "PRIMARY"
+
+  outer_world:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 8.0
+    period_days: 8000
+    epoch_phase_deg: 0
+    label: "OUTER WORLD"
+
+  tiny_belt:
+    type: arc_belt
+    parent: primary_star
+    semi_major_au: 0.5
+    period_days: 130
+    arc_extent_deg: 30
+    epoch_phase_deg: 270
+    label: "TINY BELT"
+
+  spread_alpha:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 3.0
+    period_days: 1900
+    epoch_phase_deg: 90
+    label: "SPREAD ALPHA"
+
+  cluster_a:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 1.0
+    period_days: 365
+    epoch_phase_deg: 30
+    label: "CLUSTER ALPHA"
+  cluster_b:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 1.0
+    period_days: 365
+    epoch_phase_deg: 60
+    label: "CLUSTER BETA"
+  cluster_c:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 1.0
+    period_days: 365
+    epoch_phase_deg: 90
+    label: "CLUSTER GAMMA"
+  cluster_d:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 1.05
+    period_days: 392
+    epoch_phase_deg: 120
+    label: "CLUSTER DELTA"
+
+  companion_dwarf:
+    type: companion
+    parent: primary_star
+    semi_major_au: 5.0
+    period_days: 5000
+    epoch_phase_deg: 180
+    label: "COMPANION DWARF"
+  habitat_x1:
+    type: habitat
+    parent: companion_dwarf
+    semi_major_au: 0.005
+    period_days: 30
+    epoch_phase_deg: 0
+    label: "HABITAT X-1"
+  habitat_x2:
+    type: habitat
+    parent: companion_dwarf
+    semi_major_au: 0.010
+    period_days: 60
+    epoch_phase_deg: 90
+    label: "HABITAT X-2"
+  habitat_x3:
+    type: habitat
+    parent: companion_dwarf
+    semi_major_au: 0.015
+    period_days: 90
+    epoch_phase_deg: 180
+    label: "HABITAT X-3"
+
+  lonely_companion:
+    type: companion
+    parent: primary_star
+    semi_major_au: 6.5
+    period_days: 7400
+    epoch_phase_deg: 270
+    label: "LONELY COMPANION"
+  habitat_y1:
+    type: habitat
+    parent: lonely_companion
+    semi_major_au: 0.005
+    period_days: 30
+    epoch_phase_deg: 0
+    label: "HABITAT Y-1"
+
+  habitat_with_moons:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 2.2
+    period_days: 1200
+    epoch_phase_deg: 315
+    label: "HABITAT WITH MOONS"
+  moon_z1:
+    type: habitat
+    parent: habitat_with_moons
+    semi_major_au: 0.004
+    period_days: 25
+    epoch_phase_deg: 0
+    label: "MOON Z-1"
+  moon_z2:
+    type: habitat
+    parent: habitat_with_moons
+    semi_major_au: 0.008
+    period_days: 50
+    epoch_phase_deg: 180
+    label: "MOON Z-2"
+
+  spread_beta:
+    type: habitat
+    parent: primary_star
+    semi_major_au: 4.5
+    period_days: 3500
+    epoch_phase_deg: 220
+    label: "SPREAD BETA"
