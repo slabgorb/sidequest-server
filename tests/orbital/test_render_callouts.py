@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from sidequest.orbital import palette
 from sidequest.orbital.loader import load_orbital_content
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -62,7 +63,6 @@ class TestStrategyDispatch:
         assert "<textPath" in svg
         assert "OUTER WORLD" in svg
 
-    @pytest.mark.xfail(reason="Task 23 implements callout SVG emission")
     def test_spread_alpha_renders_callout_via_explicit(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
         svg = render_chart(
@@ -74,7 +74,6 @@ class TestStrategyDispatch:
         assert "SPREAD ALPHA" in svg
         assert "habitat · 3.0 AU" in svg
 
-    @pytest.mark.xfail(reason="Task 23 implements callout SVG emission")
     def test_companion_children_grouped_block(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
         svg = render_chart(
@@ -146,3 +145,49 @@ class TestEmitRadialLabel:
         m = re.search(r'<text [^>]*radial-label[^>]*>SPREAD BETA</text>', svg)
         assert m is not None, "expected SPREAD BETA inside a radial-label <text>"
         assert ' x="' in m.group(0) and ' y="' in m.group(0)
+
+
+class TestEmitCalloutBlock:
+    def test_singleton_callout_basic_emission(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        # SPREAD ALPHA singleton callout (explicit_callout_label).
+        assert "SPREAD ALPHA" in svg
+        assert "habitat · 3.0 AU" in svg
+        assert "callout-leader" in svg
+        assert "callout-terminator" in svg
+
+    def test_grouped_block_has_title_and_border(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert "COMPANION DWARF SYSTEM" in svg
+        assert "callout-group-border" in svg
+        # Members listed in semi_major_au ascending order: x1 < x2 < x3.
+        idx_x1 = svg.find("HABITAT X-1")
+        idx_x2 = svg.find("HABITAT X-2")
+        idx_x3 = svg.find("HABITAT X-3")
+        assert 0 < idx_x1 < idx_x2 < idx_x3
+
+    def test_leader_color_matches_engraved_register(self, world_callout_strategy):
+        from sidequest.orbital.render import Scope, render_chart
+        svg = render_chart(
+            orbits=world_callout_strategy.orbits,
+            chart=world_callout_strategy.chart,
+            scope=Scope.system_root(),
+            t_hours=0.0, party_at=None,
+        )
+        assert palette.BRASS in svg
+        assert (
+            f'stroke-width="{palette.LEADER_STROKE_WIDTH_PX}"' in svg
+            or f"stroke-width='{palette.LEADER_STROKE_WIDTH_PX}'" in svg
+        )

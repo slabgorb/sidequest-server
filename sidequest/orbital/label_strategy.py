@@ -306,15 +306,24 @@ def _group_callouts_by_parent(
     decisions: list[LabelDecision],
     semi_major_by_id: dict[str, float],
 ) -> list[tuple[LabelDecision, ...]]:
-    """Group callout decisions by parent_id; ≥CALLOUT_GROUP_MIN_MEMBERS form
-    a single grouped block, fewer remain as singletons. Within a group,
+    """Group moon-band callout decisions by parent_id; ≥CALLOUT_GROUP_MIN_MEMBERS
+    form a single grouped block, fewer remain as singletons. Within a group,
     members sort by semi_major_au ascending (innermost first, AC-G3).
+
+    Per spec §AC-G1: grouping is restricted to *moon-band* siblings (decisions
+    with `reason == FORCED_MOON_BAND`). Top-level callouts (explicit_callout_label
+    overrides + radial-fallbacks) remain singletons even when they share a
+    parent_id, because the chart's reading is "this body is highlighted
+    individually," not "these children all live in one moon system."
     """
     by_parent: dict[str | None, list[LabelDecision]] = {}
     for d in decisions:
+        if d.reason != SelectionReason.FORCED_MOON_BAND:
+            continue
         by_parent.setdefault(d.parent_id, []).append(d)
 
     groups: list[tuple[LabelDecision, ...]] = []
+    grouped_ids: set[str] = set()
     for parent_id, members in by_parent.items():
         if parent_id is not None and len(members) >= palette.CALLOUT_GROUP_MIN_MEMBERS:
             sorted_members = sorted(
@@ -322,9 +331,13 @@ def _group_callouts_by_parent(
                 key=lambda d: semi_major_by_id.get(d.body_id, 0.0),
             )
             groups.append(tuple(sorted_members))
-        else:
-            for m in members:
-                groups.append((m,))
+            grouped_ids.update(m.body_id for m in sorted_members)
+
+    # Everything not in a moon-band group is a singleton.
+    for d in decisions:
+        if d.body_id in grouped_ids:
+            continue
+        groups.append((d,))
     return groups
 
 

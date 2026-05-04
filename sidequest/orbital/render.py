@@ -1146,8 +1146,148 @@ def _emit_radial_label(
 def _emit_callout_block(
     block: CalloutBlock, orbits: OrbitsConfig, viewport: _Viewport
 ) -> svgwrite.base.BaseElement:
-    """PLACEHOLDER stub — Task 23 implements."""
-    return svgwrite.text.Text(block.members[0].text)
+    """Emit a callout block: leader line(s) + label rect/border + text lines.
+
+    Singleton: title + optional tag.
+    Grouped:   '<PARENT_LABEL> SYSTEM' title + bordered rect + per-member lines.
+    """
+    g = svgwrite.container.Group()
+    g["class"] = "callout-block"
+    if block.side == "inset":
+        g["data-inset"] = "true"
+
+    is_grouped = len(block.members) >= palette.CALLOUT_GROUP_MIN_MEMBERS
+
+    # Leader stroke color: derive from first member's register.
+    register = block.members[0].register
+    if register == "prose":
+        leader_color = palette.DIM
+    elif register == "chalk":
+        leader_color = palette.PARTY
+    else:
+        leader_color = palette.BRASS
+
+    # --- Leader line(s) ---
+    # Block edge nearest the bend.
+    if block.anchor_x < block.block_x:
+        edge_x = block.block_x
+    else:
+        edge_x = block.block_x + block.block_width_px
+    edge_y = block.block_y + block.block_height_px / 2.0
+
+    leader_origin = (block.anchor_x, block.anchor_y)
+    bend_x = edge_x
+    bend_y = leader_origin[1]
+    path_d = (
+        f"M {leader_origin[0]} {leader_origin[1]} "
+        f"L {bend_x} {bend_y} "
+        f"L {edge_x} {edge_y}"
+    )
+    leader = svgwrite.path.Path(d=path_d, fill="none", stroke=leader_color)
+    leader["stroke-width"] = palette.LEADER_STROKE_WIDTH_PX
+    leader["class"] = "callout-leader"
+    g.add(leader)
+
+    ts = palette.LEADER_TERMINATOR_SIZE_PX
+    term = svgwrite.shapes.Rect(
+        insert=(edge_x - ts / 2.0, edge_y - ts / 2.0),
+        size=(ts, ts),
+        fill=leader_color,
+    )
+    term["class"] = "callout-terminator"
+    g.add(term)
+
+    # --- Label block content ---
+    pad = palette.CALLOUT_BLOCK_PADDING_PX
+    text_x = block.block_x + pad
+
+    if is_grouped:
+        # Border rect.
+        border = svgwrite.shapes.Rect(
+            insert=(block.block_x, block.block_y),
+            size=(block.block_width_px, block.block_height_px),
+            fill="none",
+            stroke=leader_color,
+        )
+        border["stroke-width"] = palette.CALLOUT_GROUP_BORDER_PX
+        border["class"] = "callout-group-border"
+        g.add(border)
+
+        # Title: "<PARENT_LABEL> SYSTEM"
+        parent_id = block.parent_label  # parent_id stashed on block.parent_label
+        parent_body = orbits.bodies.get(parent_id) if parent_id else None
+        parent_label_text = (
+            (parent_body.label if parent_body and parent_body.label else (parent_id or ""))
+            .strip()
+            .upper()
+        )
+        title = svgwrite.text.Text(
+            f"{parent_label_text} SYSTEM",
+            x=[text_x],
+            y=[block.block_y + pad + palette.CALLOUT_GROUP_TITLE_HEIGHT_PX * 0.75],
+            fill=leader_color,
+            font_family=palette.LABEL_ENGRAVED_FONT,
+            font_size=11,
+        )
+        title["class"] = "callout-group-title"
+        g.add(title)
+
+        # One line per member.
+        line_y = block.block_y + pad + palette.CALLOUT_GROUP_TITLE_HEIGHT_PX
+        for m in block.members:
+            line_y += palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+            body = orbits.bodies.get(m.body_id)
+            distance_label = ""
+            if body and body.semi_major_au is not None:
+                if body.semi_major_au >= 0.01:
+                    distance_label = f"{body.semi_major_au:.2f} AU"
+                else:
+                    km = body.semi_major_au * 1.496e8
+                    distance_label = f"{km / 1e6:.2f}M km"
+            line_text = f"{m.text} · {distance_label}" if distance_label else m.text
+            line = svgwrite.text.Text(
+                line_text,
+                x=[text_x],
+                y=[line_y],
+                fill=leader_color,
+                font_family=palette.LABEL_ENGRAVED_FONT,
+                font_size=10,
+            )
+            line["class"] = "callout-group-member"
+            g.add(line)
+    else:
+        # Singleton: title + optional tag.
+        m = block.members[0]
+        title = svgwrite.text.Text(
+            m.text,
+            x=[text_x],
+            y=[block.block_y + pad + palette.CALLOUT_BLOCK_LINE_HEIGHT_PX * 0.75],
+            fill=leader_color,
+            font_family=palette.LABEL_ENGRAVED_FONT,
+            font_size=11,
+        )
+        title["class"] = "callout-singleton-title"
+        g.add(title)
+        if m.callout_tag:
+            tag_y = (
+                block.block_y
+                + pad
+                + palette.CALLOUT_BLOCK_LINE_HEIGHT_PX
+                + palette.CALLOUT_BLOCK_TAG_LINE_HEIGHT_PX * 0.75
+            )
+            tag = svgwrite.text.Text(
+                m.callout_tag,
+                x=[text_x],
+                y=[tag_y],
+                fill=palette.DIM,
+                font_family=palette.LABEL_PROSE_FONT,
+                font_size=palette.LABEL_PROSE_FONT_SIZE,
+            )
+            tag["font-style"] = "italic"
+            tag["class"] = "callout-singleton-tag"
+            g.add(tag)
+
+    return g
 
 
 # ---------------------------------------------------------------------------

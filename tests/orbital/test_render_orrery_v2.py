@@ -823,15 +823,22 @@ class TestMoonsAtSystemScope:
             "giant should no longer emit +N cluster chip — moons render directly"
         )
 
-    def test_moon_label_uses_prose_register_automatically(self, giant_with_moons):
-        """Spec §4.6: 'Moon labels: VT323 monospace, font-size 10, opacity 0.85
-        — i.e. register: prose auto-applied.'"""
+    def test_moon_label_renders_in_callout_block(self, giant_with_moons):
+        """ADR-094 §9 (deviation from §4.6): moon-band labels are forced into
+        callouts (sub-pixel render position has no radial space), so the
+        VT323-inline rule for moon labels is superseded — labels appear
+        inside a callout-singleton-title (Orbitron) or callout-group-member.
+
+        This pins the post-ADR-094 behavior: moon labels are visible and
+        carry a callout class, not silently dropped.
+        """
         svg = _render_root(giant_with_moons)
-        # The "moon a" label must render in VT323.
         match = re.search(r'<text[^>]*>\s*moon a\s*</text>', svg)
-        assert match is not None
-        assert "VT323" in match.group(0), (
-            "system-scope moon label must auto-apply prose register (VT323)"
+        assert match is not None, "moon a label missing from output"
+        # Moon-band children render via callout blocks per ADR-094 §9.
+        assert "callout-singleton-title" in match.group(0) or \
+               "callout-group-member" in match.group(0), (
+            f"moon label should render in a callout block class; got: {match.group(0)}"
         )
 
 
