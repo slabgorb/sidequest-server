@@ -21,7 +21,8 @@ recover silently.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -31,7 +32,6 @@ from sidequest.agents.orchestrator import (
     Orchestrator,
     TurnContext,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes — process doubles that can simulate CLI failure modes
