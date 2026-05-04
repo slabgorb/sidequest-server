@@ -13,11 +13,15 @@ are deferred fields and not authored here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from sidequest.genre.models.chassis import BondTier, ChassisVoiceSpec
 from sidequest.genre.models.rigs_world import OceanScores
+
+if TYPE_CHECKING:
+    from sidequest.game.session import GameSnapshot
 
 _TIER_THRESHOLDS: list[tuple[float, BondTier]] = [
     (-0.85, "severed"),
@@ -176,6 +180,29 @@ def apply_chassis_lineage_intimate(
 # ---------------------------------------------------------------------------
 
 
+def rebind_chassis_bonds_to_character(
+    snapshot: GameSnapshot, character_id: str
+) -> None:
+    """Replace the ``"player_character"`` placeholder seed with the real
+    chargen character id across every chassis in ``snapshot.chassis_registry``.
+
+    Story 47-6: ``init_chassis_registry`` writes bond ledger seeds keyed
+    against the placeholder ``"player_character"`` because chargen runs
+    in a separate flow that doesn't have the chassis context. This
+    function closes the loop — call it from chargen-complete (or from
+    any session-start handler that has the real character id).
+
+    Idempotent: a second call is a no-op for entries already keyed to a
+    real id; only entries still keyed to the placeholder are rewritten.
+    Multi-PC scenarios (deferred) will add new ledger entries rather
+    than overwriting an existing real-id entry.
+    """
+    for chassis in snapshot.chassis_registry.values():
+        for entry in chassis.bond_ledger:
+            if entry.character_id == "player_character":
+                entry.character_id = character_id
+
+
 def init_chassis_registry(snapshot, genre_pack) -> None:
     """Load `worlds/<world_slug>/rigs.yaml` and materialize chassis state.
 
@@ -236,9 +263,9 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     for inst_cfg in cfg.chassis_instances:
         bond_seeds = [
             BondLedgerEntry(
-                # character_role placeholder ("player_character") is
-                # rebound to the real character id at chargen time
-                # (deferred to a follow-on chargen wiring task).
+                # character_role placeholder ("player_character") gets
+                # rewritten to the real chargen character id by
+                # rebind_chassis_bonds_to_character() at session-start.
                 character_id=seed.character_role,
                 bond_strength_character_to_chassis=seed.bond_strength_character_to_chassis,
                 bond_strength_chassis_to_character=seed.bond_strength_chassis_to_character,

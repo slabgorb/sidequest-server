@@ -17,6 +17,10 @@ from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.world import RoomDef
 from sidequest.magic.confrontations import find_eligible_room_autofire
 from sidequest.magic.outputs import apply_mandatory_outputs
+from sidequest.telemetry.spans.rig import (
+    emit_room_entry_evaluated,
+    emit_room_entry_skipped,
+)
 
 
 class RoomGraphInitError(Exception):
@@ -55,42 +59,58 @@ def process_room_entry(
     room_id: str,
     current_turn: int,
 ) -> None:
-    """Post-room-entry hook: dispatch any rig-coupled auto-fire confrontations
-    eligible at the entered room.
+    """Post-room-entry hook: dispatch any rig-coupled auto-fire
+    confrontations that match the entered room AND pass the cooldown gate.
 
-    ``room_id`` is chassis-scoped — ``"<chassis_id>:<room_local>"``. Rooms
-    that aren't chassis-scoped (no colon, or colon-prefix not matching a
-    chassis_registry key) are no-ops on this path; map-graph rooms are
-    handled by the legacy room-graph machinery.
+    ``room_id`` accepts three forms:
 
-    Story 47-4 (Rig MVP Phase C): wires Galley entry → ``the_tea_brew``.
-    Iterates ``snap.magic_state.confrontations`` filtered to
-    chassis-coupled entries (``register == "intimate"``), then by the
-    chassis's interior_rooms; evaluates ``fire_conditions`` (room match,
-    bond_tier_min, cooldown_turns), and dispatches eligible firings via
-    ``apply_mandatory_outputs`` on the ``clear_win`` branch — the auto-fire
-    default; the narrator may override to ``refused`` later through
-    explicit dispatch (out of slice scope).
+    1. Chassis-prefixed ``"<chassis_id>:<room_local>"`` — explicit form
+       used by tests and callers that already know the chassis context.
+    2. Chassis-qualified narrator form ``"<Chassis Name> — <Display>"``
+       (em-dash with surrounding spaces) — what the narrator actually
+       emits as ``location``. Stripped via ``rsplit`` and resolved by
+       falling through to (3).
+    3. Bare world-name like ``"Galley"`` — case-insensitive match
+       against ``chassis.interior_rooms`` across all registered chassis.
 
-    OTEL: span emission happens inside ``apply_mandatory_outputs`` when
-    the rig framing keys are present, plus inside the bond/lineage
-    handlers themselves.
+    Inputs that match none of these resolve to no chassis and emit
+    ``room.entry_skipped`` (reason ``not_chassis_room`` or
+    ``chassis_not_found``); map-graph rooms are handled by the legacy
+    room-graph machinery upstream of this hook.
+
+    Story 47-4 wires Galley entry → ``the_tea_brew``. Story 47-6 adds the
+    em-dash matcher, OTEL on every silent-return path, and splits the
+    cooldown gate out of ``find_eligible_room_autofire`` so the
+    ``room.entry_evaluated`` span can distinguish ``eligible_count``
+    (matched room+bond) from ``fired_count`` (matched AND off cooldown).
+
+    Story 47-6 + post-merge with 45-43: confrontations are read from
+    ``snap.magic_state.confrontations`` (canonical store after the
+    snapshot split-brain cleanup) filtered to ``register == "intimate"``
+    so world-scoped bar-DSL entries don't appear here.
+
+    OTEL: every return path emits either ``room.entry_skipped`` (with
+    ``reason``) or ``room.entry_evaluated`` (with ``eligible_count`` and
+    ``fired_count``); per-firing ``rig.confrontation_outcome`` and
+    ``rig.bond_event`` come from inside ``apply_mandatory_outputs``.
     """
-    # Resolve room_id to (chassis_id, room_local_id). Two formats accepted:
-    #   1. Chassis-prefixed: "<chassis_id>:<room_local>" — explicit form used
-    #      by tests and by callers that already know the chassis context.
-    #   2. Bare world-name: "Galley", "Cockpit" — narrator-emitted location
-    #      strings. Resolved against `chassis.interior_rooms` (case-
-    #      insensitive). World-locations that match no chassis interior room
-    #      are non-rig and silent no-op on this path; map-graph rooms are
-    #      handled by the legacy room-graph machinery.
     if ":" in room_id:
         chassis_id, room_local_id = room_id.split(":", 1)
         chassis = snap.chassis_registry.get(chassis_id)
         if chassis is None:
+            emit_room_entry_skipped(
+                reason="chassis_not_found",
+                room_id=room_id,
+                actor_id=character_id,
+            )
             return
     else:
-        room_local_id = room_id.strip().lower().replace(" ", "_")
+        # Strip the chassis-qualified prefix if present. The narrator's
+        # ``location`` field is "<chassis_name> — <room_display>" — splitting
+        # on " — " and taking the trailing segment yields the room piece.
+        # Bare names without the separator pass through unchanged.
+        room_segment = room_id.rsplit(" — ", 1)[-1]
+        room_local_id = room_segment.strip().lower().replace(" ", "_")
         chassis = None
         for c in snap.chassis_registry.values():
             normalized = {r.lower() for r in c.interior_rooms}
@@ -98,40 +118,55 @@ def process_room_entry(
                 chassis = c
                 break
         if chassis is None:
+            emit_room_entry_skipped(
+                reason="not_chassis_room",
+                room_id=room_id,
+                actor_id=character_id,
+            )
             return
 
     bond = chassis.bond_for(character_id)
     if bond is None:
+        emit_room_entry_skipped(
+            reason="no_bond_for_actor",
+            room_id=room_id,
+            actor_id=character_id,
+        )
         return
 
-    cooldown_view: dict[tuple[str, str], int] = {}
-    for key, turn in snap.chassis_autofire_cooldowns.items():
-        if ":" not in key:
-            continue
-        c_id, conf_id = key.split(":", 1)
-        cooldown_view[(c_id, conf_id)] = turn
-
-    # S1 — magic_state.confrontations is the canonical store for all
-    # confrontation defs. Pre-filter to chassis-coupled entries
-    # (register == "intimate" per ADR / confrontations.py:112) before
-    # passing to find_eligible_room_autofire. World-scoped (bar-DSL)
-    # entries are driven by the threshold evaluator, not the room-entry
-    # path, and must not appear here.
+    # 45-43 (snapshot split-brain): magic_state.confrontations is the
+    # canonical store. World-scoped (bar-DSL) entries are driven by the
+    # threshold evaluator, not this room-entry path; pre-filter to
+    # chassis-coupled (``register == "intimate"``) entries.
     if snap.magic_state is None:
+        emit_room_entry_skipped(
+            reason="no_magic_state",
+            room_id=room_id,
+            actor_id=character_id,
+        )
         return
     chassis_coupled = [
         c for c in snap.magic_state.confrontations if c.register == "intimate"
     ]
     eligible = find_eligible_room_autofire(
         confrontations=chassis_coupled,
-        chassis_id=chassis.id,
         room_local_id=room_local_id,
         bond_tier_chassis=bond.bond_tier_chassis,
-        current_turn=current_turn,
-        cooldown_ledger=cooldown_view,
     )
 
+    fired_count = 0
     for cdef in eligible:
+        # Per-confrontation cooldown gate. Eligible entries that fail
+        # the cooldown still count toward ``eligible_count`` so the GM
+        # panel sees "matched but on cooldown" vs "no match".
+        cooldown_key = f"{chassis.id}:{cdef.id}"
+        last_fired = snap.chassis_autofire_cooldowns.get(cooldown_key)
+        cooldown_turns = (
+            cdef.fire_conditions.cooldown_turns if cdef.fire_conditions else 0
+        )
+        if last_fired is not None and (current_turn - last_fired) < cooldown_turns:
+            continue
+
         outputs = cdef.outcomes["clear_win"].mandatory_outputs
         apply_mandatory_outputs(
             snapshot=snap,
@@ -144,7 +179,50 @@ def process_room_entry(
             turn_id=current_turn,
             narrative_seed=f"auto_fire:{room_local_id}",
         )
-        snap.chassis_autofire_cooldowns[f"{chassis.id}:{cdef.id}"] = current_turn
+        snap.chassis_autofire_cooldowns[cooldown_key] = current_turn
+        fired_count += 1
+
+    emit_room_entry_evaluated(
+        chassis_id=chassis.id,
+        room_local_id=room_local_id,
+        eligible_count=len(eligible),
+        fired_count=fired_count,
+    )
 
 
-__all__ = ["RoomGraphInitError", "init_room_graph_location", "process_room_entry"]
+def process_session_open(
+    snap: GameSnapshot,
+    *,
+    character_id: str,
+    current_turn: int,
+) -> None:
+    """Run room-entry eligibility against ``snapshot.location`` at
+    session-start time.
+
+    Story 47-6 (Bug 3): ``sidequest/server/dispatch/opening.py`` sets
+    the starting interior room without going through
+    ``process_room_entry``. So the FIRST eligible moment — turn 1, cold
+    start in galley with bond ``trusted`` — silently skipped. This hook
+    closes the gap. Idempotent because ``process_room_entry`` records a
+    cooldown stamp on fire, so a second call within the cooldown window
+    is observable (eligible_count >= 1, fired_count == 0) but harmless.
+
+    No-op if ``snap.location`` is empty — the opening pipeline will
+    populate it before this hook runs in production.
+    """
+    if not snap.location:
+        return
+    process_room_entry(
+        snap,
+        character_id=character_id,
+        room_id=snap.location,
+        current_turn=current_turn,
+    )
+
+
+__all__ = [
+    "RoomGraphInitError",
+    "init_room_graph_location",
+    "process_room_entry",
+    "process_session_open",
+]

@@ -41,7 +41,10 @@ from sidequest.game.builder import (
     CharacterBuilder,
 )
 from sidequest.game.character import Character
-from sidequest.game.chassis import init_chassis_registry
+from sidequest.game.chassis import (
+    init_chassis_registry,
+    rebind_chassis_bonds_to_character,
+)
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import (
     seed_lore_from_char_creation,
@@ -54,6 +57,7 @@ from sidequest.game.region_init import RegionInitError, init_region_location
 from sidequest.game.room_movement import (
     RoomGraphInitError,
     init_room_graph_location,
+    process_session_open,
 )
 from sidequest.game.session import (
     GameSnapshot,
@@ -1395,6 +1399,20 @@ class WebSocketSessionHandler:
             )
 
             init_chassis_registry(sd.snapshot, sd.genre_pack)
+            # Story 47-6: bond_seeds in rigs.yaml use the
+            # ``"player_character"`` placeholder. Rewrite every chassis's
+            # bond_ledger to the real chargen character id so
+            # process_room_entry can find the bond on later transitions.
+            rebind_chassis_bonds_to_character(sd.snapshot, character.core.name)
+            # Story 47-6: evaluate room-entry eligibility for the starting
+            # interior_room so a session that opens INTO the galley fires
+            # the_tea_brew on turn 1 instead of waiting for a later
+            # narrator-driven location update.
+            process_session_open(
+                sd.snapshot,
+                character_id=character.core.name,
+                current_turn=sd.snapshot.turn_manager.interaction,
+            )
             span.add_event(
                 "character_creation.world_materialized",
                 {
