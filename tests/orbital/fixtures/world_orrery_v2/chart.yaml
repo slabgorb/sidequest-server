@@ -1,0 +1,16 @@
+# Engraved chart flavor for the world_orrery_v2 fixture.
+# Exercises curve_along resolution for orbit_outermost and orbit_<body>.
+
+version: "0.1.0"
+
+annotations:
+  - kind: engraved_label
+    text: "the Outer Drift"
+    curve_along: orbit_outermost
+
+  - kind: engraved_label
+    text: "giant lane"
+    curve_along: orbit_giant
+
+  - kind: scale_ruler
+    label: "scale (engraved) — 0 1 2 3 4 5 AU"

@@ -67,3 +67,45 @@ def test_red_prospect_scope_t0(world, request):
         party_at=None,
     )
     _compare_or_record("red_prospect_scope_t0", svg, request)
+
+
+# ---------------------------------------------------------------------------
+# Orrery v2 (Story 45-42) — pinned snapshots over the new register pipeline
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def world_v2():
+    return load_orbital_content(FIXTURES / "world_orrery_v2")
+
+
+def test_orrery_v2_system_scope_t0(world_v2, request):
+    """AC#18: byte-identical SVG for the v2 fixture at t=0, scope=root.
+
+    Pins every new code path: bearing rose, star reticle, register-driven
+    orbit styling (engraved/chalk/prose), label_register override (drift),
+    moon-band rendering (giant + moons), show_at_system_scope elision
+    (moon_hidden), peer-collision tier (alpha/beta/gamma cluster), and
+    the dashed hazard-outline signal (trap).
+    """
+    svg = render_chart(
+        orbits=world_v2.orbits,
+        chart=world_v2.chart,
+        scope=Scope.system_root(),
+        t_hours=0.0,
+        party_at=None,
+    )
+    _compare_or_record("orrery_v2_system_t0", svg, request)
+
+
+def test_orrery_v2_drill_in_giant(world_v2, request):
+    """AC#24: drill-in to a parent-with-moons still renders all moons,
+    including ones marked show_at_system_scope=False."""
+    svg = render_chart(
+        orbits=world_v2.orbits,
+        chart=world_v2.chart,
+        scope=Scope(center_body_id="giant"),
+        t_hours=0.0,
+        party_at=None,
+    )
+    _compare_or_record("orrery_v2_drill_in_giant", svg, request)
