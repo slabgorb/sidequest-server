@@ -256,9 +256,9 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
     for inst_cfg in cfg.chassis_instances:
         bond_seeds = [
             BondLedgerEntry(
-                # character_role placeholder ("player_character") is
-                # rebound to the real character id at chargen time
-                # (deferred to a follow-on chargen wiring task).
+                # character_role placeholder ("player_character") gets
+                # rewritten to the real chargen character id by
+                # rebind_chassis_bonds_to_character() at session-start.
                 character_id=seed.character_role,
                 bond_strength_character_to_chassis=seed.bond_strength_character_to_chassis,
                 bond_strength_chassis_to_character=seed.bond_strength_chassis_to_character,

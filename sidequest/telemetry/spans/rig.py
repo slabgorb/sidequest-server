@@ -96,8 +96,10 @@ def emit_room_entry_skipped(
 ) -> None:
     """Story 47-6: every silent return path of process_room_entry must
     emit this span so the GM dashboard can see why eligibility wasn't
-    evaluated. ``reason`` is one of: ``not_chassis_room``,
-    ``no_bond_for_actor``, ``no_magic_state``, ``chassis_not_found``."""
+    evaluated. ``reason`` is currently one of: ``chassis_not_found``,
+    ``not_chassis_room``, ``no_bond_for_actor``. Story 47-7 will add
+    ``no_magic_state`` when magic_state becomes load-bearing for
+    confrontation outputs."""
     with Span.open(
         SPAN_ROOM_ENTRY_SKIPPED,
         attrs={
