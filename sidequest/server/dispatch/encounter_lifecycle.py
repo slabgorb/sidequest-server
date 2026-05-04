@@ -20,12 +20,27 @@ from sidequest.server.dispatch.confrontation import find_confrontation_def
 from sidequest.server.dispatch.sealed_letter import ROLE_BLUE, ROLE_RED
 from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
+    encounter_no_opponent_available_span,
     encounter_resolved_span,
     npc_registry_hp_set_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 _VALID_SIDES = ("player", "opponent", "neutral")
+
+
+class NoOpponentAvailableError(ValueError):
+    """Raised when a category=combat encounter resolves to zero opponents
+    after both the narrator's ``npcs_present`` and the location-scoped
+    registry fallback come up empty (Story 45-33).
+
+    Subclass of ``ValueError`` so existing ``except ValueError`` blocks
+    still catch it; the dedicated class lets ``_apply_narration_result_to_snapshot``
+    catch THIS path gracefully (CLAUDE.md "strict helper, lenient caller")
+    without swallowing the sealed-letter validator's
+    ``"exactly one opponent"`` ValueError, which is a config/extraction
+    error that should propagate.
+    """
 
 
 def _validate_side(actor_name: str, declared: str) -> str:
@@ -227,6 +242,37 @@ def instantiate_encounter_from_trigger(
         npcs_present = _registry_fallback_npcs(
             snapshot,
             is_combat=cdef.category == "combat",
+        )
+
+    # Story 45-33: combat empty+empty guard (CLAUDE.md "No Silent Fallbacks").
+    # If narrator's ``npcs_present`` was empty AND ``_registry_fallback_npcs``
+    # returned empty (no NPCs at the player's location, or
+    # ``snapshot.location is None``), a category=combat encounter would
+    # currently instantiate with ``actors=[player only]`` — the original
+    # Playtest 3 (Orin) bug shape. Refuse here and surface the lie-detector
+    # signal via OTEL so the GM panel can confirm the guard engaged.
+    #
+    # Sealed-letter encounters bypass this guard — their own validator below
+    # carries a more specific error message ("got 0 npcs_present") that
+    # downstream tooling already keys on. Non-combat (social, movement) is
+    # also exempt: a parley or chase with a solo player is a legitimate
+    # one-on-one scene shape that the narrator can populate on a later beat.
+    if (
+        cdef.category == "combat"
+        and cdef.resolution_mode != ResolutionMode.sealed_letter_lookup
+        and not npcs_present
+    ):
+        with encounter_no_opponent_available_span(
+            encounter_type=encounter_type,
+            genre_slug=genre_slug or "",
+            player_name=player_name,
+            category=cdef.category,
+        ):
+            pass
+        raise NoOpponentAvailableError(
+            f"no opponent available for combat encounter {encounter_type!r} "
+            f"after registry fallback (player_name={player_name!r}, "
+            f"location={snapshot.location!r})"
         )
 
     with encounter_confrontation_initiated_span(

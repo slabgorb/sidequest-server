@@ -60,6 +60,7 @@ def test_instantiate_unknown_type_raises(cac_pack) -> None:
 
 def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     """A resolved prior encounter does not block a new one."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.game.encounter import EncounterActor, EncounterMetric
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
@@ -74,12 +75,16 @@ def test_instantiate_replaces_resolved_encounter(cac_pack) -> None:
     )
     prior.resolved = True
     snap.encounter = prior
+    # Story 45-33: combat now requires an opponent post-fallback. The original
+    # test fixture passed npcs_present=[] because the focus is the resolved
+    # encounter replacement, not opponent supply — adding an explicit
+    # opponent preserves the test's intent.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Rux",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
     )
     assert snap.encounter is enc
@@ -273,17 +278,21 @@ def test_instantiate_seats_additional_pcs_for_mp_bundle(cac_pack) -> None:
 
 def test_instantiate_additional_pcs_dedup_against_primary(cac_pack) -> None:
     """If the caller passes the primary in additional list, dedup."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
 
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    # Story 45-33: combat requires an opponent post-fallback; this test's
+    # focus is PC-list dedup, so supply a stub opponent and assert against
+    # only the player-side actors.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Scratchy",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
         additional_player_names=["Scratchy", "Itchy", "Itchy"],
     )
@@ -296,17 +305,20 @@ def test_instantiate_additional_pcs_dedup_against_primary(cac_pack) -> None:
 
 def test_instantiate_additional_pcs_default_none_keeps_solo_behavior(cac_pack) -> None:
     """Solo callers (additional_player_names=None) get a single-PC roster."""
+    from sidequest.agents.orchestrator import NpcMention
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
 
     snap = GameSnapshot(genre_slug="caverns_and_claudes")
+    # Story 45-33: combat requires an opponent. The test's focus is the
+    # solo-PC roster shape (no MP bundle), not opponent supply.
     enc = instantiate_encounter_from_trigger(
         snapshot=snap,
         pack=cac_pack,
         encounter_type="combat",
         player_name="Rux",
-        npcs_present=[],
+        npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         genre_slug="caverns_and_claudes",
     )
     assert enc is not None

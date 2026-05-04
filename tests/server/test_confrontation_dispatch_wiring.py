@@ -29,9 +29,18 @@ def _result(narration: str = "ok", **kwargs) -> NarrationTurnResult:
 async def test_confrontation_message_emitted_on_encounter_start(
     session_handler_factory,
 ):
+    from sidequest.agents.orchestrator import NpcMention
+
     sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    # Story 45-33: combat now requires an opponent post-fallback. Supply
+    # an explicit hostile so the lifecycle does not raise — the test's
+    # focus is the CONFRONTATION-message dispatch on encounter start, not
+    # opponent supply.
     sd.orchestrator.run_narration_turn = AsyncMock(
-        return_value=_result(confrontation="combat"),
+        return_value=_result(
+            confrontation="combat",
+            npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
+        ),
     )
     from sidequest.server.session_handler import _build_turn_context
 

@@ -116,10 +116,18 @@ async def test_confrontation_broadcasts_to_all_four_peer_sockets(
     # Orchestrator mock: opens a confrontation on this turn (encounter is
     # currently None on the snapshot; result.confrontation="combat" makes
     # the dispatch branch take the now_live path).
+    # Story 45-33: combat encounters require an opponent post-fallback;
+    # supply Veriti Onua (already named in the prose) explicitly so the
+    # lifecycle does not raise — the test's focus is the broadcast fan-out.
+    from sidequest.agents.orchestrator import NpcMention
+
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=NarrationTurnResult(
             narration="Paul squares off against Veriti Onua.",
             confrontation="combat",
+            npcs_present=[
+                NpcMention(name="Veriti Onua", side="opponent", role="hostile"),
+            ],
         ),
     )
 

@@ -498,10 +498,16 @@ async def test_narration_apply_emits_momentum_broadcast_span(
     # None on the snapshot (no _install_active_encounter call) so
     # confrontation="combat" triggers the now_live=True path that
     # emits the CONFRONTATION.
+    # Story 45-33: combat encounters require an opponent post-fallback;
+    # supply an explicit goblin so the lifecycle does not raise — the
+    # test's focus is the post-narration momentum-broadcast span fan-out.
+    from sidequest.agents.orchestrator import NpcMention
+
     sd.orchestrator.run_narration_turn = AsyncMock(
         return_value=NarrationTurnResult(
             narration="Rux squares off — combat begins.",
             confrontation="combat",
+            npcs_present=[NpcMention(name="Goblin", side="opponent", role="hostile")],
         ),
     )
 
