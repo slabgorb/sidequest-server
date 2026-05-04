@@ -38,12 +38,10 @@ SPACE_OPERA = REPO_ROOT / "sidequest-content" / "genre_packs" / "space_opera"
 
 def _bootstrap_session_opened_in_galley() -> GameSnapshot:
     """Snapshot in the same shape a fresh session takes when the opening
-    places the player in the galley — chassis registered, magic_state up,
-    location set to the chassis-qualified galley."""
+    places the player in the galley — chassis registered and location
+    set to the chassis-qualified galley."""
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
-    from tests.integration.conftest import make_minimal_coyote_star_magic_state
-
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
@@ -51,7 +49,6 @@ def _bootstrap_session_opened_in_galley() -> GameSnapshot:
         location="The Kestrel — Galley",
     )
     snap.turn_manager = TurnManager()
-    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     return snap
 
@@ -104,8 +101,6 @@ def test_session_opened_outside_galley_does_not_fire_tea_brew() -> None:
 
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
-    from tests.integration.conftest import make_minimal_coyote_star_magic_state
-
     pack = load_genre_pack(SPACE_OPERA)
     snap = GameSnapshot(
         genre_slug="space_opera",
@@ -113,7 +108,6 @@ def test_session_opened_outside_galley_does_not_fire_tea_brew() -> None:
         location="The Kestrel — Cockpit",
     )
     snap.turn_manager = TurnManager()
-    snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
     kestrel = snap.chassis_registry["kestrel"]
     bond_before = kestrel.bond_ledger[0].bond_strength_chassis_to_character

@@ -20,12 +20,16 @@ from .span import Span
 SPAN_RIG_BOND_EVENT = "rig.bond_event"
 SPAN_RIG_VOICE_REGISTER_CHANGE = "rig.voice_register_change"
 SPAN_RIG_CONFRONTATION_OUTCOME = "rig.confrontation_outcome"
+SPAN_ROOM_ENTRY_SKIPPED = "room.entry_skipped"
+SPAN_ROOM_ENTRY_EVALUATED = "room.entry_evaluated"
 
 FLAT_ONLY_SPANS.update(
     {
         SPAN_RIG_BOND_EVENT,
         SPAN_RIG_VOICE_REGISTER_CHANGE,
         SPAN_RIG_CONFRONTATION_OUTCOME,
+        SPAN_ROOM_ENTRY_SKIPPED,
+        SPAN_ROOM_ENTRY_EVALUATED,
     }
 )
 
@@ -79,6 +83,51 @@ def emit_rig_voice_register_change(
             "register_before": register_before,
             "register_after": register_after,
             "triggering_event": triggering_event,
+        },
+    ):
+        pass
+
+
+def emit_room_entry_skipped(
+    *,
+    reason: str,
+    room_id: str,
+    actor_id: str,
+) -> None:
+    """Story 47-6: every silent return path of process_room_entry must
+    emit this span so the GM dashboard can see why eligibility wasn't
+    evaluated. ``reason`` is one of: ``not_chassis_room``,
+    ``no_bond_for_actor``, ``no_magic_state``, ``chassis_not_found``."""
+    with Span.open(
+        SPAN_ROOM_ENTRY_SKIPPED,
+        attrs={
+            "reason": reason,
+            "room_id": room_id,
+            "actor_id": actor_id,
+        },
+    ):
+        pass
+
+
+def emit_room_entry_evaluated(
+    *,
+    chassis_id: str,
+    room_local_id: str,
+    eligible_count: int,
+    fired_count: int,
+) -> None:
+    """Story 47-6: emitted after process_room_entry resolves a chassis
+    room and runs the auto-fire eligibility evaluator. ``fired_count``
+    < ``eligible_count`` when cooldown blocks dispatch, so the GM
+    panel can distinguish "nothing matched" from "matched but on
+    cooldown"."""
+    with Span.open(
+        SPAN_ROOM_ENTRY_EVALUATED,
+        attrs={
+            "chassis_id": chassis_id,
+            "room_local_id": room_local_id,
+            "eligible_count": eligible_count,
+            "fired_count": fired_count,
         },
     ):
         pass

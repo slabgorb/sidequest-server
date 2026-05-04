@@ -15,6 +15,10 @@ from __future__ import annotations
 
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.world import RoomDef
+from sidequest.telemetry.spans.rig import (
+    emit_room_entry_evaluated,
+    emit_room_entry_skipped,
+)
 
 
 class RoomGraphInitError(Exception):
@@ -73,21 +77,31 @@ def process_room_entry(
     the rig framing keys are present, plus inside the bond/lineage
     handlers themselves.
     """
-    # Resolve room_id to (chassis_id, room_local_id). Two formats accepted:
+    # Resolve room_id to (chassis_id, room_local_id). Three formats accepted:
     #   1. Chassis-prefixed: "<chassis_id>:<room_local>" — explicit form used
     #      by tests and by callers that already know the chassis context.
-    #   2. Bare world-name: "Galley", "Cockpit" — narrator-emitted location
-    #      strings. Resolved against `chassis.interior_rooms` (case-
-    #      insensitive). World-locations that match no chassis interior room
-    #      are non-rig and silent no-op on this path; map-graph rooms are
-    #      handled by the legacy room-graph machinery.
+    #   2. Chassis-qualified narrator form: "<Chassis Name> — <Display>" —
+    #      what the narrator actually emits as ``location`` (em-dash with
+    #      surrounding spaces). Strip the prefix and fall through to (3).
+    #   3. Bare world-name: "Galley", "Cockpit" — short location strings.
+    #      Resolved against ``chassis.interior_rooms`` (case-insensitive).
     if ":" in room_id:
         chassis_id, room_local_id = room_id.split(":", 1)
         chassis = snap.chassis_registry.get(chassis_id)
         if chassis is None:
+            emit_room_entry_skipped(
+                reason="chassis_not_found",
+                room_id=room_id,
+                actor_id=character_id,
+            )
             return
     else:
-        room_local_id = room_id.strip().lower().replace(" ", "_")
+        # Strip the chassis-qualified prefix if present. The narrator's
+        # ``location`` field is "<chassis_name> — <room_display>" — splitting
+        # on " — " and taking the trailing segment yields the room piece.
+        # Bare names without the separator pass through unchanged.
+        room_segment = room_id.rsplit(" — ", 1)[-1]
+        room_local_id = room_segment.strip().lower().replace(" ", "_")
         chassis = None
         for c in snap.chassis_registry.values():
             normalized = {r.lower() for r in c.interior_rooms}
@@ -95,10 +109,20 @@ def process_room_entry(
                 chassis = c
                 break
         if chassis is None:
+            emit_room_entry_skipped(
+                reason="not_chassis_room",
+                room_id=room_id,
+                actor_id=character_id,
+            )
             return
 
     bond = chassis.bond_for(character_id)
     if bond is None:
+        emit_room_entry_skipped(
+            reason="no_bond_for_actor",
+            room_id=room_id,
+            actor_id=character_id,
+        )
         return
 
     from sidequest.magic.confrontations import find_eligible_room_autofire
@@ -135,5 +159,47 @@ def process_room_entry(
         )
         snap.chassis_autofire_cooldowns[f"{chassis.id}:{cdef.id}"] = current_turn
 
+    emit_room_entry_evaluated(
+        chassis_id=chassis.id,
+        room_local_id=room_local_id,
+        eligible_count=len(eligible),
+        fired_count=len(eligible),
+    )
 
-__all__ = ["RoomGraphInitError", "init_room_graph_location", "process_room_entry"]
+
+def process_session_open(
+    snap: GameSnapshot,
+    *,
+    character_id: str,
+    current_turn: int,
+) -> None:
+    """Run room-entry eligibility against ``snapshot.location`` at
+    session-start time.
+
+    Story 47-6 (Bug 3): ``sidequest/server/dispatch/opening.py`` sets
+    the starting interior room without going through
+    ``process_room_entry``. So the FIRST eligible moment — turn 1, cold
+    start in galley with bond ``trusted`` — silently skipped. This hook
+    closes the gap. Idempotent because ``process_room_entry`` records a
+    cooldown stamp on fire, so a second call within the cooldown window
+    is observable (eligible_count >= 1, fired_count == 0) but harmless.
+
+    No-op if ``snap.location`` is empty — the opening pipeline will
+    populate it before this hook runs in production.
+    """
+    if not snap.location:
+        return
+    process_room_entry(
+        snap,
+        character_id=character_id,
+        room_id=snap.location,
+        current_turn=current_turn,
+    )
+
+
+__all__ = [
+    "RoomGraphInitError",
+    "init_room_graph_location",
+    "process_room_entry",
+    "process_session_open",
+]
