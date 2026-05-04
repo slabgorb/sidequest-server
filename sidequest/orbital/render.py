@@ -747,8 +747,10 @@ def render_chart(
         for b in orbits.bodies.values()
         if (b.label is None or not b.label.strip()) and b.show_at_system_scope
     )
+    # AC-O2 sum invariant: textpath + radial + callout + unlabeled == total.
+    # `total` counts every visible-at-scope body, not just labeled ones.
     emit_chart_label_distribution(
-        bodies_total=len(decisions),
+        bodies_total=len(decisions) + bodies_unlabeled,
         bodies_textpath=counts["textpath"],
         bodies_radial=counts["radial"],
         bodies_callout=counts["callout"],
