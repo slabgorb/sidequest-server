@@ -55,6 +55,8 @@ from sidequest.protocol.messages import (
     RetreatToHamletMessage,
 )
 from sidequest.server.session_helpers import _error_msg
+from sidequest.telemetry.spans.session import SPAN_SESSION_DELVE_ENDED
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
     from sidequest.server.websocket_session_handler import WebSocketSessionHandler
@@ -198,6 +200,18 @@ async def _end_delve(
     # row (rather than a stale cached one). save_world_save also stamps
     # ``last_saved_at`` which the GM panel reads.
     final_world_save = store.load_world_save()
+
+    _watcher_publish(
+        SPAN_SESSION_DELVE_ENDED,
+        {
+            "slug": slug,
+            "dungeon": dungeon_slug,
+            "outcome": outcome,
+            "party_size": len(snapshot.characters),
+            "delve_count_after": new_world_save.delve_count,
+        },
+        component="session",
+    )
 
     logger.info(
         "session.delve_ended slug=%s dungeon=%s outcome=%s wounded_boss=%s "

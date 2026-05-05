@@ -51,6 +51,8 @@ from sidequest.game.persistence import SqliteStore, db_path_for_slug, get_game
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import GenreLoader
 from sidequest.server.session_helpers import _error_msg
+from sidequest.telemetry.spans.session import SPAN_SESSION_DELVE_STARTED
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
     from sidequest.protocol import GameMessage
@@ -219,6 +221,17 @@ class DungeonSelectHandler:
         # doesn't bind, so this is the first bind on the room.
         room.bind_world(snapshot=new_snapshot, store=store, world_dir=world_dir)
         room.save()
+
+        _watcher_publish(
+            SPAN_SESSION_DELVE_STARTED,
+            {
+                "slug": slug,
+                "dungeon": payload.dungeon,
+                "party_size": len(party),
+                "party_hireling_ids": list(payload.party_hireling_ids),
+            },
+            component="session",
+        )
 
         logger.info(
             "session.delve_started slug=%s dungeon=%s party_size=%d",

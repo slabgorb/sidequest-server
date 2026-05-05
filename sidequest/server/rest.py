@@ -33,6 +33,11 @@ from sidequest.game.persistence import (
     upsert_game,
 )
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, load_genre_pack_cached
+from sidequest.telemetry.spans.session import (
+    SPAN_SESSION_HIRELING_DISMISSED,
+    SPAN_SESSION_HIRELING_RECRUITED,
+)
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
 
@@ -666,8 +671,19 @@ def create_rest_router() -> APIRouter:
                 world=world,
                 existing_ids={h.id for h in world_save.roster},
             )
-            store.save_world_save(
-                world_save.model_copy(update={"roster": [*world_save.roster, new_h]})
+            new_world_save = world_save.model_copy(
+                update={"roster": [*world_save.roster, new_h]}
+            )
+            store.save_world_save(new_world_save)
+            _watcher_publish(
+                SPAN_SESSION_HIRELING_RECRUITED,
+                {
+                    "slug": slug,
+                    "hireling_id": new_h.id,
+                    "archetype": new_h.archetype,
+                    "roster_size_after": len(new_world_save.roster),
+                },
+                component="session",
             )
             return new_h.model_dump(mode="json")
         finally:
@@ -735,6 +751,16 @@ def create_rest_router() -> APIRouter:
 
             updated = world_save.model_copy(update={"roster": new_roster})
             store.save_world_save(updated)
+            _watcher_publish(
+                SPAN_SESSION_HIRELING_DISMISSED,
+                {
+                    "slug": slug,
+                    "hireling_id": hireling_id,
+                    "reason": reason,
+                    "roster_size_after": len(updated.roster),
+                },
+                component="session",
+            )
             return updated.model_dump(mode="json")
         finally:
             store.close()

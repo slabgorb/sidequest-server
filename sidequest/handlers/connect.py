@@ -55,6 +55,7 @@ from sidequest.server.session_helpers import (
     _presence_msg,
     _resolve_location_display,
 )
+from sidequest.telemetry.spans.session import SPAN_SESSION_HUB_MODE_ENTERED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -359,6 +360,17 @@ class ConnectHandler:
                 and (saved is None or saved.snapshot.active_delve_dungeon is None)
             ):
                 world_save = store.load_world_save()
+                _watcher_publish(
+                    SPAN_SESSION_HUB_MODE_ENTERED,
+                    {
+                        "slug": slug,
+                        "genre": row.genre_slug,
+                        "world": row.world_slug,
+                        "roster_size": len(world_save.roster),
+                        "delve_count": world_save.delve_count,
+                    },
+                    component="session",
+                )
                 return [
                     HubViewMessage(
                         payload=HubViewPayload(
