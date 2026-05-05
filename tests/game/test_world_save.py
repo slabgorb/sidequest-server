@@ -153,3 +153,65 @@ def test_save_world_save_overwrites_singleton():
     rows = store._conn.execute("SELECT COUNT(*) FROM world_save").fetchone()
     assert rows[0] == 1, "INSERT OR REPLACE must keep singleton invariant"
     assert store.load_world_save().currency == 2
+
+
+def test_init_session_preserves_world_save_across_reinit():
+    """Hub-state persistence guarantee — Sünden engine plan item 2.
+
+    A delve-end / fresh-delve flow calls ``init_session()`` to clear
+    per-slot tables. The roster, currency, Wall, wound flags, and
+    drift flag MUST survive that reinit; otherwise a hireling roster
+    is emptied between delves and the entire DD-shaped loop falls
+    apart.
+    """
+    store = SqliteStore.open_in_memory()
+    store.init_session("caverns_and_claudes", "caverns_three_sins")
+
+    ws = WorldSave(
+        roster=[Hireling(id="vol_1", name="Volga", archetype="prig", stress=15)],
+        currency=42,
+        wall=[WallEntry(
+            delve_number=1, sin="pride", dungeon="grimvault",
+            party_hireling_ids=["vol_1"], outcome="victory",
+            wounded_boss=True,
+            timestamp=datetime.now(tz=UTC),
+        )],
+        dungeon_wounds={"grimvault": True},
+        latest_delve_sin="pride",
+        delve_count=1,
+    )
+    store.save_world_save(ws)
+
+    # Simulate the next delve starting — slot reinit clears per-slot tables.
+    store.init_session("caverns_and_claudes", "caverns_three_sins")
+
+    reloaded = store.load_world_save()
+    assert reloaded.currency == 42
+    assert reloaded.delve_count == 1
+    assert reloaded.roster[0].name == "Volga"
+    assert reloaded.roster[0].stress == 15
+    assert reloaded.wall[0].sin == "pride"
+    assert reloaded.wall[0].dungeon == "grimvault"
+    assert reloaded.wall[0].wounded_boss is True
+    assert reloaded.dungeon_wounds == {"grimvault": True}
+    assert reloaded.latest_delve_sin == "pride"
+
+
+def test_init_session_clears_game_state_but_keeps_world_save():
+    store = SqliteStore.open_in_memory()
+    store.init_session("caverns_and_claudes", "caverns_three_sins")
+    # populate game_state and world_save
+    store._conn.execute(
+        "INSERT INTO game_state (id, snapshot_json, saved_at) VALUES (1, '{}', ?)",
+        (datetime.now(tz=UTC).isoformat(),),
+    )
+    store._conn.commit()
+    store.save_world_save(WorldSave(currency=99))
+
+    store.init_session("caverns_and_claudes", "caverns_three_sins")
+
+    game_state_rows = store._conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0]
+    world_save_rows = store._conn.execute("SELECT COUNT(*) FROM world_save").fetchone()[0]
+    assert game_state_rows == 0, "game_state must be cleared by init_session"
+    assert world_save_rows == 1, "world_save must NOT be cleared by init_session"
+    assert store.load_world_save().currency == 99
