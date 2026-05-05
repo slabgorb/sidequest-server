@@ -215,3 +215,18 @@ def test_init_session_clears_game_state_but_keeps_world_save():
     assert game_state_rows == 0, "game_state must be cleared by init_session"
     assert world_save_rows == 1, "world_save must NOT be cleared by init_session"
     assert store.load_world_save().currency == 99
+
+
+def test_world_save_round_trip_file_backed(tmp_path):
+    """File-backed round-trip across reopen — documents SQLite persistence."""
+    db_path = tmp_path / "save.db"
+    store = SqliteStore(db_path)
+    store.init_session("caverns_and_claudes", "caverns_three_sins")
+    store.save_world_save(WorldSave(currency=7, delve_count=1))
+    store.close()
+
+    # Re-open
+    store2 = SqliteStore(db_path)
+    ws = store2.load_world_save()
+    assert ws.currency == 7
+    assert ws.delve_count == 1
