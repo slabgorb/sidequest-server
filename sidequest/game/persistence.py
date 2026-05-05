@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from sidequest.game.migrations import migrate_legacy_snapshot
 from sidequest.game.session import GameSnapshot, NarrativeEntry
+from sidequest.game.world_save import WorldSave
 from sidequest.telemetry.spans import SPAN_SESSION_SLOT_REINITIALIZED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
@@ -447,6 +448,37 @@ class SqliteStore:
         known_facts = snapshot.characters[0].known_facts if snapshot.characters else []
         recap = _generate_recap(entries, character_names, snapshot.location, known_facts)
         return SavedSession(meta=meta, snapshot=snapshot, recap=recap)
+
+    def load_world_save(self) -> WorldSave:
+        """Load this campaign's hub state, or a fresh empty WorldSave.
+
+        Lazy-on-first-read: a save that predates this feature, or a new
+        save in a non-hub world, returns a default-populated WorldSave
+        without writing anything to disk. The first write happens via
+        save_world_save() (called from item 4's recruit / delve-end flows).
+
+        Raises SaveSchemaIncompatibleError on JSON or pydantic validation
+        failure — same pattern as load(), so the websocket layer's typed
+        error path catches it cleanly.
+        """
+        row = self._conn.execute(
+            "SELECT payload_json FROM world_save WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return WorldSave()
+        try:
+            raw = json.loads(row[0])
+            return WorldSave.model_validate(raw)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise SaveSchemaIncompatibleError(
+                save_path=self._path or Path("<in-memory>"),
+                underlying=(
+                    exc if isinstance(exc, ValidationError)
+                    else ValidationError.from_exception_data(
+                        title="invalid_world_save_json", line_errors=[]
+                    )
+                ),
+            ) from exc
 
     def append_narrative(self, entry: NarrativeEntry) -> None:
         """Append a narrative entry to the log."""

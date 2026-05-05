@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from sidequest.game.persistence import SaveSchemaIncompatibleError, SqliteStore
 from sidequest.game.world_save import Hireling, WallEntry, WorldSave
 
 
@@ -108,3 +109,22 @@ def test_world_save_round_trip_json():
     assert ws2.dungeon_wounds == {"grimvault": True}
     assert ws2.latest_delve_sin == "pride"
     assert ws2.delve_count == 3
+
+
+def test_load_world_save_empty_returns_default():
+    store = SqliteStore.open_in_memory()
+    ws = store.load_world_save()
+    assert ws.roster == []
+    assert ws.currency == 0
+    assert ws.delve_count == 0
+
+
+def test_load_world_save_invalid_json_raises():
+    store = SqliteStore.open_in_memory()
+    store._conn.execute(
+        "INSERT INTO world_save (id, payload_json, saved_at) VALUES (1, ?, ?)",
+        ("not json", "2026-05-05T00:00:00+00:00"),
+    )
+    store._conn.commit()
+    with pytest.raises(SaveSchemaIncompatibleError):
+        store.load_world_save()
