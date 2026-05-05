@@ -185,7 +185,7 @@ def test_message_type_yield_wire_string() -> None:
 
 
 def test_message_type_complete_count() -> None:
-    """All 44 GameMessage variants must be represented.
+    """All 47 GameMessage variants must be represented.
 
     Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
     Group D Task 7 reserved DISPATCH_PACKAGE, NARRATOR_DIRECTIVE_USED,
@@ -195,10 +195,23 @@ def test_message_type_complete_count() -> None:
     Voice protocol additions (VOICE_SIGNAL, VOICE_TEXT) bumped 41 → 43.
     Story 47-3 added CONFRONTATION_OUTCOME (Phase 5 reveal dispatch);
     bumped 43 → 44.
+    Sünden engine plan item 4a added HUB_VIEW (outbound), DUNGEON_SELECT
+    (inbound), RETREAT_TO_HAMLET (inbound); bumped 44 → 47.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 44
+    assert len(MessageType) == 47
+
+
+# ===========================================================================
+# Sünden engine plan item 4a — delve lifecycle MessageType variants
+# ===========================================================================
+
+
+def test_new_message_types_present() -> None:
+    assert MessageType.HUB_VIEW.value == "HUB_VIEW"
+    assert MessageType.DUNGEON_SELECT.value == "DUNGEON_SELECT"
+    assert MessageType.RETREAT_TO_HAMLET.value == "RETREAT_TO_HAMLET"
 
 
 # ===========================================================================

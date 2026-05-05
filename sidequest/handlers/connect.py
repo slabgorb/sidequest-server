@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.game.builder import CharacterBuilder
+from sidequest.game.delve_lifecycle import build_available_dungeons, is_hub_world
 from sidequest.game.event_log import EventLog
 from sidequest.game.persistence import (
     SaveSchemaIncompatibleError,
@@ -31,6 +32,8 @@ from sidequest.protocol.messages import (
     ConfrontationMessage,
     ConfrontationPayload,
     GameResumedMessage,
+    HubViewMessage,
+    HubViewPayload,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SessionEventMessage,
@@ -52,6 +55,7 @@ from sidequest.server.session_helpers import (
     _presence_msg,
     _resolve_location_display,
 )
+from sidequest.telemetry.spans.session import SPAN_SESSION_HUB_MODE_ENTERED
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
@@ -298,39 +302,12 @@ class ConnectHandler:
                 )
                 return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
 
-            # Hub-world guard. A hub world (today: only `caverns_three_sins`)
-            # has child dungeons in `world.dungeons` and cannot start a delve
-            # directly — the dungeon-pick UI (engine-plan item 4 of the
-            # Hamlet-of-Sünden spec, not yet shipped) routes through it. Until
-            # then, fail loud rather than letting the session limp through and
-            # crash later on a missing cartography or empty openings list.
-            _world_obj = genre_pack.worlds.get(row.world_slug)
-            if _world_obj is not None and _world_obj.dungeons:
-                _watcher_publish(
-                    "session_hub_world_blocked",
-                    {
-                        "slug": slug,
-                        "genre": row.genre_slug,
-                        "world": row.world_slug,
-                        "dungeons": sorted(_world_obj.dungeons.keys()),
-                    },
-                    component="session",
-                    severity="error",
-                )
-                return [
-                    _error_msg(
-                        f"World {row.world_slug!r} is a hub world with "
-                        f"{len(_world_obj.dungeons)} dungeons "
-                        f"({', '.join(sorted(_world_obj.dungeons.keys()))}). "
-                        "Pick a dungeon to start a delve. The dungeon-pick UI "
-                        "is not yet implemented; tracked as engine-plan item 4 "
-                        "of the Hamlet-of-Sünden spec.",
-                        reconnect_required=False,
-                        code="hub_world_requires_dungeon_selection",
-                    )
-                ]
-
             # Restore saved snapshot, or start fresh (Bug 2 fix: resume semantics).
+            #
+            # Loaded BEFORE the hub-mode branch below so the hub branch can
+            # distinguish "fresh / between-delves" (emit HUB_VIEW) from
+            # "mid-delve resume" (skip HUB_VIEW, fall through to the
+            # standard resume path). Sünden engine plan Task 7.
             try:
                 saved = store.load()
             except SaveSchemaIncompatibleError as exc:
@@ -365,6 +342,49 @@ class ConnectHandler:
                         code="save_schema_invalid",
                     )
                 ]
+
+            # Hub-mode emission. A hub world (today: only ``caverns_three_sins``)
+            # has child dungeons; the connect handler emits HUB_VIEW so the
+            # client can render the dungeon-pick + recruit UI. Skipped when
+            # the save is mid-delve (``active_delve_dungeon`` set) — that
+            # snapshot resumes through the standard load path below.
+            #
+            # The next inbound message in hub mode must be DUNGEON_SELECT
+            # (or a hub REST mutation); openings/cartography/chargen/
+            # narrator are intentionally NOT initialised here. Sünden engine
+            # plan Task 7.
+            _world_obj = genre_pack.worlds.get(row.world_slug)
+            if (
+                _world_obj is not None
+                and is_hub_world(_world_obj)
+                and (saved is None or saved.snapshot.active_delve_dungeon is None)
+            ):
+                world_save = store.load_world_save()
+                _watcher_publish(
+                    SPAN_SESSION_HUB_MODE_ENTERED,
+                    {
+                        "slug": slug,
+                        "genre": row.genre_slug,
+                        "world": row.world_slug,
+                        "roster_size": len(world_save.roster),
+                        "delve_count": world_save.delve_count,
+                    },
+                    component="session",
+                )
+                return [
+                    HubViewMessage(
+                        payload=HubViewPayload(
+                            slug=slug,
+                            genre_slug=row.genre_slug,
+                            world_slug=row.world_slug,
+                            available_dungeons=build_available_dungeons(
+                                _world_obj, world_save
+                            ),
+                            world_save=world_save,
+                        ),
+                    ),
+                ]
+
             if saved is not None:
                 snapshot = saved.snapshot
                 _backfill_magic_state_on_resume(
