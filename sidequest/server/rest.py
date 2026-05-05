@@ -654,7 +654,7 @@ def create_rest_router() -> APIRouter:
 
         Recruit is free in this plan — no currency cost. Item 4b owns the
         roll; the OTEL ``session.hireling_recruited`` watcher event is
-        Task 12 and is intentionally NOT emitted here.
+        emitted after ``save_world_save`` below.
         """
         save_dir: Path = request.app.state.save_dir
         db = db_path_for_slug(save_dir, slug)

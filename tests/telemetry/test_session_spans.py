@@ -28,6 +28,7 @@ from sidequest.game.persistence import (
     upsert_game,
 )
 from sidequest.game.world_save import Hireling, WorldSave
+from sidequest.handlers.retreat_to_hamlet import maybe_end_delve_on_player_dead
 from sidequest.server.app import create_app
 from tests._helpers.delve import (
     drive_connect,
@@ -192,6 +193,49 @@ async def test_delve_ended_span_fires_with_outcome(
     assert fields["dungeon"] == _DUNGEON
     assert fields["outcome"] == "retreat"
     assert fields["party_size"] == 1
+    assert fields["delve_count_after"] == 1
+    assert meta["component"] == "session"
+
+
+@pytest.mark.asyncio
+async def test_delve_ended_span_fires_on_player_dead_defeat(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """player_dead auto-trigger emits delve_ended with outcome="defeat"."""
+    slug = "span-delve-ended-defeat"
+    seed_hub_game(tmp_path, slug)
+    h1 = drive_recruit(
+        tmp_path, slug, hireling_id="prig_001", name="Mira", archetype="prig"
+    )
+
+    captured = _capture(monkeypatch, "sidequest.handlers.retreat_to_hamlet")
+
+    handler = make_handler(tmp_path, search_paths=[_CONTENT_SEARCH_PATH])
+    await drive_connect(handler, slug)
+    await drive_dungeon_select(
+        handler, dungeon=_DUNGEON, party_hireling_ids=[h1.id]
+    )
+
+    # Simulate a narrator turn flipping player_dead True.
+    snap = handler._room.snapshot
+    assert snap.player_dead is False
+    snap.player_dead = True
+    out = await maybe_end_delve_on_player_dead(
+        session=handler,
+        slug=slug,
+        prev_player_dead=False,
+        snapshot=snap,
+    )
+    assert not [m for m in out if getattr(m, "type", None) == "ERROR"]
+
+    matches = _events_of_type(captured, "session.delve_ended")
+    assert len(matches) == 1, (
+        f"expected one session.delve_ended; got {[e[0] for e in captured]}"
+    )
+    _, fields, meta = matches[0]
+    assert fields["slug"] == slug
+    assert fields["dungeon"] == _DUNGEON
+    assert fields["outcome"] == "defeat"
     assert fields["delve_count_after"] == 1
     assert meta["component"] == "session"
 
