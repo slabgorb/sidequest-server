@@ -12,6 +12,7 @@ of the spec (see file header for plan links).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -39,3 +40,34 @@ class Hireling(BaseModel):
     status: Literal["active", "dead", "missing"] = "active"
     recruited_at_delve: int = 0              # the WorldSave.delve_count when added
     notes: str = ""                          # narrator-emitted flavor; free text
+
+
+class WallEntry(BaseModel):
+    """One row of Sünden's Wall (the campaign-memory monument).
+
+    Append-only ledger; the Wall does not erase. One entry per
+    delve-resolution event, regardless of outcome.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    delve_number: int                        # 1-indexed, matches WorldSave.delve_count at write-time
+    sin: str                                 # the dungeon's sin slug ("pride" | "greed" | "gluttony"); read from Dungeon.config.sin at write-time
+    dungeon: str                             # dungeon slug ("grimvault" | "horden" | "mawdeep")
+    party_hireling_ids: list[str]            # ids of the hirelings who delved (alive or dead)
+
+    # Party fate. Three orthogonal-to-wound outcomes: cleared dungeon
+    # without TPK (victory), TPK (defeat), or chose to leave alive
+    # (retreat). The spec ("Wounded Sins") treats wound-status as a
+    # SEPARATE flag — see ``wounded_boss`` below. This split lets
+    # "TPK after wounding the boss" be recorded honestly instead of
+    # being forced into a single conflated literal.
+    outcome: Literal["victory", "defeat", "retreat"]
+
+    # Did this delve culminate in the boss-floor / wound event the
+    # spec calls out? Independent of ``outcome`` — a defeat can still
+    # have wounded the boss. The post-delve apply step uses this flag
+    # to flip ``WorldSave.dungeon_wounds[dungeon]``.
+    wounded_boss: bool = False
+
+    timestamp: datetime                      # write-time, UTC
