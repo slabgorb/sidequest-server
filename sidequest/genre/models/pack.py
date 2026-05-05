@@ -112,10 +112,77 @@ class PortraitManifestEntry(BaseModel):
     element_visual: str = ""
 
 
+class DungeonConfig(BaseModel):
+    """Top of dungeons/<slug>/dungeon.yaml — slim variant of WorldConfig.
+
+    A dungeon is a delvable child of a hub world. The hub owns regional
+    lore, factions, archetype roster, audio, and the hamlet; each
+    dungeon owns its own cartography, openings, rooms, creatures,
+    encounter tables, drift profile, wound profile, and approach hamlet.
+
+    `parent_world` MUST equal the slug of the world directory containing
+    `dungeons/`. The loader enforces this; mismatches are loud authoring
+    errors per the No Silent Fallbacks rule.
+    """
+
+    # extra=allow so dungeons can carry the same flatten-extras as WorldConfig
+    # (keeper, tagline, sin, etc.) without each one being a model field.
+    model_config = {"extra": "allow"}
+
+    parent_world: str
+    name: str
+    description: str
+    sin: str | None = None
+    cover_poi: str | None = None
+    axis_snapshot: dict[str, float] = Field(default_factory=dict)
+
+
+class Dungeon(BaseModel):
+    """A delvable dungeon under a hub world's `dungeons/` subdirectory.
+
+    Carries everything required to run a delve: cartography, openings,
+    legends, tropes, plus narrator-zone fodder (drift_profile,
+    wound_profile) and a per-dungeon approach hamlet. Most per-dungeon
+    files (creatures, encounter_tables, factions, rooms) are kept as
+    raw YAML for now and promoted to typed models when consumers exist.
+    """
+
+    model_config = {"extra": "allow"}
+
+    config: DungeonConfig
+    cartography: CartographyConfig
+    openings: list[Opening] = Field(default_factory=list)
+    legends: list[Legend] = Field(default_factory=list)
+    tropes: list[TropeDefinition] = Field(default_factory=list)
+    visual_style: Any = None
+    portrait_manifest: list[PortraitManifestEntry] = Field(default_factory=list)
+    # Narrator-zone fodder; engine consumes in a later plan.
+    drift_profile: Any = None
+    wound_profile: Any = None
+    # Approach hamlet (Ashgate / Copperbridge / Gristwell).
+    approach: Any = None
+    # Raw passthrough — schema upgrades when consumers exist.
+    factions_raw: Any = None
+    creatures_raw: Any = None
+    encounter_tables_raw: Any = None
+    rooms_raw: Any = None
+
+
 class World(BaseModel):
     """A world within a genre pack, assembled from worlds/{slug}/.
 
     Fields are populated by the loader (Story 41-3).
+
+    A *leaf* world owns its own cartography and openings — this is the
+    classic shape and what every world other than `caverns_three_sins`
+    looks like today.
+
+    A *hub* world has `dungeons/` populated, no world-level cartography,
+    and no world-level openings. The session handler refuses to start a
+    delve in a hub world until the dungeon-pick UI ships
+    (engine-plan item 4 of the Hamlet-of-Sünden spec).
+
+    Invariant: `cartography is None` ⇔ `dungeons` is non-empty.
     """
 
     # No extra="forbid" at aggregate level — loader populates this
@@ -124,7 +191,8 @@ class World(BaseModel):
     config: WorldConfig
     lore: WorldLore
     legends: list[Legend] = Field(default_factory=list)
-    cartography: CartographyConfig
+    # None on hub worlds; required on leaf worlds. Enforced by the loader.
+    cartography: CartographyConfig | None = None
     cultures: list[Culture] = Field(default_factory=list)
     tropes: list[TropeDefinition] = Field(default_factory=list)
     archetypes: list[NpcArchetype] = Field(default_factory=list)
@@ -138,6 +206,10 @@ class World(BaseModel):
     char_creation: list[CharCreationScene] = Field(default_factory=list)
     chassis_instances: list[ChassisInstanceConfig] = Field(default_factory=list)
     magic_register: str = ""
+    # Hub-world children. Empty for leaf worlds.
+    dungeons: dict[str, Dungeon] = Field(default_factory=dict)
+    # Hamlet-of-Sünden hub data; raw YAML for now (typed schema in a later plan).
+    hamlet: Any = None
 
 
 class GenrePack(BaseModel):
