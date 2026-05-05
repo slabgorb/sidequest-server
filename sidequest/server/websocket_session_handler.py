@@ -3182,6 +3182,12 @@ class WebSocketSessionHandler:
                 # the still-in-delve state right up to the moment of
                 # death; the appended HUB_VIEW carries the post-end view.
                 if sd._room is not None:
+                    # Lazy import: matches the ``_message_handler_for``
+                    # registry pattern (lines 640-645). Handler modules
+                    # import ``WebSocketSessionHandler`` under
+                    # ``TYPE_CHECKING``; importing them at module top
+                    # would invert that relationship and risk circular
+                    # imports as the handler surface grows.
                     from sidequest.handlers.retreat_to_hamlet import (  # noqa: PLC0415
                         maybe_end_delve_on_player_dead,
                     )

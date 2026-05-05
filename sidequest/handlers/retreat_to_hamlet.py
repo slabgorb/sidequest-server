@@ -46,7 +46,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from sidequest.game.delve_lifecycle import apply_delve_end, build_available_dungeons
-from sidequest.game.persistence import SqliteStore, db_path_for_slug, get_game
+from sidequest.game.persistence import get_game
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import GenreLoader
 from sidequest.protocol.messages import (
@@ -94,14 +94,22 @@ async def _end_delve(
             "callers must validate active_delve_dungeon first"
         )
 
-    db = db_path_for_slug(session._save_dir, slug)
-    if not db.exists():
-        return [_error_msg(f"unknown game slug: {slug}", code="unknown_slug")]
-    store = SqliteStore(db)
-    store.initialize()
+    # Use the room's canonical SqliteStore — opening a sibling handle
+    # against the same DB file would violate ADR-037 (the room owns the
+    # store) AND leak the prior handle when ``rebind_world`` swaps it.
+    # The room is already bound by DUNGEON_SELECT/CONNECT, so the store
+    # is guaranteed non-None on the success path of those handlers.
+    store = room._store
+    if store is None:
+        # Programming-error path — a bound room+snapshot without a bound
+        # store would mean DUNGEON_SELECT/CONNECT skipped the bind_world
+        # store= argument. Fail loud rather than silently re-open.
+        raise RuntimeError(
+            "_end_delve called on a room with no bound store — "
+            "bind_world must be called with store= before delve-end"
+        )
     row = get_game(store, slug)
     if row is None:
-        store.close()
         return [_error_msg(f"unknown game slug: {slug}", code="unknown_slug")]
 
     try:
@@ -109,7 +117,6 @@ async def _end_delve(
         pack = loader.load(row.genre_slug)
         world_dir = loader.find(row.genre_slug) / "worlds" / row.world_slug
     except Exception as exc:
-        store.close()
         logger.error(
             "session.end_delve.genre_load_failed genre=%s slug=%s error=%s",
             row.genre_slug,
@@ -125,7 +132,6 @@ async def _end_delve(
 
     world = pack.worlds.get(row.world_slug)
     if world is None:
-        store.close()
         return [
             _error_msg(
                 f"world {row.world_slug!r} not found in pack {row.genre_slug!r}",
@@ -137,7 +143,6 @@ async def _end_delve(
         # Dungeon disappeared between delve-start and delve-end —
         # only possible if content was hot-swapped mid-session. Fail
         # loud rather than silently lose the wall entry.
-        store.close()
         return [
             _error_msg(
                 f"dungeon {dungeon_slug!r} no longer exists in world "
@@ -146,7 +151,6 @@ async def _end_delve(
             )
         ]
     if dungeon.config.sin is None:
-        store.close()
         return [
             _error_msg(
                 f"dungeon {dungeon_slug!r} has no sin configured; "
@@ -184,8 +188,10 @@ async def _end_delve(
     )
     # ``bind_world`` short-circuits when a snapshot is already bound.
     # The room currently holds the delve-mode snapshot, so the
-    # explicit rebind helper is the right path.
-    room.rebind_world(snapshot=fresh, store=store, world_dir=world_dir)
+    # explicit rebind helper is the right path. ``store=`` is omitted
+    # so ``rebind_world`` preserves the canonical store the room
+    # already owns (avoids dropping a live SQLite handle on the floor).
+    room.rebind_world(snapshot=fresh, world_dir=world_dir)
     room.save()
 
     # Reload after persistence so the HUB_VIEW reads the just-written
