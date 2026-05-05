@@ -217,9 +217,14 @@ class DungeonSelectHandler:
             active_delve_dungeon=payload.dungeon,
             characters=party,
         )
-        # bind_world is idempotent — first bind wins. Hub-mode connect
-        # doesn't bind, so this is the first bind on the room.
-        room.bind_world(snapshot=new_snapshot, store=store, world_dir=world_dir)
+        # rebind_world unconditionally swaps the bound snapshot+session.
+        # Hub-mode connect leaves the room unbound, so on the first delve
+        # this is functionally a bind. On a *second* delve (i.e. after
+        # ``_end_delve`` rebound the room to a hub-mode snapshot), the
+        # idempotent ``bind_world`` would silently no-op and the new
+        # delve snapshot would never install — caught by the Task 13 e2e
+        # loop. ``rebind_world`` is the right primitive for both cases.
+        room.rebind_world(snapshot=new_snapshot, store=store, world_dir=world_dir)
         room.save()
 
         _watcher_publish(
