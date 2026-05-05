@@ -16,11 +16,16 @@ coal (ADR-014 inverse).
 Post-45-11 invariant: ``narrative_log.round_number == turn_manager.interaction``,
 and ``scrapbook_entries.turn_id`` is set from the same interaction
 counter at emit time. So scrapbook coverage maps directly to round
-number without an explicit join through narrative_log.
+number without an explicit join through narrative_log. The lockstep
+write happens at the narration site —
+``websocket_session_handler._execute_narration_turn`` writes
+``narrative_log.round_number`` from ``turn_manager.interaction`` on
+every committed turn — which is non-obvious from this module alone.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from sidequest.game.persistence import SqliteStore
@@ -31,6 +36,8 @@ from sidequest.telemetry.spans import (
     Span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,6 +124,14 @@ def detect_scrapbook_coverage_gaps(
         pass
 
     if gap_count > 0:
+        logger.warning(
+            "scrapbook.coverage_gap_detected genre=%s world=%s slug=%s gap_count=%d gap_rounds=%s",
+            genre,
+            world,
+            slug,
+            gap_count,
+            list(gap),
+        )
         # OTEL span attributes don't natively support nested lists in
         # every exporter — serialize gap_rounds as a tuple of ints which
         # the SDK handles, and publish the verbatim list to the watcher
