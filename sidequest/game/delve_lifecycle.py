@@ -29,6 +29,9 @@ The verbs are the only public surface:
 from __future__ import annotations
 
 import logging
+import random
+import re
+import secrets
 from datetime import datetime
 from typing import Literal
 
@@ -40,7 +43,8 @@ from sidequest.game.creature_core import (
 )
 from sidequest.game.session import GameSnapshot
 from sidequest.game.world_save import Hireling, WallEntry, WorldSave
-from sidequest.genre.models.pack import Dungeon, World
+from sidequest.genre.models.pack import Dungeon, GenrePack, World
+from sidequest.genre.names import build_from_culture
 from sidequest.protocol.messages import AvailableDungeon
 
 logger = logging.getLogger(__name__)
@@ -260,4 +264,146 @@ def apply_delve_end(
             "latest_delve_sin": dungeon_sin,
             "delve_count": new_count,
         }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 4b — recruit roll helper
+# ---------------------------------------------------------------------------
+
+
+# Hireling.id pattern: ^[a-z][a-z0-9_]+$ (must start with a letter, then
+# alphanumeric/underscore). Used to slugify the funnel name into the
+# archetype prefix of a fresh hireling id.
+_SLUG_NONALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_funnel_name(name: str) -> str:
+    """Slug-shape a funnel display name for use in a Hireling.id prefix.
+
+    'Cataloging Delver' → 'cataloging_delver'.
+    Strips leading/trailing underscores and collapses runs.
+    """
+    s = _SLUG_NONALNUM_RE.sub("_", name.lower()).strip("_")
+    if not s or not s[0].isalpha():
+        # Shouldn't happen on well-authored content, but a name that begins
+        # with a digit or punctuation would fail Hireling.id's pattern. Fail
+        # loud — content authoring bug, not something to silently mask.
+        raise ValueError(
+            f"funnel name {name!r} slugifies to {s!r} which cannot prefix "
+            "a Hireling.id (pattern ^[a-z][a-z0-9_]+$)"
+        )
+    return s
+
+
+def _roll_hireling_from_funnels(
+    *,
+    pack: GenrePack,
+    world: World,
+    existing_ids: set[str],
+    rng: random.Random | None = None,
+) -> Hireling:
+    """Roll a fresh hireling from the world's archetype_funnels.
+
+    Picks a funnel weighted by ``len(funnel.absorbs)`` (a natural proxy for
+    "how many axis-pair combos this funnel claims" — funnels do not carry
+    an explicit ``weight`` field), generates a name via the genre pack's
+    namegen path, and constructs a slug-shaped id like
+    ``cataloging_delver_a3f1c2d4`` that satisfies Hireling.id's
+    ``^[a-z][a-z0-9_]+$`` pattern.
+
+    Raises ``ValueError`` when the world has no archetype_funnels (loader
+    bug — Sünden hub worlds are required to ship one) or when no culture
+    is available for namegen (genre/world authoring bug).
+
+    Notes is set to ``"sin_origin: <slug>"`` when the funnel has a sin
+    origin tag (Sünden hub-world feature) — this gives the narrator a
+    surface-level cue without coupling the data model to the sin system.
+
+    OTEL emission is the caller's responsibility (item 4b separates the
+    pure roll from the watcher event; Task 12 owns the recruit/dismiss
+    span).
+    """
+    if rng is None:
+        rng = random.Random()
+    if world.archetype_funnels is None or not world.archetype_funnels.funnels:
+        raise ValueError(
+            "world has no archetype_funnels; cannot roll a hireling. "
+            "Sünden hub worlds must ship archetype_funnels.yaml."
+        )
+    funnels = world.archetype_funnels.funnels
+    weights = [max(1, len(f.absorbs)) for f in funnels]
+    chosen = rng.choices(funnels, weights=weights, k=1)[0]
+
+    archetype_slug = _slugify_funnel_name(chosen.name)
+    name = _generate_hireling_name(pack=pack, world=world, rng=rng)
+
+    # Collision avoidance against ``existing_ids``. 4 hex bytes → 2^32
+    # combinations; collisions are astronomically unlikely but defended.
+    # Bounded loop instead of ``while True`` so a degenerate caller (e.g.
+    # an existing_ids set that somehow contains every possible id) fails
+    # loud instead of hanging.
+    for _ in range(64):
+        candidate_id = f"{archetype_slug}_{secrets.token_hex(4)}"
+        if candidate_id not in existing_ids:
+            break
+    else:
+        raise RuntimeError(
+            f"could not allocate a unique hireling id after 64 attempts "
+            f"(archetype_slug={archetype_slug!r}, "
+            f"existing_id_count={len(existing_ids)})"
+        )
+
+    notes = f"sin_origin: {chosen.sin_origin}" if chosen.sin_origin else ""
+
+    # Pydantic validation enforces the id pattern; a failure here is a
+    # code bug (slugifier returned something invalid) — fail loud, do
+    # not normalize.
+    return Hireling(
+        id=candidate_id,
+        name=name,
+        archetype=archetype_slug,
+        notes=notes,
+    )
+
+
+def _generate_hireling_name(
+    *,
+    pack: GenrePack,
+    world: World,
+    rng: random.Random,
+) -> str:
+    """Generate a person name via the genre pack's namegen pipeline.
+
+    Reuses ``build_from_culture`` (the existing namegen entry point used
+    by ``sidequest.cli.namegen.namegen``). Picks the world's culture if
+    one is configured; otherwise falls back to the genre pack's culture
+    list. Raises ``ValueError`` when neither has a culture (authoring
+    bug — the corpus pipeline cannot run without one).
+    """
+    cultures = list(world.cultures) if world.cultures else list(pack.cultures)
+    if not cultures:
+        raise ValueError(
+            "no cultures available for namegen "
+            f"(pack={pack.meta.name!r}, world={world.config.name!r}); "
+            "cannot generate a hireling name"
+        )
+    if pack.source_dir is None:
+        raise ValueError(
+            f"pack {pack.meta.name!r} has no source_dir; "
+            "cannot resolve corpus directory for namegen"
+        )
+    culture = rng.choice(cultures)
+    corpus_dir = pack.source_dir / "corpus"
+    generator = build_from_culture(culture, corpus_dir, rng)
+    # Bounded retries — namegen can produce empty / "of "-prefixed
+    # strings on small corpora; bail loudly rather than infinite-loop.
+    for _ in range(20):
+        candidate = generator.generate_person()
+        lower = candidate.lower()
+        if candidate and not lower.startswith("of ") and not lower.startswith("the "):
+            return candidate
+    raise RuntimeError(
+        f"namegen produced no acceptable name after 20 attempts "
+        f"(culture={culture.name!r})"
     )

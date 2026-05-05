@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from sidequest.game.delve_lifecycle import _roll_hireling_from_funnels, is_hub_world
 from sidequest.game.game_slug import generate_slug
 from sidequest.game.persistence import (
     GameMode,
@@ -616,42 +617,187 @@ def create_rest_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
         store = SqliteStore(db)
         store.initialize()
-        row = get_game(store, slug)
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        try:
+            row, _pack, world, world_save = _open_hub_session(store, request, slug)
+            available_dungeons = [
+                {
+                    "slug": dungeon_slug,
+                    "sin": world.dungeons[dungeon_slug].config.sin,
+                    "wounded": world_save.dungeon_wounds.get(dungeon_slug, False),
+                }
+                for dungeon_slug in sorted(world.dungeons)
+            ]
+            return {
+                "slug": slug,
+                "genre_slug": row.genre_slug,
+                "world_slug": row.world_slug,
+                "available_dungeons": available_dungeons,
+                "world_save": world_save.model_dump(mode="json"),
+            }
+        finally:
+            store.close()
 
-        search_paths = getattr(
-            request.app.state,
-            "genre_pack_search_paths",
-            DEFAULT_GENRE_PACK_SEARCH_PATHS,
-        )
-        genre_pack = load_genre_pack_cached(row.genre_slug, search_paths=search_paths)
-        world = genre_pack.worlds.get(row.world_slug)
-        if world is None or not world.dungeons:
+    @router.post("/api/games/{slug}/hub/recruit")
+    async def recruit_hireling(slug: str, request: Request) -> dict:
+        """Roll a fresh hireling and append them to the hub roster.
+
+        Returns the new Hireling JSON on success.
+
+        404: no game with slug.
+        409: world is not a hub world (``not_a_hub_world``) OR a delve is
+             currently active (``delve_in_progress``).
+
+        Recruit is free in this plan — no currency cost. Item 4b owns the
+        roll; the OTEL ``session.hireling_recruited`` watcher event is
+        Task 12 and is intentionally NOT emitted here.
+        """
+        save_dir: Path = request.app.state.save_dir
+        db = db_path_for_slug(save_dir, slug)
+        if not db.exists():
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        store = SqliteStore(db)
+        store.initialize()
+        try:
+            _row, pack, world, world_save = _open_hub_session(store, request, slug)
+            _reject_if_delving(store)
+
+            new_h = _roll_hireling_from_funnels(
+                pack=pack,
+                world=world,
+                existing_ids={h.id for h in world_save.roster},
+            )
+            store.save_world_save(
+                world_save.model_copy(update={"roster": [*world_save.roster, new_h]})
+            )
+            return new_h.model_dump(mode="json")
+        finally:
+            store.close()
+
+    @router.delete("/api/games/{slug}/hub/roster/{hireling_id}")
+    async def dismiss_hireling(
+        slug: str,
+        hireling_id: str,
+        request: Request,
+        reason: str = "dismiss",
+    ) -> dict:
+        """Remove a hireling from the hub roster.
+
+        Query parameter ``reason`` controls the semantics:
+          - ``dismiss`` (default): remove the row entirely.
+          - ``died_offscreen``: keep the row but flip status to ``dead``.
+            Used by the Wall / drift bookkeeping when a hireling dies
+            outside an active delve (e.g. between sessions).
+
+        404: no game with slug, or unknown hireling_id.
+        409: world is not a hub world / delve is active.
+        400: ``reason`` is not one of the two allowed values.
+
+        Returns the updated WorldSave JSON.
+        """
+        if reason not in {"dismiss", "died_offscreen"}:
             raise HTTPException(
-                status_code=409,
+                status_code=400,
                 detail={
-                    "code": "not_a_hub_world",
-                    "world_slug": row.world_slug,
-                    "reason": "world has no dungeons",
+                    "code": "invalid_reason",
+                    "allowed": ["dismiss", "died_offscreen"],
+                    "got": reason,
                 },
             )
+        save_dir: Path = request.app.state.save_dir
+        db = db_path_for_slug(save_dir, slug)
+        if not db.exists():
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        store = SqliteStore(db)
+        store.initialize()
+        try:
+            _row, _pack, _world, world_save = _open_hub_session(store, request, slug)
+            _reject_if_delving(store)
 
-        world_save = store.load_world_save()
-        available_dungeons = [
-            {
-                "slug": dungeon_slug,
-                "sin": world.dungeons[dungeon_slug].config.sin,
-                "wounded": world_save.dungeon_wounds.get(dungeon_slug, False),
-            }
-            for dungeon_slug in sorted(world.dungeons)
-        ]
-        return {
-            "slug": slug,
-            "genre_slug": row.genre_slug,
-            "world_slug": row.world_slug,
-            "available_dungeons": available_dungeons,
-            "world_save": world_save.model_dump(mode="json"),
-        }
+            target_idx = next(
+                (i for i, h in enumerate(world_save.roster) if h.id == hireling_id),
+                None,
+            )
+            if target_idx is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "hireling_not_found", "hireling_id": hireling_id},
+                )
+
+            if reason == "dismiss":
+                new_roster = [
+                    h for h in world_save.roster if h.id != hireling_id
+                ]
+            else:  # died_offscreen — keep the row, mark dead
+                new_roster = list(world_save.roster)
+                new_roster[target_idx] = world_save.roster[target_idx].model_copy(
+                    update={"status": "dead"}
+                )
+
+            updated = world_save.model_copy(update={"roster": new_roster})
+            store.save_world_save(updated)
+            return updated.model_dump(mode="json")
+        finally:
+            store.close()
 
     return router
+
+
+# ---------------------------------------------------------------------------
+# Hub session helpers — shared between GET /hub, POST /hub/recruit, and
+# DELETE /hub/roster/{id}.
+# ---------------------------------------------------------------------------
+
+
+def _open_hub_session(store: SqliteStore, request: Request, slug: str):
+    """Resolve (game row, pack, world, world_save) for hub-shaped requests.
+
+    Raises:
+      404 if the slug has no row in ``games``.
+      409 with ``code=not_a_hub_world`` if the world is not hub-shaped
+          (no dungeons configured).
+
+    Caller owns ``store`` lifetime and is responsible for ``store.close()``
+    via try/finally — this helper does not close on any exit path.
+    """
+    row = get_game(store, slug)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+    search_paths = getattr(
+        request.app.state,
+        "genre_pack_search_paths",
+        DEFAULT_GENRE_PACK_SEARCH_PATHS,
+    )
+    pack = load_genre_pack_cached(row.genre_slug, search_paths=search_paths)
+    world = pack.worlds.get(row.world_slug)
+    if world is None or not is_hub_world(world):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_a_hub_world",
+                "world_slug": row.world_slug,
+                "reason": "world has no dungeons",
+            },
+        )
+    world_save = store.load_world_save()
+    return row, pack, world, world_save
+
+
+def _reject_if_delving(store: SqliteStore) -> None:
+    """Raise 409 ``delve_in_progress`` when the snapshot is mid-delve.
+
+    The hub recruit/dismiss endpoints are deliberately gated to
+    hub-mode-only (per plan §10): mutating the roster while a delve is
+    underway would cross the snapshot/world_save boundary that
+    ``init_session`` was designed to keep clean. The check uses the same
+    ``active_delve_dungeon`` discriminator the websocket dispatch handlers
+    rely on, so REST and WS share one source of truth for "in delve".
+    """
+    saved = store.load()
+    if saved is not None and saved.snapshot.active_delve_dungeon is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "delve_in_progress",
+                "active_dungeon": saved.snapshot.active_delve_dungeon,
+            },
+        )
