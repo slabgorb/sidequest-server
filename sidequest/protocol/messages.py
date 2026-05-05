@@ -23,6 +23,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field, RootModel
 
+from sidequest.game.world_save import WorldSave
 from sidequest.protocol.base import ProtocolBase
 from sidequest.protocol.dice import (
     DiceRequestPayload,
@@ -893,6 +894,100 @@ class OrbitalChartMessage(ProtocolBase):
 
     type: Literal[MessageType.ORBITAL_CHART] = MessageType.ORBITAL_CHART
     payload: OrbitalIntentResponse
+    player_id: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Sünden engine plan item 4a — hub view + delve lifecycle envelope.
+#
+# HUB_VIEW is outbound only (server emits on hub-mode connect and on every
+# delve-end). DUNGEON_SELECT and RETREAT_TO_HAMLET are inbound; Task 4
+# registers them in the inbound discriminated union below. HubViewMessage is
+# intentionally NOT in the union so an inbound HUB_VIEW frame raises
+# ValidationError (the websocket ingress rejects unknown clients claiming
+# to drive UI state from outside).
+# ---------------------------------------------------------------------------
+
+
+class AvailableDungeon(ProtocolBase):
+    """Enriched dungeon descriptor in HUB_VIEW.
+
+    Shipping {slug, sin, wounded} together eliminates the need for a
+    client-side SIN_BY_DUNGEON map. The sin is resolved server-side from
+    Dungeon.config.sin (loader item 1); wounded is read from
+    WorldSave.dungeon_wounds.
+    """
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    slug: str
+    sin: str
+    wounded: bool
+
+
+class HubViewPayload(ProtocolBase):
+    """Outbound — sent on hub-mode connect and on every delve-end."""
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    slug: str
+    genre_slug: str
+    world_slug: str
+    available_dungeons: list[AvailableDungeon]
+    world_save: WorldSave
+
+
+class HubViewMessage(ProtocolBase):
+    """GameMessage::HubView — outbound only; not in the inbound union."""
+
+    type: Literal[MessageType.HUB_VIEW] = MessageType.HUB_VIEW
+    payload: HubViewPayload
+    player_id: str = ""
+
+
+class DungeonSelectPayload(ProtocolBase):
+    """Inbound — start a delve."""
+
+    model_config = {"populate_by_name": True, "extra": "forbid"}
+
+    dungeon: str
+    party_hireling_ids: list[str]
+
+
+class DungeonSelectMessage(ProtocolBase):
+    """GameMessage::DungeonSelect — inbound; transitions hub → delve."""
+
+    type: Literal[MessageType.DUNGEON_SELECT] = MessageType.DUNGEON_SELECT
+    payload: DungeonSelectPayload
+    player_id: str = ""
+
+
+# Party fate. Three orthogonal-to-wound outcomes. "defeat" is server-only
+# (player_dead auto-trigger) — the inbound wire type intentionally excludes
+# it so a client cannot claim defeat.
+DelveOutcome = Literal["retreat", "victory"]
+
+
+class RetreatToHamletPayload(ProtocolBase):
+    """Inbound — end a delve voluntarily.
+
+    ``outcome`` and ``wounded_boss`` are deliberately orthogonal so that
+    "we wounded the boss but two of us died" is recordable as
+    ``(retreat, wounded_boss=True)`` rather than being forced into a
+    single conflated literal.
+    """
+
+    model_config = {"populate_by_name": True, "extra": "forbid"}
+
+    outcome: DelveOutcome
+    wounded_boss: bool = False
+
+
+class RetreatToHamletMessage(ProtocolBase):
+    """GameMessage::RetreatToHamlet — inbound; transitions delve → hub."""
+
+    type: Literal[MessageType.RETREAT_TO_HAMLET] = MessageType.RETREAT_TO_HAMLET
+    payload: RetreatToHamletPayload
     player_id: str = ""
 
 

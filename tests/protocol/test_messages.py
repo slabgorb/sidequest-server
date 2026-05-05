@@ -952,3 +952,87 @@ def test_yield_message_parses_via_game_message() -> None:
     msg = GameMessage.model_validate(wire)
     assert msg.type == MessageType.YIELD
     assert msg.player_id == "p1"
+
+
+# ---------------------------------------------------------------------------
+# Sünden engine plan item 4a — hub view + delve lifecycle payloads
+# ---------------------------------------------------------------------------
+
+
+def test_hub_view_payload_round_trips() -> None:
+    from sidequest.game.world_save import WorldSave
+    from sidequest.protocol.messages import (
+        AvailableDungeon,
+        HubViewPayload,
+    )
+
+    p = HubViewPayload(
+        slug="x",
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_three_sins",
+        available_dungeons=[
+            AvailableDungeon(slug="grimvault", sin="pride", wounded=False),
+            AvailableDungeon(slug="horden", sin="greed", wounded=False),
+            AvailableDungeon(slug="mawdeep", sin="gluttony", wounded=True),
+        ],
+        world_save=WorldSave(),
+    )
+    raw = p.model_dump_json()
+    p2 = HubViewPayload.model_validate_json(raw)
+    assert [d.slug for d in p2.available_dungeons] == [
+        "grimvault",
+        "horden",
+        "mawdeep",
+    ]
+    assert {d.slug: d.sin for d in p2.available_dungeons} == {
+        "grimvault": "pride",
+        "horden": "greed",
+        "mawdeep": "gluttony",
+    }
+    assert p2.available_dungeons[2].wounded is True
+    assert p2.world_save.delve_count == 0
+
+
+def test_dungeon_select_payload_rejects_unknown_keys() -> None:
+    from pydantic import ValidationError
+
+    from sidequest.protocol.messages import DungeonSelectPayload
+
+    with pytest.raises(ValidationError):
+        DungeonSelectPayload(
+            dungeon="grimvault",
+            party_hireling_ids=["a"],
+            extra_field="oops",  # type: ignore[call-arg]
+        )
+
+
+def test_retreat_outcome_validates_literal_and_excludes_defeat() -> None:
+    """Defeat is server-only — never inbound from a client. The wire
+    type's literal MUST exclude it so a malicious or buggy client
+    cannot claim defeat (which would short-circuit player_dead's
+    auto-trigger logic in Task 10)."""
+    from pydantic import ValidationError
+
+    from sidequest.protocol.messages import RetreatToHamletPayload
+
+    with pytest.raises(ValidationError):
+        RetreatToHamletPayload(outcome="defeat")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        RetreatToHamletPayload(outcome="wounded_dungeon")  # type: ignore[arg-type]
+    for ok in ("retreat", "victory"):
+        p = RetreatToHamletPayload(outcome=ok)  # type: ignore[arg-type]
+        assert p.outcome == ok
+        assert p.wounded_boss is False
+
+
+def test_retreat_wounded_boss_orthogonal_to_outcome() -> None:
+    """All four (outcome, wounded_boss) inbound combinations construct.
+    Client UI presents these as outcome buttons + a separate wound checkbox.
+    """
+    from sidequest.protocol.messages import RetreatToHamletPayload
+
+    for outcome in ("retreat", "victory"):
+        for wounded in (True, False):
+            p = RetreatToHamletPayload(outcome=outcome, wounded_boss=wounded)  # type: ignore[arg-type]
+            assert p.outcome == outcome
+            assert p.wounded_boss is wounded
