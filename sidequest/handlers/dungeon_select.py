@@ -47,7 +47,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from sidequest.game.delve_lifecycle import is_hub_world, materialize_party
-from sidequest.game.persistence import db_path_for_slug, get_game
+from sidequest.game.persistence import SqliteStore, db_path_for_slug, get_game
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.loader import GenreLoader
 from sidequest.server.session_helpers import _error_msg
@@ -131,8 +131,6 @@ class DungeonSelectHandler:
                     code="unknown_slug",
                 )
             ]
-        from sidequest.game.persistence import SqliteStore
-
         store = SqliteStore(db)
         store.initialize()
         row = get_game(store, slug)

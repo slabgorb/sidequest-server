@@ -236,6 +236,47 @@ class SessionRoom:
             self._store = store
             self._session = Session(snapshot, orbital_content=orbital_content)
 
+    def rebind_world(
+        self,
+        *,
+        snapshot: GameSnapshot,
+        store: SqliteStore | None = None,
+        world_dir: Path | None = None,
+    ) -> None:
+        """Replace the bound snapshot/session — used at delve→hub transitions.
+
+        ``bind_world`` short-circuits when a snapshot is already bound
+        (the idempotency that protects concurrent slug-connect from
+        constructing two sessions). Sünden's delve-end path needs to
+        SWAP the snapshot when the room transitions back from delve
+        mode to hub mode: the prior delve-mode snapshot must be torn
+        out and a fresh hub-mode snapshot installed in its place.
+        ``rebind_world`` is the explicit unbind+bind helper for that
+        flow.
+
+        ``store`` is optional — when omitted, the existing
+        ``self._store`` is preserved (delve-end keeps the same SQLite
+        handle; only the in-memory snapshot+session swap). When
+        provided, replaces the bound store. World-dir handling mirrors
+        ``bind_world``.
+        """
+        orbital_content: OrbitalContent | None = None
+        if world_dir is not None:
+            try:
+                orbital_content = load_orbital_content(world_dir)
+            except OrbitalContentMissingError:
+                orbital_content = None
+                _log.debug(
+                    "session.no_orbital_tier_on_rebind slug=%s world_dir=%s",
+                    self.slug,
+                    world_dir,
+                )
+        with self._lock:
+            self._snapshot = snapshot
+            if store is not None:
+                self._store = store
+            self._session = Session(snapshot, orbital_content=orbital_content)
+
     @property
     def snapshot(self) -> GameSnapshot | None:
         """Canonical snapshot for the slug, or None before first bind."""

@@ -653,6 +653,9 @@ class WebSocketSessionHandler:
             from sidequest.handlers.orbital_intent import HANDLER as ORBITAL_INTENT_HANDLER
             from sidequest.handlers.player_action import HANDLER as PLAYER_ACTION_HANDLER
             from sidequest.handlers.player_seat import HANDLER as PLAYER_SEAT_HANDLER
+            from sidequest.handlers.retreat_to_hamlet import (
+                HANDLER as RETREAT_TO_HAMLET_HANDLER,
+            )
             from sidequest.handlers.session_event import HANDLER as SESSION_EVENT_HANDLER
             from sidequest.handlers.yield_action import HANDLER as YIELD_HANDLER
 
@@ -666,6 +669,7 @@ class WebSocketSessionHandler:
                 "ORBITAL_INTENT": ORBITAL_INTENT_HANDLER,
                 "ACTION_REVEAL": ACTION_REVEAL_HANDLER,
                 "DUNGEON_SELECT": DUNGEON_SELECT_HANDLER,
+                "RETREAT_TO_HAMLET": RETREAT_TO_HAMLET_HANDLER,
             }
             cls._MESSAGE_HANDLERS = registry
         return registry.get(msg_type)

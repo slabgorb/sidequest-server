@@ -22,6 +22,8 @@ from sidequest.game.world_save import Hireling
 from sidequest.protocol.messages import (
     DungeonSelectMessage,
     DungeonSelectPayload,
+    RetreatToHamletMessage,
+    RetreatToHamletPayload,
     SessionEventMessage,
     SessionEventPayload,
 )
@@ -90,24 +92,41 @@ def drive_dismiss(
     hireling_id: str,
     reason: str = "died_offscreen",
 ) -> None:
-    """Mark a roster Hireling as dead via direct WorldSave manipulation.
+    """Mutate the roster to reflect a hireling departure.
 
-    Reason is purely the test-side framing — at the data layer this maps
-    to ``status="dead"``. Task 11 will reimplement this against the
-    dismiss REST endpoint.
+    ``reason`` controls the data-layer effect (Task 11 will reimplement
+    this against the dismiss REST endpoint, but the contract here
+    matches the engine plan up front so test bodies don't churn):
+
+      * ``"dismiss"`` — voluntary roster removal. The Hireling row is
+        removed from ``roster`` entirely (the player fired them; they
+        stop being part of the campaign).
+      * ``"died_offscreen"`` (default) — the Hireling's ``status`` is
+        flipped to ``"dead"`` and the row is retained so the roster
+        history (Wall references, recruited_at_delve audit trail) is
+        preserved.
+
+    Other values raise — no silent fallback to "dead" because that's
+    exactly the bug the reviewer caught (Task 8 implementation
+    ignored ``reason`` and unconditionally killed).
     """
-    del reason  # documented above; not used at the data layer
+    if reason not in ("dismiss", "died_offscreen"):
+        raise ValueError(
+            f"unknown drive_dismiss reason {reason!r}; "
+            "expected 'dismiss' or 'died_offscreen'"
+        )
     db = db_path_for_slug(save_dir, slug)
     store = SqliteStore(db)
     store.initialize()
     try:
         ws = store.load_world_save()
-        new_roster = []
-        for h in ws.roster:
-            if h.id == hireling_id:
-                new_roster.append(h.model_copy(update={"status": "dead"}))
-            else:
-                new_roster.append(h)
+        if reason == "dismiss":
+            new_roster = [h for h in ws.roster if h.id != hireling_id]
+        else:  # died_offscreen
+            new_roster = [
+                h.model_copy(update={"status": "dead"}) if h.id == hireling_id else h
+                for h in ws.roster
+            ]
         store.save_world_save(ws.model_copy(update={"roster": new_roster}))
     finally:
         store.close()
@@ -168,6 +187,26 @@ async def drive_dungeon_select(
             payload=DungeonSelectPayload(
                 dungeon=dungeon,
                 party_hireling_ids=party_hireling_ids,
+            ),
+        )
+    )
+
+
+async def drive_retreat(
+    handler: WebSocketSessionHandler,
+    *,
+    outcome: str = "retreat",
+    wounded_boss: bool = False,
+    player_id: str = "alice",
+) -> list[object]:
+    """Drive a RETREAT_TO_HAMLET through the dispatcher. Returns outbound msgs."""
+    return await handler.handle_message(
+        RetreatToHamletMessage(
+            type="RETREAT_TO_HAMLET",  # type: ignore[arg-type]
+            player_id=player_id,
+            payload=RetreatToHamletPayload(
+                outcome=outcome,  # type: ignore[arg-type]
+                wounded_boss=wounded_boss,
             ),
         )
     )
