@@ -71,9 +71,15 @@ def test_turn_span_names() -> None:
 
 
 def test_narrator_span_names() -> None:
-    from sidequest.telemetry.spans import SPAN_NARRATOR_SEALED_ROUND
+    from sidequest.telemetry.spans import (
+        SPAN_NARRATOR_SEALED_ROUND,
+        SPAN_NARRATOR_SESSION_ROTATED,
+        SPAN_NARRATOR_UNRECOVERABLE,
+    )
 
     assert SPAN_NARRATOR_SEALED_ROUND == "narrator.sealed_round"
+    assert SPAN_NARRATOR_SESSION_ROTATED == "narrator.session_rotated"
+    assert SPAN_NARRATOR_UNRECOVERABLE == "narrator.unrecoverable"
 
 
 def test_orchestrator_span_names() -> None:

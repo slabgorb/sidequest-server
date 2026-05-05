@@ -31,11 +31,20 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from sidequest.agents.claude_client import ClaudeClient, ClaudeResponse, LlmClient
+from sidequest.agents.claude_client import (
+    ClaudeClient,
+    ClaudeResponse,
+    LlmClient,
+    SubprocessFailed,
+)
+from sidequest.agents.claude_client import (
+    TimeoutError as _ClaudeTimeoutError,
+)
 from sidequest.agents.narrator import NarratorAgent, is_streaming_enabled
 from sidequest.agents.prompt_framework.core import PromptRegistry
 from sidequest.agents.prompt_framework.types import (
@@ -56,6 +65,8 @@ from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
+    narrator_session_rotated_span,
+    narrator_unrecoverable_span,
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
 )
@@ -806,6 +817,7 @@ class Orchestrator:
         self,
         client: LlmClient | None = None,
         soul_data: object | None = None,
+        recap_provider: Callable[[], str | None] | None = None,
     ) -> None:
         """Create an orchestrator.
 
@@ -814,9 +826,13 @@ class Orchestrator:
                     If None, creates a default ClaudeClient.
             soul_data: Optional SoulData for SOUL.md principle injection.
                        If None, SOUL.md is loaded from CWD (if present).
+            recap_provider: Callable returning a markdown recap for the
+                       warm-reboot frame on session rotation (ADR-066 §9);
+                       None means no [PREVIOUSLY ON] section.
         """
         self._client: LlmClient = client if client is not None else ClaudeClient()
         self._narrator = NarratorAgent()
+        self._recap_provider: Callable[[], str | None] | None = recap_provider
 
         # Persistent session management (ADR-066)
         self._narrator_session_id: str | None = None
@@ -863,6 +879,202 @@ class Orchestrator:
         """Set the narrator session ID (for testing and server dispatch)."""
         with self._session_lock:
             self._narrator_session_id = session_id
+
+    # ------------------------------------------------------------------
+    # Reactive crash recovery (ADR-066 §8)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _classify_narrator_error(exc: Exception) -> str:
+        """Map a narrator failure to one of: transient, cli_error, session_expired, unknown."""
+        if isinstance(exc, _ClaudeTimeoutError):
+            return "transient"
+        if isinstance(exc, SubprocessFailed):
+            if exc.exit_code is None:
+                # Spawn failure (binary not found, OS error, network) — transient.
+                return "transient"
+            stderr = (exc.stderr or "").lower()
+            if "context_window_full" in stderr or "maximum_tokens_exceeded" in stderr:
+                return "cli_error"
+            if "session_not_found" in stderr or "session_expired" in stderr:
+                return "session_expired"
+            return "unknown"
+        return "unknown"
+
+    @staticmethod
+    def _narrator_error_signature(exc: Exception) -> str:
+        """Return a short stable identifier for a narrator failure, for OTEL attributes."""
+        if isinstance(exc, SubprocessFailed):
+            stderr = (exc.stderr or "").lower()
+            for marker in (
+                "context_window_full",
+                "maximum_tokens_exceeded",
+                "session_not_found",
+                "session_expired",
+            ):
+                if marker in stderr:
+                    return marker
+            return (exc.stderr or "subprocess_failed")[:100]
+        return type(exc).__name__
+
+    def _compose_rebuild_header(self) -> str:
+        """Return the [SESSION CONTINUATION] warm-reboot frame, including [PREVIOUSLY ON] when a recap is available."""
+        recap: str | None = None
+        if self._recap_provider is not None:
+            try:
+                recap = self._recap_provider()
+            except Exception as e:  # noqa: BLE001 - recap is best-effort
+                logger.warning(
+                    "narrator.recap_provider_failed error=%s — proceeding without recap",
+                    e,
+                )
+
+        parts = [
+            "[SESSION CONTINUATION]",
+            "",
+            "The narration that follows is a continuation of an in-progress game.",
+            "You do not have verbatim memory of prior turns, but the world state",
+            "and recap below are authoritative. Resume narration in the established",
+            "tone and voice. Honor the hooks and NPC arcs in play.",
+            "",
+        ]
+        if recap:
+            parts.extend(["[PREVIOUSLY ON]", recap, ""])
+        return "\n".join(parts)
+
+    async def _recover_from_narrator_failure(
+        self,
+        *,
+        action: str,
+        context: TurnContext,
+        agent_name: str,
+        first_error: Exception,
+        original_prompt_text: str,
+        original_tier: str,
+    ) -> tuple[ClaudeResponse, str, str, int] | NarrationTurnResult:
+        """Route a narrator failure through retry or rotation per ADR-066 §8; return rebuild result or a degraded NarrationTurnResult."""
+        classification = self._classify_narrator_error(first_error)
+        rotation_error: Exception = first_error
+
+        # Transient → retry once on the same session before escalating.
+        if classification == "transient":
+            with self._session_lock:
+                current_session_id = self._narrator_session_id
+            is_first_turn = current_session_id is None
+            system_prompt = original_prompt_text if is_first_turn else None
+            send_prompt = action if is_first_turn else original_prompt_text
+
+            retry_start = time.monotonic()
+            try:
+                response = await self._client.send_with_session(
+                    prompt=send_prompt,
+                    model=NARRATOR_MODEL,
+                    session_id=current_session_id,
+                    system_prompt=system_prompt,
+                    allowed_tools=[],
+                    env_vars={},
+                )
+                retry_elapsed_ms = int((time.monotonic() - retry_start) * 1000)
+                logger.info(
+                    "narrator.transient_retry_succeeded duration_ms=%d", retry_elapsed_ms
+                )
+                return (response, original_tier, original_prompt_text, retry_elapsed_ms)
+            except Exception as retry_exc:  # noqa: BLE001 - escalate to rotation
+                logger.warning(
+                    "narrator.transient_retry_failed error=%s — escalating to rotation",
+                    retry_exc,
+                )
+                rotation_error = retry_exc
+                classification = self._classify_narrator_error(retry_exc)
+
+        # Rotate: reset session, rebuild Full prompt with warm-reboot frame.
+        if classification == "cli_error":
+            reason = "cli_error"
+        elif classification == "session_expired":
+            reason = "session_expired"
+        else:
+            reason = "unknown"
+
+        first_signature = self._narrator_error_signature(rotation_error)
+        self.reset_narrator_session()
+        rebuild_header = self._compose_rebuild_header()
+        recap_chars = len(rebuild_header) if rebuild_header else 0
+
+        # Both build_narrator_prompt and send_with_session must run inside
+        # the guard — a failure in either reaches the caller as the same
+        # "uncaught exception in narrator pipeline" bug class this story
+        # is fixing. rebuild_prompt_text is seeded so the stall response
+        # has a non-None prompt_text even on a build-side failure.
+        rebuild_prompt_text: str = original_prompt_text
+        rebuild_start = time.monotonic()
+        try:
+            rebuild_prompt_text, _registry = await self.build_narrator_prompt(
+                action,
+                context,
+                tier=NarratorPromptTier.Full,
+                rebuild_header=rebuild_header,
+            )
+            # Recovery turn establishes a fresh session. Send the entire
+            # composed prompt as the user message so the [SESSION
+            # CONTINUATION] frame anchors the turn the model is responding
+            # to (rather than living only in --system-prompt).
+            response = await self._client.send_with_session(
+                prompt=rebuild_prompt_text,
+                model=NARRATOR_MODEL,
+                session_id=None,
+                system_prompt=None,
+                allowed_tools=[],
+                env_vars={},
+            )
+            rebuild_latency_ms = int((time.monotonic() - rebuild_start) * 1000)
+        except Exception as rebuild_exc:  # noqa: BLE001 - unrecoverable
+            rebuild_latency_ms = int((time.monotonic() - rebuild_start) * 1000)
+            rebuild_signature = self._narrator_error_signature(rebuild_exc)
+            with narrator_unrecoverable_span(
+                reason="rebuild_failed",
+                first_error_signature=first_signature,
+                rebuild_error_signature=rebuild_signature,
+                turn_number=context.turn_number or 0,
+            ):
+                pass
+            logger.error(
+                "NARRATOR UNRECOVERABLE — rotation rebuild also failed "
+                "first_error=%s rebuild_error=%s",
+                first_signature,
+                rebuild_signature,
+            )
+            return NarrationTurnResult(
+                narration=(
+                    f"**{context.current_location}**\n\n"
+                    "The world holds its breath for a moment... "
+                    "something shifts in the distance, but the moment passes."
+                ),
+                is_degraded=True,
+                agent_name=agent_name,
+                agent_duration_ms=rebuild_latency_ms,
+                prompt_tier=NarratorPromptTier.Full,
+                prompt_text=rebuild_prompt_text,
+                secret_routes=list(self._last_secret_routes),
+            )
+
+        # cumulative_tokens: not tracked on the reactive path; the proactive
+        # watchdog wires the live meter in per ADR-066 §10.
+        with narrator_session_rotated_span(
+            reason=reason,
+            cumulative_tokens=0,
+            turn_number=context.turn_number or 0,
+            recap_chars=recap_chars,
+            rebuild_latency_ms=rebuild_latency_ms,
+            cli_error_signature=first_signature,
+        ):
+            pass
+        logger.info(
+            "narrator.session_rotated reason=%s rebuild_latency_ms=%d signature=%s",
+            reason,
+            rebuild_latency_ms,
+            first_signature,
+        )
+        return (response, NarratorPromptTier.Full, rebuild_prompt_text, rebuild_latency_ms)
 
     # ------------------------------------------------------------------
     # Group G Task 7 — entity token resolver for the leak audit
@@ -940,11 +1152,15 @@ class Orchestrator:
         action: str,
         context: TurnContext,
         tier: str = NarratorPromptTier.Full,
+        rebuild_header: str | None = None,
     ) -> tuple[str, PromptRegistry]:
         """Build the narrator prompt for a turn (without invoking the LLM).
 
         Returns (prompt_text, registry) so callers can inspect zone breakdown.
         This is the Phase 1 port of build_narrator_prompt_tiered() in orchestrator.rs.
+
+        ``rebuild_header`` is the warm-reboot frame prepended in the
+        Primacy zone on session-rotation recovery turns (ADR-066 §9).
 
         Phase 1 omissions (all deferred):
           - LoreFilter world-graph injection (Phase 2 — story 23-4)
@@ -978,6 +1194,21 @@ class Orchestrator:
         # === STATIC SECTIONS (Full tier only — already in session history on Delta) ===
 
         if is_full:
+            # Rebuild header (ADR-066 §9) — registered FIRST in Primacy so
+            # the model sees the [SESSION CONTINUATION] cue before
+            # narrator identity, on a recovery turn that re-establishes
+            # the session after a rotation.
+            if rebuild_header:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "rebuild_header",
+                        rebuild_header,
+                        AttentionZone.Primacy,
+                        SectionCategory.Soul,
+                    ),
+                )
+
             # ADR-067: Always narrator identity (unified agent)
             self._narrator.build_context(registry)
 
@@ -2239,6 +2470,8 @@ class Orchestrator:
             system_prompt_for_establish = prompt_text if is_first_turn else None
             send_prompt = action if is_first_turn else prompt_text
 
+            response: ClaudeResponse | None = None
+            first_attempt_error: Exception | None = None
             with turn_agent_llm_inference_span(
                 model=NARRATOR_MODEL,
                 prompt_len=len(send_prompt),
@@ -2246,7 +2479,7 @@ class Orchestrator:
                 call_start = time.monotonic()
                 try:
                     with context.phase_timings.phase("narrator_subprocess"):
-                        response: ClaudeResponse = await self._client.send_with_session(
+                        response = await self._client.send_with_session(
                             prompt=send_prompt,
                             model=NARRATOR_MODEL,
                             session_id=current_session_id,
@@ -2257,26 +2490,33 @@ class Orchestrator:
                     elapsed_ms = int((time.monotonic() - call_start) * 1000)
                 except Exception as e:
                     elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                    logger.error(
-                        "CLAUDE CLI FAILED — returning degraded response (ADR-005) "
-                        "agent=%s duration_ms=%d error=%s",
+                    first_attempt_error = e
+                    logger.warning(
+                        "narrator.first_attempt_failed agent=%s duration_ms=%d error=%s",
                         agent_name,
                         elapsed_ms,
                         e,
                     )
-                    return NarrationTurnResult(
-                        narration=(
-                            f"**{context.current_location}**\n\n"
-                            "The world holds its breath for a moment... "
-                            "something shifts in the distance, but the moment passes."
-                        ),
-                        is_degraded=True,
-                        agent_name=agent_name,
-                        agent_duration_ms=elapsed_ms,
-                        prompt_tier=tier,
-                        prompt_text=prompt_text,
-                        secret_routes=list(self._last_secret_routes),
-                    )
+
+            # ADR-066 §8: classify error, retry/rotate as needed.
+            # On recovery success, tier/prompt_text/elapsed_ms are reassigned
+            # so the success path below sees the rebuild's values.
+            if first_attempt_error is not None:
+                recovery = await self._recover_from_narrator_failure(
+                    action=action,
+                    context=context,
+                    agent_name=agent_name,
+                    first_error=first_attempt_error,
+                    original_prompt_text=prompt_text,
+                    original_tier=tier,
+                )
+                if isinstance(recovery, NarrationTurnResult):
+                    # Recovery itself failed — narrator.unrecoverable already
+                    # emitted; return the in-fiction stall to the player.
+                    return recovery
+                response, tier, prompt_text, elapsed_ms = recovery
+
+            assert response is not None  # narrowing for type-checkers
 
             # Store session ID from response (ADR-066)
             if response.session_id:
