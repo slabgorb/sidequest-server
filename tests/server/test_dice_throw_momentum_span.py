@@ -63,8 +63,14 @@ def otel_capture():
 
     Inline so this test module doesn't need to relocate the fixture from
     the agents tree to ``tests/server/conftest.py``. The pattern is the
-    same: install a SimpleSpanProcessor on the global TracerProvider
-    so the tracer() helper inside our span context managers reaches it.
+    same: install a SimpleSpanProcessor on the global TracerProvider so
+    the tracer() helper inside our span context managers reaches it.
+
+    **Provider reset (45-36 fix):** kept symmetric with
+    ``conftest.py::otel_capture`` — see that fixture's docstring for
+    full rationale. We clear ``_span_processors`` on the existing
+    provider rather than swapping the provider itself, because
+    production modules cache tracers at import time.
     """
     from opentelemetry import trace as otel_trace
     from opentelemetry.sdk.trace import TracerProvider
@@ -78,6 +84,11 @@ def otel_capture():
     init_tracer()
     provider = otel_trace.get_tracer_provider()
     assert isinstance(provider, TracerProvider)
+
+    # Drop accumulated processors from prior invocations — see
+    # ``tests/server/conftest.py::otel_capture`` for full rationale.
+    provider._active_span_processor._span_processors = ()  # type: ignore[attr-defined]
+
     exporter = InMemorySpanExporter()
     processor = SimpleSpanProcessor(exporter)
     provider.add_span_processor(processor)

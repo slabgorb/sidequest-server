@@ -1102,6 +1102,21 @@ def otel_capture():
     Yields the exporter; tears down the processor on exit so spans from
     one test never bleed into the next.
 
+    **Provider reset (45-36 fix):** ``SimpleSpanProcessor.shutdown()``
+    flushes pending spans but does NOT deregister the processor from the
+    global ``TracerProvider``. Across a pytest session that uses this
+    fixture N times, the provider accumulates N stale processors — they
+    are shut-down so they no-op on emit, but they leak memory and any
+    test that introspects the processor list sees ghosts. We clear the
+    underlying ``_span_processors`` tuple before adding ours so each
+    test starts from a clean slate.
+
+    Replacing the ``TracerProvider`` itself does NOT work because
+    production modules cache ``otel_trace.get_tracer(__name__)`` at
+    import time (e.g., ``server/dispatch/chargen_loadout.py``) and a
+    provider swap leaves those tracers bound to the old (now-orphaned)
+    provider, which silently drops every span those modules emit.
+
     Reusable across stories — Story 45-10 (scrapbook coverage), Story 45-3
     (dice-throw momentum span), and any future server-layer test that
     asserts span emission. ``test_dice_throw_momentum_span.py`` still
@@ -1120,6 +1135,11 @@ def otel_capture():
     init_tracer()
     provider = otel_trace.get_tracer_provider()
     assert isinstance(provider, TracerProvider)
+
+    # Drop accumulated processors from prior invocations — see
+    # "Provider reset (45-36 fix)" above.
+    provider._active_span_processor._span_processors = ()  # type: ignore[attr-defined]
+
     exporter = InMemorySpanExporter()
     processor = SimpleSpanProcessor(exporter)
     provider.add_span_processor(processor)

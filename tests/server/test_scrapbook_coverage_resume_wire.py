@@ -15,7 +15,7 @@ Resume path inventory (post-decomposition, 2026-04-28):
 
 2. **Legacy non-slug resume** — ``handlers/connect.py:856`` (``store.load()``),
    line 888 (``if saved is not None:``). Triggered by genre/world/player
-   triple without a slug — the path Felix's solo sessions still hit.
+   triple saves without a slug.
 
 The context document (sprint/context/context-story-45-10.md) referenced
 session_handler.py:1610 / 2138 — those line numbers were pre-decomposition.
@@ -30,6 +30,7 @@ checks are sharp enough to catch the half-fix regression AC4 names.
 
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 
 import pytest
@@ -231,8 +232,6 @@ class TestSlugResumeEndToEnd:
             )
         store.save(snap)
         # 10 scrapbook rows for rounds 1-10.
-        import json as _json
-
         with store._conn:
             for r in range(1, 11):
                 store._conn.execute(

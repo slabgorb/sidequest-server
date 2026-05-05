@@ -28,6 +28,8 @@ These tests fail until:
 
 from __future__ import annotations
 
+import json as _json
+import tempfile
 from dataclasses import fields, is_dataclass
 from typing import Any, get_type_hints
 
@@ -101,9 +103,10 @@ def populated_store(tmp_path):
             )
 
         # Insert scrapbook rows for rounds 1..scrapbook_rounds. The scrapbook
-        # row's ``turn_id`` mirrors the round number for fixture simplicity
-        # — the production join goes through ``narrative_log.round_number``,
-        # which equals ``interaction`` post-45-11 lockstep (ADR-051).
+        # row's ``turn_id`` mirrors the round number for fixture simplicity —
+        # production uses ``max_narrative_round()`` to bound the range and
+        # queries ``scrapbook_entries.turn_id`` directly (no join), per the
+        # post-45-11 lockstep invariant (ADR-051).
         for r in range(1, scrapbook_rounds + 1):
             payload = ScrapbookEntryPayload(
                 turn_id=r,
@@ -116,8 +119,6 @@ def populated_store(tmp_path):
                 npcs_present=[],
             )
             with store._conn:
-                import json as _json
-
                 store._conn.execute(
                     "INSERT INTO scrapbook_entries "
                     "(turn_id, scene_title, scene_type, location, image_url, "
@@ -154,9 +155,10 @@ def populated_store(tmp_path):
             s.close()
 
 
-# Stub snapshot — the detector's signature accepts (store, snapshot, **ctx)
-# but only reads ``genre_slug`` / ``world_slug`` off the snapshot for span
-# attribution. This keeps tests independent of GameSnapshot's full surface.
+# Minimal snapshot fixture — the detector's signature accepts
+# (store, snapshot, **ctx) but only reads ``genre_slug`` / ``world_slug``
+# off the snapshot for span attribution. This keeps tests independent of
+# GameSnapshot's full surface.
 @pytest.fixture
 def stub_snapshot():
     from sidequest.game.session import GameSnapshot
@@ -177,8 +179,17 @@ class TestModuleSurface:
     """Shape of the new module — fail before the implementer can do anything else."""
 
     def test_module_imports_cleanly(self) -> None:
-        """The module must exist at the documented path."""
-        import sidequest.game.scrapbook_coverage as mod  # noqa: F401
+        """The module must exist at the documented path and expose the
+        helper. Asserting both keeps the import-and-symbol check in one
+        place — a missing module fails the import; a renamed helper fails
+        the hasattr."""
+        import sidequest.game.scrapbook_coverage as mod
+
+        assert hasattr(mod, "detect_scrapbook_coverage_gaps"), (
+            "scrapbook_coverage module must expose detect_scrapbook_coverage_gaps "
+            "at module top — a rename here forces a coordinated update to the "
+            "wire site in connect.py."
+        )
 
     def test_helper_function_exported(self) -> None:
         """``detect_scrapbook_coverage_gaps`` must be a top-level callable."""
@@ -352,17 +363,31 @@ class TestOrinRegression:
         attrs = dict(gap_spans[0].attributes or {})
         assert attrs.get("gap_count") == 19
         # OTEL stringifies sequences in attribute exporters; accept either
-        # tuple/list-shaped value or a string repr that contains the
-        # boundary rounds — the GM panel only needs to render the list.
+        # a tuple/list-shaped value (preferred — when the SDK preserves
+        # sequence types) or a string repr (when an exporter coerces). In
+        # both cases assert on the EXACT 11..29 range, not a fuzzy
+        # substring — "11" and "29" appearing in a string would also match
+        # "111", "291", "229", etc., which masks off-by-one regressions.
         gap_rounds_attr = attrs.get("gap_rounds")
         assert gap_rounds_attr is not None, (
             "gap_rounds attribute is the load-bearing payload — without it "
             "the GM panel can't render which rounds are missing."
         )
-        gap_str = str(gap_rounds_attr)
-        assert "11" in gap_str and "29" in gap_str, (
-            f"gap_rounds must contain the 11..29 range. Got: {gap_rounds_attr!r}"
-        )
+        expected = tuple(range(11, 30))
+        if isinstance(gap_rounds_attr, (list, tuple)):
+            assert tuple(gap_rounds_attr) == expected, (
+                f"gap_rounds sequence must be exactly 11..29 inclusive. Got: {gap_rounds_attr!r}"
+            )
+        else:
+            # SDK-serialised case: parse the string repr and compare the
+            # parsed integer sequence against the expected tuple.
+            import re
+
+            parsed = tuple(int(m) for m in re.findall(r"-?\d+", str(gap_rounds_attr)))
+            assert parsed == expected, (
+                f"gap_rounds string repr must parse to 11..29 inclusive. "
+                f"Got: {gap_rounds_attr!r} (parsed: {parsed})"
+            )
 
     def test_orin_fixture_publishes_watcher_event(
         self, populated_store, stub_snapshot, otel_capture, watcher_capture
@@ -469,6 +494,19 @@ class TestNoOpSilence:
         attrs = dict(evaluated[0].attributes or {})
         assert attrs.get("max_round") == 0
         assert attrs.get("gap_count") == 0
+
+        # The empty-store path must NOT emit the gap span or the watcher
+        # event. A half-fix that fires both branches unconditionally would
+        # cry wolf on every fresh save and the GM panel signal goes numb.
+        assert _spans_named(otel_capture, "scrapbook.coverage_gap_detected") == [], (
+            "Gap span must NOT fire on max_round==0 (fresh save). A noisy "
+            "gap-on-empty would teach Sebastien to ignore the signal."
+        )
+        gap_publishes = [c for c in watcher_capture if c["field"] == "scrapbook_coverage_gap"]
+        assert gap_publishes == [], (
+            "Watcher event must NOT publish on max_round==0. Empty stores "
+            "are not a gap — they are 'no coverage required yet'."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -578,10 +616,248 @@ class TestSpanRouting:
         route = SPAN_ROUTES[SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED]
         assert route.component == "scrapbook"
 
+    def test_evaluated_route_extract_returns_expected_dict_shape(self) -> None:
+        """``SpanRoute.extract`` is the load-bearing call site — the watcher
+        hub invokes it on every closed span to produce the typed event
+        payload. Tests only asserting ``route.component`` leave the
+        extractor untested, so a regression in the dict shape (renamed
+        field, missing key) would silently break the GM panel feed.
+        Construct a fake span with known attributes and assert the dict
+        matches the documented contract."""
+        from sidequest.telemetry.spans import (
+            SPAN_ROUTES,
+            SPAN_SCRAPBOOK_COVERAGE_EVALUATED,
+        )
+
+        route = SPAN_ROUTES[SPAN_SCRAPBOOK_COVERAGE_EVALUATED]
+        fake_span = _FakeSpan(
+            name=SPAN_SCRAPBOOK_COVERAGE_EVALUATED,
+            attributes={
+                "max_round": 29,
+                "covered_count": 10,
+                "gap_count": 19,
+                "coverage_ratio": 10 / 29,
+                "genre": "test_genre",
+                "world": "test_world",
+                "slug": "orin-1",
+            },
+        )
+
+        out = route.extract(fake_span)
+
+        assert out == {
+            "field": "scrapbook",
+            "op": "coverage_evaluated",
+            "max_round": 29,
+            "covered_count": 10,
+            "gap_count": 19,
+            "coverage_ratio": pytest.approx(10 / 29),
+            "genre": "test_genre",
+            "world": "test_world",
+            "slug": "orin-1",
+        }
+
+    def test_evaluated_route_extract_handles_missing_attributes(self) -> None:
+        """Missing-attribute path: extractor must fall back to documented
+        defaults (zero counts, ratio 1.0, empty strings). The watcher hub
+        cannot tolerate a KeyError or ``None`` leaking into the dashboard
+        payload — the panel renders these fields verbatim."""
+        from sidequest.telemetry.spans import (
+            SPAN_ROUTES,
+            SPAN_SCRAPBOOK_COVERAGE_EVALUATED,
+        )
+
+        route = SPAN_ROUTES[SPAN_SCRAPBOOK_COVERAGE_EVALUATED]
+        fake_span = _FakeSpan(name=SPAN_SCRAPBOOK_COVERAGE_EVALUATED, attributes={})
+
+        out = route.extract(fake_span)
+
+        assert out == {
+            "field": "scrapbook",
+            "op": "coverage_evaluated",
+            "max_round": 0,
+            "covered_count": 0,
+            "gap_count": 0,
+            "coverage_ratio": 1.0,
+            "genre": "",
+            "world": "",
+            "slug": "",
+        }
+
+    def test_gap_detected_route_extract_returns_expected_dict_shape(self) -> None:
+        """Gap-detected extractor mirrors the evaluated extractor plus
+        ``gap_rounds`` — the load-bearing payload that the GM panel
+        renders verbatim. Pin the dict shape so a renamed field breaks
+        the test before it breaks the dashboard."""
+        from sidequest.telemetry.spans import (
+            SPAN_ROUTES,
+            SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED,
+        )
+
+        route = SPAN_ROUTES[SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED]
+        fake_span = _FakeSpan(
+            name=SPAN_SCRAPBOOK_COVERAGE_GAP_DETECTED,
+            attributes={
+                "max_round": 29,
+                "covered_count": 10,
+                "gap_count": 19,
+                "coverage_ratio": 10 / 29,
+                "gap_rounds": tuple(range(11, 30)),
+                "genre": "test_genre",
+                "world": "test_world",
+                "slug": "orin-1",
+            },
+        )
+
+        out = route.extract(fake_span)
+
+        assert out == {
+            "field": "scrapbook",
+            "op": "coverage_gap_detected",
+            "max_round": 29,
+            "covered_count": 10,
+            "gap_count": 19,
+            "coverage_ratio": pytest.approx(10 / 29),
+            "gap_rounds": tuple(range(11, 30)),
+            "genre": "test_genre",
+            "world": "test_world",
+            "slug": "orin-1",
+        }
+
+
+# ---------------------------------------------------------------------------
+# AC6 / AC7 — gap-pattern edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestGapPatternEdgeCases:
+    """Edge-case shapes that contiguous-range tests don't exercise."""
+
+    def test_non_contiguous_gap_pattern(
+        self, populated_store, stub_snapshot, otel_capture, watcher_capture
+    ) -> None:
+        """Rounds 1-5 and 8-10 covered → gap_rounds == [6, 7]. The Orin
+        regression is a single contiguous tail-gap, but real-world saves
+        could have any pattern — pin the set-difference math against a
+        non-contiguous shape so an off-by-one in ``expected - covered``
+        surfaces here."""
+        from sidequest.game.persistence import SqliteStore
+        from sidequest.game.scrapbook_coverage import detect_scrapbook_coverage_gaps
+        from sidequest.game.session import NarrativeEntry
+        from sidequest.protocol.messages import ScrapbookEntryPayload
+
+        # Hand-built fixture — populated_store only supports contiguous
+        # 1..N scrapbook coverage.
+        with tempfile.TemporaryDirectory() as td:
+            db_path = f"{td}/non-contig.db"
+            store = SqliteStore.open(db_path)
+            store.init_session("test_genre", "test_world")
+            for r in range(1, 11):
+                store.append_narrative(
+                    NarrativeEntry(round=r, author="narrator", content=f"R{r}", tags=[])
+                )
+            covered_rounds = list(range(1, 6)) + list(range(8, 11))
+            with store._conn:
+                for r in covered_rounds:
+                    payload = ScrapbookEntryPayload(
+                        turn_id=r,
+                        scene_title=f"Scene {r}",
+                        scene_type="exploration",
+                        location=f"Location {r}",
+                        image_url=None,
+                        narrative_excerpt=f"R{r}",
+                        world_facts=[],
+                        npcs_present=[],
+                    )
+                    store._conn.execute(
+                        "INSERT INTO scrapbook_entries "
+                        "(turn_id, scene_title, scene_type, location, image_url, "
+                        " narrative_excerpt, world_facts, npcs_present) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            payload.turn_id,
+                            payload.scene_title,
+                            payload.scene_type,
+                            payload.location,
+                            payload.image_url,
+                            payload.narrative_excerpt,
+                            _json.dumps([]),
+                            _json.dumps([]),
+                        ),
+                    )
+
+            try:
+                report = detect_scrapbook_coverage_gaps(store=store, snapshot=stub_snapshot)
+            finally:
+                store.close()
+
+        assert report.max_round == 10
+        assert report.covered_count == 8
+        assert report.gap_count == 2
+        assert tuple(report.gap_rounds) == (6, 7), (
+            "Non-contiguous coverage must yield only the missing rounds, "
+            "in ascending order. A bug in expected-covered set math would "
+            "either include 6/7 plus extras or miss them entirely."
+        )
+
+    def test_out_of_range_scrapbook_rows_excluded(
+        self, populated_store, stub_snapshot, otel_capture, watcher_capture
+    ) -> None:
+        """Rows with ``turn_id <= 0`` or ``turn_id > max_round`` are noise
+        (test-fixture artifacts, pre-lockstep stragglers). The detector's
+        WHERE clause must filter them out so they never inflate
+        ``covered_count`` or pollute ``gap_rounds``."""
+        from sidequest.game.scrapbook_coverage import detect_scrapbook_coverage_gaps
+
+        # 5 narrative rounds, 5 valid scrapbook rows (1..5 — full coverage).
+        store = populated_store(narrative_rounds=5, scrapbook_rounds=5)
+        # Inject noise rows: turn_id=0 (pre-lockstep) and turn_id=10 (past
+        # max_round).
+        with store._conn:
+            for noise_turn_id in (0, 10):
+                store._conn.execute(
+                    "INSERT INTO scrapbook_entries "
+                    "(turn_id, scene_title, scene_type, location, image_url, "
+                    " narrative_excerpt, world_facts, npcs_present) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        noise_turn_id,
+                        "Noise",
+                        "exploration",
+                        "Nowhere",
+                        None,
+                        "out-of-range",
+                        _json.dumps([]),
+                        _json.dumps([]),
+                    ),
+                )
+
+        report = detect_scrapbook_coverage_gaps(store=store, snapshot=stub_snapshot)
+
+        assert report.max_round == 5
+        assert report.covered_count == 5, (
+            "Out-of-range rows (turn_id=0, turn_id=max_round+5) must NOT "
+            "inflate covered_count. The WHERE filter is the lie-detector "
+            "for fixture-leak regressions."
+        )
+        assert report.gap_count == 0
+        assert tuple(report.gap_rounds) == ()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _FakeSpan:
+    """Structural stand-in for opentelemetry.sdk.trace.ReadableSpan,
+    matching ``_SpanLike`` in ``telemetry/spans/_core.py``. Used by
+    ``TestSpanRouting`` to drive ``SpanRoute.extract`` without spinning up
+    a real tracer."""
+
+    def __init__(self, *, name: str, attributes: dict[str, Any] | None) -> None:
+        self.name = name
+        self.attributes = attributes
 
 
 def _spans_named(exporter, name: str) -> list:
@@ -589,7 +865,19 @@ def _spans_named(exporter, name: str) -> list:
     return [s for s in exporter.get_finished_spans() if s.name == name]
 
 
+_ROW_COUNT_TABLE_WHITELIST = frozenset({"narrative_log", "scrapbook_entries"})
+
+
 def _row_count(store, table: str) -> int:
-    """Read row count of a table directly through the store's connection."""
+    """Read row count of a table directly through the store's connection.
+
+    Accepts only the two tables this test module probes — the f-string
+    interpolation is non-exploitable from test inputs but the whitelist
+    pins the surface so a future caller cannot pass an attacker-controlled
+    name into the query (python.md rule #11).
+    """
+    assert table in _ROW_COUNT_TABLE_WHITELIST, (
+        f"_row_count only accepts {sorted(_ROW_COUNT_TABLE_WHITELIST)}; got {table!r}"
+    )
     row = store._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
     return int(row[0]) if row else 0
