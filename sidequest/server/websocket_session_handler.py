@@ -2143,6 +2143,12 @@ class WebSocketSessionHandler:
                     encounter_unresolved_before = (
                         snapshot.encounter is not None and not snapshot.encounter.resolved
                     )
+                    # Sünden engine plan Task 10: capture player_dead BEFORE
+                    # the apply so the post-apply check can detect a positive
+                    # edge (False → True) and auto-end the delve. Captured
+                    # here rather than inline-after-apply so the variable
+                    # name documents the intent: this is the pre-apply read.
+                    prev_player_dead_for_delve_end = snapshot.player_dead
                     _apply_narration_result_to_snapshot(
                         snapshot,
                         result,
@@ -3163,6 +3169,30 @@ class WebSocketSessionHandler:
                         snapshot.turn_manager.interaction,
                         exc,
                     )
+
+                # Sünden engine plan Task 10: player_dead auto-trigger.
+                # On the positive edge (False → True) inside an active
+                # delve, run the same _end_delve path the voluntary
+                # RETREAT_TO_HAMLET handler uses, with outcome="defeat".
+                # This is the only place the server can synthesize
+                # outcome="defeat" — the wire-inbound RetreatToHamletPayload
+                # narrows to ("retreat", "victory") so a client cannot
+                # claim defeat. Wired here (post game_state_snapshot
+                # publish) so the lie-detector's resume snapshot reflects
+                # the still-in-delve state right up to the moment of
+                # death; the appended HUB_VIEW carries the post-end view.
+                if sd._room is not None:
+                    from sidequest.handlers.retreat_to_hamlet import (  # noqa: PLC0415
+                        maybe_end_delve_on_player_dead,
+                    )
+
+                    delve_end_msgs = await maybe_end_delve_on_player_dead(
+                        session=self,
+                        slug=sd._room.slug,
+                        prev_player_dead=prev_player_dead_for_delve_end,
+                        snapshot=snapshot,
+                    )
+                    outbound.extend(delve_end_msgs)
 
                 return outbound
         finally:

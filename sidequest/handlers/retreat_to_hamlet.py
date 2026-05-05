@@ -216,6 +216,43 @@ async def _end_delve(
     ]
 
 
+async def maybe_end_delve_on_player_dead(
+    *,
+    session: WebSocketSessionHandler,
+    slug: str,
+    prev_player_dead: bool,
+    snapshot: GameSnapshot,
+) -> list[object]:
+    """Task 10 trigger — fire ``_end_delve(outcome="defeat")`` on positive edge.
+
+    Called by the dispatch path immediately after
+    ``_apply_narration_result_to_snapshot``. ``prev_player_dead`` is
+    captured before the apply; ``snapshot`` is the post-apply
+    snapshot. The combined check (positive edge AND active delve)
+    prevents a double-fire when the same flag stays set across turns
+    (e.g. resume into a save where the PC is already dead but the
+    delve was previously ended).
+
+    The auto-fire path uses ``outcome="defeat"`` and
+    ``wounded_boss=False`` — the latter because by the time the PC is
+    dead the narrator has already committed to "TPK without wounding";
+    a "TPK after wounding" path would need an explicit flag from the
+    narrator's structured output, which Task 10 does not yet wire.
+    """
+    if (
+        not prev_player_dead
+        and snapshot.player_dead
+        and snapshot.active_delve_dungeon is not None
+    ):
+        return await _end_delve(
+            session=session,
+            slug=slug,
+            outcome="defeat",
+            wounded_boss=False,
+        )
+    return []
+
+
 class RetreatToHamletHandler:
     """Handle a RETREAT_TO_HAMLET inbound message."""
 

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from sidequest.game.persistence import SqliteStore, db_path_for_slug
+from sidequest.handlers.retreat_to_hamlet import maybe_end_delve_on_player_dead
 from tests._helpers.delve import (
     drive_connect,
     drive_dungeon_select,
@@ -234,5 +235,107 @@ async def test_retreat_does_not_clear_world_save(tmp_path: Path) -> None:
     by_id = {h.id: h for h in ws.roster}
     assert by_id[h1.id].status == "active"
     assert by_id[h2.id].status == "active"
+
+
+# ---------------------------------------------------------------------------
+# Task 10 — player_dead auto-trigger
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_player_dead_auto_triggers_defeat(tmp_path: Path) -> None:
+    """Forcing snapshot.player_dead True during a delve fires _end_delve(defeat).
+
+    Bypasses the narrator: directly mutates ``snapshot.player_dead =
+    True`` and invokes the trigger helper that the dispatch path calls
+    immediately after ``_apply_narration_result_to_snapshot``. The
+    helper observes the positive edge and routes through the same
+    ``_end_delve`` path with ``outcome="defeat"``.
+    """
+    slug = "player-dead-tpk"
+    handler, _h1 = await _start_delve(tmp_path, slug)
+
+    # Force the post-apply state. prev_player_dead=False captures the
+    # pre-apply read; the mutation here simulates what a narrator turn
+    # would do (set the flag through _apply_narration_result_to_snapshot).
+    snap = handler._room.snapshot
+    assert snap.player_dead is False
+    snap.player_dead = True
+
+    outbound = await maybe_end_delve_on_player_dead(
+        session=handler,
+        slug=slug,
+        prev_player_dead=False,
+        snapshot=snap,
+    )
+    types = [getattr(m, "type", None) for m in outbound]
+    errors = [m for m in outbound if getattr(m, "type", None) == "ERROR"]
+    assert not errors, f"got errors: {types}"
+
+    hub_views = [m for m in outbound if getattr(m, "type", None) == "HUB_VIEW"]
+    assert len(hub_views) == 1, f"expected 1 HUB_VIEW; got {types}"
+
+    ws = _read_world_save(tmp_path, slug)
+    assert ws.delve_count == 1
+    assert ws.wall[0].outcome == "defeat"
+    assert ws.wall[0].wounded_boss is False
+    assert ws.dungeon_wounds == {}
+
+
+@pytest.mark.asyncio
+async def test_player_dead_no_edge_does_not_fire(tmp_path: Path) -> None:
+    """Idempotency: prev_player_dead=True (no positive edge) is a no-op.
+
+    Defends against double-fire when the same flag stays set across
+    turns (e.g. resume into a save where the PC is already dead and
+    the delve was previously ended).
+    """
+    slug = "player-dead-no-edge"
+    handler, _h1 = await _start_delve(tmp_path, slug)
+
+    snap = handler._room.snapshot
+    snap.player_dead = True
+
+    outbound = await maybe_end_delve_on_player_dead(
+        session=handler,
+        slug=slug,
+        prev_player_dead=True,
+        snapshot=snap,
+    )
+    assert outbound == []
+    # Delve still active because the trigger never fired.
+    assert handler._room.snapshot.active_delve_dungeon == _DUNGEON
+
+
+@pytest.mark.asyncio
+async def test_player_dead_outside_delve_does_not_fire(tmp_path: Path) -> None:
+    """active_delve_dungeon is None → no auto-trigger.
+
+    Hub-mode player_dead is non-physical (the hamlet doesn't kill the
+    PC); this guard prevents a stray transition from inventing a
+    delve-end Wall entry against ``None``.
+    """
+    slug = "player-dead-hub"
+    seed_hub_game(tmp_path, slug)
+    handler = make_handler(tmp_path, search_paths=[_CONTENT_SEARCH_PATH])
+    await drive_connect(handler, slug)
+
+    # Hub-mode rooms have no bound snapshot post-connect, so manufacture
+    # one with active_delve_dungeon=None to exercise the predicate.
+    from sidequest.game.session import GameSnapshot
+
+    snap = GameSnapshot(
+        genre_slug=_GENRE,
+        world_slug=_HUB_WORLD,
+        active_delve_dungeon=None,
+        player_dead=True,
+    )
+    outbound = await maybe_end_delve_on_player_dead(
+        session=handler,
+        slug=slug,
+        prev_player_dead=False,
+        snapshot=snap,
+    )
+    assert outbound == []
 
 
