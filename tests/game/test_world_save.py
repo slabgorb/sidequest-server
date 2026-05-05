@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from sidequest.game.world_save import Hireling, WallEntry
+from sidequest.game.world_save import Hireling, WallEntry, WorldSave
 
 
 def test_hireling_defaults_active_zero_stress():
@@ -80,3 +80,31 @@ def test_wall_entry_wounded_boss_is_orthogonal_to_outcome():
             )
             assert e.outcome == outcome
             assert e.wounded_boss is wounded
+
+
+def test_world_save_defaults_empty():
+    ws = WorldSave()
+    assert ws.roster == []
+    assert ws.currency == 0
+    assert ws.wall == []
+    assert ws.dungeon_wounds == {}
+    assert ws.latest_delve_sin is None
+    assert ws.delve_count == 0
+    assert ws.last_saved_at is None
+
+
+def test_world_save_round_trip_json():
+    ws = WorldSave(
+        roster=[Hireling(id="vol_1", name="Volga", archetype="prig")],
+        currency=42,
+        dungeon_wounds={"grimvault": True},
+        latest_delve_sin="pride",
+        delve_count=3,
+    )
+    raw = ws.model_dump_json()
+    ws2 = WorldSave.model_validate_json(raw)
+    assert ws2.roster[0].name == "Volga"
+    assert ws2.currency == 42
+    assert ws2.dungeon_wounds == {"grimvault": True}
+    assert ws2.latest_delve_sin == "pride"
+    assert ws2.delve_count == 3

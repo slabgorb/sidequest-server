@@ -71,3 +71,41 @@ class WallEntry(BaseModel):
     wounded_boss: bool = False
 
     timestamp: datetime                      # write-time, UTC
+
+
+class WorldSave(BaseModel):
+    """Hub-world state that persists across delves.
+
+    Each campaign (.db file) has at most one WorldSave row. Fresh hub
+    worlds get a default-populated WorldSave on first read. Non-hub
+    worlds never instantiate one (no production code reads them).
+    """
+
+    model_config = {"extra": "ignore"}
+
+    roster: list[Hireling] = Field(default_factory=list)
+    currency: int = 0
+    wall: list[WallEntry] = Field(default_factory=list)
+
+    # Per-dungeon wound flag. Keys are dungeon slugs from the genre pack;
+    # absence means "not yet wounded". Item 4a flips the bool to True on
+    # any delve-end where ``WallEntry.wounded_boss`` is True (regardless
+    # of outcome — TPK-after-wound still wounds the dungeon). Once True,
+    # never flips back (spec §"Wounded Sins": "A dungeon can only be
+    # wounded once"). Item 6 reads the flag to merge wound_profile.yaml
+    # into the Keeper definition.
+    dungeon_wounds: dict[str, bool] = Field(default_factory=dict)
+
+    # The most-recent-delve drift flag. None on a campaign with no
+    # completed delves. Set by item 4 at delve-end; consumed by item 5
+    # in the Hamlet-scene prompt zone. Overwritten on every subsequent
+    # delve — the spec deliberately limits drift to the most recent.
+    latest_delve_sin: str | None = None
+
+    # Monotonic counter of completed delves (any outcome). Used as the
+    # delve_number stamp for WallEntry and as the time-axis for any
+    # future "recruited at delve N" UI affordances.
+    delve_count: int = 0
+
+    # ISO-8601 string set by save_world_save(); read for the GM panel.
+    last_saved_at: datetime | None = None
