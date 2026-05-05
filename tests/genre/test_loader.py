@@ -158,7 +158,17 @@ def test_loaded_pack_worlds_have_required_fields() -> None:
     for world_name, world in pack.worlds.items():
         assert world.config is not None, f"{world_name} missing config"
         assert world.lore is not None, f"{world_name} missing lore"
-        assert world.cartography is not None, f"{world_name} missing cartography"
+        if world.dungeons:
+            # Hub world: cartography lives per-dungeon, not at world level.
+            assert world.cartography is None, (
+                f"{world_name} is a hub world; cartography must live under dungeons/"
+            )
+            for dslug, dungeon in world.dungeons.items():
+                assert dungeon.cartography is not None, (
+                    f"{world_name}/{dslug} missing cartography"
+                )
+        else:
+            assert world.cartography is not None, f"{world_name} missing cartography"
 
 
 def test_loaded_pack_genre_tropes_present() -> None:
@@ -346,19 +356,21 @@ def test_worlds_with_tropes_inherit_from_genre(tmp_path: Path) -> None:
     ]
     (pack_dir / "tropes.yaml").write_text(yaml.dump(abstract_trope), encoding="utf-8")
 
-    # Inject a world trope that extends it into grimvault
-    world_dir = pack_dir / "worlds" / "grimvault"
-    world_trope = [
+    # Inject a dungeon-level trope that extends it into grimvault.
+    # Grimvault is now a dungeon under the caverns_three_sins hub world,
+    # not a world; per-dungeon tropes inherit directly from the genre.
+    dungeon_dir = pack_dir / "worlds" / "caverns_three_sins" / "dungeons" / "grimvault"
+    dungeon_trope = [
         {
             "name": "Grimvault Eternal",
             "extends": "the-eternal-dungeon",
             "description": "The vault version",
         }
     ]
-    (world_dir / "tropes.yaml").write_text(yaml.dump(world_trope), encoding="utf-8")
+    (dungeon_dir / "tropes.yaml").write_text(yaml.dump(dungeon_trope), encoding="utf-8")
 
     pack = load_genre_pack(pack_dir)
-    grimvault = pack.worlds["grimvault"]
+    grimvault = pack.worlds["caverns_three_sins"].dungeons["grimvault"]
     assert len(grimvault.tropes) == 1
     gv_trope = grimvault.tropes[0]
     assert gv_trope.name == "Grimvault Eternal"
@@ -395,10 +407,16 @@ def test_full_phase1_pack_pipeline() -> None:
     # Worlds loaded
     assert len(pack.worlds) >= 1
 
-    # At least one world has cartography
+    # Each world is either a leaf (cartography at world level) or a hub
+    # (cartography lives per-dungeon). Both shapes are valid; assert the
+    # invariant rather than the legacy single-shape expectation.
     for world in pack.worlds.values():
-        assert world.cartography is not None
-        break
+        if world.dungeons:
+            assert world.cartography is None
+            for dungeon in world.dungeons.values():
+                assert dungeon.cartography is not None
+        else:
+            assert world.cartography is not None
 
     # Tropes (genre-level) are a list
     assert isinstance(pack.tropes, list)
