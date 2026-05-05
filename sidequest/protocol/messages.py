@@ -1022,7 +1022,11 @@ _Phase1Variant = Annotated[
     | DiceResultMessage
     | OrbitalIntentMessage
     | OrbitalChartMessage
-    | YieldMessage,
+    | YieldMessage
+    # Sünden engine plan item 4a — delve lifecycle inbound types.
+    # HubViewMessage is intentionally absent (outbound only).
+    | DungeonSelectMessage
+    | RetreatToHamletMessage,
     Field(discriminator="type"),
 ]
 

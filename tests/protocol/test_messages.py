@@ -1036,3 +1036,46 @@ def test_retreat_wounded_boss_orthogonal_to_outcome() -> None:
             p = RetreatToHamletPayload(outcome=outcome, wounded_boss=wounded)  # type: ignore[arg-type]
             assert p.outcome == outcome
             assert p.wounded_boss is wounded
+
+
+# ---------------------------------------------------------------------------
+# Sünden engine plan item 4a Task 4 — inbound dispatch registration.
+# The "dispatch table" for wire messages is the GameMessage discriminated
+# union (Annotated[..., Field(discriminator="type")]). DUNGEON_SELECT and
+# RETREAT_TO_HAMLET must parse via GameMessage; HUB_VIEW (outbound only)
+# must NOT — an inbound HUB_VIEW frame is a contract violation.
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_parses_dungeon_select() -> None:
+    from sidequest.protocol.messages import DungeonSelectMessage
+
+    raw = {
+        "type": "DUNGEON_SELECT",
+        "payload": {"dungeon": "grimvault", "party_hireling_ids": ["a"]},
+    }
+    msg = GameMessage.model_validate(raw)
+    assert isinstance(msg.root, DungeonSelectMessage)
+    assert msg.root.payload.dungeon == "grimvault"
+    assert msg.root.payload.party_hireling_ids == ["a"]
+
+
+def test_dispatch_parses_retreat() -> None:
+    from sidequest.protocol.messages import RetreatToHamletMessage
+
+    raw = {
+        "type": "RETREAT_TO_HAMLET",
+        "payload": {"outcome": "retreat"},
+    }
+    msg = GameMessage.model_validate(raw)
+    assert isinstance(msg.root, RetreatToHamletMessage)
+    assert msg.root.payload.outcome == "retreat"
+
+
+def test_dispatch_does_not_parse_hub_view_inbound() -> None:
+    """HUB_VIEW is server→client only. Inbound HUB_VIEW must error."""
+    from pydantic import ValidationError
+
+    raw = {"type": "HUB_VIEW", "payload": {}}
+    with pytest.raises(ValidationError):
+        GameMessage.model_validate(raw)
