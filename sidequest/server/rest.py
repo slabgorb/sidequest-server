@@ -31,7 +31,7 @@ from sidequest.game.persistence import (
     get_game,
     upsert_game,
 )
-from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
+from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, load_genre_pack_cached
 
 logger = logging.getLogger(__name__)
 
@@ -602,5 +602,56 @@ def create_rest_router() -> APIRouter:
             world_slug=row.world_slug,
             resumed=True,
         )
+
+    @router.get("/api/games/{slug}/hub")
+    async def get_hub_state(slug: str, request: Request) -> dict:
+        """Return WorldSave + enriched dungeon list for a hub-world game.
+
+        404: slug not found. 409: world has no dungeons (not_a_hub_world).
+        200: WorldSave JSON + available_dungeons [{slug, sin, wounded}, ...].
+        """
+        save_dir: Path = request.app.state.save_dir
+        db = db_path_for_slug(save_dir, slug)
+        if not db.exists():
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+        store = SqliteStore(db)
+        store.initialize()
+        row = get_game(store, slug)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no game with slug {slug}")
+
+        search_paths = getattr(
+            request.app.state,
+            "genre_pack_search_paths",
+            DEFAULT_GENRE_PACK_SEARCH_PATHS,
+        )
+        genre_pack = load_genre_pack_cached(row.genre_slug, search_paths=search_paths)
+        world = genre_pack.worlds.get(row.world_slug)
+        if world is None or not world.dungeons:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "not_a_hub_world",
+                    "world_slug": row.world_slug,
+                    "reason": "world has no dungeons",
+                },
+            )
+
+        world_save = store.load_world_save()
+        available_dungeons = [
+            {
+                "slug": dungeon_slug,
+                "sin": world.dungeons[dungeon_slug].config.sin,
+                "wounded": world_save.dungeon_wounds.get(dungeon_slug, False),
+            }
+            for dungeon_slug in sorted(world.dungeons)
+        ]
+        return {
+            "slug": slug,
+            "genre_slug": row.genre_slug,
+            "world_slug": row.world_slug,
+            "available_dungeons": available_dungeons,
+            "world_save": world_save.model_dump(mode="json"),
+        }
 
     return router
