@@ -113,6 +113,10 @@ def materialize_party(
       4. all referenced hirelings have ``status == "active"``
 
     Stress is NOT propagated to Character (item 3 territory).
+
+    NOTE: ``dungeon`` is currently unused inside materialize_party's per-
+    character path — reserved for downstream item-5/6 prompt-zone wiring
+    (e.g. dungeon-specific opening descriptions). Do not remove.
     """
     if not (1 <= len(party_ids) <= 6):
         raise ValueError(f"party size must be 1..6, got {len(party_ids)}")
@@ -158,7 +162,7 @@ def _character_from_hireling(hireling: Hireling, *, world_slug: str) -> Characte
         core=CreatureCore(
             name=hireling.name,
             description=f"A roster member of {world_slug}.",
-            personality="placeholder",
+            personality="Plain-spoken.",
             inventory=Inventory(),
             statuses=[],
             edge=placeholder_edge_pool(),
