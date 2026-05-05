@@ -27,9 +27,10 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 # Per-slot tables that ``init_session()`` clears on reinit. ``games``
-# (slug-keyed) and ``scenario_archive`` (session_id-keyed) are global
-# lifecycle, not per-slot, and survive reinit. ``session_meta`` is
-# replaced (not cleared) by the INSERT OR REPLACE in ``init_session()``.
+# (slug-keyed), ``scenario_archive`` (session_id-keyed), and
+# ``world_save`` (singleton hub state — Sünden engine plan item 2) are
+# all global lifecycle, not per-slot, and survive reinit. ``session_meta``
+# is replaced (not cleared) by the INSERT OR REPLACE in ``init_session()``.
 #
 # Order matters: ``projection_cache`` carries a foreign key to
 # ``events.seq`` (PRAGMA foreign_keys=ON in ``_configure_connection``).
@@ -174,6 +175,11 @@ CREATE TABLE IF NOT EXISTS projection_cache (
     FOREIGN KEY (event_seq) REFERENCES events(seq)
 );
 CREATE INDEX IF NOT EXISTS idx_projection_cache_player ON projection_cache (player_id, event_seq);
+CREATE TABLE IF NOT EXISTS world_save (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    payload_json TEXT NOT NULL,
+    saved_at TEXT NOT NULL
+);
 """
 
 
