@@ -128,3 +128,28 @@ def test_load_world_save_invalid_json_raises():
     store._conn.commit()
     with pytest.raises(SaveSchemaIncompatibleError):
         store.load_world_save()
+
+
+def test_save_world_save_round_trip():
+    store = SqliteStore.open_in_memory()
+    ws = WorldSave(
+        roster=[Hireling(id="x_1", name="X", archetype="x")],
+        currency=10,
+        delve_count=1,
+    )
+    store.save_world_save(ws)
+    reloaded = store.load_world_save()
+    assert reloaded.currency == 10
+    assert reloaded.delve_count == 1
+    assert len(reloaded.roster) == 1
+    assert reloaded.roster[0].name == "X"
+    assert reloaded.last_saved_at is not None  # save_world_save stamps it
+
+
+def test_save_world_save_overwrites_singleton():
+    store = SqliteStore.open_in_memory()
+    store.save_world_save(WorldSave(currency=1))
+    store.save_world_save(WorldSave(currency=2))
+    rows = store._conn.execute("SELECT COUNT(*) FROM world_save").fetchone()
+    assert rows[0] == 1, "INSERT OR REPLACE must keep singleton invariant"
+    assert store.load_world_save().currency == 2

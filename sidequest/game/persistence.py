@@ -480,6 +480,18 @@ class SqliteStore:
                 ),
             ) from exc
 
+    def save_world_save(self, world_save: WorldSave) -> None:
+        """Persist this campaign's hub state. Atomic via transaction."""
+        now = datetime.now(tz=UTC)
+        stamped = world_save.model_copy(update={"last_saved_at": now})
+        payload_json = stamped.model_dump_json()
+        with self._conn:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO world_save (id, payload_json, saved_at)
+                   VALUES (1, ?, ?)""",
+                (payload_json, now.isoformat()),
+            )
+
     def append_narrative(self, entry: NarrativeEntry) -> None:
         """Append a narrative entry to the log."""
         import json
