@@ -24,6 +24,7 @@ from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
+    ClassDef,
     EquipmentTables,
     NpcArchetype,
     VisualStyle,
@@ -174,6 +175,7 @@ class GenrePack(BaseModel):
     openings: list[Opening] = Field(default_factory=list)
     backstory_tables: BackstoryTables | None = None
     equipment_tables: EquipmentTables | None = None
+    classes: list[ClassDef] = Field(default_factory=list)
     base_archetypes: BaseArchetypes | None = None
     archetype_constraints: ArchetypeConstraints | None = None
     npc_traits: NpcTraitsDatabase | None = None
