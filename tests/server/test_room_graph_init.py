@@ -158,9 +158,10 @@ class TestRoomGraphInit:
             assert isinstance(out[0], CharacterCreationMessage)
             assert out[0].payload.phase == "complete"
 
-            # Entrance room id populated on the snapshot.
-            assert sd.snapshot.location
-            entrance_id = sd.snapshot.location
+            # Entrance room id populated on the snapshot — Wave 2B
+            # writes per-character entries via init_room_graph_location.
+            entrance_id = sd.snapshot.character_locations.get("Rux")
+            assert entrance_id
             entrance_room = next(r for r in world.cartography.rooms if r.id == entrance_id)
             assert entrance_room.room_type == "entrance"
             assert entrance_id in sd.snapshot.discovered_rooms
@@ -237,7 +238,10 @@ class TestRoomGraphInit:
             # default_location wiring in a later slice is what replaces
             # that with a canonical region id.
             room_ids = {r.id for r in world.cartography.rooms or []}
-            assert sd.snapshot.location not in room_ids
+            # No per-character room-graph init occurred — character_locations
+            # for Rux is either empty or some non-room value (chapter
+            # location text from materialize, not a canonical room id).
+            assert sd.snapshot.character_locations.get("Rux") not in room_ids
 
             # OTEL: init_failed fired; init success did not.
             assert _events(otel_capture, "location.initialized") == []

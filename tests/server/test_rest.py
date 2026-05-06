@@ -245,7 +245,6 @@ def test_debug_state_projects_saved_game(tmp_path):
     snap = GameSnapshot(
         genre_slug="spaghetti_western",
         world_slug="dust_and_lead",
-        location="Sangre River Ford",
         discovered_regions=["Sangre River Ford", "Dust Town"],
         npc_registry=[
             NpcRegistryEntry(
@@ -271,7 +270,9 @@ def test_debug_state_projects_saved_game(tmp_path):
     assert view["session_key"] == slug
     assert view["genre_slug"] == "spaghetti_western"
     assert view["world_slug"] == "dust_and_lead"
-    assert view["current_location"] == "Sangre River Ford"
+    # Wave 2B: pre-chargen snapshot has no per-character location, so the
+    # party-frame projection is empty (no consensus).
+    assert view["current_location"] == ""
     assert "Sangre River Ford" in view["discovered_regions"]
     assert len(view["npc_registry"]) == 1
     assert view["npc_registry"][0]["name"] == "El Paso"
@@ -323,10 +324,10 @@ def test_debug_state_with_character_does_not_500(tmp_path):
     snap = GameSnapshot(
         genre_slug="spaghetti_western",
         world_slug="dust_and_lead",
-        location="Sangre River Ford",
         characters=[char],
         turn_manager=TurnManager(interaction=3),
     )
+    snap.character_locations["El Paso"] = "Sangre River Ford"
     store.save(snap)
     store.close()
 

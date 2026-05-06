@@ -310,20 +310,37 @@ class TestRecomputeArcHistory:
         scene back to whatever the latest chapter declared.
         """
 
+        from sidequest.game.character import Character
+        from sidequest.game.creature_core import CreatureCore, Inventory
+
         snap = _snapshot_at(round=10)
+        snap.characters.append(
+            Character(
+                core=CreatureCore(
+                    name="Live PC",
+                    description="x",
+                    personality="x",
+                    inventory=Inventory(),
+                ),
+                char_class="Adventurer",
+                race="Human",
+                backstory="x",
+            )
+        )
         chapters = _three_tier_chapters()
         # First recompute lands the chapter set so subsequent calls are
         # stable-maturity ticks.
         materialize_world(snap, chapters)
 
         # Player has moved on since chargen — live state has diverged
-        # from anything the chapter declares.
-        snap.location = "Live Player Location"
+        # from anything the chapter declares (Wave 2B: per-character
+        # location replaces the legacy party-level field).
+        snap.character_locations["Live PC"] = "Live Player Location"
         snap.atmosphere = "live atmosphere narrated mid-session"
         snap.active_stakes = "live stakes the narrator just authored"
 
         recompute_arc_history(snap, chapters)
 
-        assert snap.location == "Live Player Location"
+        assert snap.character_locations.get("Live PC") == "Live Player Location"
         assert snap.atmosphere == "live atmosphere narrated mid-session"
         assert snap.active_stakes == "live stakes the narrator just authored"

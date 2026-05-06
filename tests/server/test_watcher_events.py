@@ -115,16 +115,21 @@ async def test_state_transition_fires_on_location_update(
         snapshot, result, player_name="Rux", room=room_for(snapshot)
     )
     await asyncio.sleep(0.05)
+    # Wave 2B: the location update now fires under
+    # kind=character_location_updated keyed by the acting PC
+    # (per-character in snapshot.character_locations).
     location_events = [
         e
         for e in sock.events
-        if e["event_type"] == "state_transition" and e["fields"].get("field") == "location"
+        if e["event_type"] == "state_transition"
+        and e["fields"].get("kind") == "character_location_updated"
     ]
     assert len(location_events) == 1
     f = location_events[0]["fields"]
-    assert f["after"] == "Tood's Dome — Nest Crack"
-    assert f["before"] == ""
+    assert f["new_location"] == "Tood's Dome — Nest Crack"
+    assert (f.get("old_location") or "") == ""
     assert f["player_name"] == "Rux"
+    assert f["character"] == "Rux"
 
 
 @pytest.mark.asyncio

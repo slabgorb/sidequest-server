@@ -535,7 +535,8 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
     provider.add_span_processor(processor)
 
     try:
-        snap = GameSnapshot(genre_slug="test_pack", location="Hangar Bay 7")
+        snap = GameSnapshot(genre_slug="test_pack")
+        snap.character_locations["Maverick"] = "Hangar Bay 7"
         # Bystander at the same location — would be pulled into a non-sealed-letter
         # encounter via the registry fallback. Must NOT be pulled into the duel.
         snap.npc_registry.append(
@@ -611,7 +612,8 @@ def test_sealed_letter_empty_npcs_present_raises_without_consuming_registry(
         instantiate_encounter_from_trigger,
     )
 
-    snap = GameSnapshot(genre_slug="test_pack", location="Hangar Bay 7")
+    snap = GameSnapshot(genre_slug="test_pack")
+    snap.character_locations["Maverick"] = "Hangar Bay 7"
     snap.npc_registry.append(
         NpcRegistryEntry(
             name="Deck Crew Chief",
@@ -668,7 +670,8 @@ def test_combat_with_empty_npcs_and_empty_registry_fallback_raises(combat_only_p
         instantiate_encounter_from_trigger,
     )
 
-    snap = GameSnapshot(genre_slug="test_pack", location="The Pit")
+    snap = GameSnapshot(genre_slug="test_pack")
+    snap.character_locations["Orin"] = "The Pit"
     # Registry is empty — the fallback returns []; combined with empty
     # narrator npcs_present this is the "empty + empty" Playtest 3 shape.
 
@@ -701,7 +704,8 @@ def test_combat_with_no_location_and_empty_npcs_raises(combat_only_pack):
     )
 
     snap = GameSnapshot(genre_slug="test_pack")  # no location
-    assert snap.location in (None, "")
+    # No per-character location entry — party_location() returns None.
+    assert snap.character_locations == {}
 
     with pytest.raises(ValueError, match=r"(?i)no opponent"):
         instantiate_encounter_from_trigger(
@@ -751,7 +755,8 @@ def test_combat_no_opponent_emits_otel_span(combat_only_pack):
     provider.add_span_processor(processor)
 
     try:
-        snap = GameSnapshot(genre_slug="test_pack", location="The Pit")
+        snap = GameSnapshot(genre_slug="test_pack")
+        snap.character_locations["Orin"] = "The Pit"
         with pytest.raises(ValueError, match=r"(?i)no opponent"):
             instantiate_encounter_from_trigger(
                 snapshot=snap,

@@ -1368,6 +1368,19 @@ class WebSocketSessionHandler:
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
+            # Wave 2B (story 45-48): the chapter's location was previously
+            # written to the materialized snapshot's ``location`` field;
+            # that field is gone. Backfill the now-attached PC's
+            # per-character entry from the latest chapter that authored a
+            # ``location`` so chargen-confirmation lands the player at the
+            # scene the chapter described. Room-graph worlds overwrite this
+            # below via ``init_room_graph_location`` (entrance room id),
+            # which is intentional — the chapter's free-text location is
+            # the fallback for non-room-graph worlds.
+            for ch in reversed(materialized.world_history):
+                if ch.location:
+                    materialized.character_locations[character.core.name] = ch.location
+                    break
             # Mutate the canonical room snapshot in place rather than
             # reassigning ``sd.snapshot``. Reassignment orphans the
             # ``room._snapshot`` reference: ``room.save()`` then
@@ -3684,7 +3697,7 @@ class WebSocketSessionHandler:
         location_before = (
             snapshot_location_before
             if snapshot_location_before is not None
-            else sd.snapshot.party_location()
+            else sd.snapshot.party_location(perspective=sd.player_name)
         )
         reason = classify_trigger(
             result,
