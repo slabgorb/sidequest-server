@@ -91,9 +91,11 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
     )
     await asyncio.sleep(0.05)
 
-    # Snapshot must have been mutated inside the span.
-    assert len(snapshot.npc_registry) == 1
-    assert snapshot.npc_registry[0].name == "Vex"
+    # Snapshot must have been mutated inside the span. Wave 2A (45-47)
+    # routes auto-registration through ``npc_pool`` instead of the
+    # legacy ``npc_registry``.
+    assert len(snapshot.npc_pool) == 1
+    assert snapshot.npc_pool[0].name == "Vex"
 
     typed = [
         e
@@ -296,7 +298,13 @@ async def test_npc_reinvented_emits_warning_state_transition_via_span_route(
         appearance="",
     )
 
-    _detect_npc_identity_drift(existing, drift_mention, turn_num=9)
+    _detect_npc_identity_drift(
+        existing_name=existing.name,
+        existing_role=existing.role,
+        existing_pronouns=existing.pronouns,
+        mention=drift_mention,
+        turn_num=9,
+    )
     await asyncio.sleep(0.05)
 
     typed = [

@@ -36,10 +36,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPACE_OPERA = REPO_ROOT / "sidequest-content" / "genre_packs" / "space_opera"
 
 
-def _bootstrap_session_opened_in_galley() -> GameSnapshot:
+def _bootstrap_session_opened_in_galley(
+    *, character_id: str = "player_character"
+) -> GameSnapshot:
     """Snapshot in the same shape a fresh session takes when the opening
     places the player in the galley — chassis registered and location
-    set to the chassis-qualified galley."""
+    set to the chassis-qualified galley.
+
+    Wave 2B (45-48): per-character ``character_locations`` entry replaces
+    the removed party-level ``location`` field.
+    """
     if not SPACE_OPERA.exists():
         pytest.skip("space_opera content pack not present")
     from tests.integration.conftest import make_minimal_coyote_star_magic_state
@@ -48,8 +54,8 @@ def _bootstrap_session_opened_in_galley() -> GameSnapshot:
     snap = GameSnapshot(
         genre_slug="space_opera",
         world_slug="coyote_star",
-        location="The Kestrel — Galley",
     )
+    snap.character_locations[character_id] = "The Kestrel — Galley"
     snap.turn_manager = TurnManager()
     snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
@@ -110,8 +116,8 @@ def test_session_opened_outside_galley_does_not_fire_tea_brew() -> None:
     snap = GameSnapshot(
         genre_slug="space_opera",
         world_slug="coyote_star",
-        location="The Kestrel — Cockpit",
     )
+    snap.character_locations["player_character"] = "The Kestrel — Cockpit"
     snap.turn_manager = TurnManager()
     snap.magic_state = make_minimal_coyote_star_magic_state()
     init_chassis_registry(snap, pack)
@@ -140,7 +146,7 @@ def test_session_opened_in_galley_with_real_character_fires_tea_brew() -> None:
     from sidequest.game.chassis import rebind_chassis_bonds_to_character
     from sidequest.game.room_movement import process_session_open
 
-    snap = _bootstrap_session_opened_in_galley()
+    snap = _bootstrap_session_opened_in_galley(character_id="Zanzibar Jones")
     rebind_chassis_bonds_to_character(snap, "Zanzibar Jones")
 
     kestrel = snap.chassis_registry["kestrel"]
