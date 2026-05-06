@@ -1387,10 +1387,43 @@ class CharacterBuilder:
         random_table_requested = any(
             r.effects_applied.equipment_generation == "random_table" for r in self._results
         )
-        if random_table_requested and self._equipment_tables is not None:
+        class_kit_requested = any(
+            r.effects_applied.equipment_generation == "class_kit" for r in self._results
+        )
+
+        # Resolve the kit_tables dict to roll from.  class_kit takes
+        # precedence; random_table is the fallback for packs that don't
+        # declare per-class kits.
+        kit_tables: dict[str, list[str]] | None = None
+        kit_source = "none"
+        if class_kit_requested and self._equipment_tables is not None and self._classes:
+            chosen_class = next(
+                (c for c in self._classes if c.display_name == class_str),
+                None,
+            )
+            if chosen_class is None:
+                span.add_event(
+                    "chargen.class_kit_unresolved",
+                    {"class_str": class_str, "severity": "error"},
+                )
+            else:
+                kit_tables = self._equipment_tables.class_tables.get(chosen_class.kit_table)
+                kit_source = f"class_kit:{chosen_class.kit_table}"
+                if kit_tables is None:
+                    span.add_event(
+                        "chargen.class_kit_table_missing",
+                        {"kit_table": chosen_class.kit_table, "severity": "error"},
+                    )
+
+        # Existing random_table fallback path:
+        if kit_tables is None and random_table_requested and self._equipment_tables is not None:
+            kit_tables = self._equipment_tables.tables
+            kit_source = "random_table"
+
+        if kit_tables is not None and self._equipment_tables is not None:
             added = 0
             skipped = 0
-            for slot, candidates in self._equipment_tables.tables.items():
+            for slot, candidates in kit_tables.items():
                 if not candidates:
                     continue
                 rolls = self._equipment_tables.rolls_per_slot.get(slot, 1)
@@ -1424,10 +1457,15 @@ class CharacterBuilder:
                         }
                     )
                     added += 1
-            equipment_method = "tables"
+            if class_kit_requested and kit_source.startswith("class_kit:"):
+                span.add_event(
+                    "chargen.class_kit_rolled",
+                    {"kit_id": kit_source, "slot_count": len(kit_tables)},
+                )
+            equipment_method = kit_source
             equipment_added = added
             equipment_skipped = skipped
-        elif random_table_requested:
+        elif random_table_requested and not class_kit_requested:
             # Directive present but no equipment_tables wired — this is
             # a misconfiguration, not graceful degradation. SOUL.md: no
             # silent fallbacks.
@@ -1436,6 +1474,20 @@ class CharacterBuilder:
                 {
                     "reason": (
                         "scene declared `equipment_generation: random_table` "
+                        "but CharacterBuilder has no equipment_tables wired"
+                    ),
+                    "severity": "warn",
+                },
+            )
+            equipment_method = "none"
+            equipment_added = 0
+            equipment_skipped = 0
+        elif class_kit_requested and self._equipment_tables is None:
+            span.add_event(
+                "chargen.equipment_tables_missing",
+                {
+                    "reason": (
+                        "scene declared `equipment_generation: class_kit` "
                         "but CharacterBuilder has no equipment_tables wired"
                     ),
                     "severity": "warn",
