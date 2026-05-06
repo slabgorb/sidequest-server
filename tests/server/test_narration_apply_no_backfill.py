@@ -82,10 +82,10 @@ def _seed_legacy_location(snap: GameSnapshot, value: str) -> None:
     The assertions hold trivially because the seed loop is gone.
     """
     if hasattr(snap, "location"):
-        try:
+        import contextlib
+
+        with contextlib.suppress(AttributeError, ValueError):
             snap.location = value  # type: ignore[attr-defined]
-        except (AttributeError, ValueError):
-            pass
 
 
 # ---------------------------------------------------------------------------

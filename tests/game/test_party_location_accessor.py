@@ -20,10 +20,7 @@ Spec source: docs/superpowers/specs/2026-05-04-snapshot-split-brain-cleanup-desi
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.game.session import GameSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Mode 1: perspective supplied — single-player narrator framing

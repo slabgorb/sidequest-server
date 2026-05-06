@@ -6,7 +6,6 @@ AC-A*, AC-O*) per docs/superpowers/specs/2026-05-04-adr-094-...
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import pytest
@@ -14,11 +13,9 @@ import pytest
 from sidequest.orbital import palette
 from sidequest.orbital.label_strategy import (
     CalloutBlock,
-    GutterLayout,
     LabelDecision,
     LabelStrategy,
     SelectionReason,
-    _StrategyInput,
     _apply_decision_tree,
     _block_height_px,
     _count_cross_group_crossings,
@@ -29,6 +26,7 @@ from sidequest.orbital.label_strategy import (
     _rule_textpath,
     _segments_intersect,
     _side_for_bearing,
+    _StrategyInput,
     estimate_text_width_px,
     lay_out_gutter,
     select_label_strategies,

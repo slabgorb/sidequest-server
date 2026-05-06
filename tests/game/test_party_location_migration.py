@@ -24,7 +24,6 @@ from typing import Any
 
 from sidequest.game.migrations import migrate_legacy_snapshot
 
-
 # ---------------------------------------------------------------------------
 # Migration is wired into the orchestrator
 # ---------------------------------------------------------------------------
