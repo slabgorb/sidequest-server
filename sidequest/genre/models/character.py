@@ -68,6 +68,28 @@ class MechanicalEffects(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
 
 
+class ClassDef(BaseModel):
+    """A character class definition loaded from classes.yaml.
+
+    Class influences starting Edge (via edge_config.base_max_by_class
+    in rules.yaml) and starting equipment kit. encounter_beat_choices
+    and magic_access are reserved for future class-specific subsystems.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    display_name: str
+    rpg_role: str
+    jungian_default: str
+    prime_requisite: str  # "STR" / "DEX" / "CON" / "INT" / "WIS" / "CHA"
+    minimum_score: int
+    kit_table: str
+    flavor: str = ""
+    encounter_beat_choices: list[str] = Field(default_factory=list)
+    magic_access: str | None = None
+
+
 class CharCreationChoice(BaseModel):
     """A choice within a character creation scene."""
 
