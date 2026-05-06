@@ -131,12 +131,17 @@ class TestVisualStyleLoaderStillWorks:
                 )
             files_checked += 1
 
-        # Hard floor: the content tree currently ships ~10 genre packs
-        # plus several worlds. A misconfigured CONTENT_GENRE_PACKS path
-        # finding only a handful of files should fail loudly rather than
-        # vacuously pass. Bumping this floor is the right reaction when
-        # packs are added; lowering it requires explicit justification.
-        MIN_VISUAL_STYLE_FILES = 8
+        # Hard floor: the content tree currently ships 5 genre packs with
+        # visual_style.yaml at the genre tier (caverns_and_claudes,
+        # elemental_harmony, mutant_wasteland, space_opera, victoria) plus
+        # the two leaf worlds that ship their own override (caverns_sunden,
+        # coyote_star) — 7 files. A misconfigured CONTENT_GENRE_PACKS path
+        # finding fewer should fail loudly rather than vacuously pass.
+        # Bumping this floor is the right reaction when packs are added;
+        # lowering it requires explicit justification (most recently:
+        # 2026-05-06 Sünden hub-world revert removed the per-dungeon
+        # visual_style.yaml files).
+        MIN_VISUAL_STYLE_FILES = 7
         assert files_checked >= MIN_VISUAL_STYLE_FILES, (
             f"Expected at least {MIN_VISUAL_STYLE_FILES} visual_style.yaml "
             f"files under {CONTENT_GENRE_PACKS}; found {files_checked}. "
