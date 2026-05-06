@@ -109,21 +109,6 @@ class Character(BaseModel):
     resolved_archetype: str | None = None
     archetype_provenance: dict | None = None
 
-    # Sünden engine plan item 4a — delve-lifecycle attribution.
-    #
-    # ``hireling_id`` links this Character back to its WorldSave.roster
-    # row so commit_back can attribute alive/dead status by stable id.
-    # Match-by-name was rejected during plan review: namegen has finite
-    # culture-corpus entropy and two hirelings can share a display name,
-    # so a name match would be a silent misattribution magnet.
-    # ``None`` for legacy chargen-spawned PCs (non-hub flows).
-    hireling_id: str | None = None
-    # Per-character death sibling to the party-level
-    # ``GameSnapshot.player_dead`` flag. commit_back reads this to flip
-    # exactly the right Hireling.status to "dead" when a single hireling
-    # dies but the party retreats.
-    is_dead: bool = False
-
     # Chargen-derived narrative identity (canned-openings P2 — used by
     # _populate_opening_directive_on_chargen_complete to filter Openings
     # by triggers.backgrounds and to render PC name forms in the

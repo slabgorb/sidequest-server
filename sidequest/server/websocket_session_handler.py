@@ -649,13 +649,9 @@ class WebSocketSessionHandler:
             from sidequest.handlers.action_reveal import HANDLER as ACTION_REVEAL_HANDLER
             from sidequest.handlers.character_creation import HANDLER as CHARACTER_CREATION_HANDLER
             from sidequest.handlers.dice_throw import HANDLER as DICE_THROW_HANDLER
-            from sidequest.handlers.dungeon_select import HANDLER as DUNGEON_SELECT_HANDLER
             from sidequest.handlers.orbital_intent import HANDLER as ORBITAL_INTENT_HANDLER
             from sidequest.handlers.player_action import HANDLER as PLAYER_ACTION_HANDLER
             from sidequest.handlers.player_seat import HANDLER as PLAYER_SEAT_HANDLER
-            from sidequest.handlers.retreat_to_hamlet import (
-                HANDLER as RETREAT_TO_HAMLET_HANDLER,
-            )
             from sidequest.handlers.session_event import HANDLER as SESSION_EVENT_HANDLER
             from sidequest.handlers.yield_action import HANDLER as YIELD_HANDLER
 
@@ -668,8 +664,6 @@ class WebSocketSessionHandler:
                 "YIELD": YIELD_HANDLER,
                 "ORBITAL_INTENT": ORBITAL_INTENT_HANDLER,
                 "ACTION_REVEAL": ACTION_REVEAL_HANDLER,
-                "DUNGEON_SELECT": DUNGEON_SELECT_HANDLER,
-                "RETREAT_TO_HAMLET": RETREAT_TO_HAMLET_HANDLER,
             }
             cls._MESSAGE_HANDLERS = registry
         return registry.get(msg_type)
@@ -2143,12 +2137,6 @@ class WebSocketSessionHandler:
                     encounter_unresolved_before = (
                         snapshot.encounter is not None and not snapshot.encounter.resolved
                     )
-                    # Sünden engine plan Task 10: capture player_dead BEFORE
-                    # the apply so the post-apply check can detect a positive
-                    # edge (False → True) and auto-end the delve. Captured
-                    # here rather than inline-after-apply so the variable
-                    # name documents the intent: this is the pre-apply read.
-                    prev_player_dead_for_delve_end = snapshot.player_dead
                     _apply_narration_result_to_snapshot(
                         snapshot,
                         result,
@@ -3169,36 +3157,6 @@ class WebSocketSessionHandler:
                         snapshot.turn_manager.interaction,
                         exc,
                     )
-
-                # Sünden engine plan Task 10: player_dead auto-trigger.
-                # On the positive edge (False → True) inside an active
-                # delve, run the same _end_delve path the voluntary
-                # RETREAT_TO_HAMLET handler uses, with outcome="defeat".
-                # This is the only place the server can synthesize
-                # outcome="defeat" — the wire-inbound RetreatToHamletPayload
-                # narrows to ("retreat", "victory") so a client cannot
-                # claim defeat. Wired here (post game_state_snapshot
-                # publish) so the lie-detector's resume snapshot reflects
-                # the still-in-delve state right up to the moment of
-                # death; the appended HUB_VIEW carries the post-end view.
-                if sd._room is not None:
-                    # Lazy import: matches the ``_message_handler_for``
-                    # registry pattern (lines 640-645). Handler modules
-                    # import ``WebSocketSessionHandler`` under
-                    # ``TYPE_CHECKING``; importing them at module top
-                    # would invert that relationship and risk circular
-                    # imports as the handler surface grows.
-                    from sidequest.handlers.retreat_to_hamlet import (  # noqa: PLC0415
-                        maybe_end_delve_on_player_dead,
-                    )
-
-                    delve_end_msgs = await maybe_end_delve_on_player_dead(
-                        session=self,
-                        slug=sd._room.slug,
-                        prev_player_dead=prev_player_dead_for_delve_end,
-                        snapshot=snapshot,
-                    )
-                    outbound.extend(delve_end_msgs)
 
                 return outbound
         finally:
