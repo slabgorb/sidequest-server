@@ -326,11 +326,14 @@ def emit_scrapbook_entry(
         # produced no prose (only happens in degraded edge cases).
         return
 
-    # UI contract: ``location`` must be non-empty. Fall back to the raw
-    # snapshot location when the display lookup yields nothing — better
-    # to surface "Unknown" than to silently drop the entry.
-    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, snapshot.location) or (
-        snapshot.location or "Unknown"
+    # UI contract: ``location`` must be non-empty. Wave 2B (story 45-48):
+    # the scrapbook entry is a party-frame artifact, so use the consensus
+    # accessor — solo always returns the only PC's location; MP returns
+    # the shared location when seated PCs agree, None when split. Fall
+    # back to "Unknown" rather than silently drop the entry.
+    raw_location = snapshot.party_location()
+    loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, raw_location) or (
+        raw_location or "Unknown"
     )
 
     # Trim the excerpt to a reasonable length for caption rendering. The

@@ -104,9 +104,9 @@ def _make_session_data(player_id: str = "p-1") -> _SessionData:
     snap = GameSnapshot(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
-        location="Tood's Dome — Nest Crack",
         turn_manager=TurnManager(interaction=3),
     )
+    snap.character_locations["Rux"] = "Tood's Dome — Nest Crack"
     sd = _SessionData(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
@@ -153,11 +153,11 @@ def _make_session_data_with_pc(
     snap = GameSnapshot(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
-        location="Tood's Dome — Nest Crack",
         turn_manager=TurnManager(interaction=3),
         characters=[character],
         player_seats={player_id: player_name},
     )
+    snap.character_locations[player_name] = "Tood's Dome — Nest Crack"
     sd = _SessionData(
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
@@ -1160,7 +1160,7 @@ async def test_render_trigger_banter_emits_none_policy_skip(
     result = NarrationTurnResult(
         narration="They share a cigarette.",
         visual_scene=_visual_scene_for_turn(),
-        location=sd.snapshot.location,
+        location=sd.snapshot.character_locations.get(sd.player_name),
     )
 
     queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
@@ -1295,7 +1295,7 @@ async def test_felix_shape_replay_eight_turn_sequence(
     cap = await _bind_capture()
     handler, queue = _make_handler_with_queue()
     sd = _make_session_data()
-    base_location = sd.snapshot.location
+    base_location = sd.snapshot.character_locations.get(sd.player_name)
 
     # Disable the ADR-050 image pacing throttle for this test — we are
     # testing the trigger POLICY in isolation, and the throttle's default
@@ -1418,7 +1418,7 @@ async def test_felix_shape_replay_eight_turn_sequence(
         # Advance the snapshot's location for the next turn so the
         # classifier compares against the right baseline.
         if result.location:
-            sd.snapshot.location = result.location
+            sd.snapshot.character_locations[sd.player_name] = result.location
 
     # Give the event loop a tick so async watcher publishes from the final
     # turn (which had no `await queue.get()` to drain) reach the capture.

@@ -297,7 +297,14 @@ class WorldBuilder:
             )
 
         if chapter.location is not None:
-            snap.location = chapter.location
+            # Wave 2B (story 45-48): party-level snapshot.location removed.
+            # Stamp the chapter's location onto every existing character's
+            # per-character entry so subsequent narrator framing and views
+            # see the materialized scene. Characters added later (e.g. by
+            # chargen confirmation) will populate their own entry via
+            # init_room_graph_location.
+            for ch in snap.characters:
+                snap.character_locations[ch.core.name] = chapter.location
         if chapter.time_of_day is not None:
             snap.time_of_day = chapter.time_of_day
         if chapter.atmosphere is not None:

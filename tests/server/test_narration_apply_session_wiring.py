@@ -173,7 +173,7 @@ def test_narration_apply_does_not_advance_clock_on_location_change(
     satisfied, but the migrated branch is not reached.
     """
     room, snap = _make_room(tmp_path)
-    snap.location = "The Throat"  # old_loc must be truthy to take the sweep guard
+    snap.character_locations["Sam"] = "The Throat"  # old_loc must be truthy to take the sweep guard
 
     result = NarrationTurnResult(
         narration="They march on.",

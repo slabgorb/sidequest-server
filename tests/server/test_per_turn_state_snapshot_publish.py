@@ -84,7 +84,9 @@ async def test_execute_narration_turn_publishes_game_state_snapshot(
     )
     snap = payload["snapshot"]
     assert "characters" in snap
-    assert "location" in snap
+    # Wave 2B (story 45-48): per-character location replaces the legacy
+    # ``location`` field. State panel reads from this dict.
+    assert "character_locations" in snap
     assert "turn_manager" in snap
     # And the existing summary fields still flow for legacy consumers.
     assert "current_location" in payload

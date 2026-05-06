@@ -721,6 +721,7 @@ def _apply_npc_mentions(
     snapshot: GameSnapshot,
     mentions: list[Any],
     turn_num: int,
+    acting_character_name: str | None = None,
 ) -> None:
     """Apply narrator NPC mentions via 3-step lookup (Wave 2A, story 45-47).
 
@@ -783,8 +784,9 @@ def _apply_npc_mentions(
                 mention=mention,
                 turn_num=turn_num,
             )
-            if snapshot.location:
-                npc_hit.last_seen_location = snapshot.location
+            actor_loc = snapshot.party_location(perspective=acting_character_name)
+            if actor_loc:
+                npc_hit.last_seen_location = actor_loc
             npc_hit.last_seen_turn = turn_num
             with npc_referenced_span(
                 npc_name=mention.name,
@@ -1069,38 +1071,21 @@ def _apply_narration_result_to_snapshot(
             )
 
     if result.location:
-        old_loc = snapshot.location
-        # Playtest 2026-05-02 [BUG] (round 2): the bundled-actions narrator
-        # returns ONE ``result.location`` per round even when both players
-        # acted, so only the acting PC's ``character_locations`` entry is
-        # written each turn. Without this seed loop, a non-acting peer who
-        # never narrated a location update (e.g. joiner with suppressed
-        # opening, or a peer who just hasn't moved yet) has no entry in
-        # ``character_locations`` — and the resolver falls back to
-        # ``snapshot.location``, which we are about to clobber. So the peer's
-        # header would track whichever player most recently narrated.
-        # Defense: BEFORE clobbering ``snapshot.location``, snapshot the
-        # current global into ``character_locations[peer]`` for every seated
-        # PC who doesn't have an entry yet. They were canonically at the
-        # current ``snapshot.location`` until this narration moved someone;
-        # freezing that there preserves the right scene for them on the
-        # next PARTY_STATUS frame. ``player_seats.values()`` is the
-        # authoritative seated-PC set (chargen-bound character names).
-        if old_loc:
-            for seated_char_name in snapshot.player_seats.values():
-                if seated_char_name and seated_char_name not in snapshot.character_locations:
-                    snapshot.character_locations[seated_char_name] = old_loc
-                    _watcher_publish(
-                        "state_transition",
-                        {
-                            "kind": "character_location_seeded",
-                            "character": seated_char_name,
-                            "seeded_location": old_loc,
-                            "reason": "peer_seed_pre_acting_update",
-                        },
-                        component="game",
-                    )
-        snapshot.location = result.location
+        # Wave 2B (story 45-48): per-character locations are the only
+        # source of truth. The previous "snapshot the global before
+        # clobbering" seed loop is gone — there is no global. Compute the
+        # acting PC's prior location for scene-change detection below.
+        # ``acting_character_name`` is the canonical actor identity;
+        # legacy callers (older tests, dispatch paths that haven't been
+        # threaded yet) pass the actor as ``player_name`` instead — fall
+        # back to that so the apply path still records location updates
+        # rather than silently dropping them.
+        actor_for_location = acting_character_name or player_name
+        old_loc = (
+            snapshot.character_locations.get(actor_for_location)
+            if actor_for_location
+            else None
+        )
         # Story 47-4: rig-coupled auto-fire hook. Any narrator-emitted
         # location change runs through process_room_entry, which resolves
         # bare world-name rooms ("Galley") against chassis.interior_rooms
@@ -1117,21 +1102,18 @@ def _apply_narration_result_to_snapshot(
                 room_id=result.location,
                 current_turn=snapshot.turn_manager.interaction,
             )
-        # Bind this turn's location to the acting character so views.py
-        # can build per-player PARTY_STATUS frames with the right scene
-        # per member. Solo sessions populate a single entry that equals
-        # snapshot.location; MP populates one entry per actor as they
-        # narrate. ``acting_character_name`` is ``None`` only on legacy
-        # callers that haven't been threaded — fall back to the existing
-        # snapshot.location-only behavior in that case rather than poison
-        # the dict with a fabricated key.
-        if acting_character_name:
-            snapshot.character_locations[acting_character_name] = result.location
+        # Bind this turn's location to the acting character. Legacy
+        # callers that haven't been threaded with ``acting_character_name``
+        # fall back to ``player_name`` (which has historically held the
+        # character name in this seam). The existing observability log
+        # line below records the narrator's emit either way.
+        if actor_for_location:
+            snapshot.character_locations[actor_for_location] = result.location
             _watcher_publish(
                 "state_transition",
                 {
                     "kind": "character_location_updated",
-                    "character": acting_character_name,
+                    "character": actor_for_location,
                     "old_location": old_loc,
                     "new_location": result.location,
                     "player_name": player_name,
@@ -1370,12 +1352,19 @@ def _apply_narration_result_to_snapshot(
         # Story 45-13: per-room container retrieved-state. Each
         # ``items_gained`` entry may carry an optional ``from_container``
         # annotation pointing at a narrator-emitted container id (e.g.
-        # ``"tin_box"``). The room id is keyed off ``snapshot.location``
-        # — the canonical "where the player is right now" string. The
+        # ``"tin_box"``). The room id is the acting PC's current location
+        # (Wave 2B: per-character, no global snapshot.location). The
         # apply-time gate is the load-bearing block per AC #6: even when
         # the prompt-time hint is bypassed, a duplicate retrieval in the
         # same room is filtered here.
-        room_id = snapshot.location
+        # Fall back to player_name when callers haven't threaded
+        # acting_character_name (parity with actor_for_location above).
+        room_id = (
+            snapshot.party_location(
+                perspective=acting_character_name or player_name
+            )
+            or ""
+        )
         round_number = snapshot.turn_manager.round
         for entry in result.items_gained or []:
             container_id = str(entry.get("from_container", "") or "").strip()
@@ -1609,6 +1598,7 @@ def _apply_narration_result_to_snapshot(
         snapshot=snapshot,
         mentions=list(result.npcs_present),
         turn_num=turn_num,
+        acting_character_name=acting_character_name,
     )
 
     # Plot-a-course: parse course sidecar variants out of the

@@ -1362,6 +1362,19 @@ class WebSocketSessionHandler:
             # Discard the "Adventurer" placeholder the fresh chapter may
             # author — the chargen-built character owns that slot.
             materialized.characters = [character]
+            # Wave 2B (story 45-48): the chapter's location was previously
+            # written to the materialized snapshot's ``location`` field;
+            # that field is gone. Backfill the now-attached PC's
+            # per-character entry from the latest chapter that authored a
+            # ``location`` so chargen-confirmation lands the player at the
+            # scene the chapter described. Room-graph worlds overwrite this
+            # below via ``init_room_graph_location`` (entrance room id),
+            # which is intentional — the chapter's free-text location is
+            # the fallback for non-room-graph worlds.
+            for ch in reversed(materialized.world_history):
+                if ch.location:
+                    materialized.character_locations[character.core.name] = ch.location
+                    break
             # Mutate the canonical room snapshot in place rather than
             # reassigning ``sd.snapshot``. Reassignment orphans the
             # ``room._snapshot`` reference: ``room.save()`` then
@@ -1698,19 +1711,20 @@ class WebSocketSessionHandler:
         # to chargen instead of auto-claiming an existing PC.
         if sd.player_id and character.core.name:
             sd.snapshot.player_seats[sd.player_id] = character.core.name
-            # Playtest 2026-05-02 [BUG] (round 2): seed
-            # ``character_locations[char_name]`` with the current
-            # ``snapshot.location`` so a joiner whose opening narration
-            # gets suppressed (mp_joiner_opening_suppressed_at_consume) or
-            # whose opening doesn't emit ``result.location`` still has a
-            # last-known location entry. Without this, the next narration
-            # apply's pre-clobber seed loop catches them — but a
-            # PARTY_STATUS frame between chargen and the first apply would
-            # leak the global location into the joiner's header
-            # incorrectly. Belt + suspenders: seed at every entry point
-            # where a PC's location is known.
-            if sd.snapshot.location and character.core.name not in sd.snapshot.character_locations:
-                sd.snapshot.character_locations[character.core.name] = sd.snapshot.location
+            # Wave 2B (story 45-48): seed the joiner's per-character
+            # location from the party consensus when one exists. This
+            # gives a joiner whose opening was suppressed a sensible
+            # last-known scene immediately, rather than the empty header
+            # that a missed narration would otherwise produce. When the
+            # party is split (or pre-narration), no consensus exists and
+            # we leave the entry absent — the next narration apply will
+            # populate it.
+            party_consensus = sd.snapshot.party_location()
+            if (
+                party_consensus
+                and character.core.name not in sd.snapshot.character_locations
+            ):
+                sd.snapshot.character_locations[character.core.name] = party_consensus
             span.add_event(
                 "session.player_seat_bound",
                 {
@@ -2130,10 +2144,13 @@ class WebSocketSessionHandler:
                     # trigger policy classifier can detect SCENE_CHANGE
                     # (location differs from prior turn) and ENCOUNTER_RESOLVED
                     # (encounter transitioned from unresolved to resolved this
-                    # turn). After apply, ``snapshot.location`` and
-                    # ``snapshot.encounter`` reflect the new state and the
-                    # transition signal would be lost.
-                    snapshot_location_before_apply = snapshot.location
+                    # turn). Wave 2B (story 45-48): the comparison is now
+                    # per-character — capture the acting PC's current
+                    # location, not the removed party-level field.
+                    _acting_for_render_trigger = _resolve_acting_character_name(sd, sd._room)
+                    snapshot_location_before_apply = snapshot.party_location(
+                        perspective=_acting_for_render_trigger
+                    )
                     encounter_unresolved_before = (
                         snapshot.encounter is not None and not snapshot.encounter.resolved
                     )
@@ -2871,7 +2888,7 @@ class WebSocketSessionHandler:
                     # CHAPTER_MARKER — the UI's ``useRunningHeader`` hook derives the
                     # running-header chapter title from this frame. When the narrator
                     # emits a location in game_patch, the new location is already on
-                    # ``snapshot.location`` (applied in
+                    # ``snapshot.character_locations[acting_character]`` (applied in
                     # ``_apply_narration_result_to_snapshot``). Emit one frame per
                     # location change so the header updates in lock-step with
                     # narration. Without this the header stays blank since the UI
@@ -2884,7 +2901,11 @@ class WebSocketSessionHandler:
                             payload=ChapterMarkerPayload(
                                 title=None,
                                 location=_resolve_location_display(
-                                    sd.genre_pack, sd.world_slug, snapshot.location
+                                    sd.genre_pack,
+                                    sd.world_slug,
+                                    snapshot.party_location(
+                                        perspective=_acting_for_render_trigger
+                                    ),
                                 ),
                             ),
                             player_id=sd.player_id,
@@ -2992,10 +3013,16 @@ class WebSocketSessionHandler:
                             # (pingpong 2026-04-30 follow-on); single broadcast
                             # path fixes both halves.
                             _emit_shared_world_frame(party_status, "PARTY_STATUS")
+                            # Wave 2B (story 45-48): the log/event location is
+                            # the actor's own current scene — there is no
+                            # party-frame ``snapshot.location`` anymore.
+                            _ps_log_loc = (
+                                snapshot.party_location(perspective=self_char.core.name) or ""
+                            )
                             logger.info(
                                 "state.party_status_emitted reason=turn_end location=%r turn=%d "
                                 "self_char=%s",
-                                snapshot.location or "",
+                                _ps_log_loc,
                                 snapshot.turn_manager.interaction,
                                 self_char.core.name,
                             )
@@ -3004,7 +3031,7 @@ class WebSocketSessionHandler:
                                 {
                                     "field": "party_status",
                                     "reason": "turn_end",
-                                    "location": snapshot.location or "",
+                                    "location": _ps_log_loc,
                                     "turn_number": snapshot.turn_manager.interaction,
                                     "player_id": sd.player_id,
                                 },
@@ -3025,6 +3052,7 @@ class WebSocketSessionHandler:
                     result,
                     encounter_resolved_this_turn=encounter_resolved_this_turn,
                     snapshot_location_before=snapshot_location_before_apply,
+                    acting_character_name=_acting_for_render_trigger,
                 )
                 if render_queued is not None:
                     outbound.append(render_queued)
@@ -3141,8 +3169,17 @@ class WebSocketSessionHandler:
                             # event did fire at connect.
                             "snapshot": snapshot.model_dump(mode="json"),
                             # Back-compat summary fields the connect-time
-                            # publishes have always exposed.
-                            "current_location": snapshot.location or "",
+                            # publishes have always exposed. Wave 2B (story
+                            # 45-48): use the per-actor location for the
+                            # dashboard's "current_location" — the dashboard
+                            # is per-player.
+                            "current_location": (
+                                snapshot.party_location(
+                                    perspective=snapshot.player_seats.get(sd.player_id, "")
+                                )
+                                or snapshot.party_location()
+                                or ""
+                            ),
                             "discovered_regions": list(snapshot.discovered_regions),
                             "npc_registry_count": len(snapshot.npc_registry),
                             "quest_log_count": len(snapshot.quest_log),
@@ -3352,9 +3389,20 @@ class WebSocketSessionHandler:
                 # explicitly to the location the host's prior turn already
                 # established so the narrator does not invent a new place
                 # for the second PC. Falls back to "the same scene the
-                # other player(s) are in" when ``snapshot.location`` is
-                # still empty (degenerate path, but defensible).
-                host_location = (sd.snapshot.location or "").strip()
+                # other player(s) are in" when no seated PC has a known
+                # location yet (degenerate path, but defensible).
+                #
+                # Wave 2B (story 45-48): pick the location from any
+                # already-seated non-joiner PC's per-character entry.
+                # ``party_location()`` would return None here because the
+                # just-chargen'd joiner doesn't have an entry yet.
+                host_location = ""
+                for _seated_char in sd.snapshot.player_seats.values():
+                    if _seated_char and _seated_char != joiner_char_name:
+                        _here = sd.snapshot.character_locations.get(_seated_char)
+                        if _here:
+                            host_location = _here.strip()
+                            break
                 where_clause = (
                     f"into the location the prior turn established ({host_location!r})"
                     if host_location
@@ -3555,6 +3603,7 @@ class WebSocketSessionHandler:
         *,
         encounter_resolved_this_turn: bool = False,
         snapshot_location_before: str | None = None,
+        acting_character_name: str | None = None,
     ) -> RenderQueuedMessage | None:
         """Fire a render request at the media daemon if the trigger policy
         classifies this turn as eligible (Story 45-30).
@@ -3575,12 +3624,14 @@ class WebSocketSessionHandler:
                 post-apply state to derive this signal. Default ``False``
                 lets test fixtures and the throttled-by-other-gates code
                 path call without rewiring.
-            snapshot_location_before: ``snapshot.location`` BEFORE
-                ``_apply_narration_result_to_snapshot`` mutated it. The
-                production caller captures this; tests that call directly
-                may omit it (defaults to ``sd.snapshot.location``, which
-                is correct when the test never applies narration). The
-                classifier needs the pre-apply value to detect SCENE_CHANGE.
+            snapshot_location_before: The acting PC's location BEFORE
+                ``_apply_narration_result_to_snapshot`` mutated it (Wave
+                2B uses ``snapshot.party_location(perspective=acting)``).
+                The production caller captures this; tests that call
+                directly may omit it (defaults to the party consensus
+                accessor, which is correct when the test never applies
+                narration). The classifier needs the pre-apply value to
+                detect SCENE_CHANGE.
         """
         from sidequest.agents.orchestrator import NarrationTurnResult
         from sidequest.server.render_trigger import (
@@ -3604,7 +3655,7 @@ class WebSocketSessionHandler:
         location_before = (
             snapshot_location_before
             if snapshot_location_before is not None
-            else sd.snapshot.location
+            else sd.snapshot.party_location(perspective=sd.player_name)
         )
         reason = classify_trigger(
             result,
@@ -3812,17 +3863,24 @@ class WebSocketSessionHandler:
         render_id = provisional_render_id
         tier = (visual.tier or "scene_illustration").strip() or "scene_illustration"
 
-        # `sd.snapshot.location` is free-form narrator prose
-        # (e.g. "The Kestrel — Galley, Mid-Coast", "Engine Bay"), not a
-        # `where:<slug>` PlaceCatalog ref. The daemon's PromptComposer
-        # `_resolve_location` accepts an empty location (transient setting,
-        # subject prose carries it) and rejects anything else with
-        # ValueError → COMPOSE_FAILED. Sanitize once, centrally, before
-        # the per-tier branches: only true `where:<slug>` refs survive.
-        # Free-form prose is dropped to "" with a loud watcher event so
-        # the GM panel can see the contract gap (per CLAUDE.md "no silent
-        # fallbacks" + OTEL observability principle).
-        raw_location = (sd.snapshot.location or "").strip()
+        # The location is free-form narrator prose (e.g. "The Kestrel —
+        # Galley, Mid-Coast", "Engine Bay"), not a `where:<slug>`
+        # PlaceCatalog ref. The daemon's PromptComposer `_resolve_location`
+        # accepts an empty location (transient setting, subject prose
+        # carries it) and rejects anything else with ValueError →
+        # COMPOSE_FAILED. Sanitize once, centrally, before the per-tier
+        # branches: only true `where:<slug>` refs survive. Free-form prose
+        # is dropped to "" with a loud watcher event so the GM panel can
+        # see the contract gap (per CLAUDE.md "no silent fallbacks" + OTEL
+        # observability principle). Wave 2B (story 45-48): the source is
+        # the acting PC's per-character location; party-frame consensus
+        # is the fallback when the caller didn't thread an actor.
+        raw_location = (
+            sd.snapshot.party_location(perspective=acting_character_name)
+            if acting_character_name
+            else sd.snapshot.party_location()
+        ) or ""
+        raw_location = raw_location.strip()
         sanitized_location = raw_location if raw_location.startswith("where:") else ""
         if raw_location and not sanitized_location:
             _watcher_publish(

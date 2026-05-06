@@ -97,8 +97,9 @@ def _seed_resumable_game(tmp_path: Path, slug: str) -> None:
         race="Human",
         backstory="A wandering fighter",
     )
-    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [char]
+    snap.character_locations["Rux"] = "Entrance"
     store.init_session(_GENRE, _WORLD)
     store.save(snap)
     store.close()
@@ -567,8 +568,9 @@ def _seed_resumable_game_with_uuid_name(tmp_path: Path, slug: str, player_id: st
         race="Human",
         backstory="A pre-fix fighter",
     )
-    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD, location="Entrance")
+    snap = GameSnapshot(genre_slug=_GENRE, world_slug=_WORLD)
     snap.characters = [char]
+    snap.character_locations["Rux"] = "Entrance"
     store.init_session(_GENRE, _WORLD)
     store.save(snap)
     store.close()

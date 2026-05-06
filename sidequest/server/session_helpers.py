@@ -329,13 +329,14 @@ def _build_turn_context(
     # turn — including the no-prior-retrievals case
     # (``retrieved_container_count=0``) — because Sebastien's
     # lie-detector must be able to distinguish "gate engaged with
-    # nothing to report" from "gate not engaged at all". The room is
-    # keyed off ``snapshot.location``, the canonical "where the player
-    # is right now" string. The retrieved-container payload also flows
-    # into ``state_summary_payload`` automatically because line 312
-    # already serializes the full ``snapshot`` (which includes
-    # ``room_states``) into the narrator's <game_state> block.
-    current_room_id = snapshot.location
+    # nothing to report" from "gate not engaged at all". Per Wave 2B
+    # (story 45-48), the room is keyed off the acting PC's location
+    # (``snapshot.party_location(perspective=char_name)``) — there is
+    # no party-level snapshot.location anymore. The retrieved-container
+    # payload also flows into ``state_summary_payload`` automatically
+    # because line 312 already serializes the full ``snapshot`` (which
+    # includes ``room_states``) into the narrator's <game_state> block.
+    current_room_id = snapshot.party_location(perspective=char_name)
     if not current_room_id:
         # No silent fallback (CLAUDE.md): a turn without a canonical
         # location renders the room-state gate unreachable — the span
@@ -345,7 +346,7 @@ def _build_turn_context(
         # Sebastien's lie-detector keeps its no-op case) but with
         # ``room_id=""`` AND a logged warning.
         logger.warning(
-            "state.room_state_injected_unreachable reason=snapshot_location_empty interaction=%d",
+            "state.room_state_injected_unreachable reason=actor_location_empty interaction=%d",
             snapshot.turn_manager.interaction,
         )
         current_room_id = ""
@@ -422,7 +423,12 @@ def _build_turn_context(
         genre_prompts=sd.genre_pack.prompts,
         character_name=char_name,
         current_location=(
-            _resolve_location_display(sd.genre_pack, sd.world_slug, snapshot.location) or "Unknown"
+            _resolve_location_display(
+                sd.genre_pack,
+                sd.world_slug,
+                snapshot.party_location(perspective=char_name),
+            )
+            or "Unknown"
         ),
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
         npc_registry=list(snapshot.npc_registry),

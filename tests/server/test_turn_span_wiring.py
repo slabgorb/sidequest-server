@@ -95,7 +95,18 @@ async def test_dispatch_opens_turn_span(otel_capture, session_fixture) -> None:
     )
 
     # Only flag truly orphaned spans (parent is None) — grandchildren are fine.
-    orphans = [s for s in spans if s.name != "turn" and s.parent is None]
+    # ``snapshot.party_location_query`` (Wave 2B / story 45-48) is a getter
+    # span emitted by ``GameSnapshot.party_location()`` that fires from many
+    # code paths outside turn dispatch (chargen, projection rebuilds, REST
+    # debug, turn-context construction before the turn span opens). It is
+    # an intentional lie-detector hook for the GM panel and is exempt from
+    # the "every span must descend from turn" rule.
+    orphan_whitelist = {"snapshot.party_location_query"}
+    orphans = [
+        s
+        for s in spans
+        if s.name != "turn" and s.parent is None and s.name not in orphan_whitelist
+    ]
     assert not orphans, f"Non-turn spans without any parent (orphaned): {[r.name for r in orphans]}"
 
 

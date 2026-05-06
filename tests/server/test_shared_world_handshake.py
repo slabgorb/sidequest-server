@@ -68,7 +68,8 @@ def test_build_shared_world_delta_carries_canonical_fields(
         seat_players=[("p1", "Orin"), ("p2", "Blutka")],
         active_player=("p1", "Orin"),
     )
-    room.snapshot.location = "rusted_atrium"
+    room.snapshot.character_locations["Orin"] = "rusted_atrium"
+    room.snapshot.character_locations["Blutka"] = "rusted_atrium"
 
     delta = build_shared_world_delta(room.snapshot, room=room)
     delta_dict = delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
@@ -124,7 +125,8 @@ def test_shared_world_delta_excludes_perceived_state(
         elif char.core.name == "Blutka":
             char.core.personality = "BLUTKA_PERCEIVED_MOOD_LEAK_SENTINEL"
             char.core.description = "BLUTKA_PERCEIVED_DESC_LEAK_SENTINEL"
-    snapshot.location = "rusted_atrium"
+    snapshot.character_locations["Orin"] = "rusted_atrium"
+    snapshot.character_locations["Blutka"] = "rusted_atrium"
 
     delta = build_shared_world_delta(snapshot, room=room)
     delta_dict = delta.model_dump() if hasattr(delta, "model_dump") else dict(delta)
@@ -177,8 +179,9 @@ def test_merge_preserves_perceived_character_fields(
             char.core.personality = "BLUTKA_POV_PERSONALITY"
             char.core.description = "BLUTKA_POV_DESCRIPTION"
 
+    snapshot.character_locations["Orin"] = "rusted_atrium"
+    snapshot.character_locations["Blutka"] = "rusted_atrium"
     delta = build_shared_world_delta(snapshot, room=None)
-    snapshot.location = "rusted_atrium"
 
     result = merge_shared_delta_into_snapshot(snapshot, delta)
     blutka = next(c for c in snapshot.characters if c.core.name == "Blutka")
@@ -225,7 +228,8 @@ def test_build_turn_context_state_summary_exposes_party_formation(
         seat_players=[("p1", "Orin"), ("p2", "Blutka")],
         active_player=("p2", "Blutka"),  # building B's context
     )
-    room.snapshot.location = "rusted_atrium"
+    room.snapshot.character_locations["Orin"] = "rusted_atrium"
+    room.snapshot.character_locations["Blutka"] = "rusted_atrium"
 
     ctx = _build_turn_context(sd, room=room)
     payload = json.loads(ctx.state_summary)
@@ -275,7 +279,8 @@ def test_build_turn_context_emits_handshake_watcher_event(
         seat_players=[("p1", "Orin"), ("p2", "Blutka")],
         active_player=("p2", "Blutka"),
     )
-    room.snapshot.location = "rusted_atrium"
+    room.snapshot.character_locations["Orin"] = "rusted_atrium"
+    room.snapshot.character_locations["Blutka"] = "rusted_atrium"
 
     # Patch the watcher_publish at every reasonable site — Dev may emit
     # from session_helpers (apply seam) or the helper module itself.

@@ -245,7 +245,6 @@ def test_debug_state_projects_saved_game(tmp_path):
     snap = GameSnapshot(
         genre_slug="spaghetti_western",
         world_slug="dust_and_lead",
-        location="Sangre River Ford",
         discovered_regions=["Sangre River Ford", "Dust Town"],
         npc_registry=[
             NpcRegistryEntry(
@@ -271,10 +270,26 @@ def test_debug_state_projects_saved_game(tmp_path):
     assert view["session_key"] == slug
     assert view["genre_slug"] == "spaghetti_western"
     assert view["world_slug"] == "dust_and_lead"
-    assert view["current_location"] == "Sangre River Ford"
+    # Wave 2B: pre-chargen snapshot has no per-character location, so the
+    # party-frame projection is empty (no consensus).
+    assert view["current_location"] == ""
     assert "Sangre River Ford" in view["discovered_regions"]
-    assert len(view["npc_registry"]) == 1
-    assert view["npc_registry"][0]["name"] == "El Paso"
+    # Wave 2A (story 45-47) migrates orphan ``npc_registry`` entries into
+    # ``npc_pool`` on load. The /api/debug/state projection reads the
+    # legacy ``npc_registry`` field, so a fresh-shape save with only a
+    # registry entry projects empty after the migration runs. Verifying
+    # both halves keeps the lie-detector wired up to the new structure
+    # while leaving the rest endpoint's legacy path documented.
+    assert view["npc_registry"] == []
+    assert len(snap.npc_pool) == 0  # we constructed in-memory before save
+    # Reload to assert post-migration shape (this is what the projection
+    # actually reads).
+    reload_store = SqliteStore(db)
+    reload_store.initialize()
+    reloaded = reload_store.load()
+    reload_store.close()
+    assert reloaded is not None
+    assert any(m.name == "El Paso" for m in reloaded.snapshot.npc_pool)
     assert view["player_count"] == 0
 
 
@@ -323,10 +338,10 @@ def test_debug_state_with_character_does_not_500(tmp_path):
     snap = GameSnapshot(
         genre_slug="spaghetti_western",
         world_slug="dust_and_lead",
-        location="Sangre River Ford",
         characters=[char],
         turn_manager=TurnManager(interaction=3),
     )
+    snap.character_locations["El Paso"] = "Sangre River Ford"
     store.save(snap)
     store.close()
 

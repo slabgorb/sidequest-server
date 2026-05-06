@@ -96,9 +96,12 @@ def build_shared_world_delta(
     a circular import). When supplied, ``slot_to_player_id`` populates
     party formation; without a room, formation is empty (solo path).
 
-    All seated players currently share ``snapshot.location`` — adjacency
-    is therefore "every other seated player" until per-character location
-    lands (out of scope here per AC #4 / context-story-45-1.md).
+    Wave 2B (story 45-48): per-character locations come from
+    ``snapshot.character_locations[name]`` via the player_seats
+    (player_id → character.name) lookup. Adjacency is computed against
+    seated player_ids that share the same per-character location, not
+    against "every other seated player" — that's the original AC #4
+    follow-up the per-character split was supposed to enable.
     """
     encounter = snapshot.encounter
     encounter_id: str | None = None
@@ -111,17 +114,42 @@ def build_shared_world_delta(
         if callable(slot_lookup):
             slot_to_pid: dict[str, str] = slot_lookup()
             seated_pids = list(slot_to_pid.values())
+            # player_id → character_name for the seated PCs.
+            pid_to_char: dict[str, str] = {
+                pid: snapshot.player_seats.get(pid, "") for pid in seated_pids
+            }
+            # player_id → per-character location ("" when absent).
+            pid_to_loc: dict[str, str] = {
+                pid: snapshot.character_locations.get(name, "")
+                for pid, name in pid_to_char.items()
+            }
             for pid in seated_pids:
+                here = pid_to_loc.get(pid, "")
+                # Adjacency: seated peers whose location matches mine.
+                # Empty location matches no one (an unplaced PC has no
+                # canonical adjacency).
+                adjacency = (
+                    [
+                        other
+                        for other in seated_pids
+                        if other != pid and pid_to_loc.get(other) == here
+                    ]
+                    if here
+                    else []
+                )
                 party_formation.append(
                     PartyFormationEntry(
                         player_id=pid,
-                        location=snapshot.location,
-                        adjacency=[other for other in seated_pids if other != pid],
+                        location=here,
+                        adjacency=adjacency,
                     ),
                 )
 
+    # Party-frame consensus for the shared location field. None when
+    # seated PCs disagree (split party) — represented as "" on the
+    # delta because the field is typed ``str``.
     return SharedWorldDelta(
-        location=snapshot.location,
+        location=snapshot.party_location() or "",
         encounter_id=encounter_id,
         party_formation=party_formation,
     )
@@ -148,14 +176,28 @@ def merge_shared_delta_into_snapshot(
     conflict_count = 0
     resolution_path = "no_change"
 
-    if delta.location:
-        if snapshot.location and snapshot.location != delta.location:
-            conflict_count += 1
-            resolution_path = "delta_overwrote_local"
-        elif resolution_path == "no_change":
-            resolution_path = "delta_authoritative"
-        snapshot.location = delta.location
-        delta_fields.append("location")
+    # Wave 2B (story 45-48): the canonical location field maps to
+    # per-character entries in ``snapshot.character_locations`` keyed by
+    # ``PartyFormationEntry.player_id`` → ``snapshot.player_seats``. The
+    # legacy global ``snapshot.location`` is gone; we no longer write to
+    # it. Conflict detection compares the delta's per-player location
+    # against each character's prior entry.
+    if delta.party_formation:
+        for entry in delta.party_formation:
+            if not entry.location:
+                continue
+            character_name = snapshot.player_seats.get(entry.player_id, "")
+            if not character_name:
+                continue
+            existing = snapshot.character_locations.get(character_name)
+            if existing and existing != entry.location:
+                conflict_count += 1
+                resolution_path = "delta_overwrote_local"
+            elif resolution_path == "no_change":
+                resolution_path = "delta_authoritative"
+            snapshot.character_locations[character_name] = entry.location
+        if "location" not in delta_fields:
+            delta_fields.append("location")
 
     if delta.encounter_id is not None:
         delta_fields.append("encounter_id")

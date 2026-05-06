@@ -21,11 +21,10 @@ from tests.game.test_character import make_test_character
 
 
 def _make_snapshot() -> GameSnapshot:
-    return GameSnapshot(
+    snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="iron_mines",
         characters=[make_test_character()],
-        location="The Upper Gallery",
         time_of_day="evening",
         atmosphere="tense",
         current_region="Ironhold",
@@ -33,6 +32,8 @@ def _make_snapshot() -> GameSnapshot:
         active_stakes="escape before collapse",
         lore_established=["The mines run deep"],
     )
+    snap.character_locations["Thorn Ironhide"] = "The Upper Gallery"
+    return snap
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ def test_save_and_load_roundtrip():
     assert saved is not None
     assert isinstance(saved, SavedSession)
     assert saved.snapshot.genre_slug == "caverns_and_claudes"
-    assert saved.snapshot.location == "The Upper Gallery"
+    assert saved.snapshot.character_locations.get("Thorn Ironhide") == "The Upper Gallery"
     assert saved.snapshot.characters[0].core.name == "Thorn Ironhide"
     assert saved.snapshot.quest_log == {"Find the Warden": "active"}
     assert saved.snapshot.lore_established == ["The mines run deep"]
@@ -136,12 +137,12 @@ def test_save_overwrite_replaces_previous():
     store.save(snap1)
 
     snap2 = _make_snapshot()
-    snap2.location = "The Deep Caverns"
+    snap2.character_locations["Thorn Ironhide"] = "The Deep Caverns"
     store.save(snap2)
 
     saved = store.load()
     assert saved is not None
-    assert saved.snapshot.location == "The Deep Caverns"
+    assert saved.snapshot.character_locations.get("Thorn Ironhide") == "The Deep Caverns"
     store.close()
 
 
@@ -268,7 +269,7 @@ def test_file_backed_store_roundtrip():
         assert saved is not None
         # genre_slug comes from the snapshot JSON, not init_session
         assert saved.snapshot.genre_slug == "caverns_and_claudes"
-        assert saved.snapshot.location == "The Upper Gallery"
+        assert saved.snapshot.character_locations.get("Thorn Ironhide") == "The Upper Gallery"
         store2.close()
 
 

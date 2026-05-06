@@ -229,7 +229,7 @@ def test_wiring_narration_apply_clears_scratch_on_location_change(
     snap, pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
     sam = snap.characters[0]
-    snap.location = "The Throat"
+    snap.character_locations["Sam"] = "The Throat"
     _add_status(sam, "Choked", StatusSeverity.Scratch)
     _add_status(sam, "Bruised Ribs", StatusSeverity.Wound)
 
@@ -255,8 +255,9 @@ def test_wiring_narration_apply_first_location_does_not_sweep(
     snap, pack = snapshot_with_pack
     snap.characters.append(character_named_sam)
     sam = snap.characters[0]
-    # snap.location is "" at start (default factory) — falsy
-    assert not snap.location
+    # snap.character_locations is empty at start — Sam has no per-character
+    # entry until the first narration emits one.
+    assert "Sam" not in snap.character_locations
     _add_status(sam, "Lingering doubt", StatusSeverity.Scratch)
 
     result = NarrationTurnResult(

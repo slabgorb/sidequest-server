@@ -77,7 +77,7 @@ def test_location_change_resolves_active_encounter_as_abandoned(
     fire the CONFRONTATION clear payload (verified separately).
     """
     snap, pack = snapshot_with_pack
-    snap.location = "Vaskov Centrum — Inspector Karenina's Office"
+    snap.character_locations["Linus"] = "Vaskov Centrum — Inspector Karenina's Office"
     snap.characters.append(character_named_sam)
     encounter = _attach_active_negotiation(snap)
     assert encounter.resolved is False  # baseline: still active
@@ -122,7 +122,7 @@ def test_no_location_change_leaves_active_encounter_alone(
     apply — only the location-change edge should trigger it.
     """
     snap, pack = snapshot_with_pack
-    snap.location = "Vaskov Centrum — Inspector Karenina's Office"
+    snap.character_locations["Linus"] = "Vaskov Centrum — Inspector Karenina's Office"
     snap.characters.append(character_named_sam)
     encounter = _attach_active_negotiation(snap)
 
@@ -154,7 +154,7 @@ def test_location_set_to_same_value_does_not_resolve(
     """The narrator re-emits the current location. Not a real change;
     the deactivate branch must not fire."""
     snap, pack = snapshot_with_pack
-    snap.location = "Vaskov Centrum — Inspector Karenina's Office"
+    snap.character_locations["Linus"] = "Vaskov Centrum — Inspector Karenina's Office"
     snap.characters.append(character_named_sam)
     encounter = _attach_active_negotiation(snap)
 
@@ -187,7 +187,7 @@ def test_already_resolved_encounter_not_re_resolved_on_location_change(
     turn's location change, losing the win record.
     """
     snap, pack = snapshot_with_pack
-    snap.location = "Vaskov Centrum — Inspector Karenina's Office"
+    snap.character_locations["Linus"] = "Vaskov Centrum — Inspector Karenina's Office"
     snap.characters.append(character_named_sam)
     encounter = _attach_active_negotiation(snap)
     encounter.resolved = True
@@ -225,7 +225,7 @@ def test_first_location_set_does_not_attempt_deactivation(
     (``if old_loc and old_loc != result.location:``).
     """
     snap, pack = snapshot_with_pack
-    snap.location = ""  # explicit empty — fresh session
+    snap.character_locations.pop("Linus", None)  # explicit empty — fresh session
     snap.characters.append(character_named_sam)
     encounter = _attach_active_negotiation(snap)
 
@@ -243,7 +243,7 @@ def test_first_location_set_does_not_attempt_deactivation(
 
     # Location did update, but encounter must stay live — initial scene
     # set is not an abandonment edge.
-    assert snap.location == "Vaskov Centrum — Inspector Karenina's Office"
+    assert snap.character_locations.get("Linus") == "Vaskov Centrum — Inspector Karenina's Office"
     assert snap.encounter is encounter
     assert snap.encounter.resolved is False
     assert snap.encounter.outcome is None
@@ -258,7 +258,7 @@ def test_location_change_with_no_active_encounter_is_no_op(
     deactivate span.
     """
     snap, pack = snapshot_with_pack
-    snap.location = "Vaskov Centrum — Loading Bay"
+    snap.character_locations["Linus"] = "Vaskov Centrum — Loading Bay"
     snap.characters.append(character_named_sam)
     assert snap.encounter is None  # baseline
 
@@ -276,7 +276,7 @@ def test_location_change_with_no_active_encounter_is_no_op(
         player_name="Linus",
         room=room_for(snapshot=snap),
     )
-    assert snap.location == "Vaskov Centrum — East Freight Stair"
+    assert snap.character_locations.get("Linus") == "Vaskov Centrum — East Freight Stair"
     assert snap.encounter is None
 
 

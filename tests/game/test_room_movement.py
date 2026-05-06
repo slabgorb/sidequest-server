@@ -14,6 +14,7 @@ from sidequest.game.room_movement import (
 )
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.world import RoomDef
+from tests.game.test_character import make_test_character
 
 
 def _room(id_: str, room_type: str, name: str | None = None) -> RoomDef:
@@ -22,7 +23,7 @@ def _room(id_: str, room_type: str, name: str | None = None) -> RoomDef:
 
 class TestInitRoomGraphLocation:
     def test_picks_entrance_and_updates_snapshot(self) -> None:
-        snap = GameSnapshot()
+        snap = GameSnapshot(characters=[make_test_character()])
         rooms = [
             _room("foyer", "normal"),
             _room("threshold", "entrance"),
@@ -31,41 +32,44 @@ class TestInitRoomGraphLocation:
         entrance_id = init_room_graph_location(snap, rooms)
 
         assert entrance_id == "threshold"
-        assert snap.location == "threshold"
+        assert snap.character_locations["Thorn Ironhide"] == "threshold"
         assert snap.discovered_rooms == ["threshold"]
 
     def test_first_entrance_wins_on_duplicates(self) -> None:
-        snap = GameSnapshot()
+        snap = GameSnapshot(characters=[make_test_character()])
         rooms = [
             _room("alpha", "entrance"),
             _room("beta", "entrance"),
         ]
         entrance_id = init_room_graph_location(snap, rooms)
         assert entrance_id == "alpha"
-        assert snap.location == "alpha"
+        assert snap.character_locations["Thorn Ironhide"] == "alpha"
 
     def test_missing_entrance_raises(self) -> None:
-        snap = GameSnapshot()
+        snap = GameSnapshot(characters=[make_test_character()])
         rooms = [_room("a", "normal"), _room("b", "treasure")]
         with pytest.raises(RoomGraphInitError) as exc_info:
             init_room_graph_location(snap, rooms)
         assert "2 rooms checked" in str(exc_info.value)
 
     def test_empty_rooms_raises(self) -> None:
-        snap = GameSnapshot()
+        snap = GameSnapshot(characters=[make_test_character()])
         with pytest.raises(RoomGraphInitError) as exc_info:
             init_room_graph_location(snap, [])
         assert "0 rooms checked" in str(exc_info.value)
 
     def test_idempotent_does_not_duplicate_discovered(self) -> None:
-        snap = GameSnapshot()
+        snap = GameSnapshot(characters=[make_test_character()])
         rooms = [_room("threshold", "entrance")]
         init_room_graph_location(snap, rooms)
         init_room_graph_location(snap, rooms)
         assert snap.discovered_rooms == ["threshold"]
 
     def test_preserves_existing_discovered_rooms(self) -> None:
-        snap = GameSnapshot(discovered_rooms=["cache", "sealed_chamber"])
+        snap = GameSnapshot(
+            characters=[make_test_character()],
+            discovered_rooms=["cache", "sealed_chamber"]
+        )
         rooms = [_room("threshold", "entrance")]
         init_room_graph_location(snap, rooms)
         assert snap.discovered_rooms == ["cache", "sealed_chamber", "threshold"]
@@ -73,8 +77,9 @@ class TestInitRoomGraphLocation:
     def test_snapshot_location_is_id_not_name(self) -> None:
         """The Rust call site reads ``snap.location`` as a canonical room ID
         downstream. Using the display name here would silently break every
-        subsequent room-movement validation call."""
-        snap = GameSnapshot()
+        subsequent room-movement validation call. Now stores in
+        ``character_locations[name]`` for per-PC framing."""
+        snap = GameSnapshot(characters=[make_test_character()])
         rooms = [_room("threshold", "entrance", name="The Threshold")]
         init_room_graph_location(snap, rooms)
-        assert snap.location == "threshold"
+        assert snap.character_locations["Thorn Ironhide"] == "threshold"

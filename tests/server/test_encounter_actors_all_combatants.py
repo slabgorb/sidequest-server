@@ -86,9 +86,10 @@ def playtest3_snapshot():
     snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="mawdeep",
-        location="Mawdeep Caverns",
         turn_manager=TurnManager(interaction=4),
     )
+    # Wave 2B: per-character location replaces the party-level field.
+    snap.character_locations["Orin"] = "Mawdeep Caverns"
     snap.npc_registry.append(
         NpcRegistryEntry(
             name="Crawling Scavenger",

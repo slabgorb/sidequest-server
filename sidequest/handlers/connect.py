@@ -997,6 +997,20 @@ class ConnectHandler:
                 # Include the full snapshot dump so the dashboard State panel
                 # can paint immediately on reconnect rather than waiting for
                 # the next per-turn snapshot to arrive.
+                # Wave 2B (story 45-48): "current_location" is per-resuming-
+                # player — use their seated character's per-character entry.
+                # Fall back to ``display_name`` when the saved snapshot
+                # predates the player_seats wiring (older saves and the
+                # slug-resume tests seed character_locations directly without
+                # populating player_seats).
+                resume_char_name = (
+                    snapshot.player_seats.get(player_id, "") or display_name
+                )
+                resume_loc = (
+                    snapshot.party_location(perspective=resume_char_name)
+                    if resume_char_name
+                    else snapshot.party_location()
+                ) or ""
                 _watcher_publish(
                     "game_state_snapshot",
                     {
@@ -1007,7 +1021,7 @@ class ConnectHandler:
                         "player_id": player_id,
                         "turn_number": snapshot.turn_manager.interaction,
                         "snapshot": snapshot.model_dump(mode="json"),
-                        "current_location": snapshot.location or "",
+                        "current_location": resume_loc,
                         "discovered_regions": list(snapshot.discovered_regions),
                         "npc_registry_count": len(snapshot.npc_registry),
                         "quest_log_count": len(snapshot.quest_log),
@@ -1044,7 +1058,10 @@ class ConnectHandler:
                 # them — orphan protocol type. Emit once here; subsequent
                 # turns emit their own CHAPTER_MARKER when the narrator
                 # changes location (see _execute_narration_turn).
-                if snapshot.location:
+                # Wave 2B (story 45-48): chapter marker is per-resuming-
+                # player — show their seated character's location, not a
+                # party-frame consensus that may be empty mid-split.
+                if resume_loc:
                     bootstrap_msgs.append(
                         ChapterMarkerMessage(
                             payload=ChapterMarkerPayload(
@@ -1054,7 +1071,7 @@ class ConnectHandler:
                                     if session._session_data is not None
                                     else None,
                                     row.world_slug,
-                                    snapshot.location,
+                                    resume_loc,
                                 ),
                             ),
                             player_id=player_id,

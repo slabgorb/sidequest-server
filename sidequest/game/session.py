@@ -448,11 +448,19 @@ class GameSnapshot(BaseModel):
     - resources: typed ``dict[str, ResourcePool]`` (ADR-033). Dispatch-
       side wiring and OTEL emission land in 42-4.
 
-    P1-required: genre_slug, world_slug, characters, npcs, location,
+    P1-required: genre_slug, world_slug, characters, npcs,
+                 character_locations (per-PC scene, Wave 2B / story 45-48),
                  time_of_day, quest_log, notes, narrative_log, atmosphere,
                  current_region, discovered_regions, discovered_routes,
                  turn_manager, active_stakes, lore_established,
                  npc_registry, player_dead.
+
+    Wave 2B (story 45-48): the legacy party-level ``location`` field is
+    removed. Use ``self.party_location(perspective=name)`` for single-PC
+    framing and ``self.party_location()`` for the consensus view.
+    Migration on load (``_migrate_s3_party_location``) promotes any
+    legacy ``location`` value into ``character_locations`` for seated PCs
+    before pydantic drops the unknown field via ``extra: ignore``.
     """
 
     model_config = {"extra": "ignore"}  # forward-compat: ignore unknown save fields
@@ -465,8 +473,9 @@ class GameSnapshot(BaseModel):
     characters: list[Character] = Field(default_factory=list)
     npcs: list[Npc] = Field(default_factory=list)
 
-    # World state (P1-required)
-    location: str = ""
+    # World state (P1-required) — Wave 2B (story 45-48): party-level
+    # ``location`` field removed; use ``party_location(...)`` accessor
+    # or ``character_locations[name]`` for the per-PC source of truth.
     time_of_day: str = ""
     quest_log: dict[str, str] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
@@ -752,6 +761,84 @@ class GameSnapshot(BaseModel):
         return data
 
     # ------------------------------------------------------------------
+    # Derived accessors
+    # ------------------------------------------------------------------
+
+    def party_location(self, *, perspective: str | None = None) -> str | None:
+        """Resolve "where is the party" from per-character locations (Wave 2B).
+
+        Three modes (per design 2026-05-04 § Wave 2 Story B):
+
+        1. ``perspective`` supplied — returns ``character_locations[perspective]``
+           or ``None`` if that character has no entry. Used by single-player
+           narrator framing and per-character header rendering.
+        2. ``perspective`` omitted, all seated PCs agree on the same location
+           — returns that consensus string.
+        3. ``perspective`` omitted, seated PCs disagree (or any seated PC
+           lacks an entry) — returns ``None``. Callers render "(party split)"
+           or equivalent rather than fall back to a stale global.
+
+        Always emits ``snapshot.party_location_query`` for the GM panel
+        (lie-detector hook). ``party_split=True`` flags a mid-session
+        disagreement; ``party_split=False`` covers both consensus and
+        no-party-seated cases (the latter is not a "split" — it's pre-chargen).
+        """
+        from sidequest.telemetry.spans import SPAN_PARTY_LOCATION_QUERY, Span
+
+        perspective_supplied = perspective is not None
+
+        if perspective_supplied:
+            value = self.character_locations.get(perspective) if perspective else None
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": True,
+                    "consensus_found": False,
+                    "party_split": False,
+                },
+            ):
+                pass
+            return value
+
+        seated = [name for name in self.player_seats.values() if name]
+        if not seated:
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": False,
+                    "consensus_found": False,
+                    "party_split": False,
+                },
+            ):
+                pass
+            return None
+
+        locations = [self.character_locations.get(name) for name in seated]
+        if any(loc is None for loc in locations) or len(set(locations)) != 1:
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": False,
+                    "consensus_found": False,
+                    "party_split": True,
+                },
+            ):
+                pass
+            return None
+
+        consensus = locations[0]
+        with Span.open(
+            SPAN_PARTY_LOCATION_QUERY,
+            {
+                "perspective_supplied": False,
+                "consensus_found": True,
+                "party_split": False,
+            },
+        ):
+            pass
+        return consensus
+
+    # ------------------------------------------------------------------
     # State mutation methods
     # ------------------------------------------------------------------
 
@@ -837,7 +924,21 @@ class GameSnapshot(BaseModel):
 
     def _apply_world_patch_inner(self, patch: WorldStatePatch) -> None:
         if patch.location is not None:
-            self.location = patch.location
+            # Wave 2B (story 45-48): no party-level snapshot.location to
+            # write. ``WorldStatePatch.location`` is a party-frame intent
+            # ("everyone is now here") — apply to every seated PC's
+            # ``character_locations`` entry. Solo and pre-MP saves end up
+            # with one entry; MP gets all seats. Pre-chargen patches with
+            # no seated PCs fall back to writing under the first character
+            # name we find (legacy behavior preservation for tests that
+            # apply a patch before chargen is wired).
+            seated = [name for name in self.player_seats.values() if name]
+            if seated:
+                for name in seated:
+                    self.character_locations[name] = patch.location
+            elif self.characters:
+                for character in self.characters:
+                    self.character_locations[character.core.name] = patch.location
         if patch.time_of_day is not None:
             self.time_of_day = patch.time_of_day
         if patch.atmosphere is not None:

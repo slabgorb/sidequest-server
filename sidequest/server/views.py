@@ -124,18 +124,19 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
     if snapshot.characters:
         mapping[sd.player_id] = snapshot.characters[0].core.name
 
-    # Zone + hidden-character tracking from the live snapshot. Characters
-    # share the party-level location today (no per-character zone split
-    # in the engine yet); NPCs carry their own ``location``. Keys are
-    # creature names — the same identity the rest of the projection
-    # system uses when it refers to characters by ID. Single pass per
-    # collection so character_zones and hidden_characters stay in sync.
+    # Zone + hidden-character tracking from the live snapshot. Wave 2B
+    # (story 45-48): per-character zones come from
+    # ``snapshot.character_locations[name]``; party-frame fallback uses
+    # the consensus accessor (returns None when seated PCs disagree).
+    # NPCs carry their own ``location``. Keys are creature names — the
+    # same identity the rest of the projection system uses when it
+    # refers to characters by ID.
     character_zones: dict[str, str] = {}
     hidden_characters: set[str] = set()
-    party_zone = snapshot.location or None
+    party_zone = snapshot.party_location()
 
     # One-shot OTEL breadcrumb: if we have player-characters but no
-    # party zone, every co-located visible_to() collapses to False.
+    # consensus zone, every co-located visible_to() collapses to False.
     # The direction is conservative-correct but invisible to the GM
     # panel — surface it once per session so rule authors can see why
     # their ``visible_to`` rules are masking everything.
@@ -146,10 +147,11 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
     ):
         logger.warning(
             "projection.party_zone_absent_with_characters slug=%s "
-            "characters=%d — snapshot.location is empty while "
-            "snapshot.characters is non-empty; visible_to() / "
+            "characters=%d — party_location() returned None (no consensus) "
+            "while snapshot.characters is non-empty; visible_to() / "
             "in_same_zone() will mask every co-located target until "
-            "a location is set (typically the first encounter).",
+            "the seated PCs agree on a location (typically the first "
+            "encounter).",
             sd.game_slug,
             len(snapshot.characters),
         )
@@ -157,8 +159,13 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
 
     for ch in snapshot.characters:
         name = ch.core.name
-        if party_zone is not None:
-            character_zones[name] = party_zone
+        # Prefer per-character location; fall back to party consensus
+        # only when this PC has no per-character entry. Both can be
+        # None — leave the entry absent in that case (callers handle).
+        per_char = snapshot.character_locations.get(name)
+        zone = per_char if per_char else party_zone
+        if zone is not None:
+            character_zones[name] = zone
         if is_hidden_status_list(ch.core.statuses):
             hidden_characters.add(name)
     for npc in snapshot.npcs:
@@ -384,16 +391,13 @@ def party_member_from_character(
     )
 
     location_nbs: NonBlankString | None = None
-    # Playtest 2026-05-02 [BUG]: prefer this character's last-known
-    # location over the party-level snapshot.location so the multiplayer
-    # PARTY_STATUS frame carries each member's own scene rather than
-    # whichever player narrated most recently. Falls back to
-    # ``snapshot.location`` for legacy saves and pre-first-narration
-    # turns where ``character_locations`` is still empty for this PC.
-    raw_location = (
-        sd.snapshot.character_locations.get(character.core.name)
-        or sd.snapshot.location
-    )
+    # Wave 2B (story 45-48): per-character location is the only source
+    # of truth — the party-level ``snapshot.location`` is gone. When
+    # this PC has no per-character entry yet (pre-first-narration), the
+    # PARTY_STATUS frame omits the location field; the UI renders
+    # "(unknown)" rather than inheriting whichever player narrated most
+    # recently.
+    raw_location = sd.snapshot.party_location(perspective=character.core.name)
     loc_display = _resolve_location_display(sd.genre_pack, sd.world_slug, raw_location)
     if loc_display:
         try:

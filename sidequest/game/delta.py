@@ -102,7 +102,7 @@ class StateSnapshot:
     def __init__(self, state: GameSnapshot) -> None:
         self.characters_json = _to_json(state.characters)
         self.npcs_json = _to_json(state.npcs)
-        self.location = state.location
+        self.character_locations_json = _to_json(state.character_locations)
         self.time_of_day = state.time_of_day
         self.quest_log_json = _to_json(state.quest_log)
         self.notes_json = _to_json(state.notes)
@@ -135,7 +135,7 @@ def snapshot(state: GameSnapshot) -> StateSnapshot:
 
 def compute_delta(before: StateSnapshot, after: StateSnapshot) -> StateDelta:
     """Compute which field groups changed between two state snapshots."""
-    location_changed = before.location != after.location
+    location_changed = before.character_locations_json != after.character_locations_json
     return StateDelta(
         characters=before.characters_json != after.characters_json,
         npcs=before.npcs_json != after.npcs_json,
@@ -150,5 +150,5 @@ def compute_delta(before: StateSnapshot, after: StateSnapshot) -> StateDelta:
         active_stakes=before.active_stakes != after.active_stakes,
         lore=before.lore_established_json != after.lore_established_json,
         magic=before.magic_state_json != after.magic_state_json,
-        new_location=after.location if location_changed else None,
+        new_location=None,
     )

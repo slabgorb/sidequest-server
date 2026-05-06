@@ -685,6 +685,10 @@ def session_handler_factory(tmp_path):
                 room.connect(pid, socket_id=f"sock-{i}")
                 room.seat(pid, character_slot=character_slot)
                 room.transition_to_playing(pid)
+                # Wave 2B (story 45-48): party_location() reads
+                # snapshot.player_seats; mirror the room's seat map so
+                # the per-character location accessors work in tests.
+                snap.player_seats[pid] = character_slot
             handler._room = room
             sd._room = room
             # Silence broadcast so tests don't need a real WebSocket.
@@ -728,9 +732,10 @@ def session_fixture():
     snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="sunken_keep",
-        location="Main Hall",
         turn_manager=TurnManager(interaction=1),
     )
+    snap.character_locations["TestHero"] = "Main Hall"
+    snap.player_seats["player:TestHero"] = "TestHero"
     sd = _SessionData(
         genre_slug="caverns_and_claudes",
         world_slug="sunken_keep",
@@ -770,7 +775,9 @@ def _build_turn_context_for_test(sd):
         state_summary="(test state summary)",
         genre=sd.genre_slug,
         character_name=sd.player_name,
-        current_location=getattr(sd.snapshot, "location", None) or "Unknown",
+        current_location=(
+            sd.snapshot.party_location(perspective=sd.player_name) or "Unknown"
+        ),
         npc_registry=list(getattr(sd.snapshot, "npc_registry", [])),
     )
 

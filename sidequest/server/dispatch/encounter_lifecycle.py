@@ -128,6 +128,7 @@ def _registry_fallback_npcs(
     snapshot: GameSnapshot,
     *,
     is_combat: bool,
+    acting_character_name: str | None = None,
 ) -> list:
     """Synthesise NpcMention entries from snapshot.npc_registry.
 
@@ -152,7 +153,11 @@ def _registry_fallback_npcs(
     """
     from sidequest.agents.orchestrator import NpcMention
 
-    location = snapshot.location
+    # Wave 2B (story 45-48): "the player's location" is the acting PC's
+    # per-character location; party-frame fallback uses the consensus
+    # accessor (returns None when seated PCs disagree, matching the prior
+    # "no global ⇒ no fallback" semantics).
+    location = snapshot.party_location(perspective=acting_character_name)
     if not location:
         return []
     default_side = "opponent" if is_combat else "neutral"
@@ -242,6 +247,7 @@ def instantiate_encounter_from_trigger(
         npcs_present = _registry_fallback_npcs(
             snapshot,
             is_combat=cdef.category == "combat",
+            acting_character_name=player_name,
         )
 
     # Story 45-33: combat empty+empty guard (CLAUDE.md "No Silent Fallbacks").
@@ -272,7 +278,7 @@ def instantiate_encounter_from_trigger(
         raise NoOpponentAvailableError(
             f"no opponent available for combat encounter {encounter_type!r} "
             f"after registry fallback (player_name={player_name!r}, "
-            f"location={snapshot.location!r})"
+            f"location={snapshot.party_location(perspective=player_name)!r})"
         )
 
     with encounter_confrontation_initiated_span(

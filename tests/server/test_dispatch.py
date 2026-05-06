@@ -26,13 +26,23 @@ def _make_result(**kwargs) -> NarrationTurnResult:
 
 
 def test_apply_location_update():
-    """location from game_patch is applied to snapshot.location."""
-    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Old Place")
+    """location from game_patch is applied to snapshot.character_locations (Wave 2B)."""
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        character_locations={"Protagonist": "Old Place"}
+    )
     result = _make_result(narration="You arrive.", location="New Dungeon")
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        "player",
+        room=room_for(snapshot),
+        acting_character_name="Protagonist",
+    )
 
-    assert snapshot.location == "New Dungeon"
+    assert snapshot.character_locations["Protagonist"] == "New Dungeon"
     assert "New Dungeon" in snapshot.discovered_regions
 
 
@@ -41,12 +51,18 @@ def test_apply_location_added_to_discovered_regions_once():
     snapshot = GameSnapshot(
         genre_slug="test",
         world_slug="test",
-        location="Town",
+        character_locations={"Protagonist": "Town"},
         discovered_regions=["Town"],
     )
     result = _make_result(narration="You stay in town.", location="Town")
 
-    _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        "player",
+        room=room_for(snapshot),
+        acting_character_name="Protagonist",
+    )
 
     assert snapshot.discovered_regions.count("Town") == 1
 
@@ -85,7 +101,11 @@ def test_apply_npc_pool_new_npc():
     the pre-Wave-2A npc_registry write path)."""
     from sidequest.agents.orchestrator import NpcMention
 
-    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="Tavern")
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        character_locations={"Protagonist": "Tavern"}
+    )
     result = _make_result(
         narration="A stranger approaches.",
         npcs_present=[NpcMention(name="Zara", role="barkeep", pronouns="she/her")],
@@ -119,7 +139,7 @@ def test_apply_npc_pool_existing_is_additive_only():
     snapshot = GameSnapshot(
         genre_slug="test",
         world_slug="test",
-        location="Tavern",
+        character_locations={"Protagonist": "Tavern"},
         npc_pool=[
             NpcPoolMember(
                 name="Zara", role="stranger", drawn_from="legacy_registry"
@@ -148,25 +168,29 @@ def test_apply_no_mutation_on_empty_result():
     snapshot = GameSnapshot(
         genre_slug="test",
         world_slug="test",
-        location="Start",
+        character_locations={"Protagonist": "Start"},
         quest_log={"q1": "active"},
     )
-    original_location = snapshot.location
+    original_locations = dict(snapshot.character_locations)
     original_quest_log = dict(snapshot.quest_log)
 
     result = _make_result(narration="Nothing happens.")
 
     _apply_narration_result_to_snapshot(snapshot, result, "player", room=room_for(snapshot))
 
-    assert snapshot.location == original_location
+    assert snapshot.character_locations == original_locations
     assert snapshot.quest_log == original_quest_log
 
 
 def test_apply_non_narration_result_is_noop():
     """Non-NarrationTurnResult argument is a no-op (type guard)."""
-    snapshot = GameSnapshot(genre_slug="test", world_slug="test", location="X")
+    snapshot = GameSnapshot(
+        genre_slug="test",
+        world_slug="test",
+        character_locations={"Protagonist": "X"}
+    )
     _apply_narration_result_to_snapshot(snapshot, object(), "player", room=room_for(snapshot))
-    assert snapshot.location == "X"
+    assert snapshot.character_locations["Protagonist"] == "X"
 
 
 # ---------------------------------------------------------------------------

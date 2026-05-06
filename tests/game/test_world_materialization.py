@@ -239,9 +239,16 @@ class TestWorldBuilderBuild:
             )
             .build()
         )
-        # Early overrides location + atmosphere; time_of_day keeps Fresh's
-        # value because Early didn't declare it.
-        assert snap.location == "The Spillway"
+        # Early overrides atmosphere; time_of_day keeps Fresh's value because
+        # Early didn't declare it. Wave 2B (story 45-48): per-PC location
+        # replaces party-level field; with no characters in the snapshot,
+        # the chapter's location lives on world_history (chapter 1).
+        latest_loc_chapter = next(
+            (c for c in reversed(snap.world_history) if c.location),
+            None,
+        )
+        assert latest_loc_chapter is not None
+        assert latest_loc_chapter.location == "The Spillway"
         assert snap.atmosphere == "louder, more chaotic"
         assert snap.time_of_day == "dawn"
         assert snap.active_stakes == "establish foothold"
@@ -618,7 +625,10 @@ class TestMaterializeFromGenrePack:
         assert snap.world_slug == "grimvault"
         assert len(snap.world_history) == 1
         assert snap.lore_established == ["The vault is clean."]
-        assert snap.location == "The Threshold"
+        # Wave 2B: chapter's location persists on world_history; per-PC
+        # snapshot.character_locations is populated downstream by dispatch
+        # once a character is attached.
+        assert snap.world_history[0].location == "The Threshold"
         assert snap.atmosphere == "clinical unease"
 
     def test_parse_failure_propagates(self) -> None:

@@ -55,6 +55,7 @@ def _extract_snapshot_canonicalize(span: Any) -> dict[str, Any]:
     for key in (
         "s1_world_confrontations_merged",
         "s1_world_confrontations_dropped_no_target",
+        "s3_party_location_seeded",
     ):
         if key in attrs:
             payload[key] = attrs[key]
@@ -65,6 +66,28 @@ SPAN_ROUTES[SPAN_SNAPSHOT_CANONICALIZE] = SpanRoute(
     event_type="state_transition",
     component="persistence",
     extract=_extract_snapshot_canonicalize,
+)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot party-location query — Wave 2B / story 45-48 / S3
+# Emitted by ``GameSnapshot.party_location()``. Lie-detector hook: when
+# ``party_split=True``, the seated PCs disagree on where the party is —
+# Sebastien's GM panel can flag mid-session splits the narrator may be
+# papering over. ``perspective_supplied=True`` short-circuits the consensus
+# check (single-PC framing).
+# ---------------------------------------------------------------------------
+SPAN_PARTY_LOCATION_QUERY = "snapshot.party_location_query"
+SPAN_ROUTES[SPAN_PARTY_LOCATION_QUERY] = SpanRoute(
+    event_type="state_transition",
+    component="snapshot",
+    extract=lambda span: {
+        "field": "snapshot",
+        "op": "party_location_query",
+        "perspective_supplied": (span.attributes or {}).get("perspective_supplied", False),
+        "consensus_found": (span.attributes or {}).get("consensus_found", False),
+        "party_split": (span.attributes or {}).get("party_split", False),
+    },
 )
 
 

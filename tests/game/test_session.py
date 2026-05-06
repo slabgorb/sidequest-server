@@ -46,7 +46,9 @@ def test_snapshot_defaults():
     s = GameSnapshot()
     assert s.genre_slug == ""
     assert s.characters == []
-    assert s.location == ""
+    # Wave 2B (story 45-48): party-level location field removed; per-character
+    # locations live in ``character_locations`` (default empty dict).
+    assert s.character_locations == {}
     assert s.player_dead is False
 
 
@@ -66,15 +68,15 @@ def test_gamesnapshot_with_character_and_delta_roundtrip():
     original = _make_snapshot()
     before_snap = snapshot(original)
 
-    # Mutate state
-    original.location = "The Lower Gallery"
+    # Mutate state — Wave 2B (story 45-48): per-character location, not the
+    # removed party-level field.
+    original.character_locations["Thorn Ironhide"] = "The Lower Gallery"
     original.quest_log["Rescue the Miners"] = "active"
 
     after_snap = snapshot(original)
     delta = compute_delta(before_snap, after_snap)
 
     assert delta.location_changed()
-    assert delta.new_location == "The Lower Gallery"
     assert delta.quest_log_changed()
     assert not delta.is_empty()
 
@@ -82,7 +84,7 @@ def test_gamesnapshot_with_character_and_delta_roundtrip():
     json_str = original.model_dump_json()
     restored = GameSnapshot.model_validate_json(json_str)
 
-    assert restored.location == "The Lower Gallery"
+    assert restored.character_locations["Thorn Ironhide"] == "The Lower Gallery"
     assert restored.genre_slug == "caverns_and_claudes"
     assert restored.characters[0].core.name == "Thorn Ironhide"
     assert "Rescue the Miners" in restored.quest_log
@@ -94,9 +96,14 @@ def test_gamesnapshot_with_character_and_delta_roundtrip():
 
 
 def test_apply_patch_location():
+    """Wave 2B (story 45-48): a party-frame ``WorldStatePatch.location``
+    propagates to every character's per-character entry. Pre-chargen
+    (no player_seats yet) falls back to ``snapshot.characters``."""
     s = _make_snapshot()
     s.apply_world_patch(WorldStatePatch(location="The Deep Caverns"))
-    assert s.location == "The Deep Caverns"
+    # _make_snapshot seats no players but has one character — falls back
+    # to character iteration.
+    assert s.character_locations["Thorn Ironhide"] == "The Deep Caverns"
 
 
 def test_apply_patch_atmosphere():
@@ -188,10 +195,12 @@ def test_apply_patch_npc_upsert_existing():
 
 
 def test_apply_patch_none_fields_unchanged():
+    """Wave 2B (story 45-48): ``WorldStatePatch.location=None`` must not
+    touch ``character_locations``."""
     s = _make_snapshot()
-    original_location = s.location
+    original_locations = dict(s.character_locations)
     s.apply_world_patch(WorldStatePatch(atmosphere="eerie"))
-    assert s.location == original_location
+    assert s.character_locations == original_locations
 
 
 # ---------------------------------------------------------------------------

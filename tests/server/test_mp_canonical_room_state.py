@@ -51,7 +51,6 @@ def test_replace_with_preserves_identity_and_propagates_through_room() -> None:
     canonical = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="mawdeep",
-        location="Unknown",
     )
     room.bind_world(snapshot=canonical, store=object())  # type: ignore[arg-type]
 
@@ -64,10 +63,10 @@ def test_replace_with_preserves_identity_and_propagates_through_room() -> None:
     materialized = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="mawdeep",
-        location="Mouth of Mawdeep",
     )
     materialized.characters = [_char("Fonzie")]
     materialized.player_seats = {"p:fonzie": "Fonzie"}
+    materialized.character_locations["Fonzie"] = "Mouth of Mawdeep"
 
     canonical.replace_with(materialized)
 
@@ -76,8 +75,8 @@ def test_replace_with_preserves_identity_and_propagates_through_room() -> None:
     assert id(canonical) == canonical_id
     assert peer_view is room.snapshot
     assert peer_view is canonical
-    # Content updated.
-    assert peer_view.location == "Mouth of Mawdeep"
+    # Content updated — Wave 2B: per-character location.
+    assert peer_view.character_locations.get("Fonzie") == "Mouth of Mawdeep"
     assert [c.core.name for c in peer_view.characters] == ["Fonzie"]
     assert peer_view.player_seats == {"p:fonzie": "Fonzie"}
 
