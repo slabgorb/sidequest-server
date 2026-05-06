@@ -45,8 +45,6 @@ from sidequest.genre.models.narrative import (
 from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.pack import (
-    Dungeon,
-    DungeonConfig,
     GenrePack,
     PackMeta,
     PortraitManifestEntry,
@@ -514,17 +512,6 @@ def _validate_opening_bank_coverage(
 # ---------------------------------------------------------------------------
 
 
-# Files that may NOT appear at the hub level when `dungeons/` exists.
-# These are dungeon-scoped concerns; hub-level copies are a loud authoring bug.
-_HUB_REJECTED_FILES: tuple[str, ...] = (
-    "cartography.yaml",
-    "rooms.yaml",
-    "openings.yaml",
-    "creatures.yaml",
-    "encounter_tables.yaml",
-)
-
-
 def _load_cartography(yaml_path: Path) -> CartographyConfig:
     """Load cartography.yaml + (optional) sibling rooms.yaml.
 
@@ -604,32 +591,7 @@ def _load_single_world(
     config: WorldConfig = _load_yaml(world_path / "world.yaml", WorldConfig)
     lore: WorldLore = _load_yaml(world_path / "lore.yaml", WorldLore)
 
-    # === Hub vs leaf detection ===
-    # A hub world has a populated `dungeons/` subdirectory. The detection
-    # is intentionally local — no class hierarchy, no separate function
-    # for hubs. The branch points below all key off `is_hub`.
-    dungeons_dir = world_path / "dungeons"
-    is_hub = dungeons_dir.is_dir() and any(p.is_dir() for p in dungeons_dir.iterdir())
-
-    if is_hub:
-        # Hub-level rejections: these files must live in dungeons/<name>/, not
-        # at world level. A hub-level copy is an authoring bug — fail loud.
-        for rejected in _HUB_REJECTED_FILES:
-            offending = world_path / rejected
-            if offending.exists():
-                raise GenreLoadError(
-                    path=offending,
-                    detail=(
-                        f"World {world_path.name!r} is a hub world (has dungeons/ "
-                        f"subdirectory) and cannot carry {rejected!r} at world level. "
-                        f"Move it to dungeons/<dungeon>/{rejected}."
-                    ),
-                )
-
-    # cartography is mandatory on leaves, forbidden on hubs.
-    cartography: CartographyConfig | None = None
-    if not is_hub:
-        cartography = _load_cartography(world_path / "cartography.yaml")
+    cartography: CartographyConfig = _load_cartography(world_path / "cartography.yaml")
 
     cultures_raw = _load_yaml_raw_optional(world_path / "cultures.yaml")
     cultures: list[Culture] = (
@@ -663,23 +625,21 @@ def _load_single_world(
         world_path / "archetype_funnels.yaml", ArchetypeFunnels
     )
 
-    # === World-tier openings.yaml — MANDATORY on leaf, forbidden on hub ===
+    # === World-tier openings.yaml — MANDATORY ===
     # The unified Opening schema. Both solo and MP entries live here,
     # distinguished by triggers.mode. Replaces both the old genre-tier
     # fallback path and the per-world side file that previously held
     # MP-only openings.
-    openings: list[Opening] = []
-    if not is_hub:
-        openings = _load_openings(
-            world_path / "openings.yaml",
-            scope=f"worlds/{world_path.name}",
-            missing_detail=(
-                f"World {world_path.name!r} is missing required openings.yaml. "
-                "World-tier openings became mandatory in the canned-openings story; "
-                "every world must author at least one solo and one MP opening. "
-                "See docs/superpowers/specs/2026-05-01-canned-openings-design.md §1."
-            ),
-        )
+    openings: list[Opening] = _load_openings(
+        world_path / "openings.yaml",
+        scope=f"worlds/{world_path.name}",
+        missing_detail=(
+            f"World {world_path.name!r} is missing required openings.yaml. "
+            "World-tier openings became mandatory in the canned-openings story; "
+            "every world must author at least one solo and one MP opening. "
+            "See docs/superpowers/specs/2026-05-01-canned-openings-design.md §1."
+        ),
+    )
 
     # === World-tier npcs.yaml — OPTIONAL ===
     # AuthoredNpc list. If a chassis_instance references crew_npcs from
@@ -710,29 +670,25 @@ def _load_single_world(
         rigs_cfg = RigsWorldConfig.model_validate(rigs_raw)
         chassis_instances = list(rigs_cfg.chassis_instances)
 
-    # Cross-file validators run on the world's own openings list. On hub
-    # worlds, openings is empty — validators are no-ops at this scope and
-    # run again per-dungeon below. On leaf worlds, the existing behavior
-    # is preserved.
+    # Cross-file validators run on the world's own openings list.
     _validate_opening_setting_references(openings, chassis_instances, world_slug=world_path.name)
     _validate_crew_npc_references(chassis_instances, authored_npcs, world_slug=world_path.name)
     _validate_authored_npc_uniqueness(authored_npcs, world_slug=world_path.name)
     _validate_present_npcs_resolve(openings, authored_npcs, world_slug=world_path.name)
 
-    if not is_hub:
-        # Validators 7 + 8 (opening bank coverage) only meaningful on leaves.
-        # Derive chargen backgrounds from the canonical "background" scene in
-        # char_creation.yaml. Worlds whose chargen uses a different scene id
-        # (e.g. coyote_star uses "origins") fall through to []; that disables
-        # Validator 8 for those worlds but Validator 7 still enforces solo+MP.
-        background_scene = next(
-            (s for s in char_creation if s.id == "background"),
-            None,
-        )
-        chargen_backgrounds: list[str] = (
-            [c.label for c in background_scene.choices] if background_scene else []
-        )
-        _validate_opening_bank_coverage(openings, chargen_backgrounds, world_slug=world_path.name)
+    # Validators 7 + 8 (opening bank coverage). Derive chargen backgrounds
+    # from the canonical "background" scene in char_creation.yaml. Worlds
+    # whose chargen uses a different scene id (e.g. coyote_star uses
+    # "origins") fall through to []; that disables Validator 8 for those
+    # worlds but Validator 7 still enforces solo+MP.
+    background_scene = next(
+        (s for s in char_creation if s.id == "background"),
+        None,
+    )
+    chargen_backgrounds: list[str] = (
+        [c.label for c in background_scene.choices] if background_scene else []
+    )
+    _validate_opening_bank_coverage(openings, chargen_backgrounds, world_slug=world_path.name)
 
     # === World-tier magic.yaml — OPTIONAL (silent-skip when absent) ===
     # The magic_loader requires BOTH genre-tier and world-tier magic.yaml.
@@ -750,29 +706,6 @@ def _load_single_world(
         magic_register = magic_cfg.narrator_register or ""
 
     portrait_manifest = _load_portrait_manifest(world_path / "portrait_manifest.yaml")
-
-    # === Hub-only: load dungeons + hamlet ===
-    dungeons: dict[str, Dungeon] = {}
-    hamlet: Any = None
-    if is_hub:
-        for entry in sorted(dungeons_dir.iterdir()):
-            if entry.is_dir():
-                dungeons[entry.name] = _load_single_dungeon(
-                    entry,
-                    parent_world_slug=world_path.name,
-                    genre_tropes=genre_tropes,
-                )
-        if not dungeons:
-            # Empty `dungeons/` is an authoring bug — `is_hub` already filtered
-            # for non-empty dirs above, so this is defensive only.
-            raise GenreLoadError(
-                path=dungeons_dir,
-                detail=(
-                    f"World {world_path.name!r} has dungeons/ but no child dungeon "
-                    "directories were loaded. Hub worlds must have at least one dungeon."
-                ),
-            )
-        hamlet = _load_yaml_raw_optional(world_path / "hamlet.yaml")
 
     return World(
         config=config,
@@ -792,103 +725,6 @@ def _load_single_world(
         char_creation=char_creation,
         chassis_instances=chassis_instances,
         magic_register=magic_register,
-        dungeons=dungeons,
-        hamlet=hamlet,
-    )
-
-
-def _load_single_dungeon(
-    dungeon_path: Path,
-    *,
-    parent_world_slug: str,
-    genre_tropes: list[TropeDefinition],
-) -> Dungeon:
-    """Load a single dungeon under a hub world's ``dungeons/`` subdirectory.
-
-    Mirrors ``_load_single_world`` minus the world-only fields (lore,
-    cultures, archetypes, char_creation, magic, history, hamlet). The
-    dungeon owns cartography, openings, legends, tropes, and the
-    narrator-zone fodder (drift_profile, wound_profile, approach).
-
-    Most per-dungeon files (creatures, encounter_tables, factions,
-    rooms-as-data) are loaded as raw YAML; they get typed schemas in
-    follow-on plans when consumers exist.
-
-    Raises:
-        GenreLoadError: If parent_world doesn't match the containing
-            world slug, or any required file is missing/malformed.
-    """
-    scope = f"worlds/{parent_world_slug}/dungeons/{dungeon_path.name}"
-
-    config: DungeonConfig = _load_yaml(dungeon_path / "dungeon.yaml", DungeonConfig)
-    if config.parent_world != parent_world_slug:
-        raise GenreLoadError(
-            path=dungeon_path / "dungeon.yaml",
-            detail=(
-                f"dungeon.yaml parent_world={config.parent_world!r} does not match "
-                f"containing world {parent_world_slug!r}. parent_world must equal "
-                "the slug of the directory containing dungeons/."
-            ),
-        )
-
-    cartography = _load_cartography(dungeon_path / "cartography.yaml")
-    openings = _load_openings(
-        dungeon_path / "openings.yaml",
-        scope=scope,
-        missing_detail=(
-            f"Dungeon {dungeon_path.name!r} (under world {parent_world_slug!r}) "
-            "is missing required openings.yaml. Every dungeon must author at "
-            "least one solo and one MP opening (canned-openings §1)."
-        ),
-    )
-
-    legends, _legends_raw = _load_legends_flexible(dungeon_path / "legends.yaml")
-
-    # Tropes: resolve against genre-tier (no intermediate world tier — dungeon
-    # tropes inherit directly from the genre).
-    dungeon_tropes_raw = _load_yaml_raw_optional(dungeon_path / "tropes.yaml")
-    raw_dungeon_tropes: list[TropeDefinition] = (
-        [TropeDefinition.model_validate(t) for t in dungeon_tropes_raw]
-        if isinstance(dungeon_tropes_raw, list)
-        else []
-    )
-    tropes = (
-        resolve_trope_inheritance(genre_tropes, raw_dungeon_tropes) if raw_dungeon_tropes else []
-    )
-
-    visual_style: Any = _load_yaml_raw_optional(dungeon_path / "visual_style.yaml")
-    portrait_manifest = _load_portrait_manifest(dungeon_path / "portrait_manifest.yaml")
-    drift_profile: Any = _load_yaml_raw_optional(dungeon_path / "drift_profile.yaml")
-    wound_profile: Any = _load_yaml_raw_optional(dungeon_path / "wound_profile.yaml")
-    approach: Any = _load_yaml_raw_optional(dungeon_path / "approach.yaml")
-    factions_raw: Any = _load_yaml_raw_optional(dungeon_path / "factions.yaml")
-    creatures_raw: Any = _load_yaml_raw_optional(dungeon_path / "creatures.yaml")
-    encounter_tables_raw: Any = _load_yaml_raw_optional(dungeon_path / "encounter_tables.yaml")
-    rooms_raw: Any = _load_yaml_raw_optional(dungeon_path / "rooms.yaml")
-
-    # Run cross-file validators against this dungeon's own openings. Dungeons
-    # don't currently carry rigs/npcs (those are world-level concerns), so
-    # the chassis/npc validators run on empty lists — they catch openings
-    # that incorrectly reference rigs that don't exist at this scope.
-    _validate_opening_setting_references(openings, [], world_slug=scope)
-    _validate_present_npcs_resolve(openings, [], world_slug=scope)
-    _validate_opening_bank_coverage(openings, [], world_slug=scope)
-
-    return Dungeon(
-        config=config,
-        cartography=cartography,
-        openings=openings,
-        legends=legends,
-        tropes=tropes,
-        visual_style=visual_style,
-        portrait_manifest=portrait_manifest,
-        drift_profile=drift_profile,
-        wound_profile=wound_profile,
-        approach=approach,
-        factions_raw=factions_raw,
-        creatures_raw=creatures_raw,
-        encounter_tables_raw=encounter_tables_raw,
-        rooms_raw=rooms_raw,
     )
 
 

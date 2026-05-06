@@ -298,38 +298,6 @@ class ConnectHandler:
                 )
                 return [_error_msg(f"Failed to load genre pack '{row.genre_slug}': {exc}")]
 
-            # Hub-world guard. A hub world (today: only `caverns_three_sins`)
-            # has child dungeons in `world.dungeons` and cannot start a delve
-            # directly — the dungeon-pick UI (engine-plan item 4 of the
-            # Hamlet-of-Sünden spec, not yet shipped) routes through it. Until
-            # then, fail loud rather than letting the session limp through and
-            # crash later on a missing cartography or empty openings list.
-            _world_obj = genre_pack.worlds.get(row.world_slug)
-            if _world_obj is not None and _world_obj.dungeons:
-                _watcher_publish(
-                    "session_hub_world_blocked",
-                    {
-                        "slug": slug,
-                        "genre": row.genre_slug,
-                        "world": row.world_slug,
-                        "dungeons": sorted(_world_obj.dungeons.keys()),
-                    },
-                    component="session",
-                    severity="error",
-                )
-                return [
-                    _error_msg(
-                        f"World {row.world_slug!r} is a hub world with "
-                        f"{len(_world_obj.dungeons)} dungeons "
-                        f"({', '.join(sorted(_world_obj.dungeons.keys()))}). "
-                        "Pick a dungeon to start a delve. The dungeon-pick UI "
-                        "is not yet implemented; tracked as engine-plan item 4 "
-                        "of the Hamlet-of-Sünden spec.",
-                        reconnect_required=False,
-                        code="hub_world_requires_dungeon_selection",
-                    )
-                ]
-
             # Restore saved snapshot, or start fresh (Bug 2 fix: resume semantics).
             try:
                 saved = store.load()
