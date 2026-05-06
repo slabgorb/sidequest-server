@@ -170,13 +170,13 @@ class TestRegionInit:
 
         async def body() -> None:
             handler = handler_factory()
-            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            await _connect(handler, genre="caverns_and_claudes", world="caverns_sunden")
             sd = handler._session_data  # type: ignore[attr-defined]
 
-            world = sd.genre_pack.worlds.get("grimvault")
+            world = sd.genre_pack.worlds.get("caverns_sunden")
             assert world is not None
             expected_region = world.cartography.starting_region
-            assert expected_region, "grimvault cartography must declare a starting_region"
+            assert expected_region, "caverns_sunden cartography must declare a starting_region"
 
             out = await _walk_and_confirm(handler)
             assert isinstance(out[0], CharacterCreationMessage)
@@ -199,7 +199,7 @@ class TestRegionInit:
             assert attrs["mode"] == "room_graph"
             assert attrs["source"] == "starting_region"
             assert attrs["genre"] == "caverns_and_claudes"
-            assert attrs["world"] == "grimvault"
+            assert attrs["world"] == "caverns_sunden"
 
             # No init_failed on the happy path.
             assert _events(otel_capture, "region.init_failed") == []
@@ -241,7 +241,7 @@ class TestRegionInit:
             assert attrs["region"] == expected_region
             assert attrs["mode"] == "region"
 
-            # Mirror grimvault happy-path: init_failed must not fire.
+            # Mirror happy-path: init_failed must not fire.
             assert _events(otel_capture, "region.init_failed") == []
 
         asyncio.run(body())
@@ -256,11 +256,11 @@ class TestRegionInit:
 
         async def body() -> None:
             handler = handler_factory()
-            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            await _connect(handler, genre="caverns_and_claudes", world="caverns_sunden")
             sd = handler._session_data  # type: ignore[attr-defined]
 
             # Wipe the starting_region in place to simulate an authoring bug.
-            world = sd.genre_pack.worlds.get("grimvault")
+            world = sd.genre_pack.worlds.get("caverns_sunden")
             assert world is not None
             world.cartography.starting_region = ""
 
@@ -291,12 +291,12 @@ class TestRegionInit:
 
         async def body() -> None:
             handler = handler_factory()
-            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            await _connect(handler, genre="caverns_and_claudes", world="caverns_sunden")
             sd = handler._session_data  # type: ignore[attr-defined]
 
-            world = sd.genre_pack.worlds.get("grimvault")
+            world = sd.genre_pack.worlds.get("caverns_sunden")
             assert world is not None
-            assert world.cartography.regions, "grimvault must declare regions"
+            assert world.cartography.regions, "caverns_sunden must declare regions"
             world.cartography.starting_region = "not_a_real_region"
 
             out = await _walk_and_confirm(handler)

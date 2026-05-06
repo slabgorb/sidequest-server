@@ -567,14 +567,10 @@ def _load_single_world(
 ) -> World:
     """Load a single world from its directory.
 
-    Port of Rust load_single_world(), extended for hub-and-dungeons shape.
-
-    A *leaf* world (the classic shape) carries cartography.yaml,
-    openings.yaml, etc. directly. A *hub* world (today: only
-    ``caverns_three_sins``) has a ``dungeons/`` subdirectory; cartography,
-    openings, rooms, creatures, and encounter tables move down to each
-    dungeon. Hub worlds with those files at world level fail loud per the
-    No Silent Fallbacks rule.
+    Port of Rust load_single_world(). Every world is a leaf — carries
+    cartography.yaml + openings.yaml at world level. Worlds with multiple
+    dungeon-style regions (e.g. caverns_sunden) author them as additional
+    regions in the world's cartography.
 
     Args:
         world_path: Path to the world directory (e.g. ``.../worlds/coyote_star``).
@@ -585,8 +581,7 @@ def _load_single_world(
             ``load_world_magic`` (see ``magic_loader.py``).
 
     Raises:
-        GenreLoadError: If required files are missing or malformed, or if
-            a hub world carries world-level files that must be dungeon-scoped.
+        GenreLoadError: If required files are missing or malformed.
     """
     config: WorldConfig = _load_yaml(world_path / "world.yaml", WorldConfig)
     lore: WorldLore = _load_yaml(world_path / "lore.yaml", WorldLore)

@@ -19,6 +19,11 @@ class Funnel(BaseModel):
     lore: str
     cultural_status: str | None = None
     disposition_toward: dict[str, str] = Field(default_factory=dict)
+    # World-flavor metadata — no engine consumer. caverns_sunden tags
+    # each funnel with the sin its culture is aligned to ("pride",
+    # "greed", "gluttony"); other worlds may add their own descriptive
+    # tags here. Optional and free-form.
+    sin_origin: str | None = None
 
 
 class WorldConstraints(BaseModel):
