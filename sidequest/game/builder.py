@@ -995,7 +995,7 @@ class CharacterBuilder:
         """
         match self._phase:
             case InProgress(scene_index=scene_index):
-                scene = self._scenes[scene_index]
+                scene = self._filter_class_choices(self._scenes[scene_index])
                 choices = [
                     CreationChoice(
                         label=NonBlankString(c.label),
@@ -1686,6 +1686,28 @@ class CharacterBuilder:
         )
 
         return character
+
+    # --- Scene filtering ---
+
+    def _filter_class_choices(self, scene: CharCreationScene) -> CharCreationScene:
+        """If this scene's choices encode class_hint values AND we have a
+        loaded class list, drop choices whose class doesn't qualify against
+        current rolled stats."""
+        if not self._classes or not scene.choices:
+            return scene
+        if not all(c.mechanical_effects.class_hint for c in scene.choices):
+            return scene
+        if self._rolled_stats is None:
+            return scene
+        stats_dict = dict(self._rolled_stats)
+        qualifying_names = {
+            c.display_name for c in qualifying_classes(stats_dict, self._classes)
+        }
+        kept = [
+            c for c in scene.choices
+            if c.mechanical_effects.class_hint in qualifying_names
+        ]
+        return scene.model_copy(update={"choices": kept})
 
     # --- Stat generation ---
 
