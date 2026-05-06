@@ -1357,7 +1357,14 @@ def _apply_narration_result_to_snapshot(
         # apply-time gate is the load-bearing block per AC #6: even when
         # the prompt-time hint is bypassed, a duplicate retrieval in the
         # same room is filtered here.
-        room_id = snapshot.party_location(perspective=acting_character_name) or ""
+        # Fall back to player_name when callers haven't threaded
+        # acting_character_name (parity with actor_for_location above).
+        room_id = (
+            snapshot.party_location(
+                perspective=acting_character_name or player_name
+            )
+            or ""
+        )
         round_number = snapshot.turn_manager.round
         for entry in result.items_gained or []:
             container_id = str(entry.get("from_container", "") or "").strip()

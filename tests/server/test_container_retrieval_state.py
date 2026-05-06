@@ -78,10 +78,11 @@ def vault_snapshot(cac_pack):
     snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="mawdeep",
-        location="mawdeep:vault",
         discovered_rooms=["mawdeep:vault"],
         turn_manager=TurnManager(round=10, interaction=10),
     )
+    # Wave 2B: per-character location keyed by character name.
+    snap.character_locations["Rux"] = "mawdeep:vault"
     char = Character(
         core=CreatureCore(
             name="Rux",
@@ -301,7 +302,7 @@ def test_negative_gate_is_room_scoped_not_global(
     assert vault_snapshot.room_states["mawdeep:vault"].containers["tin_box"].retrieved is True
 
     # Move to room B; bump round counter to mirror real play.
-    vault_snapshot.location = "mawdeep:antechamber"
+    vault_snapshot.character_locations["Rux"] = "mawdeep:antechamber"
     if "mawdeep:antechamber" not in vault_snapshot.discovered_rooms:
         vault_snapshot.discovered_rooms.append("mawdeep:antechamber")
     vault_snapshot.turn_manager = TurnManager(round=11, interaction=11)
@@ -442,7 +443,7 @@ def test_room_state_injected_resets_count_on_room_change(
     )
 
     # Move to a fresh room.
-    vault_snapshot.location = "mawdeep:antechamber"
+    vault_snapshot.character_locations["Rux"] = "mawdeep:antechamber"
     if "mawdeep:antechamber" not in vault_snapshot.discovered_rooms:
         vault_snapshot.discovered_rooms.append("mawdeep:antechamber")
 

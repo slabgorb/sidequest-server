@@ -628,7 +628,7 @@ class TestMPJoinerHostLocationAnchor:
             # Simulate the host's prior turn having landed a location —
             # exactly what `narration_apply` does when the host's first
             # turn commits ("snapshot.location = result.location").
-            sd.snapshot.location = "The Kestrel — Galley, Mid-Coast"
+            sd.snapshot.character_locations["HostPC"] = "The Kestrel — Galley, Mid-Coast"
 
             # Reset the mock so we only see the joiner's narrator call
             # (the host's turn never actually fired in this fixture —
@@ -709,7 +709,9 @@ class TestMPJoinerHostLocationAnchor:
             )
             sd.snapshot.characters.append(host)
             sd.snapshot.player_seats["host-id"] = "HostPC"
-            sd.snapshot.location = ""  # simulate no host narration yet
+            # Wave 2B: simulate no host narration yet — leave the host's
+            # character_locations entry absent.
+            sd.snapshot.character_locations.pop("HostPC", None)
 
             claude_mock.send_with_session.reset_mock()
             await _walk_and_confirm(handler)

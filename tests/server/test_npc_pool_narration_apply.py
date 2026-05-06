@@ -58,14 +58,16 @@ def _mention(
 
 def test_cite_known_npc_updates_last_seen_on_npc() -> None:
     snapshot = GameSnapshot(
-        location="TavernRow",
+        characters=[_pc("Hero")],
         npcs=[Npc(core=_core("Boris"))],
     )
+    snapshot.character_locations["Hero"] = "TavernRow"
     mention = _mention("Boris")
     _apply_npc_mentions(
         snapshot=snapshot,
         mentions=[mention],
         turn_num=7,
+        acting_character_name="Hero",
     )
     npc = snapshot.npcs[0]
     assert npc.last_seen_location == "TavernRow"
@@ -257,11 +259,11 @@ def test_pc_skip_is_case_insensitive() -> None:
 
 def test_multiple_mentions_route_to_different_branches() -> None:
     snapshot = GameSnapshot(
-        location="Crossroads",
         characters=[_pc("Rux")],
         npcs=[Npc(core=_core("Boris"))],
         npc_pool=[NpcPoolMember(name="Marya", drawn_from="legacy_registry")],
     )
+    snapshot.character_locations["Rux"] = "Crossroads"
     _apply_npc_mentions(
         snapshot=snapshot,
         mentions=[
@@ -271,6 +273,7 @@ def test_multiple_mentions_route_to_different_branches() -> None:
             _mention("NewFace"),  # invented
         ],
         turn_num=4,
+        acting_character_name="Rux",
     )
     assert snapshot.npcs[0].last_seen_location == "Crossroads"
     assert snapshot.npcs[0].last_seen_turn == 4
