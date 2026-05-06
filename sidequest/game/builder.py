@@ -618,12 +618,15 @@ class CharacterBuilder:
         # scene declares roll_3d6_strict, that scene's narration gets
         # stat values.
         self._rolled_stats: list[tuple[str, int]] | None = None
+        self._classes: list[ClassDef] = []
         for s in scenes:
             eff = s.mechanical_effects
             if eff is None or eff.stat_generation is None:
                 continue
             if eff.stat_generation == "roll_3d6_strict":
-                self._rolled_stats = self._roll_3d6_stats()
+                self._roll_3d6_with_qualification(
+                    qualification_loop=eff.class_qualification_loop,
+                )
             break
 
         self._backstory_tables: BackstoryTables | None = backstory_tables
@@ -654,6 +657,12 @@ class CharacterBuilder:
         these tables. Story 31-3.
         """
         self._equipment_tables = tables
+        return self
+
+    def with_classes(self, classes: list[ClassDef]) -> CharacterBuilder:
+        """Attach the genre pack's class definitions for qualification loop
+        and class_kit equipment selection."""
+        self._classes = list(classes)
         return self
 
     # --- Phase queries ---
@@ -1142,7 +1151,9 @@ class CharacterBuilder:
         # generate_stats() calls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
-                self._rolled_stats = self._roll_3d6_stats()
+                self._roll_3d6_with_qualification(
+                    qualification_loop=effects.class_qualification_loop,
+                )
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1226,7 +1237,9 @@ class CharacterBuilder:
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
                 if self._rolled_stats is None:
-                    self._rolled_stats = self._roll_3d6_stats()
+                    self._roll_3d6_with_qualification(
+                        qualification_loop=effects.class_qualification_loop,
+                    )
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1623,6 +1636,38 @@ class CharacterBuilder:
         return character
 
     # --- Stat generation ---
+
+    def _roll_3d6_with_qualification(self, *, qualification_loop: bool) -> None:
+        """Roll 3d6 stats, optionally re-rolling until at least one class qualifies.
+
+        When `qualification_loop` is True and self._classes is non-empty,
+        re-rolls until qualifying_classes(stats, self._classes) is non-empty.
+        Each rejected roll emits a chargen.class_qualification_reroll OTEL
+        event. Caps at 100 rerolls (defensive — 3d6 ≥9 has p≈0.625, so
+        the loop should never trip legitimately).
+        """
+        self._rolled_stats = self._roll_3d6_stats()
+        if not qualification_loop or not self._classes:
+            return
+        rerolls = 0
+        while not qualifying_classes(dict(self._rolled_stats), self._classes):
+            rerolls += 1
+            if rerolls > 100:
+                raise RuntimeError(
+                    "class_qualification_loop exceeded 100 rerolls — "
+                    "check minimum_score values in classes.yaml"
+                )
+            trace.get_current_span().add_event(
+                "chargen.class_qualification_reroll",
+                {"rejected_stats": dict(self._rolled_stats), "attempt": rerolls},
+            )
+            self._rolled_stats = self._roll_3d6_stats()
+        if self._rolled_stats is not None:
+            qual = qualifying_classes(dict(self._rolled_stats), self._classes)
+            trace.get_current_span().add_event(
+                "chargen.class_qualifying",
+                {"class_ids": [c.id for c in qual]},
+            )
 
     def _roll_3d6_stats(self) -> list[tuple[str, int]]:
         """Roll 3d6 for each ability score in order. Returns ``(name, total)``
