@@ -13,7 +13,7 @@ def _base_state() -> GameSnapshot:
     return GameSnapshot(
         genre_slug="test",
         world_slug="world",
-        location="The Mines",
+        character_locations={"Protagonist": "The Mines"},
         time_of_day="dusk",
         atmosphere="gloomy",
         current_region="Ironhold",
@@ -34,7 +34,7 @@ def _base_state() -> GameSnapshot:
 def test_snapshot_captures_location():
     state = _base_state()
     s = snapshot(state)
-    assert s.location == "The Mines"
+    assert s.character_locations_json == '{"Protagonist": "The Mines"}'
 
 
 def test_snapshot_captures_atmosphere():
@@ -64,11 +64,10 @@ def test_delta_empty_when_states_equal():
 def test_delta_location_changed():
     state = _base_state()
     before = snapshot(state)
-    state.location = "The Caverns"
+    state.character_locations["Protagonist"] = "The Caverns"
     after = snapshot(state)
     delta = compute_delta(before, after)
     assert delta.location_changed()
-    assert delta.new_location == "The Caverns"
     assert not delta.is_empty()
 
 

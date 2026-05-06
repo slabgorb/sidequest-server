@@ -98,10 +98,11 @@ class StatusCommand(CommandHandler):
             return ErrorResult("No character found")
 
         ch = state.characters[0]
+        location = state.party_location(perspective=ch.core.name) or "(unknown location)"
         output = (
             f"{ch.core.name} — Level {ch.core.level} {ch.race} {ch.char_class}\n"
             f"Edge: {ch.core.edge.current}/{ch.core.edge.max}\n"
-            f"Location: {state.location} ({state.current_region})"
+            f"Location: {location} ({state.current_region})"
         )
 
         if ch.stats:

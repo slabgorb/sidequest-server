@@ -28,16 +28,17 @@ class RoomGraphInitError(Exception):
 
 
 def init_room_graph_location(snap: GameSnapshot, rooms: list[RoomDef]) -> str:
-    """Set ``snap.location`` to the graph's entrance room.
+    """Set ``snap.character_locations`` to the graph's entrance room.
 
     Mutates ``snap`` in place:
 
-    - ``snap.location`` = the first room with ``room_type == "entrance"``
+    - ``snap.character_locations[character_name]`` = the first room with
+      ``room_type == "entrance"`` for each character in ``snap.characters``
     - ``snap.discovered_rooms`` gains that room id (dedup-append on a
       ``list[str]`` for JSON stability with existing saves).
 
     Returns the chosen entrance id so the caller can emit OTEL without
-    re-scanning ``snap.location``.
+    re-scanning ``snap.character_locations``.
 
     Raises :class:`RoomGraphInitError` when no room is tagged
     ``entrance`` — a pack authoring error rather than a runtime state.
@@ -46,7 +47,10 @@ def init_room_graph_location(snap: GameSnapshot, rooms: list[RoomDef]) -> str:
     if entrance is None:
         raise RoomGraphInitError(f"room graph has no entrance room — {len(rooms)} rooms checked")
 
-    snap.location = entrance.id
+    # Populate character_locations for all characters (Wave 2B).
+    for character in snap.characters:
+        snap.character_locations[character.core.name] = entrance.id
+
     if entrance.id not in snap.discovered_rooms:
         snap.discovered_rooms.append(entrance.id)
     return entrance.id
@@ -196,8 +200,8 @@ def process_session_open(
     character_id: str,
     current_turn: int,
 ) -> None:
-    """Run room-entry eligibility against ``snapshot.location`` at
-    session-start time.
+    """Run room-entry eligibility against the character's current location
+    at session-start time.
 
     Story 47-6 (Bug 3): ``sidequest/server/dispatch/opening.py`` sets
     the starting interior room without going through
@@ -207,15 +211,18 @@ def process_session_open(
     cooldown stamp on fire, so a second call within the cooldown window
     is observable (eligible_count >= 1, fired_count == 0) but harmless.
 
-    No-op if ``snap.location`` is empty — the opening pipeline will
-    populate it before this hook runs in production.
+    No-op when the PC has no per-character location entry — the opening
+    pipeline will populate it before this hook runs in production. Wave
+    2B (story 45-48) uses ``snap.party_location(perspective=character_id)``
+    instead of the removed party-level ``snap.location``.
     """
-    if not snap.location:
+    location = snap.party_location(perspective=character_id)
+    if not location:
         return
     process_room_entry(
         snap,
         character_id=character_id,
-        room_id=snap.location,
+        room_id=location,
         current_turn=current_turn,
     )
 

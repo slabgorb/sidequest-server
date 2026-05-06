@@ -54,6 +54,9 @@ def _char(name: str) -> Character:
 
 
 def _sd(player_id: str, player_name: str, characters: list[Character]) -> _SessionData:
+    """Build a session-data fixture (Wave 2B / story 45-48 — no party-level
+    ``location=`` kwarg; per-character locations live in
+    ``snapshot.character_locations`` and tests seed them per case)."""
     return _SessionData(
         genre_slug="caverns_and_claudes",
         world_slug="mawdeep",
@@ -62,7 +65,6 @@ def _sd(player_id: str, player_name: str, characters: list[Character]) -> _Sessi
         snapshot=GameSnapshot(
             genre_slug="caverns_and_claudes",
             world_slug="mawdeep",
-            location="Test",
             turn_manager=TurnManager(interaction=1),
             characters=list(characters),
         ),
@@ -433,14 +435,14 @@ def test_solo_path_unaffected_by_shared_room_model() -> None:
 
 
 def test_party_member_uses_per_character_location_when_set() -> None:
-    """When ``snapshot.character_locations`` has an entry for a character,
-    ``party_member_from_character`` projects that location into the
-    member's ``current_location``, NOT the global ``snapshot.location``.
+    """``party_member_from_character`` projects ``character_locations[name]``
+    into the member's ``current_location``. Wave 2B (story 45-48):
+    per-character is the only source of truth — there is no global
+    ``snapshot.location`` field anymore.
     """
     laverne = _char("Laverne")
     shirley = _char("Shirley")
     sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = "Cargo Bay"  # global / most-recent
     sd.snapshot.character_locations = {
         "Laverne": "Galley",
         "Shirley": "Cockpit",
@@ -459,19 +461,20 @@ def test_party_member_uses_per_character_location_when_set() -> None:
     assert str(shirley_member.current_location) == "Cockpit"
 
 
-def test_party_member_falls_back_to_snapshot_location_when_per_char_absent() -> None:
-    """Legacy saves and pre-first-narration sessions have
-    ``character_locations`` empty; the resolver must fall back to
-    ``snapshot.location`` so solo and freshly-loaded MP keep working.
+def test_party_member_omits_location_when_per_char_absent() -> None:
+    """Wave 2B (story 45-48) — when a PC has no ``character_locations``
+    entry yet (pre-first-narration), the PARTY_STATUS frame omits the
+    ``current_location`` field entirely. The UI renders "(unknown)"
+    rather than inheriting whichever player most recently narrated.
+    There is no global ``snapshot.location`` fallback anymore.
     """
     pc = _char("Solo")
     sd = _sd("p:solo", "Solo", [pc])
-    sd.snapshot.location = "Tavern"
     sd.snapshot.character_locations = {}
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
     member = views.party_member_from_character(handler, sd, pc, "p:solo", "Solo")
-    assert str(member.current_location) == "Tavern"
+    assert member.current_location is None
 
 
 def test_build_session_start_party_status_carries_per_member_locations() -> None:
@@ -487,7 +490,6 @@ def test_build_session_start_party_status_carries_per_member_locations() -> None
     laverne = _char("Laverne")
     shirley = _char("Shirley")
     sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = "Cargo Bay"
     sd.snapshot.character_locations = {
         "Laverne": "Galley",
         "Shirley": "Cockpit",
@@ -518,7 +520,6 @@ def test_apply_narration_writes_per_character_location_for_acting_pc() -> None:
     laverne = _char("Laverne")
     shirley = _char("Shirley")
     sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = "Galley"
     sd.snapshot.character_locations = {"Laverne": "Galley", "Shirley": "Galley"}
 
     room = SessionRoom(slug="slug-narr", mode=GameMode.MULTIPLAYER)
@@ -542,137 +543,9 @@ def test_apply_narration_writes_per_character_location_for_acting_pc() -> None:
     )
 
     # Acting character moved; peer's last-known location is unchanged.
+    # Wave 2B (story 45-48): there is no party-level snapshot.location
+    # to "also advance" — character_locations is the only source of truth.
     assert sd.snapshot.character_locations["Shirley"] == "Cockpit"
     assert sd.snapshot.character_locations["Laverne"] == "Galley"
-    # Global also advances (existing single-location semantics preserved).
-    assert sd.snapshot.location == "Cockpit"
 
 
-def test_apply_narration_seeds_unset_peer_location_before_clobber() -> None:
-    """Playtest 2026-05-02 round 2: bundled-actions narrator returns ONE
-    ``result.location`` per round even when both players acted, so only
-    the acting PC's ``character_locations`` entry is updated. A peer who
-    never narrated a location update (e.g. joiner with suppressed
-    opening) has no entry and falls back to ``snapshot.location`` — which
-    this turn is about to overwrite with the actor's NEW location.
-
-    Defense: BEFORE clobbering ``snapshot.location``, seed every seated
-    PC who lacks a ``character_locations`` entry with the OLD global so
-    they keep showing the right scene on the next PARTY_STATUS frame.
-    """
-    from sidequest.agents.orchestrator import NarrationTurnResult
-    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
-
-    laverne = _char("Laverne")
-    shirley = _char("Shirley")
-    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = "Galley"
-    # Laverne never narrated her own opening location update; entry absent.
-    sd.snapshot.character_locations = {}
-    # Both PCs are seated — ``player_seats.values()`` drives the seed loop.
-    sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
-
-    room = SessionRoom(slug="slug-seed", mode=GameMode.MULTIPLAYER)
-    room.seat("p:laverne", character_slot="Laverne")
-    room.seat("p:shirley", character_slot="Shirley")
-
-    # Shirley is the only acting PC this turn but the bundle moved her.
-    result = NarrationTurnResult(
-        narration="Shirley walks to the cockpit.",
-        location="Cockpit",
-    )
-
-    _apply_narration_result_to_snapshot(
-        sd.snapshot,
-        result,
-        sd.player_name,
-        room=room,
-        pack=sd.genre_pack,
-        acting_character_name="Shirley",
-    )
-
-    # Shirley advanced; Laverne stays anchored at the prior global location
-    # ("Galley") and does NOT inherit Shirley's new location ("Cockpit").
-    assert sd.snapshot.character_locations["Shirley"] == "Cockpit"
-    assert sd.snapshot.character_locations["Laverne"] == "Galley"
-    assert sd.snapshot.location == "Cockpit"
-
-
-def test_apply_narration_seed_skips_already_set_peer_location() -> None:
-    """When a peer already has a ``character_locations`` entry, the
-    pre-clobber seed must NOT overwrite it — the peer's last-known
-    location may differ from the global (e.g. they moved earlier and
-    a third PC's narration is now firing).
-    """
-    from sidequest.agents.orchestrator import NarrationTurnResult
-    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
-
-    laverne = _char("Laverne")
-    shirley = _char("Shirley")
-    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = "Galley"
-    # Laverne already has a peer location set from an earlier turn.
-    sd.snapshot.character_locations = {"Laverne": "Engine Room"}
-    sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
-
-    room = SessionRoom(slug="slug-noseed", mode=GameMode.MULTIPLAYER)
-    room.seat("p:laverne", character_slot="Laverne")
-    room.seat("p:shirley", character_slot="Shirley")
-
-    result = NarrationTurnResult(
-        narration="Shirley moves up to the cockpit.",
-        location="Cockpit",
-    )
-
-    _apply_narration_result_to_snapshot(
-        sd.snapshot,
-        result,
-        sd.player_name,
-        room=room,
-        pack=sd.genre_pack,
-        acting_character_name="Shirley",
-    )
-
-    # Laverne's prior entry is preserved — not overwritten with "Galley".
-    assert sd.snapshot.character_locations["Laverne"] == "Engine Room"
-    assert sd.snapshot.character_locations["Shirley"] == "Cockpit"
-
-
-def test_apply_narration_seed_noop_when_old_location_empty() -> None:
-    """Pre-first-narration / fresh-session path: ``snapshot.location`` is
-    empty, so there is nothing to seed peers with. The seed loop must
-    be a no-op (otherwise we'd write empty strings into
-    ``character_locations`` and the resolver would prefer empty over
-    the eventual fallback to ``snapshot.location``).
-    """
-    from sidequest.agents.orchestrator import NarrationTurnResult
-    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
-
-    laverne = _char("Laverne")
-    shirley = _char("Shirley")
-    sd = _sd("p:shirley", "Shirley", [laverne, shirley])
-    sd.snapshot.location = ""  # fresh, no prior narration
-    sd.snapshot.character_locations = {}
-    sd.snapshot.player_seats = {"p:laverne": "Laverne", "p:shirley": "Shirley"}
-
-    room = SessionRoom(slug="slug-fresh", mode=GameMode.MULTIPLAYER)
-    room.seat("p:laverne", character_slot="Laverne")
-    room.seat("p:shirley", character_slot="Shirley")
-
-    result = NarrationTurnResult(
-        narration="The Kestrel hums.",
-        location="The Kestrel — Galley",
-    )
-
-    _apply_narration_result_to_snapshot(
-        sd.snapshot,
-        result,
-        sd.player_name,
-        room=room,
-        pack=sd.genre_pack,
-        acting_character_name="Shirley",
-    )
-
-    # Only acting PC gets an entry; peer is NOT seeded with empty string.
-    assert sd.snapshot.character_locations.get("Shirley") == "The Kestrel — Galley"
-    assert "Laverne" not in sd.snapshot.character_locations

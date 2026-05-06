@@ -27,8 +27,10 @@ class SessionGameStateView:
 
     Zone tracking populated by
     ``WebSocketSessionHandler._build_game_state_view`` from
-    ``snapshot.location`` (all player-characters share the party-level
-    location) and ``Npc.location`` (NPCs). ``hidden_characters``
+    per-character ``snapshot.character_locations[name]`` (Wave 2B,
+    story 45-48), with party-frame fallback via
+    ``snapshot.party_location()``. NPCs report their per-entity
+    ``Npc.location``. ``hidden_characters``
     populated from stealth-flavored tokens on ``CreatureCore.statuses``
     (whole-token match; see ``WebSocketSessionHandler._HIDDEN_STATUS_TOKENS``).
     ``player_id_to_character`` maps the session's active ``player_id`` to

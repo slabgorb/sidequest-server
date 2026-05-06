@@ -27,7 +27,7 @@ def _make_state() -> GameSnapshot:
         genre_slug="test",
         world_slug="test",
         characters=[make_test_character()],
-        location="The Iron Mines",
+        character_locations={"Thorn Ironhide": "The Iron Mines"},
         current_region="Ironhold Mountains",
         discovered_regions=["Ironhold Mountains", "Sunken Vale"],
         discovered_routes=["Mountains → Vale"],

@@ -448,11 +448,19 @@ class GameSnapshot(BaseModel):
     - resources: typed ``dict[str, ResourcePool]`` (ADR-033). Dispatch-
       side wiring and OTEL emission land in 42-4.
 
-    P1-required: genre_slug, world_slug, characters, npcs, location,
+    P1-required: genre_slug, world_slug, characters, npcs,
+                 character_locations (per-PC scene, Wave 2B / story 45-48),
                  time_of_day, quest_log, notes, narrative_log, atmosphere,
                  current_region, discovered_regions, discovered_routes,
                  turn_manager, active_stakes, lore_established,
                  npc_registry, player_dead.
+
+    Wave 2B (story 45-48): the legacy party-level ``location`` field is
+    removed. Use ``self.party_location(perspective=name)`` for single-PC
+    framing and ``self.party_location()`` for the consensus view.
+    Migration on load (``_migrate_s3_party_location``) promotes any
+    legacy ``location`` value into ``character_locations`` for seated PCs
+    before pydantic drops the unknown field via ``extra: ignore``.
     """
 
     model_config = {"extra": "ignore"}  # forward-compat: ignore unknown save fields
@@ -465,8 +473,9 @@ class GameSnapshot(BaseModel):
     characters: list[Character] = Field(default_factory=list)
     npcs: list[Npc] = Field(default_factory=list)
 
-    # World state (P1-required)
-    location: str = ""
+    # World state (P1-required) — Wave 2B (story 45-48): party-level
+    # ``location`` field removed; use ``party_location(...)`` accessor
+    # or ``character_locations[name]`` for the per-PC source of truth.
     time_of_day: str = ""
     quest_log: dict[str, str] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)

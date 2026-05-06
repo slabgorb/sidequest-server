@@ -2739,7 +2739,7 @@ async def run_narration_turn(
         genre_prompts=genre.prompts,
         character_name=char_name,
         turn_number=session.turn_manager.interaction,
-        current_location=session.location or "Unknown",
+        current_location=session.party_location(perspective=char_name) or "Unknown",
         available_sfx=available_sfx,
         npc_registry=list(session.npc_registry),
         npc_pool=list(session.npc_pool),

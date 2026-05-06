@@ -446,7 +446,12 @@ class SqliteStore:
         entries = self.recent_narrative(3)
         character_names = [ch.core.name for ch in snapshot.characters]
         known_facts = snapshot.characters[0].known_facts if snapshot.characters else []
-        recap = _generate_recap(entries, character_names, snapshot.location, known_facts)
+        # Wave 2B (story 45-48): use the consensus party location for the
+        # recap header — solo always returns the only PC's location;
+        # MP returns the shared location when seated PCs agree, "" when split.
+        recap = _generate_recap(
+            entries, character_names, snapshot.party_location() or "", known_facts
+        )
         return SavedSession(meta=meta, snapshot=snapshot, recap=recap)
 
     def load_world_save(self) -> WorldSave:
