@@ -26,6 +26,7 @@ from sidequest.genre.models.axes import AxesConfig
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
+    ClassDef,
     EquipmentTables,
     NpcArchetype,
     VisualStyle,
@@ -882,6 +883,18 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         path / "equipment_tables.yaml", EquipmentTables
     )
 
+    classes_path = path / "classes.yaml"
+    classes_list: list[ClassDef] = []
+    if classes_path.exists():
+        with classes_path.open("r", encoding="utf-8") as f:
+            raw_classes = yaml.safe_load(f) or []
+        if not isinstance(raw_classes, list):
+            raise GenreLoadError(
+                path=classes_path,
+                detail="expected a list of class definitions",
+            )
+        classes_list = [ClassDef.model_validate(item) for item in raw_classes]
+
     archetype_constraints: ArchetypeConstraints | None = _load_yaml_optional(
         path / "archetype_constraints.yaml", ArchetypeConstraints
     )
@@ -971,6 +984,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         openings=openings,
         backstory_tables=backstory_tables,
         equipment_tables=equipment_tables,
+        classes=classes_list,
         base_archetypes=base_archetypes,
         archetype_constraints=archetype_constraints,
         npc_traits=npc_traits,
