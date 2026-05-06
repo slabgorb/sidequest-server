@@ -284,10 +284,10 @@ def test_legacy_save_round_trips_through_sqlite_store(tmp_path) -> None:
             "player_seats": {"p:1": "Shirley"},
         }
     )
-    with store._connect() as conn:  # type: ignore[attr-defined]
-        conn.execute(
-            "UPDATE sessions SET snapshot_json = ? WHERE genre_slug = ?",
-            (legacy_blob, "g"),
+    with store._conn:  # type: ignore[attr-defined]
+        store._conn.execute(  # type: ignore[attr-defined]
+            "UPDATE game_state SET snapshot_json = ? WHERE id = 1",
+            (legacy_blob,),
         )
 
     loaded = store.load()

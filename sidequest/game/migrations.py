@@ -172,6 +172,57 @@ def _migrate_s2_npc_registry_split(out: dict[str, Any]) -> dict[str, Any] | None
     }
 
 
+def _migrate_s3_party_location(out: dict[str, Any]) -> dict[str, Any] | None:
+    """S3 (Wave 2B) — promote legacy ``location`` into ``character_locations``.
+
+    Pre-Wave-2B, the party-level ``snapshot.location`` was the fallback for
+    any character without a ``character_locations`` entry. Wave 2B removes
+    the field; the migration must seed seated PCs from the legacy value
+    BEFORE pydantic drops the unknown field (model config is
+    ``extra: ignore``).
+
+    Behaviour:
+    - If the legacy ``location`` key is absent: no-op (canonical save).
+    - If ``location`` is empty / falsy: drop the key, no seed (no silent
+      fallback into empty strings).
+    - Otherwise, for each seated PC (``player_seats.values()``) WITHOUT
+      an existing ``character_locations`` entry, seed their entry with the
+      legacy value. Existing entries are newer truth and untouched.
+
+    Drops the legacy ``location`` field on success. Returns OTEL attributes
+    when any seat was seeded, else None (silent on canonical input).
+    """
+    if "location" not in out:
+        return None
+
+    legacy_location = out.pop("location")
+
+    if not legacy_location:
+        return None
+
+    seats = out.get("player_seats") or {}
+    if not isinstance(seats, dict) or not seats:
+        return None
+
+    char_locations = out.setdefault("character_locations", {})
+    if not isinstance(char_locations, dict):
+        return None
+
+    seeded = 0
+    for character_name in seats.values():
+        if not character_name:
+            continue
+        if character_name in char_locations:
+            continue
+        char_locations[character_name] = legacy_location
+        seeded += 1
+
+    if seeded == 0:
+        return None
+
+    return {"s3_party_location_seeded": seeded}
+
+
 def migrate_legacy_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     """Rewrite a legacy snapshot dict into the canonical shape.
 
@@ -187,6 +238,7 @@ def migrate_legacy_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     for sub in (
         _migrate_s1_world_confrontations,
         _migrate_s2_npc_registry_split,
+        _migrate_s3_party_location,
     ):
         attrs = sub(out)
         if attrs is not None:

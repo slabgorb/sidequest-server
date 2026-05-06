@@ -757,6 +757,84 @@ class GameSnapshot(BaseModel):
         return data
 
     # ------------------------------------------------------------------
+    # Derived accessors
+    # ------------------------------------------------------------------
+
+    def party_location(self, *, perspective: str | None = None) -> str | None:
+        """Resolve "where is the party" from per-character locations (Wave 2B).
+
+        Three modes (per design 2026-05-04 § Wave 2 Story B):
+
+        1. ``perspective`` supplied — returns ``character_locations[perspective]``
+           or ``None`` if that character has no entry. Used by single-player
+           narrator framing and per-character header rendering.
+        2. ``perspective`` omitted, all seated PCs agree on the same location
+           — returns that consensus string.
+        3. ``perspective`` omitted, seated PCs disagree (or any seated PC
+           lacks an entry) — returns ``None``. Callers render "(party split)"
+           or equivalent rather than fall back to a stale global.
+
+        Always emits ``snapshot.party_location_query`` for the GM panel
+        (lie-detector hook). ``party_split=True`` flags a mid-session
+        disagreement; ``party_split=False`` covers both consensus and
+        no-party-seated cases (the latter is not a "split" — it's pre-chargen).
+        """
+        from sidequest.telemetry.spans import SPAN_PARTY_LOCATION_QUERY, Span
+
+        perspective_supplied = perspective is not None
+
+        if perspective_supplied:
+            value = self.character_locations.get(perspective) if perspective else None
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": True,
+                    "consensus_found": False,
+                    "party_split": False,
+                },
+            ):
+                pass
+            return value
+
+        seated = [name for name in self.player_seats.values() if name]
+        if not seated:
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": False,
+                    "consensus_found": False,
+                    "party_split": False,
+                },
+            ):
+                pass
+            return None
+
+        locations = [self.character_locations.get(name) for name in seated]
+        if any(loc is None for loc in locations) or len(set(locations)) != 1:
+            with Span.open(
+                SPAN_PARTY_LOCATION_QUERY,
+                {
+                    "perspective_supplied": False,
+                    "consensus_found": False,
+                    "party_split": True,
+                },
+            ):
+                pass
+            return None
+
+        consensus = locations[0]
+        with Span.open(
+            SPAN_PARTY_LOCATION_QUERY,
+            {
+                "perspective_supplied": False,
+                "consensus_found": True,
+                "party_split": False,
+            },
+        ):
+            pass
+        return consensus
+
+    # ------------------------------------------------------------------
     # State mutation methods
     # ------------------------------------------------------------------
 
