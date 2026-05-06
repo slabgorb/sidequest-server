@@ -1108,6 +1108,12 @@ class CharacterBuilder:
             )
         )
 
+        if effects.class_hint is not None:
+            trace.get_current_span().add_event(
+                "chargen.class_chosen",
+                {"class_hint": effects.class_hint},
+            )
+
         if scene.hook_prompt is not None:
             self._phase = AwaitingFollowup(
                 scene_index=scene_index,
@@ -1239,6 +1245,16 @@ class CharacterBuilder:
                 if self._rolled_stats is None:
                     self._roll_3d6_with_qualification(
                         qualification_loop=effects.class_qualification_loop,
+                    )
+                elif self._classes and self._rolled_stats is not None:
+                    # Stats already rolled (eager construction roll fired before
+                    # with_classes() was called). Emit class_qualifying now that
+                    # classes are available so the GM panel can see which
+                    # classes the player qualifies for.
+                    qual = qualifying_classes(dict(self._rolled_stats), self._classes)
+                    trace.get_current_span().add_event(
+                        "chargen.class_qualifying",
+                        {"class_ids": [c.id for c in qual]},
                     )
             else:
                 self._stat_generation = effects.stat_generation
