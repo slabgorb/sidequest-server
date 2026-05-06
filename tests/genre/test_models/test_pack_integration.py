@@ -153,7 +153,9 @@ def test_char_creation_deserializes() -> None:
     data = _load(CC / "char_creation.yaml")
     assert isinstance(data, list)
     scenes = [CharCreationScene.model_validate(s) for s in data]
-    assert len(scenes) == 4
+    # 5 scenes (classic-class era): the_roll, the_calling, pronouns,
+    # the_kit, the_mouth. Previously 4 before class choice was added.
+    assert len(scenes) == 5
 
 
 def test_cultures_deserializes() -> None:
@@ -165,7 +167,10 @@ def test_cultures_deserializes() -> None:
 
 def test_inventory_deserializes() -> None:
     inv = InventoryConfig.model_validate(_load(CC / "inventory.yaml"))
-    assert len(inv.item_catalog) == 23
+    # 30 items: 23 base + 7 class-kit items (sword_long, staff_wood,
+    # hammer_war, spellbook, component_pouch, holy_symbol, lockpicks)
+    # added for the classic-class chargen system.
+    assert len(inv.item_catalog) == 30
     assert inv.currency is not None
 
 

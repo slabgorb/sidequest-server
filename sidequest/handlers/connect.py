@@ -521,6 +521,8 @@ class ConnectHandler:
                 ).with_lobby_name(display_name)
                 if genre_pack.equipment_tables is not None:
                     builder = builder.with_equipment_tables(genre_pack.equipment_tables)
+                if genre_pack.classes:
+                    builder = builder.with_classes(genre_pack.classes)
 
             # Opening-hook + world-context resolution (matches legacy branch).
             # Resolved once at connect time so chargen confirmation and the
