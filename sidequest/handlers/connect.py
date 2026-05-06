@@ -1049,7 +1049,13 @@ class ConnectHandler:
                 # the next per-turn snapshot to arrive.
                 # Wave 2B (story 45-48): "current_location" is per-resuming-
                 # player — use their seated character's per-character entry.
-                resume_char_name = snapshot.player_seats.get(player_id, "")
+                # Fall back to ``display_name`` when the saved snapshot
+                # predates the player_seats wiring (older saves and the
+                # slug-resume tests seed character_locations directly without
+                # populating player_seats).
+                resume_char_name = (
+                    snapshot.player_seats.get(player_id, "") or display_name
+                )
                 resume_loc = (
                     snapshot.party_location(perspective=resume_char_name)
                     if resume_char_name

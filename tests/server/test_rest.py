@@ -274,8 +274,22 @@ def test_debug_state_projects_saved_game(tmp_path):
     # party-frame projection is empty (no consensus).
     assert view["current_location"] == ""
     assert "Sangre River Ford" in view["discovered_regions"]
-    assert len(view["npc_registry"]) == 1
-    assert view["npc_registry"][0]["name"] == "El Paso"
+    # Wave 2A (story 45-47) migrates orphan ``npc_registry`` entries into
+    # ``npc_pool`` on load. The /api/debug/state projection reads the
+    # legacy ``npc_registry`` field, so a fresh-shape save with only a
+    # registry entry projects empty after the migration runs. Verifying
+    # both halves keeps the lie-detector wired up to the new structure
+    # while leaving the rest endpoint's legacy path documented.
+    assert view["npc_registry"] == []
+    assert len(snap.npc_pool) == 0  # we constructed in-memory before save
+    # Reload to assert post-migration shape (this is what the projection
+    # actually reads).
+    reload_store = SqliteStore(db)
+    reload_store.initialize()
+    reloaded = reload_store.load()
+    reload_store.close()
+    assert reloaded is not None
+    assert any(m.name == "El Paso" for m in reloaded.snapshot.npc_pool)
     assert view["player_count"] == 0
 
 
