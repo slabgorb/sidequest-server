@@ -1087,6 +1087,25 @@ class GameSnapshot(BaseModel):
                 npc.core.apply_edge_delta(delta)
                 return
 
+    def find_creature_core(self, name: str) -> CreatureCore | None:
+        """Resolve an actor name (PC or NPC) to its ``CreatureCore``.
+
+        Used as the ``edge_resolver`` callable for ``apply_beat`` and
+        ``resolve_opposed_check``: both need to read or mutate the live
+        edge pool of an actor named in an encounter selection. Returns
+        ``None`` when the name doesn't match any seated character or
+        instantiated NPC — caller decides whether that's a hard error
+        (target_edge_delta with no actor) or a legitimate omission
+        (numerical_advantage_for excludes unknown allies).
+        """
+        for ch in self.characters:
+            if ch.core.name == name:
+                return ch.core
+        for npc in self.npcs:
+            if npc.core.name == name:
+                return npc.core
+        return None
+
     def _merge_npc_patch(self, npc: Npc, patch: NpcPatch) -> None:
         if patch.description is not None:
             npc.core.description = patch.description

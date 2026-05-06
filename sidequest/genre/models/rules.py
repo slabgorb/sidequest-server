@@ -106,6 +106,13 @@ class BeatDef(BaseModel):
     gold_delta: int | None = None
     edge_delta: int | None = None
     target_edge_delta: int | None = None
+    # Per-beat target-resolution mode for ``target_edge_delta`` (Step 2 of
+    # numerical-advantage design). ``focus`` (default) hits the first live
+    # opposing actor for the full debit. ``spread`` divides the debit
+    # ``floor(N)`` across every live opposing actor (remainder dropped).
+    # ``swarm`` is focus-targeted but flagged for ally amplification by the
+    # numerical-advantage rule (Step 3).
+    target_select: str | None = None
     resource_deltas: dict[str, float] | None = None
 
     @model_validator(mode="after")
@@ -125,6 +132,13 @@ class BeatDef(BaseModel):
             for tier in self.deltas:
                 if tier not in valid_tiers:
                     raise ValueError(f"beat '{self.id}' deltas key {tier!r} not in {valid_tiers}")
+        if self.target_select is not None:
+            valid_modes = {"focus", "spread", "swarm"}
+            if self.target_select not in valid_modes:
+                raise ValueError(
+                    f"beat '{self.id}' target_select={self.target_select!r} "
+                    f"not in {sorted(valid_modes)}"
+                )
         return self
 
 

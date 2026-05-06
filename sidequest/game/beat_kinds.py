@@ -227,6 +227,96 @@ def _opposite_side_first_actor(
     return None
 
 
+def _opposite_side_live_actors(
+    enc: StructuredEncounter,
+    side: str,
+) -> list[str]:
+    """All non-withdrawn opposing actors, in encounter declaration order.
+
+    Used by ``target_select=spread`` to divide ``target_edge_delta`` across
+    every engaged enemy.
+    """
+    other = "opponent" if side == "player" else "player"
+    return [a.name for a in enc.actors if a.side == other and not a.withdrawn]
+
+
+# ---------------------------------------------------------------------------
+# Numerical advantage (Step 3 of numerical-advantage design)
+# ---------------------------------------------------------------------------
+
+
+_NUMERICAL_ADVANTAGE_DIVISOR = 2
+_NUMERICAL_ADVANTAGE_CAP = 3
+
+
+def numerical_advantage_modifier(
+    ally_edge_fractions: list[float],
+) -> int:
+    """Pure shift modifier from a side's engaged-ally roster.
+
+    ``ally_edge_fractions`` lists the ``edge_fraction`` (current/max) of
+    every engaged ally on the initiator's side, EXCLUDING the initiator
+    themselves. Withdrawn allies are passed in as ``0.0`` (still bodies
+    in the room, contributing nothing).
+
+    Math:
+        raw = floor(sum(fractions) / 2)         # +1 per 2 full-edge allies
+        cap at +3
+        if more than half of allies are broken (fraction <= 0.0):
+            return -max(raw, 1)                 # collapsed swarm flips sign
+
+    Tuning: the d20 shift bands (ADR-093) place ``Tie`` at [-1,+1] and
+    ``Success`` at >=+2. A +1 numerical-advantage modifier alone is
+    therefore tier-neutral in expectation — meaningful on the margin
+    but not a free win. +2 (4+ allies) flips the average roll from
+    Tie to Success; +3 (6+ allies) is saturated swarm pressure.
+    """
+    if not ally_edge_fractions:
+        return 0
+
+    raw = int(sum(ally_edge_fractions) / _NUMERICAL_ADVANTAGE_DIVISOR)
+    capped = min(raw, _NUMERICAL_ADVANTAGE_CAP)
+
+    broken = sum(1 for f in ally_edge_fractions if f <= 0.0)
+    if broken * 2 > len(ally_edge_fractions):
+        # Majority broken — the swarm has visibly collapsed.
+        return -max(capped, 1)
+
+    return capped
+
+
+def numerical_advantage_for(
+    initiator: EncounterActor,
+    enc: StructuredEncounter,
+    edge_resolver: EdgeResolver,
+) -> int:
+    """Compute the initiator's side's numerical-advantage shift modifier.
+
+    Walks ``enc.actors`` for engaged allies (same side, not the initiator),
+    resolves each to a ``CreatureCore`` via ``edge_resolver``, and computes
+    ``edge.current / edge.max`` per ally. Withdrawn allies contribute 0.0.
+    Allies the resolver doesn't know are excluded from the computation
+    rather than counted as zero — see CLAUDE.md no-silent-fallback: a
+    legitimate "actor without a core" arises during MP joiner races and
+    should not count toward swarm collapse detection.
+    """
+    fractions: list[float] = []
+    for actor in enc.actors:
+        if actor.name == initiator.name:
+            continue
+        if actor.side != initiator.side:
+            continue
+        if actor.withdrawn:
+            fractions.append(0.0)
+            continue
+        core = edge_resolver(actor.name)
+        if core is None:
+            continue
+        denom = core.edge.max if core.edge.max > 0 else 1
+        fractions.append(core.edge.current / denom)
+    return numerical_advantage_modifier(fractions)
+
+
 def _normalize_overrides(
     raw: dict[str, dict] | None,
 ) -> dict[RollOutcome, dict] | None:
@@ -475,28 +565,61 @@ def apply_beat(
                 composure_break = (actor.name, "self")
 
         if target_edge_delta:
-            target_name = _opposite_side_first_actor(enc, actor.side)
-            if target_name is not None:
-                target_core = edge_resolver(target_name)
-                if target_core is None:
-                    raise ValueError(
-                        f"edge_resolver returned no CreatureCore for target {target_name!r}"
-                    )
-                before = target_core.edge.current
-                target_core.apply_edge_delta(-target_edge_delta)
-                after = target_core.edge.current
-                with encounter_edge_debit_span(
-                    source_actor=actor.name,
-                    target_actor=target_name,
-                    debit_kind="target",
-                    delta=-target_edge_delta,
-                    before=before,
-                    after=after,
-                    beat_id=getattr(beat, "id", "?"),
-                ):
-                    pass
-                if after <= 0 and composure_break is None:
-                    composure_break = (target_name, "target")
+            mode = getattr(beat, "target_select", None) or "focus"
+            if mode == "spread":
+                live_targets = _opposite_side_live_actors(enc, actor.side)
+                if live_targets:
+                    per_target = target_edge_delta // len(live_targets)
+                    if per_target > 0:
+                        for target_name in live_targets:
+                            target_core = edge_resolver(target_name)
+                            if target_core is None:
+                                raise ValueError(
+                                    f"edge_resolver returned no CreatureCore "
+                                    f"for target {target_name!r}"
+                                )
+                            before = target_core.edge.current
+                            target_core.apply_edge_delta(-per_target)
+                            after = target_core.edge.current
+                            with encounter_edge_debit_span(
+                                source_actor=actor.name,
+                                target_actor=target_name,
+                                debit_kind="target",
+                                delta=-per_target,
+                                before=before,
+                                after=after,
+                                beat_id=getattr(beat, "id", "?"),
+                                target_select="spread",
+                            ):
+                                pass
+                            if after <= 0 and composure_break is None:
+                                composure_break = (target_name, "target")
+            else:
+                # focus | swarm — single primary target. swarm carries an
+                # OTEL flag so Step 3 can detect ally-amplification beats.
+                target_name = _opposite_side_first_actor(enc, actor.side)
+                if target_name is not None:
+                    target_core = edge_resolver(target_name)
+                    if target_core is None:
+                        raise ValueError(
+                            f"edge_resolver returned no CreatureCore for target {target_name!r}"
+                        )
+                    before = target_core.edge.current
+                    target_core.apply_edge_delta(-target_edge_delta)
+                    after = target_core.edge.current
+                    with encounter_edge_debit_span(
+                        source_actor=actor.name,
+                        target_actor=target_name,
+                        debit_kind="target",
+                        delta=-target_edge_delta,
+                        before=before,
+                        after=after,
+                        beat_id=getattr(beat, "id", "?"),
+                        target_select=mode,
+                    ):
+                        pass
+                    if after <= 0 and composure_break is None:
+                        composure_break = (target_name, "target")
 
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)

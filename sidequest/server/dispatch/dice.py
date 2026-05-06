@@ -379,6 +379,7 @@ def dispatch_dice_throw(
             beat,
             resolved.outcome,
             turn=round_number,
+            edge_resolver=snapshot.find_creature_core,
         )
 
         if apply_result.skipped_reason:

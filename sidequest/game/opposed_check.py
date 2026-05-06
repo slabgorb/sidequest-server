@@ -43,6 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from sidequest.game.beat_kinds import EdgeResolver, numerical_advantage_for
 from sidequest.game.encounter import EncounterActor, StructuredEncounter
 from sidequest.protocol.dice import RollOutcome
 
@@ -96,6 +97,13 @@ class OpposedRollResult:
     Carries everything the GM panel needs to audit the resolution
     (mechanically and narratively). The ``tier`` value is what gets fed
     to ``apply_beat`` for both sides.
+
+    ``player_num_advantage`` / ``opponent_num_advantage`` carry the
+    side-aggregate shift bonus from numerical advantage (Step 3 of the
+    numerical-advantage design). Both default to 0 when the caller
+    didn't supply an ``edge_resolver``. They're added into ``shift``;
+    the ``mod`` fields remain the per-actor stat modifier so the GM
+    panel can show stat-bonus and side-bonus separately.
     """
 
     player_roll: int
@@ -104,6 +112,8 @@ class OpposedRollResult:
     opponent_mod: int
     shift: int
     tier: RollOutcome
+    player_num_advantage: int = 0
+    opponent_num_advantage: int = 0
 
 
 def _stat_score_from_actor(
@@ -199,6 +209,7 @@ def resolve_opposed_check(
     player_roll: int,
     opponent_roll: int,
     encounter: StructuredEncounter | None = None,
+    edge_resolver: EdgeResolver | None = None,
 ) -> OpposedRollResult:
     """Run an opposed-check resolution.
 
@@ -247,7 +258,23 @@ def resolve_opposed_check(
         stat_check=opponent_stat,
     )
 
-    shift = (player_roll + player_mod) - (opponent_roll + opponent_mod)
+    # Numerical advantage (Step 3): when an edge_resolver is provided AND
+    # an encounter is available, fold each side's swarm-pressure modifier
+    # into the shift. The modifiers default to 0 when either input is
+    # missing — back-compat for fixtures that don't seed cores.
+    player_num_adv = 0
+    opponent_num_adv = 0
+    if edge_resolver is not None and encounter is not None:
+        player_num_adv = numerical_advantage_for(
+            player_actor, encounter, edge_resolver
+        )
+        opponent_num_adv = numerical_advantage_for(
+            opponent_actor, encounter, edge_resolver
+        )
+
+    shift = (player_roll + player_mod + player_num_adv) - (
+        opponent_roll + opponent_mod + opponent_num_adv
+    )
     tier = _tier_from_shift(shift)
 
     return OpposedRollResult(
@@ -257,4 +284,6 @@ def resolve_opposed_check(
         opponent_mod=opponent_mod,
         shift=shift,
         tier=tier,
+        player_num_advantage=player_num_adv,
+        opponent_num_advantage=opponent_num_adv,
     )

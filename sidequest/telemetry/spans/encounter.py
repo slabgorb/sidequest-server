@@ -110,6 +110,8 @@ SPAN_ROUTES[SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED] = SpanRoute(
         "player_mod": (span.attributes or {}).get("player_mod", 0),
         "opponent_roll": (span.attributes or {}).get("opponent_roll", 0),
         "opponent_mod": (span.attributes or {}).get("opponent_mod", 0),
+        "player_num_advantage": (span.attributes or {}).get("player_num_advantage", 0),
+        "opponent_num_advantage": (span.attributes or {}).get("opponent_num_advantage", 0),
         "shift": (span.attributes or {}).get("shift", 0),
         "tier": (span.attributes or {}).get("tier", ""),
     },
@@ -258,11 +260,18 @@ def encounter_opposed_roll_resolved_span(
     opponent_mod: int,
     shift: int,
     tier: str,
+    player_num_advantage: int = 0,
+    opponent_num_advantage: int = 0,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Lie-detector for the opposed-check path. Emit BEFORE apply_beat so the
     GM panel can correlate the engine-derived tier with the metric_advance.
+
+    ``player_num_advantage`` / ``opponent_num_advantage`` carry the side-
+    aggregate numerical-advantage modifiers from
+    ``numerical_advantage_for``. Default to 0 for back-compat with legacy
+    callers; production sites pass the values from ``OpposedRollResult``.
     """
     with Span.open(
         SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED,
@@ -272,6 +281,8 @@ def encounter_opposed_roll_resolved_span(
             "player_mod": int(player_mod),
             "opponent_roll": int(opponent_roll),
             "opponent_mod": int(opponent_mod),
+            "player_num_advantage": int(player_num_advantage),
+            "opponent_num_advantage": int(opponent_num_advantage),
             "shift": int(shift),
             "tier": tier,
             **attrs,
