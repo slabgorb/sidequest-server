@@ -139,12 +139,19 @@ class BackstoryTables(BaseModel):
 
 
 class EquipmentTables(BaseModel):
-    """Random equipment generation tables loaded from equipment_tables.yaml."""
+    """Random equipment generation tables loaded from equipment_tables.yaml.
+
+    `tables` is the top-level slot→items mapping consumed by
+    `equipment_generation: random_table`. `class_tables` is a per-class
+    override consumed by `equipment_generation: class_kit`; the chosen
+    class's `kit_table` id resolves to one of these blocks.
+    """
 
     model_config = {"extra": "forbid"}
 
     tables: dict[str, list[str]] = Field(default_factory=dict)
     rolls_per_slot: dict[str, int] = Field(default_factory=dict)
+    class_tables: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
 
 
 class VisualStyle(BaseModel):

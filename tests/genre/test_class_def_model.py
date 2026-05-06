@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from sidequest.genre.models.character import ClassDef
+from sidequest.genre.models.character import ClassDef, EquipmentTables
 
 
 def test_classdef_minimal_valid():
@@ -47,3 +47,20 @@ def test_classdef_full_optional_fields():
         magic_access=None,
     )
     assert c.flavor == "A bookish nuisance."
+
+
+def test_equipment_tables_class_tables_default_empty():
+    et = EquipmentTables()
+    assert et.class_tables == {}
+
+
+def test_equipment_tables_class_tables_loads_nested():
+    et = EquipmentTables.model_validate({
+        "tables": {"weapon": ["dagger"]},
+        "class_tables": {
+            "fighter_kit": {"weapon": ["sword_long"]},
+            "mage_kit": {"weapon": ["staff_wood"]},
+        },
+    })
+    assert "fighter_kit" in et.class_tables
+    assert et.class_tables["mage_kit"]["weapon"] == ["staff_wood"]
