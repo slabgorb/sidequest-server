@@ -1075,9 +1075,15 @@ def _apply_narration_result_to_snapshot(
         # source of truth. The previous "snapshot the global before
         # clobbering" seed loop is gone — there is no global. Compute the
         # acting PC's prior location for scene-change detection below.
+        # ``acting_character_name`` is the canonical actor identity;
+        # legacy callers (older tests, dispatch paths that haven't been
+        # threaded yet) pass the actor as ``player_name`` instead — fall
+        # back to that so the apply path still records location updates
+        # rather than silently dropping them.
+        actor_for_location = acting_character_name or player_name
         old_loc = (
-            snapshot.character_locations.get(acting_character_name)
-            if acting_character_name
+            snapshot.character_locations.get(actor_for_location)
+            if actor_for_location
             else None
         )
         # Story 47-4: rig-coupled auto-fire hook. Any narrator-emitted
@@ -1096,19 +1102,18 @@ def _apply_narration_result_to_snapshot(
                 room_id=result.location,
                 current_turn=snapshot.turn_manager.interaction,
             )
-        # Bind this turn's location to the acting character. ``acting_character_name``
-        # is ``None`` only on legacy callers that haven't been threaded —
-        # without it we cannot know which PC moved, so the location update
-        # is dropped (no silent fallback to a global field that no longer
-        # exists). The existing observability log line below records the
-        # narrator's emit either way.
-        if acting_character_name:
-            snapshot.character_locations[acting_character_name] = result.location
+        # Bind this turn's location to the acting character. Legacy
+        # callers that haven't been threaded with ``acting_character_name``
+        # fall back to ``player_name`` (which has historically held the
+        # character name in this seam). The existing observability log
+        # line below records the narrator's emit either way.
+        if actor_for_location:
+            snapshot.character_locations[actor_for_location] = result.location
             _watcher_publish(
                 "state_transition",
                 {
                     "kind": "character_location_updated",
-                    "character": acting_character_name,
+                    "character": actor_for_location,
                     "old_location": old_loc,
                     "new_location": result.location,
                     "player_name": player_name,

@@ -204,7 +204,6 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
     snapshot.turn_manager = TurnManager()
-    snapshot.location = ""
     snapshot.discovered_regions = []
     snapshot.quest_log = {}
     snapshot.lore_established = []

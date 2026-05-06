@@ -48,7 +48,9 @@ def test_session_view_reflects_party_location(session_fixture) -> None:
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.characters.append(_make_character("Bob"))
-    # session_fixture already sets snapshot.location = "Main Hall".
+    # Wave 2B: per-character locations replace the party-level field.
+    sd.snapshot.character_locations["Alice"] = "Main Hall"
+    sd.snapshot.character_locations["Bob"] = "Main Hall"
 
     view = views.build_game_state_view(handler)
 
@@ -62,6 +64,7 @@ def test_session_view_reflects_npc_location(session_fixture) -> None:
     """NPCs carry their own location — the view should mirror it."""
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
+    sd.snapshot.character_locations["Alice"] = "Main Hall"
     sd.snapshot.npcs.append(_make_npc("Barkeep", location="The Tavern"))
 
     view = views.build_game_state_view(handler)
@@ -76,6 +79,8 @@ def test_session_view_hides_stealthed_character(session_fixture) -> None:
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
     sd.snapshot.characters.append(_make_character("Bob", statuses=["hidden"]))
+    sd.snapshot.character_locations["Alice"] = "Main Hall"
+    sd.snapshot.character_locations["Bob"] = "Main Hall"
 
     view = views.build_game_state_view(handler)
 
@@ -99,6 +104,7 @@ def test_session_view_hides_stealth_npc(session_fixture) -> None:
     """NPC with a stealth-flavored status is also flagged hidden."""
     sd, handler = session_fixture
     sd.snapshot.characters.append(_make_character("Alice"))
+    sd.snapshot.character_locations["Alice"] = "Main Hall"
     sd.snapshot.npcs.append(
         _make_npc("ShadowThief", location="Main Hall", statuses=["Invisible"]),
     )
@@ -160,7 +166,8 @@ def test_session_view_warns_once_when_party_zone_absent(session_fixture, caplog)
     import logging
 
     sd, handler = session_fixture
-    sd.snapshot.location = ""  # Fresh session, pre-first-encounter.
+    # Fresh session, pre-first-encounter — no per-character entries.
+    sd.snapshot.character_locations.clear()
     sd.snapshot.characters.append(_make_character("Alice"))
 
     with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):
@@ -180,8 +187,9 @@ def test_session_view_does_not_warn_when_party_zone_present(session_fixture, cap
     import logging
 
     sd, handler = session_fixture
-    # session_fixture defaults to location="Main Hall".
+    # session_fixture defaults TestHero to "Main Hall"; mirror for Alice.
     sd.snapshot.characters.append(_make_character("Alice"))
+    sd.snapshot.character_locations["Alice"] = "Main Hall"
 
     with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):
         views.build_game_state_view(handler)
@@ -195,7 +203,7 @@ def test_session_view_does_not_warn_when_no_characters(session_fixture, caplog) 
     import logging
 
     sd, handler = session_fixture
-    sd.snapshot.location = ""
+    sd.snapshot.character_locations.clear()
     assert sd.snapshot.characters == []
 
     with caplog.at_level(logging.WARNING, logger="sidequest.server.views"):

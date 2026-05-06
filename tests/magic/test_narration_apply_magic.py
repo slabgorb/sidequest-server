@@ -166,7 +166,6 @@ def test_narration_apply_pipeline_invokes_apply_magic_working(coyote_snapshot):
     # We mutate the existing coyote_snapshot to satisfy them rather than
     # building from scratch; magic_state is already populated.
     coyote_snapshot.turn_manager = TurnManager()
-    coyote_snapshot.location = ""
     coyote_snapshot.discovered_regions = []
     coyote_snapshot.quest_log = {}
     coyote_snapshot.lore_established = []

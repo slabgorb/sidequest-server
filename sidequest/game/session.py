@@ -929,7 +929,21 @@ class GameSnapshot(BaseModel):
 
     def _apply_world_patch_inner(self, patch: WorldStatePatch) -> None:
         if patch.location is not None:
-            self.location = patch.location
+            # Wave 2B (story 45-48): no party-level snapshot.location to
+            # write. ``WorldStatePatch.location`` is a party-frame intent
+            # ("everyone is now here") — apply to every seated PC's
+            # ``character_locations`` entry. Solo and pre-MP saves end up
+            # with one entry; MP gets all seats. Pre-chargen patches with
+            # no seated PCs fall back to writing under the first character
+            # name we find (legacy behavior preservation for tests that
+            # apply a patch before chargen is wired).
+            seated = [name for name in self.player_seats.values() if name]
+            if seated:
+                for name in seated:
+                    self.character_locations[name] = patch.location
+            elif self.characters:
+                for character in self.characters:
+                    self.character_locations[character.core.name] = patch.location
         if patch.time_of_day is not None:
             self.time_of_day = patch.time_of_day
         if patch.atmosphere is not None:

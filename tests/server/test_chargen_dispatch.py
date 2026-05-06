@@ -606,7 +606,7 @@ class TestSliceCWorldMaterialization:
             # (``threshold``) because grimvault uses navigation_mode:
             # room_graph. The chapter's display name ("The Threshold")
             # only survives in atmosphere / history_chapter.
-            assert snap.location == "threshold"
+            assert snap.character_locations.get("Rux") == "threshold"
             assert "threshold" in snap.discovered_rooms
             assert "Clinical unease" in snap.atmosphere
             assert snap.time_of_day == "dawn"
