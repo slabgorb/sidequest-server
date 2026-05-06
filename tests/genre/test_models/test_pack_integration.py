@@ -324,9 +324,10 @@ def test_genre_pack_assembles_from_caverns_and_claudes() -> None:
 
 
 def test_all_worlds_load() -> None:
-    """Verify every caverns_and_claudes world deserializes — both leaf
-    worlds (world.yaml + cartography.yaml at world level) and hub worlds
-    (world.yaml only, cartography lives per-dungeon).
+    """Verify every caverns_and_claudes world deserializes — world.yaml
+    and cartography.yaml at the world level. (The hub-world / per-dungeon
+    cartography variant was reverted 2026-05-06; all C&C worlds are leaf
+    worlds now.)
     """
     worlds_dir = CC / "worlds"
     world_names = [d.name for d in worlds_dir.iterdir() if d.is_dir()]
@@ -335,17 +336,5 @@ def test_all_worlds_load() -> None:
         wdir = worlds_dir / world_name
         wc = WorldConfig.model_validate(_load(wdir / "world.yaml"))
         assert len(wc.name) > 0
-
-        dungeons_dir = wdir / "dungeons"
-        if dungeons_dir.is_dir() and any(p.is_dir() for p in dungeons_dir.iterdir()):
-            # Hub world: cartography is owned by each dungeon.
-            assert not (wdir / "cartography.yaml").exists(), (
-                f"hub world {world_name!r} must not carry cartography.yaml at world level"
-            )
-            for dpath in sorted(dungeons_dir.iterdir()):
-                if dpath.is_dir():
-                    cart = CartographyConfig.model_validate(_load(dpath / "cartography.yaml"))
-                    assert cart is not None
-        else:
-            cart = CartographyConfig.model_validate(_load(wdir / "cartography.yaml"))
-            assert cart is not None
+        cart = CartographyConfig.model_validate(_load(wdir / "cartography.yaml"))
+        assert cart is not None

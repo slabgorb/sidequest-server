@@ -135,9 +135,9 @@ class TestConnectInitBuilder:
 class TestPhaseScene:
     def test_numeric_choice_advances_scene(self, tmp_path: Path) -> None:
         # Scene 0 must have choices for this path — caverns scene 0 is
-        # display-only (auto_advance), so elemental_harmony is the right fixture.
-        if not (CONTENT_ROOT / "elemental_harmony").is_dir():
-            pytest.skip("elemental_harmony content not found")
+        # display-only (auto_advance), so mutant_wasteland is the right fixture.
+        if not (CONTENT_ROOT / "mutant_wasteland").is_dir():
+            pytest.skip("mutant_wasteland content not found")
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
             genre_pack_search_paths=[CONTENT_ROOT],
@@ -145,11 +145,11 @@ class TestPhaseScene:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="elemental_harmony", world="burning_peace")
+            await _connect(handler, genre="mutant_wasteland", world="flickering_reach")
             sd = handler._session_data  # type: ignore[attr-defined]
             assert sd is not None and sd.builder is not None
             if not sd.builder.current_scene().choices:
-                pytest.skip("elemental_harmony scene 0 has no choices")
+                pytest.skip("mutant_wasteland scene 0 has no choices")
             out = await _send_chargen(
                 handler,
                 CharacterCreationPayload(phase="scene", choice="1"),
@@ -162,8 +162,8 @@ class TestPhaseScene:
         run(body())
 
     def test_invalid_numeric_choice_returns_error(self, tmp_path: Path) -> None:
-        if not (CONTENT_ROOT / "elemental_harmony").is_dir():
-            pytest.skip("elemental_harmony content not found")
+        if not (CONTENT_ROOT / "mutant_wasteland").is_dir():
+            pytest.skip("mutant_wasteland content not found")
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
             genre_pack_search_paths=[CONTENT_ROOT],
@@ -171,7 +171,7 @@ class TestPhaseScene:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="elemental_harmony", world="burning_peace")
+            await _connect(handler, genre="mutant_wasteland", world="flickering_reach")
             out = await _send_chargen(
                 handler,
                 CharacterCreationPayload(phase="scene", choice="999"),
@@ -187,8 +187,8 @@ class TestPhaseScene:
 
     def test_missing_choice_defaults_to_first(self, tmp_path: Path) -> None:
         # Rust default: `payload.choice.as_deref().unwrap_or("1")`.
-        if not (CONTENT_ROOT / "elemental_harmony").is_dir():
-            pytest.skip("elemental_harmony content not found")
+        if not (CONTENT_ROOT / "mutant_wasteland").is_dir():
+            pytest.skip("mutant_wasteland content not found")
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
             genre_pack_search_paths=[CONTENT_ROOT],
@@ -196,7 +196,7 @@ class TestPhaseScene:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="elemental_harmony", world="burning_peace")
+            await _connect(handler, genre="mutant_wasteland", world="flickering_reach")
             out = await _send_chargen(handler, CharacterCreationPayload(phase="scene"))
             assert len(out) == 1
             assert not isinstance(out[0], ErrorMessage)
@@ -205,9 +205,9 @@ class TestPhaseScene:
 
     def test_label_match_case_insensitive(self, tmp_path: Path) -> None:
         # Use elemental_harmony or mutant_wasteland — a pack with a choice-based scene 0.
-        noir = CONTENT_ROOT / "elemental_harmony"
+        noir = CONTENT_ROOT / "mutant_wasteland"
         if not noir.is_dir():
-            pytest.skip("elemental_harmony content not found")
+            pytest.skip("mutant_wasteland content not found")
 
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
@@ -216,11 +216,11 @@ class TestPhaseScene:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="elemental_harmony", world="burning_peace")
+            await _connect(handler, genre="mutant_wasteland", world="flickering_reach")
             sd = handler._session_data  # type: ignore[attr-defined]
             assert sd is not None and sd.builder is not None
             if not sd.builder.current_scene().choices:
-                pytest.skip("elemental_harmony scene 0 has no choices")
+                pytest.skip("mutant_wasteland scene 0 has no choices")
             label = sd.builder.current_scene().choices[0].label
             # Submit the label in lowercase — match must be case-insensitive.
             out = await _send_chargen(
@@ -352,15 +352,70 @@ class TestSliceBOpeningHook:
     openings, and that both are ``None`` when no openings exist.
     """
 
-    # NOTE: ``test_caverns_connect_resolves_opening_hook`` was removed
-    # 2026-05-06. It hardcoded ``world="grimvault"`` against
-    # ``caverns_and_claudes``; the 2026-05-06 caverns_three_sins →
-    # caverns_sunden restructure (commit f987282) collapsed grimvault
-    # from a top-level world into a dungeon under caverns_sunden, so the
-    # test connected to a non-existent world and the opening_directive
-    # never landed. The opening-hook code path is still covered for
-    # other genres (e.g. space_opera/coyote_star) — re-add a caverns
-    # variant once a caverns_sunden opening hook is authored.
+    def test_caverns_connect_resolves_opening_hook(self, handler: WebSocketSessionHandler) -> None:
+        async def body() -> None:
+            # Canned-openings flow (spec: 2026-05-01-canned-openings-design.md)
+            # resolves the opening directive at chargen-completion, not at
+            # connect. Capture sd state inside
+            # ``_populate_opening_directive_on_chargen_complete`` so we can
+            # assert the directive shape at the moment it lands — by the
+            # end of the chargen-confirmation dispatch it has been consumed
+            # by ``_run_opening_turn_narration`` and cleared.
+            import sidequest.server.websocket_session_handler as _wsh
+
+            captured: dict[str, str | None] = {}
+            original_populate = _wsh._populate_opening_directive_on_chargen_complete
+
+            def _capturing_populate(*, session_data, **kw):
+                result = original_populate(session_data=session_data, **kw)
+                if "directive" not in captured and session_data.opening_directive:
+                    captured["seed"] = session_data.opening_seed
+                    captured["directive"] = session_data.opening_directive
+                return result
+
+            _wsh._populate_opening_directive_on_chargen_complete = _capturing_populate
+            try:
+                # caverns_and_claudes ships openings only at the world tier
+                # (caverns_sunden), not at the genre tier. Connect
+                # to a real caverns world so the world-tier list is reached.
+                await _connect(handler, genre="caverns_and_claudes", world="caverns_sunden")
+                sd = handler._session_data  # type: ignore[attr-defined]
+                # Walk chargen to confirmation — that dispatch is what
+                # populates the opening directive.
+                builder = sd.builder
+                assert builder is not None
+                while not builder.is_confirmation():
+                    scene = builder.current_scene()
+                    if scene.choices:
+                        payload = CharacterCreationPayload(phase="scene", choice="1")
+                    elif scene.allows_freeform:
+                        payload = CharacterCreationPayload(phase="scene", choice="Tester")
+                    else:
+                        payload = CharacterCreationPayload(phase="continue")
+                    await handler.handle_message(
+                        CharacterCreationMessage(payload=payload, player_id="pid")
+                    )
+                await handler.handle_message(
+                    CharacterCreationMessage(
+                        payload=CharacterCreationPayload(phase="confirmation"),
+                        player_id="pid",
+                    )
+                )
+            finally:
+                _wsh._populate_opening_directive_on_chargen_complete = original_populate
+
+            assert captured.get("seed") is not None, (
+                "opening_seed should be populated during chargen-completion "
+                "for a world that declares openings"
+            )
+            directive = captured.get("directive")
+            assert directive is not None, (
+                "opening_directive should be populated alongside the seed"
+            )
+            assert directive.startswith("=== OPENING SCENARIO ===")
+            assert directive.endswith("=== END OPENING ===")
+
+        run(body())
 
     def test_empty_openings_leaves_both_none(
         self, handler: WebSocketSessionHandler, monkeypatch: pytest.MonkeyPatch
@@ -523,11 +578,11 @@ class TestSliceCWorldMaterialization:
     in the sole ``characters`` slot.
     """
 
-    def test_grimvault_fresh_chapter_lore_populates_snapshot(
+    def test_caverns_sunden_first_chapter_lore_populates_snapshot(
         self, handler: WebSocketSessionHandler
     ) -> None:
         async def body() -> None:
-            await _connect(handler, genre="caverns_and_claudes", world="grimvault")
+            await _connect(handler, genre="caverns_and_claudes", world="caverns_sunden")
             await _walk_to_confirmation(handler, freeform_name="Rux")
 
             out = await _send_chargen(handler, CharacterCreationPayload(phase="confirmation"))
@@ -539,26 +594,21 @@ class TestSliceCWorldMaterialization:
 
             # Genre + world slugs set by materialize_from_genre_pack.
             assert snap.genre_slug == "caverns_and_claudes"
-            assert snap.world_slug == "grimvault"
+            assert snap.world_slug == "caverns_sunden"
 
             # Fresh maturity → exactly one chapter applied (the 'fresh' one).
             assert len(snap.world_history) == 1
             assert snap.world_history[0].id == "fresh"
 
-            # grimvault's fresh chapter authored location + atmosphere —
-            # materialize stamps them; Slice E's room-graph init then
-            # replaces ``location`` with the canonical entrance room id
-            # (``threshold``) because grimvault uses navigation_mode:
-            # room_graph. The chapter's display name ("The Threshold")
-            # only survives in atmosphere / history_chapter.
-            assert snap.character_locations.get("Rux") == "threshold"
-            assert "threshold" in snap.discovered_rooms
-            assert "Clinical unease" in snap.atmosphere
-            assert snap.time_of_day == "dawn"
+            # caverns_sunden uses region-level navigation (no rooms.yaml),
+            # so location is the chapter's authored location verbatim.
+            assert snap.location == "Sünden Square"
+            assert "quiet" in snap.atmosphere.lower()
+            assert snap.time_of_day == "morning"
 
             # Lore from the chapter is in lore_established.
-            assert any("Ashgate" in entry for entry in snap.lore_established), (
-                f"grimvault fresh-tier lore not in snapshot: {snap.lore_established[:2]}"
+            assert any("Sünden" in entry or "Wall" in entry for entry in snap.lore_established), (
+                f"caverns_sunden fresh-tier lore not in snapshot: {snap.lore_established[:2]}"
             )
 
             # Character slot holds exactly the built character (not an
@@ -690,9 +740,9 @@ class TestActions:
         run(body())
 
     def test_back_after_advance_reverts_to_previous_scene(self, tmp_path: Path) -> None:
-        noir = CONTENT_ROOT / "elemental_harmony"
+        noir = CONTENT_ROOT / "mutant_wasteland"
         if not noir.is_dir():
-            pytest.skip("elemental_harmony content not found")
+            pytest.skip("mutant_wasteland content not found")
 
         handler = WebSocketSessionHandler(
             claude_client_factory=_mock_claude_client_factory(),
@@ -701,11 +751,11 @@ class TestActions:
         )
 
         async def body() -> None:
-            await _connect(handler, genre="elemental_harmony", world="burning_peace")
+            await _connect(handler, genre="mutant_wasteland", world="flickering_reach")
             sd = handler._session_data  # type: ignore[attr-defined]
             assert sd is not None and sd.builder is not None
             if not sd.builder.current_scene().choices:
-                pytest.skip("elemental_harmony scene 0 has no choices")
+                pytest.skip("mutant_wasteland scene 0 has no choices")
             await _send_chargen(handler, CharacterCreationPayload(phase="scene", choice="1"))
             # Might have transitioned to AwaitingFollowup or advanced scene;
             # either way, scene-walking should be able to go_back.

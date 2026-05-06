@@ -1,8 +1,8 @@
-"""Regression tests for playtest 2026-04-30 — Mira/Dungeon Survivor
+"""Regression tests for playtest 2026-04-30 — Mira/Caverns Sünden
 chargen-complete with no `magic.init` log.
 
 Pre-fix flow:
-1. Player starts a fresh `caverns_and_claudes` / `dungeon_survivor`
+1. Player starts a fresh `caverns_and_claudes` / `caverns_sunden`
    session.
 2. Walks chargen (bone-dice stats, Delver class, opening, confirmation).
 3. Clicks Create Character. Server log shows `chargen.starting_equipment`
@@ -21,7 +21,7 @@ Root cause:
   with `allowed_sources` carrying per-source plugin attribution).
   Even if the world yaml had existed, the loader would have rejected
   the genre yaml's shape.
-- `caverns_and_claudes/worlds/dungeon_survivor/` had NO `magic.yaml`
+- `caverns_and_claudes/worlds/caverns_sunden/` had NO `magic.yaml`
   file at all — the immediate bug.
 
 Fix (content-only):
@@ -29,7 +29,7 @@ Fix (content-only):
   (matching `space_opera/magic.yaml` + `tests/magic/fixtures/
   space_opera_magic.yaml`). Original draft notes preserved as
   comments for future authoring reference.
-- Created `caverns_and_claudes/worlds/dungeon_survivor/magic.yaml`
+- Created `caverns_and_claudes/worlds/caverns_sunden/magic.yaml`
   honoring the genre defaults (folkloric world_knowledge,
   item_legacy_v1 plugin, no character/world-scope bars — magic in
   C&C lives in items, instantiated by the plugin on pickup).
@@ -75,19 +75,19 @@ def test_caverns_and_claudes_genre_magic_yaml_loads_without_loader_error(cc_pack
     if the world yaml existed.
     """
     genre_yaml = cc_pack_dir / "magic.yaml"
-    world_yaml = cc_pack_dir / "worlds" / "dungeon_survivor" / "magic.yaml"
+    world_yaml = cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml"
     assert genre_yaml.exists(), "C&C genre magic.yaml must exist"
     assert world_yaml.exists(), (
-        "C&C dungeon_survivor world magic.yaml must exist — "
+        "C&C caverns_sunden world magic.yaml must exist — "
         "init_magic_state_for_session requires both tiers"
     )
     # Should not raise.
     config = load_world_magic(genre_yaml=genre_yaml, world_yaml=world_yaml)
-    assert config.world_slug == "dungeon_survivor"
+    assert config.world_slug == "caverns_sunden"
     assert config.genre_slug == "caverns_and_claudes"
 
 
-def test_caverns_and_claudes_dungeon_survivor_magic_init_fires(cc_pack_dir):
+def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
     """End-to-end: `init_magic_state_for_session` returns True for
     Mira's session shape and populates `snapshot.magic_state` with
     the item_legacy_v1 plugin active.
@@ -97,22 +97,22 @@ def test_caverns_and_claudes_dungeon_survivor_magic_init_fires(cc_pack_dir):
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
-        world_slug="dungeon_survivor",
+        world_slug="caverns_sunden",
         turn_manager=TurnManager(),
     )
     result = init_magic_state_for_session(
         snapshot=snapshot,
         genre_pack_source_dir=cc_pack_dir,
-        world_slug="dungeon_survivor",
+        world_slug="caverns_sunden",
         character_id="Mira",
     )
     assert result is True, (
         "init_magic_state_for_session must return True for "
-        "caverns_and_claudes/dungeon_survivor — pre-fix returned "
+        "caverns_and_claudes/caverns_sunden — pre-fix returned "
         "False because the world yaml was missing"
     )
     assert snapshot.magic_state is not None
-    assert snapshot.magic_state.config.world_slug == "dungeon_survivor"
+    assert snapshot.magic_state.config.world_slug == "caverns_sunden"
     assert snapshot.magic_state.config.genre_slug == "caverns_and_claudes"
     assert "item_legacy_v1" in snapshot.magic_state.config.active_plugins
 
@@ -124,13 +124,13 @@ def test_caverns_and_claudes_magic_state_has_no_character_or_world_bars(cc_pack_
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
-        world_slug="dungeon_survivor",
+        world_slug="caverns_sunden",
         turn_manager=TurnManager(),
     )
     init_magic_state_for_session(
         snapshot=snapshot,
         genre_pack_source_dir=cc_pack_dir,
-        world_slug="dungeon_survivor",
+        world_slug="caverns_sunden",
         character_id="Mira",
     )
     assert snapshot.magic_state.ledger == {}, (
@@ -146,7 +146,7 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
     """
     config = load_world_magic(
         genre_yaml=cc_pack_dir / "magic.yaml",
-        world_yaml=cc_pack_dir / "worlds" / "dungeon_survivor" / "magic.yaml",
+        world_yaml=cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml",
     )
     assert config.intensity == 0.3
     assert config.world_knowledge.primary == "folkloric"

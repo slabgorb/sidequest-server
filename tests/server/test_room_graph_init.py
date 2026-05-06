@@ -137,7 +137,17 @@ def _events(exporter: InMemorySpanExporter, name: str) -> list:
     return [e for span in exporter.get_finished_spans() for e in span.events if e.name == name]
 
 
+# 2026-05-06: After the Sünden hub-world revert, no live world in content
+# uses navigation_mode: room_graph (the orphaned caverns_sunden/dungeons/
+# subtree has rooms.yaml files but isn't loaded by the engine). The room-
+# graph init code paths still exist in region_init.py / room_graph_init.py;
+# these tests stay as scaffolding for when a room_graph world is re-
+# authored in content (or a synthetic in-test fixture is added).
+_NO_ROOM_GRAPH_WORLD = "no live world uses navigation_mode: room_graph as of 2026-05-06"
+
+
 class TestRoomGraphInit:
+    @pytest.mark.skip(reason=_NO_ROOM_GRAPH_WORLD)
     def test_grimvault_confirmation_lands_on_entrance(
         self, handler_factory, otel_capture: InMemorySpanExporter
     ) -> None:
@@ -205,6 +215,7 @@ class TestRoomGraphInit:
 
         asyncio.run(body())
 
+    @pytest.mark.skip(reason=_NO_ROOM_GRAPH_WORLD)
     def test_room_graph_with_no_entrance_logs_and_continues(
         self,
         handler_factory,

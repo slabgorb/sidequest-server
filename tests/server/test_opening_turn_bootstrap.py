@@ -88,7 +88,7 @@ def otel_capture():
         processor.shutdown()
 
 
-async def _connect(handler: WebSocketSessionHandler, *, world: str = "grimvault") -> None:
+async def _connect(handler: WebSocketSessionHandler, *, world: str = "caverns_sunden") -> None:
     from tests.server.conftest import attach_default_room_context, seed_slug_for_test
 
     slug = seed_slug_for_test(handler._save_dir, genre="caverns_and_claudes", world=world)
@@ -521,7 +521,7 @@ class TestMPJoinerRaceSuppression:
             )
             sup_attrs = dict(suppressed[0].attributes or {})
             assert sup_attrs.get("genre") == "caverns_and_claudes"
-            assert sup_attrs.get("world") == "grimvault"
+            assert sup_attrs.get("world") == "caverns_sunden"
 
             # Playtest 2026-04-29 BUG-LOW: the suppressed-joiner branch must
             # report ``seed_source="mp_joiner_orientation"`` (not the legacy
@@ -569,7 +569,7 @@ class TestOtelEvents:
             assert attrs["has_directive"] is True
             assert attrs["seed_source"] == "world_or_genre_hook"
             assert attrs["genre"] == "caverns_and_claudes"
-            assert attrs["world"] == "grimvault"
+            assert attrs["world"] == "caverns_sunden"
 
         asyncio.run(body())
 
