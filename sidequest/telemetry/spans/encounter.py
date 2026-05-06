@@ -150,6 +150,9 @@ SPAN_ENCOUNTER_YIELD_RECEIVED = "encounter.yield_received"
 SPAN_ENCOUNTER_YIELD_RESOLVED = "encounter.yield_resolved"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consumed"
+# ADR-078 §4 — composure-break resolution + per-beat edge debits.
+SPAN_ENCOUNTER_EDGE_DEBIT = "encounter.edge_debit"
+SPAN_ENCOUNTER_COMPOSURE_BREAK = "encounter.composure_break"
 
 FLAT_ONLY_SPANS.update(
     {
@@ -165,6 +168,8 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_YIELD_RESOLVED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
+        SPAN_ENCOUNTER_EDGE_DEBIT,
+        SPAN_ENCOUNTER_COMPOSURE_BREAK,
     }
 )
 
@@ -600,6 +605,67 @@ def encounter_resolution_signal_consumed_span(
             "outcome": outcome,
             "final_player_metric": final_player_metric,
             "final_opponent_metric": final_opponent_metric,
+            **attrs,
+        },
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_edge_debit_span(
+    *,
+    source_actor: str,
+    target_actor: str,
+    debit_kind: str,
+    delta: int,
+    before: int,
+    after: int,
+    beat_id: str,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Per-beat edge debit (ADR-078 §3-4).
+
+    ``debit_kind``: ``"self"`` (acting actor pays) | ``"target"`` (opposing
+    actor takes the hit). ``before``/``after`` are clamped current values.
+    Lie-detector for "did the engine actually debit edge or did the
+    narrator just describe a wound." Always one span per beat per debit.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_EDGE_DEBIT,
+        {
+            "source_actor": source_actor,
+            "target_actor": target_actor,
+            "debit_kind": debit_kind,
+            "delta": delta,
+            "before": before,
+            "after": after,
+            "beat_id": beat_id,
+            **attrs,
+        },
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_composure_break_span(
+    *,
+    char_name: str,
+    side: str,
+    beat_id: str,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Composure break — edge dropped to 0 (ADR-078 §4).
+
+    ``side``: ``"self"`` if the acting actor broke, ``"target"`` if the
+    opposing actor broke. Triggers ``encounter.resolved=True`` in the
+    caller; this span fires before the encounter-level resolution.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_COMPOSURE_BREAK,
+        {
+            "char_name": char_name,
+            "side": side,
+            "beat_id": beat_id,
             **attrs,
         },
     ) as s:

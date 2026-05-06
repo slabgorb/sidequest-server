@@ -170,6 +170,9 @@ def resolve_tier_deltas(
 # ---------------------------------------------------------------------------
 from dataclasses import dataclass  # noqa: E402
 
+from collections.abc import Callable  # noqa: E402
+
+from sidequest.game.creature_core import CreatureCore  # noqa: E402
 from sidequest.game.encounter import (  # noqa: E402
     EncounterActor,
     EncounterPhase,
@@ -177,11 +180,15 @@ from sidequest.game.encounter import (  # noqa: E402
 )
 from sidequest.game.encounter_tag import EncounterTag  # noqa: E402
 from sidequest.telemetry.spans import (  # noqa: E402
+    encounter_composure_break_span,
+    encounter_edge_debit_span,
     encounter_metric_advance_span,
     encounter_tag_backfire_span,
     encounter_tag_created_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish  # noqa: E402
+
+EdgeResolver = Callable[[str], CreatureCore | None]
 
 
 @dataclass(frozen=True)
@@ -242,6 +249,7 @@ def apply_beat(
     outcome: RollOutcome,
     *,
     turn: int = 0,
+    edge_resolver: EdgeResolver | None = None,
 ) -> ApplyResult:
     """Apply one beat at one outcome tier to the encounter.
 
@@ -426,6 +434,70 @@ def apply_beat(
             component="encounter",
         )
 
+    # ADR-078 §3-4 — apply per-beat edge debits and detect composure break.
+    # ``edge_delta`` debits the acting actor; ``target_edge_delta`` debits
+    # the first live opposing actor (single-target "focus" mode; Step 2
+    # generalises this with a per-beat ``target_select``). When either
+    # field is set the caller MUST provide an edge_resolver — silent
+    # skipping would let the narrator describe wounds the engine never
+    # recorded (CLAUDE.md no silent fallbacks).
+    self_edge_delta = getattr(beat, "edge_delta", None) or 0
+    target_edge_delta = getattr(beat, "target_edge_delta", None) or 0
+    composure_break: tuple[str, str] | None = None  # (broken_char_name, side)
+
+    if self_edge_delta or target_edge_delta:
+        if edge_resolver is None:
+            raise ValueError(
+                f"beat {getattr(beat, 'id', '?')!r} declares edge_delta / "
+                f"target_edge_delta but apply_beat received no edge_resolver"
+            )
+
+        if self_edge_delta:
+            actor_core = edge_resolver(actor.name)
+            if actor_core is None:
+                raise ValueError(
+                    f"edge_resolver returned no CreatureCore for actor {actor.name!r}"
+                )
+            before = actor_core.edge.current
+            actor_core.apply_edge_delta(-self_edge_delta)
+            after = actor_core.edge.current
+            with encounter_edge_debit_span(
+                source_actor=actor.name,
+                target_actor=actor.name,
+                debit_kind="self",
+                delta=-self_edge_delta,
+                before=before,
+                after=after,
+                beat_id=getattr(beat, "id", "?"),
+            ):
+                pass
+            if after <= 0 and composure_break is None:
+                composure_break = (actor.name, "self")
+
+        if target_edge_delta:
+            target_name = _opposite_side_first_actor(enc, actor.side)
+            if target_name is not None:
+                target_core = edge_resolver(target_name)
+                if target_core is None:
+                    raise ValueError(
+                        f"edge_resolver returned no CreatureCore for target {target_name!r}"
+                    )
+                before = target_core.edge.current
+                target_core.apply_edge_delta(-target_edge_delta)
+                after = target_core.edge.current
+                with encounter_edge_debit_span(
+                    source_actor=actor.name,
+                    target_actor=target_name,
+                    debit_kind="target",
+                    delta=-target_edge_delta,
+                    before=before,
+                    after=after,
+                    beat_id=getattr(beat, "id", "?"),
+                ):
+                    pass
+                if after <= 0 and composure_break is None:
+                    composure_break = (target_name, "target")
+
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)
 
@@ -471,20 +543,36 @@ def apply_beat(
 
     resolved = False
 
+    # Composure break (ADR-078 §4): edge dropped to 0 → encounter resolves
+    # before the dial threshold checks fire, so the narrator's resolution
+    # frame receives ``composure_break:<char>`` rather than a dial victory.
+    if composure_break is not None:
+        broken_name, broken_side = composure_break
+        with encounter_composure_break_span(
+            char_name=broken_name,
+            side=broken_side,
+            beat_id=getattr(beat, "id", "?"),
+        ):
+            pass
+        enc.resolved = True
+        enc.outcome = f"composure_break:{broken_name}"
+        enc.structured_phase = EncounterPhase.Resolution
+        resolved = True
+
     # Player threshold first, then opponent — sealed-letter order via
     # ADR-036 already places player beats first in the iteration; this
     # second-level tie-break is "first crossing wins".
-    if enc.player_metric.current >= enc.player_metric.threshold:
+    if not resolved and enc.player_metric.current >= enc.player_metric.threshold:
         enc.resolved = True
         enc.outcome = "player_victory"
         enc.structured_phase = EncounterPhase.Resolution
         resolved = True
-    elif enc.opponent_metric.current >= enc.opponent_metric.threshold:
+    elif not resolved and enc.opponent_metric.current >= enc.opponent_metric.threshold:
         enc.resolved = True
         enc.outcome = "opponent_victory"
         enc.structured_phase = EncounterPhase.Resolution
         resolved = True
-    elif deltas.resolution or getattr(beat, "resolution", False):
+    elif not resolved and (deltas.resolution or getattr(beat, "resolution", False)):
         enc.resolved = True
         enc.outcome = f"resolution_beat:{beat.id}"
         enc.structured_phase = EncounterPhase.Resolution
