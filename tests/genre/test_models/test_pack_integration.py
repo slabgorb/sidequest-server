@@ -44,15 +44,11 @@ from sidequest.genre.models import (
 
 CONTENT_ROOT = Path(__file__).resolve().parents[4] / "sidequest-content" / "genre_packs"
 CC = CONTENT_ROOT / "caverns_and_claudes"
-# Hub world (caverns_three_sins) — owns the regional concerns: archetypes,
-# archetype_funnels, pacing, lore, legends, history, factions, hamlet,
-# audio, visual_style, portrait_manifest.
-HUB = CC / "worlds" / "caverns_three_sins"
-# Grimvault demoted to a dungeon under the hub. Owns cartography, openings,
-# rooms, creatures, encounter tables, dungeon.yaml (slim WorldConfig
-# variant), drift_profile, wound_profile, approach, plus dungeon-local
-# legends/tropes/factions.
-GRIMVAULT = HUB / "dungeons" / "grimvault"
+# caverns_sunden — the leaf-shaped world that replaces caverns_three_sins
+# after the 2026-05-06 hub-world revert. Carries cartography, openings,
+# archetypes, archetype_funnels, pacing, lore, legends, history,
+# factions, hamlet, audio, visual_style, portrait_manifest at world root.
+SUNDEN = CC / "worlds" / "caverns_sunden"
 
 
 def _load(path: Path) -> Any:
@@ -157,7 +153,9 @@ def test_char_creation_deserializes() -> None:
     data = _load(CC / "char_creation.yaml")
     assert isinstance(data, list)
     scenes = [CharCreationScene.model_validate(s) for s in data]
-    assert len(scenes) == 4
+    # 5 scenes (classic-class era): the_roll, the_calling, pronouns,
+    # the_kit, the_mouth. Previously 4 before class choice was added.
+    assert len(scenes) == 5
 
 
 def test_cultures_deserializes() -> None:
@@ -169,7 +167,10 @@ def test_cultures_deserializes() -> None:
 
 def test_inventory_deserializes() -> None:
     inv = InventoryConfig.model_validate(_load(CC / "inventory.yaml"))
-    assert len(inv.item_catalog) == 23
+    # 30 items: 23 base + 7 class-kit items (sword_long, staff_wood,
+    # hammer_war, spellbook, component_pouch, holy_symbol, lockpicks)
+    # added for the classic-class chargen system.
+    assert len(inv.item_catalog) == 30
     assert inv.currency is not None
 
 
@@ -201,73 +202,55 @@ def test_archetype_constraints_deserializes() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# World-level YAML tests (Grimvault)
+# World-level YAML tests (caverns_sunden)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_grimvault_world_config_deserializes() -> None:
-    # Grimvault's slim WorldConfig variant is dungeon.yaml (was world.yaml).
-    # WorldConfig still validates it — DungeonConfig is a sibling extension,
-    # the underlying flatten-extras shape is identical.
-    wc = WorldConfig.model_validate(_load(GRIMVAULT / "dungeon.yaml"))
-    assert wc.name == "Grimvault"
-    assert wc.cover_poi == "the_descent"
-    assert wc.axis_snapshot["comedy"] == pytest.approx(0.3)
+def test_sunden_world_config_deserializes() -> None:
+    wc = WorldConfig.model_validate(_load(SUNDEN / "world.yaml"))
+    assert wc.name == "Hamlet of Sünden"
+    assert wc.cover_poi == "sunden_square"
 
 
-def test_hub_world_lore_deserializes() -> None:
-    # Hub-world lore lives at caverns_three_sins/lore.yaml (was per-dungeon).
-    wl = WorldLore.model_validate(_load(HUB / "lore.yaml"))
+def test_sunden_world_lore_deserializes() -> None:
+    wl = WorldLore.model_validate(_load(SUNDEN / "lore.yaml"))
     assert wl is not None
 
 
-def test_grimvault_legends_deserializes() -> None:
-    data = _load(GRIMVAULT / "legends.yaml")
+def test_sunden_legends_deserializes() -> None:
+    data = _load(SUNDEN / "legends.yaml")
     assert isinstance(data, list)
     legs = [Legend.model_validate(leg) for leg in data]
     assert len(legs) >= 1
 
 
-def test_grimvault_cartography_deserializes() -> None:
-    cart = CartographyConfig.model_validate(_load(GRIMVAULT / "cartography.yaml"))
-    assert cart.navigation_mode.value == "room_graph"
-    assert len(cart.regions) >= 1
+def test_sunden_cartography_deserializes() -> None:
+    cart = CartographyConfig.model_validate(_load(SUNDEN / "cartography.yaml"))
+    assert len(cart.regions) >= 4
+    assert "sunden_hamlet" in cart.regions
 
 
-def test_hub_archetype_funnels_deserializes() -> None:
-    # Funnels are now hub-level — shared across all dungeons under
-    # caverns_three_sins. Each funnel carries a sin_origin tag (pride /
-    # greed / gluttony) for drift-aware filtering in later plans.
-    funnels = ArchetypeFunnels.model_validate(_load(HUB / "archetype_funnels.yaml"))
+def test_sunden_archetype_funnels_deserializes() -> None:
+    funnels = ArchetypeFunnels.model_validate(_load(SUNDEN / "archetype_funnels.yaml"))
     assert len(funnels.funnels) >= 1
 
 
-def test_grimvault_tropes_deserializes() -> None:
-    data = _load(GRIMVAULT / "tropes.yaml")
-    tropes = [TropeDefinition.model_validate(t) for t in data]
-    assert len(tropes) >= 1
-
-
-def test_hub_archetypes_deserializes() -> None:
-    # Archetypes consolidated to hub level (merged from grimvault/horden/mawdeep).
-    data = _load(HUB / "archetypes.yaml")
+def test_sunden_archetypes_deserializes() -> None:
+    data = _load(SUNDEN / "archetypes.yaml")
     arcs = [NpcArchetype.model_validate(a) for a in data]
     assert len(arcs) >= 1
 
 
-def test_grimvault_openings_deserializes() -> None:
-    # Openings live per-dungeon in the new shape.
-    raw = _load(GRIMVAULT / "openings.yaml")
+def test_sunden_openings_deserializes() -> None:
+    raw = _load(SUNDEN / "openings.yaml")
     assert isinstance(raw, dict)
     assert "openings" in raw
     assert isinstance(raw["openings"], list)
     assert len(raw["openings"]) >= 1
 
 
-def test_hub_pacing_deserializes() -> None:
-    # Pacing is hub-level (one of the world-level concerns the design
-    # consolidated up out of per-dungeon).
-    raw = _load(HUB / "pacing.yaml")
+def test_sunden_pacing_deserializes() -> None:
+    raw = _load(SUNDEN / "pacing.yaml")
     drama_raw = raw.get("drama_thresholds", raw)  # type: ignore[union-attr]
     thresholds = DramaThresholds.model_validate(drama_raw)
     assert thresholds.render_threshold > 0

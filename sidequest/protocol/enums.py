@@ -78,13 +78,6 @@ class MessageType(StrEnum):
     # responds with an ORBITAL_CHART message carrying a fresh SVG.
     ORBITAL_INTENT = "ORBITAL_INTENT"
     ORBITAL_CHART = "ORBITAL_CHART"
-    # Sünden engine plan item 4a — delve lifecycle envelope.
-    # HUB_VIEW is outbound only (server emits when a session connects in
-    # hub mode). DUNGEON_SELECT and RETREAT_TO_HAMLET are inbound; they
-    # transition the session between hub and delve modes.
-    HUB_VIEW = "HUB_VIEW"
-    DUNGEON_SELECT = "DUNGEON_SELECT"
-    RETREAT_TO_HAMLET = "RETREAT_TO_HAMLET"
 
 
 class NarratorVerbosity(StrEnum):

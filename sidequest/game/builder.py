@@ -27,6 +27,7 @@ from sidequest.game.creature_core import (
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
+    ClassDef,
     EquipmentTables,
     MechanicalEffects,
 )
@@ -37,6 +38,25 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.models import CreationChoice, RolledStat
 from sidequest.protocol.types import NonBlankString
+
+# ---------------------------------------------------------------------------
+# Class qualification
+# ---------------------------------------------------------------------------
+
+
+def qualifying_classes(
+    stats: dict[str, int],
+    classes: list[ClassDef],
+) -> list[ClassDef]:
+    """Return classes whose prime_requisite stat meets minimum_score.
+
+    Pure function — no side effects, no genre-pack lookups. Pass the
+    rolled stats dict and the pack's class list; receive the subset
+    the player qualifies for. Empty list = nothing qualifies (caller
+    decides whether to reroll).
+    """
+    return [c for c in classes if stats.get(c.prime_requisite, 0) >= c.minimum_score]
+
 
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
@@ -598,12 +618,15 @@ class CharacterBuilder:
         # scene declares roll_3d6_strict, that scene's narration gets
         # stat values.
         self._rolled_stats: list[tuple[str, int]] | None = None
+        self._classes: list[ClassDef] = []
         for s in scenes:
             eff = s.mechanical_effects
             if eff is None or eff.stat_generation is None:
                 continue
             if eff.stat_generation == "roll_3d6_strict":
-                self._rolled_stats = self._roll_3d6_stats()
+                self._roll_3d6_with_qualification(
+                    qualification_loop=eff.class_qualification_loop,
+                )
             break
 
         self._backstory_tables: BackstoryTables | None = backstory_tables
@@ -634,6 +657,12 @@ class CharacterBuilder:
         these tables. Story 31-3.
         """
         self._equipment_tables = tables
+        return self
+
+    def with_classes(self, classes: list[ClassDef]) -> CharacterBuilder:
+        """Attach the genre pack's class definitions for qualification loop
+        and class_kit equipment selection."""
+        self._classes = list(classes)
         return self
 
     # --- Phase queries ---
@@ -667,8 +696,14 @@ class CharacterBuilder:
 
         In Confirmation phase the builder is past the last scene; callers
         should branch on is_confirmation() before reading current_scene().
+
+        When the scene's choices are class-hint encoded AND classes have
+        been attached via with_classes(), the returned scene's choices
+        are filtered to qualifying classes only. This keeps current_scene,
+        apply_choice, and the wire protocol all reading from the same
+        filtered view — preventing index drift between UI and server.
         """
-        return self._scenes[self.current_scene_index()]
+        return self._filter_class_choices(self._scenes[self.current_scene_index()])
 
     def total_scenes(self) -> int:
         """Total number of scenes."""
@@ -966,7 +1001,7 @@ class CharacterBuilder:
         """
         match self._phase:
             case InProgress(scene_index=scene_index):
-                scene = self._scenes[scene_index]
+                scene = self._filter_class_choices(self._scenes[scene_index])
                 choices = [
                     CreationChoice(
                         label=NonBlankString(c.label),
@@ -1056,7 +1091,10 @@ class CharacterBuilder:
             case _:  # pragma: no cover
                 raise AssertionError(f"unknown phase: {self._phase!r}")
 
-        scene = self._scenes[scene_index]
+        # Filter class-scene choices the same way current_scene() and the
+        # wire protocol do — apply_choice's `index` is the user-facing
+        # index, so it must read from the same filtered view.
+        scene = self._filter_class_choices(self._scenes[scene_index])
         if index >= len(scene.choices):
             # Saturating subtraction so an empty-choice scene reports
             # ``max_index=0`` instead of a negative value.
@@ -1078,6 +1116,12 @@ class CharacterBuilder:
                 choice_label=choice.label,
             )
         )
+
+        if effects.class_hint is not None:
+            trace.get_current_span().add_event(
+                "chargen.class_chosen",
+                {"class_hint": effects.class_hint},
+            )
 
         if scene.hook_prompt is not None:
             self._phase = AwaitingFollowup(
@@ -1122,7 +1166,9 @@ class CharacterBuilder:
         # generate_stats() calls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
-                self._rolled_stats = self._roll_3d6_stats()
+                self._roll_3d6_with_qualification(
+                    qualification_loop=effects.class_qualification_loop,
+                )
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1206,7 +1252,19 @@ class CharacterBuilder:
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
                 if self._rolled_stats is None:
-                    self._rolled_stats = self._roll_3d6_stats()
+                    self._roll_3d6_with_qualification(
+                        qualification_loop=effects.class_qualification_loop,
+                    )
+                elif self._classes and self._rolled_stats is not None:
+                    # Stats already rolled (eager construction roll fired before
+                    # with_classes() was called). Emit class_qualifying now that
+                    # classes are available so the GM panel can see which
+                    # classes the player qualifies for.
+                    qual = qualifying_classes(dict(self._rolled_stats), self._classes)
+                    trace.get_current_span().add_event(
+                        "chargen.class_qualifying",
+                        {"class_ids": [c.id for c in qual]},
+                    )
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1354,10 +1412,43 @@ class CharacterBuilder:
         random_table_requested = any(
             r.effects_applied.equipment_generation == "random_table" for r in self._results
         )
-        if random_table_requested and self._equipment_tables is not None:
+        class_kit_requested = any(
+            r.effects_applied.equipment_generation == "class_kit" for r in self._results
+        )
+
+        # Resolve the kit_tables dict to roll from.  class_kit takes
+        # precedence; random_table is the fallback for packs that don't
+        # declare per-class kits.
+        kit_tables: dict[str, list[str]] | None = None
+        kit_source = "none"
+        if class_kit_requested and self._equipment_tables is not None and self._classes:
+            chosen_class = next(
+                (c for c in self._classes if c.display_name == class_str),
+                None,
+            )
+            if chosen_class is None:
+                span.add_event(
+                    "chargen.class_kit_unresolved",
+                    {"class_str": class_str, "severity": "error"},
+                )
+            else:
+                kit_tables = self._equipment_tables.class_tables.get(chosen_class.kit_table)
+                kit_source = f"class_kit:{chosen_class.kit_table}"
+                if kit_tables is None:
+                    span.add_event(
+                        "chargen.class_kit_table_missing",
+                        {"kit_table": chosen_class.kit_table, "severity": "error"},
+                    )
+
+        # Existing random_table fallback path:
+        if kit_tables is None and random_table_requested and self._equipment_tables is not None:
+            kit_tables = self._equipment_tables.tables
+            kit_source = "random_table"
+
+        if kit_tables is not None and self._equipment_tables is not None:
             added = 0
             skipped = 0
-            for slot, candidates in self._equipment_tables.tables.items():
+            for slot, candidates in kit_tables.items():
                 if not candidates:
                     continue
                 rolls = self._equipment_tables.rolls_per_slot.get(slot, 1)
@@ -1391,10 +1482,15 @@ class CharacterBuilder:
                         }
                     )
                     added += 1
-            equipment_method = "tables"
+            if class_kit_requested and kit_source.startswith("class_kit:"):
+                span.add_event(
+                    "chargen.class_kit_rolled",
+                    {"kit_id": kit_source, "slot_count": len(kit_tables)},
+                )
+            equipment_method = kit_source
             equipment_added = added
             equipment_skipped = skipped
-        elif random_table_requested:
+        elif random_table_requested and not class_kit_requested:
             # Directive present but no equipment_tables wired — this is
             # a misconfiguration, not graceful degradation. SOUL.md: no
             # silent fallbacks.
@@ -1403,6 +1499,20 @@ class CharacterBuilder:
                 {
                     "reason": (
                         "scene declared `equipment_generation: random_table` "
+                        "but CharacterBuilder has no equipment_tables wired"
+                    ),
+                    "severity": "warn",
+                },
+            )
+            equipment_method = "none"
+            equipment_added = 0
+            equipment_skipped = 0
+        elif class_kit_requested and self._equipment_tables is None:
+            span.add_event(
+                "chargen.equipment_tables_missing",
+                {
+                    "reason": (
+                        "scene declared `equipment_generation: class_kit` "
                         "but CharacterBuilder has no equipment_tables wired"
                     ),
                     "severity": "warn",
@@ -1602,7 +1712,61 @@ class CharacterBuilder:
 
         return character
 
+    # --- Scene filtering ---
+
+    def _filter_class_choices(self, scene: CharCreationScene) -> CharCreationScene:
+        """If this scene's choices encode class_hint values AND we have a
+        loaded class list, drop choices whose class doesn't qualify against
+        current rolled stats."""
+        if not self._classes or not scene.choices:
+            return scene
+        if not all(c.mechanical_effects.class_hint for c in scene.choices):
+            return scene
+        if self._rolled_stats is None:
+            return scene
+        stats_dict = dict(self._rolled_stats)
+        qualifying_names = {
+            c.display_name for c in qualifying_classes(stats_dict, self._classes)
+        }
+        kept = [
+            c for c in scene.choices
+            if c.mechanical_effects.class_hint in qualifying_names
+        ]
+        return scene.model_copy(update={"choices": kept})
+
     # --- Stat generation ---
+
+    def _roll_3d6_with_qualification(self, *, qualification_loop: bool) -> None:
+        """Roll 3d6 stats, optionally re-rolling until at least one class qualifies.
+
+        When `qualification_loop` is True and self._classes is non-empty,
+        re-rolls until qualifying_classes(stats, self._classes) is non-empty.
+        Each rejected roll emits a chargen.class_qualification_reroll OTEL
+        event. Caps at 100 rerolls (defensive — 3d6 ≥9 has p≈0.625, so
+        the loop should never trip legitimately).
+        """
+        self._rolled_stats = self._roll_3d6_stats()
+        if not qualification_loop or not self._classes:
+            return
+        rerolls = 0
+        while not qualifying_classes(dict(self._rolled_stats), self._classes):
+            rerolls += 1
+            if rerolls > 100:
+                raise RuntimeError(
+                    "class_qualification_loop exceeded 100 rerolls — "
+                    "check minimum_score values in classes.yaml"
+                )
+            trace.get_current_span().add_event(
+                "chargen.class_qualification_reroll",
+                {"rejected_stats": dict(self._rolled_stats), "attempt": rerolls},
+            )
+            self._rolled_stats = self._roll_3d6_stats()
+        if self._rolled_stats is not None:
+            qual = qualifying_classes(dict(self._rolled_stats), self._classes)
+            trace.get_current_span().add_event(
+                "chargen.class_qualifying",
+                {"class_ids": [c.id for c in qual]},
+            )
 
     def _roll_3d6_stats(self) -> list[tuple[str, int]]:
         """Roll 3d6 for each ability score in order. Returns ``(name, total)``

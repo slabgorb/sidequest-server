@@ -19,7 +19,7 @@ Payloads with deny_unknown_fields in Rust use model_config = {"extra": "forbid"}
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, RootModel
 
@@ -40,14 +40,6 @@ from sidequest.protocol.models import (
 )
 from sidequest.protocol.orbital_intent import OrbitalIntent, OrbitalIntentResponse
 from sidequest.protocol.types import NonBlankString
-
-if TYPE_CHECKING:
-    # Imported only for type checking — the runtime import lives at the
-    # bottom of this module to break a circular dependency:
-    #   protocol.messages → game.world_save → game.persistence → ...
-    #     → genre.archetype.resolved → genre.resolver
-    #     → protocol.provenance → protocol.__init__ → protocol.messages
-    from sidequest.game.world_save import WorldSave
 
 # ---------------------------------------------------------------------------
 # PlayerActionPayload
@@ -904,130 +896,6 @@ class OrbitalChartMessage(ProtocolBase):
     player_id: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Sünden engine plan item 4a — hub view + delve lifecycle envelope.
-#
-# HUB_VIEW is outbound only (server emits on hub-mode connect and on every
-# delve-end). DUNGEON_SELECT and RETREAT_TO_HAMLET are inbound; Task 4
-# registers them in the inbound discriminated union below. HubViewMessage is
-# intentionally NOT in the union so an inbound HUB_VIEW frame raises
-# ValidationError (the websocket ingress rejects unknown clients claiming
-# to drive UI state from outside).
-# ---------------------------------------------------------------------------
-
-
-class AvailableDungeon(ProtocolBase):
-    """Enriched dungeon descriptor in HUB_VIEW.
-
-    Shipping {slug, sin, wounded} together eliminates the need for a
-    client-side SIN_BY_DUNGEON map. The sin is resolved server-side from
-    Dungeon.config.sin (loader item 1); wounded is read from
-    WorldSave.dungeon_wounds.
-    """
-
-    model_config = {"populate_by_name": True, "extra": "ignore"}
-
-    slug: str
-    sin: str
-    wounded: bool
-
-
-class HubViewPayload(ProtocolBase):
-    """Outbound — sent on hub-mode connect and on every delve-end."""
-
-    model_config = {"populate_by_name": True, "extra": "ignore"}
-
-    slug: str
-    genre_slug: str
-    world_slug: str
-    available_dungeons: list[AvailableDungeon]
-    world_save: WorldSave
-
-    def __init__(self, /, **data: Any) -> None:  # noqa: D401
-        # WorldSave is a forward reference (see module-bottom comment).
-        # Ensure the schema is finalised before pydantic walks it.
-        _resolve_forward_refs()
-        super().__init__(**data)
-
-    @classmethod
-    def model_validate(cls, *args: Any, **kwargs: Any) -> HubViewPayload:
-        _resolve_forward_refs()
-        return super().model_validate(*args, **kwargs)
-
-    @classmethod
-    def model_validate_json(cls, *args: Any, **kwargs: Any) -> HubViewPayload:
-        _resolve_forward_refs()
-        return super().model_validate_json(*args, **kwargs)
-
-
-class HubViewMessage(ProtocolBase):
-    """GameMessage::HubView — outbound only; not in the inbound union."""
-
-    type: Literal[MessageType.HUB_VIEW] = MessageType.HUB_VIEW
-    payload: HubViewPayload
-    player_id: str = ""
-
-    def __init__(self, /, **data: Any) -> None:  # noqa: D401
-        _resolve_forward_refs()
-        super().__init__(**data)
-
-    @classmethod
-    def model_validate(cls, *args: Any, **kwargs: Any) -> HubViewMessage:
-        _resolve_forward_refs()
-        return super().model_validate(*args, **kwargs)
-
-    @classmethod
-    def model_validate_json(cls, *args: Any, **kwargs: Any) -> HubViewMessage:
-        _resolve_forward_refs()
-        return super().model_validate_json(*args, **kwargs)
-
-
-class DungeonSelectPayload(ProtocolBase):
-    """Inbound — start a delve."""
-
-    model_config = {"populate_by_name": True, "extra": "forbid"}
-
-    dungeon: str
-    party_hireling_ids: list[str]
-
-
-class DungeonSelectMessage(ProtocolBase):
-    """GameMessage::DungeonSelect — inbound; transitions hub → delve."""
-
-    type: Literal[MessageType.DUNGEON_SELECT] = MessageType.DUNGEON_SELECT
-    payload: DungeonSelectPayload
-    player_id: str = ""
-
-
-# Party fate. Three orthogonal-to-wound outcomes. "defeat" is server-only
-# (player_dead auto-trigger) — the inbound wire type intentionally excludes
-# it so a client cannot claim defeat.
-DelveOutcome = Literal["retreat", "victory"]
-
-
-class RetreatToHamletPayload(ProtocolBase):
-    """Inbound — end a delve voluntarily.
-
-    ``outcome`` and ``wounded_boss`` are deliberately orthogonal so that
-    "we wounded the boss but two of us died" is recordable as
-    ``(retreat, wounded_boss=True)`` rather than being forced into a
-    single conflated literal.
-    """
-
-    model_config = {"populate_by_name": True, "extra": "forbid"}
-
-    outcome: DelveOutcome
-    wounded_boss: bool = False
-
-
-class RetreatToHamletMessage(ProtocolBase):
-    """GameMessage::RetreatToHamlet — inbound; transitions delve → hub."""
-
-    type: Literal[MessageType.RETREAT_TO_HAMLET] = MessageType.RETREAT_TO_HAMLET
-    payload: RetreatToHamletPayload
-    player_id: str = ""
-
-
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -1059,11 +927,7 @@ _Phase1Variant = Annotated[
     | DiceResultMessage
     | OrbitalIntentMessage
     | OrbitalChartMessage
-    | YieldMessage
-    # Sünden engine plan item 4a — delve lifecycle inbound types.
-    # HubViewMessage is intentionally absent (outbound only).
-    | DungeonSelectMessage
-    | RetreatToHamletMessage,
+    | YieldMessage,
     Field(discriminator="type"),
 ]
 
@@ -1103,62 +967,3 @@ class GameMessage(RootModel[_Phase1Variant]):
     def player_id(self) -> str:
         """Return the player_id."""
         return self.root.player_id  # type: ignore[union-attr]
-
-
-# ---------------------------------------------------------------------------
-# Forward reference resolution for HubViewPayload.world_save.
-#
-# WorldSave is imported only under TYPE_CHECKING at the top of this module
-# because the runtime import would close a circular dependency:
-#   protocol.messages → game.world_save → game.persistence → game.session
-#     → game.chassis → genre.models.* → genre.archetype.resolved
-#     → genre.resolver → protocol.provenance → protocol.__init__
-#     → protocol.messages
-#
-# The cycle is in flight whenever anything imports `sidequest.agents` (or
-# anything else in the genre/protocol web) before `sidequest.game` finishes
-# loading — for example tests/server/conftest.py.
-#
-# We bind WorldSave lazily on first use. PEP 562 module __getattr__ exposes
-# the symbol when something looks it up; HubViewPayload's own
-# model_validator triggers resolution before validation runs. By the time
-# either path fires, the entire game package is fully loaded, so the
-# import succeeds. Failures (import error, rebuild error) surface loudly
-# via the underlying exception — no silent fallback.
-# ---------------------------------------------------------------------------
-
-_forward_refs_resolved = False
-
-
-def _resolve_forward_refs() -> None:
-    """Late-bind WorldSave and rebuild Hub* schemas. Idempotent."""
-    global _forward_refs_resolved
-    if _forward_refs_resolved:
-        return
-    from sidequest.game.world_save import WorldSave as _WorldSave
-
-    globals()["WorldSave"] = _WorldSave
-    HubViewPayload.model_rebuild()
-    HubViewMessage.model_rebuild()
-    _forward_refs_resolved = True
-
-
-def __getattr__(name: str) -> Any:
-    if name == "WorldSave":
-        _resolve_forward_refs()
-        return globals()["WorldSave"]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Eager resolution attempt. When this module is imported via the
-# protocol → game → genre import cycle, `from sidequest.game.world_save
-# import WorldSave` raises ImportError on the partially initialised game.*
-# tree. We re-raise unless that's the exact cycle case, and rely on the
-# PEP 562 __getattr__ above to resolve once the cycle completes. Any other
-# failure (e.g. WorldSave was renamed, model_rebuild blew up) propagates
-# loudly per the no-silent-fallbacks principle.
-try:
-    _resolve_forward_refs()
-except ImportError as exc:
-    if "partially initialized" not in str(exc) and "circular import" not in str(exc):
-        raise

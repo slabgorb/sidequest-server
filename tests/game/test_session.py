@@ -269,32 +269,3 @@ def test_full_snapshot_roundtrip():
     assert back.characters[0].core.name == "Thorn Ironhide"
     assert back.quest_log == s.quest_log
     assert back.lore_established == s.lore_established
-
-
-# ---------------------------------------------------------------------------
-# Sünden engine plan item 4a — active_delve_dungeon discriminator
-# ---------------------------------------------------------------------------
-
-
-def test_game_snapshot_active_delve_dungeon_defaults_none():
-    """Fresh GameSnapshot is in hub mode (active_delve_dungeon is None)."""
-    s = GameSnapshot()
-    assert s.active_delve_dungeon is None
-
-
-def test_game_snapshot_active_delve_dungeon_round_trips():
-    """Setting a delve dungeon survives JSON round-trip."""
-    s = _make_snapshot()
-    s.active_delve_dungeon = "grimvault"
-    json_str = s.model_dump_json()
-    back = GameSnapshot.model_validate_json(json_str)
-    assert back.active_delve_dungeon == "grimvault"
-
-
-def test_game_snapshot_legacy_save_no_active_delve_field():
-    """Legacy save JSON without active_delve_dungeon validates with default None."""
-    s = _make_snapshot()
-    payload = s.model_dump()
-    payload.pop("active_delve_dungeon", None)
-    back = GameSnapshot.model_validate(payload)
-    assert back.active_delve_dungeon is None

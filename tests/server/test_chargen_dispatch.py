@@ -463,35 +463,35 @@ class TestSliceAWiring:
             sd = handler._session_data  # type: ignore[attr-defined]
             assert len(sd.snapshot.characters) == 1
             char = sd.snapshot.characters[0]
-            assert char.char_class == "Delver"
+            # Classic-class era: char_class is one of the four classes.
+            # Walker picks idx 1 (which maps to first qualifying class,
+            # filtered server-side by qualifying_classes()).
+            assert char.char_class in {"Fighter", "Mage", "Cleric", "Thief"}
 
-            # Starting equipment wired: Delver loadout from caverns
-            # inventory.yaml carries 11 items (three torches, rations,
-            # waterskin, rope, pole, spikes, chalk, dagger) plus 10 gold.
+            # Starting equipment wired: equipment_generation: class_kit
+            # rolls from class_tables[<chosen_class.kit_table>]. Every
+            # class kit declares a torch and rations_day in c&c, so
+            # those are universal. Other items vary by kit.
             items = char.core.inventory.items
             item_ids = [i["id"] for i in items]
-            # Every item the loadout declared must appear.
-            # Loadout adds 11 entries for Delver (three torches, rations×2,
-            # waterskin, rope, pole, spikes, chalk, dagger). Builder-side
-            # item_hints (from chargen equipment-choice scenes) are
-            # preserved alongside, so torch appears at least 3 times.
-            for required in [
-                "torch",
-                "rations_day",
-                "waterskin",
-                "rope_hemp",
-                "ten_foot_pole",
-                "iron_spikes",
-                "chalk",
-                "dagger_iron",
-            ]:
-                assert required in item_ids, (
-                    f"starting equipment missing {required!r}; got {item_ids}"
-                )
-            assert item_ids.count("torch") >= 3, (
-                "Delver loadout carries three torches (builder hints may add more)"
+            assert "torch" in item_ids, (
+                f"every c&c class kit carries a torch; got {item_ids}"
             )
-            assert char.core.inventory.gold >= 10, "Delver loadout adds 10 starting gold"
+            assert "rations_day" in item_ids, (
+                f"every c&c class kit carries rations_day; got {item_ids}"
+            )
+            assert item_ids.count("torch") >= 3, (
+                "rolls_per_slot: light=3 → at least 3 torches"
+            )
+            # Items must come from the chosen class's kit only.
+            pack = sd.genre_pack
+            chosen = next(c for c in pack.classes if c.display_name == char.char_class)
+            kit = pack.equipment_tables.class_tables[chosen.kit_table]
+            kit_items = {i for items_ in kit.values() for i in items_}
+            for item_id in item_ids:
+                assert item_id in kit_items, (
+                    f"item {item_id!r} not in {chosen.kit_table}; got {item_ids}"
+                )
 
             # Every wired item has the Rust-parity shape — pick the torch
             # (a real catalog entry) and verify the required keys.
@@ -621,7 +621,7 @@ class TestSliceCWorldMaterialization:
             # runs FIRST, then dispatch replaces with the chargen
             # character).
             assert len(snap.characters) == 1
-            assert snap.characters[0].char_class == "Delver"
+            assert snap.characters[0].char_class in {"Fighter", "Mage", "Cleric", "Thief"}
 
         run(body())
 

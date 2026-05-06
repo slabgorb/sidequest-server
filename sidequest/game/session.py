@@ -606,11 +606,6 @@ class GameSnapshot(BaseModel):
     # Combat state (P1-required: permadeath / death detection)
     player_dead: bool = False
 
-    # Sünden engine plan item 4a — delve lifecycle discriminator.
-    # None ⇒ hub mode (connect emits HUB_VIEW, narration suppressed,
-    # hub REST mutations allowed). Non-None ⇒ delve mode.
-    active_delve_dungeon: str | None = None
-
     # Named resource pools (story 42-2 — ADR-033 port)
     resources: dict[str, ResourcePool] = Field(default_factory=dict)
 
