@@ -49,25 +49,27 @@ def caverns_pack() -> object:
 def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) -> None:
     """End-to-end: load real pack, walk all scenes, build a Character.
 
-    caverns_and_claudes flow (4 scenes):
-      0. the_roll — auto-advance, scene-level stat_generation=roll_3d6_strict
-      1. pronouns — 3 choices + allows_freeform, no hook
-      2. the_kit — auto-advance, scene-level equipment_generation=random_table
-      3. the_mouth — auto-advance (the dungeon entrance)
+    caverns_and_claudes flow (5 scenes — classic-class era):
+      0. the_roll — auto-advance, stat_generation=roll_3d6_strict
+                    + class_qualification_loop (server rerolls until ≥1
+                    class qualifies)
+      1. the_calling — class choice (Fighter/Mage/Cleric/Thief filtered
+                       to qualifying)
+      2. pronouns — 3 choices + allows_freeform
+      3. the_kit — auto-advance, equipment_generation=class_kit
+      4. the_mouth — auto-advance (the dungeon entrance)
 
     The builder must:
-      - Construct with pack.char_creation + pack.rules +
-        pack.backstory_tables
-      - Wire pack.equipment_tables via fluent setter
-      - Roll stats eagerly at construction (scene 0 declares
-        roll_3d6_strict)
-      - Walk all 4 scenes to Confirmation
-      - Build a valid Character with stats, inventory, edge pool
+      - Construct with pack.char_creation + pack.rules + backstory_tables
+      - Wire pack.equipment_tables and pack.classes via fluent setters
+      - Server reroll loop guarantees ≥1 class qualifies
+      - Walk all 5 scenes to Confirmation
+      - Build a Character whose char_class is one of the four classes
+        and whose Edge max matches edge_config.base_max_by_class[class]
     """
     pack = caverns_pack
-    # Sanity check: caverns has the 4 scenes we expect. If the content
-    # changes shape this test alerts us — it's the wiring canary.
-    assert len(pack.char_creation) == 4  # type: ignore[attr-defined]
+    # Sanity check: 5 scenes, the_roll first.
+    assert len(pack.char_creation) == 5  # type: ignore[attr-defined]
     assert pack.char_creation[0].id == "the_roll"  # type: ignore[attr-defined]
 
     builder = (
@@ -79,35 +81,49 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
         )
         .with_lobby_name("Rux")
         .with_equipment_tables(pack.equipment_tables)  # type: ignore[attr-defined]
+        .with_classes(pack.classes)  # type: ignore[attr-defined]
     )
 
-    # Eager 3d6 roll fired at construction — scene 0 declares
-    # stat_generation=roll_3d6_strict in its mechanical_effects.
+    # Eager 3d6 roll fired at construction. Note: the qualification
+    # loop only fires when classes are attached; with_classes() runs
+    # AFTER __init__, so the construction roll may not be qualifying.
+    # The loop fires properly on apply_auto_advance for the_roll scene.
     rolled = builder.rolled_stats()
     assert rolled is not None
-    # Ability score names come from the pack's rules config; every name
-    # appears in rolled_stats.
     rolled_names = [name for name, _ in rolled]
     assert set(rolled_names) == set(pack.rules.ability_score_names)  # type: ignore[attr-defined]
-    for _, total in rolled:
-        assert 3 <= total <= 18  # 3d6 range
 
     # Walk scenes:
-    # 0. the_roll — display-only, auto-advance
+    # 0. the_roll — auto-advance triggers qualification loop server-side
     assert builder.is_in_progress()
     assert isinstance(builder._phase, InProgress)
     assert builder.current_scene().id == "the_roll"
     builder.apply_auto_advance()
 
-    # 1. pronouns — pick one
-    assert builder.current_scene().id == "pronouns"
-    builder.apply_choice(0)  # she/her
+    # After the_roll auto-advance, at least one class must qualify.
+    final_stats = dict(builder.rolled_stats())
+    from sidequest.game.builder import qualifying_classes
+    qual = qualifying_classes(final_stats, pack.classes)  # type: ignore[attr-defined]
+    assert len(qual) >= 1, f"reroll loop should guarantee ≥1 class, got 0 with stats {final_stats}"
 
-    # 2. the_kit — equipment_generation=random_table
+    # 1. the_calling — pick a qualifying class. Pick the first one.
+    assert builder.current_scene().id == "the_calling"
+    presented = builder.current_scene()
+    presented_hints = [c.mechanical_effects.class_hint for c in presented.choices]
+    # Filter is server-side: only qualifying classes shown.
+    assert presented_hints, "at least one class choice must be presented"
+    chosen_hint = presented_hints[0]
+    builder.apply_choice(0)
+
+    # 2. pronouns — pick she/her (idx 0)
+    assert builder.current_scene().id == "pronouns"
+    builder.apply_choice(0)
+
+    # 3. the_kit — equipment_generation=class_kit
     assert builder.current_scene().id == "the_kit"
     builder.apply_auto_advance()
 
-    # 3. the_mouth — display-only
+    # 4. the_mouth — display-only
     assert builder.current_scene().id == "the_mouth"
     builder.apply_auto_advance()
 
@@ -120,10 +136,10 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
 
     # Identity
     assert character.core.name == "Rux"
-    assert character.pronouns == "she/her"  # from the pronouns scene pick
-    assert (
-        character.char_class == pack.rules.default_class
-    )  # "Delver"  # type: ignore[attr-defined]
+    assert character.pronouns == "she/her"
+    # char_class is the chosen class (one of Fighter/Mage/Cleric/Thief)
+    assert character.char_class == chosen_hint
+    assert character.char_class in {"Fighter", "Mage", "Cleric", "Thief"}
 
     # Stats: every ability score name has a value in a plausible range
     # (3d6 base = 3..18, modified by any derived bonuses = widened but
@@ -156,11 +172,15 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
         }
         assert required.issubset(item.keys())
 
-    # Edge pool: caverns_and_claudes has no edge_config → placeholder
-    # pool (base_max = 10). Class is Delver, not Fighter, so no stub.
-    assert character.core.edge.base_max == 10
-    assert character.core.edge.max == 10
-    assert character.core.edge.current == 10
+    # Edge pool: edge_config drives base_max per class
+    # (Fighter:4, Cleric:3, Mage:2, Thief:2). Fighter additionally
+    # gets a hardcoded +2 stub from Story 39-4 — so for Fighter the
+    # final base_max is 6, not 4. Verify the floor (config value)
+    # is met and current==max.
+    config_max = pack.rules.edge_config.base_max_by_class[character.char_class]  # type: ignore[attr-defined]
+    assert character.core.edge.base_max >= config_max
+    assert character.core.edge.max == character.core.edge.base_max
+    assert character.core.edge.current == character.core.edge.max
 
     # Backstory: non-blank, came from some path (fragments/tables/
     # mechanical/fallback).

@@ -696,8 +696,14 @@ class CharacterBuilder:
 
         In Confirmation phase the builder is past the last scene; callers
         should branch on is_confirmation() before reading current_scene().
+
+        When the scene's choices are class-hint encoded AND classes have
+        been attached via with_classes(), the returned scene's choices
+        are filtered to qualifying classes only. This keeps current_scene,
+        apply_choice, and the wire protocol all reading from the same
+        filtered view — preventing index drift between UI and server.
         """
-        return self._scenes[self.current_scene_index()]
+        return self._filter_class_choices(self._scenes[self.current_scene_index()])
 
     def total_scenes(self) -> int:
         """Total number of scenes."""
@@ -1085,7 +1091,10 @@ class CharacterBuilder:
             case _:  # pragma: no cover
                 raise AssertionError(f"unknown phase: {self._phase!r}")
 
-        scene = self._scenes[scene_index]
+        # Filter class-scene choices the same way current_scene() and the
+        # wire protocol do — apply_choice's `index` is the user-facing
+        # index, so it must read from the same filtered view.
+        scene = self._filter_class_choices(self._scenes[scene_index])
         if index >= len(scene.choices):
             # Saturating subtraction so an empty-choice scene reports
             # ``max_index=0`` instead of a negative value.

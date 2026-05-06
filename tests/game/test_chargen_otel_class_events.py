@@ -133,7 +133,10 @@ def test_class_otel_events_emitted():
     classes = _make_classes()
     tables = _make_equipment_tables()
 
-    # Seed RNG to produce STR≥9 so Fighter qualifies without reroll.
+    # Force-stub stats to all-18 by calling _roll_3d6_with_qualification
+    # path is harder to inject; instead override _rolled_stats directly
+    # after construction so both Fighter and Mage qualify deterministically.
+    # Equipment rolls then use a fresh seeded RNG.
     rng = random.Random(42)
 
     builder = (
@@ -141,6 +144,11 @@ def test_class_otel_events_emitted():
         .with_classes(classes)
         .with_equipment_tables(tables)
     )
+    # Force qualifying stats so Fighter is at idx 0 of the filtered scene.
+    builder._rolled_stats = [
+        ("STR", 18), ("DEX", 18), ("CON", 18),
+        ("INT", 18), ("WIS", 18), ("CHA", 18),
+    ]
 
     with tracer.start_as_current_span("chargen_span"):
         # Scene 0: auto-advance (the_roll) — construction already rolled,
