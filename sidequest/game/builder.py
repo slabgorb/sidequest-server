@@ -27,6 +27,7 @@ from sidequest.game.creature_core import (
 from sidequest.genre.models.character import (
     BackstoryTables,
     CharCreationScene,
+    ClassDef,
     EquipmentTables,
     MechanicalEffects,
 )
@@ -37,6 +38,25 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.models import CreationChoice, RolledStat
 from sidequest.protocol.types import NonBlankString
+
+# ---------------------------------------------------------------------------
+# Class qualification
+# ---------------------------------------------------------------------------
+
+
+def qualifying_classes(
+    stats: dict[str, int],
+    classes: list[ClassDef],
+) -> list[ClassDef]:
+    """Return classes whose prime_requisite stat meets minimum_score.
+
+    Pure function — no side effects, no genre-pack lookups. Pass the
+    rolled stats dict and the pack's class list; receive the subset
+    the player qualifies for. Empty list = nothing qualifies (caller
+    decides whether to reroll).
+    """
+    return [c for c in classes if stats.get(c.prime_requisite, 0) >= c.minimum_score]
+
 
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
