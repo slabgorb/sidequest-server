@@ -6,10 +6,10 @@ builder rerolls until at least one class qualifies."""
 import random
 
 import pytest
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry import trace
 
 from sidequest.game.builder import CharacterBuilder
 from sidequest.genre.models.character import (
