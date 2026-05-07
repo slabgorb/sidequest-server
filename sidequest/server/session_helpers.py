@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import NpcMention, TurnContext
@@ -603,8 +604,6 @@ def _detect_missed_recurring_npcs(
     pattern is "subsystem emits span; GM panel surfaces; human notices"
     (CLAUDE.md OTEL Observability Principle).
     """
-    import re
-
     if not narration_text:
         return
 

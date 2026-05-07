@@ -46,6 +46,7 @@ Related: ADR-031 Game Watcher / OTEL, CLAUDE.md OTEL Observability Principle.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -54,6 +55,11 @@ from sidequest.game.creature_core import CreatureCore
 from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import GameSnapshot, Npc
 from tests._helpers.session_room import room_for
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,7 +81,10 @@ def _result(narration: str, npcs_present: list[NpcMention] | None = None) -> Nar
 SPAN_NAME = "npc.recurring_presence_missed"
 
 
-def _missed_spans(otel_capture, expected_name: str | None = None) -> list:
+def _missed_spans(
+    otel_capture: InMemorySpanExporter,
+    expected_name: str | None = None,
+) -> list:
     """Filter captured spans by name (and optional npc_name attribute)."""
     spans = [s for s in otel_capture.get_finished_spans() if s.name == SPAN_NAME]
     if expected_name is not None:
@@ -215,6 +224,12 @@ def test_detector_warns_when_known_pool_member_named_in_prose_but_missing(
     )
     attrs = spans[0].attributes or {}
     assert attrs.get("source") == "npc_pool"
+    assert attrs.get("turn_number") == 12
+    # Pool-only members carry no last_seen_turn (the field lives on Npc, not
+    # NpcPoolMember). Detector must fall back to 0 — asserting this nails
+    # down the contract so the GM panel can render "last present —"
+    # unambiguously for pool-only misses.
+    assert attrs.get("last_seen_turn") == 0
 
 
 def test_detector_silent_when_known_npc_is_emitted_in_npcs_present(otel_capture):
@@ -546,4 +561,63 @@ def test_recurring_presence_missed_span_attributes_round_trip_via_route():
     assert extracted["op"] == "recurring_presence_missed", (
         "Route op must be 'recurring_presence_missed' so the GM panel can "
         "filter on it without inspecting the span name string directly."
+    )
+    # ``field`` mirrors ``source`` so the GM panel filters route stateful
+    # Npc misses to the npc_registry column (parallel to npc.auto_registered)
+    # and pool-only misses to the npc_pool column (parallel to npc.referenced).
+    assert extracted["field"] == "npc_registry"
+
+
+def test_recurring_presence_missed_span_route_field_uses_npc_pool_for_pool_source():
+    """Mirror of the npcs-source field test — when ``source="npc_pool"`` the
+    extracted ``field`` must be ``"npc_pool"`` so the GM panel renders the
+    miss in the correct column. Without this guard the route lambda could
+    silently regress to a hardcoded value.
+    """
+    from sidequest.telemetry.spans import SPAN_ROUTES
+
+    route = SPAN_ROUTES[SPAN_NAME]
+
+    class _Stub:
+        attributes = {
+            "npc_name": "Marya",
+            "source": "npc_pool",
+            "turn_number": 9,
+            "last_seen_turn": 0,
+        }
+
+    extracted = route.extract(_Stub())
+    assert extracted["field"] == "npc_pool"
+    assert extracted["source"] == "npc_pool"
+
+
+def test_detector_matches_name_with_regex_metacharacters(otel_capture):
+    """``re.escape`` must guard the regex construction in the detector — NPC
+    names containing characters like ``.``, ``+``, ``(``, ``)``, ``*`` must
+    match literally, not as regex metacharacters. Without ``re.escape`` the
+    pattern build either throws ``re.error`` or matches the wrong text.
+
+    Concrete name: "Dr. Smith" — the ``.`` is a regex metacharacter that
+    would match ANY character without escaping.
+    """
+    from sidequest.server.session_helpers import _detect_missed_recurring_npcs
+
+    snapshot = GameSnapshot(
+        npc_pool=[
+            NpcPoolMember(name="Dr. Smith", role="patron", drawn_from="legacy_registry")
+        ]
+    )
+
+    _detect_missed_recurring_npcs(
+        snapshot=snapshot,
+        narration_text="Dr. Smith examines the wound carefully.",
+        emitted_mentions=[],
+        turn_num=4,
+    )
+
+    spans = _missed_spans(otel_capture, expected_name="Dr. Smith")
+    assert len(spans) == 1, (
+        "Detector must match names containing regex metacharacters literally "
+        "via re.escape — without it 'Dr. Smith' either crashes the regex or "
+        "false-matches on 'DrxSmith' / 'Drosmith'."
     )
