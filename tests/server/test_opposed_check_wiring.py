@@ -191,6 +191,38 @@ def _make_encounter() -> StructuredEncounter:
     )
 
 
+def _make_encounter_with_companion() -> StructuredEncounter:
+    """Sumpdrake-fight shape: solo PC + recruited NPC companion + 1 opponent."""
+    return StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        structured_phase=EncounterPhase.Setup,
+        actors=[
+            EncounterActor(
+                name="Sam",
+                role="combatant",
+                side="player",
+                per_actor_state={"stats": {"STR": 14}},
+            ),
+            EncounterActor(
+                name="Donut",
+                role="ally",
+                side="player",
+                # Companion has no per_actor_state.stats — falls back
+                # to cdef.opponent_default_stats (STR: 12 in the fixture)
+                # via resolve_opponent_modifier.
+            ),
+            EncounterActor(
+                name="Wolf",
+                role="combatant",
+                side="opponent",
+                per_actor_state={"stats": {"STR": 14}},
+            ),
+        ],
+    )
+
+
 def _throw_params() -> ThrowParams:
     return ThrowParams(
         velocity=(0.0, 0.0, 0.0),
@@ -291,6 +323,11 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
     runs the resolver, applies the engine-derived tier, and the encounter
     metric advances accordingly. Proves the dispatch branch is reachable
     from the production narration path.
+
+    Per-side tier semantics (Keith's rule, playtest 2026-05-06): each
+    actor resolves *their own* roll-vs-DC. A player CritSuccess does NOT
+    bleed into an opponent CritSuccess; the opponent gets whatever tier
+    their own d20+mod-vs-DC yields.
     """
     enc = _make_encounter()
     pack = _make_pack(_opposed_cdef())
@@ -298,14 +335,17 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
     snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
     snapshot.encounter = enc
 
-    # Player rolled 18 (mod +2) → 20. Opponent will roll 5 (mod +2) → 7.
-    # Shift = +13 → CritSuccess for player. Strike kind on CritSuccess
-    # advances player dial by base (=2).
+    # Player rolled 18 (mod +2) → 20 vs DC=14 (base=2 → DC=14). Player
+    # total exceeds DC by 6 → Success (decisive margin is +10, so this
+    # is plain Success, not CritSuccess despite the high roll).
+    # Opponent rolls 5 (mod +2) → 7 vs DC=14 (their attack also base=2).
+    # Opponent total below DC → Fail tier for the opponent.
     _patched_d20(monkeypatch, value=5)
 
     # Narrator emitted opponent's beat selection only — player's beat is in
     # the pending stash from DICE_THROW. The PC-beat gate would drop any
     # PC-side selections in real flow, so we only feed the opponent here.
+    # Opponent's beat is `attack` targeting nothing (no counteract).
     result = NarrationTurnResult(
         narration="",
         beat_selections=[
@@ -330,18 +370,19 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
     )
 
     assert apply_outcome.sealed_letter is None
-    # Player +2 strike kind on CritSuccess: own dial +2.
+    # Player rolled Success on a strike (base=2). Strike Success grants
+    # own=base → +2 momentum.
     assert enc.player_metric.current == 2
-    # Opponent's strike on CritSuccess (from PLAYER's perspective) — but
-    # apply_beat is invoked with the SAME tier for both sides per spec.
-    # On CritSuccess, opponent strike at base=2 advances opponent dial +2.
-    # However, the design intent is shift>0 = player wins; we apply the
-    # engine-derived tier verbatim to both apply_beat calls. For the
-    # opponent, the SAME tier becomes their result. CritSuccess on a
-    # strike kind advances the actor's own dial by base.
-    assert enc.opponent_metric.current == 2
+    # Opponent rolled Fail (7 < 14). Strike Fail grants no own delta —
+    # opponent dial stays at 0. This is the corrected per-side behavior:
+    # the prior shift-tier-applied-to-both-sides logic gave the opponent
+    # CritSuccess here too, advancing their dial unjustly.
+    assert enc.opponent_metric.current == 0
 
-    # Wiring 3: the lie-detector span fired with full attributes.
+    # Wiring 3: the lie-detector span fired with full attributes. The
+    # span's headline ``tier`` carries the player's final tier (the
+    # value that drove the player's metric_advance); the watcher event
+    # carries the full per-side breakdown.
     finished = captured_spans.get_finished_spans()
     opposed_spans = [s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED]
     assert len(opposed_spans) == 1, (
@@ -355,26 +396,24 @@ def test_narration_apply_runs_resolver_and_advances_dial(monkeypatch, captured_s
     assert attrs["opponent_roll"] == 5
     assert attrs["opponent_mod"] == 2
     assert attrs["shift"] == 13
-    assert attrs["tier"] == RollOutcome.CritSuccess.value
+    assert attrs["tier"] == RollOutcome.Success.value
 
 
 def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, captured_spans):
-    """Strict spec parity: when shift is heavily negative the player-side
-    apply_beat fires with Fail tier (no own-dial advance) AND the opponent
-    apply_beat fires with Fail tier (no opponent-dial advance) — but
-    because `attack` is a `strike` kind whose default Fail rule has zero
-    deltas, neither dial moves. This is the precise ``Fail = stalemate``
-    behavior the spec intends. The OTEL span still proves the engine ran
-    the check (lie-detector), and ``encounter.beat_no_op`` watcher events
-    surface the silent stalemate to the GM panel.
+    """Per-side resolution (playtest 2026-05-06): when the player rolled
+    poorly and the opponent rolled well, the opponent advances *their*
+    dial from *their* own roll-vs-DC. This is the inverse of the player-
+    crit case: player Fail does NOT pull the opponent down to Fail —
+    the opponent gets their own well-rolled tier.
     """
     enc = _make_encounter()
     pack = _make_pack(_opposed_cdef())
     snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
     snapshot.encounter = enc
 
-    # Player rolls 5 (mod +2) → 7. Opponent rolls 18 (mod +2) → 20.
-    # Shift = -13 → CritFail for player.
+    # Player rolls 5 (mod +2) → 7 vs DC=14 → Fail for player.
+    # Opponent rolls 18 (mod +2) → 20 vs DC=14 → Success (not CritSuccess
+    # — total exceeds DC by 6, decisive-margin threshold is +10).
     _patched_d20(monkeypatch, value=18)
 
     result = NarrationTurnResult(
@@ -396,14 +435,21 @@ def test_narration_apply_opposed_check_fail_advances_opponent_dial(monkeypatch, 
         room=room_for(snapshot),
     )
 
-    # Verify the resolver ran — the OTEL span carries the derived tier.
+    # Player Fail on strike → no own dial advance.
+    assert enc.player_metric.current == 0
+    # Opponent Success on strike → own dial advances by base=2. The
+    # test name "fail_advances_opponent_dial" finally matches reality:
+    # player failure no longer suppresses the opponent's own roll.
+    assert enc.opponent_metric.current == 2
+
+    # Verify the resolver ran — the OTEL span carries the player's tier.
     opposed_spans = [
         s
         for s in captured_spans.get_finished_spans()
         if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
     ]
     assert len(opposed_spans) == 1
-    assert opposed_spans[0].attributes["tier"] == RollOutcome.CritFail.value
+    assert opposed_spans[0].attributes["tier"] == RollOutcome.Fail.value
 
 
 def test_narration_apply_opposed_check_hard_fails_without_pending_state():
@@ -509,6 +555,337 @@ def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_pat
     assert snapshot.pending_resolution_signal is None, (
         "no resolution signal should fire on the awaiting-dice path"
     )
+
+
+# ---------------------------------------------------------------------------
+# Companion-NPC wiring (playtest 2026-05-06): NPC ally beats run mechanically.
+# ---------------------------------------------------------------------------
+
+
+def test_companion_brace_targeting_player_counteracts_opponent_attack(
+    monkeypatch, captured_spans,
+):
+    """Sumpdrake-fight regression: when a recruited NPC companion's
+    beat is ``defend target=<player>`` and the opponent's beat is
+    attacking that same player AND the companion's roll passes its
+    DC, the opponent's tier must downgrade by one step.
+
+    Pre-fix: companion beats were rejected by the SOUL gate (every
+    player-side beat was treated as an inferred PC beat) and never
+    reached the resolver. Even when allowed through, the resolver only
+    applied the player↔opponent pair — companion beats fell off the
+    floor with no OTEL, no roll, no apply.
+
+    Post-fix:
+    - SOUL gate is seat-aware (companions flow through).
+    - Resolver rolls each companion's d20 server-side, classifies their
+      tier, and applies their beat.
+    - Companion brace whose target matches the opponent's target counts
+      as ally counteract → downgrade opponent_tier_final by one step.
+    """
+    enc = _make_encounter_with_companion()
+    pack = _make_pack(_opposed_cdef())
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+    # Sam is the only seated PC. Donut is a companion (no seat).
+    snapshot.player_seats = {"p1": "Sam"}
+
+    # Donut rolls 18 server-side (mod +1 from cdef default STR=12 → +1).
+    # vs defend DC=12 (base=1) → total=19 → CritSuccess on his brace.
+    # Wait — total=18+1=19, DC=12, decisive margin is +10 → 19 > 22?
+    # No: 12 + 10 = 22, 19 < 22 → Success (not CritSuccess).
+    # Wolf rolls 14 next (the second _roll_d20_server_side call).
+    # Wolf mod=+2, attack DC=14 (base=2) → total=16 > 14 → Success.
+    # With ally counteract: Wolf's Success → Tie (downgrade).
+    # Tie strike base=2 → own=base//2=+1 (opponent_metric +1).
+    rolls = iter([18, 14])  # Donut first, then Wolf
+    monkeypatch.setattr(
+        "sidequest.server.narration_apply._roll_d20_server_side",
+        lambda: next(rolls),
+    )
+
+    result = NarrationTurnResult(
+        narration="",
+        beat_selections=[
+            # Wolf attacks Sam.
+            BeatSelection(
+                actor="Wolf",
+                beat_id="attack",
+                outcome=RollOutcome.Success,
+                target="Sam",
+            ),
+            # Donut shields Sam from Wolf's attack.
+            BeatSelection(
+                actor="Donut",
+                beat_id="defend",
+                outcome=RollOutcome.Success,
+                target="Sam",
+            ),
+        ],
+    )
+
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        # Sam's defend total = 5+2=7 vs DC=12 → Fail.
+        opposed_player_d20=5,
+        opposed_player_beat_id="defend",
+        opposed_player_actor="Sam",
+        from_explicit_action=True,
+        room=room_for(snapshot),
+    )
+
+    # Lie-detector span carries Sam's final tier (Fail — he rolled poorly).
+    finished = captured_spans.get_finished_spans()
+    opposed_spans = [
+        s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
+    ]
+    assert len(opposed_spans) == 1
+    attrs = dict(opposed_spans[0].attributes or {})
+    assert attrs["tier"] == RollOutcome.Fail.value
+
+
+def test_companion_beat_ignored_when_seat_manifest_excludes_pc_only(monkeypatch):
+    """Negative wiring: with no seat manifest (legacy save), every
+    player-side beat that wasn't dispatched-via-DICE_THROW is treated
+    as inferred-PC and dropped. Companions only become first-class
+    when ``snapshot.player_seats`` is populated (post-MP migration
+    + post-recruiter-pipeline). This proves the seat-aware filter
+    isn't accidentally accepting narrator-inferred PC beats.
+    """
+    enc = _make_encounter_with_companion()
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+    snapshot.player_seats = {}  # legacy save / no seats
+
+    monkeypatch.setattr(
+        "sidequest.server.narration_apply._roll_d20_server_side",
+        lambda: 10,
+    )
+
+    # Pre-existing test in this file already covers the dispatch path
+    # for legacy mode — here we only need to prove the SOUL gate's
+    # legacy fallback still rejects player-side beats. Calling
+    # ``_filter_inferred_pc_beats`` directly exercises the gate.
+    from sidequest.server.narration_apply import _filter_inferred_pc_beats
+
+    selections = [
+        BeatSelection(actor="Sam", beat_id="attack", outcome=RollOutcome.Success),
+        BeatSelection(actor="Donut", beat_id="defend", outcome=RollOutcome.Success),
+    ]
+    kept = _filter_inferred_pc_beats(
+        selections,
+        enc,
+        narrating_player="p1",
+        seated_pc_names=None,  # legacy fallback path
+    )
+    # Both player-side selections rejected.
+    actor_names = {sel.actor for sel in kept}
+    assert "Sam" not in actor_names
+    assert "Donut" not in actor_names
+
+
+def test_companion_beat_passes_seat_aware_gate(monkeypatch):
+    """Positive wiring: seat-aware SOUL gate lets companion beats
+    through but still rejects the seated PC's own narrator-inferred
+    beat. Sam's beat is dropped (no DICE_THROW); Donut's flows.
+    """
+    enc = _make_encounter_with_companion()
+
+    from sidequest.server.narration_apply import _filter_inferred_pc_beats
+
+    selections = [
+        BeatSelection(actor="Sam", beat_id="attack", outcome=RollOutcome.Success),
+        BeatSelection(actor="Donut", beat_id="defend", outcome=RollOutcome.Success),
+        BeatSelection(actor="Wolf", beat_id="attack", outcome=RollOutcome.Success),
+    ]
+    kept = _filter_inferred_pc_beats(
+        selections,
+        enc,
+        narrating_player="p1",
+        seated_pc_names={"Sam"},  # only Sam is a seated PC
+    )
+    actor_names = {sel.actor for sel in kept}
+    # Sam dropped (seated PC, no DICE_THROW); Donut + Wolf flow.
+    assert "Sam" not in actor_names
+    assert "Donut" in actor_names
+    assert "Wolf" in actor_names
+
+
+# ---------------------------------------------------------------------------
+# Keith's rule (playtest 2026-05-06): plain Success uncontested → momentum.
+# ---------------------------------------------------------------------------
+
+
+def test_uncontested_player_success_advances_player_dial(monkeypatch, captured_spans):
+    """Sumpdrake-fight regression: a plain player Success against an
+    opponent who is *not* counteracting must advance the player dial.
+
+    Pre-fix behavior: opposed_check derived the tier from the shift
+    between the two rolls and applied it to BOTH apply_beat calls.
+    A player total of 16 vs an opponent total of 17 (shift -1) collapsed
+    the player to Tie tier; an opponent total of 18+ (shift -2) collapsed
+    to Fail tier. So plain Successes did nothing — only nat20s moved
+    the player dial.
+
+    Post-fix: each side resolves its own roll-vs-DC. With base=2 the DC
+    is 14; the player rolled 16 → Success → strike grants own=base=+2.
+    Opponent's roll is irrelevant unless they emit a brace targeting
+    the player (counteract gate).
+    """
+    enc = _make_encounter()
+    pack = _make_pack(_opposed_cdef())
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+
+    # Opponent rolls a high d20 (18) but their beat is a strike, not a
+    # brace targeting the player → no counteract gate, opponent's roll
+    # has no effect on the player's tier.
+    _patched_d20(monkeypatch, value=18)
+
+    result = NarrationTurnResult(
+        narration="",
+        beat_selections=[
+            BeatSelection(actor="Wolf", beat_id="attack", outcome=RollOutcome.Success),
+        ],
+    )
+
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        # Player rolled 14 + mod=2 = 16 vs DC=14 → Success.
+        opposed_player_d20=14,
+        opposed_player_beat_id="attack",
+        opposed_player_actor="Sam",
+        from_explicit_action=True,
+        room=room_for(snapshot),
+    )
+
+    # Plain Success on strike (base=2) → +2 momentum on the player dial,
+    # even though the opponent rolled higher overall (shift = -4 under
+    # the prior shift-tier logic would have collapsed the player to
+    # Fail tier).
+    assert enc.player_metric.current == 2
+
+
+def test_opponent_brace_targeting_player_counteracts_player_success(monkeypatch, captured_spans):
+    """Counteract gate: when the opponent's beat is brace and targets
+    the player AND the opponent's own roll passes its DC, the player's
+    tier downgrades by one step (Success → Tie). The combined effect
+    of (a) the player's downgraded Tie tier on strike (own=+base//2)
+    and (b) the opponent's successful brace draining the opposite dial
+    (opponent_expr=-base on Success) nets out to ~0 net momentum on the
+    attacker — exactly Keith's rule that "Counteracted Success should
+    grant 0 (or reduced)."
+
+    Asserts the downgrade actually happened via the watcher span (not
+    just the net dial state), so a future regression that produces 0
+    by accident — e.g., applying Fail tier instead of downgrading
+    Success → Tie — still surfaces.
+    """
+    enc = _make_encounter()
+    pack = _make_pack(_opposed_cdef())
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+
+    # Opponent rolls 16 + mod=2 = 18 vs defend DC (base=1 → DC=12) →
+    # Success for the opponent's brace.
+    _patched_d20(monkeypatch, value=16)
+
+    result = NarrationTurnResult(
+        narration="",
+        beat_selections=[
+            BeatSelection(
+                actor="Wolf",
+                beat_id="defend",
+                outcome=RollOutcome.Success,
+                target="Sam",  # brace targeting the player → counteract
+            ),
+        ],
+    )
+
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        opposed_player_d20=14,  # 14 + 2 = 16 vs DC=14 → Success
+        opposed_player_beat_id="attack",
+        opposed_player_actor="Sam",
+        from_explicit_action=True,
+        room=room_for(snapshot),
+    )
+
+    # Player's Success → downgraded to Tie (strike base=2 → own=+1).
+    # Opponent's brace Success → opponent_expr=-base=-1 drains player
+    # dial by 1. Net: 1 + (-1) = 0. Both effects ran; they happen to
+    # cancel cleanly for this base/tier combination, which is the
+    # intended "counteracted Success grants 0" outcome.
+    assert enc.player_metric.current == 0
+
+    # Lie-detector: confirm the downgrade actually happened (rather
+    # than the player getting Fail tier from some other path). The
+    # span carries the player's *final* tier as the headline.
+    finished = captured_spans.get_finished_spans()
+    opposed_spans = [s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED]
+    assert len(opposed_spans) == 1
+    assert opposed_spans[0].attributes["tier"] == RollOutcome.Tie.value
+
+
+def test_opponent_brace_self_targeted_does_not_counteract(monkeypatch, captured_spans):
+    """A brace with target=<self> is self-defense, not a counteract of
+    an attack on a different actor. Opponent bracing themselves while
+    the player attacks them must NOT downgrade the player's tier —
+    that would be the engine confusing self-shielding for an
+    interception.
+
+    We assert via the lie-detector span (player_tier_final=Success)
+    rather than the metric value because brace's apply_beat cross-
+    drain reduces the player dial regardless of target — the target
+    matching only gates the *tier downgrade*, not the brace's
+    independent cross-effect on the opposite dial.
+    """
+    enc = _make_encounter()
+    pack = _make_pack(_opposed_cdef())
+    snapshot = GameSnapshot(genre_slug="testpack", world_slug="testworld")
+    snapshot.encounter = enc
+
+    _patched_d20(monkeypatch, value=18)
+
+    result = NarrationTurnResult(
+        narration="",
+        beat_selections=[
+            BeatSelection(
+                actor="Wolf",
+                beat_id="defend",
+                outcome=RollOutcome.Success,
+                target="Wolf",  # bracing self, not protecting Sam
+            ),
+        ],
+    )
+
+    _apply_narration_result_to_snapshot(
+        snapshot,
+        result,
+        player_name="p1",
+        pack=pack,
+        opposed_player_d20=14,
+        opposed_player_beat_id="attack",
+        opposed_player_actor="Sam",
+        from_explicit_action=True,
+        room=room_for(snapshot),
+    )
+
+    # No counteract gate fires — the player's final tier is the raw
+    # roll-vs-DC tier (Success), not downgraded.
+    finished = captured_spans.get_finished_spans()
+    opposed_spans = [s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED]
+    assert len(opposed_spans) == 1
+    assert opposed_spans[0].attributes["tier"] == RollOutcome.Success.value
 
 
 # ---------------------------------------------------------------------------

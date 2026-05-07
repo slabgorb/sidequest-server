@@ -499,8 +499,33 @@ def build_session_start_party_status(
             pname = char.core.name
         members.append(party_member_from_character(handler, sd, char, pid, pname))
 
+    from sidequest.protocol.models import CompanionMember
+    from sidequest.protocol.types import NonBlankString
+
+    companions: list[CompanionMember] = []
+    for c in sd.snapshot.companions or []:
+        try:
+            companions.append(
+                CompanionMember(
+                    name=NonBlankString(c.name),
+                    role=c.role or "",
+                    description=c.description or "",
+                    notes=c.notes or "",
+                    recruited_turn=c.recruited_turn,
+                    recruited_by=c.recruited_by or "",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail PARTY_STATUS on a bad companion
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "party_status.companion_skipped name=%r error=%s",
+                getattr(c, "name", None),
+                exc,
+            )
+
     return PartyStatusMessage(
         type="PARTY_STATUS",  # type: ignore[arg-type]
-        payload=PartyStatusPayload(members=members),
+        payload=PartyStatusPayload(members=members, companions=companions),
         player_id=player_id,
     )

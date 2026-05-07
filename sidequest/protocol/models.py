@@ -328,6 +328,38 @@ class PartyMember(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# CompanionMember — narrator-recruited NPC companion in PARTY_STATUS
+# ---------------------------------------------------------------------------
+
+
+class CompanionMember(ProtocolBase):
+    """A narrator-recruited NPC companion (hireling / retainer / ally).
+
+    Surfaced in PARTY_STATUS alongside PartyMember so the Party panel
+    can render the full active roster (PCs + companions). Companions
+    are NOT player-controlled — they have no Edge bar / inventory /
+    sheet at this tier; this payload is the minimum state the panel
+    needs to display them: name, role, panel description, and the
+    contract notes the narrator authored on recruit.
+
+    Playtest 2026-05-06 wiring fix.
+    """
+
+    name: NonBlankString
+    """Display name. Non-blank — identity key for dismissal lookup."""
+    role: str = ""
+    """Hireling role in plain prose (torchbearer, porter, scout, etc.)."""
+    description: str = ""
+    """One-sentence narrator-authored description for panel tooltip."""
+    notes: str = ""
+    """Optional contract / terms one-liner."""
+    recruited_turn: int = 0
+    """Interaction turn at the moment of recruitment."""
+    recruited_by: str = ""
+    """Acting PC's name at recruit time — \"who is this companion bonded to.\""""
+
+
+# ---------------------------------------------------------------------------
 # TacticalGridPayload — grid layout
 # ---------------------------------------------------------------------------
 

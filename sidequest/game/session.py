@@ -198,6 +198,40 @@ class NpcRegistryEntry(BaseModel):
     max_hp: int | None = None
 
 
+class Companion(BaseModel):
+    """Narrator-recruited NPC companion (hireling / retainer / ally).
+
+    Playtest 2026-05-06 [BUG]: the narrator was hiring NPCs in prose
+    ("Donut joins as torchbearer, half-share contract") but no party
+    state mutated, leaving the Party panel showing only the PC. The
+    minimum mechanical backing per CLAUDE.md (no narration without
+    state) is: name + role + when-recruited, applied via narrator
+    sidecar, surfaced in PARTY_STATUS, and traced via OTEL on every
+    recruit/dismiss.
+
+    This is intentionally NOT a full character — companions have no
+    Edge/inventory/stat block at this tier. They are *roster
+    visibility* for the Party panel and *cite-able identity* for the
+    narrator. Promotion to a full Character (with Edge bar, inventory,
+    confrontation participation) is a separate, larger story.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    """Display name. Required, non-blank by narrator contract."""
+    role: str = ""
+    """Hireling role in plain prose: torchbearer, porter, scout, etc."""
+    description: str = ""
+    """One-sentence narrator-authored description for the panel tooltip."""
+    notes: str = ""
+    """Optional contract / terms one-liner (\"half-share, surviving recovery\")."""
+    recruited_turn: int = 0
+    """``snapshot.turn_manager.interaction`` at the moment of recruitment."""
+    recruited_by: str = ""
+    """Acting PC name on the recruit turn — \"who is this companion bonded to.\""""
+
+
 class PartyPeer(BaseModel):
     """Canonical identity packet for another party member (not the acting PC).
 
@@ -553,6 +587,16 @@ class GameSnapshot(BaseModel):
     # mechanically; the pool member remains, shadowed by the ``Npc``
     # lookup at narration_apply time.
     npc_pool: list[NpcPoolMember] = Field(default_factory=list)
+
+    # Companion roster — narrator-recruited hirelings the party
+    # currently has on contract. Playtest 2026-05-06 wiring fix.
+    # Surfaced in PARTY_STATUS so the Party panel can render the
+    # whole party (PCs + companions) and a `party.recruit` /
+    # `party.dismiss` watcher span fires on every mutation. Forward-
+    # compat: ``model_config = {"extra": "ignore"}`` plus the
+    # default-factory means saves predating this field deserialize
+    # cleanly with the list empty.
+    companions: list[Companion] = Field(default_factory=list)
 
     # Chassis registry (rig MVP slice — fresh-session only). Materialized from
     # `worlds/<world>/rigs.yaml` at connect time. Each entry is also projected
