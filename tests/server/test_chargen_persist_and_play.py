@@ -84,7 +84,7 @@ async def _connect(
     handler: WebSocketSessionHandler,
     *,
     player_name: str = "Persistent",
-    world: str = "grimvault",
+    world: str = "caverns_sunden",
     player_id: str = "pid",
 ) -> SessionEventMessage:
     from tests.server.conftest import attach_default_room_context, seed_slug_for_test
@@ -170,7 +170,7 @@ class TestChargenPersistAndPlay:
             assert saved.snapshot.characters, "persisted snapshot must carry the built character"
             assert saved.snapshot.characters[0].core.name
             assert saved.snapshot.genre_slug == "caverns_and_claudes"
-            assert saved.snapshot.world_slug == "grimvault"
+            assert saved.snapshot.world_slug == "caverns_sunden"
 
         asyncio.run(body())
 
@@ -235,7 +235,7 @@ class TestChargenPersistAndPlay:
             attrs = dict(events[0].attributes or {})
             assert attrs["reason"] == "fresh_character_narrative_reset"
             assert attrs["genre"] == "caverns_and_claudes"
-            assert attrs["world"] == "grimvault"
+            assert attrs["world"] == "caverns_sunden"
             assert "previous_len" in attrs  # numeric, may be 0 in chargen path
 
         asyncio.run(body())
@@ -255,7 +255,7 @@ class TestChargenPersistAndPlay:
             attrs = dict(events[0].attributes or {})
             assert attrs["event"] == "session.persisted"
             assert attrs["genre"] == "caverns_and_claudes"
-            assert attrs["world"] == "grimvault"
+            assert attrs["world"] == "caverns_sunden"
             assert "turn" in attrs
 
         asyncio.run(body())
@@ -385,6 +385,6 @@ class TestChargenPersistAndPlay:
                 f"genre attribute must round-trip from session through "
                 f"to the span. Got: {attrs.get('genre')!r}."
             )
-            assert attrs.get("world") == "grimvault"
+            assert attrs.get("world") == "caverns_sunden"
 
         asyncio.run(body())

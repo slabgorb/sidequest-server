@@ -23,7 +23,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from sidequest.agents.orchestrator import NarrationTurnResult, NpcMention
 from sidequest.game.session import (
     GameSnapshot,
-    NpcRegistryEntry,
     TurnManager,
 )
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
@@ -91,9 +90,10 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
     )
     await asyncio.sleep(0.05)
 
-    # Snapshot must have been mutated inside the span. Wave 2A (45-47)
-    # routes auto-registration through ``npc_pool`` instead of the
-    # legacy ``npc_registry``.
+    # Snapshot must have been mutated inside the span. Wave 2A: novel
+    # narrator-invented NPCs append to ``npc_pool`` (the unified Npc
+    # store), not the legacy ``npc_registry``. The auto-registered span
+    # still fires; ``registry_len`` reflects pool length.
     assert len(snapshot.npc_pool) == 1
     assert snapshot.npc_pool[0].name == "Vex"
 
@@ -283,14 +283,6 @@ async def test_npc_reinvented_emits_warning_state_transition_via_span_route(
     that the WatcherSpanProcessor propagates the severity attribute."""
     captured = await _setup(monkeypatch, "test-npc-reinvented-wiring")
 
-    existing = NpcRegistryEntry(
-        name="Vex",
-        role="scavenger",
-        pronouns="she/her",
-        appearance=None,
-        last_seen_location="Tood's Dome",
-        last_seen_turn=1,
-    )
     drift_mention = NpcMention(
         name="Vex",
         pronouns="they/them",  # disagrees with canonical "she/her"
@@ -299,9 +291,9 @@ async def test_npc_reinvented_emits_warning_state_transition_via_span_route(
     )
 
     _detect_npc_identity_drift(
-        existing_name=existing.name,
-        existing_role=existing.role,
-        existing_pronouns=existing.pronouns,
+        existing_name="Vex",
+        existing_role="scavenger",
+        existing_pronouns="she/her",
         mention=drift_mention,
         turn_num=9,
     )

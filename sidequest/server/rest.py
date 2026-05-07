@@ -319,26 +319,53 @@ def create_rest_router() -> APIRouter:
             if saved is None:
                 continue
             snap = saved.snapshot
+            # Wave 2A snapshot split: NPCs live in two canonical stores —
+            # ``snap.npcs`` (mechanically engaged, carries CreatureCore +
+            # last_seen tracking) and ``snap.npc_pool`` (identity-only
+            # cast pool members). Legacy ``snap.npc_registry`` entries are
+            # migrated into ``snap.npc_pool`` on load, so on any post-
+            # migration snapshot ``npc_registry`` is always empty. Project
+            # both canonical stores so the GM panel actually surfaces the
+            # NPCs that exist (the panel's JSON field name stays
+            # ``npc_registry`` to preserve the wire contract).
             npc_registry: list[dict[str, Any]] = []
-            for entry in snap.npc_registry:
+            for npc in snap.npcs:
+                core = npc.core
+                edge = getattr(core, "edge", None)
+                hp_current = (
+                    int(edge.current) if edge is not None and edge.current is not None else 0
+                )
+                hp_max = int(edge.maximum) if edge is not None and edge.maximum is not None else 0
                 npc_registry.append(
                     {
-                        "name": entry.name or "",
-                        "pronouns": entry.pronouns or "",
-                        "role": entry.role or "",
-                        "location": entry.last_seen_location or "",
-                        "last_seen_turn": entry.last_seen_turn or 0,
+                        "name": core.name or "",
+                        "pronouns": npc.pronouns or "",
+                        "role": npc.npc_role_id or "",
+                        "location": npc.last_seen_location or npc.location or "",
+                        "last_seen_turn": npc.last_seen_turn or 0,
+                        "age": npc.age or "",
+                        "appearance": npc.appearance or "",
+                        "ocean_summary": None,
+                        "ocean": npc.ocean,
+                        "hp": hp_current,
+                        "max_hp": hp_max,
+                    }
+                )
+            for member in snap.npc_pool:
+                # Pool members are identity-only — no HP or last_seen.
+                npc_registry.append(
+                    {
+                        "name": member.name or "",
+                        "pronouns": member.pronouns or "",
+                        "role": member.role or "",
+                        "location": "",
+                        "last_seen_turn": 0,
                         "age": "",
-                        "appearance": entry.appearance or "",
+                        "appearance": member.appearance or "",
                         "ocean_summary": None,
                         "ocean": None,
-                        # Story 45-21: read combat HP from the registry entry.
-                        # ``None`` (= "no combat stats published yet")
-                        # surfaces as 0 here so the existing GM panel JSON
-                        # contract is unchanged; the entry itself preserves
-                        # the None-vs-0 distinction for HP-check subsystems.
-                        "hp": int(entry.hp) if entry.hp is not None else 0,
-                        "max_hp": (int(entry.max_hp) if entry.max_hp is not None else 0),
+                        "hp": 0,
+                        "max_hp": 0,
                     }
                 )
             trope_states: list[dict[str, Any]] = []
