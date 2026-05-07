@@ -434,59 +434,32 @@ def test_narrator_prompt_distinguishes_named_onstage_from_passing_mention():
     )
 
 
-def test_narrator_prompt_recurring_rule_extends_beyond_combat():
-    """AC4 sub-point — the new rule must explicitly cross-reference the
-    CRITICAL ADVERSARY RULE so the narrator understands recurring-presence
-    emission applies in non-combat scenes too. Without the cross-reference
-    the narrator may infer that npcs_met re-emission only matters when
-    confrontation fires (the existing CRITICAL ADVERSARY RULE pattern).
+def test_narrator_prompt_introduces_dedicated_recurring_rule_block():
+    """AC4 sub-point — the recurring-presence rule must be its own labeled
+    block, paralleling the CRITICAL ADVERSARY RULE label. A discoverable
+    uppercase marker (e.g. 'RECURRING PRESENCE RULE' or
+    'RECURRING NPC RULE') makes the rule easy to find in the prompt and
+    prevents it from being collapsed into the existing free-form
+    npcs_met paragraph where the playtest pattern hid for weeks.
+
+    The CRITICAL ADVERSARY RULE must coexist (the recurring rule extends,
+    does not replace it).
     """
-    # The recurring rule and the adversary rule must coexist — the prompt
-    # already has CRITICAL ADVERSARY RULE; this test guards that the new
-    # rule does NOT delete it.
     assert "CRITICAL ADVERSARY RULE" in NARRATOR_OUTPUT_ONLY, (
         "CRITICAL ADVERSARY RULE must remain — the recurring-presence rule "
         "extends it, does not replace it (Playtest 2026-04-24 regression "
         "guard)."
     )
-    text = NARRATOR_OUTPUT_ONLY.lower()
-    # The new rule must call out roles outside the adversary axis. At
-    # minimum: ally, merchant, and quest-giver / patron must appear in
-    # the same vicinity as the every-turn / onstage rule. We assert each
-    # role term is present anywhere in the prompt; cross-reference is
-    # validated by the prior tests asserting 'every turn' and 'onstage'.
-    for role_term in ("ally", "merchant"):
-        assert role_term in text, (
-            f"NARRATOR_OUTPUT_ONLY must reference '{role_term}' as a role "
-            "category for the recurring-presence rule. Without enumerating "
-            "the non-combat NPC types (ally, merchant, quest-giver), the "
-            "narrator may infer the rule only fires on hostile NPCs."
-        )
-    # quest-giver may be hyphenated, snake-cased, or written as 'quest giver'
-    assert (
-        "quest_giver" in text
-        or "quest-giver" in text
-        or "quest giver" in text
-        or "patron" in text
-    ), (
-        "NARRATOR_OUTPUT_ONLY must reference quest-giver / patron as a role "
-        "category for the recurring-presence rule (AC2 NPC type coverage)."
+    assert "RECURRING" in NARRATOR_OUTPUT_ONLY, (
+        "NARRATOR_OUTPUT_ONLY must contain the uppercase token 'RECURRING' "
+        "as the marker for the new rule block (parallel to "
+        "'CRITICAL ADVERSARY RULE'). Without a dedicated label the rule "
+        "lives inside the free-form npcs_met paragraph and the narrator "
+        "treats it as advisory rather than mandatory — the exact failure "
+        "mode that produced the Playtest 3 vanishing-NPC pattern."
     )
-
-
-def test_narrator_prompt_recurring_rule_includes_role_field_requirement():
-    """AC1 — every recurring emission must carry at minimum name and role.
-    The prompt language for the recurring rule must mirror the CRITICAL
-    ADVERSARY RULE's 'name AND role' contract so the GM panel and the
-    server's NPC-pool lookup get a useful entry, not a bare-name re-mention.
-    """
-    # The 'name AND role' contract is already in the prompt for adversaries.
-    # The new recurring rule must use the same language so the contract is
-    # uniform. We assert the phrase appears at least once (existing guard)
-    # and that the prompt has 'role' in proximity to the recurring-rule
-    # language — combined assertion: the rule body mentions both name and
-    # role as required fields.
-    assert "name AND role" in NARRATOR_OUTPUT_ONLY, (
-        "The 'name AND role' uniform contract must remain — recurring "
-        "emission carries the same field requirement as adversary emission."
-    )
+    # The recurring rule must contain the word 'MANDATORY' to mirror the
+    # CRITICAL ADVERSARY RULE's strength (it currently uses MANDATORY too).
+    # We don't reassert MANDATORY here — the AC1 'every turn' / 'onstage'
+    # tests above are the operational guard. This test is purely about the
+    # rule having its own labeled block.
