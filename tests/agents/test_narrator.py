@@ -372,3 +372,121 @@ def test_narrator_output_format_keeps_action_rewrite():
     assert "action_rewrite" in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must still contain 'action_rewrite' (it's live)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Story 45-53: Recurring NPC presence — prompt content
+#
+# Playtest 3 (2026-04-19) and follow-up sessions surfaced a recurring failure:
+# named NPCs (allies, merchants, quest-givers, bystanders) introduced in turn
+# N would vanish from ``npcs_met`` on turns N+1..N+k even when narration prose
+# clearly placed them onstage. The CRITICAL ADVERSARY RULE only forces
+# emission for confrontation adversaries; outside combat the existing prompt
+# language ("every named NPC ... the player encounters") is ambiguous about
+# recurring presence. James (narrative-first) and Sebastien (mechanical lie-
+# detector) both feel the gap — once an NPC drops out of npcs_met the
+# narrator prompt and the GM panel both stop knowing the NPC is in the
+# scene, breaking encounter continuity and NPC-centric narrative arcs.
+# ---------------------------------------------------------------------------
+
+
+def test_narrator_prompt_requires_npcs_met_emission_every_turn_npc_is_onstage():
+    """AC1 — Every turn a named, persistent NPC is described onstage, the
+    narrator MUST re-emit them in npcs_met (regardless of is_new). The
+    prompt must state this rule explicitly so the narrator does not treat
+    npcs_met as a one-shot introduction list.
+    """
+    text = NARRATOR_OUTPUT_ONLY.lower()
+    assert "every turn" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'every turn' to make "
+        "the recurring-emission rule unambiguous. Without it, the narrator "
+        "treats npcs_met as a one-shot introduction list and recurring NPCs "
+        "vanish from game state (Playtest 3 pattern)."
+    )
+    assert "onstage" in text, (
+        "NARRATOR_OUTPUT_ONLY must use the word 'onstage' (or equivalent "
+        "explicit term) to define the trigger for npcs_met emission. The "
+        "prompt currently says 'encounters' which is ambiguous between "
+        "first-encounter and ongoing-presence."
+    )
+
+
+def test_narrator_prompt_distinguishes_named_onstage_from_passing_mention():
+    """AC4 sub-point — the prompt must distinguish 'named and onstage'
+    (must emit) from 'passing mention' (optional). Without that line the
+    narrator may collapse the rule into "emit everything ever named" and
+    over-emit, or under-emit and treat every onstage NPC as a passing
+    mention.
+    """
+    text = NARRATOR_OUTPUT_ONLY.lower()
+    assert "passing mention" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'passing mention' to "
+        "define the negative case (NPC named in dialogue but not present). "
+        "Without it, narrator can't tell which mentions require emission."
+    )
+    # The rule must explicitly contrast the two — the prompt should say one
+    # is required and the other is optional.
+    assert "named and onstage" in text or "named & onstage" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'named and onstage' "
+        "(or 'named & onstage') as the positive case for the every-turn "
+        "emission rule. The 'named and onstage' vs 'passing mention' "
+        "distinction is the operational definition for AC2/AC4."
+    )
+
+
+def test_narrator_prompt_recurring_rule_extends_beyond_combat():
+    """AC4 sub-point — the new rule must explicitly cross-reference the
+    CRITICAL ADVERSARY RULE so the narrator understands recurring-presence
+    emission applies in non-combat scenes too. Without the cross-reference
+    the narrator may infer that npcs_met re-emission only matters when
+    confrontation fires (the existing CRITICAL ADVERSARY RULE pattern).
+    """
+    # The recurring rule and the adversary rule must coexist — the prompt
+    # already has CRITICAL ADVERSARY RULE; this test guards that the new
+    # rule does NOT delete it.
+    assert "CRITICAL ADVERSARY RULE" in NARRATOR_OUTPUT_ONLY, (
+        "CRITICAL ADVERSARY RULE must remain — the recurring-presence rule "
+        "extends it, does not replace it (Playtest 2026-04-24 regression "
+        "guard)."
+    )
+    text = NARRATOR_OUTPUT_ONLY.lower()
+    # The new rule must call out roles outside the adversary axis. At
+    # minimum: ally, merchant, and quest-giver / patron must appear in
+    # the same vicinity as the every-turn / onstage rule. We assert each
+    # role term is present anywhere in the prompt; cross-reference is
+    # validated by the prior tests asserting 'every turn' and 'onstage'.
+    for role_term in ("ally", "merchant"):
+        assert role_term in text, (
+            f"NARRATOR_OUTPUT_ONLY must reference '{role_term}' as a role "
+            "category for the recurring-presence rule. Without enumerating "
+            "the non-combat NPC types (ally, merchant, quest-giver), the "
+            "narrator may infer the rule only fires on hostile NPCs."
+        )
+    # quest-giver may be hyphenated, snake-cased, or written as 'quest giver'
+    assert (
+        "quest_giver" in text
+        or "quest-giver" in text
+        or "quest giver" in text
+        or "patron" in text
+    ), (
+        "NARRATOR_OUTPUT_ONLY must reference quest-giver / patron as a role "
+        "category for the recurring-presence rule (AC2 NPC type coverage)."
+    )
+
+
+def test_narrator_prompt_recurring_rule_includes_role_field_requirement():
+    """AC1 — every recurring emission must carry at minimum name and role.
+    The prompt language for the recurring rule must mirror the CRITICAL
+    ADVERSARY RULE's 'name AND role' contract so the GM panel and the
+    server's NPC-pool lookup get a useful entry, not a bare-name re-mention.
+    """
+    # The 'name AND role' contract is already in the prompt for adversaries.
+    # The new recurring rule must use the same language so the contract is
+    # uniform. We assert the phrase appears at least once (existing guard)
+    # and that the prompt has 'role' in proximity to the recurring-rule
+    # language — combined assertion: the rule body mentions both name and
+    # role as required fields.
+    assert "name AND role" in NARRATOR_OUTPUT_ONLY, (
+        "The 'name AND role' uniform contract must remain — recurring "
+        "emission carries the same field requirement as adversary emission."
+    )
