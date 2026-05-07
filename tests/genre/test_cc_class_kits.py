@@ -38,3 +38,24 @@ def test_cc_thief_kit_has_lockpicks():
     pack = loader.load("caverns_and_claudes")
     thief_kit = pack.equipment_tables.class_tables["thief_kit"]
     assert "lockpicks" in {i for items in thief_kit.values() for i in items}
+
+
+def test_cc_each_class_has_positive_starting_gold():
+    """Every B/X class must ship with non-zero starting gold so chargen-end
+    cash gates (Recruiter's Post bonds, dungeon entry tolls) are reachable
+    by every class. Playtest 2026-05-06: Carl-the-Cleric arrived with
+    `gold_added=0` and could not engage Brenna's two-silver-bond gate at all,
+    locking the recruitment confrontation into a hard fail.
+    """
+    loader = GenreLoader()
+    pack = loader.load("caverns_and_claudes")
+    starting_gold = pack.inventory.starting_gold
+    for class_name in ("Fighter", "Mage", "Cleric", "Thief"):
+        assert class_name in starting_gold, (
+            f"{class_name} missing from starting_gold — chargen will emit "
+            f"gold_added=0 and the PC can't engage cash-gated content."
+        )
+        assert starting_gold[class_name] > 0, (
+            f"{class_name} starting_gold is {starting_gold[class_name]} — "
+            f"must be positive to clear chargen-end cash gates."
+        )
