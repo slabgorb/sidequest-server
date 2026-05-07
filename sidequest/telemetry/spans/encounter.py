@@ -110,6 +110,8 @@ SPAN_ROUTES[SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED] = SpanRoute(
         "player_mod": (span.attributes or {}).get("player_mod", 0),
         "opponent_roll": (span.attributes or {}).get("opponent_roll", 0),
         "opponent_mod": (span.attributes or {}).get("opponent_mod", 0),
+        "player_num_advantage": (span.attributes or {}).get("player_num_advantage", 0),
+        "opponent_num_advantage": (span.attributes or {}).get("opponent_num_advantage", 0),
         "shift": (span.attributes or {}).get("shift", 0),
         "tier": (span.attributes or {}).get("tier", ""),
     },
@@ -150,6 +152,9 @@ SPAN_ENCOUNTER_YIELD_RECEIVED = "encounter.yield_received"
 SPAN_ENCOUNTER_YIELD_RESOLVED = "encounter.yield_resolved"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED = "encounter.resolution_signal_emitted"
 SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED = "encounter.resolution_signal_consumed"
+# ADR-078 §4 — composure-break resolution + per-beat edge debits.
+SPAN_ENCOUNTER_EDGE_DEBIT = "encounter.edge_debit"
+SPAN_ENCOUNTER_COMPOSURE_BREAK = "encounter.composure_break"
 
 FLAT_ONLY_SPANS.update(
     {
@@ -165,6 +170,8 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_YIELD_RESOLVED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
+        SPAN_ENCOUNTER_EDGE_DEBIT,
+        SPAN_ENCOUNTER_COMPOSURE_BREAK,
     }
 )
 
@@ -253,11 +260,18 @@ def encounter_opposed_roll_resolved_span(
     opponent_mod: int,
     shift: int,
     tier: str,
+    player_num_advantage: int = 0,
+    opponent_num_advantage: int = 0,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
     """Lie-detector for the opposed-check path. Emit BEFORE apply_beat so the
     GM panel can correlate the engine-derived tier with the metric_advance.
+
+    ``player_num_advantage`` / ``opponent_num_advantage`` carry the side-
+    aggregate numerical-advantage modifiers from
+    ``numerical_advantage_for``. Default to 0 for back-compat with legacy
+    callers; production sites pass the values from ``OpposedRollResult``.
     """
     with Span.open(
         SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED,
@@ -267,6 +281,8 @@ def encounter_opposed_roll_resolved_span(
             "player_mod": int(player_mod),
             "opponent_roll": int(opponent_roll),
             "opponent_mod": int(opponent_mod),
+            "player_num_advantage": int(player_num_advantage),
+            "opponent_num_advantage": int(opponent_num_advantage),
             "shift": int(shift),
             "tier": tier,
             **attrs,
@@ -600,6 +616,67 @@ def encounter_resolution_signal_consumed_span(
             "outcome": outcome,
             "final_player_metric": final_player_metric,
             "final_opponent_metric": final_opponent_metric,
+            **attrs,
+        },
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_edge_debit_span(
+    *,
+    source_actor: str,
+    target_actor: str,
+    debit_kind: str,
+    delta: int,
+    before: int,
+    after: int,
+    beat_id: str,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Per-beat edge debit (ADR-078 §3-4).
+
+    ``debit_kind``: ``"self"`` (acting actor pays) | ``"target"`` (opposing
+    actor takes the hit). ``before``/``after`` are clamped current values.
+    Lie-detector for "did the engine actually debit edge or did the
+    narrator just describe a wound." Always one span per beat per debit.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_EDGE_DEBIT,
+        {
+            "source_actor": source_actor,
+            "target_actor": target_actor,
+            "debit_kind": debit_kind,
+            "delta": delta,
+            "before": before,
+            "after": after,
+            "beat_id": beat_id,
+            **attrs,
+        },
+    ) as s:
+        yield s
+
+
+@contextmanager
+def encounter_composure_break_span(
+    *,
+    char_name: str,
+    side: str,
+    beat_id: str,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Composure break — edge dropped to 0 (ADR-078 §4).
+
+    ``side``: ``"self"`` if the acting actor broke, ``"target"`` if the
+    opposing actor broke. Triggers ``encounter.resolved=True`` in the
+    caller; this span fires before the encounter-level resolution.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_COMPOSURE_BREAK,
+        {
+            "char_name": char_name,
+            "side": side,
+            "beat_id": beat_id,
             **attrs,
         },
     ) as s:

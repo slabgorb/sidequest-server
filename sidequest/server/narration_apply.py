@@ -1943,7 +1943,14 @@ def _apply_narration_result_to_snapshot(
                 # legacy beat path was silently returning RollOutcome from
                 # the last selection instead of the apply-outcome dataclass.
                 tier = sel.outcome  # narrator-declared tier
-                result_apply = apply_beat(enc, actor, beat, tier, turn=turn_num)
+                result_apply = apply_beat(
+                    enc,
+                    actor,
+                    beat,
+                    tier,
+                    turn=turn_num,
+                    edge_resolver=snapshot.find_creature_core,
+                )
                 if result_apply.skipped_reason is not None:
                     with encounter_beat_skipped_span(
                         reason=result_apply.skipped_reason,
@@ -2451,6 +2458,7 @@ def _resolve_opposed_check_branch(
         player_roll=pending_player_d20,
         opponent_roll=opponent_d20,
         encounter=encounter,
+        edge_resolver=snapshot.find_creature_core,
     )
 
     # Emit BEFORE apply_beat so the GM panel reads the resolver inputs
@@ -2461,6 +2469,8 @@ def _resolve_opposed_check_branch(
         player_mod=roll_result.player_mod,
         opponent_roll=roll_result.opponent_roll,
         opponent_mod=roll_result.opponent_mod,
+        player_num_advantage=roll_result.player_num_advantage,
+        opponent_num_advantage=roll_result.opponent_num_advantage,
         shift=roll_result.shift,
         tier=roll_result.tier.value,
     ):
@@ -2475,6 +2485,8 @@ def _resolve_opposed_check_branch(
             "player_mod": roll_result.player_mod,
             "opponent_roll": roll_result.opponent_roll,
             "opponent_mod": roll_result.opponent_mod,
+            "player_num_advantage": roll_result.player_num_advantage,
+            "opponent_num_advantage": roll_result.opponent_num_advantage,
             "shift": roll_result.shift,
             "tier": roll_result.tier.value,
         },
@@ -2498,6 +2510,7 @@ def _resolve_opposed_check_branch(
             sel_beat,
             roll_result.tier,
             turn=turn,
+            edge_resolver=snapshot.find_creature_core,
         )
         if applied.skipped_reason is not None:
             with encounter_beat_skipped_span(

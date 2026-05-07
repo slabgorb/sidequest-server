@@ -170,6 +170,9 @@ def resolve_tier_deltas(
 # ---------------------------------------------------------------------------
 from dataclasses import dataclass  # noqa: E402
 
+from collections.abc import Callable  # noqa: E402
+
+from sidequest.game.creature_core import CreatureCore  # noqa: E402
 from sidequest.game.encounter import (  # noqa: E402
     EncounterActor,
     EncounterPhase,
@@ -177,11 +180,15 @@ from sidequest.game.encounter import (  # noqa: E402
 )
 from sidequest.game.encounter_tag import EncounterTag  # noqa: E402
 from sidequest.telemetry.spans import (  # noqa: E402
+    encounter_composure_break_span,
+    encounter_edge_debit_span,
     encounter_metric_advance_span,
     encounter_tag_backfire_span,
     encounter_tag_created_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish  # noqa: E402
+
+EdgeResolver = Callable[[str], CreatureCore | None]
 
 
 @dataclass(frozen=True)
@@ -220,6 +227,96 @@ def _opposite_side_first_actor(
     return None
 
 
+def _opposite_side_live_actors(
+    enc: StructuredEncounter,
+    side: str,
+) -> list[str]:
+    """All non-withdrawn opposing actors, in encounter declaration order.
+
+    Used by ``target_select=spread`` to divide ``target_edge_delta`` across
+    every engaged enemy.
+    """
+    other = "opponent" if side == "player" else "player"
+    return [a.name for a in enc.actors if a.side == other and not a.withdrawn]
+
+
+# ---------------------------------------------------------------------------
+# Numerical advantage (Step 3 of numerical-advantage design)
+# ---------------------------------------------------------------------------
+
+
+_NUMERICAL_ADVANTAGE_DIVISOR = 2
+_NUMERICAL_ADVANTAGE_CAP = 3
+
+
+def numerical_advantage_modifier(
+    ally_edge_fractions: list[float],
+) -> int:
+    """Pure shift modifier from a side's engaged-ally roster.
+
+    ``ally_edge_fractions`` lists the ``edge_fraction`` (current/max) of
+    every engaged ally on the initiator's side, EXCLUDING the initiator
+    themselves. Withdrawn allies are passed in as ``0.0`` (still bodies
+    in the room, contributing nothing).
+
+    Math:
+        raw = floor(sum(fractions) / 2)         # +1 per 2 full-edge allies
+        cap at +3
+        if more than half of allies are broken (fraction <= 0.0):
+            return -max(raw, 1)                 # collapsed swarm flips sign
+
+    Tuning: the d20 shift bands (ADR-093) place ``Tie`` at [-1,+1] and
+    ``Success`` at >=+2. A +1 numerical-advantage modifier alone is
+    therefore tier-neutral in expectation — meaningful on the margin
+    but not a free win. +2 (4+ allies) flips the average roll from
+    Tie to Success; +3 (6+ allies) is saturated swarm pressure.
+    """
+    if not ally_edge_fractions:
+        return 0
+
+    raw = int(sum(ally_edge_fractions) / _NUMERICAL_ADVANTAGE_DIVISOR)
+    capped = min(raw, _NUMERICAL_ADVANTAGE_CAP)
+
+    broken = sum(1 for f in ally_edge_fractions if f <= 0.0)
+    if broken * 2 > len(ally_edge_fractions):
+        # Majority broken — the swarm has visibly collapsed.
+        return -max(capped, 1)
+
+    return capped
+
+
+def numerical_advantage_for(
+    initiator: EncounterActor,
+    enc: StructuredEncounter,
+    edge_resolver: EdgeResolver,
+) -> int:
+    """Compute the initiator's side's numerical-advantage shift modifier.
+
+    Walks ``enc.actors`` for engaged allies (same side, not the initiator),
+    resolves each to a ``CreatureCore`` via ``edge_resolver``, and computes
+    ``edge.current / edge.max`` per ally. Withdrawn allies contribute 0.0.
+    Allies the resolver doesn't know are excluded from the computation
+    rather than counted as zero — see CLAUDE.md no-silent-fallback: a
+    legitimate "actor without a core" arises during MP joiner races and
+    should not count toward swarm collapse detection.
+    """
+    fractions: list[float] = []
+    for actor in enc.actors:
+        if actor.name == initiator.name:
+            continue
+        if actor.side != initiator.side:
+            continue
+        if actor.withdrawn:
+            fractions.append(0.0)
+            continue
+        core = edge_resolver(actor.name)
+        if core is None:
+            continue
+        denom = core.edge.max if core.edge.max > 0 else 1
+        fractions.append(core.edge.current / denom)
+    return numerical_advantage_modifier(fractions)
+
+
 def _normalize_overrides(
     raw: dict[str, dict] | None,
 ) -> dict[RollOutcome, dict] | None:
@@ -242,6 +339,7 @@ def apply_beat(
     outcome: RollOutcome,
     *,
     turn: int = 0,
+    edge_resolver: EdgeResolver | None = None,
 ) -> ApplyResult:
     """Apply one beat at one outcome tier to the encounter.
 
@@ -426,6 +524,103 @@ def apply_beat(
             component="encounter",
         )
 
+    # ADR-078 §3-4 — apply per-beat edge debits and detect composure break.
+    # ``edge_delta`` debits the acting actor; ``target_edge_delta`` debits
+    # the first live opposing actor (single-target "focus" mode; Step 2
+    # generalises this with a per-beat ``target_select``). When either
+    # field is set the caller MUST provide an edge_resolver — silent
+    # skipping would let the narrator describe wounds the engine never
+    # recorded (CLAUDE.md no silent fallbacks).
+    self_edge_delta = getattr(beat, "edge_delta", None) or 0
+    target_edge_delta = getattr(beat, "target_edge_delta", None) or 0
+    composure_break: tuple[str, str] | None = None  # (broken_char_name, side)
+
+    if self_edge_delta or target_edge_delta:
+        if edge_resolver is None:
+            raise ValueError(
+                f"beat {getattr(beat, 'id', '?')!r} declares edge_delta / "
+                f"target_edge_delta but apply_beat received no edge_resolver"
+            )
+
+        if self_edge_delta:
+            actor_core = edge_resolver(actor.name)
+            if actor_core is None:
+                raise ValueError(
+                    f"edge_resolver returned no CreatureCore for actor {actor.name!r}"
+                )
+            before = actor_core.edge.current
+            actor_core.apply_edge_delta(-self_edge_delta)
+            after = actor_core.edge.current
+            with encounter_edge_debit_span(
+                source_actor=actor.name,
+                target_actor=actor.name,
+                debit_kind="self",
+                delta=-self_edge_delta,
+                before=before,
+                after=after,
+                beat_id=getattr(beat, "id", "?"),
+            ):
+                pass
+            if after <= 0 and composure_break is None:
+                composure_break = (actor.name, "self")
+
+        if target_edge_delta:
+            mode = getattr(beat, "target_select", None) or "focus"
+            if mode == "spread":
+                live_targets = _opposite_side_live_actors(enc, actor.side)
+                if live_targets:
+                    per_target = target_edge_delta // len(live_targets)
+                    if per_target > 0:
+                        for target_name in live_targets:
+                            target_core = edge_resolver(target_name)
+                            if target_core is None:
+                                raise ValueError(
+                                    f"edge_resolver returned no CreatureCore "
+                                    f"for target {target_name!r}"
+                                )
+                            before = target_core.edge.current
+                            target_core.apply_edge_delta(-per_target)
+                            after = target_core.edge.current
+                            with encounter_edge_debit_span(
+                                source_actor=actor.name,
+                                target_actor=target_name,
+                                debit_kind="target",
+                                delta=-per_target,
+                                before=before,
+                                after=after,
+                                beat_id=getattr(beat, "id", "?"),
+                                target_select="spread",
+                            ):
+                                pass
+                            if after <= 0 and composure_break is None:
+                                composure_break = (target_name, "target")
+            else:
+                # focus | swarm — single primary target. swarm carries an
+                # OTEL flag so Step 3 can detect ally-amplification beats.
+                target_name = _opposite_side_first_actor(enc, actor.side)
+                if target_name is not None:
+                    target_core = edge_resolver(target_name)
+                    if target_core is None:
+                        raise ValueError(
+                            f"edge_resolver returned no CreatureCore for target {target_name!r}"
+                        )
+                    before = target_core.edge.current
+                    target_core.apply_edge_delta(-target_edge_delta)
+                    after = target_core.edge.current
+                    with encounter_edge_debit_span(
+                        source_actor=actor.name,
+                        target_actor=target_name,
+                        debit_kind="target",
+                        delta=-target_edge_delta,
+                        before=before,
+                        after=after,
+                        beat_id=getattr(beat, "id", "?"),
+                        target_select=mode,
+                    ):
+                        pass
+                    if after <= 0 and composure_break is None:
+                        composure_break = (target_name, "target")
+
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)
 
@@ -471,20 +666,36 @@ def apply_beat(
 
     resolved = False
 
+    # Composure break (ADR-078 §4): edge dropped to 0 → encounter resolves
+    # before the dial threshold checks fire, so the narrator's resolution
+    # frame receives ``composure_break:<char>`` rather than a dial victory.
+    if composure_break is not None:
+        broken_name, broken_side = composure_break
+        with encounter_composure_break_span(
+            char_name=broken_name,
+            side=broken_side,
+            beat_id=getattr(beat, "id", "?"),
+        ):
+            pass
+        enc.resolved = True
+        enc.outcome = f"composure_break:{broken_name}"
+        enc.structured_phase = EncounterPhase.Resolution
+        resolved = True
+
     # Player threshold first, then opponent — sealed-letter order via
     # ADR-036 already places player beats first in the iteration; this
     # second-level tie-break is "first crossing wins".
-    if enc.player_metric.current >= enc.player_metric.threshold:
+    if not resolved and enc.player_metric.current >= enc.player_metric.threshold:
         enc.resolved = True
         enc.outcome = "player_victory"
         enc.structured_phase = EncounterPhase.Resolution
         resolved = True
-    elif enc.opponent_metric.current >= enc.opponent_metric.threshold:
+    elif not resolved and enc.opponent_metric.current >= enc.opponent_metric.threshold:
         enc.resolved = True
         enc.outcome = "opponent_victory"
         enc.structured_phase = EncounterPhase.Resolution
         resolved = True
-    elif deltas.resolution or getattr(beat, "resolution", False):
+    elif not resolved and (deltas.resolution or getattr(beat, "resolution", False)):
         enc.resolved = True
         enc.outcome = f"resolution_beat:{beat.id}"
         enc.structured_phase = EncounterPhase.Resolution
