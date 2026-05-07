@@ -552,8 +552,12 @@ def test_coyote_star_has_scripted_innate_firing_opening():
 
 
 # ---------------------------------------------------------------------------
-# AC4 + AC5 — end-to-end wiring: strengthened prompt + worked-example response
-# produces magic.working span, appends to working_log, debits sanity bar
+# AC4 + AC5 — apply pipeline + dispatch seam: a worked-example-shape
+# magic_working dict produces the magic.working span, appends to working_log,
+# and debits the sanity bar. Two tests below cover the apply call directly,
+# and the extract → apply seam, respectively. Neither claims end-to-end on
+# its own; together with the AC2 wiring tests above they triangulate the
+# full path. See module docstring for the test-triangle rationale.
 # ---------------------------------------------------------------------------
 
 
