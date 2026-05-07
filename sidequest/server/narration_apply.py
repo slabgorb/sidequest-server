@@ -1586,6 +1586,70 @@ def _apply_narration_result_to_snapshot(
                 unmatched_consumes,
             )
 
+    # Economy — apply narrator gold_change to the acting PC's purse.
+    # Playtest 2026-05-07 wiring fix. The narrator already emits
+    # ``gold_change`` on prose-described purchases / payments / windfalls
+    # (e.g. "nineteen silver buys all three" → ``gold_change=-19``) and
+    # the orchestrator surfaced the field on ``NarrationTurnResult``,
+    # but no apply seam consumed it — so the patch reached
+    # ``snapshot.companions`` and the inventory items, while the player's
+    # purse stayed frozen at chargen. Sünden's economy is the play
+    # loop's tension dial; a frozen purse mechanically detunes every
+    # market interaction (Sebastien-axis players notice in one trade).
+    #
+    # Solo and MP behave the same as the items lane: mutate the first
+    # character (``snapshot.characters[0]``) since that's the rolling
+    # PC on the prose path. Clamp to >= 0 — a narrator that says "you
+    # spend the last fifty silver" against a 30sp purse should not
+    # underflow into negative debt without an explicit tracker.
+    gold_change_field = getattr(result, "gold_change", None)
+    if gold_change_field is not None and snapshot.characters:
+        try:
+            delta = int(gold_change_field)
+        except (TypeError, ValueError):
+            logger.warning(
+                "economy.gold_change_invalid value=%r player=%s turn=%d",
+                gold_change_field,
+                player_name,
+                snapshot.turn_manager.interaction,
+            )
+            delta = 0
+        if delta != 0:
+            character = snapshot.characters[0]
+            before = int(character.core.inventory.gold)
+            after = max(0, before + delta)
+            applied_delta = after - before  # negative when clamped at zero
+            character.core.inventory.gold = after
+            turn_num = snapshot.turn_manager.interaction
+            logger.info(
+                "economy.gold_change player=%s actor=%s turn=%d "
+                "requested_delta=%+d applied_delta=%+d before=%d after=%d "
+                "clamped=%s",
+                player_name,
+                character.core.name,
+                turn_num,
+                delta,
+                applied_delta,
+                before,
+                after,
+                bool(applied_delta != delta),
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "kind": "economy.gold_change",
+                    "actor": character.core.name,
+                    "requested_delta": delta,
+                    "applied_delta": applied_delta,
+                    "before": before,
+                    "after": after,
+                    "clamped": bool(applied_delta != delta),
+                    "turn_number": turn_num,
+                    "player_name": player_name,
+                },
+                component="economy",
+            )
+
     if result.lore_established:
         added: list[str] = []
         for lore in result.lore_established:
