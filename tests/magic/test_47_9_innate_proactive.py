@@ -342,18 +342,17 @@ def test_coyote_star_has_scripted_innate_firing_opening():
         if mb.get("cost_bar") != "sanity":
             continue
         detail = (mb.get("detail") or "").lower()
-        # PC-anchored: detail addresses the player directly OR explicitly names
-        # a reflexive surfacing in the PC's senses/mind/body
+        # PC-anchored: detail addresses the player situationally (second-person
+        # pronouns referring to the PC's stance / immediate surroundings).
+        # Internal-perception markers ("your mind", "your senses", "behind your
+        # eyes") are deliberately excluded — narrating the PC's perception
+        # violates NARRATOR_AGENCY (internal cognition belongs to the player).
+        # An opening that anchors via reflex stimulus + situation pronouns is
+        # SOUL-compliant; one that anchors via "you feel..." is not.
         pc_anchors = [
-            "you ",  # second-person you
-            "your ",
+            "you ",  # second-person you (situational)
+            "your ",  # second-person possessive (most uses are situational)
             "yourself",
-            "your mind",
-            "your senses",
-            "your skull",
-            "your bones",
-            "your chest",
-            "behind your eyes",
         ]
         reflexive_markers = [
             "reflexive",

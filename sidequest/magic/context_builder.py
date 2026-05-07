@@ -74,13 +74,15 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
         lines.append("Example innate_v1 working — reflexive surfacing under stress:")
         lines.append(
             "  When a PC faces immediate stress (an uncanny presence, a sudden "
-            "alien stimulus, a half-beat of pressure behind the eyes), innate "
-            "flavor may surface involuntarily — a flinch, a recoil, a brief "
-            "inhuman perception they did not choose. The cost lands on the "
-            "actor's sanity bar. The flavor is one of the chargen-bound options "
-            "(acquired, born_to_it, trained_register, covenant_lineage) and the "
-            "consent_state is involuntary for stress-triggered surfacing. The "
-            "magic_working JSON shape:"
+            "alien stimulus, an alien register pressing in from outside), innate "
+            "flavor may surface involuntarily. Narrate the triggering stimulus "
+            "and any immediate reflex follow-through (a flinch, a recoil, a "
+            "tightening grip) — but do NOT narrate what the PC perceives, "
+            "thinks, names, or feels about the experience. The cost lands on "
+            "the actor's sanity bar. The flavor is one of the chargen-bound "
+            "options (acquired, born_to_it, trained_register, covenant_lineage) "
+            "and the consent_state is involuntary for stress-triggered "
+            "surfacing. The magic_working JSON shape:"
         )
         lines.append(
             '    {"plugin": "innate_v1", "mechanism": "condition", '

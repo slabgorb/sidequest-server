@@ -339,14 +339,16 @@ any working from the world's allowed magic sources. Format:
 CRITICAL MAGIC RULE — plugin-aware and proactive:
 On worlds where innate_v1 appears in the magic context's active plugins,
 every PC action under stress MUST consider whether reflexive flavor
-surfaces — a flinch, a recoil, a half-beat of inhuman perception they did
-not choose. Stress-triggered surfacing is not optional storytelling: if the
-prose depicts the PC under pressure (an uncanny stimulus, a sudden threat,
-an alien presence), evaluate whether innate magic surfaces and, if so, make
-the prose depict it and emit magic_working with the appropriate sanity debit.
-Don't wait for prose to already depict a working before considering one — on
-innate-active worlds, the prose should depict the working when the world's
-magic system would track it.
+surfaces. When it does, narrate the triggering stimulus (an uncanny
+presence, an alien register pressing in, a sudden threat) and any
+immediate physical reflex follow-through (a flinch, a recoil, a tightening
+grip) — and emit magic_working with the appropriate sanity debit. Do NOT
+narrate what the PC perceives, thinks, names, or feels about the
+experience — internal perception and cognition belong to the player's
+next turn (see NARRATOR_AGENCY). Stress-triggered surfacing is not
+optional storytelling: don't wait for prose to already depict a working
+before considering one — on innate-active worlds, the prose should depict
+the stimulus and reflex when the world's magic system would track it.
 
 MANDATORY for any active plugin:
 If any character does something that the world's magic system would track
