@@ -88,7 +88,9 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
             '    {"plugin": "innate_v1", "mechanism": "condition", '
             '"actor": "<character_name>", "costs": {"sanity": 0.15}, '
             '"domain": "psychic", "narrator_basis": "reflexive recoil from '
-            'uncanny presence", "flavor": "acquired", "consent_state": "involuntary"}'
+            'uncanny presence", '
+            '"flavor": "<character\'s chargen-bound flavor>", '
+            '"consent_state": "involuntary"}'
         )
 
     return "\n".join(lines)
