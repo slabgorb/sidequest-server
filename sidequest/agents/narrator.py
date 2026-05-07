@@ -336,7 +336,19 @@ any working from the world's allowed magic sources. Format:
     //   item_legacy_v1: item_id, alignment_with_item_nature (-1.0..1.0)
   }
 
-CRITICAL MAGIC RULE — MANDATORY when your prose depicts a working:
+CRITICAL MAGIC RULE — plugin-aware and proactive:
+On worlds where innate_v1 appears in the magic context's active plugins,
+every PC action under stress MUST consider whether reflexive flavor
+surfaces — a flinch, a recoil, a half-beat of inhuman perception they did
+not choose. Stress-triggered surfacing is not optional storytelling: if the
+prose depicts the PC under pressure (an uncanny stimulus, a sudden threat,
+an alien presence), evaluate whether innate magic surfaces and, if so, make
+the prose depict it and emit magic_working with the appropriate sanity debit.
+Don't wait for prose to already depict a working before considering one — on
+innate-active worlds, the prose should depict the working when the world's
+magic system would track it.
+
+MANDATORY for any active plugin:
 If any character does something that the world's magic system would track
 (psychic perception, named-gun firing with significance, alien artifact
 response, etc.), you MUST emit magic_working. The system enforces hard_limits

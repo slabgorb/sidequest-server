@@ -68,4 +68,25 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
         "validator enforces hard_limits; describing a working that violates one "
         "will surface a DEEP_RED flag in the GM panel."
     )
+
+    if "innate_v1" in config.active_plugins:
+        lines.append("")
+        lines.append("Example innate_v1 working — reflexive surfacing under stress:")
+        lines.append(
+            "  When a PC faces immediate stress (an uncanny presence, a sudden "
+            "alien stimulus, a half-beat of pressure behind the eyes), innate "
+            "flavor may surface involuntarily — a flinch, a recoil, a brief "
+            "inhuman perception they did not choose. The cost lands on the "
+            "actor's sanity bar. The flavor is one of the chargen-bound options "
+            "(acquired, born_to_it, trained_register, covenant_lineage) and the "
+            "consent_state is involuntary for stress-triggered surfacing. The "
+            "magic_working JSON shape:"
+        )
+        lines.append(
+            '    {"plugin": "innate_v1", "mechanism": "condition", '
+            '"actor": "<character_name>", "costs": {"sanity": 0.15}, '
+            '"domain": "psychic", "narrator_basis": "reflexive recoil from '
+            'uncanny presence", "flavor": "acquired", "consent_state": "involuntary"}'
+        )
+
     return "\n".join(lines)
