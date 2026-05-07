@@ -352,70 +352,15 @@ class TestSliceBOpeningHook:
     openings, and that both are ``None`` when no openings exist.
     """
 
-    def test_caverns_connect_resolves_opening_hook(self, handler: WebSocketSessionHandler) -> None:
-        async def body() -> None:
-            # Canned-openings flow (spec: 2026-05-01-canned-openings-design.md)
-            # resolves the opening directive at chargen-completion, not at
-            # connect. Capture sd state inside
-            # ``_populate_opening_directive_on_chargen_complete`` so we can
-            # assert the directive shape at the moment it lands — by the
-            # end of the chargen-confirmation dispatch it has been consumed
-            # by ``_run_opening_turn_narration`` and cleared.
-            import sidequest.server.websocket_session_handler as _wsh
-
-            captured: dict[str, str | None] = {}
-            original_populate = _wsh._populate_opening_directive_on_chargen_complete
-
-            def _capturing_populate(*, session_data, **kw):
-                result = original_populate(session_data=session_data, **kw)
-                if "directive" not in captured and session_data.opening_directive:
-                    captured["seed"] = session_data.opening_seed
-                    captured["directive"] = session_data.opening_directive
-                return result
-
-            _wsh._populate_opening_directive_on_chargen_complete = _capturing_populate
-            try:
-                # caverns_and_claudes ships openings only at the world tier
-                # (grimvault/horden/mawdeep), not at the genre tier. Connect
-                # to a real caverns world so the world-tier list is reached.
-                await _connect(handler, genre="caverns_and_claudes", world="grimvault")
-                sd = handler._session_data  # type: ignore[attr-defined]
-                # Walk chargen to confirmation — that dispatch is what
-                # populates the opening directive.
-                builder = sd.builder
-                assert builder is not None
-                while not builder.is_confirmation():
-                    scene = builder.current_scene()
-                    if scene.choices:
-                        payload = CharacterCreationPayload(phase="scene", choice="1")
-                    elif scene.allows_freeform:
-                        payload = CharacterCreationPayload(phase="scene", choice="Tester")
-                    else:
-                        payload = CharacterCreationPayload(phase="continue")
-                    await handler.handle_message(
-                        CharacterCreationMessage(payload=payload, player_id="pid")
-                    )
-                await handler.handle_message(
-                    CharacterCreationMessage(
-                        payload=CharacterCreationPayload(phase="confirmation"),
-                        player_id="pid",
-                    )
-                )
-            finally:
-                _wsh._populate_opening_directive_on_chargen_complete = original_populate
-
-            assert captured.get("seed") is not None, (
-                "opening_seed should be populated during chargen-completion "
-                "for a world that declares openings"
-            )
-            directive = captured.get("directive")
-            assert directive is not None, (
-                "opening_directive should be populated alongside the seed"
-            )
-            assert directive.startswith("=== OPENING SCENARIO ===")
-            assert directive.endswith("=== END OPENING ===")
-
-        run(body())
+    # NOTE: ``test_caverns_connect_resolves_opening_hook`` was removed
+    # 2026-05-06. It hardcoded ``world="grimvault"`` against
+    # ``caverns_and_claudes``; the 2026-05-06 caverns_three_sins →
+    # caverns_sunden restructure (commit f987282) collapsed grimvault
+    # from a top-level world into a dungeon under caverns_sunden, so the
+    # test connected to a non-existent world and the opening_directive
+    # never landed. The opening-hook code path is still covered for
+    # other genres (e.g. space_opera/coyote_star) — re-add a caverns
+    # variant once a caverns_sunden opening hook is authored.
 
     def test_empty_openings_leaves_both_none(
         self, handler: WebSocketSessionHandler, monkeypatch: pytest.MonkeyPatch

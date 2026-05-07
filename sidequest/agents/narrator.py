@@ -91,7 +91,8 @@ mechanical intents from this turn. Only include fields that changed.\
 Valid fields: confrontation, items_gained, items_lost, items_discarded, \
 items_consumed, \
 location, npcs_met, mood, state_snapshot, beat_selections, visual_scene, \
-footnotes, gold_change, action_rewrite, status_changes.
+footnotes, gold_change, action_rewrite, status_changes, \
+companions_added, companions_dismissed.
 gold_change: Integer. Emit when the player gains or loses gold/currency \
 outside of beat costs (e.g., winning a poker hand: +50, paying a bribe: -20, \
 finding a coin purse: +10). Beat costs are handled automatically — only emit \
@@ -133,6 +134,31 @@ because its function was spent (distinct from items_lost which covers \
 given-away/stolen/destroyed items, and from items_gained which is \
 acquisition). Use items_consumed for one-shot consumables that vanish \
 on use.
+
+companions_added: Array. Emit when an NPC is hired, recruited, or otherwise \
+joins the party as a companion / hireling / retainer / ally for ongoing \
+travel. Each entry:
+  {"name": "<companion name>", "role": "<short role e.g. torchbearer, porter, \
+scout, guard>", "description": "<one-sentence panel description>", \
+"notes": "<optional contract terms one-liner, may be empty>", \
+"recruited_by": "<acting PC name>"}
+
+companions_dismissed: Array of companion names (strings) being released \
+from service this turn — fired, paid off, walked off, killed. The companion \
+is removed from the active party roster. Use this when a hireling's \
+contract ends, when they refuse a destination and walk, when morale breaks, \
+or when they die.
+
+CRITICAL COMPANION RULE: If your narration describes an NPC joining the \
+party for ongoing travel ("Donut takes the contract", "the porter agrees \
+to come along"), you MUST emit companions_added. If an NPC leaves the \
+party for any reason, you MUST emit companions_dismissed. Without these \
+fields the Party panel will not show the companion and no recruit/dismiss \
+trace lands in the GM panel — the narration diverges from game state, \
+exactly the same failure class as silently moving items. A passing \
+shopkeeper or one-scene NPC who never leaves their post is NOT a \
+companion — only emit companions_added when the NPC is genuinely joining \
+the moving party.
 
 CRITICAL INVENTORY RULE: If your narration describes ANY item changing hands \
 or leaving the player's possession — acquiring, losing, trading, giving, \

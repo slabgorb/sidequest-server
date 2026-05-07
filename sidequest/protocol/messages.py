@@ -31,6 +31,7 @@ from sidequest.protocol.dice import (
 )
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
+    CompanionMember,
     CreationChoice,
     Footnote,
     InitialState,
@@ -372,10 +373,17 @@ class PartyStatusPayload(ProtocolBase):
     """Full party snapshot.
 
     Port of sidequest_protocol::PartyStatusPayload.
+
+    ``companions`` was added in the 2026-05-06 recruitment wiring fix.
+    Older clients that don't know the field render only ``members`` —
+    forward-compat is fine because the payload is a strict superset.
     """
 
     members: list[PartyMember]
     """All party members."""
+    companions: list[CompanionMember] = Field(default_factory=list)
+    """Narrator-recruited NPC companions on contract with the party.
+    Empty when no companions have been hired."""
 
 
 # ---------------------------------------------------------------------------

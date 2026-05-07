@@ -142,10 +142,32 @@ class YieldHandler:
                     cdef=cdef,
                     genre_slug=sd.genre_slug,
                 )
+                # Seat-aware count: NPC companions on the player side are
+                # excluded so the log line matches the actual yield gate
+                # used by ``handle_yield``. Pre-fix this counted every
+                # player-side actor including hirelings, which is what
+                # surfaced as ``remaining_player_actors=1`` in the
+                # 2026-05-06 sumpdrake-fight soft-lock (Donut counted as
+                # the missing committer).
+                seated_pc_names = set(sd.snapshot.player_seats.values())
+                if seated_pc_names:
+                    remaining = sum(
+                        1
+                        for a in post_encounter.actors
+                        if a.side == "player"
+                        and a.name in seated_pc_names
+                        and not a.withdrawn
+                    )
+                else:
+                    remaining = sum(
+                        1
+                        for a in post_encounter.actors
+                        if a.side == "player" and not a.withdrawn
+                    )
                 logger.info(
                     "session.yield_partial encounter_type=%r remaining_player_actors=%d",
                     post_encounter.encounter_type,
-                    sum(1 for a in post_encounter.actors if a.side == "player" and not a.withdrawn),
+                    remaining,
                 )
             else:
                 # Confrontation def vanished mid-session (content swap). Fail

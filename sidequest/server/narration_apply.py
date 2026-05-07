@@ -37,6 +37,7 @@ from sidequest.magic.confrontations import (
 from sidequest.magic.models import Flag, MagicWorking
 from sidequest.magic.state import ApplyWorkingResult, ThresholdCrossingEvent
 from sidequest.magic.validator import validate as magic_validate
+from sidequest.protocol.dice import RollOutcome
 from sidequest.server.dispatch.confrontation import resolve_magic_confrontation
 from sidequest.server.dispatch.sealed_letter import (
     SealedLetterOutcome,
@@ -177,15 +178,33 @@ def _filter_inferred_pc_beats(
     encounter,
     *,
     narrating_player: str,
+    seated_pc_names: set[str] | None = None,
 ) -> list:
     """SOUL "The Test" gate (Playtest 2026-04-26 [S2-BUG]).
 
-    Drop every beat selection whose actor is on the player side. Those
+    Drop every beat selection whose actor is a *seated PC*. Those
     selections are extracted from the narrator's prose — they did NOT
     originate from a ``DICE_THROW`` frame on a player's socket, so they
-    fail the explicit-consent contract. NPC (opponent / neutral) beats
-    are passed through unchanged: NPCs don't have a player-agency
-    contract; the narrator legitimately drives them.
+    fail the explicit-consent contract. NPC beats (opponents, neutrals,
+    AND companion NPCs on the player side) are passed through unchanged:
+    only seated PCs need the consent contract.
+
+    ``seated_pc_names`` is the set of actor names that map to a seat in
+    ``snapshot.player_seats.values()``. When passed, only those names
+    trigger the rejection — narrator-driven NPC ally beats (Donut's
+    ``defend target='Carl'``, etc.) flow through the gate so downstream
+    resolvers can apply them with the same OTEL discipline as opponent
+    beats. When omitted (legacy callers / pre-MP saves), the gate falls
+    back to the original side-only check (every player-side actor is
+    treated as seated).
+
+    Playtest 2026-05-06 (sumpdrake fight, caverns_sunden Grimvault):
+    Donut's ``defend target='Carl'`` was being rejected with
+    ``inferred_pc_beat_rejected`` even though Donut is a recruited
+    NPC — the gate had no way to distinguish him from Carl. After the
+    seat-aware fix, companion-NPCs reach the resolver and emit
+    ``apply_beat`` + ``encounter.beat_applied`` watcher events; Carl's
+    explicit-consent contract still applies for Carl himself.
 
     Each rejected PC beat emits a span + watcher event so the GM panel
     can see the gate firing. Without OTEL the gate is invisible — and
@@ -202,6 +221,15 @@ def _filter_inferred_pc_beats(
         actor = encounter.find_actor(sel.actor) if encounter is not None else None
         side = actor.side if actor is not None else "unknown"
         if side != "player":
+            kept.append(sel)
+            continue
+        # Seat-aware: a player-side actor that is NOT in the seated-PC
+        # manifest is a companion NPC — narrator-driven, no consent
+        # contract. Let it through. When the seat manifest isn't
+        # supplied, fall back to the original "drop every player-side
+        # beat" behavior so legacy callers don't accidentally accept
+        # narrator-inferred PC beats.
+        if seated_pc_names is not None and sel.actor not in seated_pc_names:
             kept.append(sel)
             continue
         # PC-side beat from narrator extraction — REJECT.
@@ -1741,10 +1769,19 @@ def _apply_narration_result_to_snapshot(
             and _gate_applies_to_encounter(enc, pack)
         )
         if gate_active:
+            # Seat-aware SOUL gate: companion-NPCs on the player side are
+            # narrator-driven (no consent contract), so the gate must
+            # only reject seats that map to live players. Without this
+            # filter every recruited hireling's beat would be silently
+            # dropped (playtest 2026-05-06 Donut defend regression).
+            seated_pc_names = (
+                set(snapshot.player_seats.values()) if snapshot.player_seats else None
+            )
             gated_selections = _filter_inferred_pc_beats(
                 result.beat_selections,
                 enc,
                 narrating_player=player_name,
+                seated_pc_names=seated_pc_names,
             )
 
         if enc is not None and not enc.resolved and gated_selections:
@@ -2105,7 +2142,179 @@ def _apply_narration_result_to_snapshot(
                 encounter_type=encounter_type,
             )
 
+    _apply_companion_changes(
+        snapshot=snapshot,
+        added=getattr(result, "companions_added", []) or [],
+        dismissed=getattr(result, "companions_dismissed", []) or [],
+        acting_character_name=acting_character_name or player_name,
+        player_name=player_name,
+    )
+
     return outcome
+
+
+def _apply_companion_changes(
+    *,
+    snapshot: GameSnapshot,
+    added: list,
+    dismissed: list,
+    acting_character_name: str | None,
+    player_name: str,
+) -> None:
+    """Apply narrator-declared companion roster mutations.
+
+    Playtest 2026-05-06 wiring fix. The narrator describes hiring NPCs in
+    prose ("Donut takes the contract") and now ALSO emits
+    ``companions_added`` / ``companions_dismissed`` in its game_patch
+    sidecar. This seam mutates ``snapshot.companions`` and emits one
+    ``party.recruit`` / ``party.dismiss`` watcher span per change so
+    Sebastien's GM panel sees the mechanical event paired with the prose.
+
+    Add semantics: append a fresh ``Companion`` for each unique name not
+    already on the roster. Re-hiring an already-on-roster name is a
+    silent no-op (the narrator may re-mention the contract without
+    intending a duplicate). Dismissal removes the first matching name
+    (case-insensitive); unmatched names log + emit a ``party.dismiss``
+    span with ``status=unmatched`` so the GM panel can see the prose
+    referenced a companion that wasn't on the roster.
+    """
+    if not added and not dismissed:
+        return
+
+    from sidequest.game.session import Companion
+
+    turn_num = snapshot.turn_manager.interaction
+    existing_names_lower = {c.name.casefold() for c in snapshot.companions}
+    recruited_count = 0
+    duplicate_count = 0
+
+    for entry in added:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            logger.warning(
+                "party.recruit_skipped reason=blank_name entry=%r turn=%d",
+                entry,
+                turn_num,
+            )
+            continue
+        if name.casefold() in existing_names_lower:
+            duplicate_count += 1
+            _watcher_publish(
+                "state_transition",
+                {
+                    "kind": "party.recruit_duplicate",
+                    "name": name,
+                    "turn_number": turn_num,
+                    "player_name": player_name,
+                },
+                component="party",
+            )
+            continue
+        companion = Companion(
+            name=name,
+            role=str(entry.get("role", "")).strip(),
+            description=str(entry.get("description", "")).strip(),
+            notes=str(entry.get("notes", "")).strip(),
+            recruited_turn=turn_num,
+            recruited_by=str(
+                entry.get("recruited_by", "") or acting_character_name or ""
+            ).strip(),
+        )
+        snapshot.companions.append(companion)
+        existing_names_lower.add(companion.name.casefold())
+        recruited_count += 1
+        logger.info(
+            "party.recruit name=%r role=%r recruited_by=%r turn=%d",
+            companion.name,
+            companion.role,
+            companion.recruited_by,
+            turn_num,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "kind": "party.recruit",
+                "name": companion.name,
+                "role": companion.role,
+                "description": companion.description,
+                "notes": companion.notes,
+                "recruited_by": companion.recruited_by,
+                "turn_number": turn_num,
+                "roster_size_after": len(snapshot.companions),
+                "player_name": player_name,
+            },
+            component="party",
+        )
+
+    dismissed_count = 0
+    unmatched_count = 0
+    for raw_name in dismissed:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        match_idx: int | None = None
+        for i, c in enumerate(snapshot.companions):
+            if c.name.casefold() == name.casefold():
+                match_idx = i
+                break
+        if match_idx is None:
+            unmatched_count += 1
+            logger.warning(
+                "party.dismiss_unmatched name=%r turn=%d roster=%s",
+                name,
+                turn_num,
+                [c.name for c in snapshot.companions],
+            )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "kind": "party.dismiss",
+                    "name": name,
+                    "status": "unmatched",
+                    "turn_number": turn_num,
+                    "player_name": player_name,
+                },
+                component="party",
+            )
+            continue
+        removed = snapshot.companions.pop(match_idx)
+        existing_names_lower.discard(removed.name.casefold())
+        dismissed_count += 1
+        logger.info(
+            "party.dismiss name=%r role=%r served_turns=%d turn=%d",
+            removed.name,
+            removed.role,
+            turn_num - removed.recruited_turn,
+            turn_num,
+        )
+        _watcher_publish(
+            "state_transition",
+            {
+                "kind": "party.dismiss",
+                "name": removed.name,
+                "role": removed.role,
+                "served_turns": turn_num - removed.recruited_turn,
+                "status": "ok",
+                "turn_number": turn_num,
+                "roster_size_after": len(snapshot.companions),
+                "player_name": player_name,
+            },
+            component="party",
+        )
+
+    if recruited_count or duplicate_count or dismissed_count or unmatched_count:
+        logger.info(
+            "party.companion_mutations recruited=%d duplicates=%d "
+            "dismissed=%d unmatched_dismiss=%d roster_size=%d turn=%d",
+            recruited_count,
+            duplicate_count,
+            dismissed_count,
+            unmatched_count,
+            len(snapshot.companions),
+            turn_num,
+        )
 
 
 def _build_resolution_signal(enc: object) -> object:
@@ -2343,6 +2552,139 @@ def _roll_d20_server_side() -> int:
     return random.randint(1, 20)
 
 
+def _opposed_dc(beat: Any) -> int:
+    """Per-side DC derived from beat ``base`` magnitude, clamped 10..=30.
+
+    Mirrors ``sidequest.server.dispatch.dice._compute_dc`` so a player
+    using the dispatch path and an opponent using this resolver land on
+    the same DC for the same beat.
+    """
+    return max(10, min(30, 10 + abs(getattr(beat, "base", 1)) * 2))
+
+
+_DECISIVE_MARGIN = 10  # mirrors sidequest.game.dice.DECISIVE_MARGIN
+
+
+def _classify_legacy_tier(d20: int, modifier: int, difficulty: int) -> RollOutcome:
+    """Per-side tier from one d20 face-value vs a DC.
+
+    Mirrors ``resolve_dice_with_faces`` for the d20-only common case so
+    each side of an opposed_check resolves *its own* roll against *its
+    own* DC (Keith's rule, playtest 2026-05-06): plain Success on one
+    side must not depend on the other side's shift.
+
+    Crit rules (locked 2026-04-11, Keith):
+
+    - nat20 → CritSuccess
+    - nat1  → CritFail
+    - total ≥ DC + 10 → CritSuccess (decisive margin)
+    - total > DC → Success
+    - total = DC → Tie
+    - total < DC → Fail
+    """
+    if d20 == 20:
+        return RollOutcome.CritSuccess
+    if d20 == 1:
+        return RollOutcome.CritFail
+    total = d20 + modifier
+    if total >= difficulty + _DECISIVE_MARGIN:
+        return RollOutcome.CritSuccess
+    if total > difficulty:
+        return RollOutcome.Success
+    if total == difficulty:
+        return RollOutcome.Tie
+    return RollOutcome.Fail
+
+
+_TIER_DOWNGRADE: dict[RollOutcome, RollOutcome] = {
+    RollOutcome.CritSuccess: RollOutcome.Success,
+    RollOutcome.Success: RollOutcome.Tie,
+}
+
+
+def _downgrade_one_step(tier: RollOutcome) -> RollOutcome:
+    """Counteract reduces an offensive tier by one step.
+
+    Per Keith's rule (playtest 2026-05-06): a successful defender does
+    not zero out the attacker — the attacker still rolled — but the
+    defender's success robs the attacker of the Success-tier bonus.
+    CritSuccess → Success (loses fleeting Opening tag); Success → Tie
+    (still grants base // 2 momentum). Failed offenses don't get worse
+    from a successful defense.
+    """
+    return _TIER_DOWNGRADE.get(tier, tier)
+
+
+def _brace_counteracts(
+    *,
+    defender_beat: Any,
+    defender_selection: Any,
+    attacker_actor_name: str,
+    attacker_target: str | None,
+) -> bool:
+    """True iff the defender's brace counteracts the attacker.
+
+    "Counteract" recognises two narration patterns (both observed in
+    playtest):
+
+    1. **Brace against attacker.** Defender's beat is ``brace`` and its
+       ``target`` matches the attacker's actor name. This is the
+       "opponent braces against the player's attack" case — the
+       opponent has named the source of the threat as their target.
+    2. **Shield the attacker's target.** Defender's beat is ``brace``
+       and its ``target`` matches the actor the attacker is hitting.
+       This is the "companion-NPC ally shields the patron" case —
+       Donut's ``defend target='Carl'`` while Sumpdrake's ``attack
+       target='Carl'``. The narrator's prose puts Donut between the
+       drake and Carl; the engine must read that intent from the
+       ``target`` field rather than treating it as self-defense.
+
+    Both forms produce the same mechanical effect: the attacker's tier
+    downgrades by one step (CritSuccess → Success, Success → Tie).
+    Failed offenses don't get worse from a successful defense.
+
+    A brace with ``target=<self>`` (defender shielding themselves
+    while the attacker is hitting someone else) is NOT a counteract —
+    self-defense doesn't intercept attacks on third parties. A brace
+    with no ``target`` field is also not a counteract; the narrator
+    must name an actor explicitly so the GM panel can audit the gate
+    decision.
+
+    Match is case-insensitive and trim-tolerant (narrator output is
+    not always whitespace-clean).
+    """
+    from sidequest.game.beat_kinds import BeatKind
+
+    if getattr(defender_beat, "kind", None) != BeatKind.brace:
+        return False
+    target_raw = getattr(defender_selection, "target", None)
+    if not target_raw:
+        return False
+    target_norm = str(target_raw).strip().lower()
+    if target_norm == attacker_actor_name.strip().lower():
+        return True
+    return bool(
+        attacker_target
+        and target_norm == str(attacker_target).strip().lower()
+    )
+
+
+# Legacy alias retained for any in-repo callers / tests that imported
+# the old name. New code should use ``_brace_counteracts``.
+def _is_brace_targeting(
+    *,
+    defender_beat: Any,
+    defender_selection: Any,
+    attacker_actor_name: str,
+) -> bool:
+    return _brace_counteracts(
+        defender_beat=defender_beat,
+        defender_selection=defender_selection,
+        attacker_actor_name=attacker_actor_name,
+        attacker_target=None,
+    )
+
+
 def _resolve_opposed_check_branch(
     *,
     encounter,
@@ -2376,7 +2718,7 @@ def _resolve_opposed_check_branch(
     - The opponent's beat_id is not in ``pack_beats``.
     """
     from sidequest.game.beat_kinds import apply_beat
-    from sidequest.game.opposed_check import resolve_opposed_check
+    from sidequest.game.opposed_check import resolve_opponent_modifier, resolve_opposed_check
     from sidequest.telemetry.spans import (
         encounter_beat_skipped_span,
         encounter_opposed_roll_resolved_span,
@@ -2434,6 +2776,27 @@ def _resolve_opposed_check_branch(
             f"for opposed_check.)"
         )
 
+    # Gather player-side companion selections (player-side actors that
+    # are NOT the rolling player). These are companion-NPC beats: the
+    # narrator drives them per turn (Donut's defend target='Carl', etc.)
+    # The opposed_check branch must apply these too — pre-fix they fell
+    # off the floor because the loop only searched for the single
+    # opponent. Playtest 2026-05-06 (sumpdrake fight) regression.
+    companion_selections: list[Any] = []
+    for sel in selections:
+        sel_actor = encounter.find_actor(sel.actor)
+        if sel_actor is None or sel_actor.withdrawn:
+            continue
+        if sel_actor.side != "player":
+            continue
+        if sel_actor.name == player_actor.name:
+            # The rolling player's own beat — not a companion. The
+            # SOUL gate above should have stripped this for narrator-
+            # extracted PC beats; defensive skip in case a future call
+            # site passes the player's own selection through.
+            continue
+        companion_selections.append(sel)
+
     opponent_actor = encounter.find_actor(opponent_selection.actor)
     if opponent_actor is None:
         raise ValueError(
@@ -2449,6 +2812,12 @@ def _resolve_opposed_check_branch(
 
     opponent_d20 = _roll_d20_server_side()
 
+    # ``resolve_opposed_check`` is retained for its per-side modifier
+    # resolution (stat lookup with hard-fail-loud on missing stats) and
+    # the shift computation that the lie-detector OTEL span has carried
+    # since 2026-04-26. The shift-derived tier on ``roll_result.tier`` is
+    # NO LONGER used to drive ``apply_beat`` — see the per-side tier
+    # block below for Keith's playtest 2026-05-06 rule.
     roll_result = resolve_opposed_check(
         player_actor=player_actor,
         opponent_actor=opponent_actor,
@@ -2461,8 +2830,195 @@ def _resolve_opposed_check_branch(
         edge_resolver=snapshot.find_creature_core,
     )
 
-    # Emit BEFORE apply_beat so the GM panel reads the resolver inputs
-    # paired with the resulting metric_advance spans below.
+    # ---- Per-side tier resolution + counteract detection ---------------
+    # Bug fixed (playtest 2026-05-06, sumpdrake fight): the prior shift-
+    # tier-applied-to-both-sides logic produced two structurally wrong
+    # behaviors:
+    #
+    # 1. A player CritSuccess (shift +13) handed the OPPONENT CritSuccess
+    #    too — sumpdrake's strike dial advanced +base on every Carl crit.
+    # 2. A player Success against an opponent rolling normally (shift in
+    #    [-1, +1]) collapsed to Tie tier, and a Success against an
+    #    opponent rolling well (shift ≤ -2) collapsed to Fail. So plain
+    #    Successes never moved the player dial — only nat20s did.
+    #
+    # Keith's rule (canonical): "a plain Success outcome on a beat MUST
+    # shift momentum unless the opponent's parallel beat *successfully
+    # counteracts* it (e.g. an opposed attack/defend pair where the
+    # defender also passed). Crits are a bonus on top, not the only
+    # mover."
+    #
+    # Implementation:
+    #
+    # - Each side resolves its own roll-vs-DC tier (legacy semantics,
+    #   matches ``resolve_dice_with_faces``).
+    # - "Counteract" = the opponent's beat is ``brace`` AND its target
+    #   matches the attacker's actor name AND the defender's own tier is
+    #   Success or CritSuccess.
+    # - On counteract the attacker's tier downgrades by one step
+    #   (CritSuccess → Success, Success → Tie). Tie/Fail/CritFail are
+    #   unchanged (no further downgrade — failed offenses stay failed).
+    #
+    # The shift remains visible to the GM panel as a single scalar so the
+    # old lie-detector span is still readable; it is no longer load-
+    # bearing for ``apply_beat``.
+    player_dc = _opposed_dc(player_beat)
+    opponent_dc = _opposed_dc(opponent_beat)
+    player_tier_raw = _classify_legacy_tier(
+        pending_player_d20, roll_result.player_mod, player_dc
+    )
+    opponent_tier_raw = _classify_legacy_tier(
+        opponent_d20, roll_result.opponent_mod, opponent_dc
+    )
+
+    # Roll + classify each companion's beat. Their tiers feed both the
+    # ally-counteract gate (companion brace shielding the player from
+    # the opponent's attack) and the per-companion ``apply_beat`` call
+    # below. Stat lookup walks per_actor_state['stats'] first then
+    # falls back to cdef.opponent_default_stats; both are valid sources
+    # for a player-side companion (recruiter pipeline currently does
+    # not seed companion per-actor stats, so the cdef-default path
+    # applies — see ``resolve_opponent_modifier`` for the exact lookup).
+    companion_rolls: list[dict[str, Any]] = []
+    for c_sel in companion_selections:
+        c_actor = encounter.find_actor(c_sel.actor)
+        if c_actor is None:
+            continue
+        c_beat = pack_beats.get(c_sel.beat_id)
+        if c_beat is None:
+            # Skip with a loud span — pack-data inconsistency from the
+            # narrator (named a beat_id that doesn't exist in the cdef).
+            with encounter_beat_skipped_span(
+                reason="unknown_beat_id",
+                actor=c_actor.name,
+                actor_side=c_actor.side,
+                beat_id=c_sel.beat_id,
+            ):
+                pass
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_skipped",
+                    "reason": "unknown_beat_id",
+                    "actor": c_actor.name,
+                    "actor_side": c_actor.side,
+                    "beat_id": c_sel.beat_id,
+                    "source": "opposed_check_companion",
+                },
+                component="encounter",
+            )
+            continue
+        c_d20 = _roll_d20_server_side()
+        try:
+            c_mod = resolve_opponent_modifier(
+                actor=c_actor,
+                cdef=cdef,
+                stat_check=getattr(c_beat, "stat_check", "") or "",
+            )
+        except ValueError:
+            # Hard-fail-loud per CLAUDE.md no-silent-fallback: if a
+            # companion beat names a stat with no value source, the
+            # pack data is broken. Emit and skip — failing the whole
+            # round just because a hireling has no stat block would
+            # block every combat turn the moment Donut joins.
+            with encounter_beat_skipped_span(
+                reason="missing_stat_source",
+                actor=c_actor.name,
+                actor_side=c_actor.side,
+                beat_id=c_sel.beat_id,
+            ):
+                pass
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "beat_skipped",
+                    "reason": "missing_stat_source",
+                    "actor": c_actor.name,
+                    "actor_side": c_actor.side,
+                    "beat_id": c_sel.beat_id,
+                    "stat_check": getattr(c_beat, "stat_check", "") or "",
+                    "source": "opposed_check_companion",
+                },
+                component="encounter",
+                severity="warning",
+            )
+            continue
+        c_dc = _opposed_dc(c_beat)
+        c_tier = _classify_legacy_tier(c_d20, c_mod, c_dc)
+        companion_rolls.append(
+            {
+                "actor": c_actor,
+                "beat": c_beat,
+                "selection": c_sel,
+                "beat_id": c_sel.beat_id,
+                "d20": c_d20,
+                "mod": c_mod,
+                "dc": c_dc,
+                "tier": c_tier,
+            }
+        )
+
+    opponent_counteracts_player = (
+        _brace_counteracts(
+            defender_beat=opponent_beat,
+            defender_selection=opponent_selection,
+            attacker_actor_name=player_actor.name,
+            attacker_target=getattr(player_beat, "target_tag", None),
+        )
+        and opponent_tier_raw in (RollOutcome.Success, RollOutcome.CritSuccess)
+    )
+    # Player→opponent counteract requires knowing the player's beat
+    # target. The dispatch path does not currently plumb that through,
+    # so v1 leaves player counteracts as False; opponent always resolves
+    # with their own tier. A follow-up will plumb player target via the
+    # session_data stash so attacker-symmetry can be implemented for
+    # both sides.
+    player_counteracts_opponent = False
+
+    # Ally counteract: a companion brace whose ``target`` matches the
+    # opponent (bracing against the opponent) OR matches the opponent's
+    # target (shielding the player the opponent is attacking). The
+    # opponent's beat must be threatening someone for the shield form
+    # to apply. Either form, with companion tier ≥ Success, downgrades
+    # the opponent's tier by one step. Playtest 2026-05-06 (sumpdrake):
+    # Donut's ``defend target='Carl'`` while Sumpdrake's ``attack
+    # target='Carl'`` — narration described Donut shielding Carl, but
+    # the engine never modeled it. Now it does.
+    opponent_target = getattr(opponent_selection, "target", None)
+    ally_counteract_sources: list[str] = []
+    for cr in companion_rolls:
+        if cr["tier"] not in (RollOutcome.Success, RollOutcome.CritSuccess):
+            continue
+        if _brace_counteracts(
+            defender_beat=cr["beat"],
+            defender_selection=cr["selection"],
+            attacker_actor_name=opponent_actor.name,
+            attacker_target=opponent_target,
+        ):
+            ally_counteract_sources.append(cr["actor"].name)
+    ally_counteracts_opponent = bool(ally_counteract_sources)
+
+    player_tier_final = (
+        _downgrade_one_step(player_tier_raw)
+        if opponent_counteracts_player
+        else player_tier_raw
+    )
+    # Opponent gets downgraded if either the player counteracts (v1
+    # placeholder) OR an ally counteracts. Single-step downgrade
+    # regardless of how many shields land — one step is one step.
+    opponent_tier_final = (
+        _downgrade_one_step(opponent_tier_raw)
+        if (player_counteracts_opponent or ally_counteracts_opponent)
+        else opponent_tier_raw
+    )
+
+    # Lie-detector span (back-compat shape: one tier scalar). We surface
+    # ``player_tier_final`` as the headline tier so a GM auditing the
+    # span sees what actually drove the player's metric_advance. Full
+    # per-side breakdown lives on the watcher event below — that is the
+    # GM-panel feed.
     with encounter_opposed_roll_resolved_span(
         encounter_type=encounter.encounter_type,
         player_roll=roll_result.player_roll,
@@ -2472,7 +3028,7 @@ def _resolve_opposed_check_branch(
         player_num_advantage=roll_result.player_num_advantage,
         opponent_num_advantage=roll_result.opponent_num_advantage,
         shift=roll_result.shift,
-        tier=roll_result.tier.value,
+        tier=player_tier_final.value,
     ):
         pass
     _watcher_publish(
@@ -2483,32 +3039,82 @@ def _resolve_opposed_check_branch(
             "encounter_type": encounter.encounter_type,
             "player_roll": roll_result.player_roll,
             "player_mod": roll_result.player_mod,
+            "player_dc": player_dc,
+            "player_tier_raw": player_tier_raw.value,
+            "player_tier_final": player_tier_final.value,
             "opponent_roll": roll_result.opponent_roll,
             "opponent_mod": roll_result.opponent_mod,
             "player_num_advantage": roll_result.player_num_advantage,
             "opponent_num_advantage": roll_result.opponent_num_advantage,
             "shift": roll_result.shift,
-            "tier": roll_result.tier.value,
+            "opponent_counteracts_player": opponent_counteracts_player,
+            "player_counteracts_opponent": player_counteracts_opponent,
+            "ally_counteracts_opponent": ally_counteracts_opponent,
+            "ally_counteract_sources": ally_counteract_sources,
+            "companion_count": len(companion_rolls),
+            "companion_rolls": [
+                {
+                    "actor": cr["actor"].name,
+                    "beat_id": cr["beat_id"],
+                    "d20": cr["d20"],
+                    "mod": cr["mod"],
+                    "dc": cr["dc"],
+                    "tier": cr["tier"].value,
+                }
+                for cr in companion_rolls
+            ],
+            # Back-compat alias — older watchers read ``tier`` (scalar).
+            "tier": player_tier_final.value,
         },
         component="encounter",
     )
 
     encounter_resolved = False
     # Apply player beat first (matches threshold-cross order in apply_beat
-    # docstring — "player_metric first, then opponent_metric"). The
-    # leading "player"/"opponent" label is preserved as a comment-anchor
-    # so future readers see the order intent without diving into actor.side.
-    for sel_actor, sel_beat, beat_id in (
-        # ("player", ...),
-        (player_actor, player_beat, pending_player_beat_id),
-        # ("opponent", ...),
-        (opponent_actor, opponent_beat, opponent_selection.beat_id),
-    ):
+    # docstring — "player_metric first, then opponent_metric"). Each side
+    # gets its OWN final tier (per-side resolution above) — the prior
+    # behavior of feeding the same shift-tier to both apply_beat calls
+    # was the structural bug. Companions apply LAST (after opponent) so
+    # threshold-cross order is preserved when a companion brace drains
+    # the opponent's dial below the resolution threshold.
+    # Apply targets carry a per-actor source label (player/opponent/
+    # companion) so beat_applied watcher events distinguish the
+    # companion path from the primary opposed pair. Sebastien's
+    # mechanics-first lens needs this — a companion brace draining the
+    # opponent's dial should be visibly separate from the opponent
+    # rolling their own beat.
+    apply_targets: list[tuple[Any, Any, str, RollOutcome, str]] = [
+        (
+            player_actor,
+            player_beat,
+            pending_player_beat_id,
+            player_tier_final,
+            "opposed_check_player",
+        ),
+        (
+            opponent_actor,
+            opponent_beat,
+            opponent_selection.beat_id,
+            opponent_tier_final,
+            "opposed_check_opponent",
+        ),
+    ]
+    for cr in companion_rolls:
+        apply_targets.append(
+            (
+                cr["actor"],
+                cr["beat"],
+                cr["beat_id"],
+                cr["tier"],
+                "opposed_check_companion",
+            ),
+        )
+    for sel_actor, sel_beat, beat_id, sel_tier, sel_source in apply_targets:
         applied = apply_beat(
             encounter,
             sel_actor,
             sel_beat,
-            roll_result.tier,
+            sel_tier,
             turn=turn,
             edge_resolver=snapshot.find_creature_core,
         )
@@ -2529,7 +3135,7 @@ def _resolve_opposed_check_branch(
                     "actor": sel_actor.name,
                     "actor_side": sel_actor.side,
                     "beat_id": beat_id,
-                    "source": "opposed_check",
+                    "source": sel_source,
                 },
                 component="encounter",
             )
@@ -2547,11 +3153,11 @@ def _resolve_opposed_check_branch(
                 "beat_kind": (
                     sel_beat.kind.value if hasattr(sel_beat.kind, "value") else str(sel_beat.kind)
                 ),
-                "outcome_tier": roll_result.tier.value,
+                "outcome_tier": sel_tier.value,
                 "own_delta": own_delta,
                 "opponent_delta": opp_delta,
                 "metric_target": encounter.encounter_type,
-                "source": "opposed_check",
+                "source": sel_source,
             },
             component="encounter",
         )
@@ -2560,13 +3166,13 @@ def _resolve_opposed_check_branch(
             beat_id=beat_id,
             encounter_type=encounter.encounter_type,
             turn=turn,
-            source="opposed_check",
+            source=sel_source,
         )
         if applied.resolved:
             with encounter_resolved_span(
                 encounter_type=encounter.encounter_type,
                 outcome=encounter.outcome or "",
-                source="opposed_check",
+                source=sel_source,
             ):
                 pass
             _watcher_publish(
@@ -2576,7 +3182,7 @@ def _resolve_opposed_check_branch(
                     "op": "resolved",
                     "encounter_type": encounter.encounter_type,
                     "outcome": encounter.outcome or "",
-                    "source": "opposed_check",
+                    "source": sel_source,
                     "final_player_metric": encounter.player_metric.current,
                     "final_opponent_metric": encounter.opponent_metric.current,
                 },

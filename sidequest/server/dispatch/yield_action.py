@@ -99,11 +99,75 @@ def handle_yield(
 
     actor.withdrawn = True
 
-    player_actors = [a for a in enc.actors if a.side == "player"]
-    all_done = all(a.withdrawn for a in player_actors)
-    if not all_done:
-        return  # encounter remains active
+    # The "is the table done acting?" check counts SEATED PLAYER CHARACTERS
+    # only — actor names that appear in ``snapshot.player_seats`` values.
+    # NPC allies on the player side (companions / hirelings recruited via
+    # the recruiter pipeline; their beats come from the narrator's
+    # ``encounter.agent_beat_selection``, not a player click) must NOT
+    # block yield resolution. In solo, when Carl yields, Donut goes with
+    # him — there's nobody to click "yield" for Donut and the encounter
+    # would deadlock at ``remaining_player_actors=1`` forever.
+    #
+    # Playtest 2026-05-06 (sumpdrake fight in caverns_sunden Grimvault):
+    # Carl yielded → encounter persisted because Donut (recruited NPC
+    # hireling) was still on the player-side actor list with
+    # ``withdrawn=False``. The UI re-presented the action surface but
+    # nothing advanced — soft-lock requiring the player to click another
+    # action to escape. Filtering by the seat manifest here makes solo
+    # yield a deterministic resolver and preserves multiplayer semantics
+    # (every seated PC must commit; companions follow their patron).
+    seated_pc_names: set[str] = set(snapshot.player_seats.values())
+    all_player_actors = [a for a in enc.actors if a.side == "player"]
+    if not seated_pc_names:
+        # Pre-MP saves (or solo without a populated seat map) treat every
+        # player-side actor as a seated PC — back-compat with the legacy
+        # path. Companions only exist post-recruiter; pre-recruiter solo
+        # had no NPC allies on the player side, so this fallback is the
+        # historical behavior. The seat-manifest path is the new norm.
+        seated_player_actors = list(all_player_actors)
+        companion_actor_names: list[str] = []
+    else:
+        seated_player_actors = [
+            a for a in all_player_actors if a.name in seated_pc_names
+        ]
+        companion_actor_names = [
+            a.name for a in all_player_actors if a.name not in seated_pc_names
+        ]
 
+    all_done = all(a.withdrawn for a in seated_player_actors)
+    # GM-panel visibility for the seat-aware yield gate. Without this
+    # span, the GM can't tell whether the encounter persisted because
+    # (a) the yield count math is wrong again or (b) a real other PC
+    # still has to commit. Surface the seat manifest, the seated-PC
+    # actor names, and the all_done decision.
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "yield_seat_gate",
+            "encounter_type": enc.encounter_type,
+            "yielded_actor": player_name,
+            "seated_pc_count": len(seated_player_actors),
+            "seated_pcs_remaining": [
+                a.name for a in seated_player_actors if not a.withdrawn
+            ],
+            "all_seated_pcs_withdrawn": all_done,
+            "companion_count_on_player_side": len(companion_actor_names),
+            "companions_excluded_from_gate": companion_actor_names,
+        },
+        component="encounter",
+    )
+    if not all_done:
+        return  # encounter remains active — another seated PC still has to act
+
+    # ``yielded_names`` carries every player-side actor that ended up
+    # withdrawn (seated PCs who explicitly yielded plus any companions
+    # whose actor was already withdrawn from a prior beat). The edge
+    # refund downstream walks ``snapshot.characters`` and only refunds
+    # actors that have a Character record — companions don't, so the
+    # refund quietly skips them. That preserves the spec semantics:
+    # only a yielding seated PC banks the edge refund.
+    player_actors = [a for a in enc.actors if a.side == "player"]
     yielded_names = [a.name for a in player_actors if a.withdrawn]
     edge_refreshed = _refund_edge_for_yielders(
         snapshot,

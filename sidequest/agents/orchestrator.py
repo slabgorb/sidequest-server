@@ -305,6 +305,15 @@ class NarrationTurnResult:
     # narrator does NOT invoke a magic working (the common case).
     magic_working: dict[str, Any] | None = None
 
+    # Companion roster mutations (playtest 2026-05-06 wiring fix). When
+    # the narrator hires an NPC into the party (\"Donut joins as
+    # torchbearer\"), it emits ``companions_added`` so the apply seam
+    # mutates ``snapshot.companions`` and a ``party.recruit`` watcher
+    # span fires. ``companions_dismissed`` is the symmetric remove path
+    # (by name). Empty on every turn no recruit/dismiss happens.
+    companions_added: list[dict[str, Any]] = field(default_factory=list)
+    companions_dismissed: list[str] = field(default_factory=list)
+
     # Raw game_patch dict (plot-a-course Bundle 5). Carries the full parsed
     # game_patch JSON so narration_apply can dispatch sidecar intents (e.g.
     # plot_course / cancel_course) that aren't individually extracted fields.
@@ -658,7 +667,8 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "npcs_present=%d quest_updates=%d sfx_triggers=%d "
         "has_visual_scene=%s has_scene_mood=%s has_action_rewrite=%s "
         "beat_selections=%d confrontation=%r "
-        "has_location=%s gold_change=%r status_changes=%d",
+        "has_location=%s gold_change=%r status_changes=%d "
+        "companions_added=%d companions_dismissed=%d",
         len(patch.get("footnotes", [])),
         len(patch.get("items_gained", [])),
         len(patch.get("items_lost", [])),
@@ -675,6 +685,8 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         patch.get("location") is not None,
         patch.get("gold_change"),
         len(patch.get("status_changes", [])),
+        len(patch.get("companions_added", [])),
+        len(patch.get("companions_dismissed", [])),
     )
 
     prose = _strip_json_fence(raw)
@@ -709,6 +721,12 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         # raised at the apply seam (where ``MagicWorkingParseError`` is
         # defined) rather than during extraction.
         "magic_working": patch.get("magic_working"),
+        "companions_added": [
+            d for d in patch.get("companions_added", []) if isinstance(d, dict)
+        ],
+        "companions_dismissed": [
+            str(n) for n in patch.get("companions_dismissed", []) if n
+        ],
     }
 
 
@@ -2420,6 +2438,8 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                companions_added=extraction.get("companions_added", []),
+                companions_dismissed=extraction.get("companions_dismissed", []),
                 game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
@@ -2635,6 +2655,8 @@ class Orchestrator:
                     if isinstance(extraction.get("magic_working"), dict)
                     else None
                 ),
+                companions_added=extraction.get("companions_added", []),
+                companions_dismissed=extraction.get("companions_dismissed", []),
                 game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,

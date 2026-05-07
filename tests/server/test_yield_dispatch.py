@@ -202,3 +202,82 @@ def test_yield_emits_watcher_events_with_resolved_last(
     finally:
         bind_event_store(None)
         store.close()
+
+def test_yield_solo_pc_with_companion_resolves_encounter_immediately(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
+    """Playtest 2026-05-06 regression (sumpdrake fight, caverns_sunden):
+
+    A solo PC with a recruited NPC companion on the player side must
+    resolve the encounter on yield. Pre-fix the gate counted every
+    player-side actor — including the companion — as 'still owing a
+    beat', so yield logged remaining_player_actors=1 with no
+    seated player to ever click for the missing actor. Encounter
+    deadlocked: action surface re-presented, no narration advanced.
+
+    Filter: only actors whose name appears in snapshot.player_seats
+    block yield resolution. Companions follow their patron; they never
+    block the gate.
+    """
+    snap, _ = snapshot_with_pack
+    snap.encounter = StructuredEncounter(
+        encounter_type='combat',
+        player_metric=EncounterMetric(name='momentum', current=2, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name='momentum', current=4, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name='Sam', role='combatant', side='player'),
+            EncounterActor(name='Donut', role='ally', side='player'),
+            EncounterActor(name='Sumpdrake', role='combatant', side='opponent'),
+        ],
+    )
+    snap.characters.append(character_named_sam)
+    # Solo seat — only Sam is a seated PC. Donut is an NPC companion.
+    snap.player_seats = {'p1': 'Sam'}
+
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id='p1', player_name='Sam')
+
+    assert snap.encounter.resolved is True, (
+        'solo yield with NPC companion on the player side must resolve — '
+        'companions follow their patron'
+    )
+    assert snap.encounter.outcome == 'yielded'
+    # Only the explicit yielder ends up withdrawn; the companion is not
+    # marked withdrawn (the gate excludes them, but doesn't auto-yield
+    # them either). The manifest carries actors that ARE withdrawn.
+    assert snap.pending_resolution_signal.yielded_actors == ('Sam',)
+
+
+def test_yield_partial_blocked_by_other_seated_pc(
+    snapshot_with_pack, character_named_sam, tmp_path
+):
+    """Multiplayer parity check: when there is more than one seated PC,
+    one PC's yield must NOT resolve the encounter — the other seated PC
+    still has to commit. The seat-aware gate from the solo fix must not
+    weaken multiplayer semantics.
+    """
+    snap, _ = snapshot_with_pack
+    snap.encounter = StructuredEncounter(
+        encounter_type='combat',
+        player_metric=EncounterMetric(name='momentum', current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name='momentum', current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name='Sam', role='combatant', side='player'),
+            EncounterActor(name='Riley', role='combatant', side='player'),
+            EncounterActor(name='Promo', role='combatant', side='opponent'),
+        ],
+    )
+    snap.characters.append(character_named_sam)
+    snap.player_seats = {'p1': 'Sam', 'p2': 'Riley'}
+
+    room = _room_for(snap, tmp_path)
+    handle_yield(snap, room=room, player_id='p1', player_name='Sam')
+
+    assert snap.encounter.resolved is False, (
+        'encounter must persist while another seated PC has not yielded'
+    )
+    sam_actor = snap.encounter.find_actor('Sam')
+    assert sam_actor is not None and sam_actor.withdrawn is True
+    riley_actor = snap.encounter.find_actor('Riley')
+    assert riley_actor is not None and riley_actor.withdrawn is False
+
