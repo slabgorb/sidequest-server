@@ -78,6 +78,34 @@ class ApplyWorkingResult(BaseModel):
     bar_changes: dict[str, tuple[float, float]] = Field(default_factory=dict)
 
 
+def _resolve_starts_at_chargen(
+    spec: LedgerBarSpec, *, character_class: str | None, character_id: str
+) -> float:
+    """Resolve a bar's initial value, honoring class-keyed dict specs.
+
+    Scalar specs return as-is; class-keyed dicts require ``character_class``
+    and a matching key. Both failure modes raise loudly per CLAUDE.md
+    (no silent fallback).
+    """
+    starts = spec.starts_at_chargen
+    if isinstance(starts, dict):
+        if character_class is None:
+            raise ValueError(
+                f"bar {spec.id!r} has class-keyed starts_at_chargen but no "
+                f"character_class was supplied for character {character_id!r}; "
+                f"keys={sorted(starts)}"
+            )
+        if character_class not in starts:
+            raise ValueError(
+                f"bar {spec.id!r}: character_class={character_class!r} "
+                f"missing from starts_at_chargen keys={sorted(starts)} "
+                f"(character {character_id!r}). Add the class to the world "
+                f"magic.yaml or correct the chargen class string."
+            )
+        return float(starts[character_class])
+    return float(starts)
+
+
 def _serialize_bar_key(k: BarKey) -> str:
     """Serialize BarKey to a string for dict-key safe pydantic dump."""
     return f"{k.scope}|{k.owner_id}|{k.bar_id}"
@@ -131,23 +159,41 @@ class MagicState(BaseModel):
         """Construct empty MagicState; world-scope bars instantiated immediately."""
         state = cls(config=config)
         # Eagerly instantiate world-scope bars (per spec D1 = eager).
+        # World-scope bars cannot use class-keyed ``starts_at_chargen``
+        # (validator on LedgerBarSpec enforces this) — the cast is
+        # narrowed accordingly.
         for spec in config.ledger_bars:
             if spec.scope == "world":
+                assert isinstance(spec.starts_at_chargen, float | int), (
+                    "world-scope bar must have scalar starts_at_chargen "
+                    "(LedgerBarSpec validator should have caught dict shape)"
+                )
                 key = BarKey(scope="world", owner_id=config.world_slug, bar_id=spec.id)
                 state.ledger[_serialize_bar_key(key)] = LedgerBar(
-                    spec=spec, value=spec.starts_at_chargen
+                    spec=spec, value=float(spec.starts_at_chargen)
                 )
         return state
 
-    def add_character(self, character_id: str) -> None:
-        """Instantiate per-character bars for `character_id`."""
+    def add_character(
+        self, character_id: str, *, character_class: str | None = None
+    ) -> None:
+        """Instantiate per-character bars for ``character_id``.
+
+        ``character_class`` (display-cased: "Mage", "Cleric", ...) is
+        required when any character-scope bar uses class-keyed
+        ``starts_at_chargen``. Missing class for a class-keyed bar
+        raises ValueError loudly (CLAUDE.md no-silent-fallback).
+        """
         for spec in self.config.ledger_bars:
             if spec.scope == "character":
                 key = BarKey(scope="character", owner_id=character_id, bar_id=spec.id)
                 serialized = _serialize_bar_key(key)
                 if serialized in self.ledger:
                     continue  # idempotent
-                self.ledger[serialized] = LedgerBar(spec=spec, value=spec.starts_at_chargen)
+                initial = _resolve_starts_at_chargen(
+                    spec, character_class=character_class, character_id=character_id
+                )
+                self.ledger[serialized] = LedgerBar(spec=spec, value=initial)
 
     def add_item(
         self,

@@ -49,8 +49,17 @@ def init_magic_state_for_session(
     genre_pack_source_dir: Path | None,
     world_slug: str,
     character_id: str,
+    character_class: str | None = None,
 ) -> bool:
     """Populate ``snapshot.magic_state`` for the freshly chargen'd character.
+
+    ``character_class`` (display-cased: "Mage", "Cleric", "Fighter", "Thief",
+    "Delver") is required when the world's magic.yaml ships a character-
+    scope bar with class-keyed ``starts_at_chargen`` (B/X-style class-aware
+    spell slot allocation, caverns_sunden 2026-05-07). Worlds with only
+    scalar specs (coyote_star) work without it. A class-keyed bar with
+    no ``character_class`` raises ValueError inside ``add_character``
+    rather than silently falling back.
 
     Returns True iff a magic state was loaded and assigned. Returns False
     when:
@@ -194,13 +203,14 @@ def init_magic_state_for_session(
     else:
         state = snapshot.magic_state
         first_commit = False
-    state.add_character(character_id)
+    state.add_character(character_id, character_class=character_class)
     plugins = list(config.active_plugins)
     bar_count = len(state.ledger)
     logger.info(
-        "magic.init world=%s actor=%s plugins=%s bars=%d first_commit=%s",
+        "magic.init world=%s actor=%s class=%s plugins=%s bars=%d first_commit=%s",
         world_slug,
         character_id,
+        character_class,
         plugins,
         bar_count,
         first_commit,
@@ -210,6 +220,7 @@ def init_magic_state_for_session(
         {
             "world_slug": world_slug,
             "actor": character_id,
+            "class": character_class,
             "plugins": plugins,
             "bars": bar_count,
             "first_commit": first_commit,
@@ -240,6 +251,7 @@ def init_magic_state_for_session(
                 {
                     "world_slug": world_slug,
                     "actor": character_id,
+                    "class": character_class,
                     "plugins": plugins,
                     "world_yaml": str(world_magic),
                 },

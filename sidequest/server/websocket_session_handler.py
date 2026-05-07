@@ -1409,6 +1409,7 @@ class WebSocketSessionHandler:
                 genre_pack_source_dir=sd.genre_pack.source_dir,
                 world_slug=sd.world_slug,
                 character_id=character.core.name,
+                character_class=character.char_class,
             )
 
             init_chassis_registry(sd.snapshot, sd.genre_pack)

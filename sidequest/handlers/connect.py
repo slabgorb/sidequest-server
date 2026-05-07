@@ -106,16 +106,20 @@ def _backfill_magic_state_on_resume(
     source_dir = getattr(genre_pack, "source_dir", None)
     if source_dir is None:
         return
-    character_id = snapshot.characters[0].core.name
+    seated = snapshot.characters[0]
+    character_id = seated.core.name
+    character_class = seated.char_class
     tracer = trace.get_tracer("sidequest.handlers.connect")
     with tracer.start_as_current_span("magic_state.backfill_on_resume") as span:
         span.set_attribute("world_slug", world_slug)
         span.set_attribute("character_id", character_id)
+        span.set_attribute("character_class", character_class or "")
         loaded = init_magic_state_for_session(
             snapshot=snapshot,
             genre_pack_source_dir=source_dir,
             world_slug=world_slug,
             character_id=character_id,
+            character_class=character_class,
         )
         span.set_attribute("loaded", loaded)
         if loaded:

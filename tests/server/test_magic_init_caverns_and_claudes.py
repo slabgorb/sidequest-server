@@ -90,10 +90,8 @@ def test_caverns_and_claudes_genre_magic_yaml_loads_without_loader_error(cc_pack
 def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
     """End-to-end: `init_magic_state_for_session` returns True for
     Mira's session shape and populates `snapshot.magic_state` with
-    the item_legacy_v1 plugin active.
-
-    The space_opera comparison test (below) and this test must both
-    pass — fixing one shouldn't regress the other.
+    BOTH plugins active post-2026-05-07 B/X pivot (item_legacy_v1 +
+    innate_v1).
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
@@ -105,6 +103,7 @@ def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
         genre_pack_source_dir=cc_pack_dir,
         world_slug="caverns_sunden",
         character_id="Mira",
+        character_class="Delver",
     )
     assert result is True, (
         "init_magic_state_for_session must return True for "
@@ -114,13 +113,17 @@ def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
     assert snapshot.magic_state is not None
     assert snapshot.magic_state.config.world_slug == "caverns_sunden"
     assert snapshot.magic_state.config.genre_slug == "caverns_and_claudes"
-    assert "item_legacy_v1" in snapshot.magic_state.config.active_plugins
+    # Post-pivot: BOTH plugins are permitted/active for caverns_sunden.
+    active = snapshot.magic_state.config.active_plugins
+    assert "item_legacy_v1" in active
+    assert "innate_v1" in active
 
 
-def test_caverns_and_claudes_magic_state_has_no_character_or_world_bars(cc_pack_dir):
-    """C&C magic is purely item-based. The world load should produce a
-    MagicState with an empty ledger — bars only get instantiated when
-    items enter play via item_legacy_v1's add_item path.
+def test_caverns_sunden_ships_one_character_scope_spell_slots_bar(cc_pack_dir):
+    """Post-2026-05-07 B/X pivot: caverns_sunden ships one character-
+    scope ``spell_slots`` bar with class-keyed ``starts_at_chargen``.
+    A Delver-class chargen lands at 0.0 (non-caster); the bar exists
+    so that a future Mage commit can see the same registry.
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
@@ -132,26 +135,117 @@ def test_caverns_and_claudes_magic_state_has_no_character_or_world_bars(cc_pack_
         genre_pack_source_dir=cc_pack_dir,
         world_slug="caverns_sunden",
         character_id="Mira",
+        character_class="Delver",
     )
-    assert snapshot.magic_state.ledger == {}, (
-        "C&C ships zero world/character-scope bars; the ledger must be "
-        "empty until an item is picked up"
+    bars = list(snapshot.magic_state.ledger.values())
+    assert len(bars) == 1, (
+        f"caverns_sunden should ship exactly one character-scope bar "
+        f"(spell_slots) seeded by add_character; got {len(bars)} bars"
     )
+    assert bars[0].spec.id == "spell_slots"
+    assert bars[0].value == 0.0, (
+        "Delver is a non-caster; spell_slots must seed at 0.0 per "
+        "world magic.yaml class-keyed starts_at_chargen"
+    )
+
+
+def test_caverns_sunden_class_aware_spell_slot_allocation(cc_pack_dir):
+    """B/X canon at L1: Magic-User gets 1 slot/day; Cleric gets 0
+    (casting begins L2); Fighter and Thief get 0 (non-casters);
+    Delver gets 0 (pre-class default). The class-keyed
+    ``starts_at_chargen`` dict in caverns_sunden/magic.yaml encodes
+    these values; ``add_character`` resolves them by
+    ``character.char_class`` (display-cased).
+    """
+    expected = {
+        "Mage": 1.0,
+        "Cleric": 0.0,
+        "Fighter": 0.0,
+        "Thief": 0.0,
+        "Delver": 0.0,
+    }
+    for char_class, expected_value in expected.items():
+        snapshot = GameSnapshot(
+            genre_slug="caverns_and_claudes",
+            world_slug="caverns_sunden",
+            turn_manager=TurnManager(),
+        )
+        init_magic_state_for_session(
+            snapshot=snapshot,
+            genre_pack_source_dir=cc_pack_dir,
+            world_slug="caverns_sunden",
+            character_id=f"Test_{char_class}",
+            character_class=char_class,
+        )
+        bars = list(snapshot.magic_state.ledger.values())
+        assert len(bars) == 1
+        assert bars[0].value == expected_value, (
+            f"{char_class!r} expected spell_slots={expected_value}, "
+            f"got {bars[0].value}"
+        )
+
+
+def test_caverns_sunden_unknown_class_raises_loudly(cc_pack_dir):
+    """No silent fallback: if a character is committed with a class
+    that isn't in the world's ``starts_at_chargen`` dict, ``add_character``
+    raises ValueError. Production callers (websocket_session_handler /
+    connect handler) cannot reach this state because Character validates
+    char_class at build time, but the schema enforcement here catches
+    YAML/class-list drift early.
+    """
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    with pytest.raises(ValueError, match=r"missing from starts_at_chargen"):
+        init_magic_state_for_session(
+            snapshot=snapshot,
+            genre_pack_source_dir=cc_pack_dir,
+            world_slug="caverns_sunden",
+            character_id="Test_Bard",
+            character_class="Bard",  # not in classes.yaml; not in dict
+        )
+
+
+def test_caverns_sunden_missing_class_param_raises_loudly(cc_pack_dir):
+    """Class-keyed ``starts_at_chargen`` requires the caller to pass
+    ``character_class``. Omitting it raises ValueError — defends against
+    a future caller forgetting to thread the class through (the bug this
+    whole change exists to fix).
+    """
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    with pytest.raises(ValueError, match=r"no character_class was supplied"):
+        init_magic_state_for_session(
+            snapshot=snapshot,
+            genre_pack_source_dir=cc_pack_dir,
+            world_slug="caverns_sunden",
+            character_id="Mira",
+            # character_class intentionally omitted
+        )
 
 
 def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
-    """Smoke: the migration preserved C&C's authored values (intensity
-    0.3, folkloric world-knowledge) — guards against accidental shape
-    drift if the yaml is touched again.
+    """Smoke: the migration preserved C&C's authored values
+    (folkloric world-knowledge, hard limits) — guards against
+    accidental shape drift if the yaml is touched again. Note:
+    intensity moved from 0.3 (genre default) to 0.4 (world layer)
+    in the 2026-05-07 B/X pivot to reflect the addition of the
+    caster surface.
     """
     config = load_world_magic(
         genre_yaml=cc_pack_dir / "magic.yaml",
         world_yaml=cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml",
     )
-    assert config.intensity == 0.3
+    assert config.intensity == 0.4
     assert config.world_knowledge.primary == "folkloric"
     assert "components" in config.cost_types
     assert "backlash" in config.cost_types
+    assert "slots" in config.cost_types  # added in B/X pivot for caster slot debits
     # Hard limits authored as five entries — guard count + a known id.
     assert len(config.hard_limits) == 5
     limit_ids = {hl.id for hl in config.hard_limits}
