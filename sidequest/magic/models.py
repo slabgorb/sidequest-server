@@ -142,7 +142,16 @@ class LedgerBarSpec(BaseModel):
     consequence_on_high_cross: str | None = None
     consequence_on_low_cross: str | None = None
     decay_per_session: float = 0.0
-    starts_at_chargen: float
+    # Initial value at character-add or world-load time. Two shapes:
+    #   - scalar float — every owner starts at the same value
+    #   - dict[class, float] — character-scope only; the value is keyed
+    #     by ``character.char_class`` (display-cased: "Mage", "Cleric",
+    #     etc.). Used by B/X-style class-aware spell slot allocation
+    #     (caverns_and_claudes/caverns_sunden 2026-05-07 pivot). When
+    #     a dict-shaped spec is encountered, ``MagicState.add_character``
+    #     requires the caller to pass ``character_class``; missing or
+    #     unknown class raises ValueError (no silent fallback per CLAUDE.md).
+    starts_at_chargen: float | dict[str, float]
     # Per-bar status-panel mapping (Task 3.4). Optional: bars that don't
     # surface as character statuses (world-scope hegemony_heat, etc.) leave
     # this None. The threshold-promotion pipeline reads this directly off
@@ -165,6 +174,19 @@ class LedgerBarSpec(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def class_keyed_starts_only_for_character_scope(self) -> LedgerBarSpec:
+        if isinstance(self.starts_at_chargen, dict) and self.scope != "character":
+            raise ValueError(
+                f"bar {self.id!r} uses class-keyed starts_at_chargen but scope="
+                f"{self.scope!r}; only character-scope bars may key by class"
+            )
+        if isinstance(self.starts_at_chargen, dict) and not self.starts_at_chargen:
+            raise ValueError(
+                f"bar {self.id!r} starts_at_chargen dict is empty; list at least one class"
+            )
+        return self
+
+    @model_validator(mode="after")
     def range_and_thresholds_in_bounds(self) -> LedgerBarSpec:
         lo, hi = self.range
         if not lo < hi:
@@ -174,7 +196,6 @@ class LedgerBarSpec(BaseModel):
             "threshold_higher",
             "threshold_low",
             "threshold_lower",
-            "starts_at_chargen",
         ):
             value = getattr(self, name)
             if value is None:
@@ -182,6 +203,15 @@ class LedgerBarSpec(BaseModel):
             if not lo <= value <= hi:
                 raise ValueError(
                     f"bar {self.id!r} {name}={value!r} must lie within range={self.range!r}"
+                )
+        # ``starts_at_chargen`` is float | dict[str, float]; check both shapes.
+        starts = self.starts_at_chargen
+        starts_values = starts.values() if isinstance(starts, dict) else (starts,)
+        for v in starts_values:
+            if not lo <= v <= hi:
+                raise ValueError(
+                    f"bar {self.id!r} starts_at_chargen={starts!r} contains value {v} "
+                    f"outside range={self.range!r}"
                 )
         return self
 

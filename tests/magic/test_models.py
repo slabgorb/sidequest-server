@@ -136,6 +136,91 @@ class TestLedgerBarSpec:
             )
 
 
+class TestClassKeyedStartsAtChargen:
+    """B/X pivot 2026-05-07: ``starts_at_chargen`` accepts either a
+    scalar float (every owner starts at the same value) OR a class-keyed
+    dict[class, float] (character-scope only, used for caster-class
+    spell-slot allocation).
+    """
+
+    def test_class_keyed_dict_accepted_for_character_scope(self):
+        spec = LedgerBarSpec(
+            id="spell_slots",
+            scope="character",
+            direction="down",
+            range=(0.0, 1.0),
+            threshold_low=0.0,
+            starts_at_chargen={
+                "Mage": 1.0,
+                "Cleric": 0.0,
+                "Fighter": 0.0,
+            },
+        )
+        assert isinstance(spec.starts_at_chargen, dict)
+        assert spec.starts_at_chargen["Mage"] == 1.0
+
+    def test_class_keyed_dict_rejected_for_world_scope(self):
+        with pytest.raises(ValidationError, match="only character-scope"):
+            LedgerBarSpec(
+                id="hegemony_heat",
+                scope="world",
+                direction="up",
+                range=(0.0, 1.0),
+                threshold_high=0.7,
+                starts_at_chargen={"Mage": 0.0},
+            )
+
+    def test_class_keyed_dict_rejected_for_item_scope(self):
+        with pytest.raises(ValidationError, match="only character-scope"):
+            LedgerBarSpec(
+                id="bond",
+                scope="item",
+                direction="bidirectional",
+                range=(-1.0, 1.0),
+                threshold_high=0.7,
+                threshold_low=-0.7,
+                starts_at_chargen={"Mage": 0.0},
+            )
+
+    def test_class_keyed_dict_value_outside_range_rejected(self):
+        with pytest.raises(ValidationError, match="outside range"):
+            LedgerBarSpec(
+                id="spell_slots",
+                scope="character",
+                direction="down",
+                range=(0.0, 1.0),
+                threshold_low=0.0,
+                starts_at_chargen={
+                    "Mage": 2.5,  # above range
+                    "Cleric": 0.0,
+                },
+            )
+
+    def test_class_keyed_dict_empty_rejected(self):
+        with pytest.raises(ValidationError, match="dict is empty"):
+            LedgerBarSpec(
+                id="spell_slots",
+                scope="character",
+                direction="down",
+                range=(0.0, 1.0),
+                threshold_low=0.0,
+                starts_at_chargen={},
+            )
+
+    def test_scalar_still_works(self):
+        # Backwards-compat: existing scalar specs (sanity, vitality, etc.)
+        # continue to validate. This is the coyote_star path.
+        spec = LedgerBarSpec(
+            id="sanity",
+            scope="character",
+            direction="down",
+            range=(0.0, 1.0),
+            threshold_low=0.40,
+            starts_at_chargen=0.85,
+        )
+        assert spec.starts_at_chargen == 0.85
+
+
 class TestFlag:
     def test_flag_construction(self):
         f = Flag(
