@@ -573,6 +573,7 @@ from sidequest.server.narration_apply import (  # noqa: E402 — back-compat re-
 )
 from sidequest.server.session_helpers import (  # noqa: E402 — back-compat re-export
     _build_turn_context,
+    _detect_missed_recurring_npcs,
     _detect_npc_identity_drift,
     _error_msg,
     _find_confrontation_def,
@@ -600,6 +601,7 @@ __all__ = [
     # Module-level helpers re-exported from session_helpers / narration_apply
     "_apply_narration_result_to_snapshot",
     "_build_turn_context",
+    "_detect_missed_recurring_npcs",
     "_detect_npc_identity_drift",
     "_error_msg",
     "_find_confrontation_def",

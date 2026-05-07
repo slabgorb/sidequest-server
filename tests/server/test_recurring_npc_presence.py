@@ -55,7 +55,6 @@ from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import GameSnapshot, Npc
 from tests._helpers.session_room import room_for
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

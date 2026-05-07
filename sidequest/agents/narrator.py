@@ -253,6 +253,24 @@ first appearance. Include every named NPC, creature, or distinct group the \
 player encounters, especially adversaries during a confrontation (see rule \
 above).
 
+RECURRING PRESENCE RULE — MANDATORY every turn a named NPC is onstage: \
+if a previously introduced NPC (ally, merchant, patron, quest_giver, \
+companion, named bystander, or any other named character the player has \
+already met) is described in your prose as physically present in the \
+scene, you MUST emit them in npcs_met for THIS turn — even when is_new \
+is false, even outside combat, every turn they remain onstage. The same \
+"name AND role" contract applies. The server's NPC pool relies on per-turn \
+re-emission to track who is currently in frame; without it, recurring \
+characters silently drop out of game state and downstream subsystems \
+(party state, quest tracking, NPC arcs) lose them. \
+Distinguish "named and onstage" (must emit) from "passing mention" \
+(optional): if the prose says "Boris pours a drink" or "Marya is bent \
+over her ledger", Boris/Marya are named and onstage — emit. If the prose \
+says "the captain mentioned Boris in passing last week" with no current \
+presence, that is a passing mention — emission is optional. The rule \
+extends the CRITICAL ADVERSARY RULE to non-combat scenes; both rules \
+coexist.
+
 Each entry MUST include "side": one of "player" (party allies), "opponent" \
 (anyone the party is fighting), or "neutral" (bystanders, narrators, \
 audience). This is structural — `role` remains free-form prose, `side` is \
