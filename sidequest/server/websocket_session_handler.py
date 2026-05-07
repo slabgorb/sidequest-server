@@ -1550,6 +1550,27 @@ class WebSocketSessionHandler:
             existing_names = {c.core.name for c in sd.snapshot.characters}
             if character.core.name not in existing_names:
                 sd.snapshot.characters.append(character)
+            # Pingpong 2026-05-07 ("magic.init only fires for the host"):
+            # the host's chargen-complete branch (above) calls
+            # ``init_magic_state_for_session`` to register the actor in
+            # the magic ledger AND emit the ``magic.init`` OTEL span;
+            # MP joiners never reached that call site. Result: late
+            # joiners (Donut, Katia) had no actor row in
+            # ``snapshot.magic_state.ledger``, so any narrator-emitted
+            # working against them raised ``unknown actor; call
+            # add_character first`` (the same shape as the 2026-04-30
+            # bug fixed in magic_init.py — the idempotence is now
+            # required at TWO seams, not one). Mirror the call here so
+            # every committer gets ``add_character`` + the
+            # observable ``magic.init`` span. Idempotent on
+            # ``snapshot.magic_state`` per the existing
+            # first_commit-vs-reuse branch.
+            init_magic_state_for_session(
+                snapshot=sd.snapshot,
+                genre_pack_source_dir=sd.genre_pack.source_dir,
+                world_slug=sd.world_slug,
+                character_id=character.core.name,
+            )
             # Re-bind active_scenario on this socket from whatever the
             # peer wrote — its presence on sd.active_scenario is what
             # downstream pressure / accusation code keys off.

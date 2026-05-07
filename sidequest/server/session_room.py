@@ -146,9 +146,20 @@ class PendingAction:
 class SessionRoom:
     slug: str
     mode: GameMode
-    # player_id -> socket_id (only connected players)
+    # player_id -> latest socket_id (only connected players). Latest because
+    # the legacy single-socket consumers (snapshot dispatch, broadcast
+    # exclude_socket_id) need a stable handle; we keep the most recent
+    # connect for that role. Authoritative liveness is `_player_sockets`.
     _connected: dict[str, str] = field(default_factory=dict)
     _sockets: dict[str, str] = field(default_factory=dict)  # socket_id -> player_id
+    # player_id -> set of all live socket_ids. A player is considered
+    # "present" as long as this set is non-empty. Pingpong 2026-05-07
+    # [BUG] "Host presence cleared on transient disconnect": HMR / tab
+    # backgrounding can produce two concurrent WS for the same
+    # player_id; the legacy code dropped presence the moment one closed.
+    # Multi-socket bookkeeping makes presence ref-counted by player_id
+    # rather than tied to a single socket lifecycle.
+    _player_sockets: dict[str, set[str]] = field(default_factory=dict)
     _seated: dict[str, _Seat] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, repr=False)
     # socket_id -> asyncio.Queue for per-socket outbound message fan-out (MP-02 Task 4)
@@ -323,6 +334,17 @@ class SessionRoom:
                 self._store = None
 
     def connect(self, player_id: str, *, socket_id: str) -> None:
+        # Multi-socket bookkeeping: each WS for a player_id is tracked in
+        # `_player_sockets[player_id]`. Re-connect from the same player on
+        # a new socket (HMR, tab reload, transient drop + Playwright tab-
+        # switch wakeup) DOES NOT untrack the prior socket — that prior
+        # socket has its own WebSocketDisconnect lifecycle that calls
+        # ``disconnect(socket_id=old)`` exactly once. Untracking it from
+        # `_sockets` early was the 2026-05-07 host-presence bug: when the
+        # second socket closed, ``disconnect`` looked up the player via
+        # ``_sockets[second]`` (the latest) and cleared
+        # ``_connected[player_id]`` even though the first socket was
+        # still alive.
         with self._lock:
             if self.mode == GameMode.SOLO:
                 other_players = [p for p in self._connected if p != player_id]
@@ -330,12 +352,10 @@ class SessionRoom:
                     raise SoloSlotConflict(
                         f"solo game {self.slug} already occupied by {other_players[0]}"
                     )
-            # If same player reconnects on a new socket, drop the old socket mapping.
-            old_socket = self._connected.get(player_id)
-            if old_socket and old_socket != socket_id:
-                self._sockets.pop(old_socket, None)
             self._connected[player_id] = socket_id
             self._sockets[socket_id] = player_id
+            self._player_sockets.setdefault(player_id, set()).add(socket_id)
+            live_socket_count = len(self._player_sockets[player_id])
 
         # Story 45-2: emit state-transition (CONNECTED is implicit / not
         # stored, but the GM panel still wants to see the edge fire).
@@ -349,31 +369,107 @@ class SessionRoom:
             },
             component="lobby",
         )
+        # Pingpong 2026-05-07 lie-detector: when a second WS attaches for an
+        # already-present player_id, the GM panel needs visibility so we
+        # can recognize HMR / tab-reload concurrency vs. a real new joiner.
+        if live_socket_count > 1:
+            _hub.publish_event(
+                "presence.multi_socket_attach",
+                {
+                    "slug": self.slug,
+                    "player_id": player_id,
+                    "socket_id": socket_id,
+                    "live_socket_count": live_socket_count,
+                },
+                component="multiplayer",
+            )
 
     def disconnect(self, *, socket_id: str) -> str | None:
         # Capture transition info under the lock so the seat-state read and
         # the mutation happen atomically; emit watcher events outside the
         # lock (publish_event may be patched in tests / has its own
         # synchronization).
+        #
+        # Pingpong 2026-05-07 [BUG] "Host presence cleared on transient
+        # disconnect": this method is now ref-counted by player_id. A
+        # disconnect on one of N live WS for the same player_id removes
+        # only that socket from the bookkeeping; presence (the
+        # `_connected` entry, the seat-abandonment edge, the action-
+        # reveal cleared broadcast) is touched ONLY when the LAST socket
+        # for the player_id closes. This makes HMR / Playwright tab-
+        # switch / Vite reload (which transiently opens a second WS, then
+        # closes it) a no-op for everyone else's roster.
         abandon_payload: dict[str, Any] | None = None
+        presence_skipped = False
+        remaining_socket_count = 0
         with self._lock:
             player_id = self._sockets.pop(socket_id, None)
             if player_id is None:
                 return None
-            # Only remove from _connected if this socket is still the active one for that player.
-            if self._connected.get(player_id) == socket_id:
+            # Remove this socket from the player's live set.
+            live = self._player_sockets.get(player_id)
+            if live is not None:
+                live.discard(socket_id)
+                remaining_socket_count = len(live)
+                if remaining_socket_count == 0:
+                    # Last socket gone — clear bookkeeping and proceed
+                    # with presence-clearing side effects below.
+                    self._player_sockets.pop(player_id, None)
+                else:
+                    # Other live sockets exist for this player — do NOT
+                    # clear `_connected[player_id]` and do NOT abandon
+                    # the seat. Repoint `_connected[player_id]` at one
+                    # of the remaining live sockets if it still points
+                    # at the closing one, so downstream consumers
+                    # (broadcast exclude_socket_id, snapshot dispatch)
+                    # observe a live socket.
+                    if self._connected.get(player_id) == socket_id:
+                        # Pick any remaining socket — order is not
+                        # load-bearing because `_outbound_queues` is the
+                        # ground truth for delivery (see
+                        # test_broadcast_returns_only_sockets_with_attached_outbound_queues).
+                        self._connected[player_id] = next(iter(live))
+                    presence_skipped = True
+            # Last-socket path: only remove from _connected if this
+            # socket is still the active one for that player.
+            if not presence_skipped and self._connected.get(player_id) == socket_id:
                 self._connected.pop(player_id, None)
-            seat = self._seated.get(player_id)
-            if seat is not None and seat.state == LobbyState.CHARGEN:
-                # Story 45-2 fix dimension #4: disconnect during chargen
-                # cancels the seat. ABANDONED slots are reclaimable —
-                # they are NOT counted by the turn barrier.
-                seat.state = LobbyState.ABANDONED
-                abandon_payload = {
+            if not presence_skipped:
+                seat = self._seated.get(player_id)
+                if seat is not None and seat.state == LobbyState.CHARGEN:
+                    # Story 45-2 fix dimension #4: disconnect during
+                    # chargen cancels the seat. ABANDONED slots are
+                    # reclaimable — they are NOT counted by the turn
+                    # barrier.
+                    seat.state = LobbyState.ABANDONED
+                    abandon_payload = {
+                        "player_id": player_id,
+                        "character_slot": seat.character_slot,
+                        "from_state": LobbyState.CHARGEN.value,
+                    }
+
+        if presence_skipped:
+            # Lie-detector for the GM panel: shows when a transient
+            # disconnect was correctly absorbed by ref-counting. Without
+            # this span the only way to verify the fix engaged is to
+            # diff two consecutive presence_backfill outputs.
+            _hub.publish_event(
+                "presence.disconnect_skipped",
+                {
+                    "slug": self.slug,
                     "player_id": player_id,
-                    "character_slot": seat.character_slot,
-                    "from_state": LobbyState.CHARGEN.value,
-                }
+                    "socket_id": socket_id,
+                    "reason": "other_ws_alive",
+                    "remaining_socket_count": remaining_socket_count,
+                },
+                component="multiplayer",
+            )
+            # Skip the action_reveal cleared broadcast and the
+            # seat-abandonment events — the player is still present.
+            # Return None to signal "no presence change" so the WS
+            # endpoint does NOT broadcast PLAYER_PRESENCE{disconnected}
+            # for a player whose other WS is still alive.
+            return None
 
         if abandon_payload is not None:
             _hub.publish_event(

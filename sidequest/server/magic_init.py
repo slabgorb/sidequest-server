@@ -69,13 +69,39 @@ def init_magic_state_for_session(
       - loader raised LoaderError (logged at ERROR; snapshot untouched)
     """
     if genre_pack_source_dir is None:
+        _watcher_publish(
+            "magic.init_skipped",
+            {
+                "world_slug": world_slug,
+                "actor": character_id,
+                "reason": "no_genre_pack_source_dir",
+            },
+            component="magic",
+            severity="info",
+        )
         return False
 
     genre_magic = genre_pack_source_dir / "magic.yaml"
     world_magic = genre_pack_source_dir / "worlds" / world_slug / "magic.yaml"
 
     if not genre_magic.exists() or not world_magic.exists():
-        # No magic config for this world — silent, expected, common.
+        # No magic config for this world — expected, common (e.g. genres
+        # that don't model magic at all). Surface to the GM panel so
+        # "subsystem invisible" never reads as "subsystem broken" — per
+        # the OTEL Observability Principle (CLAUDE.md), the panel needs
+        # to confirm engagement OR justified non-engagement, not silence.
+        _watcher_publish(
+            "magic.init_skipped",
+            {
+                "world_slug": world_slug,
+                "actor": character_id,
+                "reason": "no_magic_yaml",
+                "genre_magic_exists": genre_magic.exists(),
+                "world_magic_exists": world_magic.exists(),
+            },
+            component="magic",
+            severity="info",
+        )
         return False
 
     try:
@@ -88,6 +114,18 @@ def init_magic_state_for_session(
             genre_magic,
             world_magic,
             exc,
+        )
+        _watcher_publish(
+            "magic.init_failed",
+            {
+                "world_slug": world_slug,
+                "actor": character_id,
+                "genre_yaml": str(genre_magic),
+                "world_yaml": str(world_magic),
+                "error": str(exc),
+            },
+            component="magic",
+            severity="error",
         )
         return False
 
@@ -166,13 +204,58 @@ def init_magic_state_for_session(
         state = snapshot.magic_state
         first_commit = False
     state.add_character(character_id, character_class=character_class)
+    plugins = list(config.active_plugins)
+    bar_count = len(state.ledger)
     logger.info(
         "magic.init world=%s actor=%s class=%s plugins=%s bars=%d first_commit=%s",
         world_slug,
         character_id,
         character_class,
-        list(config.active_plugins),
-        len(state.ledger),
+        plugins,
+        bar_count,
         first_commit,
     )
+    _watcher_publish(
+        "magic.init",
+        {
+            "world_slug": world_slug,
+            "actor": character_id,
+            "class": character_class,
+            "plugins": plugins,
+            "bars": bar_count,
+            "first_commit": first_commit,
+        },
+        component="magic",
+        severity="info",
+    )
+    # Loud-fallback guard (CLAUDE.md "No Silent Fallbacks"): innate_v1
+    # is the per-character bar producer; if it's active but no character
+    # bars instantiated for this actor, the world's ``ledger_bars`` list
+    # is missing per-character spec entries. Emit an explicit warning so
+    # the GM panel and dev logs surface the misconfig instead of
+    # silently shipping a Mage/Cleric with no sanity bar.
+    if "innate_v1" in plugins:
+        actor_prefix = f"character|{character_id}|"
+        actor_bar_count = sum(1 for k in state.ledger if k.startswith(actor_prefix))
+        if actor_bar_count == 0:
+            logger.warning(
+                "magic.init_no_actor_bars world=%s actor=%s plugins=%s — "
+                "innate_v1 is active but world ledger_bars defines no "
+                "character-scope bars for this actor",
+                world_slug,
+                character_id,
+                plugins,
+            )
+            _watcher_publish(
+                "magic.init_no_actor_bars",
+                {
+                    "world_slug": world_slug,
+                    "actor": character_id,
+                    "class": character_class,
+                    "plugins": plugins,
+                    "world_yaml": str(world_magic),
+                },
+                component="magic",
+                severity="warning",
+            )
     return True
