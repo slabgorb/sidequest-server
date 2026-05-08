@@ -32,6 +32,15 @@ class TestNpcArchetype:
         )
         assert a.name == "Merchant"
 
+    def test_npc_archetype_mindless_defaults_false(self) -> None:
+        """B/X mindless flag — bypasses morale checks."""
+        arch = NpcArchetype(name="goblin", description="a goblin", role="enemy")
+        assert arch.mindless is False
+
+    def test_npc_archetype_mindless_can_be_true(self) -> None:
+        arch = NpcArchetype(name="skeleton", description="a skeleton", role="enemy", mindless=True)
+        assert arch.mindless is True
+
 
 class TestMechanicalEffects:
     def test_defaults(self) -> None:
