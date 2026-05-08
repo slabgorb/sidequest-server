@@ -155,6 +155,13 @@ class MagicState(BaseModel):
     # empty on load.
     pending_status_promotions: list[dict[str, str]] = Field(default_factory=list, exclude=True)
 
+    # learned_v1 collections — per-actor known and prepared spell lists.
+    # Slots themselves ride the existing LedgerBar registry (one bar per
+    # spell level: slots_l1, slots_l2, ...). These two collections carry
+    # the list-shaped state that doesn't fit a numeric bar.
+    known_spells: dict[str, list[str]] = Field(default_factory=dict)
+    prepared_spells: dict[str, dict[int, list[str]]] = Field(default_factory=dict)
+
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:
         """Construct empty MagicState; world-scope bars instantiated immediately."""
@@ -209,6 +216,16 @@ class MagicState(BaseModel):
             self.ledger[_serialize_bar_key(key)] = LedgerBar(
                 spec=template, value=template.starts_at_chargen
             )
+
+    def learn_spell(self, actor_id: str, spell_id: str) -> None:
+        """Append spell_id to actor's known list (idempotent)."""
+        self.known_spells.setdefault(actor_id, [])
+        if spell_id not in self.known_spells[actor_id]:
+            self.known_spells[actor_id].append(spell_id)
+
+    def prepare_spells(self, actor_id: str, prep: dict[int, list[str]]) -> None:
+        """Replace actor's prepared spell list. Caller validates slot budget."""
+        self.prepared_spells[actor_id] = prep
 
     def get_bar(self, key: BarKey) -> LedgerBar:
         return self.ledger[_serialize_bar_key(key)]

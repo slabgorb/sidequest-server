@@ -295,3 +295,50 @@ def test_add_character_idempotent_with_class():
     state.add_character("Gandalf", character_class="Mage")
     # Idempotent: the bar's mid-session value is preserved, not reset.
     assert state.get_bar(bar_key).value == 0.5
+
+
+def _learned_world_config() -> WorldMagicConfig:
+    """Minimal learned_v1-flavored config for the learned-collection tests.
+
+    Plan-provided fixtures (Task 2.3, lines 481-528) omitted required
+    fields (genre_slug, intensity, visibility, cost_types,
+    narrator_register); this helper supplies them while preserving the
+    plan's intent (allowed_sources=["learned"], active_plugins=
+    ["learned_v1"], empty bars/limits).
+    """
+    return WorldMagicConfig(
+        world_slug="test",
+        genre_slug="test_genre",
+        allowed_sources=["learned"],
+        active_plugins=["learned_v1"],
+        intensity=0.5,
+        world_knowledge=WorldKnowledge(primary="folkloric"),
+        visibility={"primary": "feared"},
+        hard_limits=[],
+        cost_types=[],
+        ledger_bars=[],
+        narrator_register="test register",
+    )
+
+
+def test_magic_state_learned_collections_default_empty():
+    state = MagicState.from_config(_learned_world_config())
+    assert state.known_spells == {}
+    assert state.prepared_spells == {}
+
+
+def test_magic_state_learn_spell_records_per_actor_known_list():
+    state = MagicState.from_config(_learned_world_config())
+    state.learn_spell("rux", "magic_missile")
+    state.learn_spell("rux", "sleep")
+    assert state.known_spells["rux"] == ["magic_missile", "sleep"]
+
+
+def test_magic_state_prepare_spells_replaces_prior_preparation():
+    state = MagicState.from_config(_learned_world_config())
+    state.learn_spell("rux", "magic_missile")
+    state.learn_spell("rux", "sleep")
+    state.prepare_spells("rux", {1: ["magic_missile"]})
+    assert state.prepared_spells["rux"] == {1: ["magic_missile"]}
+    state.prepare_spells("rux", {1: ["sleep"]})
+    assert state.prepared_spells["rux"] == {1: ["sleep"]}
