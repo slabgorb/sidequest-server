@@ -77,7 +77,16 @@ class MagicWorking(BaseModel):
 
     plugin: str
     mechanism: Literal[
-        "faction", "place", "time", "condition", "native", "discovery", "relational", "cosmic"
+        "faction",
+        "place",
+        "time",
+        "condition",
+        "native",
+        "discovery",
+        "relational",
+        "cosmic",
+        "studied",
+        "granted",
     ]
     actor: str
     costs: dict[str, float] = Field(default_factory=dict)
@@ -99,6 +108,9 @@ class MagicWorking(BaseModel):
     consent_state: str | None = None
     item_id: str | None = None
     alignment_with_item_nature: float | None = None
+    # learned_v1 fields:
+    spell_id: str | None = None
+    slot_level: int | None = None
 
     @model_validator(mode="after")
     def costs_non_negative(self) -> MagicWorking:

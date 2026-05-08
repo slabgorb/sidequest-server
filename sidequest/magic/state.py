@@ -55,6 +55,9 @@ class WorkingRecord(BaseModel):
     consent_state: str | None = None
     item_id: str | None = None
     alignment_with_item_nature: float | None = None
+    # learned_v1 fields:
+    spell_id: str | None = None
+    slot_level: int | None = None
 
 
 class ThresholdCrossingEvent(BaseModel):

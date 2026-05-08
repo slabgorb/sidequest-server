@@ -229,3 +229,38 @@ class TestFlag:
             detail="bargained_for_v1",
         )
         assert f.severity == FlagSeverity.RED
+
+
+def test_magic_working_accepts_studied_mechanism_and_spell_id():
+    """learned_v1 emits workings with mechanism='studied' and a spell_id."""
+    from sidequest.magic.models import MagicWorking
+
+    w = MagicWorking(
+        plugin="learned_v1",
+        mechanism="studied",
+        actor="rux",
+        domain="physical",
+        narrator_basis="cast Magic Missile from prepared list",
+        spell_id="magic_missile",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    assert w.spell_id == "magic_missile"
+    assert w.slot_level == 1
+
+
+def test_magic_working_accepts_granted_mechanism():
+    """learned_v1/divine emits workings with mechanism='granted'."""
+    from sidequest.magic.models import MagicWorking
+
+    w = MagicWorking(
+        plugin="learned_v1",
+        mechanism="granted",
+        actor="brother_hesh",
+        domain="physical",
+        narrator_basis="Cleric heals via Cure Light Wounds",
+        spell_id="cure_light_wounds",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    assert w.mechanism == "granted"
