@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from sidequest.magic.models import MagicWorking
 from sidequest.magic.state import BarKey, MagicState
 
 _log = logging.getLogger(__name__)
@@ -75,3 +76,40 @@ def prepare(state: MagicState, *, actor: str, prep: dict[int, list[str]]) -> Pre
         prepared=prep,
         slots_used_per_level={lvl: len(ids) for lvl, ids in prep.items()},
     )
+
+
+@dataclass
+class CastResult:
+    actor: str
+    spell_id: str
+    slot_consumed: bool
+
+
+def cast(state: MagicState, *, working: MagicWorking) -> CastResult:
+    """Resolve a learned_v1 cast working. Validates prep + slot, applies costs.
+
+    Caller (narration_apply) is responsible for save-vs-spells resolution
+    (separate concern; it goes through C&C's opposed_check). cast() handles
+    the magic-state mutations only.
+    """
+    actor = working.actor
+    if working.spell_id is None or working.slot_level is None:
+        raise ValueError("cast requires spell_id and slot_level")
+    spell_id = working.spell_id
+    level = working.slot_level
+
+    prepared_at_level = state.prepared_spells.get(actor, {}).get(level, [])
+    if spell_id not in prepared_at_level:
+        raise ValueError(
+            f"spell {spell_id!r} not prepared at level {level} for actor {actor!r} "
+            f"(prepared: {prepared_at_level})"
+        )
+
+    bar = state.get_bar(_slot_bar_key(actor, level))
+    if bar.value <= 0:
+        raise ValueError(f"actor {actor!r} has no slots remaining at level {level}")
+
+    # apply_working mutates the bar via cost routing:
+    state.apply_working(working)
+
+    return CastResult(actor=actor, spell_id=spell_id, slot_consumed=True)

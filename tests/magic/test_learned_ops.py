@@ -69,3 +69,87 @@ def test_prepare_rejects_over_slot_budget():
     # slots_l1 starts at 2; preparing 3 spells should fail.
     with pytest.raises(ValueError, match="exceeds slot budget"):
         prepare(state, actor="rux", prep={1: ["magic_missile", "sleep", "charm_person"]})
+
+
+def test_cast_decrements_slot_and_records_working():
+    from sidequest.magic.learned_ops import cast, prepare
+    from sidequest.magic.models import MagicWorking
+    from sidequest.magic.state import BarKey, MagicState
+
+    state = MagicState.from_config(_config_with_slots())
+    state.add_character("rux")
+    state.learn_spell("rux", "magic_missile")
+    prepare(state, actor="rux", prep={1: ["magic_missile"]})
+
+    working = MagicWorking(
+        plugin="learned_v1",
+        mechanism="studied",
+        actor="rux",
+        domain="physical",
+        narrator_basis="cast magic missile",
+        spell_id="magic_missile",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    result = cast(state, working=working)
+
+    bar = state.get_bar(BarKey(scope="character", owner_id="rux", bar_id="slots_l1"))
+    assert bar.value == 1.0  # was 2, now 1
+    assert state.working_log[-1].spell_id == "magic_missile"
+    assert result.slot_consumed is True
+
+
+def test_cast_rejects_unprepared_spell():
+    import pytest
+
+    from sidequest.magic.learned_ops import cast
+    from sidequest.magic.models import MagicWorking
+    from sidequest.magic.state import MagicState
+
+    state = MagicState.from_config(_config_with_slots())
+    state.add_character("rux")
+    state.learn_spell("rux", "magic_missile")
+    # Did NOT prepare anything.
+
+    working = MagicWorking(
+        plugin="learned_v1",
+        mechanism="studied",
+        actor="rux",
+        domain="physical",
+        narrator_basis="cast magic missile",
+        spell_id="magic_missile",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    with pytest.raises(ValueError, match="not prepared"):
+        cast(state, working=working)
+
+
+def test_cast_rejects_when_slot_empty():
+    import pytest
+
+    from sidequest.magic.learned_ops import cast, prepare
+    from sidequest.magic.models import MagicWorking
+    from sidequest.magic.state import MagicState
+
+    state = MagicState.from_config(_config_with_slots())
+    state.add_character("rux")
+    state.learn_spell("rux", "magic_missile")
+    prepare(state, actor="rux", prep={1: ["magic_missile"]})
+
+    # Drain the slot:
+    working = MagicWorking(
+        plugin="learned_v1",
+        mechanism="studied",
+        actor="rux",
+        domain="physical",
+        narrator_basis="cast 1",
+        spell_id="magic_missile",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    cast(state, working=working)
+    cast(state, working=working)  # 2nd cast: slot bar 2 -> 1 -> 0
+
+    with pytest.raises(ValueError, match="no slots remaining"):
+        cast(state, working=working)
