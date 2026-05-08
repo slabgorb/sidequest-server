@@ -182,3 +182,72 @@ def test_rest_clears_prepared_and_resets_slots():
     assert state.prepared_spells["rux"] == {}
     bar = state.get_bar(BarKey(scope="character", owner_id="rux", bar_id="slots_l1"))
     assert bar.value == 2.0  # back to max
+
+
+def _config_with_slots_and_divine_favor():
+    from sidequest.magic.models import LedgerBarSpec, WorldKnowledge, WorldMagicConfig
+
+    return WorldMagicConfig(
+        world_slug="test",
+        genre_slug="test_genre",
+        allowed_sources=["learned"],
+        active_plugins=["learned_v1"],
+        intensity=0.5,
+        world_knowledge=WorldKnowledge(primary="folkloric"),
+        visibility={"primary": "open"},
+        cost_types=["slots_l1"],
+        narrator_register="test",
+        ledger_bars=[
+            LedgerBarSpec(
+                id="slots_l1",
+                scope="character",
+                direction="down",
+                range=(0.0, 2.0),
+                threshold_low=0.0,
+                consequence_on_low_cross="out",
+                starts_at_chargen=2.0,
+            ),
+            LedgerBarSpec(
+                id="divine_favor",
+                scope="character",
+                direction="bidirectional",
+                range=(-1.0, 1.0),
+                threshold_high=0.7,
+                threshold_low=-0.7,
+                consequence_on_high_cross="boon",
+                consequence_on_low_cross="dry",
+                starts_at_chargen=0.0,
+            ),
+        ],
+        hard_limits=[],
+    )
+
+
+def test_turn_undead_blocked_when_divine_favor_low():
+    import pytest
+
+    from sidequest.magic.learned_ops import turn_undead
+    from sidequest.magic.state import BarKey, MagicState
+
+    state = MagicState.from_config(_config_with_slots_and_divine_favor())
+    state.add_character("vail")
+    state.set_bar_value(
+        BarKey(scope="character", owner_id="vail", bar_id="divine_favor"),
+        -0.8,
+    )
+    with pytest.raises(ValueError, match="divine_favor below threshold"):
+        turn_undead(state, actor="vail", undead_hd=2)
+
+
+def test_turn_undead_returns_outcome_when_favor_clean():
+    from sidequest.magic.learned_ops import turn_undead
+    from sidequest.magic.state import MagicState
+
+    state = MagicState.from_config(_config_with_slots_and_divine_favor())
+    state.add_character("vail")
+    result = turn_undead(state, actor="vail", undead_hd=2)
+    # outcome is a structured request the orchestrator resolves via opposed_check;
+    # turn_undead itself does not roll dice.
+    assert result.actor == "vail"
+    assert result.undead_hd == 2
+    assert result.divine_favor == 0.0

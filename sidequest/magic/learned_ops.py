@@ -137,3 +137,31 @@ def rest(state: MagicState, *, actor: str) -> RestResult:
         restored[level] = max_value
     state.prepared_spells[actor] = {}
     return RestResult(actor=actor, slots_restored=restored)
+
+
+@dataclass
+class TurnUndeadResult:
+    actor: str
+    undead_hd: int
+    divine_favor: float
+
+
+def turn_undead(state: MagicState, *, actor: str, undead_hd: int) -> TurnUndeadResult:
+    """Cleric class-special. Validates divine_favor; returns structured request.
+
+    The opposed_check itself (favor*level vs HD) is rolled by the C&C check
+    resolver — turn_undead surfaces the structured request and the favor
+    value at request time. Threshold-low cross blocks the action with a
+    descriptive ValueError so the GM panel can render the block reason.
+    """
+    favor_key = BarKey(scope="character", owner_id=actor, bar_id="divine_favor")
+    try:
+        bar = state.get_bar(favor_key)
+    except KeyError as e:
+        raise ValueError(f"actor {actor!r} has no divine_favor bar; not a Cleric class") from e
+    if bar.spec.threshold_low is not None and bar.value <= bar.spec.threshold_low:
+        raise ValueError(
+            f"divine_favor below threshold ({bar.value:.2f} <= {bar.spec.threshold_low:.2f}); "
+            f"cleric must restore favor at the Confessional/Workhouse/Masquerade before turning"
+        )
+    return TurnUndeadResult(actor=actor, undead_hd=undead_hd, divine_favor=bar.value)
