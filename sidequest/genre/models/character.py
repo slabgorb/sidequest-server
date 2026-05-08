@@ -92,8 +92,8 @@ class ClassDef(BaseModel):
     """A character class definition loaded from classes.yaml.
 
     Class influences starting Edge (via edge_config.base_max_by_class
-    in rules.yaml) and starting equipment kit. encounter_beat_choices
-    and magic_access are reserved for future class-specific subsystems.
+    in rules.yaml), starting equipment kit, and (when magic_access is
+    set) per-class magic config consumed by the magic_init pipeline.
     """
 
     model_config = {"extra": "forbid"}
