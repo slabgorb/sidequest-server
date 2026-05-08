@@ -11,13 +11,31 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_SPELL_SAVE_EFFECT_FIXED = frozenset({"none", "negates", "halves"})
 
 
 class SpellSave(BaseModel):
     model_config = {"extra": "forbid"}
     stat: str | None
-    effect: Literal["none", "negates", "halves"] | str  # str allows partial:<text>
+    # Allowed values: one of {"none", "negates", "halves"} OR a discriminated
+    # "partial:<text>" form. The plain `str` is intentional only to admit the
+    # partial: prefix; arbitrary strings (including typos like "negate") are
+    # rejected by the validator below.
+    effect: str
+
+    @field_validator("effect")
+    @classmethod
+    def _validate_effect(cls, v: str) -> str:
+        if v in _SPELL_SAVE_EFFECT_FIXED:
+            return v
+        if v.startswith("partial:") and len(v) > len("partial:"):
+            return v
+        raise ValueError(
+            f"SpellSave.effect={v!r} is not a known value; expected one of "
+            f"{sorted(_SPELL_SAVE_EFFECT_FIXED)} or a 'partial:<text>' discriminated form"
+        )
 
 
 class SpellComponents(BaseModel):
@@ -66,6 +84,19 @@ class SpellCatalog(BaseModel):
     tradition: Literal["arcane", "divine"]
     level: int
     spells: list[Spell]
+
+    @model_validator(mode="after")
+    def _check_unique_spell_ids(self) -> SpellCatalog:
+        seen: dict[str, int] = {}
+        for s in self.spells:
+            seen[s.id] = seen.get(s.id, 0) + 1
+        dupes = sorted(sid for sid, n in seen.items() if n > 1)
+        if dupes:
+            raise ValueError(
+                f"SpellCatalog has duplicate spell ids: {dupes} "
+                f"(tradition={self.tradition} level={self.level} genre={self.genre})"
+            )
+        return self
 
     def get(self, spell_id: str) -> Spell:
         for s in self.spells:
