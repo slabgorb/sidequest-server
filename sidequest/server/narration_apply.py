@@ -2420,6 +2420,47 @@ def _apply_narration_result_to_snapshot(
                     source="narrator_beat",
                 )
 
+                # ─── B/X resource_deltas consumption hook (§5.6 #4 fix) ────
+                # Apply per-beat resource_deltas to the magic_state ledger.
+                # This is the V1 wire-up for cast_spell consumption (B/X
+                # memorization): a Mage with spell_slots=1.0 can cast once;
+                # after this hook runs the bar is 0.0 and beats_available_for
+                # will filter cast_spell out of the menu on the next turn.
+                # Clamp at 0.0 — slot ledger cannot go negative.
+                if beat.resource_deltas:
+                    magic_state = snapshot.magic_state
+                    if magic_state is not None:
+                        from sidequest.magic.state import BarKey
+
+                        for resource_name, delta in beat.resource_deltas.items():
+                            bar_key = BarKey(
+                                scope="character",
+                                owner_id=actor.name,
+                                bar_id=resource_name,
+                            )
+                            try:
+                                bar = magic_state.get_bar(bar_key)
+                            except KeyError:
+                                # Character has no ledger entry for this
+                                # resource — skip silently (non-magic actor
+                                # or bar not declared for this world).
+                                continue
+                            new_value = max(0.0, bar.value + delta)
+                            magic_state.set_bar_value(bar_key, new_value)
+                            _watcher_publish(
+                                "state_transition",
+                                {
+                                    "field": "magic_state",
+                                    "op": "resource_delta",
+                                    "resource": resource_name,
+                                    "delta": delta,
+                                    "owner": actor.name,
+                                    "new_value": new_value,
+                                    "beat_id": beat.id,
+                                },
+                                component="magic",
+                            )
+
                 # ─── B/X morale per-beat hook (Task 9, architect feedback
                 # 2026-05-08) ───────────────────────────────────────────
                 # Fire morale-trigger detection on every beat that
