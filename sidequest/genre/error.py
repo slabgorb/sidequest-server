@@ -104,6 +104,19 @@ class SchemaValidationError(GenreError):
         super().__init__(f"schema validation error: {message}")
 
 
+class PackError(GenreError):
+    """Cross-reference validation failed within a genre pack.
+
+    Raised when beat class_filter or class encounter_beat_choices reference
+    IDs that do not exist in the loaded pack (classes.yaml / confrontation
+    beat pool).
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
 class ValidationErrors(Exception):
     """A collection of validation errors, supporting error aggregation.
 

@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from sidequest.genre.cache import GenreCache
-from sidequest.genre.error import GenreLoadError, GenreNotFoundError
+from sidequest.genre.error import GenreLoadError, GenreNotFoundError, PackError
 from sidequest.genre.genre_code import GenreCode
 from sidequest.genre.models.archetype_axes import BaseArchetypes
 from sidequest.genre.models.archetype_constraints import ArchetypeConstraints
@@ -509,6 +509,50 @@ def _validate_opening_bank_coverage(
 
 
 # ---------------------------------------------------------------------------
+# Class / beat cross-reference validators (Task 5: C&C B/X class beats)
+# ---------------------------------------------------------------------------
+
+
+def _validate_class_filter_refs(rules: RulesConfig, classes: list[ClassDef]) -> None:
+    """Loud-fail if any beat.class_filter references a class not in classes.yaml,
+    if any class.encounter_beat_choices references a missing beat ID,
+    or if a class in allowed_classes has empty encounter_beat_choices.
+
+    Only runs when classes list is non-empty (packs without classes.yaml are
+    not subject to these rules).
+    """
+    if not classes:
+        return
+
+    declared_classes = {c.display_name for c in classes}
+    all_beat_ids: set[str] = set()
+    for cd in rules.confrontations:
+        for beat in cd.beats:
+            all_beat_ids.add(beat.id)
+            if beat.class_filter is not None:
+                missing = [c for c in beat.class_filter if c not in declared_classes]
+                if missing:
+                    raise PackError(
+                        f"beat '{beat.id}' class_filter references class(es) "
+                        f"{missing!r} not declared in classes.yaml"
+                    )
+
+    for c in classes:
+        if c.display_name in rules.allowed_classes:
+            if not c.encounter_beat_choices:
+                raise PackError(
+                    f"class '{c.display_name}' encounter_beat_choices is empty "
+                    f"(class is in allowed_classes and must declare beat choices)"
+                )
+            missing_beats = [b for b in c.encounter_beat_choices if b not in all_beat_ids]
+            if missing_beats:
+                raise PackError(
+                    f"class '{c.display_name}' encounter_beat_choices "
+                    f"references beat id(s) {missing_beats!r} not in pool"
+                )
+
+
+# ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
 
@@ -898,6 +942,10 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     archetype_constraints: ArchetypeConstraints | None = _load_yaml_optional(
         path / "archetype_constraints.yaml", ArchetypeConstraints
     )
+
+    # Cross-reference validation: class_filter / encounter_beat_choices consistency.
+    # Only enforced when a classes.yaml is present (classes_list is non-empty).
+    _validate_class_filter_refs(rules, classes_list)
 
     # Base archetypes and npc_traits live at content root (parent of genre_packs/)
     content_root: Path | None = None
