@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from sidequest.game.beat_filter import beats_available_for
 from sidequest.game.beat_kinds import (
     apply_beat,
 )
@@ -8,7 +9,8 @@ from sidequest.game.encounter import (
     EncounterMetric,
     StructuredEncounter,
 )
-from sidequest.genre.models.rules import BeatDef
+from sidequest.genre.models.character import ClassDef
+from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 from sidequest.protocol.dice import RollOutcome
 
 
@@ -381,3 +383,93 @@ def test_space_opera_negotiation_beats_carry_opponent_overrides():
         assert beat.deltas["fail"]["opponent"] >= 1
         assert "crit_fail" in beat.deltas
         assert beat.deltas["crit_fail"]["opponent"] >= beat.deltas["fail"]["opponent"]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# beats_available_for — class-based beat filtering (Task 7, C&C B/X port)
+#
+# Two tests: a Fighter must not see cast_spell; a Mage at full slots must.
+# Tests call beats_available_for directly (same style as apply_beat tests
+# above — inline factories, no fixtures).
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _combat_confrontation_with_class_beats() -> ConfrontationDef:
+    """Build a minimal ConfrontationDef with two beats:
+    - 'attack': universal (class_filter=None)
+    - 'cast_spell': Mage-only (class_filter=['Mage'])
+    """
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "player_metric": {"name": "momentum", "threshold": 10},
+            "opponent_metric": {"name": "momentum", "threshold": 10},
+            "beats": [
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                },
+                {
+                    "id": "cast_spell",
+                    "label": "Cast Spell",
+                    "kind": "strike",
+                    "base": 3,
+                    "stat_check": "INT",
+                    "class_filter": ["Mage"],
+                },
+            ],
+        }
+    )
+
+
+def _fighter_class_def() -> ClassDef:
+    return ClassDef.model_validate(
+        {
+            "id": "fighter",
+            "display_name": "Fighter",
+            "rpg_role": "tank",
+            "jungian_default": "hero",
+            "prime_requisite": "STR",
+            "minimum_score": 9,
+            "kit_table": "fighter_kit",
+            "encounter_beat_choices": ["attack"],
+        }
+    )
+
+
+def _mage_class_def() -> ClassDef:
+    return ClassDef.model_validate(
+        {
+            "id": "mage",
+            "display_name": "Mage",
+            "rpg_role": "caster",
+            "jungian_default": "sage",
+            "prime_requisite": "INT",
+            "minimum_score": 9,
+            "kit_table": "mage_kit",
+            "encounter_beat_choices": ["attack", "cast_spell"],
+            "magic_access": "arcane",
+        }
+    )
+
+
+def test_player_beat_selection_filtered_by_class():
+    """Fighter must not see Mage-only cast_spell beat in available actions."""
+    cdef = _combat_confrontation_with_class_beats()
+    fighter = _fighter_class_def()
+    available = beats_available_for(cdef, fighter, spell_slots_remaining=0.0)
+    assert "cast_spell" not in [b.id for b in available]
+    assert "attack" in [b.id for b in available]
+
+
+def test_player_beat_selection_includes_class_signature():
+    """Mage at full slots sees cast_spell in available actions."""
+    cdef = _combat_confrontation_with_class_beats()
+    mage = _mage_class_def()
+    available = beats_available_for(cdef, mage, spell_slots_remaining=1.0)
+    assert "cast_spell" in [b.id for b in available]
