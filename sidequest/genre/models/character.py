@@ -70,6 +70,24 @@ class MechanicalEffects(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
 
 
+class ClassMagicConfig(BaseModel):
+    """Per-class magic configuration. Loaded from classes.yaml.
+
+    Carried into MagicState at chargen by magic_init to instantiate
+    per-actor known/prepared/slot bookkeeping.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    tradition: str  # "arcane" | "divine"
+    # str-keyed dicts because YAML 1.1 + JSON serialization both flatten
+    # int keys to strings; pydantic handles round-trip.
+    slots_by_class_level: dict[str, dict[str, int]]
+    starting_known_spells: int
+    save_dc_stat: str  # "INT" | "WIS" | "CHA"
+    turn_undead: bool = False  # cleric-only class-special
+
+
 class ClassDef(BaseModel):
     """A character class definition loaded from classes.yaml.
 
@@ -90,6 +108,7 @@ class ClassDef(BaseModel):
     flavor: str = ""
     encounter_beat_choices: list[str] = Field(default_factory=list)
     magic_access: str | None = None
+    magic_config: ClassMagicConfig | None = None
 
 
 class CharCreationChoice(BaseModel):
