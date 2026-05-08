@@ -734,6 +734,8 @@ class NarratorAgent(BaseAgent):
                         confrontation_type=cdef.confrontation_type,
                         available_beat_ids=",".join(available_ids),
                         spell_slots_remaining=spell_slots,
+                        pool_size=len(cdef.beats),
+                        filtered_size=len(available),
                     ):
                         pass
                 if pc_blocks:

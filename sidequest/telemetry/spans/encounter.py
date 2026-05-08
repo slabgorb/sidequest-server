@@ -195,8 +195,23 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
         SPAN_ENCOUNTER_EDGE_DEBIT,
         SPAN_ENCOUNTER_COMPOSURE_BREAK,
-        SPAN_CONFRONTATION_BEAT_FILTER,
     }
+)
+# C&C B/X Task 12 — promote beat_filter from flat-only to routed so the GM
+# panel's state_transition tab shows filter decisions (lie-detector discipline).
+SPAN_ROUTES[SPAN_CONFRONTATION_BEAT_FILTER] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "beat_filter",
+        "actor": (span.attributes or {}).get("actor", ""),
+        "character_class": (span.attributes or {}).get("class_name", ""),
+        "confrontation_type": (span.attributes or {}).get("confrontation_type", ""),
+        "pool_size": (span.attributes or {}).get("pool_size", 0),
+        "filtered_size": (span.attributes or {}).get("filtered_size", 0),
+        "beat_ids": (span.attributes or {}).get("available_beat_ids", ""),
+        "spell_slots_remaining": (span.attributes or {}).get("spell_slots_remaining", 0.0),
+    },
 )
 
 
