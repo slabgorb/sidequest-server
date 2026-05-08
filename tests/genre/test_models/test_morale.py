@@ -30,15 +30,15 @@ def test_morale_def_defaults_score_8_chase():
 
 
 def test_morale_def_rejects_score_below_2():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="morale score"):
         MoraleDef(score=1, triggers=[MoraleTrigger.first_blood])
 
 
 def test_morale_def_rejects_score_above_12():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="morale score"):
         MoraleDef(score=13, triggers=[MoraleTrigger.first_blood])
 
 
 def test_morale_def_rejects_empty_triggers():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="morale.triggers"):
         MoraleDef(score=8, triggers=[])
