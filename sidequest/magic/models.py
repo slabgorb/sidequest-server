@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from sidequest.magic.spell_catalog import SpellCatalog
+
 # --- World-knowledge axis ----------------------------------------------------
 
 # Awareness ordering: lower index = less institutionally aware that magic is real.
@@ -300,3 +302,4 @@ class WorldMagicConfig(BaseModel):
     can_build_caster: bool = False
     can_build_item_user: bool = True
     narrator_register: str
+    spell_catalogs: dict[str, SpellCatalog] | None = None

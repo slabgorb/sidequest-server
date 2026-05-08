@@ -40,6 +40,7 @@ from sidequest.magic.models import (
     WorldKnowledge,
     WorldMagicConfig,
 )
+from sidequest.magic.spell_catalog import SpellCatalog, load_spell_catalog
 
 
 class LoaderError(GenreError):
@@ -120,7 +121,7 @@ def load_world_magic(*, genre_yaml: Path, world_yaml: Path) -> WorldMagicConfig:
     intensity = world_data.get("intensity", genre_data.get("intensity", {}).get("default", 0.5))
 
     try:
-        return WorldMagicConfig(
+        config = WorldMagicConfig(
             world_slug=world_data["world"],
             genre_slug=world_data.get("genre", genre_data.get("genre")),
             allowed_sources=list(genre_data.get("allowed_sources", [])),
@@ -141,3 +142,16 @@ def load_world_magic(*, genre_yaml: Path, world_yaml: Path) -> WorldMagicConfig:
         raise LoaderError(f"WorldMagicConfig schema error: {e}") from e
     except KeyError as e:
         raise LoaderError(f"required field missing: {e}") from e
+
+    # Spell catalog discovery — sibling to genre magic.yaml. None when
+    # the dir is absent (distinguishes "no spells" from "empty spells dir").
+    spells_dir = genre_yaml.parent / "spells"
+    if spells_dir.is_dir():
+        catalogs: dict[str, SpellCatalog] = {}
+        for catalog_path in sorted(spells_dir.glob("*.yaml")):
+            cat = load_spell_catalog(catalog_path)
+            key = catalog_path.stem  # e.g. "arcane_l1"
+            catalogs[key] = cat
+        config = config.model_copy(update={"spell_catalogs": catalogs})
+
+    return config
