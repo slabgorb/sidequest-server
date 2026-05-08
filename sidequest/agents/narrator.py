@@ -743,6 +743,8 @@ class NarratorAgent(BaseAgent):
                         "Player-character beat menus — each PC's "
                         "beat_selection.beat_id MUST come from THEIR class's "
                         "list (cross-class picks are illegal):\n" + "\n".join(pc_blocks) + "\n"
+                        "The player's available actions for this turn are listed above. "
+                        "Do not narrate actions outside that list as performed.\n"
                     )
             tag_lines = (
                 "\n".join(

@@ -419,3 +419,19 @@ def test_narrator_prompt_omits_pc_block_when_no_classes_supplied(build_registry)
     # But there is no per-PC class-distinct block.
     assert "Player-character beat menus" not in rendered
     assert "Fighter (Sam) can:" not in rendered
+
+
+def test_narrator_per_turn_prompt_includes_action_invariant(build_registry):
+    """The per-turn prompt zone tells the narrator not to perform unlisted actions."""
+    from sidequest.agents.narrator import NarratorAgent
+
+    enc, cdef, pc_classes_by_name = _two_pc_class_filter_setup()
+    registry = build_registry()
+    NarratorAgent().build_encounter_context(
+        registry,
+        encounter=enc,
+        cdef=cdef,
+        pc_classes_by_name=pc_classes_by_name,
+    )
+    rendered = registry.render_for("narrator")
+    assert "Do not narrate actions outside that list as performed" in rendered
