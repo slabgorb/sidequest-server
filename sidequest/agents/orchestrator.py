@@ -721,12 +721,8 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         # raised at the apply seam (where ``MagicWorkingParseError`` is
         # defined) rather than during extraction.
         "magic_working": patch.get("magic_working"),
-        "companions_added": [
-            d for d in patch.get("companions_added", []) if isinstance(d, dict)
-        ],
-        "companions_dismissed": [
-            str(n) for n in patch.get("companions_dismissed", []) if n
-        ],
+        "companions_added": [d for d in patch.get("companions_added", []) if isinstance(d, dict)],
+        "companions_dismissed": [str(n) for n in patch.get("companions_dismissed", []) if n],
     }
 
 
@@ -993,9 +989,7 @@ class Orchestrator:
                     env_vars={},
                 )
                 retry_elapsed_ms = int((time.monotonic() - retry_start) * 1000)
-                logger.info(
-                    "narrator.transient_retry_succeeded duration_ms=%d", retry_elapsed_ms
-                )
+                logger.info("narrator.transient_retry_succeeded duration_ms=%d", retry_elapsed_ms)
                 return (response, original_tier, original_prompt_text, retry_elapsed_ms)
             except Exception as retry_exc:  # noqa: BLE001 - escalate to rotation
                 logger.warning(
@@ -1787,15 +1781,9 @@ class Orchestrator:
             )
             from sidequest.telemetry.spans.course import emit_course_compute
 
-            in_scope_n = sum(
-                1 for r in course_rows.values() if r.source.value == "in_scope"
-            )
-            recent_n = sum(
-                1 for r in course_rows.values() if r.source.value == "recent_mention"
-            )
-            quest_n = sum(
-                1 for r in course_rows.values() if r.source.value == "quest_objective"
-            )
+            in_scope_n = sum(1 for r in course_rows.values() if r.source.value == "in_scope")
+            recent_n = sum(1 for r in course_rows.values() if r.source.value == "recent_mention")
+            quest_n = sum(1 for r in course_rows.values() if r.source.value == "quest_objective")
             emit_course_compute(
                 course_count=len(course_rows),
                 in_scope=in_scope_n,

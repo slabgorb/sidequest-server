@@ -1007,9 +1007,7 @@ class ConnectHandler:
                 # predates the player_seats wiring (older saves and the
                 # slug-resume tests seed character_locations directly without
                 # populating player_seats).
-                resume_char_name = (
-                    snapshot.player_seats.get(player_id, "") or display_name
-                )
+                resume_char_name = snapshot.player_seats.get(player_id, "") or display_name
                 resume_loc = (
                     snapshot.party_location(perspective=resume_char_name)
                     if resume_char_name

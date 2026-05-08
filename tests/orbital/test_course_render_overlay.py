@@ -16,6 +16,7 @@ Suite covers:
   root_party) return the input SVG unchanged
 - Reticle position aligns with the destination body's rendered glyph center
 """
+
 from __future__ import annotations
 
 import re
@@ -235,22 +236,17 @@ def test_render_course_overlay_drops_when_party_is_root_body() -> None:
 
 def test_resolve_drop_reason_none_course() -> None:
     assert (
-        _resolve_drop_reason(course=None, orbits=_orbits(), party_body_id="near")
-        == "none_course"
+        _resolve_drop_reason(course=None, orbits=_orbits(), party_body_id="near") == "none_course"
     )
 
 
 def test_resolve_drop_reason_unknown_party() -> None:
     assert (
-        _resolve_drop_reason(
-            course=_course(), orbits=_orbits(), party_body_id="not_a_body"
-        )
+        _resolve_drop_reason(course=_course(), orbits=_orbits(), party_body_id="not_a_body")
         == "unknown_party"
     )
     assert (
-        _resolve_drop_reason(
-            course=_course(), orbits=_orbits(), party_body_id=None
-        )
+        _resolve_drop_reason(course=_course(), orbits=_orbits(), party_body_id=None)
         == "unknown_party"
     )
 
@@ -280,12 +276,7 @@ def test_resolve_drop_reason_unknown_destination() -> None:
 
 
 def test_resolve_drop_reason_returns_none_on_valid_input() -> None:
-    assert (
-        _resolve_drop_reason(
-            course=_course(), orbits=_orbits(), party_body_id="near"
-        )
-        is None
-    )
+    assert _resolve_drop_reason(course=_course(), orbits=_orbits(), party_body_id="near") is None
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +308,7 @@ def test_reticle_lands_on_destination_body() -> None:
     assert expected is not None
     ex, ey = expected
 
-    m = re.search(
-        r'id="course-target"\s+transform="translate\(([-\d.]+),([-\d.]+)\)"', out
-    )
+    m = re.search(r'id="course-target"\s+transform="translate\(([-\d.]+),([-\d.]+)\)"', out)
     assert m, f"course-target group not found in overlay output:\n{out[:600]}"
     rx, ry = float(m.group(1)), float(m.group(2))
 

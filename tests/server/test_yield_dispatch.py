@@ -203,6 +203,7 @@ def test_yield_emits_watcher_events_with_resolved_last(
         bind_event_store(None)
         store.close()
 
+
 def test_yield_solo_pc_with_companion_resolves_encounter_immediately(
     snapshot_with_pack, character_named_sam, tmp_path
 ):
@@ -221,31 +222,31 @@ def test_yield_solo_pc_with_companion_resolves_encounter_immediately(
     """
     snap, _ = snapshot_with_pack
     snap.encounter = StructuredEncounter(
-        encounter_type='combat',
-        player_metric=EncounterMetric(name='momentum', current=2, starting=0, threshold=10),
-        opponent_metric=EncounterMetric(name='momentum', current=4, starting=0, threshold=10),
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=2, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=4, starting=0, threshold=10),
         actors=[
-            EncounterActor(name='Sam', role='combatant', side='player'),
-            EncounterActor(name='Donut', role='ally', side='player'),
-            EncounterActor(name='Sumpdrake', role='combatant', side='opponent'),
+            EncounterActor(name="Sam", role="combatant", side="player"),
+            EncounterActor(name="Donut", role="ally", side="player"),
+            EncounterActor(name="Sumpdrake", role="combatant", side="opponent"),
         ],
     )
     snap.characters.append(character_named_sam)
     # Solo seat — only Sam is a seated PC. Donut is an NPC companion.
-    snap.player_seats = {'p1': 'Sam'}
+    snap.player_seats = {"p1": "Sam"}
 
     room = _room_for(snap, tmp_path)
-    handle_yield(snap, room=room, player_id='p1', player_name='Sam')
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
 
     assert snap.encounter.resolved is True, (
-        'solo yield with NPC companion on the player side must resolve — '
-        'companions follow their patron'
+        "solo yield with NPC companion on the player side must resolve — "
+        "companions follow their patron"
     )
-    assert snap.encounter.outcome == 'yielded'
+    assert snap.encounter.outcome == "yielded"
     # Only the explicit yielder ends up withdrawn; the companion is not
     # marked withdrawn (the gate excludes them, but doesn't auto-yield
     # them either). The manifest carries actors that ARE withdrawn.
-    assert snap.pending_resolution_signal.yielded_actors == ('Sam',)
+    assert snap.pending_resolution_signal.yielded_actors == ("Sam",)
 
 
 def test_yield_partial_blocked_by_other_seated_pc(
@@ -258,26 +259,25 @@ def test_yield_partial_blocked_by_other_seated_pc(
     """
     snap, _ = snapshot_with_pack
     snap.encounter = StructuredEncounter(
-        encounter_type='combat',
-        player_metric=EncounterMetric(name='momentum', current=0, starting=0, threshold=10),
-        opponent_metric=EncounterMetric(name='momentum', current=0, starting=0, threshold=10),
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
         actors=[
-            EncounterActor(name='Sam', role='combatant', side='player'),
-            EncounterActor(name='Riley', role='combatant', side='player'),
-            EncounterActor(name='Promo', role='combatant', side='opponent'),
+            EncounterActor(name="Sam", role="combatant", side="player"),
+            EncounterActor(name="Riley", role="combatant", side="player"),
+            EncounterActor(name="Promo", role="combatant", side="opponent"),
         ],
     )
     snap.characters.append(character_named_sam)
-    snap.player_seats = {'p1': 'Sam', 'p2': 'Riley'}
+    snap.player_seats = {"p1": "Sam", "p2": "Riley"}
 
     room = _room_for(snap, tmp_path)
-    handle_yield(snap, room=room, player_id='p1', player_name='Sam')
+    handle_yield(snap, room=room, player_id="p1", player_name="Sam")
 
     assert snap.encounter.resolved is False, (
-        'encounter must persist while another seated PC has not yielded'
+        "encounter must persist while another seated PC has not yielded"
     )
-    sam_actor = snap.encounter.find_actor('Sam')
+    sam_actor = snap.encounter.find_actor("Sam")
     assert sam_actor is not None and sam_actor.withdrawn is True
-    riley_actor = snap.encounter.find_actor('Riley')
+    riley_actor = snap.encounter.find_actor("Riley")
     assert riley_actor is not None and riley_actor.withdrawn is False
-

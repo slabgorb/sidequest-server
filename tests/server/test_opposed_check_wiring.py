@@ -563,7 +563,8 @@ def test_narration_apply_opposed_check_awaiting_dice_drops_beats_on_narrator_pat
 
 
 def test_companion_brace_targeting_player_counteracts_opponent_attack(
-    monkeypatch, captured_spans,
+    monkeypatch,
+    captured_spans,
 ):
     """Sumpdrake-fight regression: when a recruited NPC companion's
     beat is ``defend target=<player>`` and the opponent's beat is
@@ -639,9 +640,7 @@ def test_companion_brace_targeting_player_counteracts_opponent_attack(
 
     # Lie-detector span carries Sam's final tier (Fail — he rolled poorly).
     finished = captured_spans.get_finished_spans()
-    opposed_spans = [
-        s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED
-    ]
+    opposed_spans = [s for s in finished if s.name == SPAN_ENCOUNTER_OPPOSED_ROLL_RESOLVED]
     assert len(opposed_spans) == 1
     attrs = dict(opposed_spans[0].attributes or {})
     assert attrs["tier"] == RollOutcome.Fail.value

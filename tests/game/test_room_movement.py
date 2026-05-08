@@ -67,8 +67,7 @@ class TestInitRoomGraphLocation:
 
     def test_preserves_existing_discovered_rooms(self) -> None:
         snap = GameSnapshot(
-            characters=[make_test_character()],
-            discovered_rooms=["cache", "sealed_chamber"]
+            characters=[make_test_character()], discovered_rooms=["cache", "sealed_chamber"]
         )
         rooms = [_room("threshold", "entrance")]
         init_room_graph_location(snap, rooms)

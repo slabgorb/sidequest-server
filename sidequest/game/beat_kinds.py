@@ -545,9 +545,7 @@ def apply_beat(
         if self_edge_delta:
             actor_core = edge_resolver(actor.name)
             if actor_core is None:
-                raise ValueError(
-                    f"edge_resolver returned no CreatureCore for actor {actor.name!r}"
-                )
+                raise ValueError(f"edge_resolver returned no CreatureCore for actor {actor.name!r}")
             before = actor_core.edge.current
             actor_core.apply_edge_delta(-self_edge_delta)
             after = actor_core.edge.current

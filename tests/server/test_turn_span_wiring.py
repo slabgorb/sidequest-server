@@ -103,9 +103,7 @@ async def test_dispatch_opens_turn_span(otel_capture, session_fixture) -> None:
     # the "every span must descend from turn" rule.
     orphan_whitelist = {"snapshot.party_location_query"}
     orphans = [
-        s
-        for s in spans
-        if s.name != "turn" and s.parent is None and s.name not in orphan_whitelist
+        s for s in spans if s.name != "turn" and s.parent is None and s.name not in orphan_whitelist
     ]
     assert not orphans, f"Non-turn spans without any parent (orphaned): {[r.name for r in orphans]}"
 

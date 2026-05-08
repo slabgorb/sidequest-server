@@ -82,9 +82,7 @@ def test_legacy_load_creates_backup_once(tmp_path: Path) -> None:
     assert bak_path.is_file()
     # The .bak captures the pre-migration on-disk state.
     with sqlite3.connect(bak_path) as conn:
-        row = conn.execute(
-            "SELECT snapshot_json FROM game_state WHERE id = 1"
-        ).fetchone()
+        row = conn.execute("SELECT snapshot_json FROM game_state WHERE id = 1").fetchone()
     assert row is not None
     backed_up = json.loads(row[0])
     assert backed_up == legacy

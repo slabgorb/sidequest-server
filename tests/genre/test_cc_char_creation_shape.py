@@ -38,10 +38,12 @@ def test_cc_class_scene_choices_carry_role_and_jungian():
     pack = loader.load("caverns_and_claudes")
     class_scene = next(s for s in pack.char_creation if s.id == "the_calling")
     for choice in class_scene.choices:
-        assert choice.mechanical_effects.rpg_role_hint is not None, \
+        assert choice.mechanical_effects.rpg_role_hint is not None, (
             f"choice {choice.label} missing rpg_role_hint"
-        assert choice.mechanical_effects.jungian_hint is not None, \
+        )
+        assert choice.mechanical_effects.jungian_hint is not None, (
             f"choice {choice.label} missing jungian_hint"
+        )
 
 
 def test_cc_kit_scene_uses_class_kit_generation():

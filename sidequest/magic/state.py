@@ -150,9 +150,7 @@ class MagicState(BaseModel):
     # it. ``exclude=True`` keeps it out of ``MagicState.model_dump`` so a
     # save mid-handler cannot persist a partial queue. Re-initializes
     # empty on load.
-    pending_status_promotions: list[dict[str, str]] = Field(
-        default_factory=list, exclude=True
-    )
+    pending_status_promotions: list[dict[str, str]] = Field(default_factory=list, exclude=True)
 
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:
@@ -174,9 +172,7 @@ class MagicState(BaseModel):
                 )
         return state
 
-    def add_character(
-        self, character_id: str, *, character_class: str | None = None
-    ) -> None:
+    def add_character(self, character_id: str, *, character_class: str | None = None) -> None:
         """Instantiate per-character bars for ``character_id``.
 
         ``character_class`` (display-cased: "Mage", "Cleric", ...) is

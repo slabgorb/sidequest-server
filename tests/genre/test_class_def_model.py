@@ -55,12 +55,14 @@ def test_equipment_tables_class_tables_default_empty():
 
 
 def test_equipment_tables_class_tables_loads_nested():
-    et = EquipmentTables.model_validate({
-        "tables": {"weapon": ["dagger"]},
-        "class_tables": {
-            "fighter_kit": {"weapon": ["sword_long"]},
-            "mage_kit": {"weapon": ["staff_wood"]},
-        },
-    })
+    et = EquipmentTables.model_validate(
+        {
+            "tables": {"weapon": ["dagger"]},
+            "class_tables": {
+                "fighter_kit": {"weapon": ["sword_long"]},
+                "mage_kit": {"weapon": ["staff_wood"]},
+            },
+        }
+    )
     assert "fighter_kit" in et.class_tables
     assert et.class_tables["mage_kit"]["weapon"] == ["staff_wood"]

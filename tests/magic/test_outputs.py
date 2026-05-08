@@ -49,9 +49,20 @@ def captured_watcher_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, A
     """
     captured: list[dict[str, Any]] = []
 
-    def _capture(event_type: str, fields: dict, *, component: str = "sidequest-server", severity: str = "info") -> None:
+    def _capture(
+        event_type: str,
+        fields: dict,
+        *,
+        component: str = "sidequest-server",
+        severity: str = "info",
+    ) -> None:
         captured.append(
-            {"event_type": event_type, "fields": fields, "component": component, "severity": severity}
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
         )
 
     # The handlers may publish via narration_apply._watcher_publish (existing

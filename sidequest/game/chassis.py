@@ -180,9 +180,7 @@ def apply_chassis_lineage_intimate(
 # ---------------------------------------------------------------------------
 
 
-def rebind_chassis_bonds_to_character(
-    snapshot: GameSnapshot, character_id: str
-) -> None:
+def rebind_chassis_bonds_to_character(snapshot: GameSnapshot, character_id: str) -> None:
     """Replace the ``"player_character"`` placeholder seed with the real
     chargen character id across every chassis in ``snapshot.chassis_registry``.
 

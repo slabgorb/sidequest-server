@@ -84,8 +84,7 @@ def _validate_room_slug(room_slug: str) -> str:
         )
     if "\x00" in room_slug:
         raise ValueError(
-            "room_slug contains a null byte — refusing to construct "
-            "a filename with embedded NUL"
+            "room_slug contains a null byte — refusing to construct a filename with embedded NUL"
         )
     return room_slug
 
@@ -117,8 +116,7 @@ def write_session_diagnostic(
     for field in _REQUIRED_SNAPSHOT_FIELDS:
         if field not in snapshot:
             raise ValueError(
-                f"snapshot missing required field {field!r}; "
-                f"got keys={sorted(snapshot.keys())}"
+                f"snapshot missing required field {field!r}; got keys={sorted(snapshot.keys())}"
             )
 
     target_dir = _diagnostics_dir()
@@ -146,13 +144,9 @@ def write_session_diagnostic(
             "path": str(path),
             "room_slug": safe_slug,
             "heartbeat_count": len(body.get("heartbeat_history") or []),
-            "unresponsive_window_count": len(
-                body.get("unresponsive_windows") or []
-            ),
+            "unresponsive_window_count": len(body.get("unresponsive_windows") or []),
             "enqueue_count": int(body.get("enqueue_count") or 0),
-            "backpressure_warn_count": int(
-                body.get("backpressure_warn_count") or 0
-            ),
+            "backpressure_warn_count": int(body.get("backpressure_warn_count") or 0),
         },
         component="render",
     )

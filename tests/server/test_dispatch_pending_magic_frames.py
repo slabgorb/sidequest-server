@@ -136,8 +136,7 @@ def test_dispatcher_emits_confrontation_frame_per_auto_fire(
     )
     kind, payload = handler._emit_event.call_args.args
     assert kind == "CONFRONTATION", (
-        f"dispatcher must emit kind=CONFRONTATION for auto-fire entries; "
-        f"got kind={kind!r}"
+        f"dispatcher must emit kind=CONFRONTATION for auto-fire entries; got kind={kind!r}"
     )
     assert isinstance(payload, ConfrontationPayload), (
         f"payload must be a typed ConfrontationPayload, not {type(payload).__name__}"
@@ -183,8 +182,7 @@ def test_dispatcher_emits_outcome_frame_when_pending(
         f"outcome payload; got kind={kind!r}"
     )
     assert isinstance(payload, ConfrontationOutcomePayload), (
-        f"payload must be a typed ConfrontationOutcomePayload, "
-        f"not {type(payload).__name__}"
+        f"payload must be a typed ConfrontationOutcomePayload, not {type(payload).__name__}"
     )
     assert payload.confrontation_id == "the_bleeding_through"
     assert payload.label == "The Bleeding-Through"
@@ -224,8 +222,7 @@ def test_dispatcher_emits_both_frames_in_one_call(
     # CONFRONTATION fires first (auto-fire begins the encounter), then
     # CONFRONTATION_OUTCOME (resolution is a separate event).
     assert kinds == ["CONFRONTATION", "CONFRONTATION_OUTCOME"], (
-        f"dispatch order matters — auto-fire first, outcome second; "
-        f"got {kinds}"
+        f"dispatch order matters — auto-fire first, outcome second; got {kinds}"
     )
 
     # Both queues cleared.
@@ -349,7 +346,8 @@ def test_dispatcher_clears_queue_per_entry_to_survive_payload_error(
         "the failing entry; got 0 emit_event calls"
     )
     valid_calls = [
-        c for c in handler._emit_event.call_args_list
+        c
+        for c in handler._emit_event.call_args_list
         if c.args[0] == "CONFRONTATION" and c.args[1].type == "the_bleeding_through"
     ]
     assert len(valid_calls) >= 1

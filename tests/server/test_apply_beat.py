@@ -357,9 +357,7 @@ def test_space_opera_negotiation_beats_carry_opponent_overrides():
 
     from sidequest.genre.loader import load_genre_pack
 
-    content = Path(
-        "/Users/slabgorb/Projects/oq-2/sidequest-content/genre_packs/space_opera"
-    )
+    content = Path("/Users/slabgorb/Projects/oq-2/sidequest-content/genre_packs/space_opera")
     if not content.is_dir():
         pytest.skip("sidequest-content not on disk in this checkout")
 

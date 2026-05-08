@@ -280,18 +280,14 @@ def _habitat_glyph(
     """Habitat: brass diamond. With hazard=True, adds dashed-stroke signal
     (AC #11 — non-color cue for color-blind players)."""
     pts = [(x, y - 5), (x + 5, y), (x, y + 5), (x - 5, y)]
-    poly = svgwrite.shapes.Polygon(
-        points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1
-    )
+    poly = svgwrite.shapes.Polygon(points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1)
     if hazard:
         poly["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
         poly["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
     return poly
 
 
-def _gate_glyph(
-    x: float, y: float, *, fill: str, hazard: bool = False
-) -> svgwrite.shapes.Polygon:
+def _gate_glyph(x: float, y: float, *, fill: str, hazard: bool = False) -> svgwrite.shapes.Polygon:
     """Gate: hexagon outline."""
     r = 6
     pts = [
@@ -302,9 +298,7 @@ def _gate_glyph(
         (x - r * 0.866, y + r * 0.5),
         (x - r * 0.866, y - r * 0.5),
     ]
-    poly = svgwrite.shapes.Polygon(
-        points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1
-    )
+    poly = svgwrite.shapes.Polygon(points=pts, fill=fill, stroke=palette.BRASS, stroke_width=1)
     if hazard:
         poly["stroke-dasharray"] = palette.HAZARD_GLYPH_DASH
         poly["stroke-width"] = palette.HAZARD_GLYPH_STROKE_WIDTH
@@ -319,9 +313,7 @@ def _wreck_glyph(x: float, y: float) -> svgwrite.container.Group:
         theta = math.radians(90 + i * 72)
         x2 = x + r * math.cos(theta)
         y2 = y - r * math.sin(theta)
-        g.add(
-            svgwrite.shapes.Line(start=(x, y), end=(x2, y2), stroke=palette.DIM, stroke_width=1)
-        )
+        g.add(svgwrite.shapes.Line(start=(x, y), end=(x2, y2), stroke=palette.DIM, stroke_width=1))
     return g
 
 
@@ -527,9 +519,7 @@ def _resolve_curve_along(
         # Start at top of the ellipse (cx, cy - ry); sweep clockwise (sweep-flag=1)
         # in two arcs to wrap the full ring. SVG: M ax,ay A rx,ry rot lf sf bx,by
         path_d = (
-            f"M {cx} {cy - ry} "
-            f"A {rx} {ry} 0 0 1 {cx} {cy + ry} "
-            f"A {rx} {ry} 0 0 1 {cx} {cy - ry}"
+            f"M {cx} {cy - ry} A {rx} {ry} 0 0 1 {cx} {cy + ry} A {rx} {ry} 0 0 1 {cx} {cy - ry}"
         )
         circumference = _ellipse_perimeter_px(rx, ry)
         return path_id, path_d, body_id, circumference
@@ -537,16 +527,18 @@ def _resolve_curve_along(
     if value.startswith("body:"):
         body_id = value[len("body:") :]
         if body_id not in orbits.bodies:
-            raise ValueError(
-                f"curve_along={value!r}: body:{body_id!r} references nonexistent body"
-            )
+            raise ValueError(f"curve_along={value!r}: body:{body_id!r} references nonexistent body")
         body = orbits.bodies[body_id]
         if body.type != BodyType.ARC_BELT:
             raise ValueError(
                 f"curve_along={value!r}: body:{body_id!r} is type={body.type.value!r}, "
                 f"only arc_belt bodies have a meaningful body arc"
             )
-        if body.semi_major_au is None or body.epoch_phase_deg is None or body.arc_extent_deg is None:
+        if (
+            body.semi_major_au is None
+            or body.epoch_phase_deg is None
+            or body.arc_extent_deg is None
+        ):
             raise ValueError(
                 f"curve_along={value!r}: body:{body_id!r} missing arc geometry "
                 f"(semi_major_au / epoch_phase_deg / arc_extent_deg)"
@@ -559,9 +551,7 @@ def _resolve_curve_along(
         # Clockwise sweep along the arc (sweep-flag=1).
         large_arc = 1 if abs(body.arc_extent_deg) > 180 else 0
         path_id = f"curve_body_{body_id}"
-        path_d = (
-            f"M {x1} {y1} A {radius_px} {radius_px} 0 {large_arc} 1 {x2} {y2}"
-        )
+        path_d = f"M {x1} {y1} A {radius_px} {radius_px} 0 {large_arc} 1 {x2} {y2}"
         # Arc length = r * θ (radians). For arc_belt the path is a single arc.
         circumference = abs(math.radians(body.arc_extent_deg)) * radius_px
         return path_id, path_d, body_id, circumference
@@ -981,9 +971,7 @@ def _assign_collision_tiers(
     return max_tier
 
 
-def _arc_to_neighbor_for_placement(
-    p: _BodyPlacement, peers: list[_BodyPlacement]
-) -> float:
+def _arc_to_neighbor_for_placement(p: _BodyPlacement, peers: list[_BodyPlacement]) -> float:
     """Smallest arc length (px) at p's body radius to a peer's bearing.
 
     Used by ADR-094 strategy selection to know whether a radial label fits
@@ -1029,9 +1017,7 @@ def _resolve_anchor(
 # ---------------------------------------------------------------------------
 
 
-def _emit_textpath_label(
-    d: LabelDecision, viewport: _Viewport
-) -> svgwrite.base.BaseElement:
+def _emit_textpath_label(d: LabelDecision, viewport: _Viewport) -> svgwrite.base.BaseElement:
     """Emit a textPath label per ADR-094 textpath strategy.
 
     Mirrors `_engraved_label_textpath`'s register-driven styling but
@@ -1180,11 +1166,7 @@ def _emit_callout_block(
     leader_origin = (block.anchor_x, block.anchor_y)
     bend_x = edge_x
     bend_y = leader_origin[1]
-    path_d = (
-        f"M {leader_origin[0]} {leader_origin[1]} "
-        f"L {bend_x} {bend_y} "
-        f"L {edge_x} {edge_y}"
-    )
+    path_d = f"M {leader_origin[0]} {leader_origin[1]} L {bend_x} {bend_y} L {edge_x} {edge_y}"
     leader = svgwrite.path.Path(d=path_d, fill="none", stroke=leader_color)
     leader["stroke-width"] = palette.LEADER_STROKE_WIDTH_PX
     leader["class"] = "callout-leader"
@@ -1369,9 +1351,7 @@ def _body_glyph(body: BodyDef, *, x: float, y: float, body_id: str) -> svgwrite.
     return _attach_body_id(elem, body_id)
 
 
-def _moon_dot_glyph(
-    body: BodyDef, x: float, y: float, body_id: str
-) -> svgwrite.base.BaseElement:
+def _moon_dot_glyph(body: BodyDef, x: float, y: float, body_id: str) -> svgwrite.base.BaseElement:
     """A small moon dot for system-scope moon-band rendering. Hazard moons
     get red color + dashed-outline non-color signal (AC #11)."""
     fill = palette.RED if body.hazard else palette.BRASS
@@ -1645,13 +1625,9 @@ def _render_engraved_layer(
         p.body_id
         for p in placements
         if p.body_id in drillable_ids
-        and any(
-            b.parent == p.body_id and b.show_at_system_scope for b in orbits.bodies.values()
-        )
+        and any(b.parent == p.body_id and b.show_at_system_scope for b in orbits.bodies.values())
         and sum(
-            1
-            for b in orbits.bodies.values()
-            if b.parent == p.body_id and b.show_at_system_scope
+            1 for b in orbits.bodies.values() if b.parent == p.body_id and b.show_at_system_scope
         )
         <= palette.MOON_BAND_MAX
     }
@@ -1670,9 +1646,7 @@ def _render_engraved_layer(
             ellipse["stroke-dasharray"] = palette.ORBIT_DASH_CHALK
         g.add(_attach_body_id(ellipse, p.body_id))
 
-        renders_moon_band = (
-            scope_is_root and p.body_id in parents_with_visible_moons
-        )
+        renders_moon_band = scope_is_root and p.body_id in parents_with_visible_moons
 
         if p.body_id in drillable_ids and not renders_moon_band:
             # Legacy +N drillable cluster — used only when moons aren't being
@@ -1773,9 +1747,7 @@ def _render_engraved_layer(
     semi_major_by_id: dict[str, float] = {}
     placement_by_body: dict[str, _BodyPlacement] = {}
 
-    def _build_input(
-        p: _BodyPlacement, *, is_moon_band_child: bool
-    ) -> _StrategyInput | None:
+    def _build_input(p: _BodyPlacement, *, is_moon_band_child: bool) -> _StrategyInput | None:
         if p.body.label is None or not p.body.label.strip():
             return None
         # Suppression: arc_belt + textpath annotation pairs already handled
@@ -1792,15 +1764,12 @@ def _render_engraved_layer(
         cl = callout_label_by_body.get(p.body_id)
         tp = textpath_by_body.get(p.body_id)
         arc_to_neighbor = (
-            None if is_moon_band_child
-            else _arc_to_neighbor_for_placement(p, radial_candidates)
+            None if is_moon_band_child else _arc_to_neighbor_for_placement(p, radial_candidates)
         )
         return _StrategyInput(
             body_id=p.body_id,
             parent_id=body.parent,
-            parent_type=(
-                orbits.bodies[body.parent].type.value if body.parent else None
-            ),
+            parent_type=(orbits.bodies[body.parent].type.value if body.parent else None),
             text=text,
             register=register,
             text_width_px=text_w,
@@ -1951,9 +1920,7 @@ def _render_annotation(
             # drift's textPath renders in prose register, not Orbitron).
             register = _effective_label_register(orbits.bodies[body_id])
             return (
-                _engraved_label_textpath(
-                    annot.text, path_id=path_id, register=register
-                ),
+                _engraved_label_textpath(annot.text, path_id=path_id, register=register),
                 (path_id, path_d),
             )
         # Fallback: fixed top-center placement (backward compat).

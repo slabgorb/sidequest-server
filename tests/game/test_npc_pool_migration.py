@@ -280,9 +280,14 @@ def test_canonical_already_migrated_unchanged() -> None:
     canonical = {
         "npcs": [],
         "npc_pool": [
-            {"name": "X", "drawn_from": "world_authored",
-             "role": None, "pronouns": None, "appearance": None,
-             "archetype_id": None}
+            {
+                "name": "X",
+                "drawn_from": "world_authored",
+                "role": None,
+                "pronouns": None,
+                "appearance": None,
+                "archetype_id": None,
+            }
         ],
     }
     before = copy.deepcopy(canonical)
@@ -310,9 +315,14 @@ def test_existing_pool_entries_preserved_when_legacy_registry_also_present() -> 
     legacy = {
         "npcs": [],
         "npc_pool": [
-            {"name": "World-X", "drawn_from": "world_authored",
-             "role": None, "pronouns": None, "appearance": None,
-             "archetype_id": None}
+            {
+                "name": "World-X",
+                "drawn_from": "world_authored",
+                "role": None,
+                "pronouns": None,
+                "appearance": None,
+                "archetype_id": None,
+            }
         ],
         "npc_registry": [_registry_entry("Marya")],
     }

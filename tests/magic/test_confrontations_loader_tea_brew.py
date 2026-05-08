@@ -100,9 +100,7 @@ def test_tea_brew_refused_outputs_lineage_only() -> None:
     confs = _load_or_skip()
     tea_brew = _by_id(confs, "the_tea_brew")
     outputs = tea_brew.outcomes["refused"].mandatory_outputs
-    assert outputs == ["chassis_lineage_intimate"], (
-        f"refused must be lineage-only; got {outputs!r}"
-    )
+    assert outputs == ["chassis_lineage_intimate"], f"refused must be lineage-only; got {outputs!r}"
 
 
 def test_tea_brew_auto_fire_true() -> None:

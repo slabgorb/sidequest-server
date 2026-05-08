@@ -98,10 +98,7 @@ def test_class_scene_filters_to_qualifying_only():
     # INT = 2+3+3 = 8; WIS = 2+3+3 = 8; CHA = 2+3+3 = 8.
     scripted_dice = [5, 4, 5] + [2, 3, 3] * 5
     rng = _ScriptedRandom(scripted_dice)
-    builder = (
-        CharacterBuilder(scenes, rules, rng=rng)
-        .with_classes(_make_classes())
-    )
+    builder = CharacterBuilder(scenes, rules, rng=rng).with_classes(_make_classes())
 
     # Advance past the roll scene.
     assert builder.current_scene().id == "the_roll"
@@ -113,9 +110,7 @@ def test_class_scene_filters_to_qualifying_only():
 
     # Only Fighter should be visible — STR=14 qualifies, INT=8 and WIS=8 don't.
     choice_labels = [str(c.label) for c in msg.payload.choices]
-    assert choice_labels == ["Fighter"], (
-        f"Expected only ['Fighter'], got {choice_labels}"
-    )
+    assert choice_labels == ["Fighter"], f"Expected only ['Fighter'], got {choice_labels}"
 
 
 def test_class_scene_shows_all_when_all_qualify():
@@ -135,10 +130,7 @@ def test_class_scene_shows_all_when_all_qualify():
 
     # All dice = 3 → all stats = 9 (exactly at minimum_score for all classes).
     rng = _ScriptedRandom([3] * 18)
-    builder = (
-        CharacterBuilder(scenes, rules, rng=rng)
-        .with_classes(_make_classes())
-    )
+    builder = CharacterBuilder(scenes, rules, rng=rng).with_classes(_make_classes())
 
     builder.apply_auto_advance()
     msg = builder.to_scene_message("player1")
@@ -197,10 +189,7 @@ def test_no_filter_on_mixed_scenes():
         stat_generation="standard_array",
         ability_score_names=["STR", "DEX", "CON", "INT", "WIS", "CHA"],
     )
-    builder = (
-        CharacterBuilder([scene], rules, rng=random.Random(42))
-        .with_classes(_make_classes())
-    )
+    builder = CharacterBuilder([scene], rules, rng=random.Random(42)).with_classes(_make_classes())
     # Manually set rolled_stats to ensure filter WOULD fire if not for mixed scene.
     builder._rolled_stats = [("STR", 3), ("DEX", 3), ("CON", 3), ("INT", 3), ("WIS", 3), ("CHA", 3)]
 

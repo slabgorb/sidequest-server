@@ -1742,10 +1742,7 @@ class WebSocketSessionHandler:
             # we leave the entry absent — the next narration apply will
             # populate it.
             party_consensus = sd.snapshot.party_location()
-            if (
-                party_consensus
-                and character.core.name not in sd.snapshot.character_locations
-            ):
+            if party_consensus and character.core.name not in sd.snapshot.character_locations:
                 sd.snapshot.character_locations[character.core.name] = party_consensus
             span.add_event(
                 "session.player_seat_bound",
@@ -2925,9 +2922,7 @@ class WebSocketSessionHandler:
                                 location=_resolve_location_display(
                                     sd.genre_pack,
                                     sd.world_slug,
-                                    snapshot.party_location(
-                                        perspective=_acting_for_render_trigger
-                                    ),
+                                    snapshot.party_location(perspective=_acting_for_render_trigger),
                                 ),
                             ),
                             player_id=sd.player_id,

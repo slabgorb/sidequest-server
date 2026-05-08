@@ -55,8 +55,6 @@ SPAN_ROUTES[SPAN_RENDER_POLICY_SKIP] = SpanRoute(
         # try to emit a visual_scene" from "narrator tried but no
         # policy match" — both legitimate banter cases the GM panel
         # may want to differentiate.
-        "narrator_emitted_subject": (span.attributes or {}).get(
-            "narrator_emitted_subject", False
-        ),
+        "narrator_emitted_subject": (span.attributes or {}).get("narrator_emitted_subject", False),
     },
 )

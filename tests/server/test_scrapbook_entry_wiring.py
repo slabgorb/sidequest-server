@@ -280,9 +280,7 @@ def _banter_narration_result():
     )
 
     return NarrationTurnResult(
-        narration=(
-            "Thorn stretches their shoulders against the cold and says little."
-        ),
+        narration=("Thorn stretches their shoulders against the cold and says little."),
         visual_scene=VisualScene.from_dict(
             {
                 "subject": "fighter rolls shoulders by lantern light",
@@ -355,9 +353,7 @@ async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
     store = SqliteStore(db)
     store.initialize()
     try:
-        rows = store._conn.execute(
-            "SELECT render_status FROM scrapbook_entries"
-        ).fetchall()
+        rows = store._conn.execute("SELECT render_status FROM scrapbook_entries").fetchall()
         assert rows, (
             "banter turn must still persist a scrapbook_entries row — the "
             "story remembers the turn even when no image was rendered"
@@ -374,16 +370,14 @@ async def test_scrapbook_render_status_skipped_policy_for_banter_turn(
         events = EventLog(store).read_since(since_seq=0)
         scrapbook_events = [e for e in events if e.kind == "SCRAPBOOK_ENTRY"]
         assert scrapbook_events, (
-            "SCRAPBOOK_ENTRY missing from event journal — gallery "
-            "won't see this turn on reconnect"
+            "SCRAPBOOK_ENTRY missing from event journal — gallery won't see this turn on reconnect"
         )
         # The journal stores payloads as JSON strings — assert the field
         # is present and carries the correct value in whatever shape the
         # journal stores. ``payload_json`` is the canonical column.
         payload_repr = scrapbook_events[0].payload_json
         assert "render_status" in payload_repr, (
-            f"render_status missing from journaled SCRAPBOOK_ENTRY "
-            f"payload: {payload_repr[:200]}"
+            f"render_status missing from journaled SCRAPBOOK_ENTRY payload: {payload_repr[:200]}"
         )
         assert "skipped_policy" in payload_repr
     finally:
@@ -428,9 +422,7 @@ async def test_scrapbook_render_status_rendered_for_eligible_turn(
     from sidequest.agents.orchestrator import NpcMention
 
     eligible = _fake_narration_result()
-    eligible.npcs_present = [
-        NpcMention(name="Caretaker Eldrin", is_new=True, side="neutral")
-    ]
+    eligible.npcs_present = [NpcMention(name="Caretaker Eldrin", is_new=True, side="neutral")]
 
     with patch(
         "sidequest.agents.orchestrator.Orchestrator.run_narration_turn",
@@ -453,9 +445,7 @@ async def test_scrapbook_render_status_rendered_for_eligible_turn(
     store = SqliteStore(db)
     store.initialize()
     try:
-        rows = store._conn.execute(
-            "SELECT render_status FROM scrapbook_entries"
-        ).fetchall()
+        rows = store._conn.execute("SELECT render_status FROM scrapbook_entries").fetchall()
         assert rows, "expected a row in scrapbook_entries"
         # Acceptable terminal values for an eligible turn whose async
         # image has not yet arrived: "rendered" (policy dispatched) or

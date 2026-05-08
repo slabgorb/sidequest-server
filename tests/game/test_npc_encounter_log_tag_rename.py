@@ -28,9 +28,7 @@ def test_narrative_entry_uses_npc_encounter_log_tag() -> None:
     entry = NarrativeEntry(
         author="narrator",
         content="Orin nods.",
-        encounter_tags=[
-            NpcEncounterLogTag(npc_id="captain_orin", encounter_type="dialogue")
-        ],
+        encounter_tags=[NpcEncounterLogTag(npc_id="captain_orin", encounter_type="dialogue")],
     )
     assert isinstance(entry.encounter_tags[0], NpcEncounterLogTag)
 

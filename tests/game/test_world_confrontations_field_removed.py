@@ -24,11 +24,13 @@ def test_legacy_save_with_world_confrontations_loads_clean() -> None:
     """Saved JSON containing the legacy field must round-trip via the
     migration without breaking validation. The model_config extra=ignore
     + the migration strip combine to make this safe."""
-    legacy_json = json.dumps({
-        "genre_slug": "g",
-        "world_slug": "w",
-        "world_confrontations": [],  # legacy field
-    })
+    legacy_json = json.dumps(
+        {
+            "genre_slug": "g",
+            "world_slug": "w",
+            "world_confrontations": [],  # legacy field
+        }
+    )
     from sidequest.game.migrations import migrate_legacy_snapshot
 
     migrated = migrate_legacy_snapshot(json.loads(legacy_json))

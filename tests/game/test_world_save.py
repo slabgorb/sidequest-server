@@ -74,8 +74,11 @@ def test_wall_entry_wounded_boss_is_orthogonal_to_outcome():
     for outcome in ("victory", "defeat", "retreat"):
         for wounded in (True, False):
             e = WallEntry(
-                delve_number=1, sin="pride", dungeon="grimvault",
-                party_hireling_ids=[], outcome=outcome,
+                delve_number=1,
+                sin="pride",
+                dungeon="grimvault",
+                party_hireling_ids=[],
+                outcome=outcome,
                 wounded_boss=wounded,
                 timestamp=datetime.now(tz=UTC),
             )
@@ -170,12 +173,17 @@ def test_init_session_preserves_world_save_across_reinit():
     ws = WorldSave(
         roster=[Hireling(id="vol_1", name="Volga", archetype="prig", stress=15)],
         currency=42,
-        wall=[WallEntry(
-            delve_number=1, sin="pride", dungeon="grimvault",
-            party_hireling_ids=["vol_1"], outcome="victory",
-            wounded_boss=True,
-            timestamp=datetime.now(tz=UTC),
-        )],
+        wall=[
+            WallEntry(
+                delve_number=1,
+                sin="pride",
+                dungeon="grimvault",
+                party_hireling_ids=["vol_1"],
+                outcome="victory",
+                wounded_boss=True,
+                timestamp=datetime.now(tz=UTC),
+            )
+        ],
         dungeon_wounds={"grimvault": True},
         latest_delve_sin="pride",
         delve_count=1,

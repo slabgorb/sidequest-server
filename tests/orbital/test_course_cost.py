@@ -9,6 +9,7 @@ Numbers are tunable via travel.travel_speed_factor. These tests
 lock in the *order of magnitude* and the relative ordering, not
 exact decimals — the calibration is allowed to drift within ±15%.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -24,9 +25,7 @@ from sidequest.orbital.models import (
 )
 
 
-def _orbits(
-    *bodies: tuple[str, BodyDef], travel_speed_factor: float = 1.0
-) -> OrbitsConfig:
+def _orbits(*bodies: tuple[str, BodyDef], travel_speed_factor: float = 1.0) -> OrbitsConfig:
     return OrbitsConfig(
         version="0.1.0",
         clock=ClockConfig(),
@@ -94,4 +93,4 @@ def test_far_to_gate_is_expensive() -> None:
     gate = _body(type_=BodyType.GATE, semi_major_au=4.0, epoch_phase_deg=180.0)
     eta, dv = compute_eta_and_dv(far, gate, _orbits(("far", far), ("gate", gate)))
     assert 60.0 < eta < 130.0  # ≈ 90h ± headroom
-    assert 2.0 < dv < 4.0       # ≈ 2.8 ± headroom
+    assert 2.0 < dv < 4.0  # ≈ 2.8 ± headroom

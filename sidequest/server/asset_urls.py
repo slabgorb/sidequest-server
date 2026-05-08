@@ -18,6 +18,7 @@ Per CLAUDE.md no-silent-fallbacks rule: a relative_path with an unknown
 top-level prefix raises in local mode. CDN mode tolerates anything (the
 404 is the lie detector).
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,7 @@ _LOCAL_PREFIX_MAP: Final[dict[str, str]] = {
 def _local_path_for(relative: str) -> str:
     for prefix, replacement in _LOCAL_PREFIX_MAP.items():
         if relative.startswith(prefix):
-            return replacement + relative[len(prefix):]
+            return replacement + relative[len(prefix) :]
     raise ValueError(
         f"unknown asset prefix in local mode: {relative!r} "
         f"(expected one of {sorted(_LOCAL_PREFIX_MAP)})"
@@ -61,8 +62,6 @@ def resolve_asset_url(relative_path: str) -> str:
         url = f"{base.rstrip('/')}/{rel}"
         mode = "cdn"
 
-    with asset_url_resolved_span(
-        relative_path=rel, base_url=base or "", mode=mode
-    ):
+    with asset_url_resolved_span(relative_path=rel, base_url=base or "", mode=mode):
         pass
     return url

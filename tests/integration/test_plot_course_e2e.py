@@ -6,6 +6,7 @@ Stops short of touching the WebSocket transport — that's covered
 by tests/integration/test_orbital_e2e.py for the chart path; we
 just exercise the apply_narration_result + intent fetch chain.
 """
+
 from __future__ import annotations
 
 from sidequest.game.session import GameSnapshot
@@ -89,9 +90,7 @@ def test_narrator_payload_to_chart_overlay() -> None:
     # Re-render the chart; verify overlay present.
     response = handle_orbital_intent(
         session,
-        OrbitalIntent.model_validate(
-            {"kind": "view_map", "scope": "system_root"}
-        ),
+        OrbitalIntent.model_validate({"kind": "view_map", "scope": "system_root"}),
     )
     assert "<path" in response.svg
     assert "stroke-dasharray" in response.svg

@@ -114,21 +114,27 @@ class TestEmitChartLabelDistribution:
     def test_sum_invariant_holds(self, otel_capture):
         # AC-O2: bodies_textpath + bodies_radial + bodies_callout + bodies_unlabeled == bodies_total
         emit_chart_label_distribution(
-            bodies_total=10, bodies_textpath=2, bodies_radial=3,
-            bodies_callout=4, bodies_unlabeled=1,
-            gutter_inset_fallbacks=0, cross_group_crossings=0,
+            bodies_total=10,
+            bodies_textpath=2,
+            bodies_radial=3,
+            bodies_callout=4,
+            bodies_unlabeled=1,
+            gutter_inset_fallbacks=0,
+            cross_group_crossings=0,
         )
         a = _last_attrs(otel_capture, SPAN_CHART_LABEL_DISTRIBUTION)
         assert (
-            a["bodies_textpath"] + a["bodies_radial"]
-            + a["bodies_callout"] + a["bodies_unlabeled"]
+            a["bodies_textpath"] + a["bodies_radial"] + a["bodies_callout"] + a["bodies_unlabeled"]
             == a["bodies_total"]
         )
 
     def test_with_warnings(self, otel_capture):
         emit_chart_label_distribution(
-            bodies_total=20, bodies_textpath=2, bodies_radial=8,
-            bodies_callout=10, bodies_unlabeled=0,
+            bodies_total=20,
+            bodies_textpath=2,
+            bodies_radial=8,
+            bodies_callout=10,
+            bodies_unlabeled=0,
             gutter_inset_fallbacks=2,
             cross_group_crossings=1,
         )

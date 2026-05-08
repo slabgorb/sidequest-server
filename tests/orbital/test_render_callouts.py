@@ -29,13 +29,12 @@ def world_callout_strategy():
 
 
 class TestMoonBandForcedCalloutSurface:
-    def test_moon_band_children_with_labels_surface_to_strategy(
-        self, world_callout_strategy
-    ):
+    def test_moon_band_children_with_labels_surface_to_strategy(self, world_callout_strategy):
         # Render at system scope. Companion-children (habitat_x1..x3) and
         # the habitat-moons (moon_z1, moon_z2) all have labels and should
         # appear in chart.label_distribution.bodies_callout.
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
@@ -44,7 +43,7 @@ class TestMoonBandForcedCalloutSurface:
             party_at=None,
         )
         # Spot-check the callout block is present in SVG output.
-        assert "<g class=\"moon-band\"" in svg or "class=\"moon-band\"" in svg
+        assert '<g class="moon-band"' in svg or 'class="moon-band"' in svg
         assert "HABITAT X-1" in svg
         assert "MOON Z-1" in svg
 
@@ -54,33 +53,39 @@ class TestStrategyDispatch:
 
     def test_outer_world_renders_textpath(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "<textPath" in svg
         assert "OUTER WORLD" in svg
 
     def test_spread_alpha_renders_callout_via_explicit(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "SPREAD ALPHA" in svg
         assert "habitat · 3.0 AU" in svg
 
     def test_companion_children_grouped_block(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "COMPANION DWARF SYSTEM" in svg
         assert "HABITAT X-1" in svg
@@ -89,22 +94,26 @@ class TestStrategyDispatch:
 
     def test_lonely_companion_singleton_callout(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "HABITAT Y-1" in svg
         assert "LONELY COMPANION SYSTEM" not in svg
 
     def test_habitat_with_moons_grouping(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "MOON Z-1" in svg
         assert "MOON Z-2" in svg
@@ -114,27 +123,33 @@ class TestStrategyDispatch:
 class TestEmitTextpathLabel:
     def test_textpath_uses_resolved_path_id(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         # _resolve_curve_along's path id convention is `curve_orbit_<body_id>`
         # for orbit references (per render._resolve_curve_along).
-        assert 'href="#curve_orbit_outer_world"' in svg or \
-               'xlink:href="#curve_orbit_outer_world"' in svg
+        assert (
+            'href="#curve_orbit_outer_world"' in svg
+            or 'xlink:href="#curve_orbit_outer_world"' in svg
+        )
         assert "— OUTER WORLD —" in svg
 
 
 class TestEmitRadialLabel:
     def test_radial_label_at_anchor_position(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "SPREAD BETA" in svg
         # Radial-label class is present and the element carries x= / y= coords
@@ -142,7 +157,8 @@ class TestEmitRadialLabel:
         assert "radial-label" in svg
         # The text element rendering "SPREAD BETA" should have positional attrs.
         import re
-        m = re.search(r'<text [^>]*radial-label[^>]*>SPREAD BETA</text>', svg)
+
+        m = re.search(r"<text [^>]*radial-label[^>]*>SPREAD BETA</text>", svg)
         assert m is not None, "expected SPREAD BETA inside a radial-label <text>"
         assert ' x="' in m.group(0) and ' y="' in m.group(0)
 
@@ -150,11 +166,13 @@ class TestEmitRadialLabel:
 class TestEmitCalloutBlock:
     def test_singleton_callout_basic_emission(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         # SPREAD ALPHA singleton callout (explicit_callout_label).
         assert "SPREAD ALPHA" in svg
@@ -164,11 +182,13 @@ class TestEmitCalloutBlock:
 
     def test_grouped_block_has_title_and_border(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert "COMPANION DWARF SYSTEM" in svg
         assert "callout-group-border" in svg
@@ -180,11 +200,13 @@ class TestEmitCalloutBlock:
 
     def test_leader_color_matches_engraved_register(self, world_callout_strategy):
         from sidequest.orbital.render import Scope, render_chart
+
         svg = render_chart(
             orbits=world_callout_strategy.orbits,
             chart=world_callout_strategy.chart,
             scope=Scope.system_root(),
-            t_hours=0.0, party_at=None,
+            t_hours=0.0,
+            party_at=None,
         )
         assert palette.BRASS in svg
         assert (
@@ -211,7 +233,7 @@ class TestSnapshotRegression:
             "  uv run python -c 'from pathlib import Path; "
             "from sidequest.orbital.loader import load_orbital_content; "
             "from sidequest.orbital.render import Scope, render_chart; "
-            "w = load_orbital_content(Path(\"tests/orbital/fixtures/world_callout_strategy\")); "
-            "Path(\"tests/orbital/snapshots/world_callout_strategy_t0.svg\").write_text("
+            'w = load_orbital_content(Path("tests/orbital/fixtures/world_callout_strategy")); '
+            'Path("tests/orbital/snapshots/world_callout_strategy_t0.svg").write_text('
             "render_chart(orbits=w.orbits, chart=w.chart, scope=Scope.system_root(), t_hours=0.0, party_at=None))'"
         )

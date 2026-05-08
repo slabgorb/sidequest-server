@@ -36,9 +36,7 @@ def make_minimal_coyote_star_magic_state():
             allowed_sources=[],
             active_plugins=[],
             intensity=0.0,
-            world_knowledge=WorldKnowledge(
-                primary="classified", local_register="folkloric"
-            ),
+            world_knowledge=WorldKnowledge(primary="classified", local_register="folkloric"),
             visibility={"primary": "feared", "local_register": "dismissed"},
             hard_limits=[],
             cost_types=[],

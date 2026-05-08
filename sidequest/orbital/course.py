@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 # Calibration constants — tuned so Far Landing → Tethys Watch ≈ 12h,
 # Far Landing → The Gate ≈ 90h. See cost-model section of the design.
 TRAVEL_HOURS_PER_AU = 30.0
-DELTA_V_BASE = 0.7           # km/s per AU of total chord distance
+DELTA_V_BASE = 0.7  # km/s per AU of total chord distance
 DELTA_V_RADIAL_FACTOR = 0.4  # extra Δv per AU of radial (semi-major-axis) diff
 
 
@@ -207,7 +207,7 @@ def format_courses_block(rows: dict[str, CourseRow]) -> str:
     lines.append("")
     lines.append(
         "If the player asks for a destination not in this list, say so "
-        'in-fiction ("Kestrel can\'t lock that, captain — say a body within '
+        "in-fiction (\"Kestrel can't lock that, captain — say a body within "
         'scanner range or a known objective"). Do NOT invent course_ids.'
     )
     lines.append("")
@@ -219,9 +219,7 @@ def format_courses_block(rows: dict[str, CourseRow]) -> str:
         elif row.source == CourseSource.RECENT_MENTION:
             suffix = " — recently mentioned"
         # IN_SCOPE: no suffix.
-        lines.append(
-            f"- {body_id} (ETA {row.eta_hours:.0f}h, Δv {row.delta_v:.1f}){suffix}"
-        )
+        lines.append(f"- {body_id} (ETA {row.eta_hours:.0f}h, Δv {row.delta_v:.1f}){suffix}")
     lines.append("</courses>")
     return "\n".join(lines)
 
@@ -245,9 +243,7 @@ def _bodies_in_scope(orbits: OrbitsConfig, scope: Scope) -> set[str]:
             return set()
         primary_id = primaries[0]
         # System root: include the primary and all of its direct children.
-        return {primary_id} | {
-            bid for bid, b in orbits.bodies.items() if b.parent == primary_id
-        }
+        return {primary_id} | {bid for bid, b in orbits.bodies.items() if b.parent == primary_id}
     # Drilled-in: center body plus its direct children.
     return {scope.center_body_id} | {
         bid for bid, b in orbits.bodies.items() if b.parent == scope.center_body_id

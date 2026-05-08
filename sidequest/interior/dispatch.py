@@ -87,8 +87,7 @@ def get_chassis_interior(instance_id: str, request: Request):
         raise HTTPException(
             status_code=404,
             detail=(
-                f"chassis instance {instance_id!r} not found in any "
-                f"genre pack on the search path"
+                f"chassis instance {instance_id!r} not found in any genre pack on the search path"
             ),
         )
 
@@ -97,6 +96,7 @@ def get_chassis_interior(instance_id: str, request: Request):
     # renderer only touches those three attributes.
     class _InstView:
         pass
+
     inst_view = _InstView()
     inst_view.id = chassis_inst.id
     inst_view.name = chassis_inst.name

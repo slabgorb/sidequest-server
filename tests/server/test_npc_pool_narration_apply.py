@@ -46,9 +46,7 @@ def _mention(
     pronouns: str = "",
     appearance: str = "",
 ) -> NpcMention:
-    return NpcMention(
-        name=name, role=role, pronouns=pronouns, appearance=appearance
-    )
+    return NpcMention(name=name, role=role, pronouns=pronouns, appearance=appearance)
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +288,7 @@ def test_npc_lookup_shadows_pool_member_with_same_name() -> None:
     snapshot = GameSnapshot(
         location="Inn",
         npcs=[Npc(core=_core("Boris"), pool_origin="Boris")],
-        npc_pool=[
-            NpcPoolMember(name="Boris", drawn_from="legacy_registry")
-        ],
+        npc_pool=[NpcPoolMember(name="Boris", drawn_from="legacy_registry")],
     )
     _apply_npc_mentions(
         snapshot=snapshot,

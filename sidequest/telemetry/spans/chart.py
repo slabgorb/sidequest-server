@@ -24,11 +24,13 @@ SPAN_CHART_RENDER = "chart.render"
 SPAN_CHART_LABEL_STRATEGY = "chart.label_strategy"
 SPAN_CHART_LABEL_DISTRIBUTION = "chart.label_distribution"
 
-FLAT_ONLY_SPANS.update({
-    SPAN_CHART_RENDER,
-    SPAN_CHART_LABEL_STRATEGY,
-    SPAN_CHART_LABEL_DISTRIBUTION,
-})
+FLAT_ONLY_SPANS.update(
+    {
+        SPAN_CHART_RENDER,
+        SPAN_CHART_LABEL_STRATEGY,
+        SPAN_CHART_LABEL_DISTRIBUTION,
+    }
+)
 
 
 def emit_chart_render(
@@ -99,7 +101,9 @@ def emit_chart_label_strategy(
             "tier": -1 if tier is None else int(tier),
             "arc_available_px": -1.0 if arc_available_px is None else float(arc_available_px),
             "text_width_px": float(text_width_px),
-            "path_circumference_px": -1.0 if path_circumference_px is None else float(path_circumference_px),
+            "path_circumference_px": -1.0
+            if path_circumference_px is None
+            else float(path_circumference_px),
         },
     ):
         pass

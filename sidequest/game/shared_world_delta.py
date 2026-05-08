@@ -120,8 +120,7 @@ def build_shared_world_delta(
             }
             # player_id → per-character location ("" when absent).
             pid_to_loc: dict[str, str] = {
-                pid: snapshot.character_locations.get(name, "")
-                for pid, name in pid_to_char.items()
+                pid: snapshot.character_locations.get(name, "") for pid, name in pid_to_char.items()
             }
             for pid in seated_pids:
                 here = pid_to_loc.get(pid, "")

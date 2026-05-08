@@ -166,9 +166,7 @@ def init_magic_state_for_session(
         # degradation to the GM panel so it is not invisible. A
         # follow-up story should consider promoting this to a hard
         # failure once chargen rollback is wired.
-        confrontations_yaml = (
-            genre_pack_source_dir / "worlds" / world_slug / "confrontations.yaml"
-        )
+        confrontations_yaml = genre_pack_source_dir / "worlds" / world_slug / "confrontations.yaml"
         if confrontations_yaml.exists():
             try:
                 state.confrontations = load_confrontations(confrontations_yaml)

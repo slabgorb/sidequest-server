@@ -44,8 +44,12 @@ def _drive_chargen(pack, *, target_class: str, rng_seed: int = 42):
     )
     # Force qualifying stats for all four classes.
     builder._rolled_stats = [
-        ("STR", 18), ("DEX", 18), ("CON", 18),
-        ("INT", 18), ("WIS", 18), ("CHA", 18),
+        ("STR", 18),
+        ("DEX", 18),
+        ("CON", 18),
+        ("INT", 18),
+        ("WIS", 18),
+        ("CHA", 18),
     ]
 
     # 0. the_roll — auto-advance.
@@ -53,8 +57,7 @@ def _drive_chargen(pack, *, target_class: str, rng_seed: int = 42):
     # 1. the_calling — pick by class_hint.
     scene = builder.current_scene()
     idx = next(
-        (i for i, c in enumerate(scene.choices)
-         if c.mechanical_effects.class_hint == target_class),
+        (i for i, c in enumerate(scene.choices) if c.mechanical_effects.class_hint == target_class),
         None,
     )
     assert idx is not None, (
@@ -135,8 +138,12 @@ def test_e2e_low_str_filters_out_fighter(cc_pack):
     )
     # STR=8, all others=18 → Fighter shouldn't qualify; Mage/Cleric/Thief should.
     builder._rolled_stats = [
-        ("STR", 8), ("DEX", 18), ("CON", 18),
-        ("INT", 18), ("WIS", 18), ("CHA", 18),
+        ("STR", 8),
+        ("DEX", 18),
+        ("CON", 18),
+        ("INT", 18),
+        ("WIS", 18),
+        ("CHA", 18),
     ]
     builder.apply_auto_advance()
     scene = builder.current_scene()

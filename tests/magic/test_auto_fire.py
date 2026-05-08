@@ -134,9 +134,7 @@ def test_invalid_trigger_expression_raises() -> None:
     """
     bad = _make_def(id="bad", auto_fire=True, auto_fire_trigger="not parseable")
     with pytest.raises(ValueError, match="parse"):
-        evaluate_auto_fire_triggers(
-            confs=[bad], character_id="x", bar_values={"sanity": 0.10}
-        )
+        evaluate_auto_fire_triggers(confs=[bad], character_id="x", bar_values={"sanity": 0.10})
 
 
 def test_returns_pairs_of_definition_and_character(

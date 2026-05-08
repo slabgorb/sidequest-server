@@ -103,6 +103,7 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
     # After the_roll auto-advance, at least one class must qualify.
     final_stats = dict(builder.rolled_stats())
     from sidequest.game.builder import qualifying_classes
+
     qual = qualifying_classes(final_stats, pack.classes)  # type: ignore[attr-defined]
     assert len(qual) >= 1, f"reroll loop should guarantee ≥1 class, got 0 with stats {final_stats}"
 

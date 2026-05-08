@@ -59,9 +59,7 @@ def _ok_envelope(text: str, session_id: str) -> bytes:
     ).encode()
 
 
-_HAPPY_NARRATION = (
-    "**The Throat**\n\nYou step deeper into the cavern.\n\n```game_patch\n{}\n```"
-)
+_HAPPY_NARRATION = "**The Throat**\n\nYou step deeper into the cavern.\n\n```game_patch\n{}\n```"
 
 
 def _make_scripted_spawn(
@@ -87,8 +85,7 @@ def _make_scripted_spawn(
         i = state["i"]
         state["i"] = i + 1
         assert i < len(script), (
-            f"spawn_fn called more times than scripted: call #{i + 1}, "
-            f"only {len(script)} entries"
+            f"spawn_fn called more times than scripted: call #{i + 1}, only {len(script)} entries"
         )
         step = script[i]
         if step == "ok":
@@ -166,8 +163,7 @@ async def test_context_overflow_emits_session_rotated_span(otel_capture):
     spans = otel_capture.get_finished_spans()
     rotated = [s for s in spans if s.name == "narrator.session_rotated"]
     assert len(rotated) == 1, (
-        f"Expected exactly one narrator.session_rotated span; "
-        f"saw {[s.name for s in spans]}"
+        f"Expected exactly one narrator.session_rotated span; saw {[s.name for s in spans]}"
     )
     attrs = rotated[0].attributes or {}
     assert attrs.get("reason") == "cli_error"
@@ -243,11 +239,7 @@ async def test_session_not_found_emits_session_rotated_with_reason(otel_capture)
 
     await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
-    rotated = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "narrator.session_rotated"
-    ]
+    rotated = [s for s in otel_capture.get_finished_spans() if s.name == "narrator.session_rotated"]
     assert len(rotated) == 1
     attrs = rotated[0].attributes or {}
     assert attrs.get("reason") == "session_expired"
@@ -296,11 +288,7 @@ async def test_transient_error_retry_does_not_emit_rotation_span(otel_capture):
 
     await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
-    rotated = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "narrator.session_rotated"
-    ]
+    rotated = [s for s in otel_capture.get_finished_spans() if s.name == "narrator.session_rotated"]
     assert rotated == [], (
         "A transient retry must NOT trigger session rotation; only persistent "
         "failures escalate to rotation per ADR-066 §8."
@@ -320,9 +308,7 @@ async def test_transient_error_after_retry_falls_back_to_rotation():
     orch = _orchestrator_with(spawn)
     orch.set_narrator_session_id("session-warm")
 
-    result = await orch.run_narration_turn(
-        "look around", TurnContext(character_name="Kael")
-    )
+    result = await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
     assert not result.is_degraded
     assert orch._narrator_session_id == "session-rebuild-001"
@@ -391,8 +377,7 @@ async def test_rebuild_prompt_build_failure_falls_back_to_unrecoverable(otel_cap
 
     span_names = [s.name for s in otel_capture.get_finished_spans()]
     assert "narrator.unrecoverable" in span_names, (
-        f"Build-side failure during recovery must emit "
-        f"narrator.unrecoverable; saw {span_names}"
+        f"Build-side failure during recovery must emit narrator.unrecoverable; saw {span_names}"
     )
 
 
@@ -526,9 +511,7 @@ async def test_recovery_handles_empty_recap_gracefully():
     orch = _orchestrator_with(spawn, recap=None)
     orch.set_narrator_session_id("expired")
 
-    result = await orch.run_narration_turn(
-        "look around", TurnContext(character_name="Kael")
-    )
+    result = await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
     assert not result.is_degraded
 
@@ -559,9 +542,7 @@ async def test_recovery_works_with_no_recap_provider_at_all():
     orch = Orchestrator(client=client)  # type: ignore[call-arg]
     orch.set_narrator_session_id("expired")
 
-    result = await orch.run_narration_turn(
-        "look around", TurnContext(character_name="Kael")
-    )
+    result = await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
     assert not result.is_degraded
     assert len(captured_prompts) >= 2
@@ -593,9 +574,7 @@ async def test_recovery_survives_recap_provider_exception():
     orch = Orchestrator(client=client, recap_provider=raising_recap)  # type: ignore[call-arg]
     orch.set_narrator_session_id("expired")
 
-    result = await orch.run_narration_turn(
-        "look around", TurnContext(character_name="Kael")
-    )
+    result = await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
     assert not result.is_degraded
 
@@ -626,11 +605,7 @@ async def test_session_rotated_span_reason_classification(
 
     await orch.run_narration_turn("look around", TurnContext(character_name="Kael"))
 
-    rotated = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "narrator.session_rotated"
-    ]
+    rotated = [s for s in otel_capture.get_finished_spans() if s.name == "narrator.session_rotated"]
     assert len(rotated) == 1
     assert (rotated[0].attributes or {}).get("reason") == expected_reason
 

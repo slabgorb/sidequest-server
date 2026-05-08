@@ -1,4 +1,5 @@
 """Asset-URL resolution span — fires every time the server emits a media URL."""
+
 from __future__ import annotations
 
 from collections.abc import Iterator

@@ -302,9 +302,7 @@ class SqliteStore:
         # marker for the unavailable-fallback path. Older DBs created
         # before this column existed need it added.
         try:
-            self._conn.execute(
-                "ALTER TABLE scrapbook_entries ADD COLUMN render_status TEXT"
-            )
+            self._conn.execute("ALTER TABLE scrapbook_entries ADD COLUMN render_status TEXT")
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 raise
@@ -466,9 +464,7 @@ class SqliteStore:
         failure — same pattern as load(), so the websocket layer's typed
         error path catches it cleanly.
         """
-        row = self._conn.execute(
-            "SELECT payload_json FROM world_save WHERE id = 1"
-        ).fetchone()
+        row = self._conn.execute("SELECT payload_json FROM world_save WHERE id = 1").fetchone()
         if row is None:
             return WorldSave()
         try:
@@ -478,7 +474,8 @@ class SqliteStore:
             raise SaveSchemaIncompatibleError(
                 save_path=self._path or Path("<in-memory>"),
                 underlying=(
-                    exc if isinstance(exc, ValidationError)
+                    exc
+                    if isinstance(exc, ValidationError)
                     else ValidationError.from_exception_data(
                         title="invalid_world_save_json", line_errors=[]
                     )

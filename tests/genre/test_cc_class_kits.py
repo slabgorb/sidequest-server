@@ -13,7 +13,10 @@ def test_cc_has_four_class_kits():
     pack = loader.load("caverns_and_claudes")
     assert pack.equipment_tables is not None
     assert set(pack.equipment_tables.class_tables.keys()) == {
-        "fighter_kit", "mage_kit", "cleric_kit", "thief_kit",
+        "fighter_kit",
+        "mage_kit",
+        "cleric_kit",
+        "thief_kit",
     }
 
 

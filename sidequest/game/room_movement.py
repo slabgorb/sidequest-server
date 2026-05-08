@@ -149,9 +149,7 @@ def process_room_entry(
             actor_id=character_id,
         )
         return
-    chassis_coupled = [
-        c for c in snap.magic_state.confrontations if c.register == "intimate"
-    ]
+    chassis_coupled = [c for c in snap.magic_state.confrontations if c.register == "intimate"]
     eligible = find_eligible_room_autofire(
         confrontations=chassis_coupled,
         room_local_id=room_local_id,
@@ -165,9 +163,7 @@ def process_room_entry(
         # panel sees "matched but on cooldown" vs "no match".
         cooldown_key = f"{chassis.id}:{cdef.id}"
         last_fired = snap.chassis_autofire_cooldowns.get(cooldown_key)
-        cooldown_turns = (
-            cdef.fire_conditions.cooldown_turns if cdef.fire_conditions else 0
-        )
+        cooldown_turns = cdef.fire_conditions.cooldown_turns if cdef.fire_conditions else 0
         if last_fired is not None and (current_turn - last_fired) < cooldown_turns:
             continue
 

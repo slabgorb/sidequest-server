@@ -39,8 +39,7 @@ def _seed_game(save_dir: Path, slug: str, genre: str, world: str) -> SqliteStore
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
-    upsert_game(store, slug=slug, mode=GameMode.SOLO,
-                genre_slug=genre, world_slug=world)
+    upsert_game(store, slug=slug, mode=GameMode.SOLO, genre_slug=genre, world_slug=world)
     return store
 
 
@@ -50,7 +49,8 @@ def test_hub_endpoint_404_when_slug_missing(content_client: TestClient) -> None:
 
 
 def test_hub_endpoint_409_when_world_not_a_hub(
-    content_client: TestClient, tmp_path: Path,
+    content_client: TestClient,
+    tmp_path: Path,
 ) -> None:
     _seed_game(tmp_path, "spgo-test", "space_opera", "coyote_star").close()
     r = content_client.get("/api/games/spgo-test/hub")
@@ -59,17 +59,22 @@ def test_hub_endpoint_409_when_world_not_a_hub(
 
 
 def test_hub_endpoint_returns_world_save_and_dungeons(
-    content_client: TestClient, tmp_path: Path,
+    content_client: TestClient,
+    tmp_path: Path,
 ) -> None:
     store = _seed_game(
-        tmp_path, "cnc-test",
-        "caverns_and_claudes", "caverns_three_sins",
+        tmp_path,
+        "cnc-test",
+        "caverns_and_claudes",
+        "caverns_three_sins",
     )
-    store.save_world_save(WorldSave(
-        roster=[Hireling(id="vol_1", name="Volga", archetype="prig", stress=7)],
-        currency=33,
-        delve_count=2,
-    ))
+    store.save_world_save(
+        WorldSave(
+            roster=[Hireling(id="vol_1", name="Volga", archetype="prig", stress=7)],
+            currency=33,
+            delve_count=2,
+        )
+    )
     store.close()
 
     r = content_client.get("/api/games/cnc-test/hub")
@@ -81,7 +86,9 @@ def test_hub_endpoint_returns_world_save_and_dungeons(
     dungeons = body["available_dungeons"]
     assert [d["slug"] for d in dungeons] == ["grimvault", "horden", "mawdeep"]
     assert {d["slug"]: d["sin"] for d in dungeons} == {
-        "grimvault": "pride", "horden": "greed", "mawdeep": "gluttony",
+        "grimvault": "pride",
+        "horden": "greed",
+        "mawdeep": "gluttony",
     }
     assert all(d["wounded"] is False for d in dungeons)
     assert body["world_save"]["currency"] == 33
@@ -91,15 +98,20 @@ def test_hub_endpoint_returns_world_save_and_dungeons(
 
 
 def test_hub_endpoint_marks_wounded_dungeons(
-    content_client: TestClient, tmp_path: Path,
+    content_client: TestClient,
+    tmp_path: Path,
 ) -> None:
     store = _seed_game(
-        tmp_path, "cnc-wound",
-        "caverns_and_claudes", "caverns_three_sins",
+        tmp_path,
+        "cnc-wound",
+        "caverns_and_claudes",
+        "caverns_three_sins",
     )
-    store.save_world_save(WorldSave(
-        dungeon_wounds={"grimvault": True},
-    ))
+    store.save_world_save(
+        WorldSave(
+            dungeon_wounds={"grimvault": True},
+        )
+    )
     store.close()
 
     r = content_client.get("/api/games/cnc-wound/hub")
@@ -111,13 +123,16 @@ def test_hub_endpoint_marks_wounded_dungeons(
 
 
 def test_hub_endpoint_fresh_hub_save_returns_empty_world_save(
-    content_client: TestClient, tmp_path: Path,
+    content_client: TestClient,
+    tmp_path: Path,
 ) -> None:
     """Lazy-on-first-read: a hub save with no world_save row returns
     a default-populated WorldSave, not 404 / 500."""
     _seed_game(
-        tmp_path, "cnc-fresh",
-        "caverns_and_claudes", "caverns_three_sins",
+        tmp_path,
+        "cnc-fresh",
+        "caverns_and_claudes",
+        "caverns_three_sins",
     ).close()
     r = content_client.get("/api/games/cnc-fresh/hub")
     assert r.status_code == 200
@@ -125,5 +140,4 @@ def test_hub_endpoint_fresh_hub_save_returns_empty_world_save(
     assert body["world_save"]["roster"] == []
     assert body["world_save"]["currency"] == 0
     assert body["world_save"]["delve_count"] == 0
-    assert [d["slug"] for d in body["available_dungeons"]] == \
-        ["grimvault", "horden", "mawdeep"]
+    assert [d["slug"] for d in body["available_dungeons"]] == ["grimvault", "horden", "mawdeep"]

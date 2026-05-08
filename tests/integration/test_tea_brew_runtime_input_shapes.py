@@ -191,8 +191,7 @@ def test_rebind_replaces_placeholder_character_id() -> None:
 
     kestrel = snap.chassis_registry["kestrel"]
     assert kestrel.bond_ledger[0].character_id == "Zanzibar Jones", (
-        f"rebind did not rewrite placeholder; saw "
-        f"{kestrel.bond_ledger[0].character_id!r}"
+        f"rebind did not rewrite placeholder; saw {kestrel.bond_ledger[0].character_id!r}"
     )
 
 

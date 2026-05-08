@@ -50,9 +50,7 @@ def test_disconnect_emits_cleared_with_exclude_none() -> None:
     room.broadcast = fake_broadcast  # type: ignore[assignment]
     room.disconnect(socket_id="s1")
 
-    cleared = [
-        (m, kw) for m, kw in captured if isinstance(m, ActionRevealMessage)
-    ]
+    cleared = [(m, kw) for m, kw in captured if isinstance(m, ActionRevealMessage)]
     assert cleared[0][1]["exclude_socket_id"] is None
 
 
