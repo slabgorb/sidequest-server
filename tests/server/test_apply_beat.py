@@ -612,3 +612,102 @@ def test_leader_killed_fires_only_for_tagged_leader():
     post_boss = [_opp("grunt", alive=False), _opp("boss", alive=False, is_leader=True)]
     _emit_morale_triggers(enc, cdef, "warband", post_grunt, post_boss, True, rng)
     assert "leader_killed:warband" in enc.morale_events
+
+
+def test_per_beat_dial_advance_emits_first_blood_through_apply_pipeline():
+    """Integration: a single player strike that advances player_metric by 1
+    (from 0/threshold=4) fires first_blood through the full apply pipeline.
+
+    This proves the wire-up at the legacy beat loop is live — not just
+    the helper. Specifically asserts ``first_blood:combat`` lands on
+    ``enc.morale_events`` after one ``_apply_narration_result_to_snapshot``
+    call, with no resolution (encounter still active because dial reached
+    1 of 4, not threshold).
+
+    Architect feedback 2026-05-08 (commit 602a909 follow-up): morale must
+    fire BEFORE the dial saturates so a flee outcome can interrupt the
+    fight. Earlier wire-up that gated on ``player_victory`` left the
+    morale system structurally non-functional.
+
+    Note on metric choice: the architect's spec referenced
+    ``opponent_metric``, but this codebase uses ``player_metric`` for
+    "player progress toward winning" (= opponents being defeated).
+    The implementation uses ``player_metric``; this test follows.
+    """
+    from unittest.mock import MagicMock
+
+    from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult, NpcMention
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import MetricDef, MoraleDef, MoraleTrigger, RulesConfig
+    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+    from tests._helpers.session_room import room_for
+
+    # Build a confrontation with morale block + a strike beat that
+    # advances the dial by exactly 1 on Success.
+    cdef = ConfrontationDef(
+        type="combat",
+        label="Combat",
+        category="combat",
+        player_metric=MetricDef(name="momentum", starting=0, threshold=4),
+        opponent_metric=MetricDef(name="momentum", starting=0, threshold=4),
+        morale=MoraleDef(
+            score=8,
+            triggers=[MoraleTrigger.first_blood, MoraleTrigger.half_killed],
+        ),
+        beats=[
+            BeatDef.model_validate(
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 1,
+                    "stat_check": "STR",
+                }
+            ),
+        ],
+    )
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+
+    # Snapshot with an active encounter (player at 0, threshold=4).
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    snap.encounter = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=4),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=4),
+        actors=[
+            EncounterActor(name="Sam", role="combatant", side="player"),
+            EncounterActor(name="Promo", role="combatant", side="opponent"),
+        ],
+    )
+
+    result = NarrationTurnResult(
+        narration="Sam swings.",
+        beat_selections=[
+            BeatSelection(actor="Sam", beat_id="attack", outcome=RollOutcome.Success),
+        ],
+        npcs_present=[NpcMention(name="Promo", side="opponent", role="hostile")],
+    )
+
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        "Sam",
+        pack=pack,
+        from_explicit_action=True,
+        room=room_for(snap),
+    )
+
+    enc = snap.encounter
+    # Dial advanced from 0 → 1 (player_metric.current).
+    assert enc.player_metric.current == 1
+    # first_blood fired and was recorded for deduplication.
+    assert "first_blood:combat" in enc.morale_events
+    # Encounter still active (not yet at threshold=4).
+    assert not enc.resolved

@@ -72,6 +72,34 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+def _all_opponents_mindless(opp_actors, pack: GenrePack | None) -> bool:
+    """Return True iff every opponent actor in ``opp_actors`` maps to an
+    NpcArchetype with ``mindless: True``.
+
+    V1 deviation (Task 9 architect feedback, 2026-05-08): the dial-based
+    morale wire path has no per-actor archetype linkage available without
+    threading new state through ``EncounterActor``. The current encounter
+    model carries actor name + side + role but no archetype reference, so
+    the lookup ``actor → archetype.mindless`` is structurally unavailable
+    at this seam.
+
+    For V1 we default to ``False`` (= morale roll proceeds normally for
+    every side). A future story that adds archetype linkage to
+    ``EncounterActor`` (or a side-level ``mindless`` flag emitted by the
+    encounter instantiator) can light this up; the helper exists as the
+    single seam to update. Per CLAUDE.md "no silent fallbacks": this
+    is a documented V1 deviation, not a missing-data fallback.
+    """
+    # Fail-loud guard: empty side cannot be all-mindless. Caller already
+    # filters opponent actors, but defensive anyway.
+    if not opp_actors:
+        return False
+    if pack is None:
+        return False
+    # V1: no archetype lookup wired. See deviation note above.
+    return False
+
+
 def _emit_morale_triggers(
     encounter,
     cdef,
@@ -83,16 +111,47 @@ def _emit_morale_triggers(
 ) -> list[tuple[MoraleTrigger, MoraleOutcome]]:
     """Detect and fire first_blood, half_killed, leader_killed in one pass.
 
-    Called after a beat resolution that downs one or more opponents.
-    ``pre_kill_state`` is the list of ``OpponentState`` objects BEFORE the
-    kill; ``post_kill_state`` is the list AFTER. The function checks which
+    Called after every beat that advances ``player_metric`` (the dial
+    that tracks "opponents being defeated"). The function checks which
     triggers apply (per B/X morale rules), deduplicates via
     ``encounter.morale_events``, calls ``maybe_check_morale`` for each
     eligible trigger, and records the result.
 
+    ─── Dial-based pseudo-HP approximation (V1 deviation) ───────────────
+    The encounter engine uses dial abstractions (``player_metric``,
+    ``opponent_metric``) rather than per-opponent HP. The morale spec
+    (§4.4) describes triggers in terms of "opponent count drops by 1",
+    which has no direct analog in this system. V1 approximates:
+
+        pseudo_initial    = player_metric.threshold
+        pseudo_pre_alive  = max(0, threshold - pre_dial_value)
+        pseudo_post_alive = max(0, threshold - post_dial_value)
+
+    Higher dial value = "more opponents down". This preserves the
+    invariants the spec needs (first_blood on first dial advance,
+    half_killed when post crosses ⌊threshold/2⌋), but is lossy — no
+    per-opponent KO event, no per-opponent leader tag.
+
+    ─── V1 limitations ──────────────────────────────────────────────────
+    - ``leader_killed`` is False at the per-beat path. The dial-based
+      wire cannot detect *which* actor was KO'd; that requires
+      per-opponent HP tracking (future story). The narrator-emitted
+      ``intimidated`` sidecar (Task 10) is the working path for explicit
+      leader-takedown signaling until then.
+    - ``mindless`` is global per side at this resolution (see
+      ``_all_opponents_mindless`` — V1 returns False).
+
+    ─── Use direct-call path for tests ──────────────────────────────────
+    Tests that want to exercise per-opponent semantics (specifically the
+    "two goblins, kill one then kill the other" scenario, or the
+    ``leader_killed`` trigger) call this helper directly with
+    constructed ``OpponentState`` lists. The helper itself is correct
+    per spec; only the production wire is approximate.
+
     Returns a list of ``(trigger, outcome)`` tuples for the caller to
-    act on (chase escalation / surrender / rout). Deferred to Task 12 for
-    full flee-consequence dispatch; this task wires detection + recording.
+    act on (chase escalation / surrender / rout). Deferred to Task 12
+    for full flee-consequence dispatch; this task wires detection +
+    recording.
 
     OTEL: morale-check spans are deferred to Task 12 (per plan). This
     function emits a watcher event per trigger for GM-panel visibility
@@ -2200,6 +2259,91 @@ def _apply_narration_result_to_snapshot(
                     turn=turn_num,
                     source="narrator_beat",
                 )
+
+                # ─── B/X morale per-beat hook (Task 9, architect feedback
+                # 2026-05-08) ───────────────────────────────────────────
+                # Fire morale-trigger detection on every beat that
+                # advanced ``player_metric`` (the dial that tracks
+                # "opponents being defeated"). Without this hook morale
+                # only fires at encounter resolution (player_victory),
+                # which is too late — the spec exit criterion §5.6.2
+                # requires combats to END in flight or surrender, which
+                # means morale must fire BEFORE the dial saturates.
+                #
+                # Dial-as-pseudo-HP approximation: see
+                # ``_emit_morale_triggers`` docstring for the full
+                # deviation note. Briefly: dial value = pseudo-HP taken,
+                # threshold = pseudo-initial-side-size. ``leader_killed``
+                # is False here (no per-actor KO at the dial seam);
+                # ``mindless`` defaults False per ``_all_opponents_mindless``.
+                #
+                # Selection of dial: ``player_metric`` advances when the
+                # PLAYER side scores success — that maps to "opponents
+                # taking damage" in this codebase's dual-track engine
+                # (player_metric.current → threshold = players win =
+                # opponents defeated). Note: the architect feedback's
+                # spec referenced ``opponent_metric``, but this codebase
+                # uses ``player_metric`` for player-progress-toward-win;
+                # see the dual-track design (spec 2026-04-25). Using
+                # ``player_metric`` produces the right semantic
+                # ("first hit lands → first_blood fires").
+                if result_apply.deltas is not None:
+                    # The actor's beat may have advanced player_metric via
+                    # ``own`` (player-side actor) or via ``opponent`` (cross
+                    # delta — e.g. opponent-side ``brace`` draining player
+                    # dial; that is a NEGATIVE delta so it does not advance).
+                    # We only care about positive advances of player_metric.
+                    if actor.side == "player":
+                        morale_dial_delta = max(result_apply.deltas.own, 0)
+                    else:
+                        # Opponent-side actor's beat: ``opponent`` delta is
+                        # cross-side. For an opponent strike on player_metric
+                        # this would be negative (drain) by spec, so only
+                        # positive values count. In practice opponent strikes
+                        # advance ``opponent_metric`` (their own dial), not
+                        # ``player_metric``, so morale_dial_delta is 0 here.
+                        morale_dial_delta = max(result_apply.deltas.opponent, 0)
+                    if morale_dial_delta > 0:
+                        pm = enc.player_metric
+                        threshold = max(pm.threshold, 1)
+                        post_value = pm.current
+                        pre_value = max(0, post_value - morale_dial_delta)
+                        pseudo_initial = threshold
+                        pseudo_pre_alive = max(0, threshold - pre_value)
+                        pseudo_post_alive = max(0, threshold - post_value)
+                        if pseudo_pre_alive != pseudo_post_alive:
+                            opp_actors_for_morale = [a for a in enc.actors if a.side == "opponent"]
+                            all_mindless = _all_opponents_mindless(opp_actors_for_morale, pack)
+                            pre_states = [
+                                OpponentState(
+                                    id=str(i),
+                                    alive=(i < pseudo_pre_alive),
+                                    mindless=all_mindless,
+                                )
+                                for i in range(pseudo_initial)
+                            ]
+                            post_states = [
+                                OpponentState(
+                                    id=str(i),
+                                    alive=(i < pseudo_post_alive),
+                                    mindless=all_mindless,
+                                )
+                                for i in range(pseudo_initial)
+                            ]
+                            # leader_killed: dial-based wire cannot detect
+                            # which actor was KO'd; V1 keeps False here.
+                            # Task 10's intimidated sidecar covers explicit
+                            # narrator-emitted leader-takedown signals.
+                            _emit_morale_triggers(
+                                enc,
+                                cdef,
+                                enc.encounter_type,
+                                pre_states,
+                                post_states,
+                                False,
+                                Random(),
+                            )
+
                 if result_apply.resolved:
                     with encounter_resolved_span(
                         encounter_type=enc.encounter_type,
@@ -2233,45 +2377,10 @@ def _apply_narration_result_to_snapshot(
                         outcome=enc.outcome or "",
                         actor=actor.name,
                     )
-                    # B/X morale: when players defeat all opponents, emit
-                    # morale triggers for the encounter resolution beat.
-                    # Treats "player_victory" as the final KO event —
-                    # pre-state is all opponents alive, post-state is all
-                    # opponents defeated (withdrawn). Per-opponent
-                    # intermediate KOs (individual goblin deaths) are
-                    # deferred to a future story that adds HP-pool tracking.
-                    if enc.outcome == "player_victory":
-                        opp_actors = [a for a in enc.actors if a.side == "opponent"]
-                        if opp_actors:
-                            pre_states = [
-                                OpponentState(
-                                    id=a.name,
-                                    alive=True,
-                                    is_leader=bool(a.per_actor_state.get("is_leader", False)),
-                                )
-                                for a in opp_actors
-                            ]
-                            post_states = [
-                                OpponentState(
-                                    id=a.name,
-                                    alive=False,
-                                    is_leader=bool(a.per_actor_state.get("is_leader", False)),
-                                )
-                                for a in opp_actors
-                            ]
-                            any_leader = any(
-                                a.per_actor_state.get("is_leader", False) for a in opp_actors
-                            )
-                            side_label = enc.encounter_type
-                            _emit_morale_triggers(
-                                enc,
-                                cdef,
-                                side_label,
-                                pre_states,
-                                post_states,
-                                any_leader,
-                                Random(),
-                            )
+                    # B/X morale: per-beat dial-advance hook (above)
+                    # already fired any morale triggers caused by the
+                    # beat that resolved this encounter. No additional
+                    # call here.
                     # Scratch sweep at encounter resolution. Encounter end
                     # is the canonical "scene end" trigger that the Scratch
                     # severity tier promises in game/status.py — without
@@ -3349,6 +3458,55 @@ def _resolve_opposed_check_branch(
             turn=turn,
             source=sel_source,
         )
+
+        # B/X morale per-beat hook (Task 9, architect feedback 2026-05-08).
+        # Mirrors the legacy beat-loop site above. ``pack`` is not threaded
+        # into this branch — pass None to ``_all_opponents_mindless``;
+        # V1 returns False either way (see ``_all_opponents_mindless``
+        # deviation note). See ``_emit_morale_triggers`` docstring for the
+        # full dial-as-pseudo-HP approximation.
+        if applied.deltas is not None:
+            if sel_actor.side == "player":
+                morale_dial_delta = max(applied.deltas.own, 0)
+            else:
+                morale_dial_delta = max(applied.deltas.opponent, 0)
+            if morale_dial_delta > 0:
+                pm = encounter.player_metric
+                threshold = max(pm.threshold, 1)
+                post_value = pm.current
+                pre_value = max(0, post_value - morale_dial_delta)
+                pseudo_initial = threshold
+                pseudo_pre_alive = max(0, threshold - pre_value)
+                pseudo_post_alive = max(0, threshold - post_value)
+                if pseudo_pre_alive != pseudo_post_alive:
+                    opp_actors_for_morale = [a for a in encounter.actors if a.side == "opponent"]
+                    all_mindless = _all_opponents_mindless(opp_actors_for_morale, None)
+                    pre_states = [
+                        OpponentState(
+                            id=str(i),
+                            alive=(i < pseudo_pre_alive),
+                            mindless=all_mindless,
+                        )
+                        for i in range(pseudo_initial)
+                    ]
+                    post_states = [
+                        OpponentState(
+                            id=str(i),
+                            alive=(i < pseudo_post_alive),
+                            mindless=all_mindless,
+                        )
+                        for i in range(pseudo_initial)
+                    ]
+                    _emit_morale_triggers(
+                        encounter,
+                        cdef,
+                        encounter.encounter_type,
+                        pre_states,
+                        post_states,
+                        False,
+                        Random(),
+                    )
+
         if applied.resolved:
             with encounter_resolved_span(
                 encounter_type=encounter.encounter_type,
