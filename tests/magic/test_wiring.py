@@ -29,7 +29,7 @@ def test_plugin_registry_has_innate_and_item_legacy():
     import sidequest.magic.plugins  # noqa: F401
     from sidequest.magic.plugin import MAGIC_PLUGINS
 
-    assert set(MAGIC_PLUGINS) == {"innate_v1", "item_legacy_v1"}
+    assert set(MAGIC_PLUGINS) == {"innate_v1", "item_legacy_v1", "learned_v1"}
 
 
 def test_every_plugin_py_file_registers_in_magic_plugins():
