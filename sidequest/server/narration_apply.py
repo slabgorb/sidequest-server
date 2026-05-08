@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from random import Random
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ValidationError
@@ -17,6 +18,12 @@ if TYPE_CHECKING:
     from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
 
+from sidequest.game.morale import (
+    MoraleOutcome,
+    OpponentSideState,
+    OpponentState,
+    maybe_check_morale,
+)
 from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.region_validation import (
     canonicalize_region_name,
@@ -29,7 +36,7 @@ from sidequest.game.session import (
     RoomState,
 )
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import ResolutionMode
+from sidequest.genre.models.rules import MoraleTrigger, ResolutionMode
 from sidequest.magic.confrontations import (
     BranchName,
     evaluate_auto_fire_triggers,
@@ -63,6 +70,88 @@ from sidequest.telemetry.spans import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_morale_triggers(
+    encounter,
+    cdef,
+    opponent_side_label: str,
+    pre_kill_state: list[OpponentState],
+    post_kill_state: list[OpponentState],
+    killed_was_leader: bool,
+    rng: Random,
+) -> list[tuple[MoraleTrigger, MoraleOutcome]]:
+    """Detect and fire first_blood, half_killed, leader_killed in one pass.
+
+    Called after a beat resolution that downs one or more opponents.
+    ``pre_kill_state`` is the list of ``OpponentState`` objects BEFORE the
+    kill; ``post_kill_state`` is the list AFTER. The function checks which
+    triggers apply (per B/X morale rules), deduplicates via
+    ``encounter.morale_events``, calls ``maybe_check_morale`` for each
+    eligible trigger, and records the result.
+
+    Returns a list of ``(trigger, outcome)`` tuples for the caller to
+    act on (chase escalation / surrender / rout). Deferred to Task 12 for
+    full flee-consequence dispatch; this task wires detection + recording.
+
+    OTEL: morale-check spans are deferred to Task 12 (per plan). This
+    function emits a watcher event per trigger for GM-panel visibility
+    in the interim.
+    """
+    fired: list[tuple[MoraleTrigger, MoraleOutcome]] = []
+
+    pre_alive = sum(1 for o in pre_kill_state if o.alive)
+    post_alive = sum(1 for o in post_kill_state if o.alive)
+    initial = len(pre_kill_state)
+    side = OpponentSideState(label=opponent_side_label, opponents=post_kill_state)
+
+    triggers_to_check: list[MoraleTrigger] = []
+
+    # first_blood: first opponent downed from full side (fires once per side).
+    event_key_fb = f"first_blood:{opponent_side_label}"
+    if (
+        pre_alive == initial
+        and post_alive < initial
+        and event_key_fb not in encounter.morale_events
+    ):
+        triggers_to_check.append(MoraleTrigger.first_blood)
+
+    # half_killed: opponent count crosses ≤ ⌊initial/2⌋.
+    event_key_hk = f"half_killed:{opponent_side_label}"
+    if post_alive <= initial // 2 < pre_alive and event_key_hk not in encounter.morale_events:
+        triggers_to_check.append(MoraleTrigger.half_killed)
+
+    # leader_killed: the downed actor was tagged is_leader.
+    if killed_was_leader:
+        triggers_to_check.append(MoraleTrigger.leader_killed)
+
+    for trig in triggers_to_check:
+        event_key = f"{trig.value}:{opponent_side_label}"
+        outcome = maybe_check_morale(cdef, side, trig, rng)
+        fired.append((trig, outcome))
+        encounter.morale_events.append(event_key)
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "morale_trigger",
+                "trigger": trig.value,
+                "opponent_side": opponent_side_label,
+                "outcome": outcome.value,
+                "post_alive": post_alive,
+                "initial": initial,
+            },
+            component="confrontation",
+        )
+        logger.info(
+            "confrontation.morale_trigger trigger=%s side=%s outcome=%s post_alive=%d initial=%d",
+            trig.value,
+            opponent_side_label,
+            outcome.value,
+            post_alive,
+            initial,
+        )
+    return fired
 
 
 # Pingpong 2026-05-03 [BUG] — narrator described "patrol cutter spinning
@@ -2144,6 +2233,45 @@ def _apply_narration_result_to_snapshot(
                         outcome=enc.outcome or "",
                         actor=actor.name,
                     )
+                    # B/X morale: when players defeat all opponents, emit
+                    # morale triggers for the encounter resolution beat.
+                    # Treats "player_victory" as the final KO event —
+                    # pre-state is all opponents alive, post-state is all
+                    # opponents defeated (withdrawn). Per-opponent
+                    # intermediate KOs (individual goblin deaths) are
+                    # deferred to a future story that adds HP-pool tracking.
+                    if enc.outcome == "player_victory":
+                        opp_actors = [a for a in enc.actors if a.side == "opponent"]
+                        if opp_actors:
+                            pre_states = [
+                                OpponentState(
+                                    id=a.name,
+                                    alive=True,
+                                    is_leader=bool(a.per_actor_state.get("is_leader", False)),
+                                )
+                                for a in opp_actors
+                            ]
+                            post_states = [
+                                OpponentState(
+                                    id=a.name,
+                                    alive=False,
+                                    is_leader=bool(a.per_actor_state.get("is_leader", False)),
+                                )
+                                for a in opp_actors
+                            ]
+                            any_leader = any(
+                                a.per_actor_state.get("is_leader", False) for a in opp_actors
+                            )
+                            side_label = enc.encounter_type
+                            _emit_morale_triggers(
+                                enc,
+                                cdef,
+                                side_label,
+                                pre_states,
+                                post_states,
+                                any_leader,
+                                Random(),
+                            )
                     # Scratch sweep at encounter resolution. Encounter end
                     # is the canonical "scene end" trigger that the Scratch
                     # severity tier promises in game/status.py — without

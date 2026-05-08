@@ -1,3 +1,4 @@
+import random as _random
 from pathlib import Path
 
 from sidequest.game.beat_filter import beats_available_for
@@ -9,9 +10,11 @@ from sidequest.game.encounter import (
     EncounterMetric,
     StructuredEncounter,
 )
+from sidequest.game.morale import OpponentState
 from sidequest.genre.models.character import ClassDef
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 from sidequest.protocol.dice import RollOutcome
+from sidequest.server.narration_apply import _emit_morale_triggers
 
 
 def _enc(*, p_thresh: int = 10, o_thresh: int = 10, p_cur: int = 0, o_cur: int = 0):
@@ -473,3 +476,139 @@ def test_player_beat_selection_includes_class_signature():
     mage = _mage_class_def()
     available = beats_available_for(cdef, mage, spell_slots_remaining=1.0)
     assert "cast_spell" in [b.id for b in available]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Morale trigger emission tests (Task 9 — C&C B/X morale integration)
+#
+# Tests call _emit_morale_triggers directly, matching the existing test style
+# of operating at the function level rather than through a session wrapper.
+# The function takes explicit pre/post OpponentState lists so the caller
+# controls exactly what changed between beats.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _morale_confrontation(*, score: int = 8) -> ConfrontationDef:
+    """Build a ConfrontationDef with a morale block for morale trigger tests."""
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "player_metric": {"name": "momentum", "threshold": 10},
+            "opponent_metric": {"name": "momentum", "threshold": 10},
+            "morale": {
+                "score": score,
+                "triggers": ["first_blood", "half_killed", "leader_killed"],
+                "flee_consequence": "rout",
+            },
+            "beats": [
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            ],
+        }
+    )
+
+
+def _opp(id_: str, *, alive: bool = True, is_leader: bool = False) -> OpponentState:
+    return OpponentState(id=id_, alive=alive, is_leader=is_leader)
+
+
+def _enc_morale(*, n_opponents: int = 2, side: str = "goblins") -> StructuredEncounter:
+    """Build a StructuredEncounter with n opponent actors."""
+    actors = [EncounterActor(name="Hero", role="combatant", side="player")]
+    for i in range(n_opponents):
+        actors.append(EncounterActor(name=f"Goblin{i + 1}", role="combatant", side="opponent"))
+    return StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=actors,
+    )
+
+
+def _rng_always_flee() -> _random.Random:
+    """RNG that always produces 6+6=12 (flee on any score < 12)."""
+
+    class _AlwaysFlee(_random.Random):
+        def randint(self, a, b):  # noqa: ARG002
+            return 6
+
+    return _AlwaysFlee()
+
+
+def _rng_always_stay() -> _random.Random:
+    """RNG that always produces 1+1=2 (stay on any score >= 2)."""
+
+    class _AlwaysStay(_random.Random):
+        def randint(self, a, b):  # noqa: ARG002
+            return 1
+
+    return _AlwaysStay()
+
+
+def test_first_blood_fires_once_per_side():
+    """first_blood emits exactly once when the first opponent goes down.
+    Second kill must NOT re-emit first_blood."""
+    cdef = _morale_confrontation()
+    enc = _enc_morale(n_opponents=2)
+    rng = _rng_always_stay()
+
+    pre = [_opp("g1", alive=True), _opp("g2", alive=True)]
+    post_kill1 = [_opp("g1", alive=False), _opp("g2", alive=True)]
+
+    # First kill — first_blood should fire.
+    _emit_morale_triggers(enc, cdef, "goblins", pre, post_kill1, False, rng)
+    assert "first_blood:goblins" in enc.morale_events
+
+    fb_count_after_first = enc.morale_events.count("first_blood:goblins")
+    assert fb_count_after_first == 1
+
+    # Second kill — first_blood must NOT fire again.
+    post_kill2 = [_opp("g1", alive=False), _opp("g2", alive=False)]
+    _emit_morale_triggers(enc, cdef, "goblins", post_kill1, post_kill2, False, rng)
+    assert enc.morale_events.count("first_blood:goblins") == 1
+
+
+def test_half_killed_fires_when_side_crosses_half():
+    """half_killed fires when standing opponents drop to ⌊initial/2⌋ = 2."""
+    cdef = _morale_confrontation()
+    enc = _enc_morale(n_opponents=4)
+    rng = _rng_always_stay()
+
+    # Kill 1 of 4 — 3 left, does not cross half.
+    pre4 = [_opp(f"g{i}", alive=True) for i in range(4)]
+    post3 = [_opp("g0", alive=False)] + [_opp(f"g{i}", alive=True) for i in range(1, 4)]
+    _emit_morale_triggers(enc, cdef, "goblins", pre4, post3, False, rng)
+    assert "half_killed:goblins" not in enc.morale_events
+
+    # Kill 1 more — 2 left = ⌊4/2⌋, crosses the half threshold.
+    post2 = [_opp("g0", alive=False), _opp("g1", alive=False)] + [
+        _opp(f"g{i}", alive=True) for i in range(2, 4)
+    ]
+    _emit_morale_triggers(enc, cdef, "goblins", post3, post2, False, rng)
+    assert "half_killed:goblins" in enc.morale_events
+
+
+def test_leader_killed_fires_only_for_tagged_leader():
+    """leader_killed fires only when killed_was_leader=True."""
+    cdef = _morale_confrontation()
+    enc = _enc_morale(n_opponents=2)
+    rng = _rng_always_stay()
+
+    pre = [_opp("grunt", alive=True), _opp("boss", alive=True, is_leader=True)]
+    post_grunt = [_opp("grunt", alive=False), _opp("boss", alive=True, is_leader=True)]
+
+    # Kill grunt (not leader) — leader_killed must NOT fire.
+    _emit_morale_triggers(enc, cdef, "warband", pre, post_grunt, False, rng)
+    assert "leader_killed:warband" not in enc.morale_events
+
+    # Kill boss (leader) — leader_killed MUST fire.
+    post_boss = [_opp("grunt", alive=False), _opp("boss", alive=False, is_leader=True)]
+    _emit_morale_triggers(enc, cdef, "warband", post_grunt, post_boss, True, rng)
+    assert "leader_killed:warband" in enc.morale_events
