@@ -1,0 +1,53 @@
+version: "0.1.0"
+genre: caverns_and_claudes
+tradition: arcane
+level: 1
+
+spells:
+  - id: magic_missile
+    name: "Magic Missile"
+    level: 1
+    tradition: arcane
+    range: near
+    target: single
+    duration: instant
+    save: { stat: null, effect: none }
+    effect_template: "Force dart, 1 momentum damage, auto-hit"
+    components: { verbal: true, somatic: true, material: null }
+    backlash: null
+    narrator_register: "A bolt of glowing force."
+    hard_limits_check: []
+    domain: physical
+    otel_attrs: [cast_intent]
+
+  - id: sleep
+    name: "Sleep"
+    level: 1
+    tradition: arcane
+    range: near
+    target: area
+    duration: turns:1d4+1
+    save: { stat: WIS, effect: negates }
+    effect_template: "Up to 4d4 HD; save WIS or unconscious"
+    components: { verbal: true, somatic: true, material: null }
+    backlash: null
+    narrator_register: "A slow, kind weight."
+    hard_limits_check: []
+    domain: psychic
+    otel_attrs: [cast_intent]
+
+  - id: charm_person
+    name: "Charm Person"
+    level: 1
+    tradition: arcane
+    range: near
+    target: single
+    duration: until_rest
+    save: { stat: WIS, effect: negates }
+    effect_template: "Single humanoid; save WIS or trusted friend"
+    components: { verbal: true, somatic: true, material: null }
+    backlash: null
+    narrator_register: "Their eyes settle."
+    hard_limits_check: []
+    domain: psychic
+    otel_attrs: [cast_intent]
