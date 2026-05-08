@@ -153,3 +153,32 @@ def test_cast_rejects_when_slot_empty():
 
     with pytest.raises(ValueError, match="no slots remaining"):
         cast(state, working=working)
+
+
+def test_rest_clears_prepared_and_resets_slots():
+    from sidequest.magic.learned_ops import cast, prepare, rest
+    from sidequest.magic.models import MagicWorking
+    from sidequest.magic.state import BarKey, MagicState
+
+    state = MagicState.from_config(_config_with_slots())
+    state.add_character("rux")
+    state.learn_spell("rux", "magic_missile")
+    prepare(state, actor="rux", prep={1: ["magic_missile"]})
+
+    working = MagicWorking(
+        plugin="learned_v1",
+        mechanism="studied",
+        actor="rux",
+        domain="physical",
+        narrator_basis="cast",
+        spell_id="magic_missile",
+        slot_level=1,
+        costs={"slots_l1": 1.0},
+    )
+    cast(state, working=working)
+
+    rest(state, actor="rux")
+
+    assert state.prepared_spells["rux"] == {}
+    bar = state.get_bar(BarKey(scope="character", owner_id="rux", bar_id="slots_l1"))
+    assert bar.value == 2.0  # back to max

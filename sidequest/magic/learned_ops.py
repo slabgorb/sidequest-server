@@ -113,3 +113,27 @@ def cast(state: MagicState, *, working: MagicWorking) -> CastResult:
     state.apply_working(working)
 
     return CastResult(actor=actor, spell_id=spell_id, slot_consumed=True)
+
+
+@dataclass
+class RestResult:
+    actor: str
+    slots_restored: dict[int, float]
+
+
+def rest(state: MagicState, *, actor: str) -> RestResult:
+    """Reset all per-level slot bars to max; clear prepared_spells."""
+    restored: dict[int, float] = {}
+    # Find slot bars for this actor and reset.
+    for serialized in list(state.ledger.keys()):
+        if not serialized.startswith(f"character|{actor}|slots_l"):
+            continue
+        bar = state.ledger[serialized]
+        starts = bar.spec.starts_at_chargen
+        max_value = float(starts) if not isinstance(starts, dict) else float(bar.value)
+        bar.value = max_value
+        # serialized is "character|<actor>|slots_l<N>"
+        level = int(serialized.rsplit("slots_l", 1)[1])
+        restored[level] = max_value
+    state.prepared_spells[actor] = {}
+    return RestResult(actor=actor, slots_restored=restored)
