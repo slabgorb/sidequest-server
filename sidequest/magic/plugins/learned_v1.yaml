@@ -1,0 +1,27 @@
+plugin_id: learned_v1
+source: learned
+delivery_mechanisms:
+  - studied
+  - granted
+ledger_bar_templates:
+  divine_favor:
+    id: divine_favor
+    scope: character
+    direction: bidirectional
+    range: [-1.0, 1.0]
+    threshold_high: 0.7
+    threshold_low: -0.7
+    consequence_on_high_cross: "narrator-discretion: cleric receives one free reliquary effect within the session"
+    consequence_on_low_cross: "narrator-discretion: cleric cannot Turn until favor is restored"
+    starts_at_chargen: 0.0
+narrator_register: |
+  Magic the caster carries. Mages prepare from a spellbook they keep close
+  but rarely show; clerics receive what is granted, and forget when it
+  passes. The casting is a budgeted thing — slots filled at safe rest,
+  expended one at a time, gone until the next quiet hour.
+required_span_attrs:
+  - spell_id
+  - slot_level
+optional_span_attrs:
+  - save_target_actor
+  - save_outcome
