@@ -222,3 +222,54 @@ def test_pack_load_rejects_empty_encounter_beat_choices_for_allowed_class(
     )
     with pytest.raises(PackError, match="encounter_beat_choices.*empty"):
         load_genre_pack(pack.path)
+
+
+def test_pack_load_accepts_valid_class_filter_and_beat_choices(tmp_path, minimal_pack_factory):
+    """Validator passes silently when class_filter / encounter_beat_choices are well-formed.
+
+    Guards against a regression where the validator accidentally raises on valid packs.
+    """
+    pack = minimal_pack_factory(tmp_path)
+    pack.set_rules_yaml(
+        confrontations=[
+            {
+                "type": "combat",
+                "label": "C",
+                "category": "combat",
+                "player_metric": {"name": "m", "starting": 0, "threshold": 7},
+                "opponent_metric": {"name": "m", "starting": 0, "threshold": 7},
+                "beats": [
+                    {"id": "attack", "label": "A", "kind": "strike", "stat_check": "STR"},
+                    {
+                        "id": "cleave",
+                        "label": "C",
+                        "kind": "strike",
+                        "stat_check": "STR",
+                        "class_filter": ["Fighter"],
+                    },
+                ],
+            }
+        ],
+        allowed_classes=["Fighter"],
+    )
+    pack.set_classes_yaml(
+        [
+            {
+                "id": "fighter",
+                "display_name": "Fighter",
+                "rpg_role": "tank",
+                "jungian_default": "hero",
+                "prime_requisite": "STR",
+                "minimum_score": 9,
+                "kit_table": "fighter_kit",
+                "flavor": "—",
+                "encounter_beat_choices": ["attack", "cleave"],
+            }
+        ]
+    )
+    # Should not raise — declared class, in-pool beat IDs, non-empty list
+    pack_obj = load_genre_pack(pack.path)
+    assert pack_obj is not None
+    assert pack_obj.rules is not None
+    assert pack_obj.rules.confrontations
+    assert any(c.display_name == "Fighter" for c in pack_obj.classes)
