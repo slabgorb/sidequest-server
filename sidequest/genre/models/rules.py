@@ -312,6 +312,7 @@ class ConfrontationDef(BaseModel):
     # opposed_check — only valid when ``resolution_mode`` is something
     # other than ``opposed_check``.
     opponent_default_stats: dict[str, int] | None = None
+    morale: MoraleDef | None = None
 
     @model_validator(mode="before")
     @classmethod
