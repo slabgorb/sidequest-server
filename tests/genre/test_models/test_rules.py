@@ -144,6 +144,21 @@ class TestConfrontationDef:
         assert c.resolution_mode == ResolutionMode.beat_selection
 
 
+class TestBeatDefClassFilter:
+    def test_beat_class_filter_defaults_none(self) -> None:
+        b = BeatDef.model_validate(_beat())
+        assert b.class_filter is None
+
+    def test_beat_class_filter_accepts_nonempty_list(self) -> None:
+        b = BeatDef.model_validate(_beat({"class_filter": ["Fighter"]}))
+        assert b.class_filter == ["Fighter"]
+
+    def test_beat_class_filter_rejects_empty_list(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            BeatDef.model_validate(_beat({"class_filter": []}))
+        assert "class_filter" in str(exc.value).lower()
+
+
 class TestRulesConfig:
     def test_empty_defaults(self) -> None:
         r = RulesConfig()

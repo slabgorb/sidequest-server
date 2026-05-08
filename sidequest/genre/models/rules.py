@@ -114,6 +114,7 @@ class BeatDef(BaseModel):
     # numerical-advantage rule (Step 3).
     target_select: str | None = None
     resource_deltas: dict[str, float] | None = None
+    class_filter: list[str] | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> BeatDef:
@@ -139,6 +140,8 @@ class BeatDef(BaseModel):
                     f"beat '{self.id}' target_select={self.target_select!r} "
                     f"not in {sorted(valid_modes)}"
                 )
+        if self.class_filter is not None and not self.class_filter:
+            raise ValueError(f"beat '{self.id}' class_filter must be None or non-empty list")
         return self
 
 
