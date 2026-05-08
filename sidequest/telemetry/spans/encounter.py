@@ -160,6 +160,10 @@ SPAN_ROUTES[SPAN_ENCOUNTER_MOMENTUM_BROADCAST] = SpanRoute(
 # Dual-track momentum constants — flat-only baseline; routes land with the
 # GM-panel encounter timeline rollout.
 SPAN_ENCOUNTER_BEAT_SKIPPED = "encounter.beat_skipped"
+# C&C B/X class beats Task 7 — fires every time the narrator prompt is built
+# with a class-filtered per-PC beat menu. Lets the GM panel verify the filter
+# is wired, not just defined (CLAUDE.md OTEL-on-every-subsystem discipline).
+SPAN_CONFRONTATION_BEAT_FILTER = "confrontation.beat_filter"
 SPAN_ENCOUNTER_INVALID_SIDE = "encounter.invalid_side"
 SPAN_ENCOUNTER_INVALID_OUTCOME_TIER = "encounter.invalid_outcome_tier"
 SPAN_ENCOUNTER_METRIC_ADVANCE = "encounter.metric_advance"
@@ -191,6 +195,7 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
         SPAN_ENCOUNTER_EDGE_DEBIT,
         SPAN_ENCOUNTER_COMPOSURE_BREAK,
+        SPAN_CONFRONTATION_BEAT_FILTER,
     }
 )
 
@@ -410,6 +415,33 @@ def encounter_beat_skipped_span(
     with Span.open(
         SPAN_ENCOUNTER_BEAT_SKIPPED,
         {"reason": reason, "actor": actor, "actor_side": actor_side, "beat_id": beat_id, **attrs},
+    ) as s:
+        yield s
+
+
+@contextmanager
+def confrontation_beat_filter_span(
+    *,
+    actor: str,
+    class_name: str,
+    confrontation_type: str,
+    available_beat_ids: str,
+    spell_slots_remaining: float,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Emitted once per PC actor when the narrator prompt renders a
+    class-filtered beat menu. Lets the GM panel verify class-distinct beat
+    menus are actually shipped to the LLM (§5.6 criterion 1)."""
+    with Span.open(
+        SPAN_CONFRONTATION_BEAT_FILTER,
+        {
+            "actor": actor,
+            "class_name": class_name,
+            "confrontation_type": confrontation_type,
+            "available_beat_ids": available_beat_ids,
+            "spell_slots_remaining": spell_slots_remaining,
+            **attrs,
+        },
     ) as s:
         yield s
 
