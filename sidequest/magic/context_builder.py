@@ -19,6 +19,13 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
     lines: list[str] = ["ACTIVE MAGIC CONTEXT — " + config.world_slug]
     lines.append(f"allowed_sources: {config.allowed_sources}")
     lines.append(f"active_plugins: {config.active_plugins}")
+    # Canonical cost-type vocabulary. The engine routes
+    # ``magic_working.costs[<cost_type>]`` directly to a ledger bar of
+    # the same id; an off-vocabulary cost (improvised from genre
+    # folklore — `slots`, `mp`, `mana`) is silently dropped with a
+    # warning, exactly the SOUL.md illusionism failure the GM panel
+    # exists to catch (playtest 2026-05-08, caverns_sunden Mage).
+    lines.append(f"valid_cost_types: {config.cost_types}")
 
     hard_limit_ids = [h.id for h in config.hard_limits]
     lines.append(f"hard_limits: {hard_limit_ids}")
@@ -66,7 +73,12 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
         "If your narration depicts a magic working, emit a magic_working field "
         "in your game_patch with required fields for the firing plugin. The "
         "validator enforces hard_limits; describing a working that violates one "
-        "will surface a DEEP_RED flag in the GM panel."
+        "will surface a DEEP_RED flag in the GM panel. Cost keys in "
+        "magic_working.costs MUST be drawn from valid_cost_types above and "
+        "MUST exactly match an entry of active_ledger_for_<actor> when "
+        "debiting a character bar — do NOT improvise cost names from genre "
+        "folklore (B/X 'slots', JRPG 'mp', etc.). Off-vocabulary costs are "
+        "dropped silently with a warning."
     )
 
     if "innate_v1" in config.active_plugins:

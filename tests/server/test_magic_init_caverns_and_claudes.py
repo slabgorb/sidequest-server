@@ -185,6 +185,92 @@ def test_caverns_sunden_class_aware_spell_slot_allocation(cc_pack_dir):
         )
 
 
+def test_caverns_sunden_mage_cast_routes_to_spell_slots_bar(cc_pack_dir):
+    """Playtest 2026-05-08 regression: a magic_working with cost_type
+    `spell_slots` MUST debit the `spell_slots` ledger bar end-to-end.
+
+    Pre-fix, world cost_types_active listed `slots` while the bar id
+    was `spell_slots`; the engine routes by ``BarKey(scope, owner,
+    bar_id=cost_type)`` so a `slots` cost found no matching bar, fell
+    through to the world/item-scope-pending guard, and emitted a
+    `magic.unrouted_cost` warning. Every Mage cast was a no-op against
+    the ledger — the textbook SOUL.md illusionism failure.
+
+    The fix aligns cost_type with bar id (`spell_slots` everywhere).
+    This test asserts that alignment by exercising the routing path
+    end-to-end against the shipped content (no synthetic fixture).
+    """
+    from sidequest.magic.models import MagicWorking
+
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Ponder",
+        character_class="Mage",
+    )
+
+    # Pre-cast: B/X L1 Mage starts with 1 prepared spell slot.
+    spell_slots_key = next(iter(snapshot.magic_state.ledger))
+    assert snapshot.magic_state.ledger[spell_slots_key].value == 1.0
+
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="native",
+        actor="Ponder",
+        costs={"spell_slots": 1.0},
+        domain="elemental",
+        narrator_basis="Mage casts the prepared Light spell",
+        flavor="acquired",
+        consent_state="willing",
+    )
+    result = snapshot.magic_state.apply_working(working)
+
+    # Post-cast: the slot is gone, the bar dropped 1.0 → 0.0, and the
+    # routing actually engaged (bar_changes is non-empty — a routed
+    # cost; an unrouted cost would skip the assignment and leave
+    # bar_changes empty with a `magic.unrouted_cost` warning).
+    assert "spell_slots" in result.bar_changes, (
+        "spell_slots cost must route to the spell_slots bar — empty "
+        "bar_changes means the cost dropped silently (the playtest bug)"
+    )
+    prev, post = result.bar_changes["spell_slots"]
+    assert prev == 1.0
+    assert post == 0.0
+
+
+def test_caverns_sunden_cost_types_match_character_scope_bar_ids(cc_pack_dir):
+    """Engine convention: ``MagicState.apply_working`` looks up bars by
+    ``BarKey(scope, owner, bar_id=cost_type)``. For every character-scope
+    bar a world ships, the bar's id MUST appear in cost_types — else a
+    narrator-emitted cost against that bar will drop silently.
+
+    Authored cost_types may legitimately exceed character bar ids when
+    the cost targets world/item scope (engine routing for those scopes
+    is pending; ``magic.state.apply_working`` logs `magic.unrouted_cost`
+    for them). The reverse direction is the bug: an authored character
+    bar with no matching cost_type means there's no narrator-side path
+    to reach it. This test pins that direction.
+    """
+    config = load_world_magic(
+        genre_yaml=cc_pack_dir / "magic.yaml",
+        world_yaml=cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml",
+    )
+    character_bar_ids = {b.id for b in config.ledger_bars if b.scope == "character"}
+    cost_type_set = set(config.cost_types)
+    missing = character_bar_ids - cost_type_set
+    assert not missing, (
+        f"caverns_sunden ships character-scope bar(s) {sorted(missing)} "
+        f"with no matching cost_type; narrator-emitted costs cannot reach "
+        f"them. Add to cost_types_active in worlds/caverns_sunden/magic.yaml."
+    )
+
+
 def test_caverns_sunden_unknown_class_raises_loudly(cc_pack_dir):
     """No silent fallback: if a character is committed with a class
     that isn't in the world's ``starts_at_chargen`` dict, ``add_character``
@@ -245,7 +331,12 @@ def test_caverns_and_claudes_intensity_and_world_knowledge(cc_pack_dir):
     assert config.world_knowledge.primary == "folkloric"
     assert "components" in config.cost_types
     assert "backlash" in config.cost_types
-    assert "slots" in config.cost_types  # added in B/X pivot for caster slot debits
+    # B/X spell-slot debits route by `cost_type == bar_id` (engine convention
+    # at magic/state.py); cost_type name must match the `spell_slots` ledger
+    # bar id or every cast drops silently (playtest 2026-05-08).
+    assert "spell_slots" in config.cost_types
+    # The pre-fix cost_type name `slots` is gone — keep the regression pinned.
+    assert "slots" not in config.cost_types
     # Hard limits authored as five entries — guard count + a known id.
     assert len(config.hard_limits) == 5
     limit_ids = {hl.id for hl in config.hard_limits}

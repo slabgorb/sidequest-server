@@ -218,7 +218,7 @@ def _class_keyed_world_config() -> WorldMagicConfig:
         world_knowledge=WorldKnowledge(primary="folkloric"),
         visibility={"primary": "feared"},
         hard_limits=[HardLimit(id="no_test", description="ban resurrection")],
-        cost_types=["slots"],
+        cost_types=["spell_slots"],
         ledger_bars=[
             LedgerBarSpec(
                 id="spell_slots",
