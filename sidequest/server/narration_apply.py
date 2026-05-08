@@ -1156,6 +1156,90 @@ def _apply_course_sidecar(
         )
 
 
+def _apply_morale_sidecar(
+    *,
+    snapshot: GameSnapshot,
+    result: object,
+    pack: GenrePack | None,
+) -> None:
+    """Apply a ``morale_event`` sidecar from game_patch_dict to the active encounter.
+
+    Called from ``_apply_narration_result_to_snapshot`` after the course
+    sidecar handler and before the encounter beat loop.
+
+    Skips silently when:
+    - result has no game_patch_dict (non-NarrationTurnResult or empty patch)
+    - game_patch_dict carries no ``morale_event`` key
+    - no active encounter on the snapshot
+    - pack is None or encounter type not in pack rules
+    - confrontation has no morale block (morale=None)
+
+    Raises ValueError on unknown ``morale_event`` values (loud-fail per
+    ADR-039 and CLAUDE.md "no silent fallbacks" — unknown values surface
+    narrator drift immediately).
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+    patch_dict = result.game_patch_dict
+    if not patch_dict:
+        return
+
+    sidecar_morale_event = patch_dict.get("morale_event")
+    if sidecar_morale_event is None:
+        return
+
+    _KNOWN_SIDECAR_MORALE_EVENTS = {"intimidated"}
+    if sidecar_morale_event not in _KNOWN_SIDECAR_MORALE_EVENTS:
+        raise ValueError(
+            f"narrator sidecar morale_event={sidecar_morale_event!r} not recognized; "
+            f"known values: {sorted(_KNOWN_SIDECAR_MORALE_EVENTS)}"
+        )
+
+    enc = snapshot.encounter
+    if enc is None or enc.resolved:
+        return
+
+    if pack is None or pack.rules is None:
+        return
+
+    from sidequest.server.dispatch.confrontation import find_confrontation_def
+
+    cdef = find_confrontation_def(pack.rules.confrontations, enc.encounter_type)
+    if cdef is None or cdef.morale is None:
+        # Confrontation has no morale block — no morale check possible.
+        return
+
+    if sidecar_morale_event == "intimidated":
+        event_key = f"intimidated:{enc.encounter_type}"
+        if event_key not in enc.morale_events:
+            opp_actors = [a for a in enc.actors if a.side == "opponent"]
+            side = OpponentSideState(
+                label=enc.encounter_type,
+                opponents=[OpponentState(id=a.name, alive=True) for a in opp_actors],
+            )
+            outcome = maybe_check_morale(cdef, side, MoraleTrigger.intimidated, Random())
+            enc.morale_events.append(event_key)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "morale_trigger",
+                    "trigger": "intimidated",
+                    "opponent_side": enc.encounter_type,
+                    "outcome": outcome.value,
+                    "source": "sidecar",
+                },
+                component="confrontation",
+            )
+            logger.info(
+                "confrontation.morale_trigger trigger=intimidated side=%s outcome=%s source=sidecar",
+                enc.encounter_type,
+                outcome.value,
+            )
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -1842,6 +1926,11 @@ def _apply_narration_result_to_snapshot(
     # is not yet implemented — no reactions mechanism exists on Session.
     # Escalated: Bundle 6 or a dedicated reactions bundle should wire that path.
     _apply_course_sidecar(snapshot=snapshot, result=result, room=room)
+
+    # B/X morale sidecar: narrator-emitted morale_event (Task 10, ADR-039).
+    # Fires before the beat loop so an intimidated trigger can register
+    # before any dial advance occurs this turn.
+    _apply_morale_sidecar(snapshot=snapshot, result=result, pack=pack)
 
     # Encounter lifecycle (dual-track momentum, spec 2026-04-25)
     if pack is not None:

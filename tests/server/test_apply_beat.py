@@ -711,3 +711,207 @@ def test_per_beat_dial_advance_emits_first_blood_through_apply_pipeline():
     assert "first_blood:combat" in enc.morale_events
     # Encounter still active (not yet at threshold=4).
     assert not enc.resolved
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Task 10 — sidecar-driven intimidated morale trigger (ADR-039)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _morale_confrontation_with_intimidated(*, score: int = 8) -> ConfrontationDef:
+    """ConfrontationDef that declares intimidated in its morale triggers."""
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "player_metric": {"name": "momentum", "threshold": 10},
+            "opponent_metric": {"name": "momentum", "threshold": 10},
+            "morale": {
+                "score": score,
+                "triggers": ["first_blood", "intimidated"],
+                "flee_consequence": "rout",
+            },
+            "beats": [
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 1,
+                    "stat_check": "STR",
+                }
+            ],
+        }
+    )
+
+
+def test_intimidated_sidecar_fires_when_morale_block_present():
+    """Narrator JSON sidecar `morale_event: intimidated` fires the trigger
+    and records an entry in enc.morale_events when the confrontation has
+    a morale block."""
+    from unittest.mock import MagicMock
+
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import RulesConfig
+    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+    from tests._helpers.session_room import room_for
+
+    cdef = _morale_confrontation_with_intimidated()
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    snap.encounter = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Hero", role="combatant", side="player"),
+            EncounterActor(name="Goblin1", role="combatant", side="opponent"),
+        ],
+    )
+
+    result = NarrationTurnResult(
+        narration="Hero glares down the goblins.",
+        game_patch_dict={"morale_event": "intimidated"},
+    )
+
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        "Hero",
+        pack=pack,
+        from_explicit_action=True,
+        room=room_for(snap),
+    )
+
+    enc = snap.encounter
+    assert any("intimidated" in e for e in enc.morale_events), (
+        f"expected 'intimidated' in morale_events, got {enc.morale_events}"
+    )
+
+
+def test_intimidated_sidecar_ignored_when_no_morale_block():
+    """Narrator sidecar `morale_event: intimidated` does not record a morale
+    entry when the confrontation has no morale block."""
+    from unittest.mock import MagicMock
+
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import RulesConfig
+    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+    from tests._helpers.session_room import room_for
+
+    # Confrontation WITHOUT a morale block.
+    cdef_no_morale = ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "player_metric": {"name": "momentum", "threshold": 10},
+            "opponent_metric": {"name": "momentum", "threshold": 10},
+            "beats": [
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 1,
+                    "stat_check": "STR",
+                }
+            ],
+        }
+    )
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef_no_morale])
+
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    snap.encounter = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Hero", role="combatant", side="player"),
+            EncounterActor(name="Goblin1", role="combatant", side="opponent"),
+        ],
+    )
+
+    result = NarrationTurnResult(
+        narration="Hero glares down the goblins.",
+        game_patch_dict={"morale_event": "intimidated"},
+    )
+
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        "Hero",
+        pack=pack,
+        from_explicit_action=True,
+        room=room_for(snap),
+    )
+
+    enc = snap.encounter
+    assert enc.morale_events == [], (
+        f"expected no morale_events when confrontation has no morale block, got {enc.morale_events}"
+    )
+
+
+def test_unknown_sidecar_morale_event_raises():
+    """ValueError on narrator sidecar drift — unknown morale_event values."""
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.game.session import GameSnapshot
+    from sidequest.game.turn import TurnManager
+    from sidequest.genre.models.pack import GenrePack
+    from sidequest.genre.models.rules import RulesConfig
+    from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
+    from tests._helpers.session_room import room_for
+
+    cdef = _morale_confrontation_with_intimidated()
+    pack = MagicMock(spec=GenrePack)
+    pack.rules = RulesConfig(confrontations=[cdef])
+
+    snap = GameSnapshot(
+        genre_slug="test_pack",
+        world_slug="test_world",
+        turn_manager=TurnManager(),
+    )
+    snap.encounter = StructuredEncounter(
+        encounter_type="combat",
+        player_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        opponent_metric=EncounterMetric(name="momentum", current=0, starting=0, threshold=10),
+        actors=[
+            EncounterActor(name="Hero", role="combatant", side="player"),
+            EncounterActor(name="Goblin1", role="combatant", side="opponent"),
+        ],
+    )
+
+    result = NarrationTurnResult(
+        narration="The goblins panic and scatter.",
+        game_patch_dict={"morale_event": "panic"},
+    )
+
+    with pytest.raises(ValueError, match="morale_event.*panic"):
+        _apply_narration_result_to_snapshot(
+            snap,
+            result,
+            "Hero",
+            pack=pack,
+            from_explicit_action=True,
+            room=room_for(snap),
+        )
