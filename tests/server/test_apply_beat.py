@@ -14,7 +14,7 @@ from sidequest.game.morale import OpponentState
 from sidequest.genre.models.character import ClassDef
 from sidequest.genre.models.rules import BeatDef, ConfrontationDef
 from sidequest.protocol.dice import RollOutcome
-from sidequest.server.narration_apply import _emit_morale_triggers
+from sidequest.server.narration_apply import _apply_flee_consequences, _emit_morale_triggers
 
 
 def _enc(*, p_thresh: int = 10, o_thresh: int = 10, p_cur: int = 0, o_cur: int = 0):
@@ -915,3 +915,91 @@ def test_unknown_sidecar_morale_event_raises():
             from_explicit_action=True,
             room=room_for(snap),
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Task 11 — flee consequence dispatch (chase / surrender / rout)
+#
+# Tests call _emit_morale_triggers with _rng_always_flee() to force a
+# flee outcome, then assert on the resulting encounter state.
+# Uses the same inline-factory style as Tasks 9/10 above.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _morale_cdef_flee(*, flee_consequence: str = "rout") -> ConfrontationDef:
+    """Minimal ConfrontationDef with morale score=2 so any 2d6 roll > 2 → flee.
+
+    With _rng_always_flee() (each die = 6, sum = 12 > 2) the roll always fails
+    and outcome is MoraleOutcome.flee.
+    """
+    return ConfrontationDef.model_validate(
+        {
+            "type": "combat",
+            "label": "Combat",
+            "category": "combat",
+            "player_metric": {"name": "momentum", "threshold": 10},
+            "opponent_metric": {"name": "momentum", "threshold": 10},
+            "morale": {
+                "score": 2,
+                "triggers": ["first_blood"],
+                "flee_consequence": flee_consequence,
+            },
+            "beats": [
+                {
+                    "id": "attack",
+                    "label": "Attack",
+                    "kind": "strike",
+                    "base": 2,
+                    "stat_check": "STR",
+                }
+            ],
+        }
+    )
+
+
+def _run_flee_consequence(*, flee_consequence: str) -> StructuredEncounter:
+    """Helper: fire first_blood with rng_always_flee, apply flee consequence.
+
+    Returns the encounter so the caller can assert on its state.
+    """
+    cdef = _morale_cdef_flee(flee_consequence=flee_consequence)
+    enc = _enc_morale(n_opponents=2)
+    rng = _rng_always_flee()
+
+    pre = [_opp("g1", alive=True), _opp("g2", alive=True)]
+    post = [_opp("g1", alive=False), _opp("g2", alive=True)]
+
+    fired = _emit_morale_triggers(enc, cdef, "combat", pre, post, False, rng)
+    _apply_flee_consequences(enc, cdef, fired)
+    return enc
+
+
+def test_flee_consequence_chase_sets_pending_flag():
+    """flee_consequence=chase: enc.flee_consequence_pending set to 'chase'.
+
+    Chase does NOT resolve the encounter (V1 — full chase-launch is a
+    follow-up story). The orchestrator picks up flee_consequence_pending
+    to launch a chase confrontation.
+    """
+    enc = _run_flee_consequence(flee_consequence="chase")
+    assert enc.flee_consequence_pending == "chase"
+    # Chase does NOT end the combat encounter in V1.
+    assert enc.resolved is False
+
+
+def test_flee_consequence_surrender_ends_combat():
+    """flee_consequence=surrender: encounter resolved, opponents surrendered."""
+    enc = _run_flee_consequence(flee_consequence="surrender")
+    assert enc.flee_consequence_pending == "surrender"
+    assert enc.opponents_disposition == "surrendered"
+    assert enc.resolved is True
+    assert enc.outcome == "surrender"
+
+
+def test_flee_consequence_rout_ends_combat():
+    """flee_consequence=rout: encounter resolved, opponents routed."""
+    enc = _run_flee_consequence(flee_consequence="rout")
+    assert enc.flee_consequence_pending == "rout"
+    assert enc.opponents_disposition == "routed"
+    assert enc.resolved is True
+    assert enc.outcome == "rout"

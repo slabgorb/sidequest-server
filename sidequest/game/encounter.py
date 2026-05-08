@@ -162,6 +162,15 @@ class StructuredEncounter(BaseModel):
     # list (initialized to empty) so callers can always append without
     # a guard.
     morale_events: list[str] = Field(default_factory=list)
+    # B/X flee consequences (Task 11 — C&C class-beats + morale).
+    # ``flee_consequence_pending`` is set to "chase"|"surrender"|"rout"
+    # when a morale flee outcome is applied. Chase is a V1 placeholder —
+    # full chase-launch needs a follow-up story. Surrender/rout also set
+    # ``resolved=True`` and ``outcome`` to their disposition value.
+    # ``opponents_disposition`` is "surrendered"|"routed" when applicable.
+    # Both fields are server-only (not forwarded to UI in V1).
+    flee_consequence_pending: str | None = None
+    opponents_disposition: str | None = None
 
     @model_validator(mode="before")
     @classmethod

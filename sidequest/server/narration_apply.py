@@ -36,7 +36,7 @@ from sidequest.game.session import (
     RoomState,
 )
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import MoraleTrigger, ResolutionMode
+from sidequest.genre.models.rules import FleeConsequence, MoraleTrigger, ResolutionMode
 from sidequest.magic.confrontations import (
     BranchName,
     evaluate_auto_fire_triggers,
@@ -211,6 +211,72 @@ def _emit_morale_triggers(
             initial,
         )
     return fired
+
+
+def _apply_flee_consequences(
+    encounter,
+    cdef,
+    fired: list[tuple[MoraleTrigger, MoraleOutcome]],
+) -> None:
+    """Apply chase/surrender/rout based on morale.flee_consequence.
+
+    No-op if no fired trigger has outcome=flee. Idempotent: relies on
+    encounter state not being mutated twice for the same outcome
+    (the caller passes a fresh ``fired`` list per beat).
+
+    For surrender/rout: also sets ``encounter.resolved = True`` and
+    ``encounter.outcome`` so the encounter ends. For chase: sets
+    ``flee_consequence_pending="chase"`` only — full chase escalation
+    is a follow-up story (V1 limitation, documented).
+
+    Loud-fail (ValueError) on unknown FleeConsequence values per
+    CLAUDE.md "no silent fallbacks" — unknown values surface drift
+    immediately.
+    """
+    if not any(outcome is MoraleOutcome.flee for _, outcome in fired):
+        return
+    if cdef.morale is None:
+        # Defensive: should not happen — fired list is non-empty only when
+        # morale is configured. Loud-fail surfaces upstream bugs.
+        raise ValueError(
+            f"_apply_flee_consequences called with fired outcomes but no morale "
+            f"block on '{cdef.label}'"
+        )
+    consequence = cdef.morale.flee_consequence
+    if consequence is FleeConsequence.chase:
+        # V1: set pending flag; actual chase launch is a follow-up story.
+        # The orchestrator can inspect flee_consequence_pending="chase" to
+        # transition to a chase confrontation. No further mutations here.
+        encounter.flee_consequence_pending = "chase"
+    elif consequence is FleeConsequence.surrender:
+        encounter.flee_consequence_pending = "surrender"
+        encounter.opponents_disposition = "surrendered"
+        if not encounter.resolved:
+            encounter.resolved = True
+            encounter.outcome = "surrender"
+    elif consequence is FleeConsequence.rout:
+        encounter.flee_consequence_pending = "rout"
+        encounter.opponents_disposition = "routed"
+        if not encounter.resolved:
+            encounter.resolved = True
+            encounter.outcome = "rout"
+    else:
+        raise ValueError(f"unknown flee_consequence: {consequence!r}")
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "flee_consequence",
+            "consequence": consequence.value,
+            "side": encounter.encounter_type,
+        },
+        component="confrontation",
+    )
+    logger.info(
+        "confrontation.flee_consequence consequence=%s side=%s",
+        consequence.value,
+        encounter.encounter_type,
+    )
 
 
 # Pingpong 2026-05-03 [BUG] — narrator described "patrol cutter spinning
@@ -1238,6 +1304,11 @@ def _apply_morale_sidecar(
                 enc.encounter_type,
                 outcome.value,
             )
+            # Task 11: apply flee consequence if intimidated roll returned flee.
+            sidecar_fired: list[tuple[MoraleTrigger, MoraleOutcome]] = [
+                (MoraleTrigger.intimidated, outcome)
+            ]
+            _apply_flee_consequences(enc, cdef, sidecar_fired)
 
 
 def _apply_narration_result_to_snapshot(
@@ -2423,7 +2494,7 @@ def _apply_narration_result_to_snapshot(
                             # which actor was KO'd; V1 keeps False here.
                             # Task 10's intimidated sidecar covers explicit
                             # narrator-emitted leader-takedown signals.
-                            _emit_morale_triggers(
+                            morale_fired = _emit_morale_triggers(
                                 enc,
                                 cdef,
                                 enc.encounter_type,
@@ -2432,6 +2503,7 @@ def _apply_narration_result_to_snapshot(
                                 False,
                                 Random(),
                             )
+                            _apply_flee_consequences(enc, cdef, morale_fired)
 
                 if result_apply.resolved:
                     with encounter_resolved_span(
@@ -3586,7 +3658,7 @@ def _resolve_opposed_check_branch(
                         )
                         for i in range(pseudo_initial)
                     ]
-                    _emit_morale_triggers(
+                    morale_fired = _emit_morale_triggers(
                         encounter,
                         cdef,
                         encounter.encounter_type,
@@ -3595,6 +3667,7 @@ def _resolve_opposed_check_branch(
                         False,
                         Random(),
                     )
+                    _apply_flee_consequences(encounter, cdef, morale_fired)
 
         if applied.resolved:
             with encounter_resolved_span(
