@@ -33,11 +33,13 @@ from pathlib import Path
 
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.magic_loader import LoaderError, load_world_magic
+from sidequest.genre.models.character import ClassDef
 from sidequest.magic.confrontations import (
     ConfrontationLoaderError,
     load_confrontations,
 )
-from sidequest.magic.state import MagicState
+from sidequest.magic.models import LedgerBarSpec
+from sidequest.magic.state import BarKey, LedgerBar, MagicState
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
@@ -257,3 +259,46 @@ def init_magic_state_for_session(
                 severity="warning",
             )
     return True
+
+
+def seed_learned_v1_state(
+    state: MagicState,
+    *,
+    actor: str,
+    class_def: ClassDef,
+    class_level: int,
+    chosen_known_spells: list[str],
+) -> None:
+    """Per-actor learned_v1 seed: known_spells + per-level slot bars.
+
+    Called from init_magic_state_for_session for any class with
+    magic_access == 'learned_v1'. Slot-table lookup uses string-keyed
+    dicts (YAML 1.1/JSON-safe) and selects the highest entry <= class_level.
+    """
+    if class_def.magic_config is None:
+        raise ValueError(f"class {class_def.id!r} declares learned_v1 but has no magic_config")
+
+    for sid in chosen_known_spells:
+        state.learn_spell(actor, sid)
+
+    # Pick the slot row for this class_level: largest key <= class_level.
+    slot_table = class_def.magic_config.slots_by_class_level
+    eligible = sorted(int(k) for k in slot_table if int(k) <= class_level)
+    if not eligible:
+        return  # class_level too low; no slots yet (e.g. cleric L1 has no L1 slots in some tables)
+    row = slot_table[str(eligible[-1])]
+
+    for spell_level_str, max_slots in row.items():
+        spell_level = int(spell_level_str)
+        bar_id = f"slots_l{spell_level}"
+        spec = LedgerBarSpec(
+            id=bar_id,
+            scope="character",
+            direction="down",
+            range=(0.0, float(max_slots)),
+            threshold_low=0.0,
+            consequence_on_low_cross=f"out of L{spell_level} slots until rest",
+            starts_at_chargen=float(max_slots),
+        )
+        _key = BarKey(scope="character", owner_id=actor, bar_id=bar_id)
+        state.ledger[f"character|{actor}|{bar_id}"] = LedgerBar(spec=spec, value=float(max_slots))
