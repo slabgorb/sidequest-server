@@ -86,6 +86,25 @@ SPAN_ROUTES[SPAN_ENCOUNTER_NO_OPPONENT_AVAILABLE] = SpanRoute(
         "category": (span.attributes or {}).get("category", ""),
     },
 )
+# Playtest 2026-05-08: narrator staged a multi-NPC scene (drift gang pack) and
+# triggered the ``dogfight`` sealed-letter encounter, whose 1v1 red/blue
+# contract refused 3 npcs_present and crashed the turn (auto-save + reconnect
+# = sticky crash loop). Guard now declines the instantiation gracefully and
+# fires this span so the GM panel can see "narrator picked sealed-letter for
+# pack scene; engine declined" rather than the narrator's prose proceeding
+# without any signal that the mechanic disengaged.
+SPAN_ENCOUNTER_SEALED_LETTER_ARITY_REJECTED = "encounter.sealed_letter_arity_rejected"
+SPAN_ROUTES[SPAN_ENCOUNTER_SEALED_LETTER_ARITY_REJECTED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.sealed_letter_arity_rejected",
+        "encounter_type": (span.attributes or {}).get("encounter_type", ""),
+        "genre_slug": (span.attributes or {}).get("genre_slug", ""),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "npc_count": (span.attributes or {}).get("npc_count", 0),
+    },
+)
 SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH = "encounter.beat_failure_branch"
 SPAN_ROUTES[SPAN_ENCOUNTER_BEAT_FAILURE_BRANCH] = SpanRoute(
     event_type="state_transition",
@@ -341,6 +360,37 @@ def encounter_no_opponent_available_span(
             "genre_slug": genre_slug,
             "player_name": player_name,
             "category": category,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def encounter_sealed_letter_arity_rejected_span(
+    *,
+    encounter_type: str,
+    genre_slug: str,
+    player_name: str,
+    npc_count: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Playtest 2026-05-08: sealed-letter encounter (1v1 red/blue) declined
+    because the narrator staged a multi-NPC scene. The encounter does NOT
+    instantiate; the narration turn continues without a structured mechanic.
+    GM panel reads this span as the lie-detector signal that the engine saw
+    the inappropriate selection and refused, rather than improvising a 1v1
+    against a pack.
+    """
+    with Span.open(
+        SPAN_ENCOUNTER_SEALED_LETTER_ARITY_REJECTED,
+        {
+            "encounter_type": encounter_type,
+            "genre_slug": genre_slug,
+            "player_name": player_name,
+            "npc_count": npc_count,
             **attrs,
         },
         tracer_override=_tracer,

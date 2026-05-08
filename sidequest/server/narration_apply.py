@@ -1708,6 +1708,7 @@ def _apply_narration_result_to_snapshot(
         from sidequest.server.dispatch.confrontation import find_confrontation_def
         from sidequest.server.dispatch.encounter_lifecycle import (
             NoOpponentAvailableError,
+            SealedLetterArityError,
             instantiate_encounter_from_trigger,
         )
         from sidequest.telemetry.spans import (
@@ -1801,12 +1802,23 @@ def _apply_narration_result_to_snapshot(
                 )
             except NoOpponentAvailableError as exc:
                 # Narrowly scoped: only the Story 45-33 no-opponent guard is
-                # caught here. The sealed-letter validator's "exactly one
-                # opponent" ValueError and the unknown-encounter-type / bad-side
+                # caught here. The unknown-encounter-type / bad-side
                 # ValueErrors all PROPAGATE — those are config/extraction errors
                 # that the existing test suite asserts crash the turn.
                 logger.warning(
                     "encounter.no_opponent_available confrontation=%s player=%s reason=%s",
+                    result.confrontation,
+                    player_name,
+                    exc,
+                )
+            except SealedLetterArityError as exc:
+                # Playtest 2026-05-08: narrator triggered a sealed-letter
+                # encounter (1v1 contract) against zero or multiple NPCs.
+                # The OTEL span at the validator already recorded the
+                # rejection; here we keep the turn alive — the narrator's
+                # prose stands, no structured encounter instantiates.
+                logger.warning(
+                    "encounter.sealed_letter_arity_rejected confrontation=%s player=%s reason=%s",
                     result.confrontation,
                     player_name,
                     exc,

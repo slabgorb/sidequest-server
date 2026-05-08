@@ -22,6 +22,7 @@ from sidequest.telemetry.spans import (
     encounter_confrontation_initiated_span,
     encounter_no_opponent_available_span,
     encounter_resolved_span,
+    encounter_sealed_letter_arity_rejected_span,
     npc_registry_hp_set_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
@@ -40,6 +41,26 @@ class NoOpponentAvailableError(ValueError):
     without swallowing the sealed-letter validator's
     ``"exactly one opponent"`` ValueError, which is a config/extraction
     error that should propagate.
+    """
+
+
+class SealedLetterArityError(ValueError):
+    """Raised when the narrator triggers a sealed-letter encounter (1v1
+    red/blue contract — dogfight, duel, etc.) against zero or multiple
+    NPCs (Playtest 2026-05-08).
+
+    Subclass of ``ValueError`` so existing ``except ValueError`` blocks
+    still match. The dedicated class lets the narration-apply caller
+    catch THIS path gracefully — declining the encounter without
+    crashing the turn — while still propagating other ValueErrors
+    (config/extraction errors that the existing test suite asserts
+    crash the turn).
+
+    Sealed-letter encounters are commit-reveal duels addressed by role
+    tag (red/blue); a pack of raiders has no clean mapping into that
+    contract. The selector (the narrator) made an inappropriate choice;
+    the engine declines, OTEL records the gap, and the turn proceeds
+    on prose alone.
     """
 
 
@@ -306,7 +327,14 @@ def instantiate_encounter_from_trigger(
                     f"populated table (loaded via the `_from:` pointer)"
                 )
             if len(npcs_present) != 1:
-                raise ValueError(
+                with encounter_sealed_letter_arity_rejected_span(
+                    encounter_type=encounter_type,
+                    genre_slug=genre_slug or "",
+                    player_name=player_name,
+                    npc_count=len(npcs_present),
+                ):
+                    pass
+                raise SealedLetterArityError(
                     f"sealed-letter encounter {encounter_type!r} requires "
                     f"exactly one opponent NPC (player=red, npc=blue); got "
                     f"{len(npcs_present)} npcs_present"

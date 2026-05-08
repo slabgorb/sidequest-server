@@ -167,10 +167,14 @@ def test_dogfight_instantiation_assigns_red_blue_roles(
 
 def test_dogfight_instantiation_rejects_zero_npcs(
     space_opera_snap: tuple[GameSnapshot, GenrePack],
+    otel_capture: InMemorySpanExporter,
 ) -> None:
-    """Sealed-letter dogfights need exactly one opponent — zero is a
-    configuration / narrator error and must raise loudly (no silent
-    fallback to a player-only encounter that would never resolve).
+    """Sealed-letter dogfights need exactly one opponent. Playtest
+    2026-05-08: the prior crash-on-arity behavior wedged the player on
+    turn 1 (auto-save + reconnect = sticky crash loop). Now the wrapper
+    catches ``SealedLetterArityError``, fires
+    ``encounter.sealed_letter_arity_rejected``, and the turn continues
+    on prose alone — no encounter instantiates.
     """
     snap, pack = space_opera_snap
     result = NarrationTurnResult(
@@ -178,21 +182,31 @@ def test_dogfight_instantiation_rejects_zero_npcs(
         confrontation="dogfight",
         npcs_present=[],
     )
-    with pytest.raises(ValueError, match="exactly one opponent"):
-        _apply_narration_result_to_snapshot(
-            snap,
-            result,
-            player_name="Maverick",
-            pack=pack,
-            room=room_for(snap),
-        )
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        player_name="Maverick",
+        pack=pack,
+        room=room_for(snap),
+    )
+    assert snap.encounter is None, "no encounter must instantiate when arity guard fires"
+
+    span_names = {span.name for span in otel_capture.get_finished_spans()}
+    assert "encounter.sealed_letter_arity_rejected" in span_names, (
+        "OTEL lie-detector span must fire so the GM panel sees the rejection"
+    )
 
 
 def test_dogfight_instantiation_rejects_two_npcs(
     space_opera_snap: tuple[GameSnapshot, GenrePack],
+    otel_capture: InMemorySpanExporter,
 ) -> None:
-    """Sealed-letter dogfights are 1v1 — three actors total has no role
-    slot and the resolver would silently miss commits."""
+    """Sealed-letter dogfights are 1v1 — multi-NPC scenes (drift gang
+    pack, posse, mob) decline gracefully. Playtest 2026-05-08 was the
+    forcing function: narrator legitimately staged a 3-raider pack, the
+    1v1 contract refused 3 actors, the turn crashed and auto-save +
+    reconnect put the player back on the same crashing turn forever.
+    """
     snap, pack = space_opera_snap
     result = NarrationTurnResult(
         narration="Two bandits roll in on your six.",
@@ -202,13 +216,52 @@ def test_dogfight_instantiation_rejects_two_npcs(
             NpcMention(name="Bandit Two", role="hostile", side="opponent"),
         ],
     )
-    with pytest.raises(ValueError, match="exactly one opponent"):
-        _apply_narration_result_to_snapshot(
-            snap,
-            result,
-            player_name="Maverick",
+    _apply_narration_result_to_snapshot(
+        snap,
+        result,
+        player_name="Maverick",
+        pack=pack,
+        room=room_for(snap),
+    )
+    assert snap.encounter is None, "no encounter must instantiate when arity guard fires"
+
+    arity_spans = [
+        s
+        for s in otel_capture.get_finished_spans()
+        if s.name == "encounter.sealed_letter_arity_rejected"
+    ]
+    assert len(arity_spans) == 1, "exactly one arity-rejection span per declined trigger"
+    attrs = arity_spans[0].attributes or {}
+    assert attrs.get("encounter_type") == "dogfight"
+    assert attrs.get("npc_count") == 2
+    assert attrs.get("player_name") == "Maverick"
+
+
+def test_dogfight_instantiation_arity_error_propagates_at_lifecycle_layer(
+    space_opera_snap: tuple[GameSnapshot, GenrePack],
+) -> None:
+    """The wrapper at ``_apply_narration_result_to_snapshot`` is what
+    grants the graceful skip. The lifecycle helper itself must still
+    raise ``SealedLetterArityError`` — direct callers (tests, future
+    dispatch paths that want loud failure) MUST see the typed exception.
+    """
+    from sidequest.server.dispatch.encounter_lifecycle import (
+        SealedLetterArityError,
+        instantiate_encounter_from_trigger,
+    )
+
+    snap, pack = space_opera_snap
+    with pytest.raises(SealedLetterArityError, match="exactly one opponent"):
+        instantiate_encounter_from_trigger(
+            snapshot=snap,
             pack=pack,
-            room=room_for(snap),
+            encounter_type="dogfight",
+            player_name="Maverick",
+            npcs_present=[
+                NpcMention(name="Bandit One", role="hostile", side="opponent"),
+                NpcMention(name="Bandit Two", role="hostile", side="opponent"),
+            ],
+            genre_slug="space_opera",
         )
 
 
