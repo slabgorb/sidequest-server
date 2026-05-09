@@ -31,6 +31,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
+from pydantic import ValidationError
+
 from sidequest.game.session import GameSnapshot
 from sidequest.genre.magic_loader import LoaderError, load_world_magic
 from sidequest.genre.models.character import ClassDef
@@ -57,7 +60,6 @@ def _load_class_def(genre_pack_source_dir: Path | None, character_class: str) ->
     classes_yaml = genre_pack_source_dir / "classes.yaml"
     if not classes_yaml.exists():
         return None
-    import yaml
 
     raw = yaml.safe_load(classes_yaml.read_text(encoding="utf-8")) or []
     if not isinstance(raw, list):
@@ -65,7 +67,16 @@ def _load_class_def(genre_pack_source_dir: Path | None, character_class: str) ->
     for entry in raw:
         try:
             cd = ClassDef.model_validate(entry)
-        except Exception:  # noqa: BLE001
+        except (ValidationError, TypeError) as exc:
+            # Loud-fail per CLAUDE.md "No Silent Fallbacks": malformed
+            # class entries surface as a warning so authoring bugs don't
+            # masquerade as "class not found" lookup misses.
+            logger.warning(
+                "magic.init_class_def_invalid genre_pack=%s entry_id=%s error=%s",
+                genre_pack_source_dir,
+                entry.get("id", "?") if isinstance(entry, dict) else "?",
+                exc,
+            )
             continue
         if cd.display_name == character_class:
             return cd

@@ -76,9 +76,11 @@ def cast_spell_rejection_reason(
     """Why was cast_spell filtered out for this actor?
 
     Returns one of:
-      - ``None`` — cast_spell was selectable (no rejection)
+      - ``None`` — cast_spell was selectable (no rejection), OR ``prepared_spells``
+        was omitted (backward-compat caller — gate is dormant)
       - ``"no_slots"`` — slot bar at zero; rest required
-      - ``"unprepared"`` — slots remaining but no spells prepared at any level
+      - ``"unprepared"`` — caller passed a non-None ``prepared_spells`` and the
+        actor has no spells prepared at any level
       - ``"class"`` — class isn't allowed cast_spell at all (Fighter/Thief)
       - ``"absent"`` — beat isn't in this confrontation's pool
 
@@ -95,6 +97,10 @@ def cast_spell_rejection_reason(
         return "class"
     if spell_slots_remaining < 1.0:
         return "no_slots"
-    if not _has_any_prepared(prepared_spells):
+    # Symmetric with beats_available_for: when prepared_spells is omitted
+    # (None — backward-compat callers), the prepared-list gate is skipped
+    # and cast_spell is considered selectable. Only callers that explicitly
+    # pass an empty/non-empty dict trigger the unprepared check.
+    if prepared_spells is not None and not _has_any_prepared(prepared_spells):
         return "unprepared"
     return None

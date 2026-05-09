@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
+    from sidequest.agents.orchestrator import BeatSelection
+    from sidequest.game.encounter import EncounterActor
     from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
 
@@ -72,7 +74,12 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
-def _resolve_innate_cast_for_beat(*, sel, actor, snapshot: GameSnapshot) -> None:
+def _resolve_innate_cast_for_beat(
+    *,
+    sel: BeatSelection,
+    actor: EncounterActor,
+    snapshot: GameSnapshot,
+) -> None:
     """Story 47-10 — drive resolve_innate_v1_cast for a cast_spell beat.
 
     Each guard publishes a watcher event on miss so the GM panel can surface
@@ -136,12 +143,17 @@ def _resolve_innate_cast_for_beat(*, sel, actor, snapshot: GameSnapshot) -> None
         )
         return
 
-    # Save resolver: v1 stub. The opposed_check pipeline integration is a
-    # follow-up (architect spec-check finding 4 / spec §10 open question).
+    # Save resolver: v1 stub. Opposed-check pipeline integration is a
+    # follow-up tracked at:
+    #   docs/superpowers/specs/2026-05-06-magic-system-caverns-and-claudes-implementation-design.md §10 (open question 5)
+    #   sprint/epic-47.yaml story 47-10 Architect spec-check Mismatch 4
     # For now, default to "fail" — the defender does not save, the full
     # effect_template applies. This is the worst-case-for-defender path,
     # which is narratively safe (the narrator already chose to depict the
-    # spell hitting; we don't soften without an opposed roll).
+    # spell hitting; we don't soften without an opposed roll). The
+    # auto-apply branch (null-stat spells like Magic Missile) does fire
+    # the full innate_v1.cast span correctly; only the opposed-check
+    # branch uses this stub.
     def _stub_save_resolver(stat: str, target_id: str) -> str:
         return "fail"
 
@@ -155,6 +167,13 @@ def _resolve_innate_cast_for_beat(*, sel, actor, snapshot: GameSnapshot) -> None
         slot_consumed=True,  # resource_deltas drain ran above
         save_resolver=_stub_save_resolver if spell.save.stat is not None else None,
     )
+
+    # Story 47-10: append to spent_spells so the UI MagicBlock can render
+    # the cast spell struck-through-but-visible until rest. Idempotent on
+    # repeated cast of the same spell at the same level (set semantics).
+    spent_at_level = magic_state.spent_spells.setdefault(actor.name, {}).setdefault(spell.level, [])
+    if spell_id not in spent_at_level:
+        spent_at_level.append(spell_id)
 
 
 def _all_opponents_mindless(opp_actors, pack: GenrePack | None) -> bool:

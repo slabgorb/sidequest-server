@@ -73,7 +73,12 @@ def test_block_instructs_narrator_to_emit_magic_working_field(world_state):
 def caster_state(world_config):
     """A MagicState with a Mage actor whose known/prepared/slot fields are
     populated as if seed_learned_v1_state ran + the player prepared two
-    spells."""
+    spells. Includes the slots_l1 ledger bar so the slot-count rendering
+    branch in context_builder is actually exercised (rather than skipped
+    via the bar-not-found except path)."""
+    from sidequest.magic.models import LedgerBarSpec
+    from sidequest.magic.state import LedgerBar
+
     state = MagicState.from_config(world_config)
     state.add_character("rux")
     for sid in [
@@ -92,6 +97,19 @@ def caster_state(world_config):
     ]:
         state.learn_spell("rux", sid)
     state.prepare_spells("rux", {1: ["sleep", "magic_missile"]})
+    # Real slot bar so the <slots> rendering branch actually fires.
+    state.ledger["character|rux|slots_l1"] = LedgerBar(
+        spec=LedgerBarSpec(
+            id="slots_l1",
+            scope="character",
+            direction="down",
+            range=(0.0, 2.0),
+            threshold_low=0.0,
+            consequence_on_low_cross="out of L1 slots until rest",
+            starts_at_chargen=2.0,
+        ),
+        value=2.0,
+    )
     return state
 
 
@@ -125,10 +143,18 @@ def test_block_separates_known_from_prepared(caster_state):
 
 
 def test_block_renders_slot_count_for_prepared_level(caster_state):
-    """The block must show slot info at L1 so the narrator knows when the
-    Mage is out."""
+    """The block must show explicit slot counts at L1 so the narrator knows
+    when the Mage is out. Strict assertion: the actual slot value (2) must
+    appear in a slot-context segment, not just any 'l1' substring (which
+    would also match the prepared-spell tag)."""
     block = build_magic_context_block(magic_state=caster_state, actor_id="rux")
+    # Slot count format: "2/2 remaining" per the rendered <slots> section.
+    assert "2/2" in block or "2 of 2" in block, (
+        f"learned-magic block must surface explicit slot count (e.g. '2/2'). Block:\n{block}"
+    )
+    # Sanity: the word 'slot' (or 'remaining') appears somewhere — confirms
+    # the <slots> section rendered, not just a tag substring match.
     block_lower = block.lower()
-    assert "slot" in block_lower or "l1" in block_lower or "level 1" in block_lower, (
-        f"learned-magic block must surface slot count / level info. Block:\n{block}"
+    assert "slot" in block_lower or "remaining" in block_lower, (
+        f"learned-magic block must include a slots section. Block:\n{block}"
     )

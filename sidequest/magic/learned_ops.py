@@ -136,6 +136,9 @@ def rest(state: MagicState, *, actor: str) -> RestResult:
         level = int(serialized.rsplit("slots_l", 1)[1])
         restored[level] = max_value
     state.prepared_spells[actor] = {}
+    # Story 47-10: rest also clears the spent-spell visibility so the UI
+    # strikethrough resets — the spells are re-memorized fresh.
+    state.spent_spells[actor] = {}
     return RestResult(actor=actor, slots_restored=restored)
 
 
