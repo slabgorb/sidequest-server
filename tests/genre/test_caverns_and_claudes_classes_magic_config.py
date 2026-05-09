@@ -59,9 +59,7 @@ def test_mage_magic_config_starting_known_spells(cc_classes):
 
 def test_mage_magic_config_save_dc_stat_is_int(cc_classes):
     mage = _by_id(cc_classes, "mage")
-    assert mage.magic_config.save_dc_stat == "INT", (
-        "Mage save DCs scale on INT (B/X-aligned)"
-    )
+    assert mage.magic_config.save_dc_stat == "INT", "Mage save DCs scale on INT (B/X-aligned)"
 
 
 def test_mage_magic_config_turn_undead_false(cc_classes):
@@ -78,12 +76,8 @@ def test_mage_magic_config_has_l1_slot_row(cc_classes):
         f"Mage slots_by_class_level must have a row for class level 1; got keys {list(table.keys())!r}"
     )
     row = table["1"]
-    assert "1" in row, (
-        f"Mage class L1 row must have an entry for spell level 1; got {row!r}"
-    )
-    assert row["1"] >= 1, (
-        f"Mage class L1 must grant at least 1 L1 slot; got {row['1']}"
-    )
+    assert "1" in row, f"Mage class L1 row must have an entry for spell level 1; got {row!r}"
+    assert row["1"] >= 1, f"Mage class L1 must grant at least 1 L1 slot; got {row['1']}"
 
 
 def test_cleric_declares_magic_config_with_divine_tradition(cc_classes):

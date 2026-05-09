@@ -45,6 +45,33 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+def _load_class_def(genre_pack_source_dir: Path | None, character_class: str) -> ClassDef | None:
+    """Load a single ClassDef by display_name from the genre pack's classes.yaml.
+
+    Returns None if classes.yaml is absent or the class isn't found. Lookup
+    uses display_name (case-sensitive) to match the chargen-emitted
+    character_class string ("Mage", "Cleric", "Fighter", ...).
+    """
+    if genre_pack_source_dir is None:
+        return None
+    classes_yaml = genre_pack_source_dir / "classes.yaml"
+    if not classes_yaml.exists():
+        return None
+    import yaml
+
+    raw = yaml.safe_load(classes_yaml.read_text(encoding="utf-8")) or []
+    if not isinstance(raw, list):
+        return None
+    for entry in raw:
+        try:
+            cd = ClassDef.model_validate(entry)
+        except Exception:  # noqa: BLE001
+            continue
+        if cd.display_name == character_class:
+            return cd
+    return None
+
+
 def init_magic_state_for_session(
     *,
     snapshot: GameSnapshot,
@@ -204,6 +231,50 @@ def init_magic_state_for_session(
         state = snapshot.magic_state
         first_commit = False
     state.add_character(character_id, character_class=character_class)
+
+    # Story 47-10 — seed learned_v1 data layer for casters.
+    # When the world activates learned_v1 AND the actor's ClassDef declares
+    # magic_config, populate known_spells from the matching spell catalog
+    # and create per-level slot bars. The data layer is a no-op for non-
+    # casters and for worlds that don't activate learned_v1.
+    if "learned_v1" in config.active_plugins and character_class is not None:
+        class_def = _load_class_def(genre_pack_source_dir, character_class)
+        if class_def is not None and class_def.magic_config is not None:
+            tradition = class_def.magic_config.tradition
+            # Catalogs are keyed by file stem (e.g. "arcane_l1") in
+            # WorldMagicConfig.spell_catalogs. v1 ships L1 only — collect
+            # all catalogs whose tradition matches this class so future
+            # L2+ catalogs aggregate naturally.
+            matching = [
+                c for c in (config.spell_catalogs or {}).values() if c.tradition == tradition
+            ]
+            catalog = matching[0] if matching else None
+            if catalog is None:
+                logger.warning(
+                    "magic.init_no_catalog world=%s actor=%s tradition=%s — "
+                    "class declares magic_config but no %s catalog loaded",
+                    world_slug,
+                    character_id,
+                    tradition,
+                    tradition,
+                )
+            else:
+                # Spellbook seed: the actor "knows" every spell in the
+                # catalog. starting_known_spells in the spec is advisory
+                # for now — we give the player the full list to prepare
+                # from. Future stories may narrow this on chargen.
+                known_spell_ids = [s.id for s in catalog.spells]
+                # Class level — chargen lands characters at L1 by default.
+                # Future progression hooks can pass a higher level via the
+                # GameSnapshot character record.
+                seed_learned_v1_state(
+                    state,
+                    actor=character_id,
+                    class_def=class_def,
+                    class_level=1,
+                    chosen_known_spells=known_spell_ids,
+                )
+
     plugins = list(config.active_plugins)
     bar_count = len(state.ledger)
     logger.info(
@@ -280,6 +351,13 @@ def seed_learned_v1_state(
 
     for sid in chosen_known_spells:
         state.learn_spell(actor, sid)
+
+    # Initialize prepared_spells[actor] as an empty dict so the
+    # prepared-list gate (story 47-10 AC4) and context block (AC7) can
+    # distinguish "never prepared" (empty dict) from "no MagicState for
+    # this actor" (key absent). The actor will populate this via the
+    # learned_ops.prepare op at a safe site.
+    state.prepared_spells.setdefault(actor, {})
 
     # Pick the slot row for this class_level: largest key <= class_level.
     slot_table = class_def.magic_config.slots_by_class_level

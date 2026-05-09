@@ -21,7 +21,7 @@ function with this signature for the test surface.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 
@@ -83,8 +83,12 @@ def test_resolve_innate_cast_null_stat_skips_save():
     skip the opposed-check pipeline and apply the effect template directly."""
     from sidequest.magic.innate_v1_cast import resolve_innate_v1_cast
 
-    spell = _spell("magic_missile", save_stat=None, save_effect="none",
-                   effect_template="1 momentum damage, auto-hit")
+    spell = _spell(
+        "magic_missile",
+        save_stat=None,
+        save_effect="none",
+        effect_template="1 momentum damage, auto-hit",
+    )
     result = resolve_innate_v1_cast(
         spell=spell,
         actor_id="Rux",
@@ -104,8 +108,9 @@ def test_resolve_innate_cast_with_save_stat_runs_opposed_check():
     auto-apply; it must emit a save request and branch the effect on result."""
     from sidequest.magic.innate_v1_cast import resolve_innate_v1_cast
 
-    spell = _spell("sleep", save_stat="WIS", save_effect="negates",
-                   effect_template="up to 4d4 HD unconscious")
+    spell = _spell(
+        "sleep", save_stat="WIS", save_effect="negates", effect_template="up to 4d4 HD unconscious"
+    )
     result = resolve_innate_v1_cast(
         spell=spell,
         actor_id="Rux",
@@ -139,8 +144,7 @@ def test_resolve_innate_cast_save_success_applies_save_effect():
     assert result.save_skipped is False
     assert result.save_result == "success"
     assert result.effect_applied is None or result.effect_applied == "", (
-        f"On save success vs negates effect, no effect should apply; "
-        f"got {result.effect_applied!r}"
+        f"On save success vs negates effect, no effect should apply; got {result.effect_applied!r}"
     )
 
 
@@ -153,8 +157,12 @@ def test_resolve_innate_cast_emits_innate_v1_cast_span_on_success(otel_capture):
     """Successful cast emits an innate_v1.cast span with required attrs."""
     from sidequest.magic.innate_v1_cast import resolve_innate_v1_cast
 
-    spell = _spell("magic_missile", save_stat=None, save_effect="none",
-                   effect_template="1 momentum damage, auto-hit")
+    spell = _spell(
+        "magic_missile",
+        save_stat=None,
+        save_effect="none",
+        effect_template="1 momentum damage, auto-hit",
+    )
     resolve_innate_v1_cast(
         spell=spell,
         actor_id="Rux",
@@ -180,8 +188,9 @@ def test_resolve_innate_cast_span_includes_save_fields_on_save_path(otel_capture
     """When save_skipped=False, the span must include save_stat and save_result."""
     from sidequest.magic.innate_v1_cast import resolve_innate_v1_cast
 
-    spell = _spell("sleep", save_stat="WIS", save_effect="negates",
-                   effect_template="up to 4d4 HD unconscious")
+    spell = _spell(
+        "sleep", save_stat="WIS", save_effect="negates", effect_template="up to 4d4 HD unconscious"
+    )
     resolve_innate_v1_cast(
         spell=spell,
         actor_id="Rux",

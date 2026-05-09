@@ -77,9 +77,18 @@ def caster_state(world_config):
     state = MagicState.from_config(world_config)
     state.add_character("rux")
     for sid in [
-        "magic_missile", "sleep", "charm_person", "light", "read_magic",
-        "detect_magic", "floating_disc", "hold_portal", "protection_from_evil",
-        "read_languages", "shield", "ventriloquism",
+        "magic_missile",
+        "sleep",
+        "charm_person",
+        "light",
+        "read_magic",
+        "detect_magic",
+        "floating_disc",
+        "hold_portal",
+        "protection_from_evil",
+        "read_languages",
+        "shield",
+        "ventriloquism",
     ]:
         state.learn_spell("rux", sid)
     state.prepare_spells("rux", {1: ["sleep", "magic_missile"]})

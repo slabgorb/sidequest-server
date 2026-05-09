@@ -81,6 +81,50 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
         "dropped silently with a warning."
     )
 
+    # Story 47-10 — learned-magic block. When the actor has prepared
+    # spells, surface known/prepared/slot info to the narrator. The
+    # narrator is bound by ADR-009 to only name spells in the
+    # <prepared> list (don't narrate unlisted actions).
+    if actor_id is not None:
+        prepared = magic_state.prepared_spells.get(actor_id, {})
+        known = magic_state.known_spells.get(actor_id, [])
+        if prepared and any(spells for spells in prepared.values()):
+            lines.append("")
+            lines.append(f'<learned-magic actor="{actor_id}">')
+            if known:
+                lines.append(f"  <known>{', '.join(known)}</known>")
+            lines.append("  <prepared>")
+            for level in sorted(prepared.keys()):
+                spell_ids = prepared[level]
+                if spell_ids:
+                    lines.append(f"    <l{level}>{', '.join(spell_ids)}</l{level}>")
+            lines.append("  </prepared>")
+            # Slot remaining counts per level — read from the ledger.
+            # Bar id convention: slots_l<N> (per seed_learned_v1_state).
+            slot_lines: list[str] = []
+            for level in sorted(prepared.keys()):
+                bar_id = f"slots_l{level}"
+                key = BarKey(scope="character", owner_id=actor_id, bar_id=bar_id)
+                try:
+                    bar = magic_state.get_bar(key)
+                except KeyError:
+                    continue
+                # Read max from the bar's spec range.
+                max_slots = bar.spec.range[1] if bar.spec.range else "?"
+                slot_lines.append(
+                    f"    <l{level}>{bar.value:.0f}/{max_slots:.0f} remaining</l{level}>"
+                )
+            if slot_lines:
+                lines.append("  <slots>")
+                lines.extend(slot_lines)
+                lines.append("  </slots>")
+            lines.append("</learned-magic>")
+            lines.append(
+                "Per ADR-009: cast_spell narration MUST name a spell from the "
+                "<prepared> list above. Unprepared spells are not available to "
+                "the actor this turn — do not narrate them as cast."
+            )
+
     if "innate_v1" in config.active_plugins:
         lines.append("")
         lines.append("Example innate_v1 working — reflexive surfacing under stress:")

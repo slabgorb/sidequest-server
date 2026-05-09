@@ -119,11 +119,12 @@ def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
     assert "innate_v1" in active
 
 
-def test_caverns_sunden_ships_one_character_scope_spell_slots_bar(cc_pack_dir):
-    """Post-2026-05-07 B/X pivot: caverns_sunden ships one character-
-    scope ``spell_slots`` bar with class-keyed ``starts_at_chargen``.
-    A Delver-class chargen lands at 0.0 (non-caster); the bar exists
-    so that a future Mage commit can see the same registry.
+def test_caverns_sunden_ships_character_scope_spell_slots_bar(cc_pack_dir):
+    """Post-2026-05-07 B/X pivot: caverns_sunden ships character-scope
+    ``spell_slots`` and (story 47-10) ``divine_favor`` bars with class-keyed
+    ``starts_at_chargen``. A Delver-class chargen lands both at 0.0
+    (non-caster, non-cleric); the bars exist so future caster commits
+    see the same registry.
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
@@ -137,16 +138,16 @@ def test_caverns_sunden_ships_one_character_scope_spell_slots_bar(cc_pack_dir):
         character_id="Mira",
         character_class="Delver",
     )
-    bars = list(snapshot.magic_state.ledger.values())
-    assert len(bars) == 1, (
-        f"caverns_sunden should ship exactly one character-scope bar "
-        f"(spell_slots) seeded by add_character; got {len(bars)} bars"
-    )
-    assert bars[0].spec.id == "spell_slots"
-    assert bars[0].value == 0.0, (
+    bars_by_id = {b.spec.id: b for b in snapshot.magic_state.ledger.values()}
+    assert "spell_slots" in bars_by_id
+    assert bars_by_id["spell_slots"].value == 0.0, (
         "Delver is a non-caster; spell_slots must seed at 0.0 per "
         "world magic.yaml class-keyed starts_at_chargen"
     )
+    assert "divine_favor" in bars_by_id, (
+        "Story 47-10: divine_favor character-scope bar must ship in caverns_sunden world magic.yaml"
+    )
+    assert bars_by_id["divine_favor"].value == 0.0, "Delver (non-Cleric) divine_favor seeds at 0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +264,8 @@ def test_mage_session_init_creates_l1_slot_bar(cc_pack_dir):
     ms = snapshot.magic_state
     # Find a per-level L1 slot bar for actor 'Rux'.
     l1_bars = [
-        (key, bar) for key, bar in ms.ledger.items()
+        (key, bar)
+        for key, bar in ms.ledger.items()
         if "Rux" in key and ("slots_l1" in key or "spell_slots_l1" in key)
     ]
     assert len(l1_bars) >= 1, (
@@ -388,10 +390,13 @@ def test_caverns_sunden_class_aware_spell_slot_allocation(cc_pack_dir):
             character_id=f"Test_{char_class}",
             character_class=char_class,
         )
-        bars = list(snapshot.magic_state.ledger.values())
-        assert len(bars) == 1
-        assert bars[0].value == expected_value, (
-            f"{char_class!r} expected spell_slots={expected_value}, got {bars[0].value}"
+        bars_by_id = {b.spec.id: b for b in snapshot.magic_state.ledger.values()}
+        assert "spell_slots" in bars_by_id, (
+            f"{char_class!r} session must have a spell_slots bar; got {list(bars_by_id.keys())!r}"
+        )
+        assert bars_by_id["spell_slots"].value == expected_value, (
+            f"{char_class!r} expected spell_slots={expected_value}, "
+            f"got {bars_by_id['spell_slots'].value}"
         )
 
 
