@@ -171,3 +171,69 @@ def test_narrator_register_falls_through_to_plugin_default_when_neither_override
         "the consumer composes that with descriptor.narrator_register. "
         "This test will be moved to the context-builder test suite."
     )
+
+
+def test_load_world_magic_returns_spell_catalogs_when_present(tmp_path):
+    """When a genre has spells/ dir, load_world_magic returns the catalogs."""
+    from sidequest.genre.magic_loader import load_world_magic
+
+    # Arrange — minimal genre + world magic.yaml plus spells/arcane_l1.yaml
+    genre_dir = tmp_path / "test_genre"
+    genre_dir.mkdir()
+    spells_dir = genre_dir / "spells"
+    spells_dir.mkdir()
+    (genre_dir / "magic.yaml").write_text(
+        "genre: test_genre\n"
+        "allowed_sources: [learned]\n"
+        "permitted_plugins: [learned_v1]\n"
+        "intensity: { default: 0.3 }\n"
+        "world_knowledge_default: { primary: folkloric }\n"
+        "hard_limits: []\n"
+        "cost_types: [slot]\n"
+        "narrator_register: 'test'\n"
+    )
+    world_dir = genre_dir / "worlds" / "test_world"
+    world_dir.mkdir(parents=True)
+    (world_dir / "magic.yaml").write_text(
+        "world: test_world\n"
+        "genre: test_genre\n"
+        "intensity: 0.3\n"
+        "active_plugins: [learned_v1]\n"
+        "world_knowledge: { primary: folkloric }\n"
+        "visibility: { primary: feared }\n"
+        "can_build_caster: true\n"
+        "can_build_item_user: true\n"
+        "cost_types_active: [slot]\n"
+        "ledger_bars: []\n"
+        "narrator_register: 'test'\n"
+    )
+    # 1-spell fixture
+    (spells_dir / "arcane_l1.yaml").write_text(
+        'version: "0.1.0"\n'
+        "genre: test_genre\ntradition: arcane\nlevel: 1\n"
+        "spells:\n"
+        "  - id: magic_missile\n"
+        '    name: "Magic Missile"\n'
+        "    level: 1\n    tradition: arcane\n"
+        "    range: near\n    target: single\n"
+        "    duration: instant\n"
+        "    save: { stat: null, effect: none }\n"
+        "    effect_template: 'force dart'\n"
+        "    components: { verbal: true, somatic: true, material: null }\n"
+        "    backlash: null\n"
+        "    narrator_register: 'glow'\n"
+        "    hard_limits_check: []\n"
+        "    domain: physical\n"
+        "    otel_attrs: []\n"
+    )
+
+    # Act
+    config = load_world_magic(
+        genre_yaml=genre_dir / "magic.yaml",
+        world_yaml=world_dir / "magic.yaml",
+    )
+
+    # Assert
+    assert config.spell_catalogs is not None
+    assert "arcane_l1" in config.spell_catalogs
+    assert config.spell_catalogs["arcane_l1"].spells[0].id == "magic_missile"

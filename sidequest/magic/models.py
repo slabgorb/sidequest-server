@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from sidequest.magic.spell_catalog import SpellCatalog
+
 # --- World-knowledge axis ----------------------------------------------------
 
 # Awareness ordering: lower index = less institutionally aware that magic is real.
@@ -77,7 +79,16 @@ class MagicWorking(BaseModel):
 
     plugin: str
     mechanism: Literal[
-        "faction", "place", "time", "condition", "native", "discovery", "relational", "cosmic"
+        "faction",
+        "place",
+        "time",
+        "condition",
+        "native",
+        "discovery",
+        "relational",
+        "cosmic",
+        "studied",
+        "granted",
     ]
     actor: str
     costs: dict[str, float] = Field(default_factory=dict)
@@ -99,6 +110,9 @@ class MagicWorking(BaseModel):
     consent_state: str | None = None
     item_id: str | None = None
     alignment_with_item_nature: float | None = None
+    # learned_v1 fields:
+    spell_id: str | None = None
+    slot_level: int | None = None
 
     @model_validator(mode="after")
     def costs_non_negative(self) -> MagicWorking:
@@ -288,3 +302,4 @@ class WorldMagicConfig(BaseModel):
     can_build_caster: bool = False
     can_build_item_user: bool = True
     narrator_register: str
+    spell_catalogs: dict[str, SpellCatalog] | None = None

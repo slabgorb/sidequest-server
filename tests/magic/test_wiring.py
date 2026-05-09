@@ -29,7 +29,7 @@ def test_plugin_registry_has_innate_and_item_legacy():
     import sidequest.magic.plugins  # noqa: F401
     from sidequest.magic.plugin import MAGIC_PLUGINS
 
-    assert set(MAGIC_PLUGINS) == {"innate_v1", "item_legacy_v1"}
+    assert set(MAGIC_PLUGINS) == {"innate_v1", "item_legacy_v1", "learned_v1"}
 
 
 def test_every_plugin_py_file_registers_in_magic_plugins():
@@ -95,3 +95,61 @@ def test_production_content_loads():
     assert "innate_v1" in config.active_plugins
     assert "item_legacy_v1" in config.active_plugins
     assert config.intensity == 0.25
+
+
+def test_magic_init_seeds_learned_v1_for_mage_class(tmp_path):
+    """Mage chargen → init wires per-level slot bars + chosen known spells."""
+    pytest.skip("integration test — see test_e2e_learned_v1.py for end-to-end")
+
+
+def test_seed_learned_v1_state_instantiates_slot_bars_per_level():
+    from sidequest.genre.models.character import ClassDef, ClassMagicConfig
+    from sidequest.magic.models import WorldKnowledge, WorldMagicConfig
+    from sidequest.magic.state import BarKey, MagicState
+    from sidequest.server.magic_init import seed_learned_v1_state
+
+    class_def = ClassDef(
+        id="mage",
+        display_name="Mage",
+        rpg_role="control",
+        jungian_default="magician",
+        prime_requisite="INT",
+        minimum_score=9,
+        kit_table="mage_kit",
+        magic_access="learned_v1",
+        magic_config=ClassMagicConfig(
+            tradition="arcane",
+            slots_by_class_level={"1": {"1": 1}, "3": {"1": 2, "2": 1}},
+            starting_known_spells=2,
+            save_dc_stat="INT",
+        ),
+    )
+    state = MagicState.from_config(
+        WorldMagicConfig(
+            world_slug="test",
+            genre_slug="test_genre",
+            allowed_sources=["learned"],
+            active_plugins=["learned_v1"],
+            intensity=0.5,
+            world_knowledge=WorldKnowledge(primary="folkloric"),
+            visibility={"primary": "feared"},
+            ledger_bars=[],
+            hard_limits=[],
+            cost_types=[],
+            narrator_register="standard",
+        )
+    )
+    state.add_character("rux")
+
+    seed_learned_v1_state(
+        state,
+        actor="rux",
+        class_def=class_def,
+        class_level=1,
+        chosen_known_spells=["magic_missile", "sleep"],
+    )
+
+    assert state.known_spells["rux"] == ["magic_missile", "sleep"]
+    bar = state.get_bar(BarKey(scope="character", owner_id="rux", bar_id="slots_l1"))
+    assert bar.value == 1.0
+    assert bar.spec.range == (0.0, 1.0)
