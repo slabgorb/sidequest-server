@@ -149,3 +149,42 @@ class TestVisualStyleLoraFieldsRemoved:
         assert extras.get("lora") == "legacy.safetensors"
         assert extras.get("lora_trigger") == "legacy_trigger"
         assert extras.get("lora_scale") == 0.8
+
+
+def test_class_def_accepts_saving_throws_table():
+    from sidequest.genre.models.character import ClassDef
+    from sidequest.genre.models.rules import SavingThrowsTable
+
+    c = ClassDef(
+        id="fighter",
+        display_name="Fighter",
+        rpg_role="tank",
+        jungian_default="hero",
+        prime_requisite="STR",
+        minimum_score=9,
+        kit_table="fighter_kit",
+        saving_throws=SavingThrowsTable(
+            death_ray_or_poison=12,
+            magic_wands=13,
+            paralysis_or_stone=14,
+            dragon_breath=15,
+            rods_staves_spells=16,
+        ),
+    )
+    assert c.saving_throws is not None
+    assert c.saving_throws.dragon_breath == 15
+
+
+def test_class_def_saving_throws_defaults_none():
+    from sidequest.genre.models.character import ClassDef
+
+    c = ClassDef(
+        id="fighter",
+        display_name="Fighter",
+        rpg_role="tank",
+        jungian_default="hero",
+        prime_requisite="STR",
+        minimum_score=9,
+        kit_table="fighter_kit",
+    )
+    assert c.saving_throws is None
