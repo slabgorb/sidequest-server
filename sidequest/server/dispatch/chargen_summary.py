@@ -56,6 +56,24 @@ DEFAULT_CHARGEN_FIELD_LABELS: dict[str, str] = {
 }
 
 
+# Sentence punctuation that distinguishes freeform prose (the_story flow,
+# autogen-table rolls) from tokenish chargen identifiers ("Outsystem-arrived",
+# "old-soldier"). Tokens don't contain these characters; prose almost always
+# does. The pipe is from ``_apply_story``'s ``" | "`` background+description
+# join — preserves the separator on output rather than mangling it.
+_PROSE_MARKERS = frozenset(".,!?|;:")
+
+
+def _looks_like_prose(value: str) -> bool:
+    """True if ``value`` reads as freeform prose rather than a chargen token.
+
+    Used by the backstory rendering branch to decide whether to apply
+    ``humanize_display`` (token-style: kebab-case → Title Case) or
+    pass through as-is (prose). Sentence punctuation is the discriminator.
+    """
+    return any(ch in _PROSE_MARKERS for ch in value)
+
+
 def humanize_display(value: str) -> str:
     """Title-case a chargen identifier value for player-facing display.
 
@@ -289,9 +307,22 @@ def render_confirmation_summary(
         # preview dict normally. Humanize the raw token so kebab-case
         # YAML values like "Outsystem-arrived" or "old-soldier" display
         # as "Outsystem Arrived" / "Old Soldier" instead of leaking
-        # routing tags into the player-facing summary.
+        # routing tags into the player-facing summary. But: the_story
+        # flow (caverns_and_claudes) routes freeform prose AND/OR
+        # autogen-table prose into ``acc.background`` — applying
+        # ``humanize_display`` to a sentence like "Two delves under his
+        # belt. Came back from the second…" capitalizes every word and
+        # mangles intent. Detect prose by sentence punctuation; only
+        # humanize tokenish values. The_story also concatenates
+        # background + description with " | " (no dedicated description
+        # field on MechanicalEffects); split it back to a stacked
+        # display so players see two paragraphs instead of a pipe.
         backstory_label = field_label(rules, "backstory")
-        background_display = humanize_display(backstory_source)
+        if _looks_like_prose(backstory_source):
+            paragraphs = [seg.strip() for seg in backstory_source.split(" | ") if seg.strip()]
+            background_display = "\n".join(paragraphs)
+        else:
+            background_display = humanize_display(backstory_source)
         parts.append(f"\n{backstory_label}: {background_display}")
         preview[backstory_label] = background_display
 

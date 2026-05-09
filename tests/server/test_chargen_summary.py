@@ -639,6 +639,50 @@ class TestWireShape:
         # promote the choice label to backstory_label.
         assert "Backstory: Drifter" in summary
 
+    def test_freeform_prose_backstory_preserves_sentence_case(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        """sq-playtest 2026-05-09 [BUG-LOW]: the_story flow routes
+        sentence-case prose into ``acc.background``. Pre-fix, every word
+        was Title-Cased, mangling "Two delves under his belt." into
+        "Two Delves Under His Belt." Detect prose by sentence punctuation
+        and pass it through unchanged.
+        """
+        prose = (
+            "Two delves under his belt. Came back from the second with "
+            "a tooth in a cloth bag."
+        )
+        scenes = [make_scene("origin", choices=[make_choice("Human", background=prose)])]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (
+            render_confirmation_summary(b, caverns_pack, "Narder", "p1").payload.summary
+        ) or ""
+        assert prose in summary
+        assert "Two Delves Under His Belt" not in summary
+
+    def test_pipe_separated_background_description_renders_as_paragraphs(
+        self, caverns_pack: GenrePack
+    ) -> None:
+        """the_story scene joins background + description with " | " in
+        ``MechanicalEffects.background``. Display splits on the pipe so
+        the player-facing summary shows two stacked paragraphs instead
+        of a literal pipe.
+        """
+        joined = (
+            "Former cobbler with ambitions. Ears pierced with bent iron nails. | "
+            "Tall, soot-stained, missing a tooth."
+        )
+        scenes = [make_scene("origin", choices=[make_choice("Human", background=joined)])]
+        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
+        b.apply_choice(0)
+        summary = (
+            render_confirmation_summary(b, caverns_pack, "Willes", "p1").payload.summary
+        ) or ""
+        assert " | " not in summary
+        assert "Former cobbler with ambitions." in summary
+        assert "Tall, soot-stained, missing a tooth." in summary
+
     def test_message_wire_shape(self, caverns_pack: GenrePack) -> None:
         scenes = [make_scene("origin", choices=[make_choice("Human", race_hint="Human")])]
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
