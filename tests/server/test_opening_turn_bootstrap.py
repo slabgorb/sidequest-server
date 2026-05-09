@@ -605,6 +605,140 @@ class TestOtelEvents:
         asyncio.run(body())
 
 
+class TestCharacterLocationBootstrap:
+    """sq-playtest 2026-05-09 [OBS] projection.party_zone_absent_with_characters.
+
+    At the start of a multiplayer game, ``party_location()`` returned None
+    (no consensus) because no seated PC had a ``character_locations`` entry.
+    The perception rewriter then fell back to "you can't identify them" mode
+    on turn 1, so the narrator referred to peers as *"another figure — armed,
+    by the silhouette"* instead of by name.
+
+    Fix: ``_bootstrap_character_locations_from_opening`` writes the resolved
+    Opening's ``setting.location_label`` to every seated PC's
+    ``character_locations`` entry that's still empty. Both seated PCs land
+    on the same string, so consensus matches and ``in_same_zone()`` returns
+    True on turn 1.
+    """
+
+    def test_chargen_complete_bootstraps_pc_location_from_opening(
+        self,
+        handler: WebSocketSessionHandler,
+    ) -> None:
+        """After a solo chargen-complete, the seated PC's
+        ``character_locations`` entry must be filled with the opening's
+        ``setting.location_label`` so ``party_location()`` returns
+        non-None on turn 1."""
+
+        async def body() -> None:
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd is not None
+            assert not sd.snapshot.character_locations, (
+                "fixture should start with empty character_locations"
+            )
+
+            await _walk_and_confirm(handler)
+
+            seated = [name for name in sd.snapshot.player_seats.values() if name]
+            assert seated, "chargen-complete must seat the PC"
+            for name in seated:
+                assert name in sd.snapshot.character_locations, (
+                    f"PC {name!r} must have a character_locations entry "
+                    "after chargen-complete bootstrap (sq-playtest 2026-05-09 [OBS] "
+                    "projection.party_zone_absent_with_characters)"
+                )
+                assert sd.snapshot.character_locations[name], (
+                    f"PC {name!r} bootstrap location must be non-empty"
+                )
+
+            # party_location() now returns consensus instead of None.
+            # Pre-fix this returned None because no PC had an entry; the
+            # perception rewriter then masked all PCs and the narrator
+            # had to call peers "another figure" instead of by name.
+            assert sd.snapshot.party_location() is not None, (
+                "party_location must return a consensus location post-bootstrap"
+            )
+
+        asyncio.run(body())
+
+    def test_bootstrap_helper_writes_only_missing_entries(self) -> None:
+        """Direct unit test of ``_bootstrap_character_locations_from_opening``:
+        writes the opening location for seated PCs without an entry,
+        leaves existing entries untouched (idempotent), and skips
+        entirely when the opening has no ``location_label``.
+        """
+        from sidequest.game.session import GameSnapshot
+        from sidequest.server.websocket_session_handler import (
+            _bootstrap_character_locations_from_opening,
+        )
+
+        class _FakeSetting:
+            def __init__(self, location_label: str | None) -> None:
+                self.location_label = location_label
+
+        class _FakeOpening:
+            def __init__(self, opening_id: str, location_label: str | None) -> None:
+                self.id = opening_id
+                self.setting = _FakeSetting(location_label)
+
+        # Two seated PCs, neither has a location → bootstrap fills both.
+        snap = GameSnapshot(genre_slug="g", world_slug="w")
+        snap.player_seats["p1"] = "PC1"
+        snap.player_seats["p2"] = "PC2"
+        opening = _FakeOpening("opening_alpha", "Sünden Square")
+        _bootstrap_character_locations_from_opening(snap, opening)
+        assert snap.character_locations == {"PC1": "Sünden Square", "PC2": "Sünden Square"}
+
+        # Existing entry preserved (idempotent on second call).
+        snap.character_locations["PC1"] = "the Recruiter's Post"
+        snap.player_seats["p3"] = "PC3"
+        _bootstrap_character_locations_from_opening(snap, opening)
+        assert snap.character_locations["PC1"] == "the Recruiter's Post"
+        assert snap.character_locations["PC2"] == "Sünden Square"
+        assert snap.character_locations["PC3"] == "Sünden Square"
+
+        # Empty location_label → no-op.
+        snap2 = GameSnapshot(genre_slug="g", world_slug="w")
+        snap2.player_seats["p1"] = "PC1"
+        empty_opening = _FakeOpening("opening_beta", None)
+        _bootstrap_character_locations_from_opening(snap2, empty_opening)
+        assert snap2.character_locations == {}
+
+    def test_bootstrap_skipped_when_world_has_no_openings(
+        self,
+        handler: WebSocketSessionHandler,
+    ) -> None:
+        """If the populator can't resolve an opening (degenerate content),
+        the bootstrap must skip gracefully — no character_locations
+        entry written. Subsequent narration apply will populate the
+        entry on turn 1 as before."""
+
+        async def body() -> None:
+            await _connect(handler)
+            sd = handler._session_data  # type: ignore[attr-defined]
+            assert sd is not None
+            world = sd.genre_pack.worlds.get(sd.world_slug)
+            assert world is not None
+            world.openings = []
+
+            await _walk_and_confirm(handler)
+
+            # No bootstrap fired (populator skipped with
+            # world_or_openings_missing). Subsequent narration apply
+            # will fill the entry on turn 1 — that path is unchanged.
+            seated = [name for name in sd.snapshot.player_seats.values() if name]
+            assert seated, "PC must still be seated even when bootstrap skips"
+            # Locations were not bootstrapped from the opening (there
+            # wasn't one), but turn-1 narration may have run during
+            # walk_and_confirm and populated some entries via narration
+            # apply. Either state is acceptable; the assertion is that
+            # the bootstrap helper did not raise on the missing-opening
+            # path (the test would have failed otherwise).
+
+        asyncio.run(body())
+
+
 class TestMPJoinerHostLocationAnchor:
     """Playtest 2026-05-02 [BUG-LOW] — opening narration splits party.
 
@@ -715,9 +849,17 @@ class TestMPJoinerHostLocationAnchor:
         otel_capture: InMemorySpanExporter,
     ) -> None:
         """Defensive path: if the host's narration somehow hasn't set
-        ``snapshot.location`` yet (very early MP race), the joiner
-        prompt falls back to a same-scene clause and emits the
-        ``fallback_same_scene`` anchor kind for GM-panel visibility.
+        ``snapshot.location`` yet AND the chargen-complete location
+        bootstrap can't fill it (e.g. world has no openings authored),
+        the joiner prompt falls back to a same-scene clause and emits
+        the ``fallback_same_scene`` anchor kind for GM-panel visibility.
+
+        sq-playtest 2026-05-09: the original repro ("HostPC seated but
+        character_locations empty") is now defended against by
+        ``_bootstrap_character_locations_from_opening``. To still cover
+        the fallback branch, also clear the in-memory pack's openings
+        so the populator emits ``world_or_openings_missing`` and the
+        bootstrap doesn't run.
         """
 
         async def body() -> None:
@@ -744,6 +886,14 @@ class TestMPJoinerHostLocationAnchor:
             # Wave 2B: simulate no host narration yet — leave the host's
             # character_locations entry absent.
             sd.snapshot.character_locations.pop("HostPC", None)
+            # 2026-05-09: also block the chargen-complete location
+            # bootstrap by emptying the world's openings so the
+            # populator skips with ``world_or_openings_missing``. This
+            # keeps the host's location absent through the joiner's
+            # orientation, exercising the fallback branch.
+            world = sd.genre_pack.worlds.get(sd.world_slug)
+            assert world is not None, "fixture world must be loaded"
+            world.openings = []
 
             claude_mock.send_with_session.reset_mock()
             await _walk_and_confirm(handler)
