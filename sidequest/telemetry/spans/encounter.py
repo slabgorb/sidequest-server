@@ -754,6 +754,83 @@ def encounter_edge_debit_span(
         yield s
 
 
+SPAN_ENCOUNTER_SAVING_THROW_RESOLVED = "encounter.saving_throw_resolved"
+SPAN_ROUTES[SPAN_ENCOUNTER_SAVING_THROW_RESOLVED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.saving_throw",
+        "defender_actor": (span.attributes or {}).get("defender_actor", ""),
+        "defender_class": (span.attributes or {}).get("defender_class", ""),
+        "category": (span.attributes or {}).get("category", ""),
+        "threat_label": (span.attributes or {}).get("threat_label", ""),
+        "target": (span.attributes or {}).get("target", 0),
+        "roll": (span.attributes or {}).get("roll", 0),
+        "total": (span.attributes or {}).get("total", 0),
+        "shift": (span.attributes or {}).get("shift", 0),
+        "tier": (span.attributes or {}).get("tier", ""),
+        "mindless_gate": (span.attributes or {}).get("mindless_gate", False),
+        "spell_id": (span.attributes or {}).get("spell_id", ""),
+    },
+)
+
+
+@contextmanager
+def encounter_saving_throw_resolved_span(
+    *,
+    defender_actor: str,
+    defender_class: str,
+    category: str,
+    ability: str | None,
+    threat_label: str,
+    target: int,
+    roll: int,
+    mod: int,
+    total: int,
+    shift: int,
+    tier: str,
+    spell_id: str,
+    encounter_type: str,
+    mindless_gate: bool,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Span emitted on every saving-throw resolution.
+
+    The lie-detector for B/X save resolution: missing span → save
+    subsystem isn't engaged → narrator is improvising the save outcome.
+
+    ``mindless_gate=True`` indicates the save was SKIPPED because the
+    target was mindless and the spell had ``requires_mind=True``;
+    in that case ``roll/total/shift/tier`` are zero/empty and only
+    the gate decision is logged.
+    """
+    span_attrs: dict[str, Any] = {
+        "defender_actor": defender_actor,
+        "defender_class": defender_class,
+        "category": category,
+        "threat_label": threat_label,
+        "target": target,
+        "roll": roll,
+        "mod": mod,
+        "total": total,
+        "shift": shift,
+        "tier": tier,
+        "spell_id": spell_id,
+        "encounter_type": encounter_type,
+        "mindless_gate": mindless_gate,
+        **attrs,
+    }
+    if ability is not None:
+        span_attrs["ability"] = ability
+    with Span.open(
+        SPAN_ENCOUNTER_SAVING_THROW_RESOLVED,
+        span_attrs,
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
 @contextmanager
 def encounter_composure_break_span(
     *,
