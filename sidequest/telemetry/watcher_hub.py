@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -84,6 +85,13 @@ class WatcherHub:
         # — if the bus is silent, the operator needs to see WHY.
         self._published_count: int = 0
         self._dropped_count: int = 0
+        # Ring buffer of the last N already-serialized events. Replayed to
+        # any new subscriber on connect so a dashboard refresh mid-session
+        # doesn't reset every panel to zero. Bounded so a long session
+        # can't exhaust memory; oldest events drop on overflow, matching
+        # ADR-090's "lossy by design" stance. 2000 entries ≈ 130 turns of
+        # fully-instrumented multiplayer at observed event volume.
+        self._buffer: deque[dict[str, Any]] = deque(maxlen=2000)
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Remember the FastAPI event loop so background-thread publishers
@@ -127,13 +135,10 @@ class WatcherHub:
             "dropped": self._dropped_count,
             "synthetic_spans": _synthetic_spans_minted,
             "watcher_as_spans": int(_watcher_as_spans_enabled()),
+            "buffered": len(self._buffer),
         }
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
-        async with self._lock:
-            targets = list(self._subscribers)
-        if not targets:
-            return
         # Pre-serialize once with a tolerant encoder to a JSON-safe dict.
         # This decouples encoding errors (one bad publisher) from
         # delivery errors (one dead subscriber). Without this, a Pydantic
@@ -154,6 +159,16 @@ class WatcherHub:
             )
             self._dropped_count += 1
             return
+        # Buffer the serialized event AND snapshot subscribers under the
+        # same lock so a concurrent ``replay`` sees a consistent view —
+        # either the event is in the buffer and visible to replay, or
+        # the subscriber list snapshot doesn't yet include the
+        # in-flight subscriber.
+        async with self._lock:
+            self._buffer.append(safe_event)
+            targets = list(self._subscribers)
+        if not targets:
+            return
         dead: list[_Sendable] = []
         for ws in targets:
             try:
@@ -169,6 +184,27 @@ class WatcherHub:
                 len(dead),
                 len(self._subscribers),
             )
+
+    async def replay(self, ws: _Sendable) -> int:
+        """Send every buffered event to ``ws`` in publish order.
+
+        Best-effort: a per-event ``send_json`` failure aborts replay
+        with the partial count rather than raising. The hub's internal
+        state is never mutated by this call. Used by the watcher
+        endpoint after the hello frame and before subscribing the
+        socket to live broadcasts, so a dashboard refresh mid-session
+        sees prior history before any new event arrives.
+        """
+        async with self._lock:
+            snapshot = list(self._buffer)
+        sent = 0
+        for event in snapshot:
+            try:
+                await ws.send_json(event)
+            except Exception:  # noqa: BLE001 — replay is best-effort
+                return sent
+            sent += 1
+        return sent
 
 
 def _json_default(obj: Any) -> Any:
