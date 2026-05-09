@@ -635,6 +635,11 @@ class CharacterBuilder:
         # scene declares roll_3d6_strict, that scene's narration gets
         # stat values.
         self._rolled_stats: list[tuple[str, int]] | None = None
+        # Arrange-visible mode: pool is a list of six 3d6 totals,
+        # unassigned. Arrangement happens via assign_stat / clear_stat,
+        # confirmed via confirm_arrangement, rejected via reject_arrangement.
+        self._arrangement_pool: list[int] | None = None
+        self._arrangement_assignment: dict[str, int | None] | None = None
         self._classes: list[ClassDef] = []
         for s in scenes:
             eff = s.mechanical_effects
@@ -644,6 +649,8 @@ class CharacterBuilder:
                 self._roll_3d6_with_qualification(
                     qualification_loop=eff.class_qualification_loop,
                 )
+            elif eff.stat_generation == "roll_3d6_arrange_visible":
+                self._roll_3d6_arrange_visible()
             break
 
         self._backstory_tables: BackstoryTables | None = backstory_tables
@@ -756,6 +763,16 @@ class CharacterBuilder:
         in Slice 2.
         """
         return list(self._rolled_stats) if self._rolled_stats is not None else None
+
+    def arrangement_pool(self) -> list[int] | None:
+        """Return the six unassigned 3d6 totals, or None if not in arrange mode."""
+        return list(self._arrangement_pool) if self._arrangement_pool is not None else None
+
+    def arrangement_assignment(self) -> dict[str, int | None] | None:
+        """Return the current arrangement (stat → value-or-None)."""
+        if self._arrangement_assignment is None:
+            return None
+        return dict(self._arrangement_assignment)
 
     @property
     def rules(self) -> RulesConfig:
@@ -1747,6 +1764,22 @@ class CharacterBuilder:
         return scene.model_copy(update={"choices": kept})
 
     # --- Stat generation ---
+
+    def _roll_3d6_arrange_visible(self) -> None:
+        """Roll six 3d6 totals into an unlabeled pool.
+
+        No qualification loop. The arrangement scene resolves which stat
+        gets which roll, and rejection is the only escape valve. Stat
+        labels come from ``self._ability_score_names``.
+        """
+        self._arrangement_pool = [
+            self._rng.randint(1, 6) + self._rng.randint(1, 6) + self._rng.randint(1, 6)
+            for _ in range(6)
+        ]
+        self._arrangement_assignment = {
+            name: None for name in self._ability_score_names
+        }
+        # rolled_stats stays None until confirm_arrangement materializes it.
 
     def _roll_3d6_with_qualification(self, *, qualification_loop: bool) -> None:
         """Roll 3d6 stats, optionally re-rolling until at least one class qualifies.
