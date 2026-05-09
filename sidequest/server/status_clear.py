@@ -170,9 +170,15 @@ def apply_explicit_status_clears(
         clear_text = str(clear_text_raw).strip()
         if not actor_name or not clear_text:
             continue
-        target = next(
-            (c for c in snapshot.characters if c.core.name == actor_name),
-            None,
+        # Defer-import to avoid circular: narration_apply imports this
+        # module to dispatch into apply_explicit_status_clears.
+        from sidequest.server.narration_apply import resolve_status_target
+
+        target = resolve_status_target(
+            snapshot,
+            actor_name=actor_name,
+            turn_num=turn,
+            trigger="status_clear",
         )
         if target is None:
             logger.warning(
