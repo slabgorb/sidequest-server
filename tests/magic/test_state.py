@@ -140,12 +140,10 @@ def test_pydantic_serialization_roundtrip(world_config):
 
 
 def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
-    """Cost types with no character-scope bar (e.g. world-scope `notice`)
-    must surface in the log, never silently disappear. Per CLAUDE.md
-    'GM panel is the lie detector' — a skipped subsystem decision that
-    leaves no trace is a no-silent-fallback violation. Task 3.5 will
-    promote this to an OTEL span; for now a structured log keeps it
-    auditable."""
+    """Cost types with no ledger bar spec at all (e.g. typo `karma` not in
+    world.ledger_bars) must surface in the log, never silently disappear.
+    Per CLAUDE.md 'GM panel is the lie detector' — a skipped subsystem
+    decision that leaves no trace is a no-silent-fallback violation."""
     import logging
 
     state = MagicState.from_config(world_config)
@@ -166,6 +164,177 @@ def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
         state.apply_working(working)
 
     assert any("magic.unrouted_cost" in r.message and "karma" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Playtest 2026-05-09 — world / item scope routing in apply_working
+# Backlash on Willes' innate workings was warning `magic.unrouted_cost` on
+# every turn because apply_working only looked up character-scope bars.
+# Per L457 / L70 of the playtest: pricing was correct, routing was the bug.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_working_routes_world_scope_cost(world_config):
+    """A cost_type whose spec is world-scope routes to the world bar
+    (owner_id=world_slug), not the actor. Pre-fix this would warn
+    `magic.unrouted_cost` because the resolver only tried scope=character.
+    """
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="cosmic",
+        actor="sira_mendes",
+        costs={"hegemony_heat": 0.10},
+        domain="psychic",
+        narrator_basis="visible psionic working",
+        flavor="acquired",
+        consent_state="voluntary",
+    )
+    state.apply_working(working)
+
+    heat_key = BarKey(scope="world", owner_id="coyote_star", bar_id="hegemony_heat")
+    # Up-direction bar: starts at 0.30, +0.10 cost → 0.40
+    assert state.get_bar(heat_key).value == pytest.approx(0.40)
+
+
+def test_apply_working_world_scope_does_not_warn_unrouted(world_config, caplog):
+    """The world-scope routing path must not emit magic.unrouted_cost."""
+    import logging
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="cosmic",
+        actor="sira_mendes",
+        costs={"hegemony_heat": 0.05},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="voluntary",
+    )
+    with caplog.at_level(logging.WARNING, logger="sidequest.magic.state"):
+        state.apply_working(working)
+    assert not any("magic.unrouted_cost" in r.message for r in caplog.records)
+
+
+def test_apply_working_unrouted_cost_carries_reason_no_ledger_spec(world_config, caplog):
+    """Improved warning: when no ledger_bar spec defines this cost_type
+    at all, the reason is `no_ledger_bar_spec` — distinct from
+    `bar_not_instantiated` (spec exists but owner missing). The GM panel
+    can distinguish a content gap (need to declare a bar) from a wiring
+    gap (need to add_character / add_item)."""
+    import logging
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="condition",
+        actor="sira_mendes",
+        costs={"karma": 0.10},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="involuntary",
+    )
+    with caplog.at_level(logging.WARNING, logger="sidequest.magic.state"):
+        state.apply_working(working)
+    assert any(
+        "magic.unrouted_cost" in r.message
+        and "karma" in r.message
+        and "reason=no_ledger_bar_spec" in r.message
+        for r in caplog.records
+    )
+
+
+def test_apply_working_item_scope_cost_requires_item_id(world_config, caplog):
+    """Item-scope cost without working.item_id is a wiring gap, not a
+    routing crash. Warn and skip (don't raise) so a malformed working
+    doesn't kill the apply pipeline mid-turn. The reason field tells the
+    GM panel which knob to turn."""
+    import logging
+
+    from sidequest.magic.models import LedgerBarSpec, MagicWorking
+
+    # Build a config that defines an item-scope cost, then validate the
+    # apply path. Add the item-scope bar onto our world_config in place.
+    item_spec = LedgerBarSpec(
+        id="components",
+        scope="item",
+        direction="down",
+        range=(0.0, 1.0),
+        threshold_low=0.0,
+        starts_at_chargen=1.0,
+    )
+    world_config.ledger_bars.append(item_spec)
+    world_config.cost_types.append("components")
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    # No add_item call — the working will declare components cost without
+    # a corresponding item_id.
+
+    working = MagicWorking(
+        plugin="item_legacy_v1",
+        mechanism="granted",
+        actor="sira_mendes",
+        costs={"components": 0.10},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="voluntary",
+        # item_id intentionally omitted
+    )
+    with caplog.at_level(logging.WARNING, logger="sidequest.magic.state"):
+        state.apply_working(working)
+    assert any(
+        "magic.unrouted_cost" in r.message
+        and "components" in r.message
+        and "reason=item_scope_missing_item_id" in r.message
+        for r in caplog.records
+    )
+
+
+def test_apply_working_item_scope_cost_routes_to_item_bar(world_config):
+    """Item-scope cost with working.item_id routes to that item's bar."""
+    from sidequest.magic.models import LedgerBarSpec, MagicWorking
+
+    components_spec = LedgerBarSpec(
+        id="components",
+        scope="item",
+        direction="down",
+        range=(0.0, 1.0),
+        threshold_low=0.0,
+        starts_at_chargen=1.0,
+    )
+    world_config.ledger_bars.append(components_spec)
+    world_config.cost_types.append("components")
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+    state.add_item("sira_charm_001", history_template=components_spec)
+
+    working = MagicWorking(
+        plugin="item_legacy_v1",
+        mechanism="granted",
+        actor="sira_mendes",
+        costs={"components": 0.20},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="voluntary",
+        item_id="sira_charm_001",
+    )
+    state.apply_working(working)
+
+    components_key = BarKey(
+        scope="item", owner_id="sira_charm_001", bar_id="components"
+    )
+    # Down-direction: starts 1.0, -0.20 → 0.80
+    assert state.get_bar(components_key).value == pytest.approx(0.80)
 
 
 # ---------------------------------------------------------------------------
