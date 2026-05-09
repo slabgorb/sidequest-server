@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
+
 from sidequest.game.session import GameSnapshot
 from sidequest.server.magic_init import init_magic_state_for_session
 
@@ -234,6 +236,194 @@ def test_init_magic_state_idempotent_on_duplicate_character_id() -> None:
     )
     # Ledger contents unchanged — same bars, no duplicates.
     assert dict(snap.magic_state.ledger) == bars_after_first
+
+
+# ---------------------------------------------------------------------------
+# Story 47-7 — defensive-warning watcher event dual-emit
+#
+# Three magic-subsystem warning paths previously logged at warning level
+# but emitted no watcher event, leaving the GM panel blind to them.
+# Architect (47-7 scope resolution 2026-05-09) groups them for parity:
+#   - magic.unrouted_cost (covered in tests/magic/test_state.py)
+#   - magic.init_no_catalog (AC5, below)
+#   - magic.init_class_def_invalid (AC6, below)
+# Pattern: monkeypatch ``magic_init._watcher_publish`` to capture, mirror
+# of tests/magic/test_magic_span.py captured_watcher_events fixture.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def captured_magic_init_events(monkeypatch):
+    """Capture _watcher_publish calls inside magic_init.
+
+    raising=False so this fixture works in BOTH RED (symbol may not yet
+    be imported into magic_init's namespace) and GREEN states. The
+    assertion that the event was emitted will fail in RED regardless.
+    """
+    captured: list[dict] = []
+
+    def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
+        captured.append(
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
+        )
+
+    from sidequest.server import magic_init as magic_init_module
+
+    monkeypatch.setattr(magic_init_module, "_watcher_publish", _capture, raising=False)
+    return captured
+
+
+def _make_pack_with_phantom_tradition(tmp_path: Path) -> tuple[Path, str]:
+    """Copy the C&C pack to tmp and mutate the Mage's magic_config so its
+    tradition has no matching catalog — drives the no_catalog branch in
+    init_magic_state_for_session.
+
+    Returns (pack_dir, world_slug). World is caverns_sunden (the C&C
+    world that ships learned_v1 active).
+    """
+    import shutil
+
+    import yaml
+
+    src = CONTENT_ROOT / "caverns_and_claudes"
+    pack_dir = tmp_path / "caverns_and_claudes"
+    shutil.copytree(src, pack_dir)
+
+    classes_path = pack_dir / "classes.yaml"
+    raw = yaml.safe_load(classes_path.read_text(encoding="utf-8"))
+    for entry in raw:
+        if entry.get("id") == "mage":
+            assert entry.get("magic_config") is not None, (
+                "Test fixture assumes C&C Mage ships magic_config; "
+                "if this changes, update the fixture."
+            )
+            entry["magic_config"]["tradition"] = "phantom_tradition"
+            break
+    else:  # noqa: PLW0120 — for/else: ran loop without break = mage missing
+        raise AssertionError("C&C classes.yaml has no Mage entry — fixture broken")
+    classes_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    return pack_dir, "caverns_sunden"
+
+
+def test_init_no_catalog_publishes_watcher_event(
+    tmp_path: Path,
+    captured_magic_init_events,
+) -> None:
+    """A class with magic_config but a tradition for which no spell
+    catalog exists must publish a magic.init_no_catalog watcher event
+    AND keep init returning True (regression guard — no-catalog is a
+    soft fail, not a hard error; existing behavior).
+    """
+    pack_dir, world_slug = _make_pack_with_phantom_tradition(tmp_path)
+
+    snap = GameSnapshot(genre_slug="caverns_and_claudes", world_slug=world_slug)
+    ok = init_magic_state_for_session(
+        snapshot=snap,
+        genre_pack_source_dir=pack_dir,
+        world_slug=world_slug,
+        character_id="Gandalf",
+        character_class="Mage",
+    )
+
+    # Soft-fail contract: init still completes (snapshot.magic_state is
+    # populated, returns True). The catalog miss only means the actor
+    # gets no spellbook seed — no slot bars, no known_spells.
+    assert ok is True, "init must return True even when no catalog matches the tradition"
+
+    matching = [
+        e
+        for e in captured_magic_init_events
+        if e.get("event_type") == "magic.init_no_catalog"
+        and e.get("component") == "magic"
+        and e.get("fields", {}).get("tradition") == "phantom_tradition"
+    ]
+    assert len(matching) == 1, (
+        "Expected exactly one magic.init_no_catalog watcher event for the "
+        f"Mage with phantom_tradition; captured: {captured_magic_init_events}"
+    )
+    fields = matching[0]["fields"]
+    assert fields["world_slug"] == world_slug
+    assert fields["actor"] == "Gandalf"
+    assert fields["class"] == "Mage"
+    assert fields["tradition"] == "phantom_tradition"
+    assert fields["class_id"] == "mage"
+    assert matching[0]["severity"] == "warning"
+
+
+def test_init_class_def_invalid_publishes_watcher_event(
+    tmp_path: Path,
+    captured_magic_init_events,
+) -> None:
+    """A malformed entry in classes.yaml (Pydantic ValidationError)
+    must publish a magic.init_class_def_invalid watcher event AND let
+    _load_class_def keep scanning for a valid match (existing
+    contract — one bad entry doesn't poison the whole file).
+    """
+    from sidequest.server.magic_init import _load_class_def
+
+    classes_path = tmp_path / "classes.yaml"
+    # First entry is malformed (missing required `prime_requisite`,
+    # `minimum_score`, `kit_table`); second entry is valid and matches
+    # the lookup. The function must skip the bad entry, emit the
+    # watcher event, and return the valid one.
+    classes_path.write_text(
+        """
+- id: bad_entry
+  display_name: BadEntry
+  rpg_role: tank
+  jungian_default: hero
+- id: fighter
+  display_name: Fighter
+  rpg_role: tank
+  jungian_default: hero
+  prime_requisite: STR
+  minimum_score: 9
+  kit_table: fighter_kit
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    cd = _load_class_def(tmp_path, "Fighter")
+
+    # Lookup still succeeds — bad entry is skipped, valid Fighter found.
+    assert cd is not None, "valid Fighter entry must be returned despite preceding bad entry"
+    assert cd.display_name == "Fighter"
+
+    matching = [
+        e
+        for e in captured_magic_init_events
+        if e.get("event_type") == "magic.init_class_def_invalid" and e.get("component") == "magic"
+    ]
+    # Fixture has exactly one bad entry — exactly one event must fire.
+    # Reviewer (Queen of Hearts) tightened from `>= 1` to `== 1` so a future
+    # retry-loop bug that emitted twice wouldn't pass silently.
+    assert len(matching) == 1, (
+        "Expected exactly one magic.init_class_def_invalid watcher event "
+        f"for the single bad_entry; captured: {captured_magic_init_events}"
+    )
+    bad = matching[0]
+    assert bad["fields"]["genre_pack_source_dir"] == str(tmp_path)
+    assert bad["fields"]["entry_id"] == "bad_entry"
+    # Bind the error string to the ValidationError this test exercises —
+    # `bad_entry` is missing prime_requisite/minimum_score/kit_table, so the
+    # Pydantic error must mention at least one of them. A bare truthy check
+    # would pass for any non-empty string, masking a regression where some
+    # other exception path produced the event.
+    error_str = bad["fields"]["error"]
+    assert any(
+        marker in error_str
+        for marker in ("prime_requisite", "minimum_score", "kit_table", "Field required")
+    ), (
+        f"error field {error_str!r} does not reference any expected ValidationError "
+        f"marker — captured event may not originate from the Pydantic path under test"
+    )
+    assert bad["severity"] == "warning"
 
 
 def test_websocket_session_handler_imports_and_calls_init_magic_state() -> None:

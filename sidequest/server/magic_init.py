@@ -70,12 +70,24 @@ def _load_class_def(genre_pack_source_dir: Path | None, character_class: str) ->
         except (ValidationError, TypeError) as exc:
             # Loud-fail per CLAUDE.md "No Silent Fallbacks": malformed
             # class entries surface as a warning so authoring bugs don't
-            # masquerade as "class not found" lookup misses.
+            # masquerade as "class not found" lookup misses. Story 47-7
+            # adds the watcher event so the GM panel surfaces it live.
+            entry_id = entry.get("id", "?") if isinstance(entry, dict) else "?"
             logger.warning(
                 "magic.init_class_def_invalid genre_pack=%s entry_id=%s error=%s",
                 genre_pack_source_dir,
-                entry.get("id", "?") if isinstance(entry, dict) else "?",
+                entry_id,
                 exc,
+            )
+            _watcher_publish(
+                "magic.init_class_def_invalid",
+                {
+                    "genre_pack_source_dir": str(genre_pack_source_dir),
+                    "entry_id": entry_id,
+                    "error": str(exc),
+                },
+                component="magic",
+                severity="warning",
             )
             continue
         if cd.display_name == character_class:
@@ -268,6 +280,18 @@ def init_magic_state_for_session(
                     character_id,
                     tradition,
                     tradition,
+                )
+                _watcher_publish(
+                    "magic.init_no_catalog",
+                    {
+                        "world_slug": world_slug,
+                        "actor": character_id,
+                        "class": character_class,
+                        "tradition": tradition,
+                        "class_id": class_def.id,
+                    },
+                    component="magic",
+                    severity="warning",
                 )
             else:
                 # Spellbook seed: the actor "knows" every spell in the
