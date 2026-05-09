@@ -58,6 +58,42 @@ class MinimalPack:
         with classes_path.open("w", encoding="utf-8") as f:
             yaml.dump(classes, f, default_flow_style=False, sort_keys=False)
 
+    def create_spells_dir(self) -> None:
+        """Create a minimal spells/ directory at the pack root.
+
+        This simulates a pack that ships a spell catalog, which triggers
+        the saving_throws validator. The YAML content is a minimal valid
+        SpellCatalog entry (all required fields present).
+        """
+        spells_dir = self.path / "spells"
+        spells_dir.mkdir(exist_ok=True)
+        stub_catalog = {
+            "version": "1.0",
+            "genre": "test_pack",
+            "tradition": "arcane",
+            "level": 1,
+            "spells": [
+                {
+                    "id": "magic_missile",
+                    "name": "Magic Missile",
+                    "level": 1,
+                    "tradition": "arcane",
+                    "range": "near",
+                    "target": "single",
+                    "duration": "instant",
+                    "save": {"stat": None, "effect": "none"},
+                    "effect_template": "Auto-hit bolt of force.",
+                    "components": {"verbal": True, "somatic": True},
+                    "backlash": None,
+                    "narrator_register": "A bolt of force streaks unerringly.",
+                    "domain": "force",
+                }
+            ],
+        }
+        catalog_path = spells_dir / "arcane_l1.yaml"
+        with catalog_path.open("w", encoding="utf-8") as f:
+            yaml.dump(stub_catalog, f, default_flow_style=False, sort_keys=False)
+
 
 @pytest.fixture
 def minimal_pack_factory():

@@ -273,3 +273,77 @@ def test_pack_load_accepts_valid_class_filter_and_beat_choices(tmp_path, minimal
     assert pack_obj.rules is not None
     assert pack_obj.rules.confrontations
     assert any(c.display_name == "Fighter" for c in pack_obj.classes)
+
+
+# ---------------------------------------------------------------------------
+# Task 8: saving_throws required on every class when pack has spell catalogs
+# ---------------------------------------------------------------------------
+
+# Minimal class dict shared by the saving-throws tests.  Encounter-beat
+# choices deliberately empty because the minimal fixture rules.yaml uses
+# magic_level="none" and no allowed_classes — so _validate_class_filter_refs
+# does not run against these entries.
+_BASE_CLASS: dict = {
+    "id": "magic_user",
+    "display_name": "Magic-User",
+    "rpg_role": "blaster",
+    "jungian_default": "magician",
+    "prime_requisite": "INT",
+    "minimum_score": 9,
+    "kit_table": "mage_kit",
+    "flavor": "Frail but deadly.",
+    "encounter_beat_choices": [],
+}
+
+_SAVING_THROWS: dict = {
+    "death_ray_or_poison": 13,
+    "magic_wands": 14,
+    "paralysis_or_stone": 13,
+    "dragon_breath": 16,
+    "rods_staves_spells": 15,
+}
+
+
+def test_pack_load_rejects_class_without_saving_throws_when_spell_catalog_present(
+    tmp_path, minimal_pack_factory
+):
+    """A pack with a spells/ directory must have saving_throws on every class.
+
+    This is the loudest guard against shipping a spell catalog without the
+    B/X B26 save tables that spell effects require to resolve.
+    """
+    pack = minimal_pack_factory(tmp_path)
+    pack.create_spells_dir()
+    # Class intentionally missing saving_throws (the default None).
+    pack.set_classes_yaml([dict(_BASE_CLASS)])  # no saving_throws key
+    with pytest.raises(PackError, match="saving_throws"):
+        load_genre_pack(pack.path)
+
+
+def test_pack_load_accepts_all_classes_with_saving_throws_and_spell_catalog(
+    tmp_path, minimal_pack_factory
+):
+    """When every class declares saving_throws, the validator passes even with a
+    spells/ catalog present.
+    """
+    pack = minimal_pack_factory(tmp_path)
+    pack.create_spells_dir()
+    pack.set_classes_yaml([{**_BASE_CLASS, "saving_throws": _SAVING_THROWS}])
+    # Should not raise.
+    pack_obj = load_genre_pack(pack.path)
+    assert pack_obj is not None
+    assert pack_obj.classes
+    assert pack_obj.classes[0].saving_throws is not None
+
+
+def test_pack_load_skips_saving_throws_check_without_spell_catalog(tmp_path, minimal_pack_factory):
+    """Packs without a spells/ directory do not require saving_throws on classes.
+
+    This guards heavy_metal, victoria, etc. which have no magic system yet.
+    """
+    pack = minimal_pack_factory(tmp_path)
+    # No create_spells_dir() call — no spells/ dir exists.
+    pack.set_classes_yaml([dict(_BASE_CLASS)])  # no saving_throws
+    # Should not raise — validator is no-op without spell catalogs.
+    pack_obj = load_genre_pack(pack.path)
+    assert pack_obj is not None

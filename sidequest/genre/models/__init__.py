@@ -156,6 +156,8 @@ from sidequest.genre.models.rules import (
     ResourceDeclaration,
     ResourceThresholdDecl,
     RulesConfig,
+    SaveCategory,
+    SavingThrowsTable,
     SecondaryStatDef,
 )
 from sidequest.genre.models.scenario import (
@@ -356,6 +358,8 @@ __all__ = [
     "ResourceDeclaration",
     "ResourceThresholdDecl",
     "RulesConfig",
+    "SaveCategory",
+    "SavingThrowsTable",
     "SecondaryStatDef",
     # scenario
     "Act",

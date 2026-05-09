@@ -8,12 +8,26 @@ narrator context block.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 _SPELL_SAVE_EFFECT_FIXED = frozenset({"none", "negates", "halves"})
+
+
+def _save_category_default() -> str:
+    """Lazy default factory — defers SaveCategory import to avoid circular import.
+
+    sidequest.genre.models.rules → sidequest.game.__init__ →
+    sidequest.game.persistence → sidequest.telemetry.spans.magic →
+    sidequest.magic.models → sidequest.magic.spell_catalog (partially loaded).
+    By the time this factory is *called* (at SpellSave instantiation), all
+    modules are fully loaded, so the import is safe.
+    """
+    from sidequest.genre.models.rules import SaveCategory
+
+    return SaveCategory.rods_staves_spells
 
 
 class SpellSave(BaseModel):
@@ -24,6 +38,12 @@ class SpellSave(BaseModel):
     # partial: prefix; arbitrary strings (including typos like "negate") are
     # rejected by the validator below.
     effect: str
+    # Which B/X B26 save column this spell consults. Defaults to the catch-all
+    # magic column; per-spell override for ray-type or stone-type variants.
+    # Annotated Any + default_factory (lazy import) to avoid a circular import
+    # at class definition time. The _coerce_category validator enforces the
+    # actual SaveCategory constraint. See _save_category_default docstring.
+    category: Any = Field(default_factory=_save_category_default)
 
     @field_validator("effect")
     @classmethod
@@ -37,6 +57,33 @@ class SpellSave(BaseModel):
             f"{sorted(_SPELL_SAVE_EFFECT_FIXED)} or a 'partial:<text>' discriminated form"
         )
 
+    @field_validator("category", mode="before")
+    @classmethod
+    def _coerce_category(cls, v: object) -> object:
+        """Coerce a str value to a SaveCategory enum member (lazy import)."""
+        if isinstance(v, str):
+            from sidequest.genre.models.rules import SaveCategory
+
+            try:
+                return SaveCategory(v)
+            except ValueError:
+                valid = sorted(c.value for c in SaveCategory)
+                raise ValueError(
+                    f"SpellSave.category={v!r} is not a valid SaveCategory; expected one of {valid}"
+                ) from None
+        return v
+
+    @model_validator(mode="after")
+    def _validate_dragon_breath_no_stat(self) -> SpellSave:
+        from sidequest.genre.models.rules import SaveCategory  # lazy — avoids circular import
+
+        if self.category is SaveCategory.dragon_breath and self.stat is not None:
+            raise ValueError(
+                f"SpellSave with category=dragon_breath must have stat=None "
+                f"(B/X B7: WIS does not modify Dragon Breath saves), got stat={self.stat!r}"
+            )
+        return self
+
     @model_validator(mode="after")
     def _validate_null_stat_coherence(self) -> SpellSave:
         # Story 47-10 codified rule (2026-05-09): save.stat: null means the
@@ -45,6 +92,14 @@ class SpellSave(BaseModel):
         # save for the defender to "halve" or "negate" or partially resist
         # when the cast unconditionally lands. Reject at load time so the
         # author sees the inconsistency before runtime.
+        #
+        # Exempt: dragon_breath. Per B/X B7, Dragon Breath saves have
+        # stat=None (no WIS modifier) but a real save vs. the table target;
+        # effect="halves" on a dragon_breath save is canonical.
+        from sidequest.genre.models.rules import SaveCategory  # lazy
+
+        if self.category is SaveCategory.dragon_breath:
+            return self
         if self.stat is None and self.effect != "none":
             raise ValueError(
                 f"SpellSave.stat is None (auto-apply) but effect={self.effect!r}; "
@@ -83,6 +138,7 @@ class Spell(BaseModel):
     target: Literal["single", "area", "self", "object"]
     duration: str  # "instant" | "until_rest" | "turns:<N|XdY>" | "permanent"
     save: SpellSave
+    requires_mind: bool = False
     effect_template: str
     components: SpellComponents
     backlash: str | None

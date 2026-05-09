@@ -206,6 +206,45 @@ class MoraleDef(BaseModel):
         return self
 
 
+class SaveCategory(StrEnum):  # noqa: UP042 — matches project convention
+    """B/X B26 saving-throw columns. Closed enum — adding a new
+    category is a deliberate edit, not a string-typo accident."""
+
+    death_ray_or_poison = "death_ray_or_poison"
+    magic_wands = "magic_wands"
+    paralysis_or_stone = "paralysis_or_stone"
+    dragon_breath = "dragon_breath"
+    rods_staves_spells = "rods_staves_spells"
+
+
+class SavingThrowsTable(BaseModel):
+    """Per-class B/X saving-throw target numbers (B26).
+
+    Targets are flat per Basic-set canon (B26 footnote): no level
+    adjustments. Per-level scaling is an Expert-set feature; if/when
+    XP advancement crosses a level boundary in C&C, this model
+    becomes a per-level dict.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    death_ray_or_poison: int
+    magic_wands: int
+    paralysis_or_stone: int
+    dragon_breath: int
+    rods_staves_spells: int
+
+    @model_validator(mode="after")
+    def _validate(self) -> SavingThrowsTable:
+        for f, v in self.model_dump().items():
+            if not (2 <= v <= 20):
+                raise ValueError(f"saving throw {f}={v} outside legal d20 range 2..20")
+        return self
+
+    def target_for(self, category: SaveCategory) -> int:
+        return getattr(self, category.value)
+
+
 class ResolutionMode(StrEnum):  # noqa: UP042 — matches project convention (see protocol/enums.py)
     """How a confrontation resolves each turn.
 

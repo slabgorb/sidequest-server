@@ -5,11 +5,14 @@ Port of sidequest-genre/src/models/character.rs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from sidequest.genre.models.ocean import OceanProfile
+
+if TYPE_CHECKING:
+    from sidequest.genre.models.rules import SavingThrowsTable
 
 
 class NpcArchetype(BaseModel):
@@ -33,6 +36,7 @@ class NpcArchetype(BaseModel):
     catalog_items: list[str] = Field(default_factory=list)
     ocean: OceanProfile | None = None
     mindless: bool = False
+    saves_as_class: str = "Fighter"
 
 
 class MechanicalEffects(BaseModel):
@@ -109,6 +113,7 @@ class ClassDef(BaseModel):
     encounter_beat_choices: list[str] = Field(default_factory=list)
     magic_access: str | None = None
     magic_config: ClassMagicConfig | None = None
+    saving_throws: SavingThrowsTable | None = None
 
 
 class CharCreationChoice(BaseModel):

@@ -171,3 +171,55 @@ def test_shipped_divine_l1_catalog_passes_null_stat_validator():
     clw = cat.get("cure_light_wounds")
     assert clw.save.stat is None
     assert clw.save.effect == "none"
+
+
+# ---------------------------------------------------------------------------
+# B/X B26 saving throws — category + requires_mind (Tasks 1-8 of saves plan)
+# ---------------------------------------------------------------------------
+
+
+def test_spell_save_category_defaults_rods_staves_spells():
+    from sidequest.genre.models.rules import SaveCategory
+    from sidequest.magic.spell_catalog import SpellSave
+
+    s = SpellSave(stat="WIS", effect="negates")
+    assert s.category is SaveCategory.rods_staves_spells
+
+
+def test_spell_save_category_dragon_breath_requires_null_stat():
+    from pydantic import ValidationError
+
+    from sidequest.genre.models.rules import SaveCategory
+    from sidequest.magic.spell_catalog import SpellSave
+
+    with pytest.raises(ValidationError, match="dragon_breath"):
+        SpellSave(stat="WIS", effect="halves", category=SaveCategory.dragon_breath)
+
+
+def test_spell_save_category_dragon_breath_with_null_stat_ok():
+    from sidequest.genre.models.rules import SaveCategory
+    from sidequest.magic.spell_catalog import SpellSave
+
+    s = SpellSave(stat=None, effect="halves", category=SaveCategory.dragon_breath)
+    assert s.category is SaveCategory.dragon_breath
+
+
+def test_spell_requires_mind_default_false():
+    from sidequest.magic.spell_catalog import Spell, SpellComponents, SpellSave
+
+    s = Spell(
+        id="magic_missile",
+        name="Magic Missile",
+        level=1,
+        tradition="arcane",
+        range="near",
+        target="single",
+        duration="instant",
+        save=SpellSave(stat=None, effect="none"),
+        effect_template="auto-hit",
+        components=SpellComponents(),
+        backlash=None,
+        narrator_register="A bolt.",
+        domain="physical",
+    )
+    assert s.requires_mind is False
