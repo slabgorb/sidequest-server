@@ -217,6 +217,20 @@ class RolledStat(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# ClassRequirement — chargen the_arrangement live-qualify panel row
+# ---------------------------------------------------------------------------
+
+
+class ClassRequirement(ProtocolBase):
+    """One row in the live-qualify panel during the_arrangement scene."""
+
+    name: str
+    """Class display name (e.g. 'Fighter')."""
+    requirement_label: str
+    """Human-readable requirement (e.g. 'STR 9+')."""
+
+
+# ---------------------------------------------------------------------------
 # InventoryItem — item entry in inventory
 # ---------------------------------------------------------------------------
 
