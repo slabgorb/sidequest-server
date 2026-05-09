@@ -208,14 +208,16 @@ class TestCoreFields:
         assert "Path: Ranger" in summary
 
     def test_default_class_shown_when_class_hint_absent(self, caverns_pack: GenrePack) -> None:
-        # caverns has default_class=Delver in its rules and no class scene.
+        # Synthetic rules with default_class set — caverns_and_claudes no
+        # longer has default_class (chargen-visible-dice 2026-05-09 dropped
+        # it because the_calling is mandatory). The fallback path itself
+        # is still real code for any pack that opts in.
+        rules = simple_rules(default_class="Delver")
         scenes = [make_scene("name", allows_freeform=True)]
-        b = CharacterBuilder(scenes=scenes, rules=caverns_pack.rules)
+        b = CharacterBuilder(scenes=scenes, rules=rules)
         b.apply_freeform("Rux")
         msg = render_confirmation_summary(b, caverns_pack, None, "p1")
         summary = msg.payload.summary or ""
-        # caverns class_label defaults to "Class" or similar — assert the
-        # value, not the label (label is genre-specific).
         assert "Delver" in summary
 
     def test_personality_and_pronouns_rendered_when_accumulated(
@@ -415,8 +417,12 @@ class TestEquipment:
         inv = InventoryConfig(starting_equipment={"Delver": ["rope", "torch"]})
         pack = _clone_with_inventory(caverns_pack, inv)
         scenes = [make_scene("name", allows_freeform=True)]
-        # default_class=Delver comes from caverns_pack.rules
-        b = CharacterBuilder(scenes=scenes, rules=caverns_pack.rules)
+        # Synthetic rules with default_class set — see
+        # test_default_class_shown_when_class_hint_absent for why we no
+        # longer use caverns_pack.rules here (the C&C pack dropped
+        # default_class with chargen-visible-dice 2026-05-09).
+        rules = simple_rules(default_class="Delver")
+        b = CharacterBuilder(scenes=scenes, rules=rules)
         b.apply_freeform("Rux")
         summary = (render_confirmation_summary(b, pack, None, "p1").payload.summary) or ""
         assert "Equipment: Rope, Torch" in summary
