@@ -163,9 +163,14 @@ async def watcher_endpoint(websocket: WebSocket, hub: WatcherHub) -> None:
     Holds the connection open and forwards every hub publish to the
     client. No incoming client messages are expected or consumed — the
     stream is one-way.
+
+    Connect ordering: hello → replay buffered events → subscribe to
+    live broadcasts → receive-loop. Subscribing AFTER replay closes
+    the race window where a live broadcast could reach the new
+    socket while the buffered history was still streaming, producing
+    duplicates or out-of-order events on the client.
     """
     await websocket.accept()
-    await hub.subscribe(websocket)
     try:
         # Hello frame so the client knows the stream is live before the
         # first real span arrives. Useful during idle moments when the
@@ -189,6 +194,40 @@ async def watcher_endpoint(websocket: WebSocket, hub: WatcherHub) -> None:
             )
         except WebSocketDisconnect:
             return
+
+        # Replay buffered events before going live so a refresh
+        # mid-session shows prior history. ``replay`` is best-effort
+        # internally; if the client drops mid-replay it returns the
+        # partial count and we surface the disconnect via the next
+        # ``send_json`` below or the receive-loop.
+        try:
+            await websocket.send_json(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "component": "sidequest-server",
+                    "event_type": "agent_span_open",
+                    "severity": "info",
+                    "fields": {"name": "watcher.replay_start"},
+                }
+            )
+            replayed = await hub.replay(websocket)
+            await websocket.send_json(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "component": "sidequest-server",
+                    "event_type": "agent_span_close",
+                    "severity": "info",
+                    "fields": {"name": "watcher.replay_end", "replayed": replayed},
+                }
+            )
+        except WebSocketDisconnect:
+            return
+
+        # Subscribe AFTER replay so live events can't interleave with
+        # buffered history. unsubscribe in ``finally`` is safe even if
+        # subscribe never ran — the underlying set ``discard`` is silent
+        # on missing entries.
+        await hub.subscribe(websocket)
 
         while True:
             # The watcher stream is one-way server→client. Read to
