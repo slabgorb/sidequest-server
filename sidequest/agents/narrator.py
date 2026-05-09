@@ -11,7 +11,7 @@ from former separate agents (CreatureSmith, Dialectician, Ensemble).
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sidequest.game.encounter import StructuredEncounter
@@ -709,7 +709,10 @@ class NarratorAgent(BaseAgent):
             # opponent-side selection.
             pc_beat_lines = ""
             if pc_classes_by_name:
-                from sidequest.game.beat_filter import beats_available_for
+                from sidequest.game.beat_filter import (
+                    beats_available_for,
+                    cast_spell_rejection_reason,
+                )
                 from sidequest.telemetry.spans import confrontation_beat_filter_span
 
                 pc_blocks: list[str] = []
@@ -719,24 +722,47 @@ class NarratorAgent(BaseAgent):
                     entry = pc_classes_by_name.get(actor.name)
                     if entry is None:
                         continue
-                    class_def, spell_slots = entry
+                    # Story 47-10: pc_classes_by_name entry is (class_def,
+                    # spell_slots, prepared_spells). Older callers may still
+                    # ship the 2-tuple shape — tolerate both.
+                    if len(entry) == 3:
+                        class_def, spell_slots, prepared_spells = entry
+                    else:
+                        class_def, spell_slots = entry
+                        prepared_spells = None
                     available = beats_available_for(
-                        cdef, class_def, spell_slots_remaining=spell_slots
+                        cdef,
+                        class_def,
+                        spell_slots_remaining=spell_slots,
+                        prepared_spells=prepared_spells,
                     )
                     available_ids = [b.id for b in available]
                     ids = ", ".join(available_ids) or "(none)"
                     pc_blocks.append(f"  - {class_def.display_name} ({actor.name}) can: {ids}")
+                    # Story 47-10: when cast_spell is filtered out, surface
+                    # the precise rejection reason on the OTEL span so the GM
+                    # panel can distinguish "out of slots" from "didn't
+                    # memorize anything" — Sebastien-tier observability.
+                    rejection_reason = cast_spell_rejection_reason(
+                        cdef,
+                        class_def,
+                        spell_slots_remaining=spell_slots,
+                        prepared_spells=prepared_spells,
+                    )
                     # OTEL: GM-panel verifies the filter is wired, not just
                     # defined (CLAUDE.md OTEL-on-every-subsystem).
-                    with confrontation_beat_filter_span(
-                        actor=actor.name,
-                        class_name=class_def.display_name,
-                        confrontation_type=cdef.confrontation_type,
-                        available_beat_ids=",".join(available_ids),
-                        spell_slots_remaining=spell_slots,
-                        pool_size=len(cdef.beats),
-                        filtered_size=len(available),
-                    ):
+                    span_kwargs: dict[str, Any] = {
+                        "actor": actor.name,
+                        "class_name": class_def.display_name,
+                        "confrontation_type": cdef.confrontation_type,
+                        "available_beat_ids": ",".join(available_ids),
+                        "spell_slots_remaining": spell_slots,
+                        "pool_size": len(cdef.beats),
+                        "filtered_size": len(available),
+                    }
+                    if rejection_reason is not None:
+                        span_kwargs["cast_spell_rejection_reason"] = rejection_reason
+                    with confrontation_beat_filter_span(**span_kwargs):
                         pass
                 if pc_blocks:
                     pc_beat_lines = (

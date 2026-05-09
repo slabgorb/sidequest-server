@@ -16,8 +16,6 @@ Without an edge_resolver, both numerical_advantage values default to 0
 
 from __future__ import annotations
 
-from typing import Any
-
 from sidequest.game.creature_core import CreatureCore, EdgePool
 from sidequest.game.encounter import (
     EncounterActor,

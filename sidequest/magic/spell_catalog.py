@@ -37,6 +37,23 @@ class SpellSave(BaseModel):
             f"{sorted(_SPELL_SAVE_EFFECT_FIXED)} or a 'partial:<text>' discriminated form"
         )
 
+    @model_validator(mode="after")
+    def _validate_null_stat_coherence(self) -> SpellSave:
+        # Story 47-10 codified rule (2026-05-09): save.stat: null means the
+        # spell auto-applies (no opposed check). Pairing null-stat with a
+        # non-none save.effect is contradictory authoring — there is no
+        # save for the defender to "halve" or "negate" or partially resist
+        # when the cast unconditionally lands. Reject at load time so the
+        # author sees the inconsistency before runtime.
+        if self.stat is None and self.effect != "none":
+            raise ValueError(
+                f"SpellSave.stat is None (auto-apply) but effect={self.effect!r}; "
+                f"null-stat spells must declare effect='none' (there is no save "
+                f"for the defender to react to). Either add a save.stat or set "
+                f"effect to 'none'."
+            )
+        return self
+
 
 class SpellComponents(BaseModel):
     model_config = {"extra": "forbid"}

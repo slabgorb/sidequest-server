@@ -161,6 +161,12 @@ class MagicState(BaseModel):
     # the list-shaped state that doesn't fit a numeric bar.
     known_spells: dict[str, list[str]] = Field(default_factory=dict)
     prepared_spells: dict[str, dict[int, list[str]]] = Field(default_factory=dict)
+    # Story 47-10: spells the actor has cast since their last rest, indexed
+    # by actor and spell level. The UI renders these struck-through-but-
+    # visible (LedgerPanel.MagicBlock) so the player sees what they spent.
+    # Populated by narration_apply._resolve_innate_cast_for_beat after a
+    # cast resolves; cleared by learned_ops.rest alongside prepared_spells.
+    spent_spells: dict[str, dict[int, list[str]]] = Field(default_factory=dict)
 
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:

@@ -27,6 +27,65 @@ from ._core import SPAN_ROUTES, SpanRoute
 from .span import Span
 
 SPAN_MAGIC_WORKING = "magic.working"
+SPAN_INNATE_V1_CAST = "innate_v1.cast"
+
+SPAN_ROUTES[SPAN_INNATE_V1_CAST] = SpanRoute(
+    event_type="state_transition",
+    component="magic",
+    extract=lambda span: {
+        "field": "magic_state",
+        "op": "innate_v1_cast",
+        "actor_id": (span.attributes or {}).get("actor_id", ""),
+        "spell_id": (span.attributes or {}).get("spell_id", ""),
+        "validator_outcome": (span.attributes or {}).get("validator_outcome", ""),
+        "slot_consumed": (span.attributes or {}).get("slot_consumed", False),
+        "save_skipped": (span.attributes or {}).get("save_skipped", False),
+        "save_stat": (span.attributes or {}).get("save_stat", ""),
+        "save_result": (span.attributes or {}).get("save_result", ""),
+        "damage_applied": (span.attributes or {}).get("damage_applied", ""),
+    },
+)
+
+
+@contextmanager
+def innate_v1_cast_span(
+    *,
+    actor_id: str,
+    spell_id: str,
+    validator_outcome: str,
+    slot_consumed: bool,
+    save_skipped: bool,
+    save_stat: str | None = None,
+    save_result: str | None = None,
+    damage_applied: str | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 47-10 — innate_v1.cast OTEL span.
+
+    Emitted on every successful cast_spell beat resolution. Carries the
+    spell-catalog-driven outcome shape (auto-apply vs save branch). Pairs
+    with the existing learned_v1.cast span (which fires from direct
+    learned_ops.cast paths used by tests) — innate_v1.cast is the
+    production player-surface span; learned_v1.cast survives for any
+    plugin or test that drives the data layer directly.
+    """
+    attributes: dict[str, Any] = {
+        "actor_id": actor_id,
+        "spell_id": spell_id,
+        "validator_outcome": validator_outcome,
+        "slot_consumed": slot_consumed,
+        "save_skipped": save_skipped,
+        **attrs,
+    }
+    if save_stat is not None:
+        attributes["save_stat"] = save_stat
+    if save_result is not None:
+        attributes["save_result"] = save_result
+    if damage_applied is not None:
+        attributes["damage_applied"] = damage_applied
+    with Span.open(SPAN_INNATE_V1_CAST, attributes) as span:
+        yield span
+
 
 SPAN_ROUTES[SPAN_MAGIC_WORKING] = SpanRoute(
     event_type="state_transition",

@@ -119,11 +119,12 @@ def test_caverns_and_claudes_caverns_sunden_magic_init_fires(cc_pack_dir):
     assert "innate_v1" in active
 
 
-def test_caverns_sunden_ships_one_character_scope_spell_slots_bar(cc_pack_dir):
-    """Post-2026-05-07 B/X pivot: caverns_sunden ships one character-
-    scope ``spell_slots`` bar with class-keyed ``starts_at_chargen``.
-    A Delver-class chargen lands at 0.0 (non-caster); the bar exists
-    so that a future Mage commit can see the same registry.
+def test_caverns_sunden_ships_character_scope_spell_slots_bar(cc_pack_dir):
+    """Post-2026-05-07 B/X pivot: caverns_sunden ships character-scope
+    ``spell_slots`` and (story 47-10) ``divine_favor`` bars with class-keyed
+    ``starts_at_chargen``. A Delver-class chargen lands both at 0.0
+    (non-caster, non-cleric); the bars exist so future caster commits
+    see the same registry.
     """
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
@@ -137,15 +138,227 @@ def test_caverns_sunden_ships_one_character_scope_spell_slots_bar(cc_pack_dir):
         character_id="Mira",
         character_class="Delver",
     )
-    bars = list(snapshot.magic_state.ledger.values())
-    assert len(bars) == 1, (
-        f"caverns_sunden should ship exactly one character-scope bar "
-        f"(spell_slots) seeded by add_character; got {len(bars)} bars"
-    )
-    assert bars[0].spec.id == "spell_slots"
-    assert bars[0].value == 0.0, (
+    bars_by_id = {b.spec.id: b for b in snapshot.magic_state.ledger.values()}
+    assert "spell_slots" in bars_by_id
+    assert bars_by_id["spell_slots"].value == 0.0, (
         "Delver is a non-caster; spell_slots must seed at 0.0 per "
         "world magic.yaml class-keyed starts_at_chargen"
+    )
+    assert "divine_favor" in bars_by_id, (
+        "Story 47-10: divine_favor character-scope bar must ship in caverns_sunden world magic.yaml"
+    )
+    assert bars_by_id["divine_favor"].value == 0.0, "Delver (non-Cleric) divine_favor seeds at 0.0"
+
+
+# ---------------------------------------------------------------------------
+# Story 47-10 — Init wiring for learned_v1 state (AC1)
+# ---------------------------------------------------------------------------
+# After init_magic_state_for_session runs for a Mage/Cleric in caverns_sunden,
+# MagicState should be populated with the learned_v1 surface so that
+# the prepared-list gate (AC4), context block (AC7), and cast resolution
+# (AC5/AC6) can read it. Specifically:
+#   1. MagicState.known_spells[actor] contains the actor's tradition's L1
+#      catalog (12 arcane for Mage, 8 divine for Cleric).
+#   2. MagicState.prepared_spells[actor] exists as an empty dict.
+#   3. A per-level slot ledger bar exists for L1.
+
+
+def test_mage_session_init_populates_known_spells_from_arcane_l1(cc_pack_dir):
+    """A Mage chargen in caverns_sunden must end with all 12 arcane L1
+    spells in known_spells[mage_id]. This is the seam where the prepared
+    list (UI + context block) reads from."""
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Rux",
+        character_class="Mage",
+    )
+    ms = snapshot.magic_state
+    assert ms is not None
+    known = ms.known_spells.get("Rux", [])
+    assert len(known) == 12, (
+        f"Mage 'Rux' must know all 12 arcane L1 spells after init; got "
+        f"{len(known)}: {known!r}. Verify init_magic_state_for_session "
+        f"calls seed_learned_v1_state for actors with magic_config."
+    )
+    # Spot-check canonical spells the playgroup will recognize:
+    assert "magic_missile" in known
+    assert "sleep" in known
+
+
+def test_cleric_session_init_populates_known_spells_from_divine_l1(cc_pack_dir):
+    """A Cleric chargen in caverns_sunden must end with all 8 divine L1
+    spells in known_spells[cleric_id]."""
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Brother_Hesh",
+        character_class="Cleric",
+    )
+    ms = snapshot.magic_state
+    assert ms is not None
+    known = ms.known_spells.get("Brother_Hesh", [])
+    assert len(known) == 8, (
+        f"Cleric 'Brother_Hesh' must know all 8 divine L1 spells after init; "
+        f"got {len(known)}: {known!r}"
+    )
+    assert "cure_light_wounds" in known
+
+
+def test_mage_session_init_creates_empty_prepared_spells_dict(cc_pack_dir):
+    """prepared_spells must be present and empty after init. Empty dict
+    (not absent) lets the prepared-list gate distinguish 'never prepared'
+    from 'this actor has no MagicState'."""
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Rux",
+        character_class="Mage",
+    )
+    ms = snapshot.magic_state
+    prepared = ms.prepared_spells.get("Rux")
+    assert prepared is not None, (
+        "MagicState.prepared_spells['Rux'] must exist (empty dict) after init"
+    )
+    assert prepared == {} or all(not v for v in prepared.values()), (
+        f"Prepared dict must be empty at chargen; got {prepared!r}"
+    )
+
+
+def test_mage_session_init_creates_l1_slot_bar(cc_pack_dir):
+    """A Mage at chargen must have a per-level L1 slot bar for the
+    cast_spell beat to drain. The bar's exact name is at the Dev's
+    discretion (slots_l1_<actor> or spell_slots_l1_<actor>) — this test
+    asserts existence + non-zero value, not naming.
+    """
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Rux",
+        character_class="Mage",
+    )
+    ms = snapshot.magic_state
+    # Find a per-level L1 slot bar for actor 'Rux'.
+    l1_bars = [
+        (key, bar)
+        for key, bar in ms.ledger.items()
+        if "Rux" in key and ("slots_l1" in key or "spell_slots_l1" in key)
+    ]
+    assert len(l1_bars) >= 1, (
+        f"Expected a per-level L1 slot bar for Mage 'Rux' after init. "
+        f"Found ledger keys: {list(ms.ledger.keys())!r}. The "
+        f"seed_learned_v1_state helper creates slots_l<N> bars; "
+        f"init_magic_state_for_session must invoke it for casters."
+    )
+    _key, bar = l1_bars[0]
+    assert bar.value >= 1.0, (
+        f"L1 slot bar must seed at >=1 for a Mage; got {bar.value}. "
+        f"B/X canon: Magic-User L1 = 1 slot/day; spec amends to 2 — "
+        f"either is acceptable; zero is not."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Story 47-10 — World magic.yaml: learned_v1 + divine_favor bar (AC3)
+# ---------------------------------------------------------------------------
+# The caverns_sunden world magic.yaml must:
+#   1. Permit learned_v1 alongside item_legacy_v1 and innate_v1 (data-layer
+#      activation so the spell-catalog loader fires).
+#   2. Declare the divine_favor ledger bar (Cleric-class-scope, bidirectional,
+#      thresholds at +/-0.7).
+
+
+def test_caverns_sunden_active_plugins_include_learned_v1(cc_pack_dir):
+    genre_yaml = cc_pack_dir / "magic.yaml"
+    world_yaml = cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml"
+    config = load_world_magic(genre_yaml=genre_yaml, world_yaml=world_yaml)
+    active = list(config.active_plugins)
+    assert "item_legacy_v1" in active
+    assert "innate_v1" in active
+    assert "learned_v1" in active, (
+        f"caverns_sunden must activate learned_v1 (data-layer infra) so "
+        f"the spell-catalog loader binds arcane_l1.yaml + divine_l1.yaml "
+        f"into MagicState. Currently active: {active!r}"
+    )
+
+
+def test_caverns_sunden_declares_divine_favor_ledger_bar(cc_pack_dir):
+    """Cleric class-scope bar with bidirectional range and ±0.7 thresholds.
+
+    The bar's downstream consequences (cleric cannot Turn when bar low,
+    free reliquary effect when high) are narrator-discretion — the YAML
+    only needs to declare the bar and its mechanical shape.
+    """
+    genre_yaml = cc_pack_dir / "magic.yaml"
+    world_yaml = cc_pack_dir / "worlds" / "caverns_sunden" / "magic.yaml"
+    config = load_world_magic(genre_yaml=genre_yaml, world_yaml=world_yaml)
+    bars = [b for b in config.ledger_bars if b.id == "divine_favor"]
+    assert len(bars) == 1, (
+        f"Expected exactly one ledger bar with id 'divine_favor' in "
+        f"caverns_sunden/magic.yaml; found {len(bars)}. Bar IDs: "
+        f"{[b.id for b in config.ledger_bars]!r}"
+    )
+    bar = bars[0]
+    assert bar.direction == "bidirectional", (
+        f"divine_favor must be bidirectional (acts of faith raise it; "
+        f"betrayals lower it); got {bar.direction!r}"
+    )
+    # Bar range / threshold shape — exact field names are at the
+    # LedgerBarSpec author's discretion (range, threshold_high/low). The
+    # contract: thresholds at ±0.7 (cleric drift bands).
+    bar_dump = bar.model_dump()
+    range_value = bar_dump.get("range") or [bar_dump.get("range_min"), bar_dump.get("range_max")]
+    assert range_value is not None and len(range_value) == 2
+    assert float(range_value[0]) <= -0.7 and float(range_value[1]) >= 0.7, (
+        f"divine_favor range must span [-1.0, 1.0] or wider so the ±0.7 "
+        f"thresholds are reachable; got {range_value!r}"
+    )
+
+
+def test_non_caster_session_init_does_not_create_known_spells(cc_pack_dir):
+    """A Fighter or Thief chargen must NOT populate known_spells —
+    seed_learned_v1_state is gated on ClassDef.magic_config, which
+    fighter/thief do not declare."""
+    snapshot = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="caverns_sunden",
+        turn_manager=TurnManager(),
+    )
+    init_magic_state_for_session(
+        snapshot=snapshot,
+        genre_pack_source_dir=cc_pack_dir,
+        world_slug="caverns_sunden",
+        character_id="Sam",
+        character_class="Fighter",
+    )
+    ms = snapshot.magic_state
+    assert ms is not None
+    assert ms.known_spells.get("Sam", []) == [], (
+        "Fighter must not have known_spells populated after init"
     )
 
 
@@ -177,10 +390,13 @@ def test_caverns_sunden_class_aware_spell_slot_allocation(cc_pack_dir):
             character_id=f"Test_{char_class}",
             character_class=char_class,
         )
-        bars = list(snapshot.magic_state.ledger.values())
-        assert len(bars) == 1
-        assert bars[0].value == expected_value, (
-            f"{char_class!r} expected spell_slots={expected_value}, got {bars[0].value}"
+        bars_by_id = {b.spec.id: b for b in snapshot.magic_state.ledger.values()}
+        assert "spell_slots" in bars_by_id, (
+            f"{char_class!r} session must have a spell_slots bar; got {list(bars_by_id.keys())!r}"
+        )
+        assert bars_by_id["spell_slots"].value == expected_value, (
+            f"{char_class!r} expected spell_slots={expected_value}, "
+            f"got {bars_by_id['spell_slots'].value}"
         )
 
 

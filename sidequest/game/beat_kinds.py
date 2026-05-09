@@ -168,9 +168,8 @@ def resolve_tier_deltas(
 # ---------------------------------------------------------------------------
 # apply_beat — shared between narrator and dice-throw paths
 # ---------------------------------------------------------------------------
-from dataclasses import dataclass  # noqa: E402
-
 from collections.abc import Callable  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
 
 from sidequest.game.creature_core import CreatureCore  # noqa: E402
 from sidequest.game.encounter import (  # noqa: E402
