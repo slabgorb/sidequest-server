@@ -188,3 +188,21 @@ def test_class_def_saving_throws_defaults_none():
         kit_table="fighter_kit",
     )
     assert c.saving_throws is None
+
+
+def test_npc_archetype_saves_as_class_default_fighter():
+    from sidequest.genre.models.character import NpcArchetype
+
+    a = NpcArchetype(name="Goblin", description="green and mean")
+    assert a.saves_as_class == "Fighter"
+
+
+def test_npc_archetype_saves_as_class_override():
+    from sidequest.genre.models.character import NpcArchetype
+
+    a = NpcArchetype(
+        name="Necromancer",
+        description="bones and willpower",
+        saves_as_class="Mage",
+    )
+    assert a.saves_as_class == "Mage"

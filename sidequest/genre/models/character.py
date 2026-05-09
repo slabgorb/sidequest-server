@@ -36,6 +36,7 @@ class NpcArchetype(BaseModel):
     catalog_items: list[str] = Field(default_factory=list)
     ocean: OceanProfile | None = None
     mindless: bool = False
+    saves_as_class: str = "Fighter"
 
 
 class MechanicalEffects(BaseModel):
