@@ -363,6 +363,18 @@ class EdgeConfigMissingClassError(BuilderError):
         super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
 
 
+class PoolValueNotPresentError(Exception):
+    """assign_stat called with a value not currently in the arrangement pool."""
+
+
+class UnfilledArrangementError(Exception):
+    """confirm_arrangement called before all six slots are filled."""
+
+
+class NoQualifyingClassesError(Exception):
+    """confirm_arrangement called but the arrangement qualifies for no classes."""
+
+
 # Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
 # in catch blocks without importing each variant.
 BuilderError.InvalidChoice = InvalidChoiceError  # type: ignore[attr-defined]
@@ -773,6 +785,68 @@ class CharacterBuilder:
         if self._arrangement_assignment is None:
             return None
         return dict(self._arrangement_assignment)
+
+    def assign_stat(self, stat_name: str, value: int) -> None:
+        """Move ``value`` from the arrangement pool into ``stat_name``.
+
+        If the slot already has a value, that value is returned to the pool
+        first. Raises ``PoolValueNotPresentError`` if ``value`` isn't in the
+        pool.
+        """
+        if self._arrangement_pool is None or self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        if value not in self._arrangement_pool:
+            raise PoolValueNotPresentError(
+                f"value {value} not in pool {self._arrangement_pool}"
+            )
+        existing = self._arrangement_assignment.get(stat_name)
+        if existing is not None:
+            self._arrangement_pool.append(existing)
+        self._arrangement_pool.remove(value)
+        self._arrangement_assignment[stat_name] = value
+
+    def clear_stat(self, stat_name: str) -> None:
+        """Return the value in ``stat_name`` (if any) to the pool."""
+        if self._arrangement_pool is None or self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        existing = self._arrangement_assignment.get(stat_name)
+        if existing is None:
+            return
+        self._arrangement_pool.append(existing)
+        self._arrangement_assignment[stat_name] = None
+
+    def confirm_arrangement(self) -> None:
+        """Lock the arrangement and materialize ``rolled_stats``.
+
+        Raises:
+            UnfilledArrangementError: not all six slots filled.
+            NoQualifyingClassesError: arrangement qualifies for zero classes.
+        """
+        if self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        if any(v is None for v in self._arrangement_assignment.values()):
+            raise UnfilledArrangementError("not all six stats assigned")
+        if not self._classes:
+            raise RuntimeError("no classes attached; call with_classes() before confirm")
+        qualifying = qualifying_classes_arrangement(
+            self._arrangement_assignment, self._classes,
+        )
+        if not qualifying:
+            raise NoQualifyingClassesError(
+                f"arrangement {self._arrangement_assignment} qualifies for no class"
+            )
+        self._rolled_stats = [
+            (name, self._arrangement_assignment[name])
+            for name in self._ability_score_names
+        ]
+        self._arrangement_pool = None
+        self._arrangement_assignment = None
+
+    def reject_arrangement(self) -> None:
+        """Discard the current pool and reroll. Stays in arrange mode."""
+        if self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        self._roll_3d6_arrange_visible()
 
     @property
     def rules(self) -> RulesConfig:
