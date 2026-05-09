@@ -398,8 +398,7 @@ def test_init_class_def_invalid_publishes_watcher_event(
     matching = [
         e
         for e in captured_magic_init_events
-        if e.get("event_type") == "magic.init_class_def_invalid"
-        and e.get("component") == "magic"
+        if e.get("event_type") == "magic.init_class_def_invalid" and e.get("component") == "magic"
     ]
     assert len(matching) >= 1, (
         "Expected at least one magic.init_class_def_invalid watcher event "
