@@ -112,6 +112,12 @@ class BeatSelection:
     beat_id: str
     outcome: RollOutcome = RollOutcome.Success  # default for legacy callers
     target: str | None = None
+    # Story 47-10 — when beat_id == "cast_spell", the narrator nominates a
+    # specific spell from the actor's prepared list. None on non-cast beats
+    # or when the narrator omits it (legacy paths). The cast handler in
+    # narration_apply uses this to look up the Spell in the world's catalog
+    # and route the save branch.
+    spell_id: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> BeatSelection:
@@ -156,11 +162,13 @@ class BeatSelection:
                 raise ValueError(
                     f"BeatSelection declared_tier={raw_outcome!r} not in RollOutcome"
                 ) from exc
+        spell_id_raw = d.get("spell_id")
         return cls(
             actor=str(d.get("actor", "")),
             beat_id=str(d.get("beat_id", "")),
             outcome=outcome,
             target=d.get("target"),
+            spell_id=str(spell_id_raw) if spell_id_raw else None,
         )
 
 
@@ -2778,12 +2786,21 @@ async def run_narration_turn(
     genre_classes = getattr(genre, "classes", None) or []
     if genre_classes:
         classes_by_display = {c.display_name: c for c in genre_classes}
+        # Story 47-10 — pull prepared_spells off magic_state alongside slot
+        # counts so the prepared-list gate (beats_available_for) can engage
+        # in production. When magic_state is absent (genres with no magic
+        # subsystem), prepared_spells stays empty and the gate is dormant.
+        magic_state = getattr(session, "magic_state", None)
+        prepared_spells_by_actor: dict[str, dict[int, list[str]]] = (
+            getattr(magic_state, "prepared_spells", {}) if magic_state else {}
+        )
         for pc in session.characters:
             class_def = classes_by_display.get(pc.char_class)
             if class_def is None:
                 continue
             spell_slots = _resolve_spell_slots_for_pc(session, pc.core.name)
-            pc_classes_by_name[pc.core.name] = (class_def, spell_slots)
+            prepared_spells = prepared_spells_by_actor.get(pc.core.name)
+            pc_classes_by_name[pc.core.name] = (class_def, spell_slots, prepared_spells)
 
     # Task 18 (dual-track momentum): capture the one-shot resolution signal
     # before building TurnContext so we can clear it from the snapshot after

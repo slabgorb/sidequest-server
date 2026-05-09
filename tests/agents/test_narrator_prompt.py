@@ -401,6 +401,73 @@ def test_narrator_prompt_includes_class_signature(build_registry):
     assert "attack" in mage_line
 
 
+def test_narrator_prompt_filters_cast_spell_when_mage_has_nothing_prepared(build_registry):
+    """Story 47-10 wiring test (AC4): a Mage with slots remaining but
+    nothing prepared MUST see cast_spell filtered out of the prompt menu.
+
+    This guards against the wiring gap the architect flagged in spec-check:
+    even if the prepared-list gate exists in beats_available_for, the
+    narrator must thread prepared_spells through the call. Prior to the
+    fix this test failed because narrator.py:723 called the helper with
+    only spell_slots_remaining.
+    """
+    from sidequest.agents.narrator import NarratorAgent
+
+    enc, cdef, pc_classes_by_name = _two_pc_class_filter_setup()
+    # Reshape Aldous's entry into the new 3-tuple form: slots remain, but
+    # prepared_spells is an empty dict (nothing memorized this morning).
+    pc_classes_by_name = dict(pc_classes_by_name)
+    fighter, _ = pc_classes_by_name["Sam"]
+    mage, _ = pc_classes_by_name["Aldous"]
+    pc_classes_by_name["Sam"] = (fighter, 0.0, None)
+    pc_classes_by_name["Aldous"] = (mage, 1.0, {})  # slots OK, prepared empty
+
+    registry = build_registry()
+    NarratorAgent().build_encounter_context(
+        registry,
+        encounter=enc,
+        cdef=cdef,
+        pc_classes_by_name=pc_classes_by_name,
+    )
+    rendered = registry.render_for("narrator")
+
+    mage_lines = [line for line in rendered.splitlines() if "Mage (Aldous) can:" in line]
+    assert mage_lines, "Mage PC menu line missing from rendered prompt"
+    mage_line = mage_lines[0]
+    assert "cast_spell" not in mage_line, (
+        f"With slots=1 and prepared_spells={{}}, cast_spell must be filtered "
+        f"out (rejected_unprepared). Got: {mage_line!r}"
+    )
+    assert "attack" in mage_line
+
+
+def test_narrator_prompt_includes_cast_spell_when_mage_has_prepared(build_registry):
+    """Story 47-10 wiring test (AC4 happy path): a Mage with both slots AND
+    a prepared spell sees cast_spell in their menu."""
+    from sidequest.agents.narrator import NarratorAgent
+
+    enc, cdef, pc_classes_by_name = _two_pc_class_filter_setup()
+    pc_classes_by_name = dict(pc_classes_by_name)
+    fighter, _ = pc_classes_by_name["Sam"]
+    mage, _ = pc_classes_by_name["Aldous"]
+    pc_classes_by_name["Sam"] = (fighter, 0.0, None)
+    # Slots = 1.0, prepared = {1: ["sleep"]} -> cast_spell allowed.
+    pc_classes_by_name["Aldous"] = (mage, 1.0, {1: ["sleep"]})
+
+    registry = build_registry()
+    NarratorAgent().build_encounter_context(
+        registry,
+        encounter=enc,
+        cdef=cdef,
+        pc_classes_by_name=pc_classes_by_name,
+    )
+    rendered = registry.render_for("narrator")
+
+    mage_lines = [line for line in rendered.splitlines() if "Mage (Aldous) can:" in line]
+    assert mage_lines
+    assert "cast_spell" in mage_lines[0]
+
+
 def test_narrator_prompt_omits_pc_block_when_no_classes_supplied(build_registry):
     """Backward compatibility — calling without pc_classes_by_name keeps the
     legacy single beat list (no per-PC block at all)."""

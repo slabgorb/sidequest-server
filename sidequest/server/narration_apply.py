@@ -72,6 +72,91 @@ from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 logger = logging.getLogger(__name__)
 
 
+def _resolve_innate_cast_for_beat(*, sel, actor, snapshot: GameSnapshot) -> None:
+    """Story 47-10 — drive resolve_innate_v1_cast for a cast_spell beat.
+
+    Each guard publishes a watcher event on miss so the GM panel can surface
+    "cast_spell fired but innate_v1.cast didn't" — the lie-detector pattern
+    for wiring gaps (CLAUDE.md OTEL principle). Loud failures, never silent.
+    """
+    spell_id = getattr(sel, "spell_id", None)
+    if not spell_id:
+        _watcher_publish(
+            "magic.cast_spell_no_spell_id",
+            {"actor": actor.name, "beat_id": "cast_spell"},
+            component="magic",
+            severity="warning",
+        )
+        return
+    magic_state = snapshot.magic_state
+    if magic_state is None:
+        _watcher_publish(
+            "magic.cast_spell_no_magic_state",
+            {"actor": actor.name, "spell_id": spell_id},
+            component="magic",
+            severity="warning",
+        )
+        return
+    catalogs = getattr(magic_state.config, "spell_catalogs", None) or {}
+    spell = None
+    for cat in catalogs.values():
+        try:
+            spell = cat.get(spell_id)
+            break
+        except KeyError:
+            continue
+    if spell is None:
+        _watcher_publish(
+            "magic.cast_spell_unknown",
+            {
+                "actor": actor.name,
+                "spell_id": spell_id,
+                "available_catalogs": sorted(catalogs.keys()),
+            },
+            component="magic",
+            severity="warning",
+        )
+        return
+    # Prepared-list gate — at apply-time, refuse to resolve a cast for a
+    # spell the actor hasn't memorized. Defense-in-depth: the
+    # beats_available_for filter should already have caught this in the
+    # prompt build.
+    prepared_at_level = magic_state.prepared_spells.get(actor.name, {}).get(spell.level, [])
+    if spell_id not in prepared_at_level:
+        _watcher_publish(
+            "magic.cast_spell_not_prepared",
+            {
+                "actor": actor.name,
+                "spell_id": spell_id,
+                "level": spell.level,
+                "prepared_at_level": prepared_at_level,
+            },
+            component="magic",
+            severity="warning",
+        )
+        return
+
+    # Save resolver: v1 stub. The opposed_check pipeline integration is a
+    # follow-up (architect spec-check finding 4 / spec §10 open question).
+    # For now, default to "fail" — the defender does not save, the full
+    # effect_template applies. This is the worst-case-for-defender path,
+    # which is narratively safe (the narrator already chose to depict the
+    # spell hitting; we don't soften without an opposed roll).
+    def _stub_save_resolver(stat: str, target_id: str) -> str:
+        return "fail"
+
+    from sidequest.magic.innate_v1_cast import resolve_innate_v1_cast
+
+    target_id = sel.target if getattr(sel, "target", None) else ""
+    resolve_innate_v1_cast(
+        spell=spell,
+        actor_id=actor.name,
+        target_id=target_id,
+        slot_consumed=True,  # resource_deltas drain ran above
+        save_resolver=_stub_save_resolver if spell.save.stat is not None else None,
+    )
+
+
 def _all_opponents_mindless(opp_actors, pack: GenrePack | None) -> bool:
     """Return True iff every opponent actor in ``opp_actors`` maps to an
     NpcArchetype with ``mindless: True``.
@@ -2460,6 +2545,22 @@ def _apply_narration_result_to_snapshot(
                                 },
                                 component="magic",
                             )
+
+                # ─── Story 47-10: innate_v1 cast resolution ───────────────
+                # When the cast_spell beat fires AND the narrator named a
+                # specific spell in the sidecar AND the world has loaded
+                # spell catalogs AND the actor has the spell prepared,
+                # invoke resolve_innate_v1_cast to drive the save branch
+                # and emit the innate_v1.cast OTEL span. Each guard logs a
+                # watcher event on miss so the GM panel can surface
+                # "infrastructure present but cast didn't fire" — per
+                # CLAUDE.md OTEL principle (lie detector for wiring gaps).
+                if beat.id == "cast_spell":
+                    _resolve_innate_cast_for_beat(
+                        sel=sel,
+                        actor=actor,
+                        snapshot=snapshot,
+                    )
 
                 # ─── B/X morale per-beat hook (Task 9, architect feedback
                 # 2026-05-08) ───────────────────────────────────────────
