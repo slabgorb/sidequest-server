@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sidequest.game.encounter import StructuredEncounter
+    from sidequest.genre.models.character import ClassDef
     from sidequest.genre.models.rules import ConfrontationDef
 
 from sidequest.agents.agent import BaseAgent
@@ -609,6 +610,7 @@ class NarratorAgent(BaseAgent):
         encounter_summary: str | None = None,
         statuses_by_actor: dict[str, list] | None = None,
         resolution_signal: object | None = None,
+        pc_classes_by_name: dict[str, tuple[ClassDef, float]] | None = None,
     ) -> None:
         """Inject encounter-specific narration rules + live encounter state.
 
@@ -689,9 +691,61 @@ class NarratorAgent(BaseAgent):
                     else "statuses: []"
                 )
                 actor_lines.append(f"  - {a.name} (side={a.side}, {status_text})")
+            # All-beats listing — used by the narrator to pick OPPONENT beats
+            # (the engine doesn't filter opponent options by class, since
+            # NPCs/monsters resolve via opponent_default_stats / per-actor stats,
+            # and any pack beat is fair game for the narrator to assign them).
             beat_lines = "\n".join(
                 f"  - {b.id}: {b.label} (kind={b.kind.value}, base={b.base})" for b in cdef.beats
             )
+
+            # Per-PC class-filtered beat menus (Task 7 of C&C B/X class beats).
+            # When ``pc_classes_by_name`` is supplied, render a "X (Name) can:"
+            # line for each PC actor showing only the beats their class can
+            # legally pick this turn. Class filter chain lives in
+            # ``sidequest.game.beat_filter.beats_available_for`` — single source
+            # of truth so future B/X memorization (story #2) plugs in there,
+            # not into prompt rendering. The all-beats block above stays for
+            # opponent-side selection.
+            pc_beat_lines = ""
+            if pc_classes_by_name:
+                from sidequest.game.beat_filter import beats_available_for
+                from sidequest.telemetry.spans import confrontation_beat_filter_span
+
+                pc_blocks: list[str] = []
+                for actor in encounter.actors:
+                    if actor.side != "player":
+                        continue
+                    entry = pc_classes_by_name.get(actor.name)
+                    if entry is None:
+                        continue
+                    class_def, spell_slots = entry
+                    available = beats_available_for(
+                        cdef, class_def, spell_slots_remaining=spell_slots
+                    )
+                    available_ids = [b.id for b in available]
+                    ids = ", ".join(available_ids) or "(none)"
+                    pc_blocks.append(f"  - {class_def.display_name} ({actor.name}) can: {ids}")
+                    # OTEL: GM-panel verifies the filter is wired, not just
+                    # defined (CLAUDE.md OTEL-on-every-subsystem).
+                    with confrontation_beat_filter_span(
+                        actor=actor.name,
+                        class_name=class_def.display_name,
+                        confrontation_type=cdef.confrontation_type,
+                        available_beat_ids=",".join(available_ids),
+                        spell_slots_remaining=spell_slots,
+                        pool_size=len(cdef.beats),
+                        filtered_size=len(available),
+                    ):
+                        pass
+                if pc_blocks:
+                    pc_beat_lines = (
+                        "Player-character beat menus — each PC's "
+                        "beat_selection.beat_id MUST come from THEIR class's "
+                        "list (cross-class picks are illegal):\n" + "\n".join(pc_blocks) + "\n"
+                        "The player's available actions for this turn are listed above. "
+                        "Do not narrate actions outside that list as performed.\n"
+                    )
             tag_lines = (
                 "\n".join(
                     f'  - "{t.text}" on {t.target or "(scene)"} '
@@ -738,6 +792,7 @@ class NarratorAgent(BaseAgent):
                 f"{encounter.opponent_metric.threshold}\n"
                 f"Available beats — beat_selections.beat_id MUST be one of:\n"
                 f"{beat_lines}\n"
+                f"{pc_beat_lines}"
                 f"Actors — emit a beat_selection for every non-withdrawn "
                 f"non-neutral actor:\n" + "\n".join(actor_lines) + "\n"
                 f"Encounter tags:\n{tag_lines}\n"

@@ -534,6 +534,14 @@ class TurnContext:
     # ``confrontation_def: Any`` and ``encounter: Any``.
     statuses_by_actor: dict[str, list[Any]] = field(default_factory=dict)
 
+    # Per-PC class + spell-slot lookup for the live encounter zone (Task 7,
+    # C&C B/X class beats). Maps PC actor name → (ClassDef, spell_slots_remaining).
+    # When non-empty, build_encounter_context renders class-distinct beat menus
+    # via beats_available_for. Empty dict (single-class genre or non-encounter
+    # turn) registers no per-PC block — zero-byte-leak. Typed as dict[str, Any]
+    # to avoid a circular ClassDef import in this layer.
+    pc_classes_by_name: dict[str, Any] = field(default_factory=dict)
+
     # One-shot ResolutionSignal (Task 18 — dual-track momentum). Populated by
     # run_narration_turn from session.pending_resolution_signal. Consumed in
     # build_narrator_prompt: passed to build_encounter_context, span fired.
@@ -1458,6 +1466,7 @@ class Orchestrator:
                 encounter_summary=context.encounter_summary,
                 statuses_by_actor=context.statuses_by_actor,
                 resolution_signal=context.pending_resolution_signal,
+                pc_classes_by_name=context.pc_classes_by_name or None,
             )
             if context.pending_resolution_signal is not None:
                 from sidequest.telemetry.spans import (
@@ -2662,6 +2671,32 @@ class Orchestrator:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_spell_slots_for_pc(session: GameSnapshot, character_name: str) -> float:
+    """Read the ``spell_slots`` character-scope ledger bar.
+
+    Returns 0.0 when:
+      - the world has no magic_state (non-magic genre/world),
+      - the character has no per-character ledger (e.g. before
+        ``MagicState.add_character`` runs),
+      - the world's magic.yaml does not declare a ``spell_slots`` bar.
+
+    Story 47-x B/X memorization will replace the per-character ``spell_slots``
+    bar gate with named-spell tracking. Until then, ``beats_available_for``
+    only consults this scalar.
+    """
+    magic_state = getattr(session, "magic_state", None)
+    if magic_state is None:
+        return 0.0
+    from sidequest.magic.state import BarKey
+
+    key = BarKey(scope="character", owner_id=character_name, bar_id="spell_slots")
+    try:
+        bar = magic_state.get_bar(key)
+    except KeyError:
+        return 0.0
+    return float(bar.value)
+
+
 async def run_narration_turn(
     client: LlmClient,
     session: GameSnapshot,
@@ -2733,6 +2768,23 @@ async def run_narration_turn(
     # characters so the live encounter zone can render Status objects per actor.
     statuses_by_actor = {ch.core.name: list(ch.core.statuses) for ch in session.characters}
 
+    # Task 7 (C&C B/X class beats): build per-PC ClassDef + spell_slots map
+    # for the live encounter zone. ``beats_available_for`` filters the beat
+    # menu per class so e.g. a Fighter never sees ``cast_spell``. Empty for
+    # genres with no ``classes:`` block — registers no per-PC block at all.
+    pc_classes_by_name: dict[str, Any] = {}
+    # Defensive getattr — some test fixtures pass ``genre`` as a SimpleNamespace
+    # without the full GenrePack schema. Real packs always declare ``classes``.
+    genre_classes = getattr(genre, "classes", None) or []
+    if genre_classes:
+        classes_by_display = {c.display_name: c for c in genre_classes}
+        for pc in session.characters:
+            class_def = classes_by_display.get(pc.char_class)
+            if class_def is None:
+                continue
+            spell_slots = _resolve_spell_slots_for_pc(session, pc.core.name)
+            pc_classes_by_name[pc.core.name] = (class_def, spell_slots)
+
     # Task 18 (dual-track momentum): capture the one-shot resolution signal
     # before building TurnContext so we can clear it from the snapshot after
     # the orchestrator consumes it.
@@ -2758,6 +2810,7 @@ async def run_narration_turn(
         party_peers=party_peers,
         pc_positions=pc_positions,
         statuses_by_actor=statuses_by_actor,
+        pc_classes_by_name=pc_classes_by_name,
         pending_resolution_signal=pending_signal,
         magic_state=session.magic_state,
     )

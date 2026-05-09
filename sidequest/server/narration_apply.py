@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from random import Random
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ValidationError
@@ -17,6 +18,12 @@ if TYPE_CHECKING:
     from sidequest.magic.confrontations import ConfrontationDefinition
     from sidequest.server.session_room import SessionRoom
 
+from sidequest.game.morale import (
+    MoraleOutcome,
+    OpponentSideState,
+    OpponentState,
+    maybe_check_morale,
+)
 from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.region_validation import (
     canonicalize_region_name,
@@ -29,7 +36,7 @@ from sidequest.game.session import (
     RoomState,
 )
 from sidequest.genre.models.pack import GenrePack
-from sidequest.genre.models.rules import ResolutionMode
+from sidequest.genre.models.rules import FleeConsequence, MoraleTrigger, ResolutionMode
 from sidequest.magic.confrontations import (
     BranchName,
     evaluate_auto_fire_triggers,
@@ -63,6 +70,213 @@ from sidequest.telemetry.spans import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+def _all_opponents_mindless(opp_actors, pack: GenrePack | None) -> bool:
+    """Return True iff every opponent actor in ``opp_actors`` maps to an
+    NpcArchetype with ``mindless: True``.
+
+    V1 deviation (Task 9 architect feedback, 2026-05-08): the dial-based
+    morale wire path has no per-actor archetype linkage available without
+    threading new state through ``EncounterActor``. The current encounter
+    model carries actor name + side + role but no archetype reference, so
+    the lookup ``actor → archetype.mindless`` is structurally unavailable
+    at this seam.
+
+    For V1 we default to ``False`` (= morale roll proceeds normally for
+    every side). A future story that adds archetype linkage to
+    ``EncounterActor`` (or a side-level ``mindless`` flag emitted by the
+    encounter instantiator) can light this up; the helper exists as the
+    single seam to update. Per CLAUDE.md "no silent fallbacks": this
+    is a documented V1 deviation, not a missing-data fallback.
+    """
+    # Fail-loud guard: empty side cannot be all-mindless. Caller already
+    # filters opponent actors, but defensive anyway.
+    if not opp_actors:
+        return False
+    if pack is None:
+        return False
+    # V1: no archetype lookup wired. See deviation note above.
+    return False
+
+
+def _emit_morale_triggers(
+    encounter,
+    cdef,
+    opponent_side_label: str,
+    pre_kill_state: list[OpponentState],
+    post_kill_state: list[OpponentState],
+    killed_was_leader: bool,
+    rng: Random,
+) -> list[tuple[MoraleTrigger, MoraleOutcome]]:
+    """Detect and fire first_blood, half_killed, leader_killed in one pass.
+
+    Called after every beat that advances ``player_metric`` (the dial
+    that tracks "opponents being defeated"). The function checks which
+    triggers apply (per B/X morale rules), deduplicates via
+    ``encounter.morale_events``, calls ``maybe_check_morale`` for each
+    eligible trigger, and records the result.
+
+    ─── Dial-based pseudo-HP approximation (V1 deviation) ───────────────
+    The encounter engine uses dial abstractions (``player_metric``,
+    ``opponent_metric``) rather than per-opponent HP. The morale spec
+    (§4.4) describes triggers in terms of "opponent count drops by 1",
+    which has no direct analog in this system. V1 approximates:
+
+        pseudo_initial    = player_metric.threshold
+        pseudo_pre_alive  = max(0, threshold - pre_dial_value)
+        pseudo_post_alive = max(0, threshold - post_dial_value)
+
+    Higher dial value = "more opponents down". This preserves the
+    invariants the spec needs (first_blood on first dial advance,
+    half_killed when post crosses ⌊threshold/2⌋), but is lossy — no
+    per-opponent KO event, no per-opponent leader tag.
+
+    ─── V1 limitations ──────────────────────────────────────────────────
+    - ``leader_killed`` is False at the per-beat path. The dial-based
+      wire cannot detect *which* actor was KO'd; that requires
+      per-opponent HP tracking (future story). The narrator-emitted
+      ``intimidated`` sidecar (Task 10) is the working path for explicit
+      leader-takedown signaling until then.
+    - ``mindless`` is global per side at this resolution (see
+      ``_all_opponents_mindless`` — V1 returns False).
+
+    ─── Use direct-call path for tests ──────────────────────────────────
+    Tests that want to exercise per-opponent semantics (specifically the
+    "two goblins, kill one then kill the other" scenario, or the
+    ``leader_killed`` trigger) call this helper directly with
+    constructed ``OpponentState`` lists. The helper itself is correct
+    per spec; only the production wire is approximate.
+
+    Returns a list of ``(trigger, outcome)`` tuples for the caller to
+    act on (chase escalation / surrender / rout). Deferred to Task 12
+    for full flee-consequence dispatch; this task wires detection +
+    recording.
+
+    OTEL: morale-check spans are deferred to Task 12 (per plan). This
+    function emits a watcher event per trigger for GM-panel visibility
+    in the interim.
+    """
+    fired: list[tuple[MoraleTrigger, MoraleOutcome]] = []
+
+    pre_alive = sum(1 for o in pre_kill_state if o.alive)
+    post_alive = sum(1 for o in post_kill_state if o.alive)
+    initial = len(pre_kill_state)
+    side = OpponentSideState(label=opponent_side_label, opponents=post_kill_state)
+
+    triggers_to_check: list[MoraleTrigger] = []
+
+    # first_blood: first opponent downed from full side (fires once per side).
+    event_key_fb = f"first_blood:{opponent_side_label}"
+    if (
+        pre_alive == initial
+        and post_alive < initial
+        and event_key_fb not in encounter.morale_events
+    ):
+        triggers_to_check.append(MoraleTrigger.first_blood)
+
+    # half_killed: opponent count crosses ≤ ⌊initial/2⌋.
+    event_key_hk = f"half_killed:{opponent_side_label}"
+    if post_alive <= initial // 2 < pre_alive and event_key_hk not in encounter.morale_events:
+        triggers_to_check.append(MoraleTrigger.half_killed)
+
+    # leader_killed: the downed actor was tagged is_leader.
+    if killed_was_leader:
+        triggers_to_check.append(MoraleTrigger.leader_killed)
+
+    for trig in triggers_to_check:
+        event_key = f"{trig.value}:{opponent_side_label}"
+        outcome = maybe_check_morale(cdef, side, trig, rng)
+        fired.append((trig, outcome))
+        encounter.morale_events.append(event_key)
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter",
+                "op": "morale_trigger",
+                "trigger": trig.value,
+                "opponent_side": opponent_side_label,
+                "outcome": outcome.value,
+                "post_alive": post_alive,
+                "initial": initial,
+            },
+            component="confrontation",
+        )
+        logger.info(
+            "confrontation.morale_trigger trigger=%s side=%s outcome=%s post_alive=%d initial=%d",
+            trig.value,
+            opponent_side_label,
+            outcome.value,
+            post_alive,
+            initial,
+        )
+    return fired
+
+
+def _apply_flee_consequences(
+    encounter,
+    cdef,
+    fired: list[tuple[MoraleTrigger, MoraleOutcome]],
+) -> None:
+    """Apply chase/surrender/rout based on morale.flee_consequence.
+
+    No-op if no fired trigger has outcome=flee. Idempotent: relies on
+    encounter state not being mutated twice for the same outcome
+    (the caller passes a fresh ``fired`` list per beat).
+
+    For surrender/rout: also sets ``encounter.resolved = True`` and
+    ``encounter.outcome`` so the encounter ends. For chase: sets
+    ``flee_consequence_pending="chase"`` only — full chase escalation
+    is a follow-up story (V1 limitation, documented).
+
+    Loud-fail (ValueError) on unknown FleeConsequence values per
+    CLAUDE.md "no silent fallbacks" — unknown values surface drift
+    immediately.
+    """
+    if not any(outcome is MoraleOutcome.flee for _, outcome in fired):
+        return
+    if cdef.morale is None:
+        # Defensive: should not happen — fired list is non-empty only when
+        # morale is configured. Loud-fail surfaces upstream bugs.
+        raise ValueError(
+            f"_apply_flee_consequences called with fired outcomes but no morale "
+            f"block on '{cdef.label}'"
+        )
+    consequence = cdef.morale.flee_consequence
+    if consequence is FleeConsequence.chase:
+        # V1: set pending flag; actual chase launch is a follow-up story.
+        # The orchestrator can inspect flee_consequence_pending="chase" to
+        # transition to a chase confrontation. No further mutations here.
+        encounter.flee_consequence_pending = "chase"
+    elif consequence is FleeConsequence.surrender:
+        encounter.flee_consequence_pending = "surrender"
+        encounter.opponents_disposition = "surrendered"
+        if not encounter.resolved:
+            encounter.resolved = True
+            encounter.outcome = "surrender"
+    elif consequence is FleeConsequence.rout:
+        encounter.flee_consequence_pending = "rout"
+        encounter.opponents_disposition = "routed"
+        if not encounter.resolved:
+            encounter.resolved = True
+            encounter.outcome = "rout"
+    else:
+        raise ValueError(f"unknown flee_consequence: {consequence!r}")
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "encounter",
+            "op": "flee_consequence",
+            "consequence": consequence.value,
+            "side": encounter.encounter_type,
+        },
+        component="confrontation",
+    )
+    logger.info(
+        "confrontation.flee_consequence consequence=%s side=%s",
+        consequence.value,
+        encounter.encounter_type,
+    )
 
 
 # Pingpong 2026-05-03 [BUG] — narrator described "patrol cutter spinning
@@ -1008,6 +1222,95 @@ def _apply_course_sidecar(
         )
 
 
+def _apply_morale_sidecar(
+    *,
+    snapshot: GameSnapshot,
+    result: object,
+    pack: GenrePack | None,
+) -> None:
+    """Apply a ``morale_event`` sidecar from game_patch_dict to the active encounter.
+
+    Called from ``_apply_narration_result_to_snapshot`` after the course
+    sidecar handler and before the encounter beat loop.
+
+    Skips silently when:
+    - result has no game_patch_dict (non-NarrationTurnResult or empty patch)
+    - game_patch_dict carries no ``morale_event`` key
+    - no active encounter on the snapshot
+    - pack is None or encounter type not in pack rules
+    - confrontation has no morale block (morale=None)
+
+    Raises ValueError on unknown ``morale_event`` values (loud-fail per
+    ADR-039 and CLAUDE.md "no silent fallbacks" — unknown values surface
+    narrator drift immediately).
+    """
+    from sidequest.agents.orchestrator import NarrationTurnResult
+
+    if not isinstance(result, NarrationTurnResult):
+        return
+    patch_dict = result.game_patch_dict
+    if not patch_dict:
+        return
+
+    sidecar_morale_event = patch_dict.get("morale_event")
+    if sidecar_morale_event is None:
+        return
+
+    _KNOWN_SIDECAR_MORALE_EVENTS = {"intimidated"}
+    if sidecar_morale_event not in _KNOWN_SIDECAR_MORALE_EVENTS:
+        raise ValueError(
+            f"narrator sidecar morale_event={sidecar_morale_event!r} not recognized; "
+            f"known values: {sorted(_KNOWN_SIDECAR_MORALE_EVENTS)}"
+        )
+
+    enc = snapshot.encounter
+    if enc is None or enc.resolved:
+        return
+
+    if pack is None or pack.rules is None:
+        return
+
+    from sidequest.server.dispatch.confrontation import find_confrontation_def
+
+    cdef = find_confrontation_def(pack.rules.confrontations, enc.encounter_type)
+    if cdef is None or cdef.morale is None:
+        # Confrontation has no morale block — no morale check possible.
+        return
+
+    if sidecar_morale_event == "intimidated":
+        event_key = f"intimidated:{enc.encounter_type}"
+        if event_key not in enc.morale_events:
+            opp_actors = [a for a in enc.actors if a.side == "opponent"]
+            side = OpponentSideState(
+                label=enc.encounter_type,
+                opponents=[OpponentState(id=a.name, alive=True) for a in opp_actors],
+            )
+            outcome = maybe_check_morale(cdef, side, MoraleTrigger.intimidated, Random())
+            enc.morale_events.append(event_key)
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "encounter",
+                    "op": "morale_trigger",
+                    "trigger": "intimidated",
+                    "opponent_side": enc.encounter_type,
+                    "outcome": outcome.value,
+                    "source": "sidecar",
+                },
+                component="confrontation",
+            )
+            logger.info(
+                "confrontation.morale_trigger trigger=intimidated side=%s outcome=%s source=sidecar",
+                enc.encounter_type,
+                outcome.value,
+            )
+            # Task 11: apply flee consequence if intimidated roll returned flee.
+            sidecar_fired: list[tuple[MoraleTrigger, MoraleOutcome]] = [
+                (MoraleTrigger.intimidated, outcome)
+            ]
+            _apply_flee_consequences(enc, cdef, sidecar_fired)
+
+
 def _apply_narration_result_to_snapshot(
     snapshot: GameSnapshot,
     result: object,
@@ -1695,6 +1998,11 @@ def _apply_narration_result_to_snapshot(
     # Escalated: Bundle 6 or a dedicated reactions bundle should wire that path.
     _apply_course_sidecar(snapshot=snapshot, result=result, room=room)
 
+    # B/X morale sidecar: narrator-emitted morale_event (Task 10, ADR-039).
+    # Fires before the beat loop so an intimidated trigger can register
+    # before any dial advance occurs this turn.
+    _apply_morale_sidecar(snapshot=snapshot, result=result, pack=pack)
+
     # Encounter lifecycle (dual-track momentum, spec 2026-04-25)
     if pack is not None:
         from sidequest.game.beat_kinds import apply_beat
@@ -2111,6 +2419,133 @@ def _apply_narration_result_to_snapshot(
                     turn=turn_num,
                     source="narrator_beat",
                 )
+
+                # ─── B/X resource_deltas consumption hook (§5.6 #4 fix) ────
+                # Apply per-beat resource_deltas to the magic_state ledger.
+                # This is the V1 wire-up for cast_spell consumption (B/X
+                # memorization): a Mage with spell_slots=1.0 can cast once;
+                # after this hook runs the bar is 0.0 and beats_available_for
+                # will filter cast_spell out of the menu on the next turn.
+                # Clamp at 0.0 — slot ledger cannot go negative.
+                if beat.resource_deltas:
+                    magic_state = snapshot.magic_state
+                    if magic_state is not None:
+                        from sidequest.magic.state import BarKey
+
+                        for resource_name, delta in beat.resource_deltas.items():
+                            bar_key = BarKey(
+                                scope="character",
+                                owner_id=actor.name,
+                                bar_id=resource_name,
+                            )
+                            try:
+                                bar = magic_state.get_bar(bar_key)
+                            except KeyError:
+                                # Character has no ledger entry for this
+                                # resource — skip silently (non-magic actor
+                                # or bar not declared for this world).
+                                continue
+                            new_value = max(0.0, bar.value + delta)
+                            magic_state.set_bar_value(bar_key, new_value)
+                            _watcher_publish(
+                                "state_transition",
+                                {
+                                    "field": "magic_state",
+                                    "op": "resource_delta",
+                                    "resource": resource_name,
+                                    "delta": delta,
+                                    "owner": actor.name,
+                                    "new_value": new_value,
+                                    "beat_id": beat.id,
+                                },
+                                component="magic",
+                            )
+
+                # ─── B/X morale per-beat hook (Task 9, architect feedback
+                # 2026-05-08) ───────────────────────────────────────────
+                # Fire morale-trigger detection on every beat that
+                # advanced ``player_metric`` (the dial that tracks
+                # "opponents being defeated"). Without this hook morale
+                # only fires at encounter resolution (player_victory),
+                # which is too late — the spec exit criterion §5.6.2
+                # requires combats to END in flight or surrender, which
+                # means morale must fire BEFORE the dial saturates.
+                #
+                # Dial-as-pseudo-HP approximation: see
+                # ``_emit_morale_triggers`` docstring for the full
+                # deviation note. Briefly: dial value = pseudo-HP taken,
+                # threshold = pseudo-initial-side-size. ``leader_killed``
+                # is False here (no per-actor KO at the dial seam);
+                # ``mindless`` defaults False per ``_all_opponents_mindless``.
+                #
+                # Selection of dial: ``player_metric`` advances when the
+                # PLAYER side scores success — that maps to "opponents
+                # taking damage" in this codebase's dual-track engine
+                # (player_metric.current → threshold = players win =
+                # opponents defeated). Note: the architect feedback's
+                # spec referenced ``opponent_metric``, but this codebase
+                # uses ``player_metric`` for player-progress-toward-win;
+                # see the dual-track design (spec 2026-04-25). Using
+                # ``player_metric`` produces the right semantic
+                # ("first hit lands → first_blood fires").
+                if result_apply.deltas is not None:
+                    # The actor's beat may have advanced player_metric via
+                    # ``own`` (player-side actor) or via ``opponent`` (cross
+                    # delta — e.g. opponent-side ``brace`` draining player
+                    # dial; that is a NEGATIVE delta so it does not advance).
+                    # We only care about positive advances of player_metric.
+                    if actor.side == "player":
+                        morale_dial_delta = max(result_apply.deltas.own, 0)
+                    else:
+                        # Opponent-side actor's beat: ``opponent`` delta is
+                        # cross-side. For an opponent strike on player_metric
+                        # this would be negative (drain) by spec, so only
+                        # positive values count. In practice opponent strikes
+                        # advance ``opponent_metric`` (their own dial), not
+                        # ``player_metric``, so morale_dial_delta is 0 here.
+                        morale_dial_delta = max(result_apply.deltas.opponent, 0)
+                    if morale_dial_delta > 0:
+                        pm = enc.player_metric
+                        threshold = max(pm.threshold, 1)
+                        post_value = pm.current
+                        pre_value = max(0, post_value - morale_dial_delta)
+                        pseudo_initial = threshold
+                        pseudo_pre_alive = max(0, threshold - pre_value)
+                        pseudo_post_alive = max(0, threshold - post_value)
+                        if pseudo_pre_alive != pseudo_post_alive:
+                            opp_actors_for_morale = [a for a in enc.actors if a.side == "opponent"]
+                            all_mindless = _all_opponents_mindless(opp_actors_for_morale, pack)
+                            pre_states = [
+                                OpponentState(
+                                    id=str(i),
+                                    alive=(i < pseudo_pre_alive),
+                                    mindless=all_mindless,
+                                )
+                                for i in range(pseudo_initial)
+                            ]
+                            post_states = [
+                                OpponentState(
+                                    id=str(i),
+                                    alive=(i < pseudo_post_alive),
+                                    mindless=all_mindless,
+                                )
+                                for i in range(pseudo_initial)
+                            ]
+                            # leader_killed: dial-based wire cannot detect
+                            # which actor was KO'd; V1 keeps False here.
+                            # Task 10's intimidated sidecar covers explicit
+                            # narrator-emitted leader-takedown signals.
+                            morale_fired = _emit_morale_triggers(
+                                enc,
+                                cdef,
+                                enc.encounter_type,
+                                pre_states,
+                                post_states,
+                                False,
+                                Random(),
+                            )
+                            _apply_flee_consequences(enc, cdef, morale_fired)
+
                 if result_apply.resolved:
                     with encounter_resolved_span(
                         encounter_type=enc.encounter_type,
@@ -2144,6 +2579,10 @@ def _apply_narration_result_to_snapshot(
                         outcome=enc.outcome or "",
                         actor=actor.name,
                     )
+                    # B/X morale: per-beat dial-advance hook (above)
+                    # already fired any morale triggers caused by the
+                    # beat that resolved this encounter. No additional
+                    # call here.
                     # Scratch sweep at encounter resolution. Encounter end
                     # is the canonical "scene end" trigger that the Scratch
                     # severity tier promises in game/status.py — without
@@ -3221,6 +3660,56 @@ def _resolve_opposed_check_branch(
             turn=turn,
             source=sel_source,
         )
+
+        # B/X morale per-beat hook (Task 9, architect feedback 2026-05-08).
+        # Mirrors the legacy beat-loop site above. ``pack`` is not threaded
+        # into this branch — pass None to ``_all_opponents_mindless``;
+        # V1 returns False either way (see ``_all_opponents_mindless``
+        # deviation note). See ``_emit_morale_triggers`` docstring for the
+        # full dial-as-pseudo-HP approximation.
+        if applied.deltas is not None:
+            if sel_actor.side == "player":
+                morale_dial_delta = max(applied.deltas.own, 0)
+            else:
+                morale_dial_delta = max(applied.deltas.opponent, 0)
+            if morale_dial_delta > 0:
+                pm = encounter.player_metric
+                threshold = max(pm.threshold, 1)
+                post_value = pm.current
+                pre_value = max(0, post_value - morale_dial_delta)
+                pseudo_initial = threshold
+                pseudo_pre_alive = max(0, threshold - pre_value)
+                pseudo_post_alive = max(0, threshold - post_value)
+                if pseudo_pre_alive != pseudo_post_alive:
+                    opp_actors_for_morale = [a for a in encounter.actors if a.side == "opponent"]
+                    all_mindless = _all_opponents_mindless(opp_actors_for_morale, None)
+                    pre_states = [
+                        OpponentState(
+                            id=str(i),
+                            alive=(i < pseudo_pre_alive),
+                            mindless=all_mindless,
+                        )
+                        for i in range(pseudo_initial)
+                    ]
+                    post_states = [
+                        OpponentState(
+                            id=str(i),
+                            alive=(i < pseudo_post_alive),
+                            mindless=all_mindless,
+                        )
+                        for i in range(pseudo_initial)
+                    ]
+                    morale_fired = _emit_morale_triggers(
+                        encounter,
+                        cdef,
+                        encounter.encounter_type,
+                        pre_states,
+                        post_states,
+                        False,
+                        Random(),
+                    )
+                    _apply_flee_consequences(encounter, cdef, morale_fired)
+
         if applied.resolved:
             with encounter_resolved_span(
                 encounter_type=encounter.encounter_type,

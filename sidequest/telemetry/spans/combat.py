@@ -1,4 +1,4 @@
-"""Combat lifecycle spans — tick, end, player death."""
+"""Combat lifecycle spans — tick, end, player death, morale check."""
 
 from __future__ import annotations
 
@@ -39,6 +39,24 @@ SPAN_ROUTES[SPAN_COMBAT_PLAYER_DEAD] = SpanRoute(
     extract=lambda span: {
         "field": "combat.player_dead",
         "player_name": (span.attributes or {}).get("player_name", ""),
+    },
+)
+# C&C B/X Task 12 — morale check span so the GM panel can verify B/X morale
+# rolls are wired and not silently suppressed (CLAUDE.md lie-detector discipline).
+SPAN_MORALE_CHECK = "confrontation.morale_check"
+SPAN_ROUTES[SPAN_MORALE_CHECK] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "morale_check",
+        "trigger": (span.attributes or {}).get("trigger", ""),
+        "score": (span.attributes or {}).get("score", 0),
+        "roll": (span.attributes or {}).get("roll", ""),
+        "total": (span.attributes or {}).get("total", 0),
+        "outcome": (span.attributes or {}).get("outcome", ""),
+        "opponent_side_label": (span.attributes or {}).get("opponent_side_label", ""),
+        "mindless_opponents_count": (span.attributes or {}).get("mindless_opponents_count", 0),
+        "flee_consequence": (span.attributes or {}).get("flee_consequence", ""),
     },
 )
 
