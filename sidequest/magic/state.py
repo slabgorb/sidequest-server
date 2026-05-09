@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from sidequest.magic.confrontations import ConfrontationDefinition
 from sidequest.magic.models import LedgerBarSpec, MagicWorking, WorldMagicConfig
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 _log = logging.getLogger(__name__)
 
@@ -264,15 +265,27 @@ class MagicState(BaseModel):
                 # World-scope and item-scope cost propagation are wired in
                 # later iterations. Until then, costs targeting non-character
                 # bars are skipped — but the skip MUST be auditable per
-                # CLAUDE.md "GM panel is the lie detector". Task 3.5 will
-                # promote this to an OTEL `magic.unrouted_cost` span; until
-                # then a structured warning makes the skip visible in logs.
+                # CLAUDE.md "GM panel is the lie detector". Story 47-7
+                # promoted this to a `magic.unrouted_cost` watcher event
+                # (dual-emit alongside the structured log) so the GM panel
+                # surfaces the skip live, not just in post-crash logs.
                 _log.warning(
                     "magic.unrouted_cost actor=%s cost_type=%s amount=%s "
                     "(no character-scope bar; world/item scope routing pending)",
                     working.actor,
                     cost_type,
                     amount,
+                )
+                _watcher_publish(
+                    "magic.unrouted_cost",
+                    {
+                        "actor": working.actor,
+                        "cost_type": cost_type,
+                        "amount": amount,
+                        "bar_lookup_key": serialized,
+                    },
+                    component="magic",
+                    severity="warning",
                 )
                 continue
             bar = self.ledger[serialized]
