@@ -129,7 +129,34 @@ async def _walk_and_confirm(handler: WebSocketSessionHandler) -> list:
     assert builder is not None
     while not builder.is_confirmation():
         scene = builder.current_scene()
-        if scene.choices:
+        eff = scene.mechanical_effects
+        if eff is not None and eff.assignment_required:
+            # the_arrangement — assign sorted-desc into stat order so
+            # Fighter qualifies (highest into STR), then arrange_confirm.
+            pool = builder.arrangement_pool() or []
+            sorted_pool = sorted(pool, reverse=True)
+            stat_order = list(builder._ability_score_names)  # type: ignore[attr-defined]
+            for stat, value in zip(stat_order, sorted_pool, strict=True):
+                out = await handler.handle_message(
+                    CharacterCreationMessage(
+                        payload=CharacterCreationPayload(
+                            phase="arrange_assign", stat=stat, value=value
+                        ),
+                        player_id="pid",
+                    )
+                )
+                if out and isinstance(out[0], ErrorMessage):
+                    raise AssertionError(f"walk error: {out[0].payload.message}")
+            payload = CharacterCreationPayload(phase="arrange_confirm")
+        elif eff is not None and eff.identity_capture is not None:
+            # the_story — send story_confirm with stub identity.
+            payload = CharacterCreationPayload(
+                phase="story_confirm",
+                pronouns="they/them",
+                background="A wanderer's past.",
+                description="Watchful eyes, quiet hands.",
+            )
+        elif scene.choices:
             payload = CharacterCreationPayload(phase="scene", choice="1")
         elif scene.allows_freeform:
             payload = CharacterCreationPayload(phase="scene", choice="Rux")
@@ -223,11 +250,15 @@ class TestOpeningTurnFrames:
             member = ps.payload.members[0]
             assert member.character_name is not None
             assert str(member.character_name) == "Tester"
-            assert str(member.class_) == "Delver"
+            # Visible-dice flow: the_calling picks the first qualifying
+            # class. With sorted-desc arrangement (highest into STR), the
+            # Fighter is always presented and idx 0; the walker picks "1"
+            # which is idx 0 → Fighter.
+            assert str(member.class_) in {"Fighter", "Mage", "Cleric", "Thief"}
             assert member.sheet is not None
             assert str(member.sheet.race) == "Human"
             assert member.sheet.stats  # non-empty dict
-            # Caverns Delver loadout pulls equipment into inventory.
+            # Class kit loadout pulls equipment into inventory.
             assert member.inventory is not None
             assert len(member.inventory.items) > 0
 

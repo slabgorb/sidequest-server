@@ -153,9 +153,9 @@ def test_char_creation_deserializes() -> None:
     data = _load(CC / "char_creation.yaml")
     assert isinstance(data, list)
     scenes = [CharCreationScene.model_validate(s) for s in data]
-    # 5 scenes (classic-class era): the_roll, the_calling, pronouns,
-    # the_kit, the_mouth. Previously 4 before class choice was added.
-    assert len(scenes) == 5
+    # 6 scenes (visible-dice era): the_roll, the_arrangement,
+    # the_calling, the_story, the_kit, the_mouth.
+    assert len(scenes) == 6
 
 
 def test_cultures_deserializes() -> None:

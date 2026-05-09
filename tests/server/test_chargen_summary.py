@@ -653,7 +653,6 @@ class TestWireShape:
         assert p.rolled_stats is None
         assert p.character is None
         assert p.action is None
-        assert p.target_step is None
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@ Port of sidequest-genre/src/models/character.rs.
 
 from __future__ import annotations
 
+import random as _random
+import re as _re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -39,6 +41,20 @@ class NpcArchetype(BaseModel):
     saves_as_class: str = "Fighter"
 
 
+class IdentityCapture(BaseModel):
+    """Story-scene identity capture flags (pronouns + freeform fields).
+
+    Used by the_story scene in genre packs that fold pronouns into a
+    combined identity scene.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    pronouns_required: bool = True
+    background_optional: bool = True
+    description_optional: bool = True
+
+
 class MechanicalEffects(BaseModel):
     """Mechanical effects of a character creation choice or scene-level directive."""
 
@@ -63,13 +79,20 @@ class MechanicalEffects(BaseModel):
     pronoun_hint: str | None = None
     stat_generation: str | None = None
     equipment_generation: str | None = None
-    class_qualification_loop: bool = False
     jungian_hint: str | None = None
     rpg_role_hint: str | None = None
     # spaghetti_western: chargen-choice-applied reputation tag
     # (e.g. "intimidation", "stealth", "network"). Rust dropped it;
     # reputation system unwired. Pass-through.
     reputation_bonus: str | None = None
+
+    # Arrange-scene flags (the_arrangement)
+    assignment_required: bool | None = None
+    allow_reject: bool | None = None
+
+    # Story-scene flags (the_story)
+    identity_capture: IdentityCapture | None = None
+    background_autogen_source: str | None = None
 
     model_config = {"extra": "forbid", "populate_by_name": True}
 
@@ -162,6 +185,26 @@ class BackstoryTables(BaseModel):
                     tables[k] = [str(x) for x in v]
             return cls(template=template, tables=tables)
         return super().model_validate(obj, **kwargs)
+
+    def roll(self, rng: _random.Random) -> str:
+        """Compose a backstory by rolling each `{key}` slot in the template.
+
+        For every key found in ``self.tables``, pick one entry uniformly
+        with ``rng`` and substitute it for the ``{key}`` placeholder.
+        Any leftover ``{key}`` placeholders (keys the pack didn't supply)
+        are stripped along with the ``. `` or trailing whitespace that
+        followed them, matching the behavior of the inline composer in
+        CharacterBuilder.build().
+        """
+        result = self.template
+        for key, entries in self.tables.items():
+            if entries:
+                pick = entries[rng.randrange(len(entries))]
+                result = result.replace(f"{{{key}}}", pick)
+        # Drop any unmatched {key} placeholders plus the punctuation/whitespace
+        # immediately following so the prose stays clean.
+        result = _re.sub(r"\{[^{}]+\}\s*\.?\s*", "", result)
+        return result.strip()
 
 
 class EquipmentTables(BaseModel):

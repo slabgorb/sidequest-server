@@ -2,7 +2,7 @@
 
 Ports behavior tests for construction, phase queries, scene-walking
 operations (apply_choice / apply_freeform / answer_followup /
-apply_auto_advance / go_back / go_to_scene / revert), and the
+apply_auto_advance / go_back / revert), and the
 accumulated() view.
 
 Out of scope for this test file:
@@ -417,7 +417,7 @@ class TestApplyAutoAdvance:
 
 
 # ===========================================================================
-# go_back / go_to_scene / revert — the state-machine invariant tests
+# go_back / revert — the state-machine invariant tests
 # ===========================================================================
 
 
@@ -470,35 +470,6 @@ class TestGoBack:
         assert len(b.scene_results()) == 2
         b.go_back()
         assert len(b.scene_results()) == 1
-
-
-class TestGoToScene:
-    def test_jumps_to_earlier_scene(self) -> None:
-        scenes = two_choice_scenes() + [
-            make_scene("name", allows_freeform=True),
-        ]
-        b = CharacterBuilder(scenes=scenes, rules=simple_rules())
-        b.apply_choice(0)
-        b.apply_choice(0)
-        b.apply_freeform("Kara")
-        assert b.is_confirmation()
-        b.go_to_scene(0)
-        assert b.is_in_progress()
-        assert b.current_scene_index() == 0
-        # All three results discarded.
-        assert b.scene_results() == []
-
-    def test_out_of_range_target_raises(self) -> None:
-        b = CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules())
-        with pytest.raises(WrongPhaseError):
-            b.go_to_scene(5)
-
-    def test_target_equal_to_length_raises(self) -> None:
-        """scene index == len(scenes) is the confirmation boundary — not
-        a valid scene to jump to."""
-        b = CharacterBuilder(scenes=two_choice_scenes(), rules=simple_rules())
-        with pytest.raises(WrongPhaseError):
-            b.go_to_scene(2)
 
 
 class TestRevert:

@@ -31,6 +31,7 @@ from sidequest.protocol.dice import (
 )
 from sidequest.protocol.enums import MessageType, NarratorVerbosity, NarratorVocabulary
 from sidequest.protocol.models import (
+    ClassRequirement,
     CompanionMember,
     CreationChoice,
     Footnote,
@@ -271,9 +272,12 @@ class CharacterCreationPayload(ProtocolBase):
     """
 
     phase: str | None = None
-    """Creation phase: 'scene', 'confirmation', 'complete'. Optional — omitted
-    when ``action`` is set (navigation messages like 'back' and 'edit' don't
-    carry a phase)."""
+    """Creation phase / message kind. Values:
+    'scene', 'confirmation', 'complete' — server → client per-scene phase
+    'back', 'edit' — legacy client → server navigation (edit being removed)
+    'arrange_assign', 'arrange_clear', 'arrange_confirm', 'arrange_reject' — client → server arrangement ops
+    'story_autogen', 'story_confirm' — client → server story ops
+    Optional — omitted when ``action`` is set."""
     scene_index: int | None = None
     """Current scene index (1-based)."""
     total_scenes: int | None = None
@@ -301,9 +305,50 @@ class CharacterCreationPayload(ProtocolBase):
     character: Any | None = None
     """Completed character data."""
     action: str | None = None
-    """Navigation action from client: 'back' or 'edit'."""
-    target_step: int | None = None
-    """Target scene index for 'edit' action (0-based)."""
+    """Navigation action from client: 'back'."""
+
+    # --- the_arrangement (server → client) ---
+    pool: list[int] | None = None
+    """Six 3d6 totals waiting to be assigned to stat slots."""
+    assignment: dict[str, int | None] | None = None
+    """Current stat-slot assignment; None values are unfilled slots."""
+    qualifying_classes: list[str] | None = None
+    """Class display names that qualify for the current arrangement."""
+    class_requirements: list[ClassRequirement] | None = None
+    """Static panel rows (always rendered, qualified or not)."""
+    confirm_enabled: bool | None = None
+    """Whether the Confirm button on the_arrangement is enabled (all slots filled
+    and ≥1 qualifying class)."""
+
+    # --- the_story (server → client) ---
+    pronouns_options: list[str] | None = None
+    """Pronoun options offered on the_story scene."""
+    pronouns_allow_freeform: bool | None = None
+    """Whether the_story pronouns input accepts freeform text."""
+    background_optional: bool | None = None
+    """Whether the_story background field is optional."""
+    description_optional: bool | None = None
+    """Whether the_story description field is optional."""
+    autogen_available: bool | None = None
+    """Whether the autogen button is available on the_story scene."""
+    autogen_result: dict[str, str] | None = None
+    """When set, latest autogen output for the_story textareas."""
+
+    # --- client → server (the_arrangement) ---
+    stat: str | None = None
+    """Stat slot name for arrange_assign / arrange_clear."""
+    value: int | None = None
+    """Pool value for arrange_assign."""
+
+    # --- client → server (the_story) ---
+    pronouns: str | None = None
+    """Selected pronouns for story_confirm."""
+    background: str | None = None
+    """Background prose for story_confirm."""
+    description: str | None = None
+    """Description prose for story_confirm."""
+    seed: int | None = None
+    """Optional seed for story_autogen reroll-determinism."""
 
 
 # ---------------------------------------------------------------------------

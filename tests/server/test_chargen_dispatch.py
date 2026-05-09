@@ -258,9 +258,13 @@ class TestPhaseContinue:
 async def _walk_to_confirmation(
     handler: WebSocketSessionHandler, freeform_name: str = "Rux"
 ) -> None:
-    """Helper: walk the active builder to Confirmation by picking the first
-    choice at every decision point, picking "continue" on display-only scenes,
-    and entering ``freeform_name`` on freeform scenes."""
+    """Helper: walk the active builder to Confirmation. Handles:
+      - choice scenes: pick first choice
+      - freeform scenes: send ``freeform_name``
+      - display-only scenes: send phase=continue
+      - the_arrangement: assign sorted-desc into stat order, then arrange_confirm
+      - the_story (identity_capture): send story_confirm with stub identity
+    """
     sd = handler._session_data  # type: ignore[attr-defined]
     builder = sd.builder
     assert builder is not None
@@ -268,7 +272,41 @@ async def _walk_to_confirmation(
         if not builder.is_in_progress():
             raise AssertionError(f"unexpected phase: {builder._phase!r}")
         scene = builder.current_scene()
-        if scene.choices:
+        eff = scene.mechanical_effects
+        if eff is not None and eff.assignment_required:
+            # the_arrangement — assign the sorted pool descending into the
+            # stat slots so Fighter qualifies (highest into STR), then
+            # arrange_confirm.
+            pool = builder.arrangement_pool() or []
+            sorted_pool = sorted(pool, reverse=True)
+            stat_order = list(builder._ability_score_names)  # type: ignore[attr-defined]
+            for stat, value in zip(stat_order, sorted_pool, strict=True):
+                out = await _send_chargen(
+                    handler,
+                    CharacterCreationPayload(
+                        phase="arrange_assign", stat=stat, value=value
+                    ),
+                )
+                if isinstance(out[0], ErrorMessage):
+                    raise AssertionError(
+                        f"arrange_assign failed for {stat}={value}: "
+                        f"{out[0].payload.message}"
+                    )
+            out = await _send_chargen(
+                handler, CharacterCreationPayload(phase="arrange_confirm")
+            )
+        elif eff is not None and eff.identity_capture is not None:
+            # the_story — send story_confirm with stub pronouns + text.
+            out = await _send_chargen(
+                handler,
+                CharacterCreationPayload(
+                    phase="story_confirm",
+                    pronouns="they/them",
+                    background="A wanderer's past.",
+                    description="Watchful eyes, quiet hands.",
+                ),
+            )
+        elif scene.choices:
             out = await _send_chargen(handler, CharacterCreationPayload(phase="scene", choice="1"))
         elif scene.allows_freeform:
             out = await _send_chargen(
@@ -294,33 +332,8 @@ class TestPhaseConfirmation:
             builder = sd.builder
             assert builder is not None
 
-            # Walk caverns to Confirmation: 4 scenes, all auto_advance/choice.
-            while not builder.is_confirmation():
-                if builder.is_in_progress():
-                    scene = builder.current_scene()
-                    if scene.choices:
-                        out = await _send_chargen(
-                            handler,
-                            CharacterCreationPayload(phase="scene", choice="1"),
-                        )
-                    else:
-                        # Display-only or freeform scene — continue or name entry.
-                        if scene.allows_freeform:
-                            out = await _send_chargen(
-                                handler,
-                                CharacterCreationPayload(phase="scene", choice="Rux"),
-                            )
-                        else:
-                            out = await _send_chargen(
-                                handler,
-                                CharacterCreationPayload(phase="continue"),
-                            )
-                    assert not isinstance(out[0], ErrorMessage), (
-                        f"unexpected error at scene {builder.current_scene_index()}: "
-                        f"{getattr(out[0].payload, 'message', out[0])}"
-                    )
-                else:
-                    pytest.fail(f"unexpected phase: {builder._phase!r}")
+            # Walk caverns to Confirmation through the visible-dice 6-scene flow.
+            await _walk_to_confirmation(handler, freeform_name="Rux")
 
             # Now commit. Slice H routes an opening narration turn
             # + PARTY_STATUS snapshot through confirmation, so the
@@ -696,28 +709,6 @@ class TestActions:
             )
             assert isinstance(out[0], ErrorMessage)
             assert "Cannot go back" in str(out[0].payload.message)
-
-        run(body())
-
-    def test_edit_without_target_step_returns_error(self, handler: WebSocketSessionHandler) -> None:
-        async def body() -> None:
-            await _connect(handler)
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="scene", action="edit")
-            )
-            assert isinstance(out[0], ErrorMessage)
-            assert "target_step" in str(out[0].payload.message)
-
-        run(body())
-
-    def test_edit_out_of_range_returns_error(self, handler: WebSocketSessionHandler) -> None:
-        async def body() -> None:
-            await _connect(handler)
-            out = await _send_chargen(
-                handler,
-                CharacterCreationPayload(phase="scene", action="edit", target_step=999),
-            )
-            assert isinstance(out[0], ErrorMessage)
 
         run(body())
 

@@ -72,7 +72,7 @@ class CharacterCreationHandler:
         player_id: str = getattr(msg, "player_id", "") or sd.player_id
         span = trace.get_current_span()
 
-        # ---- Navigation actions (back / edit / unknown) -------------------
+        # ---- Navigation actions (back / unknown) --------------------------
         if payload.action is not None:
             action = payload.action
             if action == "back":
@@ -90,24 +90,6 @@ class CharacterCreationHandler:
                     return [_error_msg(f"Cannot go back: {exc!r}")]
                 return [builder.to_scene_message(player_id)]
 
-            if action == "edit":
-                if payload.target_step is None:
-                    return [_error_msg("action:edit requires target_step field")]
-                target = payload.target_step
-                span.add_event(
-                    "character_creation.edit",
-                    {
-                        "action": "edit",
-                        "target_step": target,
-                        "player_id": player_id,
-                    },
-                )
-                try:
-                    builder.go_to_scene(target)
-                except BuilderError as exc:
-                    return [_error_msg(f"Cannot edit scene {target}: {exc!r}")]
-                return [builder.to_scene_message(player_id)]
-
             return [_error_msg(f"Unknown chargen action: {action}")]
 
         # ---- Phase dispatch ----------------------------------------------
@@ -120,6 +102,18 @@ class CharacterCreationHandler:
             return session._chargen_continue(builder, sd, player_id, span)
         if phase == "confirmation":
             return await session._chargen_confirmation(builder, sd, player_id, span)
+        if phase == "arrange_assign":
+            return session._chargen_arrange_assign(builder, payload, sd, player_id, span)
+        if phase == "arrange_clear":
+            return session._chargen_arrange_clear(builder, payload, sd, player_id, span)
+        if phase == "arrange_confirm":
+            return session._chargen_arrange_confirm(builder, sd, player_id, span)
+        if phase == "arrange_reject":
+            return session._chargen_arrange_reject(builder, sd, player_id, span)
+        if phase == "story_autogen":
+            return session._chargen_story_autogen(builder, payload, sd, player_id, span)
+        if phase == "story_confirm":
+            return session._chargen_story_confirm(builder, payload, sd, player_id, span)
         return [_error_msg(f"Unknown chargen phase: {phase}")]
 
 

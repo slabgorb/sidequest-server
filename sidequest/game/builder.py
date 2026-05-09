@@ -36,7 +36,7 @@ from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
 )
-from sidequest.protocol.models import CreationChoice, RolledStat
+from sidequest.protocol.models import ClassRequirement, CreationChoice, RolledStat
 from sidequest.protocol.types import NonBlankString
 
 # ---------------------------------------------------------------------------
@@ -56,6 +56,23 @@ def qualifying_classes(
     decides whether to reroll).
     """
     return [c for c in classes if stats.get(c.prime_requisite, 0) >= c.minimum_score]
+
+
+def qualifying_classes_arrangement(
+    arrangement: dict[str, int | None],
+    classes: list[ClassDef],
+) -> list[ClassDef]:
+    """Return classes whose prime_requisite is met by an in-progress arrangement.
+
+    Same predicate as :func:`qualifying_classes` but tolerates ``None`` slot
+    values (an arrangement still being filled). Unfilled slots are treated
+    as 0 — they cannot satisfy any minimum.
+    """
+    return [
+        c
+        for c in classes
+        if (arrangement.get(c.prime_requisite) or 0) >= c.minimum_score
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +147,21 @@ class FreeformInput(SceneInputType):
     text: str
 
 
+@dataclass(frozen=True)
+class StoryInput(SceneInputType):
+    """Player submitted the_story scene (pronouns + freeform background/description).
+
+    Used by genre packs that fold pronouns into a combined identity scene
+    (the_story). The scene's
+    ``mechanical_effects.identity_capture.pronouns_required`` gates whether
+    ``pronouns`` may be empty.
+    """
+
+    pronouns: str
+    background: str
+    description: str
+
+
 # ---------------------------------------------------------------------------
 # SceneResult — unit of revert for go_back
 # ---------------------------------------------------------------------------
@@ -156,6 +188,11 @@ class SceneResult:
     anchors_added: list[LoreAnchor] = field(default_factory=list)
     choice_description: str | None = None
     choice_label: str | None = None
+    # Optional source-scene id. Populated by paths that need to identify
+    # which scene produced this result without indexing back through the
+    # scene list (e.g. the_story's StoryInput dispatch). Older paths leave
+    # this as None — scene order is implicit in the results list.
+    scene_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +381,27 @@ class EdgeConfigMissingClassError(BuilderError):
     def __init__(self, class_name: str) -> None:
         self.class_name = class_name
         super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
+
+
+class PoolValueNotPresentError(Exception):
+    """assign_stat called with a value not currently in the arrangement pool."""
+
+
+class UnfilledArrangementError(Exception):
+    """confirm_arrangement called before all six slots are filled."""
+
+
+class NoQualifyingClassesError(Exception):
+    """confirm_arrangement called but the arrangement qualifies for no classes."""
+
+
+class ArrangementSceneActiveError(Exception):
+    """apply_response called while the_arrangement scene is active.
+
+    Arrangement scenes (mechanical_effects.assignment_required=True) only
+    accept apply_arrangement_confirm / apply_arrangement_reject — generic
+    ChoiceInput / FreeformInput are not valid here.
+    """
 
 
 # Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
@@ -618,15 +676,20 @@ class CharacterBuilder:
         # scene declares roll_3d6_strict, that scene's narration gets
         # stat values.
         self._rolled_stats: list[tuple[str, int]] | None = None
+        # Arrange-visible mode: pool is a list of six 3d6 totals,
+        # unassigned. Arrangement happens via assign_stat / clear_stat,
+        # confirmed via confirm_arrangement, rejected via reject_arrangement.
+        self._arrangement_pool: list[int] | None = None
+        self._arrangement_assignment: dict[str, int | None] | None = None
         self._classes: list[ClassDef] = []
         for s in scenes:
             eff = s.mechanical_effects
             if eff is None or eff.stat_generation is None:
                 continue
             if eff.stat_generation == "roll_3d6_strict":
-                self._roll_3d6_with_qualification(
-                    qualification_loop=eff.class_qualification_loop,
-                )
+                self._roll_3d6_strict()
+            elif eff.stat_generation == "roll_3d6_arrange_visible":
+                self._roll_3d6_arrange_visible()
             break
 
         self._backstory_tables: BackstoryTables | None = backstory_tables
@@ -664,6 +727,25 @@ class CharacterBuilder:
         and class_kit equipment selection."""
         self._classes = list(classes)
         return self
+
+    # --- Autogen helpers ---
+
+    def autogen_backstory(self, seed: int) -> dict[str, str]:
+        """Roll the pack's backstory tables for a deterministic background.
+
+        No Claude call — pure table roll. Returns a dict with two keys:
+        ``background`` (the composed text from the pack's template) and
+        ``description`` (currently always empty string; reserved for
+        future packs that supply a separate description-table format).
+
+        Returns ``{"background": "", "description": ""}`` if no
+        ``BackstoryTables`` are attached.
+        """
+        if self._backstory_tables is None:
+            return {"background": "", "description": ""}
+        local_rng = random.Random(seed)
+        bg = self._backstory_tables.roll(local_rng)
+        return {"background": bg, "description": ""}
 
     # --- Phase queries ---
 
@@ -739,6 +821,78 @@ class CharacterBuilder:
         in Slice 2.
         """
         return list(self._rolled_stats) if self._rolled_stats is not None else None
+
+    def arrangement_pool(self) -> list[int] | None:
+        """Return the six unassigned 3d6 totals, or None if not in arrange mode."""
+        return list(self._arrangement_pool) if self._arrangement_pool is not None else None
+
+    def arrangement_assignment(self) -> dict[str, int | None] | None:
+        """Return the current arrangement (stat → value-or-None)."""
+        if self._arrangement_assignment is None:
+            return None
+        return dict(self._arrangement_assignment)
+
+    def assign_stat(self, stat_name: str, value: int) -> None:
+        """Move ``value`` from the arrangement pool into ``stat_name``.
+
+        If the slot already has a value, that value is returned to the pool
+        first. Raises ``PoolValueNotPresentError`` if ``value`` isn't in the
+        pool.
+        """
+        if self._arrangement_pool is None or self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        if value not in self._arrangement_pool:
+            raise PoolValueNotPresentError(
+                f"value {value} not in pool {self._arrangement_pool}"
+            )
+        existing = self._arrangement_assignment.get(stat_name)
+        if existing is not None:
+            self._arrangement_pool.append(existing)
+        self._arrangement_pool.remove(value)
+        self._arrangement_assignment[stat_name] = value
+
+    def clear_stat(self, stat_name: str) -> None:
+        """Return the value in ``stat_name`` (if any) to the pool."""
+        if self._arrangement_pool is None or self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        existing = self._arrangement_assignment.get(stat_name)
+        if existing is None:
+            return
+        self._arrangement_pool.append(existing)
+        self._arrangement_assignment[stat_name] = None
+
+    def confirm_arrangement(self) -> None:
+        """Lock the arrangement and materialize ``rolled_stats``.
+
+        Raises:
+            UnfilledArrangementError: not all six slots filled.
+            NoQualifyingClassesError: arrangement qualifies for zero classes.
+        """
+        if self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        if any(v is None for v in self._arrangement_assignment.values()):
+            raise UnfilledArrangementError("not all six stats assigned")
+        if not self._classes:
+            raise RuntimeError("no classes attached; call with_classes() before confirm")
+        qualifying = qualifying_classes_arrangement(
+            self._arrangement_assignment, self._classes,
+        )
+        if not qualifying:
+            raise NoQualifyingClassesError(
+                f"arrangement {self._arrangement_assignment} qualifies for no class"
+            )
+        self._rolled_stats = [
+            (name, self._arrangement_assignment[name])
+            for name in self._ability_score_names
+        ]
+        self._arrangement_pool = None
+        self._arrangement_assignment = None
+
+    def reject_arrangement(self) -> None:
+        """Discard the current pool and reroll. Stays in arrange mode."""
+        if self._arrangement_assignment is None:
+            raise RuntimeError("not in arrangement mode")
+        self._roll_3d6_arrange_visible()
 
     @property
     def rules(self) -> RulesConfig:
@@ -1002,6 +1156,16 @@ class CharacterBuilder:
         match self._phase:
             case InProgress(scene_index=scene_index):
                 scene = self._filter_class_choices(self._scenes[scene_index])
+                eff = scene.mechanical_effects
+
+                # the_arrangement — assignment-required scenes get a custom payload.
+                if eff is not None and eff.assignment_required:
+                    return self._render_arrangement_message(scene, scene_index, player_id)
+
+                # the_story — identity-capture scenes get a custom payload.
+                if eff is not None and eff.identity_capture is not None:
+                    return self._render_story_message(scene, scene_index, player_id)
+
                 choices = [
                     CreationChoice(
                         label=NonBlankString(c.label),
@@ -1068,6 +1232,72 @@ class CharacterBuilder:
 
             case _:  # pragma: no cover — exhaustive
                 raise AssertionError(f"unknown phase: {self._phase!r}")
+
+    def _render_arrangement_message(
+        self,
+        scene: CharCreationScene,
+        scene_index: int,
+        player_id: str,
+    ) -> CharacterCreationMessage:
+        """Render the_arrangement scene payload with pool/assignment/qualify state."""
+        pool = list(self._arrangement_pool) if self._arrangement_pool is not None else []
+        assignment: dict[str, int | None] = (
+            dict(self._arrangement_assignment)
+            if self._arrangement_assignment is not None
+            else {name: None for name in self._ability_score_names}
+        )
+        qualifying = qualifying_classes_arrangement(assignment, self._classes)
+        qualifying_names = [c.display_name for c in qualifying]
+        class_requirements = [
+            ClassRequirement(
+                name=c.display_name,
+                requirement_label=f"{c.prime_requisite} {c.minimum_score}+",
+            )
+            for c in self._classes
+        ]
+        all_filled = bool(assignment) and all(v is not None for v in assignment.values())
+        confirm_enabled = all_filled and bool(qualifying)
+        payload = CharacterCreationPayload(
+            phase="scene",
+            scene_index=scene_index,
+            total_scenes=len(self._scenes),
+            prompt=self.interpolate_scene_narration(scene.narration),
+            input_type="stat_arrange",
+            loading_text=scene.loading_text,
+            pool=pool,
+            assignment=assignment,
+            qualifying_classes=qualifying_names,
+            class_requirements=class_requirements,
+            confirm_enabled=confirm_enabled,
+        )
+        return CharacterCreationMessage(payload=payload, player_id=player_id)
+
+    def _render_story_message(
+        self,
+        scene: CharCreationScene,
+        scene_index: int,
+        player_id: str,
+    ) -> CharacterCreationMessage:
+        """Render the_story scene payload with pronouns/background/description fields."""
+        eff = scene.mechanical_effects
+        ic = eff.identity_capture if eff is not None else None
+        autogen_available = bool(
+            eff is not None and eff.background_autogen_source is not None
+        )
+        payload = CharacterCreationPayload(
+            phase="scene",
+            scene_index=scene_index,
+            total_scenes=len(self._scenes),
+            prompt=self.interpolate_scene_narration(scene.narration),
+            input_type="story",
+            loading_text=scene.loading_text,
+            pronouns_options=["she/her", "he/him", "they/them"],
+            pronouns_allow_freeform=True,
+            background_optional=ic.background_optional if ic is not None else True,
+            description_optional=ic.description_optional if ic is not None else True,
+            autogen_available=autogen_available,
+        )
+        return CharacterCreationMessage(payload=payload, player_id=player_id)
 
     # --- Actions: scene walking ---
 
@@ -1166,9 +1396,11 @@ class CharacterBuilder:
         # generate_stats() calls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
-                self._roll_3d6_with_qualification(
-                    qualification_loop=effects.class_qualification_loop,
-                )
+                self._roll_3d6_strict()
+            elif effects.stat_generation == "roll_3d6_arrange_visible":
+                # Scene-flow method, not a generate_stats method.
+                # confirm_arrangement materializes _rolled_stats.
+                pass
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1252,9 +1484,7 @@ class CharacterBuilder:
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
                 if self._rolled_stats is None:
-                    self._roll_3d6_with_qualification(
-                        qualification_loop=effects.class_qualification_loop,
-                    )
+                    self._roll_3d6_strict()
                 elif self._classes and self._rolled_stats is not None:
                     # Stats already rolled (eager construction roll fired before
                     # with_classes() was called). Emit class_qualifying now that
@@ -1265,6 +1495,13 @@ class CharacterBuilder:
                         "chargen.class_qualifying",
                         {"class_ids": [c.id for c in qual]},
                     )
+            elif effects.stat_generation == "roll_3d6_arrange_visible":
+                # The pool was rolled at construction; arrangement
+                # materializes _rolled_stats. generate_stats() reuses the
+                # ``roll_3d6_strict`` branch — both materialize stats
+                # before generate_stats runs, so don't override
+                # ``self._stat_generation`` with the scene-flow string.
+                pass
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1275,6 +1512,134 @@ class CharacterBuilder:
                 hooks_added=[],
                 anchors_added=[],
                 choice_description=None,
+            )
+        )
+
+        self._advance_scene(scene_index)
+
+    def apply_response(self, response: SceneInputType) -> None:
+        """Unified dispatcher for ChoiceInput / FreeformInput.
+
+        Routes ``ChoiceInput`` to :meth:`apply_choice` and ``FreeformInput``
+        to :meth:`apply_freeform`. Guards against the arrangement scene:
+        when the current scene's ``mechanical_effects.assignment_required``
+        is True, neither input variant is valid — callers must use
+        :meth:`apply_arrangement_confirm` / :meth:`apply_arrangement_reject`.
+        """
+        if isinstance(self._phase, InProgress):
+            scene = self._scenes[self._phase.scene_index]
+            eff = scene.mechanical_effects
+            if eff is not None and eff.assignment_required:
+                raise ArrangementSceneActiveError(
+                    f"scene {scene.id!r} requires "
+                    f"apply_arrangement_confirm/reject, not apply_response"
+                )
+        if isinstance(response, StoryInput):
+            self._apply_story(response)
+        elif isinstance(response, ChoiceInput):
+            self.apply_choice(response.index)
+        elif isinstance(response, FreeformInput):
+            self.apply_freeform(response.text)
+        else:  # pragma: no cover
+            raise TypeError(f"unknown SceneInputType: {type(response).__name__}")
+
+    def apply_arrangement_confirm(self) -> None:
+        """Confirm the arrangement, materialize ``rolled_stats``, and advance.
+
+        Records a SceneResult mirroring the scene's mechanical_effects so
+        ``go_back`` parity holds. Raises ``UnfilledArrangementError`` /
+        ``NoQualifyingClassesError`` from :meth:`confirm_arrangement` if
+        the arrangement is incomplete or qualifies for no class.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        eff = scene.mechanical_effects
+        if not (eff is not None and eff.assignment_required):
+            raise RuntimeError(
+                f"scene {scene.id!r} is not an arrangement scene"
+            )
+        # confirm_arrangement may raise UnfilledArrangementError /
+        # NoQualifyingClassesError — let them propagate.
+        self.confirm_arrangement()
+
+        self._results.append(
+            SceneResult(
+                input_type=ChoiceInput(index=0),
+                effects_applied=eff,
+                hooks_added=[],
+                anchors_added=[],
+                choice_description=None,
+            )
+        )
+        self._advance_scene(scene_index)
+
+    def apply_arrangement_reject(self) -> None:
+        """Reject the current pool, reroll, and stay on the arrangement scene."""
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        eff = scene.mechanical_effects
+        if not (eff is not None and eff.assignment_required):
+            raise RuntimeError(
+                f"scene {scene.id!r} is not an arrangement scene"
+            )
+        self.reject_arrangement()
+
+    def _apply_story(self, response: StoryInput) -> None:
+        """Apply a StoryInput to the_story scene.
+
+        Records pronouns into ``MechanicalEffects.pronoun_hint`` (matching
+        the existing pronouns-scene channel) and folds the freeform
+        background + description text into ``MechanicalEffects.background``
+        (matching the existing backstory-scene channel). When
+        ``identity_capture.pronouns_required`` is True, blank/whitespace
+        pronouns raise ``UnfilledArrangementError``.
+
+        Description and background are joined with a separator since
+        ``MechanicalEffects`` has no dedicated ``description`` field;
+        the combined text lands in ``background`` so downstream
+        AccumulatedChoices.background pickup is unchanged. Empty
+        components are dropped from the join.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        scene_eff = scene.mechanical_effects
+
+        # Gate: pronouns_required.
+        identity = scene_eff.identity_capture if scene_eff is not None else None
+        pronouns_required = identity.pronouns_required if identity is not None else False
+        pronouns = response.pronouns.strip()
+        if pronouns_required and not pronouns:
+            raise UnfilledArrangementError("pronouns required")
+
+        # Compose the scene's recorded effects: pronoun_hint + background.
+        background_parts = [
+            response.background.strip(),
+            response.description.strip(),
+        ]
+        joined_background = " | ".join(p for p in background_parts if p)
+
+        effects = MechanicalEffects(
+            pronoun_hint=pronouns or None,
+            background=joined_background or None,
+        )
+
+        hooks = extract_hooks(scene.id, effects)
+        anchors = extract_anchors(scene.id, effects)
+
+        self._results.append(
+            SceneResult(
+                input_type=response,
+                effects_applied=effects,
+                hooks_added=hooks,
+                anchors_added=anchors,
+                choice_description=None,
+                scene_id=scene.id,
             )
         )
 
@@ -1294,21 +1659,6 @@ class CharacterBuilder:
             )
         self._results.pop()
         target = len(self._results)
-        self._phase = InProgress(scene_index=target)
-
-    def go_to_scene(self, target: int) -> None:
-        """Jump to a specific scene index, discarding results from that
-        scene onward.
-
-        Used by the "edit" action from the review/confirmation screen.
-        Raises WrongPhaseError if target is out of range.
-        """
-        if target >= len(self._scenes):
-            raise WrongPhaseError(
-                expected=f"scene index < {len(self._scenes)}",
-                actual=f"target scene index {target}",
-            )
-        self._results = self._results[:target]
         self._phase = InProgress(scene_index=target)
 
     def revert(self) -> None:
@@ -1731,32 +2081,32 @@ class CharacterBuilder:
 
     # --- Stat generation ---
 
-    def _roll_3d6_with_qualification(self, *, qualification_loop: bool) -> None:
-        """Roll 3d6 stats, optionally re-rolling until at least one class qualifies.
+    def _roll_3d6_arrange_visible(self) -> None:
+        """Roll six 3d6 totals into an unlabeled pool.
 
-        When `qualification_loop` is True and self._classes is non-empty,
-        re-rolls until qualifying_classes(stats, self._classes) is non-empty.
-        Each rejected roll emits a chargen.class_qualification_reroll OTEL
-        event. Caps at 100 rerolls (defensive — 3d6 ≥9 has p≈0.625, so
-        the loop should never trip legitimately).
+        No qualification loop. The arrangement scene resolves which stat
+        gets which roll, and rejection is the only escape valve. Stat
+        labels come from ``self._ability_score_names``.
+        """
+        self._arrangement_pool = [
+            self._rng.randint(1, 6) + self._rng.randint(1, 6) + self._rng.randint(1, 6)
+            for _ in range(6)
+        ]
+        self._arrangement_assignment = {
+            name: None for name in self._ability_score_names
+        }
+        # rolled_stats stays None until confirm_arrangement materializes it.
+
+    def _roll_3d6_strict(self) -> None:
+        """Roll 3d6 stats once into self._rolled_stats.
+
+        No qualification loop. C&C uses the visible
+        ``roll_3d6_arrange_visible`` flow with a player-driven reject
+        button instead. This method remains for genres whose chargen
+        flow is in-order roll-and-stop with no qualification gate.
         """
         self._rolled_stats = self._roll_3d6_stats()
-        if not qualification_loop or not self._classes:
-            return
-        rerolls = 0
-        while not qualifying_classes(dict(self._rolled_stats), self._classes):
-            rerolls += 1
-            if rerolls > 100:
-                raise RuntimeError(
-                    "class_qualification_loop exceeded 100 rerolls — "
-                    "check minimum_score values in classes.yaml"
-                )
-            trace.get_current_span().add_event(
-                "chargen.class_qualification_reroll",
-                {"rejected_stats": dict(self._rolled_stats), "attempt": rerolls},
-            )
-            self._rolled_stats = self._roll_3d6_stats()
-        if self._rolled_stats is not None:
+        if self._rolled_stats is not None and self._classes:
             qual = qualifying_classes(dict(self._rolled_stats), self._classes)
             trace.get_current_span().add_event(
                 "chargen.class_qualifying",
@@ -1945,6 +2295,7 @@ __all__ = [
     "SceneInputType",
     "ChoiceInput",
     "FreeformInput",
+    "StoryInput",
     # Scene result and accumulation
     "SceneResult",
     "AccumulatedChoices",
@@ -1964,6 +2315,10 @@ __all__ = [
     "UnknownStatGenerationError",
     "NumericNameError",
     "EdgeConfigMissingClassError",
+    "PoolValueNotPresentError",
+    "UnfilledArrangementError",
+    "NoQualifyingClassesError",
+    "ArrangementSceneActiveError",
     # Builder
     "CharacterBuilder",
     # String helpers
