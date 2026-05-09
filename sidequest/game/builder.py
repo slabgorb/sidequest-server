@@ -147,6 +147,21 @@ class FreeformInput(SceneInputType):
     text: str
 
 
+@dataclass(frozen=True)
+class StoryInput(SceneInputType):
+    """Player submitted the_story scene (pronouns + freeform background/description).
+
+    Used by genre packs that fold pronouns into a combined identity scene
+    (the_story). The scene's
+    ``mechanical_effects.identity_capture.pronouns_required`` gates whether
+    ``pronouns`` may be empty.
+    """
+
+    pronouns: str
+    background: str
+    description: str
+
+
 # ---------------------------------------------------------------------------
 # SceneResult — unit of revert for go_back
 # ---------------------------------------------------------------------------
@@ -173,6 +188,11 @@ class SceneResult:
     anchors_added: list[LoreAnchor] = field(default_factory=list)
     choice_description: str | None = None
     choice_label: str | None = None
+    # Optional source-scene id. Populated by paths that need to identify
+    # which scene produced this result without indexing back through the
+    # scene list (e.g. the_story's StoryInput dispatch). Older paths leave
+    # this as None — scene order is implicit in the results list.
+    scene_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1414,7 +1434,9 @@ class CharacterBuilder:
                     f"scene {scene.id!r} requires "
                     f"apply_arrangement_confirm/reject, not apply_response"
                 )
-        if isinstance(response, ChoiceInput):
+        if isinstance(response, StoryInput):
+            self._apply_story(response)
+        elif isinstance(response, ChoiceInput):
             self.apply_choice(response.index)
         elif isinstance(response, FreeformInput):
             self.apply_freeform(response.text)
@@ -1465,6 +1487,63 @@ class CharacterBuilder:
                 f"scene {scene.id!r} is not an arrangement scene"
             )
         self.reject_arrangement()
+
+    def _apply_story(self, response: StoryInput) -> None:
+        """Apply a StoryInput to the_story scene.
+
+        Records pronouns into ``MechanicalEffects.pronoun_hint`` (matching
+        the existing pronouns-scene channel) and folds the freeform
+        background + description text into ``MechanicalEffects.background``
+        (matching the existing backstory-scene channel). When
+        ``identity_capture.pronouns_required`` is True, blank/whitespace
+        pronouns raise ``UnfilledArrangementError``.
+
+        Description and background are joined with a separator since
+        ``MechanicalEffects`` has no dedicated ``description`` field;
+        the combined text lands in ``background`` so downstream
+        AccumulatedChoices.background pickup is unchanged. Empty
+        components are dropped from the join.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        scene_eff = scene.mechanical_effects
+
+        # Gate: pronouns_required.
+        identity = scene_eff.identity_capture if scene_eff is not None else None
+        pronouns_required = identity.pronouns_required if identity is not None else False
+        pronouns = response.pronouns.strip()
+        if pronouns_required and not pronouns:
+            raise UnfilledArrangementError("pronouns required")
+
+        # Compose the scene's recorded effects: pronoun_hint + background.
+        background_parts = [
+            response.background.strip(),
+            response.description.strip(),
+        ]
+        joined_background = " | ".join(p for p in background_parts if p)
+
+        effects = MechanicalEffects(
+            pronoun_hint=pronouns or None,
+            background=joined_background or None,
+        )
+
+        hooks = extract_hooks(scene.id, effects)
+        anchors = extract_anchors(scene.id, effects)
+
+        self._results.append(
+            SceneResult(
+                input_type=response,
+                effects_applied=effects,
+                hooks_added=hooks,
+                anchors_added=anchors,
+                choice_description=None,
+                scene_id=scene.id,
+            )
+        )
+
+        self._advance_scene(scene_index)
 
     def go_back(self) -> None:
         """Navigate backward, undoing the last scene result.
@@ -2147,6 +2226,7 @@ __all__ = [
     "SceneInputType",
     "ChoiceInput",
     "FreeformInput",
+    "StoryInput",
     # Scene result and accumulation
     "SceneResult",
     "AccumulatedChoices",

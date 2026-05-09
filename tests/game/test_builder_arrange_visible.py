@@ -2,7 +2,9 @@ import random
 
 from sidequest.game.builder import CharacterBuilder
 from sidequest.genre.models.character import (
+    CharCreationChoice,
     CharCreationScene,
+    IdentityCapture,
     MechanicalEffects,
 )
 from sidequest.genre.models.rules import RulesConfig
@@ -36,7 +38,13 @@ def _make_scenes_with_arrange_visible() -> list[CharCreationScene]:
             id="the_calling",
             title="Call",
             narration="...",
-            choices=[],
+            choices=[
+                CharCreationChoice(
+                    label="Fighter",
+                    description="Strong of arm.",
+                    mechanical_effects=MechanicalEffects(class_hint="Fighter"),
+                ),
+            ],
             allows_freeform=False,
         ),
         CharCreationScene(
@@ -45,6 +53,16 @@ def _make_scenes_with_arrange_visible() -> list[CharCreationScene]:
             narration="...",
             choices=[],
             allows_freeform=True,
+            mechanical_effects=MechanicalEffects(
+                identity_capture=IdentityCapture(pronouns_required=True),
+            ),
+        ),
+        CharCreationScene(
+            id="the_kit",
+            title="Kit",
+            narration="...",
+            choices=[],
+            allows_freeform=False,
         ),
         CharCreationScene(
             id="the_mouth",
