@@ -62,6 +62,67 @@ def test_websocket_session_handler_calls_magic_init_in_mp_second_commit() -> Non
     )
 
 
+def test_websocket_session_handler_passes_character_class_in_both_chargen_commits() -> None:
+    """Every chargen-commit ``init_magic_state_for_session`` call must pass
+    ``character_class=`` so class-keyed magic bars (``starts_at_chargen``
+    keyed by class — caverns_sunden 2026-05-07) initialise correctly.
+
+    Pre-fix the MP second-commit branch passed only ``character_id``;
+    on a class-keyed world (caverns_sunden Mage/Cleric spell slots) this
+    raised ``ValueError: bar 'spell_slots' has class-keyed
+    starts_at_chargen but no character_class was supplied for character
+    'Tester'`` from inside ``MagicState.add_character``. The host branch
+    was correct; the joiner branch was the regression seam.
+
+    Counts the literal ``character_class=`` substring against the call
+    count — every call must include the kwarg. There is also a
+    helper-level call (``_load_class_def``) that legitimately uses
+    ``character_class`` as a positional/keyword arg name; it lives
+    outside ``init_magic_state_for_session(`` invocations so the
+    counting strategy below (slice each call's argument block) is robust
+    to that.
+    """
+    from sidequest.server import websocket_session_handler
+
+    with open(websocket_session_handler.__file__) as fh:
+        source = fh.read()
+
+    # Find every ``init_magic_state_for_session(`` call and slice out its
+    # argument block (up to the matching close-paren). Then assert the
+    # block contains ``character_class=``.
+    needle = "init_magic_state_for_session("
+    cursor = 0
+    call_blocks: list[str] = []
+    while True:
+        start = source.find(needle, cursor)
+        if start < 0:
+            break
+        # Walk forward to the matching close-paren (depth-tracked).
+        i = start + len(needle)
+        depth = 1
+        while i < len(source) and depth > 0:
+            if source[i] == "(":
+                depth += 1
+            elif source[i] == ")":
+                depth -= 1
+            i += 1
+        call_blocks.append(source[start:i])
+        cursor = i
+
+    assert len(call_blocks) >= 2, (
+        f"Expected at least 2 call blocks; found {len(call_blocks)}. "
+        f"See the prior test for the wire requirement."
+    )
+
+    for block in call_blocks:
+        assert "character_class=" in block, (
+            f"init_magic_state_for_session call block missing "
+            f"`character_class=` kwarg:\n{block}\n"
+            f"Class-keyed magic bars (caverns_sunden) raise ValueError "
+            f"inside add_character when character_class is omitted."
+        )
+
+
 def test_init_magic_state_registers_mp_joiner_after_host_commit() -> None:
     """End-to-end behavioral guard: after the host's chargen commit
     populates ``snapshot.magic_state``, a joiner's chargen commit must
