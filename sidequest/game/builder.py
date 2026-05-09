@@ -58,6 +58,23 @@ def qualifying_classes(
     return [c for c in classes if stats.get(c.prime_requisite, 0) >= c.minimum_score]
 
 
+def qualifying_classes_arrangement(
+    arrangement: dict[str, int | None],
+    classes: list[ClassDef],
+) -> list[ClassDef]:
+    """Return classes whose prime_requisite is met by an in-progress arrangement.
+
+    Same predicate as :func:`qualifying_classes` but tolerates ``None`` slot
+    values (an arrangement still being filled). Unfilled slots are treated
+    as 0 — they cannot satisfy any minimum.
+    """
+    return [
+        c
+        for c in classes
+        if (arrangement.get(c.prime_requisite) or 0) >= c.minimum_score
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
 # ---------------------------------------------------------------------------
