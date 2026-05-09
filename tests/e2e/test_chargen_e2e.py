@@ -91,14 +91,16 @@ def _recv(ws) -> dict:  # type: ignore[no-untyped-def]
 
 
 class TestCavernsAndClaudesFlow:
-    """caverns_and_claudes has four scenes:
-      0. the_roll — display-only (phase=continue), rolls 3d6 strict
-      1. pronouns — choice + allows_freeform, pronoun_hint
-      2. the_kit — display-only (phase=continue), equipment_generation
-      3. the_mouth — display-only (phase=continue)
+    """caverns_and_claudes has six scenes (visible-dice era):
+      0. the_roll — display-only, rolls a 3d6 pool (no labels)
+      1. the_arrangement — assignment_required (arrange_assign × 6 + arrange_confirm)
+      2. the_calling — class choice (Fighter/Mage/Cleric/Thief, filtered to qualifying)
+      3. the_story — StoryInput (pronouns + freeform background/description)
+      4. the_kit — display-only, equipment_generation: class_kit
+      5. the_mouth — display-only
 
-    Full flow: connect → continue → scene{choice=1} → continue → continue →
-    confirmation → complete.
+    Full flow: connect → continue → arrange_assign × 6 → arrange_confirm →
+    scene{choice=1} → story_confirm → continue → continue → confirmation → complete.
     """
 
     def test_full_flow_reaches_complete(self, tmp_path: Path) -> None:
@@ -114,14 +116,15 @@ class TestCavernsAndClaudesFlow:
             assert connected["payload"]["event"] == "connected"
             assert connected["payload"]["has_character"] is False
 
-            # ---- Initial chargen scene 0 (the_roll): emitted alongside the
-            # connected event so the client has scene 0 without sending
-            # anything extra. display-only (phase=continue).
+            # ---- Initial chargen scene 0 (the_roll): display-only narration.
             initial = _recv(ws)
             assert initial["type"] == "CHARACTER_CREATION"
             assert initial["payload"]["scene_index"] == 0
 
-            # ---- Scene 0 (the_roll): display-only, phase=continue ---------
+            # ---- Scene 0 (the_roll): phase=continue → advances to the_arrangement.
+            # the_arrangement is the scene that surfaces ``pool`` for player
+            # assignment (the_roll itself is narration; the pool is rolled at
+            # builder construction and rendered when arrangement scene activates).
             ws.send_json(
                 {
                     "type": "CHARACTER_CREATION",
@@ -131,26 +134,60 @@ class TestCavernsAndClaudesFlow:
             )
             msg = _recv(ws)
             assert msg["type"] == "CHARACTER_CREATION"
-            assert msg["payload"]["phase"] == "scene"
-            # After the_roll auto-advances we should be on the pronouns scene
-            # — choices present, allows_freeform true.
-            assert msg["payload"]["scene_index"] == 1
-            assert msg["payload"]["choices"]
-            assert len(msg["payload"]["choices"]) == 3
-            assert msg["payload"]["allows_freeform"] is True
-            # the_roll declared stat_generation; rolled stats stay on the
-            # wire only for scenes that declared the roll — pronouns did
-            # not. ProtocolBase strips None-valued fields at serialization,
-            # so the field is absent rather than explicitly null.
-            assert "rolled_stats" not in msg["payload"]
+            assert msg["payload"]["scene_index"] == 1  # the_arrangement
+            assert msg["payload"].get("pool") is not None
+            assert len(msg["payload"]["pool"]) == 6
+            pool = list(msg["payload"]["pool"])
 
-            # ---- Scene 1 (pronouns): pick the first choice (she/her) ------
+            # ---- Scene 1 (the_arrangement): assign sorted-desc into stat order.
+            # Highest into STR guarantees Fighter qualifies.
+            stat_order = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
+            sorted_pool = sorted(pool, reverse=True)
+            for stat, value in zip(stat_order, sorted_pool, strict=True):
+                ws.send_json(
+                    {
+                        "type": "CHARACTER_CREATION",
+                        "payload": {"phase": "arrange_assign", "stat": stat, "value": value},
+                        "player_id": "",
+                    }
+                )
+                _recv(ws)  # arrangement-state echo
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {"phase": "arrange_confirm"},
+                    "player_id": "",
+                }
+            )
+            msg = _recv(ws)
+            assert msg["type"] == "CHARACTER_CREATION"
+            assert msg["payload"]["scene_index"] == 2  # the_calling
+            assert msg["payload"]["choices"]
+
+            # ---- Scene 2 (the_calling): pick first qualifying class.
             ws.send_json(_chargen_payload(choice="1"))
             msg = _recv(ws)
             assert msg["payload"]["phase"] == "scene"
-            assert msg["payload"]["scene_index"] == 2  # the_kit
+            assert msg["payload"]["scene_index"] == 3  # the_story
 
-            # ---- Scene 2 (the_kit): display-only -------------------------
+            # ---- Scene 3 (the_story): identity capture via story_confirm.
+            ws.send_json(
+                {
+                    "type": "CHARACTER_CREATION",
+                    "payload": {
+                        "phase": "story_confirm",
+                        "pronouns": "she/her",
+                        "background": "Raised in the caverns.",
+                        "description": "Tall, scarred, watchful.",
+                    },
+                    "player_id": "",
+                }
+            )
+            msg = _recv(ws)
+            assert msg["payload"]["phase"] == "scene"
+            assert msg["payload"]["scene_index"] == 4  # the_kit
+
+            # ---- Scene 4 (the_kit): display-only.
             ws.send_json(
                 {
                     "type": "CHARACTER_CREATION",
@@ -160,9 +197,9 @@ class TestCavernsAndClaudesFlow:
             )
             msg = _recv(ws)
             assert msg["payload"]["phase"] == "scene"
-            assert msg["payload"]["scene_index"] == 3  # the_mouth
+            assert msg["payload"]["scene_index"] == 5  # the_mouth
 
-            # ---- Scene 3 (the_mouth): display-only, advances to Confirmation
+            # ---- Scene 5 (the_mouth): display-only, advances to Confirmation.
             ws.send_json(
                 {
                     "type": "CHARACTER_CREATION",
@@ -177,12 +214,12 @@ class TestCavernsAndClaudesFlow:
             assert summary is not None
             # Lobby-name fallback because caverns has no name-entry scene.
             assert "Name: Rux" in summary
-            # Pronouns from scene 1 pick.
+            # Pronouns from the_story.
             assert "Pronouns: she/her" in summary
-            # Rolled stats present (3d6 strict fired at construction).
+            # Rolled stats present (arrangement materialized them).
             assert "Stats: STR " in summary
-            # Default class from rules.yaml (caverns has default_class: Delver).
-            assert "Delver" in summary
+            # The chosen class from the_calling — one of the four BX classes.
+            assert any(cls in summary for cls in ("Fighter", "Mage", "Cleric", "Thief"))
 
             # ---- Confirmation commit → complete ---------------------------
             ws.send_json(
@@ -192,7 +229,17 @@ class TestCavernsAndClaudesFlow:
                     "player_id": "",
                 }
             )
-            complete = _recv(ws)
+            # Confirmation now emits a sequence of frames (CHARACTER_CREATION
+            # complete, PARTY_STATUS, NARRATION × 2, NARRATION_END, ...). The
+            # CHARACTER_CREATION{complete} frame is the first one. Drain
+            # frames until we see it.
+            complete = None
+            for _ in range(12):
+                next_msg = _recv(ws)
+                if next_msg["type"] == "CHARACTER_CREATION":
+                    complete = next_msg
+                    break
+            assert complete is not None
             assert complete["type"] == "CHARACTER_CREATION"
             assert complete["payload"]["phase"] == "complete"
             assert complete["payload"]["character"] is not None
@@ -200,7 +247,7 @@ class TestCavernsAndClaudesFlow:
             # Character name is the lobby-provided name (caverns has no
             # name-entry scene; fallback chain is scene > lobby > "Player").
             assert character["core"]["name"] == "Rux"
-            assert character["char_class"] == "Delver"
+            assert character["char_class"] in {"Fighter", "Mage", "Cleric", "Thief"}
 
 
 # ---------------------------------------------------------------------------

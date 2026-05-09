@@ -2,9 +2,9 @@
 
 The wiring gate required by sidequest-content/CLAUDE.md:
 "Every Test Suite Needs a Wiring Test." Verifies the full path —
-load real pack → walk all 5 scenes → produce a Character with
-class, edge, kit, and archetype-resolution all flowing through
-correctly.
+load real pack → walk all 6 scenes (visible-dice era) → produce a
+Character with class, edge, kit, and archetype-resolution all
+flowing through correctly.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from sidequest.game.builder import CharacterBuilder, qualifying_classes
+from sidequest.game.builder import CharacterBuilder, StoryInput, qualifying_classes
 from sidequest.genre.loader import load_genre_pack
 
 CONTENT_ROOT = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
@@ -28,8 +28,17 @@ def cc_pack():
     return load_genre_pack(path)
 
 
+def _force_arrange_all_18(builder, stat_order):
+    """Stub the arrangement pool + assignment to all-18 so every class
+    qualifies. apply_arrangement_confirm then materializes _rolled_stats.
+    """
+    builder._arrangement_pool = [18, 18, 18, 18, 18, 18]
+    for stat in stat_order:
+        builder.assign_stat(stat, 18)
+
+
 def _drive_chargen(pack, *, target_class: str, rng_seed: int = 42):
-    """Walk the 5-scene flow, picking the named class. Force stats to
+    """Walk the 6-scene flow, picking the named class. Force pool to
     all-18 so all classes qualify (deterministic regardless of seed)."""
     builder = (
         CharacterBuilder(
@@ -42,19 +51,14 @@ def _drive_chargen(pack, *, target_class: str, rng_seed: int = 42):
         .with_equipment_tables(pack.equipment_tables)
         .with_classes(pack.classes)
     )
-    # Force qualifying stats for all four classes.
-    builder._rolled_stats = [
-        ("STR", 18),
-        ("DEX", 18),
-        ("CON", 18),
-        ("INT", 18),
-        ("WIS", 18),
-        ("CHA", 18),
-    ]
+    stat_order = list(pack.rules.ability_score_names)
+    _force_arrange_all_18(builder, stat_order)
 
-    # 0. the_roll — auto-advance.
+    # 0. the_roll — auto-advance (pool was rolled at construction).
     builder.apply_auto_advance()
-    # 1. the_calling — pick by class_hint.
+    # 1. the_arrangement — confirm the all-18 assignment.
+    builder.apply_arrangement_confirm()
+    # 2. the_calling — pick by class_hint.
     scene = builder.current_scene()
     idx = next(
         (i for i, c in enumerate(scene.choices) if c.mechanical_effects.class_hint == target_class),
@@ -65,11 +69,17 @@ def _drive_chargen(pack, *, target_class: str, rng_seed: int = 42):
         f"{[c.mechanical_effects.class_hint for c in scene.choices]}"
     )
     builder.apply_choice(idx)
-    # 2. pronouns — pick she/her (idx 0).
-    builder.apply_choice(0)
-    # 3. the_kit — auto-advance, class_kit equipment generation.
+    # 3. the_story — pronouns + freeform background/description.
+    builder.apply_response(
+        StoryInput(
+            pronouns="she/her",
+            background="Raised in the caverns.",
+            description="Tall, scarred, watchful.",
+        )
+    )
+    # 4. the_kit — auto-advance, class_kit equipment generation.
     builder.apply_auto_advance()
-    # 4. the_mouth — auto-advance, display only.
+    # 5. the_mouth — auto-advance, display only.
     builder.apply_auto_advance()
     return builder
 
@@ -137,15 +147,14 @@ def test_e2e_low_str_filters_out_fighter(cc_pack):
         .with_classes(cc_pack.classes)
     )
     # STR=8, all others=18 → Fighter shouldn't qualify; Mage/Cleric/Thief should.
-    builder._rolled_stats = [
-        ("STR", 8),
-        ("DEX", 18),
-        ("CON", 18),
-        ("INT", 18),
-        ("WIS", 18),
-        ("CHA", 18),
-    ]
+    builder._arrangement_pool = [8, 18, 18, 18, 18, 18]
+    stat_values = {"STR": 8, "DEX": 18, "CON": 18, "INT": 18, "WIS": 18, "CHA": 18}
+    for stat, value in stat_values.items():
+        builder.assign_stat(stat, value)
+    # 0. the_roll — auto-advance.
     builder.apply_auto_advance()
+    # 1. the_arrangement — confirm; advances to the_calling.
+    builder.apply_arrangement_confirm()
     scene = builder.current_scene()
     presented_hints = [c.mechanical_effects.class_hint for c in scene.choices]
     assert "Fighter" not in presented_hints, (

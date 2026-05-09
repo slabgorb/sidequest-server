@@ -29,6 +29,7 @@ import pytest
 from sidequest.game.builder import (
     CharacterBuilder,
     InProgress,
+    StoryInput,
 )
 from sidequest.genre.loader import load_genre_pack
 
@@ -49,27 +50,28 @@ def caverns_pack() -> object:
 def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) -> None:
     """End-to-end: load real pack, walk all scenes, build a Character.
 
-    caverns_and_claudes flow (5 scenes — classic-class era):
-      0. the_roll — auto-advance, stat_generation=roll_3d6_strict
-                    + class_qualification_loop (server rerolls until ≥1
-                    class qualifies)
-      1. the_calling — class choice (Fighter/Mage/Cleric/Thief filtered
+    caverns_and_claudes flow (6 scenes — visible-dice era):
+      0. the_roll — auto-advance, stat_generation=roll_3d6_arrange_visible
+                    (rolls a six-die pool, no labels yet)
+      1. the_arrangement — assign_stat × 6, then apply_arrangement_confirm
+                           (player drives qualification, reject button is
+                            the only escape valve)
+      2. the_calling — class choice (Fighter/Mage/Cleric/Thief filtered
                        to qualifying)
-      2. pronouns — 3 choices + allows_freeform
-      3. the_kit — auto-advance, equipment_generation=class_kit
-      4. the_mouth — auto-advance (the dungeon entrance)
+      3. the_story — StoryInput (pronouns + background + description)
+      4. the_kit — auto-advance, equipment_generation=class_kit
+      5. the_mouth — auto-advance (the dungeon entrance)
 
     The builder must:
       - Construct with pack.char_creation + pack.rules + backstory_tables
       - Wire pack.equipment_tables and pack.classes via fluent setters
-      - Server reroll loop guarantees ≥1 class qualifies
-      - Walk all 5 scenes to Confirmation
+      - Walk all 6 scenes to Confirmation
       - Build a Character whose char_class is one of the four classes
         and whose Edge max matches edge_config.base_max_by_class[class]
     """
     pack = caverns_pack
-    # Sanity check: 5 scenes, the_roll first.
-    assert len(pack.char_creation) == 5  # type: ignore[attr-defined]
+    # Sanity check: 6 scenes, the_roll first.
+    assert len(pack.char_creation) == 6  # type: ignore[attr-defined]
     assert pack.char_creation[0].id == "the_roll"  # type: ignore[attr-defined]
 
     builder = (
@@ -84,30 +86,37 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
         .with_classes(pack.classes)  # type: ignore[attr-defined]
     )
 
-    # Eager 3d6 roll fired at construction. Note: the qualification
-    # loop only fires when classes are attached; with_classes() runs
-    # AFTER __init__, so the construction roll may not be qualifying.
-    # The loop fires properly on apply_auto_advance for the_roll scene.
-    rolled = builder.rolled_stats()
-    assert rolled is not None
-    rolled_names = [name for name, _ in rolled]
-    assert set(rolled_names) == set(pack.rules.ability_score_names)  # type: ignore[attr-defined]
-
     # Walk scenes:
-    # 0. the_roll — auto-advance triggers qualification loop server-side
+    # 0. the_roll — visible-dice arrange flow rolled an unlabeled pool
+    #    at construction. Auto-advance moves on to the_arrangement.
     assert builder.is_in_progress()
     assert isinstance(builder._phase, InProgress)
     assert builder.current_scene().id == "the_roll"
+    # Visible-dice flow rolls a pool, not labeled stats.
+    assert builder.rolled_stats() is None
+    pool = builder.arrangement_pool()
+    assert pool is not None and len(pool) == 6
     builder.apply_auto_advance()
 
-    # After the_roll auto-advance, at least one class must qualify.
+    # 1. the_arrangement — assign sorted-desc into STR/DEX/CON/INT/WIS/CHA.
+    #    Highest roll into STR guarantees Fighter qualifies (min STR 9).
+    assert builder.current_scene().id == "the_arrangement"
+    sorted_pool = sorted(pool, reverse=True)
+    stat_order = list(pack.rules.ability_score_names)  # type: ignore[attr-defined]
+    for stat_name, value in zip(stat_order, sorted_pool, strict=True):
+        builder.assign_stat(stat_name, value)
+    builder.apply_arrangement_confirm()
+
+    # After arrangement, at least one class must qualify.
     final_stats = dict(builder.rolled_stats())
     from sidequest.game.builder import qualifying_classes
 
     qual = qualifying_classes(final_stats, pack.classes)  # type: ignore[attr-defined]
-    assert len(qual) >= 1, f"reroll loop should guarantee ≥1 class, got 0 with stats {final_stats}"
+    assert len(qual) >= 1, (
+        f"sorted-desc arrangement should qualify ≥1 class, got 0 with stats {final_stats}"
+    )
 
-    # 1. the_calling — pick a qualifying class. Pick the first one.
+    # 2. the_calling — pick a qualifying class. Pick the first one.
     assert builder.current_scene().id == "the_calling"
     presented = builder.current_scene()
     presented_hints = [c.mechanical_effects.class_hint for c in presented.choices]
@@ -116,15 +125,21 @@ def test_builder_walks_caverns_and_claudes_to_character(caverns_pack: object) ->
     chosen_hint = presented_hints[0]
     builder.apply_choice(0)
 
-    # 2. pronouns — pick she/her (idx 0)
-    assert builder.current_scene().id == "pronouns"
-    builder.apply_choice(0)
+    # 3. the_story — StoryInput (pronouns + background + description)
+    assert builder.current_scene().id == "the_story"
+    builder.apply_response(
+        StoryInput(
+            pronouns="she/her",
+            background="Raised in the caverns.",
+            description="Tall, scarred, watchful.",
+        )
+    )
 
-    # 3. the_kit — equipment_generation=class_kit
+    # 4. the_kit — equipment_generation=class_kit
     assert builder.current_scene().id == "the_kit"
     builder.apply_auto_advance()
 
-    # 4. the_mouth — display-only
+    # 5. the_mouth — display-only
     assert builder.current_scene().id == "the_mouth"
     builder.apply_auto_advance()
 
