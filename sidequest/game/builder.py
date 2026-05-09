@@ -730,6 +730,25 @@ class CharacterBuilder:
         self._classes = list(classes)
         return self
 
+    # --- Autogen helpers ---
+
+    def autogen_backstory(self, seed: int) -> dict[str, str]:
+        """Roll the pack's backstory tables for a deterministic background.
+
+        No Claude call — pure table roll. Returns a dict with two keys:
+        ``background`` (the composed text from the pack's template) and
+        ``description`` (currently always empty string; reserved for
+        future packs that supply a separate description-table format).
+
+        Returns ``{"background": "", "description": ""}`` if no
+        ``BackstoryTables`` are attached.
+        """
+        if self._backstory_tables is None:
+            return {"background": "", "description": ""}
+        local_rng = random.Random(seed)
+        bg = self._backstory_tables.roll(local_rng)
+        return {"background": bg, "description": ""}
+
     # --- Phase queries ---
 
     def is_in_progress(self) -> bool:

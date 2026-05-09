@@ -5,6 +5,8 @@ Port of sidequest-genre/src/models/character.rs.
 
 from __future__ import annotations
 
+import random as _random
+import re as _re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -184,6 +186,26 @@ class BackstoryTables(BaseModel):
                     tables[k] = [str(x) for x in v]
             return cls(template=template, tables=tables)
         return super().model_validate(obj, **kwargs)
+
+    def roll(self, rng: _random.Random) -> str:
+        """Compose a backstory by rolling each `{key}` slot in the template.
+
+        For every key found in ``self.tables``, pick one entry uniformly
+        with ``rng`` and substitute it for the ``{key}`` placeholder.
+        Any leftover ``{key}`` placeholders (keys the pack didn't supply)
+        are stripped along with the ``. `` or trailing whitespace that
+        followed them, matching the behavior of the inline composer in
+        CharacterBuilder.build().
+        """
+        result = self.template
+        for key, entries in self.tables.items():
+            if entries:
+                pick = entries[rng.randrange(len(entries))]
+                result = result.replace(f"{{{key}}}", pick)
+        # Drop any unmatched {key} placeholders plus the punctuation/whitespace
+        # immediately following so the prose stays clean.
+        result = _re.sub(r"\{[^{}]+\}\s*\.?\s*", "", result)
+        return result.strip()
 
 
 class EquipmentTables(BaseModel):
