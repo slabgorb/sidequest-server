@@ -210,6 +210,7 @@ def resolve_opposed_check(
     opponent_roll: int,
     encounter: StructuredEncounter | None = None,
     edge_resolver: EdgeResolver | None = None,
+    fixed_opponent_roll: int | None = None,
 ) -> OpposedRollResult:
     """Run an opposed-check resolution.
 
@@ -234,7 +235,18 @@ def resolve_opposed_check(
     ``encounter`` is currently unused; carried in the signature so the
     resolver can grow contextual logic (tag invocations, fleeting
     modifiers, etc.) without a call-site refactor.
+
+    ``fixed_opponent_roll``: when set, overrides ``opponent_roll`` with
+    the given value as the opponent's d20 face. Used by the save
+    resolver (``sidequest.game.saves``) to pin the threat's "roll" to
+    the B/X B26 table target — the threat does not roll randomly; the
+    table value IS its deterministic d20. Validated to ``1..20``.
     """
+    if fixed_opponent_roll is not None:
+        if not (1 <= fixed_opponent_roll <= 20):
+            raise ValueError(f"fixed_opponent_roll {fixed_opponent_roll} not in 1..20")
+        opponent_roll = fixed_opponent_roll
+
     if not (1 <= player_roll <= 20):
         raise ValueError(
             f"opposed_check: player_roll {player_roll} not in 1..20 — d20 face value required"
