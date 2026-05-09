@@ -201,9 +201,7 @@ def test_calibrated_distribution_meets_adr_093_targets():
     # Sanity: counts must sum to N_TRIALS — every roll classifies exactly once.
     assert success_or_better + tie + fail_or_worse == N_TRIALS
 
-    assert (
-        abs(success_pct - EXPECTED_SUCCESS_OR_BETTER_PCT) <= TOLERANCE_PCT
-    ), (
+    assert abs(success_pct - EXPECTED_SUCCESS_OR_BETTER_PCT) <= TOLERANCE_PCT, (
         f"Success-or-better rate {success_pct:.2f}% outside "
         f"{EXPECTED_SUCCESS_OR_BETTER_PCT}% ± {TOLERANCE_PCT}pp — calibration "
         f"is not delivering the player's edge"
@@ -212,9 +210,7 @@ def test_calibrated_distribution_meets_adr_093_targets():
         f"Tie rate {tie_pct:.2f}% outside {EXPECTED_TIE_PCT}% ± "
         f"{TOLERANCE_PCT}pp — tie band may not have been narrowed to ±1"
     )
-    assert (
-        abs(fail_pct - EXPECTED_FAIL_OR_WORSE_PCT) <= TOLERANCE_PCT
-    ), (
+    assert abs(fail_pct - EXPECTED_FAIL_OR_WORSE_PCT) <= TOLERANCE_PCT, (
         f"Fail-or-worse rate {fail_pct:.2f}% outside "
         f"{EXPECTED_FAIL_OR_WORSE_PCT}% ± {TOLERANCE_PCT}pp"
     )

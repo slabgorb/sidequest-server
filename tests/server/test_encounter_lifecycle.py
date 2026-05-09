@@ -578,8 +578,7 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
         spans_by_name = {s.name: s for s in exporter.get_finished_spans()}
         init_span = spans_by_name.get("encounter.confrontation_initiated")
         assert init_span is not None, (
-            f"expected encounter.confrontation_initiated span; "
-            f"got {sorted(spans_by_name)!r}"
+            f"expected encounter.confrontation_initiated span; got {sorted(spans_by_name)!r}"
         )
         attrs = dict(init_span.attributes or {})
         assert attrs.get("actor_count") == 2, (
@@ -770,8 +769,7 @@ def test_combat_no_opponent_emits_otel_span(combat_only_pack):
         spans_by_name = {s.name: s for s in exporter.get_finished_spans()}
         no_opp_span = spans_by_name.get("encounter.no_opponent_available")
         assert no_opp_span is not None, (
-            f"expected encounter.no_opponent_available span; "
-            f"got {sorted(spans_by_name)!r}"
+            f"expected encounter.no_opponent_available span; got {sorted(spans_by_name)!r}"
         )
         attrs = dict(no_opp_span.attributes or {})
         assert attrs.get("encounter_type") == "brawl", (
@@ -817,6 +815,5 @@ def test_non_combat_with_empty_npcs_and_empty_registry_does_not_raise(non_combat
     assert enc is not None
     actor_names = [a.name for a in enc.actors]
     assert actor_names == ["Ada"], (
-        f"non-combat empty encounter should produce solo-player roster; "
-        f"got {actor_names!r}"
+        f"non-combat empty encounter should produce solo-player roster; got {actor_names!r}"
     )

@@ -145,8 +145,12 @@ def test_class_otel_events_emitted():
     )
     # Force qualifying stats so Fighter is at idx 0 of the filtered scene.
     builder._rolled_stats = [
-        ("STR", 18), ("DEX", 18), ("CON", 18),
-        ("INT", 18), ("WIS", 18), ("CHA", 18),
+        ("STR", 18),
+        ("DEX", 18),
+        ("CON", 18),
+        ("INT", 18),
+        ("WIS", 18),
+        ("CHA", 18),
     ]
 
     with tracer.start_as_current_span("chargen_span"):
@@ -176,9 +180,7 @@ def test_class_otel_events_emitted():
         f"Missing chargen.class_chosen. Got events: {list(events.keys())}"
     )
     class_chosen_events = events["chargen.class_chosen"]
-    assert any(
-        e.attributes.get("class_hint") == "Fighter" for e in class_chosen_events
-    )
+    assert any(e.attributes.get("class_hint") == "Fighter" for e in class_chosen_events)
 
     # chargen.class_kit_rolled must have fired.
     assert "chargen.class_kit_rolled" in events, (
@@ -211,10 +213,7 @@ def test_class_qualifying_emits_qualifying_list():
     # Construction uses 18 dice, apply_freeform uses 18 more.
     rng = _ScriptedRandom([6] * 36)
 
-    builder = (
-        CharacterBuilder([scene], rules, rng=rng)
-        .with_classes(_make_classes())
-    )
+    builder = CharacterBuilder([scene], rules, rng=rng).with_classes(_make_classes())
 
     with tracer.start_as_current_span("roll_span"):
         builder.apply_freeform("text")

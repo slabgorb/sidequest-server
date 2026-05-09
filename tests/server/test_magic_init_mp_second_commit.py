@@ -99,9 +99,7 @@ def test_init_magic_state_registers_mp_joiner_after_host_commit() -> None:
         world_slug=world_slug,
         character_id="JoinerPC",
     )
-    joiner_keys = [
-        k for k in snap.magic_state.ledger if k.startswith("character|JoinerPC|")
-    ]
+    joiner_keys = [k for k in snap.magic_state.ledger if k.startswith("character|JoinerPC|")]
     assert len(joiner_keys) > 0, (
         "Joiner PC missing from magic_state.ledger after second-commit "
         "init. Pre-fix this seam was unwired in "

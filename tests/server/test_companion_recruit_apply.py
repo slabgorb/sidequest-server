@@ -52,17 +52,13 @@ class _RecordingHub:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any], str]] = []
 
-    def __call__(
-        self, event_type: str, payload: dict[str, Any], *, component: str
-    ) -> None:
+    def __call__(self, event_type: str, payload: dict[str, Any], *, component: str) -> None:
         self.events.append((event_type, payload, component))
 
 
 def _patch_watcher(monkeypatch) -> _RecordingHub:
     hub = _RecordingHub()
-    monkeypatch.setattr(
-        "sidequest.server.narration_apply._watcher_publish", hub
-    )
+    monkeypatch.setattr("sidequest.server.narration_apply._watcher_publish", hub)
     return hub
 
 
@@ -161,9 +157,7 @@ def test_duplicate_recruit_is_silent_no_op(monkeypatch) -> None:
     )
 
     assert len(snapshot.companions) == 1
-    duplicate_events = [
-        e for e in hub.events if e[1].get("kind") == "party.recruit_duplicate"
-    ]
+    duplicate_events = [e for e in hub.events if e[1].get("kind") == "party.recruit_duplicate"]
     assert len(duplicate_events) == 1
 
 
@@ -177,9 +171,7 @@ def test_dismiss_removes_companion_and_emits_span(monkeypatch) -> None:
     snapshot = GameSnapshot(
         characters=[_pc("Carl")],
         companions=[
-            Companion(
-                name="Donut", role="torchbearer", recruited_turn=1, recruited_by="Carl"
-            )
+            Companion(name="Donut", role="torchbearer", recruited_turn=1, recruited_by="Carl")
         ],
     )
     snapshot.turn_manager.interaction = 9
@@ -218,8 +210,7 @@ def test_dismiss_unmatched_logs_and_emits_unmatched_span(monkeypatch) -> None:
     unmatched = [
         e
         for e in hub.events
-        if e[1].get("kind") == "party.dismiss"
-        and e[1].get("status") == "unmatched"
+        if e[1].get("kind") == "party.dismiss" and e[1].get("status") == "unmatched"
     ]
     assert len(unmatched) == 1
 

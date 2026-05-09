@@ -177,10 +177,7 @@ def test_random_table_still_works():
     rules = _make_rules()
     tables = _make_equipment_tables()
 
-    builder = (
-        CharacterBuilder(scenes, rules, rng=random.Random(42))
-        .with_equipment_tables(tables)
-    )
+    builder = CharacterBuilder(scenes, rules, rng=random.Random(42)).with_equipment_tables(tables)
     builder.apply_auto_advance()
     assert builder.is_confirmation()
     character = builder.build("TestRandom")

@@ -219,9 +219,7 @@ def _h_bond_strength_growth_via_intimacy(
     register = ctx.get("register", "")
     turn_id = ctx.get("turn_id", 0)
     if chassis_id is None:
-        raise ValueError(
-            "bond_strength_growth_via_intimacy requires chassis_id in context"
-        )
+        raise ValueError("bond_strength_growth_via_intimacy requires chassis_id in context")
     chassis = snapshot.chassis_registry[chassis_id]
 
     result = apply_bond_event(
@@ -256,9 +254,7 @@ def _h_bond_strength_growth_via_intimacy(
         )
 
 
-def _h_chassis_lineage_intimate(
-    snapshot: GameSnapshot, actor: str, ctx: OutputContext
-) -> None:
+def _h_chassis_lineage_intimate(snapshot: GameSnapshot, actor: str, ctx: OutputContext) -> None:
     """Append an ``intimate``-kind lineage entry to the named chassis."""
     from sidequest.game.chassis import apply_chassis_lineage_intimate
 
@@ -267,9 +263,7 @@ def _h_chassis_lineage_intimate(
     turn_id = ctx.get("turn_id", 0)
     narrative_seed = ctx.get("narrative_seed", "")
     if chassis_id is None:
-        raise ValueError(
-            "chassis_lineage_intimate requires chassis_id in context"
-        )
+        raise ValueError("chassis_lineage_intimate requires chassis_id in context")
     chassis = snapshot.chassis_registry[chassis_id]
     apply_chassis_lineage_intimate(
         chassis=chassis,

@@ -23,9 +23,9 @@ from sidequest.orbital import render as _orbital_render  # noqa: F401  (validato
 # 2x2 hardcoded layout for voidborn_freighter, in viewBox coordinates.
 # Coords are (x, y, width, height).
 ROOM_LAYOUT: dict[str, tuple[float, float, float, float]] = {
-    "cockpit":             (40, 60, 280, 180),
-    "engineering":         (340, 60, 220, 180),
-    "galley":              (40, 260, 280, 180),
+    "cockpit": (40, 60, 280, 180),
+    "engineering": (340, 60, 220, 180),
+    "galley": (40, 260, 280, 180),
     "deck_three_corridor": (340, 260, 220, 180),
 }
 
@@ -73,13 +73,15 @@ def render_interior_svg(
     dwg.add(dwg.rect(insert=(0, 0), size=("100%", "100%"), fill=palette.BG))
 
     # Title bar — chassis instance name in display font.
-    dwg.add(dwg.text(
-        chassis_instance.name,
-        insert=(20, 36),
-        fill=palette.BRASS,
-        font_family=palette.FONT_DISPLAY,
-        font_size="22px",
-    ))
+    dwg.add(
+        dwg.text(
+            chassis_instance.name,
+            insert=(20, 36),
+            fill=palette.BRASS,
+            font_family=palette.FONT_DISPLAY,
+            font_size="22px",
+        )
+    )
 
     stations_by_room: dict[str, list] = {}
     for s in chassis_class.stations:
@@ -107,34 +109,48 @@ def render_interior_svg(
         x, y, w, h = coords
         room_g = dwg.g(**{"data-room": room.id})
 
-        room_g.add(dwg.rect(
-            insert=(x, y), size=(w, h),
-            fill="none", stroke=palette.BRASS, stroke_width=1.2,
-        ))
-        room_g.add(dwg.text(
-            room.display_name,
-            insert=(x + 8, y + 18),
-            fill=palette.BRASS,
-            font_family=palette.FONT_DISPLAY,
-            font_size="14px",
-        ))
+        room_g.add(
+            dwg.rect(
+                insert=(x, y),
+                size=(w, h),
+                fill="none",
+                stroke=palette.BRASS,
+                stroke_width=1.2,
+            )
+        )
+        room_g.add(
+            dwg.text(
+                room.display_name,
+                insert=(x + 8, y + 18),
+                fill=palette.BRASS,
+                font_family=palette.FONT_DISPLAY,
+                font_size="14px",
+            )
+        )
 
         # Stations as small open circles along the top edge.
         for i, station in enumerate(stations_by_room.get(room.id, [])):
             sx = x + 24 + i * 64
             sy = y + 44
             station_g = dwg.g(**{"data-station": station.id})
-            station_g.add(dwg.circle(
-                center=(sx, sy), r=7,
-                fill="none", stroke=palette.BRASS, stroke_width=1.2,
-            ))
-            station_g.add(dwg.text(
-                station.display_name,
-                insert=(sx - 22, sy + 22),
-                fill=palette.DIM,
-                font_family=palette.FONT_NUMERIC,
-                font_size="9px",
-            ))
+            station_g.add(
+                dwg.circle(
+                    center=(sx, sy),
+                    r=7,
+                    fill="none",
+                    stroke=palette.BRASS,
+                    stroke_width=1.2,
+                )
+            )
+            station_g.add(
+                dwg.text(
+                    station.display_name,
+                    insert=(sx - 22, sy + 22),
+                    fill=palette.DIM,
+                    font_family=palette.FONT_NUMERIC,
+                    font_size="9px",
+                )
+            )
             room_g.add(station_g)
 
         # Actor markers along the bottom of the room.
@@ -143,17 +159,24 @@ def render_interior_svg(
             ay = y + h - 24
             color = palette.PARTY if kind == "pc" else palette.BRASS
             actor_g = dwg.g(**{"data-actor": actor_name, "data-actor-kind": kind})
-            actor_g.add(dwg.circle(
-                center=(ax, ay), r=8,
-                fill=color, stroke=palette.BRASS, stroke_width=1.0,
-            ))
-            actor_g.add(dwg.text(
-                actor_name,
-                insert=(ax - 28, ay + 18),
-                fill=palette.BRASS,
-                font_family=palette.FONT_NUMERIC,
-                font_size="10px",
-            ))
+            actor_g.add(
+                dwg.circle(
+                    center=(ax, ay),
+                    r=8,
+                    fill=color,
+                    stroke=palette.BRASS,
+                    stroke_width=1.0,
+                )
+            )
+            actor_g.add(
+                dwg.text(
+                    actor_name,
+                    insert=(ax - 28, ay + 18),
+                    fill=palette.BRASS,
+                    font_family=palette.FONT_NUMERIC,
+                    font_size="10px",
+                )
+            )
             room_g.add(actor_g)
 
         dwg.add(room_g)

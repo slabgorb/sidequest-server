@@ -17,6 +17,7 @@ from sidequest.genre.error import (
     GenreMissingParentError,
     GenreNotFoundError,
     GenreValidationError,
+    PackError,
     SchemaValidationError,
     ValidationErrors,
 )
@@ -110,6 +111,7 @@ __all__ = [
     "GenreValidationError",
     "GenreIoError",
     "GenreNotFoundError",
+    "PackError",
     "SchemaValidationError",
     "ValidationErrors",
     # cache

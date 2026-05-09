@@ -96,9 +96,7 @@ def test_clear_win_grows_bond_strength() -> None:
     )
 
     bond_after = kestrel.bond_ledger[0].bond_strength_chassis_to_character
-    assert bond_after > bond_before, (
-        f"bond did not grow: before={bond_before} after={bond_after}"
-    )
+    assert bond_after > bond_before, f"bond did not grow: before={bond_before} after={bond_after}"
 
 
 @pytest.mark.integration

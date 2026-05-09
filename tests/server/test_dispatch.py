@@ -28,9 +28,7 @@ def _make_result(**kwargs) -> NarrationTurnResult:
 def test_apply_location_update():
     """location from game_patch is applied to snapshot.character_locations (Wave 2B)."""
     snapshot = GameSnapshot(
-        genre_slug="test",
-        world_slug="test",
-        character_locations={"Protagonist": "Old Place"}
+        genre_slug="test", world_slug="test", character_locations={"Protagonist": "Old Place"}
     )
     result = _make_result(narration="You arrive.", location="New Dungeon")
 
@@ -102,9 +100,7 @@ def test_apply_npc_pool_new_npc():
     from sidequest.agents.orchestrator import NpcMention
 
     snapshot = GameSnapshot(
-        genre_slug="test",
-        world_slug="test",
-        character_locations={"Protagonist": "Tavern"}
+        genre_slug="test", world_slug="test", character_locations={"Protagonist": "Tavern"}
     )
     result = _make_result(
         narration="A stranger approaches.",
@@ -140,11 +136,7 @@ def test_apply_npc_pool_existing_is_additive_only():
         genre_slug="test",
         world_slug="test",
         character_locations={"Protagonist": "Tavern"},
-        npc_pool=[
-            NpcPoolMember(
-                name="Zara", role="stranger", drawn_from="legacy_registry"
-            )
-        ],
+        npc_pool=[NpcPoolMember(name="Zara", role="stranger", drawn_from="legacy_registry")],
     )
     result = _make_result(
         narration="Zara speaks.",
@@ -185,9 +177,7 @@ def test_apply_no_mutation_on_empty_result():
 def test_apply_non_narration_result_is_noop():
     """Non-NarrationTurnResult argument is a no-op (type guard)."""
     snapshot = GameSnapshot(
-        genre_slug="test",
-        world_slug="test",
-        character_locations={"Protagonist": "X"}
+        genre_slug="test", world_slug="test", character_locations={"Protagonist": "X"}
     )
     _apply_narration_result_to_snapshot(snapshot, object(), "player", room=room_for(snapshot))
     assert snapshot.character_locations["Protagonist"] == "X"

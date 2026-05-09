@@ -55,17 +55,13 @@ class _RecordingHub:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any], str]] = []
 
-    def __call__(
-        self, event_type: str, payload: dict[str, Any], *, component: str
-    ) -> None:
+    def __call__(self, event_type: str, payload: dict[str, Any], *, component: str) -> None:
         self.events.append((event_type, payload, component))
 
 
 def _patch_watcher(monkeypatch) -> _RecordingHub:
     hub = _RecordingHub()
-    monkeypatch.setattr(
-        "sidequest.server.narration_apply._watcher_publish", hub
-    )
+    monkeypatch.setattr("sidequest.server.narration_apply._watcher_publish", hub)
     return hub
 
 
@@ -177,9 +173,7 @@ def test_overspend_clamps_at_zero_and_marks_span(monkeypatch) -> None:
     )
 
     assert snapshot.characters[0].core.inventory.gold == 0
-    payload = next(
-        e[1] for e in hub.events if e[1].get("kind") == "economy.gold_change"
-    )
+    payload = next(e[1] for e in hub.events if e[1].get("kind") == "economy.gold_change")
     assert payload["requested_delta"] == -50
     assert payload["applied_delta"] == -5  # actual change, not the request
     assert payload["clamped"] is True
@@ -216,6 +210,4 @@ def test_zero_or_missing_delta_is_noop(monkeypatch, delta) -> None:
     )
 
     assert snapshot.characters[0].core.inventory.gold == 42
-    assert [
-        e for e in hub.events if e[1].get("kind") == "economy.gold_change"
-    ] == []
+    assert [e for e in hub.events if e[1].get("kind") == "economy.gold_change"] == []

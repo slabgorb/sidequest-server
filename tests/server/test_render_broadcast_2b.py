@@ -52,11 +52,11 @@ def _make_eligible_result(**kwargs):
     NarrationTurnResult directly and bypass this helper.
     """
     from sidequest.agents.orchestrator import BeatSelection
+
     if "beat_selections" not in kwargs:
-        kwargs["beat_selections"] = [
-            BeatSelection(actor="test", beat_id="dispatch_test")
-        ]
+        kwargs["beat_selections"] = [BeatSelection(actor="test", beat_id="dispatch_test")]
     return NarrationTurnResult(**kwargs)
+
 
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
@@ -66,6 +66,7 @@ def short_sock(tmp_path: Path) -> Path:
     if p.exists():
         p.unlink()
 
+
 @pytest.fixture
 async def bound_hub() -> WatcherHub:
     watcher_hub.bind_loop(asyncio.get_running_loop())
@@ -73,12 +74,14 @@ async def bound_hub() -> WatcherHub:
         watcher_hub._subscribers.clear()  # noqa: SLF001
     return watcher_hub
 
+
 class _Cap:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
     async def send_json(self, data: dict[str, Any]) -> None:
         self.events.append(data)
+
 
 class _FakeDaemon:
     def __init__(self, reply_payload: dict[str, Any]) -> None:
@@ -109,10 +112,12 @@ class _FakeDaemon:
             self._server.close()
             await self._server.wait_closed()
 
+
 def _client_bound_to(path: Path):
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
+
 
 def _make_session_data(*, player_id: str, world_slug: str = "grimvault") -> _SessionData:
     from sidequest.game.session import GameSnapshot, TurnManager
@@ -138,8 +143,10 @@ def _make_session_data(*, player_id: str, world_slug: str = "grimvault") -> _Ses
         game_slug=f"test-session-{player_id}",
     )
 
+
 def _slug(sd: _SessionData) -> str:
     return f"mp:{sd.genre_slug}:{sd.world_slug}"
+
 
 def _make_two_player_room(
     sd: _SessionData,
@@ -171,9 +178,11 @@ def _make_two_player_room(
     room.attach_outbound(peer_socket, peer_q)
     return handler, registry, actor_q, peer_q, slug
 
+
 # ----------------------------------------------------------------------
 # Bug #2b core fix: IMAGE reaches every connected socket in the room
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_image_broadcasts_to_all_room_sockets(
@@ -229,9 +238,11 @@ async def test_image_broadcasts_to_all_room_sockets(
     assert actor_msg.payload.url == peer_msg.payload.url
     assert actor_msg.payload.render_id == peer_msg.payload.render_id
 
+
 # ----------------------------------------------------------------------
 # OTEL lie-detector: completion event records broadcast + recipient count
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_render_completion_otel_records_broadcast_and_recipients(
@@ -301,10 +312,12 @@ async def test_render_completion_otel_records_broadcast_and_recipients(
         f"broadcast regressed back to per-player delivery"
     )
 
+
 # ----------------------------------------------------------------------
 # Backward-compat: legacy non-room path still single-queues (test/legacy
 # only — production never hits this branch since story 37-30).
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_legacy_no_room_path_uses_single_queue(

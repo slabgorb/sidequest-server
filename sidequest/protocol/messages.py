@@ -154,9 +154,7 @@ class ScrapbookEntryPayload(ProtocolBase):
     #   ``failed``         — policy fired, daemon gate refused synchronously.
     #   ``unavailable``    — daemon UNRESPONSIVE per heartbeat mirror;
     #                        dispatcher took the 45-31 fallback path.
-    render_status: Literal[
-        "rendered", "skipped_policy", "failed", "unavailable"
-    ] = "rendered"
+    render_status: Literal["rendered", "skipped_policy", "failed", "unavailable"] = "rendered"
 
 
 # ---------------------------------------------------------------------------
@@ -720,9 +718,7 @@ class ConfrontationMessage(ProtocolBase):
 class ConfrontationOutcomeMessage(ProtocolBase):
     """GameMessage::ConfrontationOutcome wire representation (Story 47-3)."""
 
-    type: Literal[MessageType.CONFRONTATION_OUTCOME] = (
-        MessageType.CONFRONTATION_OUTCOME
-    )
+    type: Literal[MessageType.CONFRONTATION_OUTCOME] = MessageType.CONFRONTATION_OUTCOME
     payload: ConfrontationOutcomePayload
     player_id: str = ""
 

@@ -71,9 +71,20 @@ def captured_watcher_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, A
     """
     captured: list[dict[str, Any]] = []
 
-    def _capture(event_type: str, fields: dict, *, component: str = "sidequest-server", severity: str = "info") -> None:
+    def _capture(
+        event_type: str,
+        fields: dict,
+        *,
+        component: str = "sidequest-server",
+        severity: str = "info",
+    ) -> None:
         captured.append(
-            {"event_type": event_type, "fields": fields, "component": component, "severity": severity}
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
         )
 
     from sidequest.server import narration_apply
@@ -92,9 +103,7 @@ def test_sanity_threshold_crossing_surfaces_bleeding_through_in_result(
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
     # Phase 5: MagicState gains a ``confrontations`` field populated at
     # world load. Tests set it directly. (The runtime path uses
     # ``state.set_confrontations(...)`` or equivalent — choose the API
@@ -134,9 +143,7 @@ def test_notice_threshold_crossing_fires_quiet_word(
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.65
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="notice"), 0.65)
     state.confrontations = [_quiet_word()]
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
@@ -173,9 +180,7 @@ def test_sub_threshold_working_does_not_auto_fire(
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.95
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.95)
     state.confrontations = [_bleeding_through()]
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
@@ -212,9 +217,7 @@ def test_auto_fire_populates_pending_magic_auto_fires(
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
     state.confrontations = [_bleeding_through()]
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
@@ -264,9 +267,7 @@ def test_auto_fire_emits_otel_span(
 
     state = MagicState.from_config(world_config)
     state.add_character("sira_mendes")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
     state.confrontations = [_bleeding_through()]
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
@@ -376,9 +377,7 @@ def test_missing_resource_pool_bar_emits_watcher_event_not_silent_zero(
     state.add_character("sira_mendes")
     # Actor has sanity (used for trigger eval), but NOT willpower
     # (referenced by resource_pool.primary).
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="sira_mendes", bar_id="sanity"), 0.45)
     state.confrontations = [_bleeding_through_with_missing_primary_bar()]
 
     snapshot = GameSnapshot.model_construct(magic_state=state)
@@ -423,8 +422,7 @@ def test_missing_resource_pool_bar_emits_watcher_event_not_silent_zero(
     bar_missing_events = [
         e
         for e in captured_watcher_events
-        if e["component"] == "magic"
-        and "bar_missing" in str(e["fields"].get("op", "")).lower()
+        if e["component"] == "magic" and "bar_missing" in str(e["fields"].get("op", "")).lower()
     ]
     assert bar_missing_events, (
         "_bar_value must emit a watcher event when the requested bar is "
@@ -436,8 +434,7 @@ def test_missing_resource_pool_bar_emits_watcher_event_not_silent_zero(
     )
     fields = bar_missing_events[0]["fields"]
     assert fields.get("actor") == "sira_mendes", (
-        f"watcher event must identify the actor whose bar was missing; "
-        f"got fields={fields}"
+        f"watcher event must identify the actor whose bar was missing; got fields={fields}"
     )
     assert fields.get("bar_id") == "willpower", (
         f"watcher event must identify which bar was missing so the "

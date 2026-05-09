@@ -145,9 +145,7 @@ def test_diagnostic_payload_carries_required_fields(tmp_path, monkeypatch) -> No
     assert body["last_successful_render_id"] == "abc123"
 
 
-def test_diagnostic_writer_emits_watcher_event_once(
-    tmp_path, monkeypatch
-) -> None:
+def test_diagnostic_writer_emits_watcher_event_once(tmp_path, monkeypatch) -> None:
     """AC5: ``daemon.session_diagnostic_written`` watcher event must
     fire EXACTLY ONCE per write — the GM panel keys on this to confirm
     the substitution happened."""
@@ -176,13 +174,12 @@ def test_diagnostic_writer_emits_watcher_event_once(
     )
 
     written = [
-        (et, f) for et, f, *_ in captured
-        if et == "state_transition"
-        and f.get("op") == "session_diagnostic_written"
+        (et, f)
+        for et, f, *_ in captured
+        if et == "state_transition" and f.get("op") == "session_diagnostic_written"
     ]
     assert len(written) == 1, (
-        f"expected exactly 1 daemon.session_diagnostic_written event, "
-        f"got {len(written)}: {written}"
+        f"expected exactly 1 daemon.session_diagnostic_written event, got {len(written)}: {written}"
     )
     fields = written[0][1]
     # path attribute lets the GM panel deep-link.
@@ -195,13 +192,13 @@ def test_diagnostic_writer_emits_watcher_event_once(
 @pytest.mark.parametrize(
     "bad_slug",
     [
-        "../../escape",      # classic POSIX traversal
-        "..",                # bare-parent component
-        "room/../../etc",    # mid-string traversal
-        "..\\win",           # Windows-style backslash + ..
-        "room\\path",        # Windows-style backslash separator
-        "/etc/passwd",       # absolute POSIX path
-        "evil\x00.json",     # embedded NUL (CWE-78)
+        "../../escape",  # classic POSIX traversal
+        "..",  # bare-parent component
+        "room/../../etc",  # mid-string traversal
+        "..\\win",  # Windows-style backslash + ..
+        "room\\path",  # Windows-style backslash separator
+        "/etc/passwd",  # absolute POSIX path
+        "evil\x00.json",  # embedded NUL (CWE-78)
     ],
     ids=[
         "posix-traversal",
@@ -258,6 +255,5 @@ def test_diagnostic_path_traversal_is_blocked(tmp_path, monkeypatch, bad_slug) -
 
     resolved = path.resolve()
     assert resolved.is_relative_to(diagnostics_root.resolve()), (
-        f"diagnostic file escaped diagnostics dir: {resolved} not under "
-        f"{diagnostics_root}"
+        f"diagnostic file escaped diagnostics dir: {resolved} not under {diagnostics_root}"
     )

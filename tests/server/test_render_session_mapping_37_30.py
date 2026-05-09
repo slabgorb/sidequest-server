@@ -58,15 +58,16 @@ def _make_eligible_result(**kwargs):
     NarrationTurnResult directly and bypass this helper.
     """
     from sidequest.agents.orchestrator import BeatSelection
+
     if "beat_selections" not in kwargs:
-        kwargs["beat_selections"] = [
-            BeatSelection(actor="test", beat_id="dispatch_test")
-        ]
+        kwargs["beat_selections"] = [BeatSelection(actor="test", beat_id="dispatch_test")]
     return NarrationTurnResult(**kwargs)
+
 
 # ----------------------------------------------------------------------
 # Shared fixtures and helpers
 # ----------------------------------------------------------------------
+
 
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
@@ -76,6 +77,7 @@ def short_sock(tmp_path: Path) -> Path:
     if p.exists():
         p.unlink()
 
+
 @pytest.fixture
 async def bound_hub() -> WatcherHub:
     """Bind the singleton hub to this loop and clear stale subscribers."""
@@ -84,6 +86,7 @@ async def bound_hub() -> WatcherHub:
         watcher_hub._subscribers.clear()  # noqa: SLF001
     return watcher_hub
 
+
 class _FakeSocket:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
@@ -91,10 +94,12 @@ class _FakeSocket:
     async def send_json(self, data: dict[str, Any]) -> None:
         self.events.append(data)
 
+
 async def _capture(hub: WatcherHub) -> _FakeSocket:
     sock = _FakeSocket()
     await hub.subscribe(sock)  # type: ignore[arg-type]
     return sock
+
 
 class _FakeDaemon:
     """Unix-domain echo server matching the daemon protocol."""
@@ -130,6 +135,7 @@ class _FakeDaemon:
             self._server.close()
             await self._server.wait_closed()
 
+
 def _make_session_data(
     *, player_id: str = "p-rux", world_slug: str = "flickering_reach"
 ) -> _SessionData:
@@ -156,10 +162,12 @@ def _make_session_data(
         game_slug=f"test-session-{player_id}",
     )
 
+
 def _client_bound_to(path: Path):
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
+
 
 def _slug(sd: _SessionData) -> str:
     """The room slug used by ws_endpoint to register a SessionRoom.
@@ -168,6 +176,7 @@ def _slug(sd: _SessionData) -> str:
     the registry lookup path without booting the full /ws machinery.
     """
     return f"{sd.genre_slug}:{sd.world_slug}:{sd.player_id}"
+
 
 def _make_handler_with_room(
     sd: _SessionData,
@@ -189,9 +198,11 @@ def _make_handler_with_room(
     room.attach_outbound(socket_id, queue)
     return handler, registry, queue, slug
 
+
 # ----------------------------------------------------------------------
 # AC-1: dispatch records mapping; watcher event carries player_id and slug
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_render_dispatch_event_includes_player_and_room_slug(
@@ -258,9 +269,11 @@ async def test_render_dispatch_event_includes_player_and_room_slug(
         "can't disambiguate the session"
     )
 
+
 # ----------------------------------------------------------------------
 # AC-2: routing via registry — IMAGE lands on the *current* live queue
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_render_completion_routes_to_current_queue_after_reconnect(
@@ -333,9 +346,11 @@ async def test_render_completion_routes_to_current_queue_after_reconnect(
     assert msg.type == MessageType.IMAGE
     assert msg.player_id == sd.player_id
 
+
 # ----------------------------------------------------------------------
 # AC-3: no silent drop — disconnected player → watcher warning
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_render_completion_emits_session_not_found_when_disconnected(
@@ -410,9 +425,11 @@ async def test_render_completion_emits_session_not_found_when_disconnected(
         "IMAGE landed on a detached queue — the silent-drop path is still active"
     )
 
+
 # ----------------------------------------------------------------------
 # AC-4: portrait renders pass character name through to the daemon
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_portrait_render_params_include_character_name(
@@ -462,9 +479,11 @@ async def test_portrait_render_params_include_character_name(
         "missing portrait initials in playtest 3)"
     )
 
+
 # ----------------------------------------------------------------------
 # AC-5: end-to-end happy path through the registry
 # ----------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_end_to_end_render_routes_through_registry_on_happy_path(
@@ -540,6 +559,7 @@ async def test_end_to_end_render_routes_through_registry_on_happy_path(
     cfields = completed[0]["fields"]
     assert cfields.get("player_id") == sd.player_id
     assert cfields.get("room_slug") == slug
+
 
 # ----------------------------------------------------------------------
 # Lang-review #6: meaningful assertions self-check is implicit — every

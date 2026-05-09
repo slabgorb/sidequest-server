@@ -648,7 +648,9 @@ class TestMPJoinerHostLocationAnchor:
             # The opening-turn prompt is the FIRST call after reset —
             # subsequent intra-pipeline narrator calls (recap, etc.)
             # may follow but the opening dispatch is first.
-            opening_prompt = calls[0].args[0] if calls[0].args else calls[0].kwargs.get("prompt", "")
+            opening_prompt = (
+                calls[0].args[0] if calls[0].args else calls[0].kwargs.get("prompt", "")
+            )
             assert "The Kestrel — Galley, Mid-Coast" in opening_prompt, (
                 "Joiner-orientation prompt must name the host's "
                 "location verbatim so the narrator cannot relocate the "
@@ -657,8 +659,7 @@ class TestMPJoinerHostLocationAnchor:
             )
             # And the explicit anti-relocation directive must be present.
             assert "Do NOT relocate them to a new location" in opening_prompt, (
-                "Joiner-orientation prompt must carry the explicit "
-                "no-relocation directive"
+                "Joiner-orientation prompt must carry the explicit no-relocation directive"
             )
 
             # OTEL: the dedicated anchor event must fire so the GM panel

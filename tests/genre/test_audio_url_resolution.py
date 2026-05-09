@@ -13,6 +13,7 @@ This is the wiring test for Task 8 of the R2 media migration plan: it
 exercises the production code path (``load_genre_pack``) against a real
 genre pack rather than constructing ``AudioConfig`` by hand.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,11 +25,7 @@ from sidequest.genre.loader import load_genre_pack
 
 def _packs_root() -> Path:
     # tests/genre/test_audio_url_resolution.py -> repo root -> sidequest-content
-    return (
-        Path(__file__).resolve().parents[2].parent
-        / "sidequest-content"
-        / "genre_packs"
-    )
+    return Path(__file__).resolve().parents[2].parent / "sidequest-content" / "genre_packs"
 
 
 @pytest.fixture
@@ -69,8 +66,7 @@ def test_theme_variation_paths_are_full_urls(caverns_pack: object) -> None:
     for theme in themes:
         for variation in theme.variations:
             assert variation.path.startswith("https://cdn.slabgorb.com/"), (
-                f"theme {theme.name!r} variation has non-CDN path: "
-                f"{variation.path!r}"
+                f"theme {theme.name!r} variation has non-CDN path: {variation.path!r}"
             )
             assert "genre_packs/caverns_and_claudes/" in variation.path
 

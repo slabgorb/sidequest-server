@@ -27,7 +27,9 @@ def _coyote_star_path() -> Path:
         return Path(env_path)
     server_root = Path(__file__).resolve().parents[2]  # sidequest-server/
     repo_root = server_root.parent
-    return repo_root / "sidequest-content" / "genre_packs" / "space_opera" / "worlds" / "coyote_star"
+    return (
+        repo_root / "sidequest-content" / "genre_packs" / "space_opera" / "worlds" / "coyote_star"
+    )
 
 
 @pytest.fixture
@@ -77,8 +79,7 @@ class TestCoyoteStarWiring:
         a = _last_span_attrs(otel_capture, SPAN_CHART_LABEL_DISTRIBUTION)
         # Sum invariant (AC-O2):
         assert (
-            a["bodies_textpath"] + a["bodies_radial"]
-            + a["bodies_callout"] + a["bodies_unlabeled"]
+            a["bodies_textpath"] + a["bodies_radial"] + a["bodies_callout"] + a["bodies_unlabeled"]
             == a["bodies_total"]
         )
 
@@ -95,9 +96,7 @@ class TestStoryYSnapshot:
             t_hours=0.0,
             party_at=None,
         )
-        snapshot_path = (
-            Path(__file__).parent / "snapshots" / "coyote_star_callouts_system_t0.svg"
-        )
+        snapshot_path = Path(__file__).parent / "snapshots" / "coyote_star_callouts_system_t0.svg"
         baseline = snapshot_path.read_text()
         assert svg == baseline, "Snapshot mismatch — re-baseline if intentional"
 

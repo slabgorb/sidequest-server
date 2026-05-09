@@ -154,15 +154,11 @@ class YieldHandler:
                     remaining = sum(
                         1
                         for a in post_encounter.actors
-                        if a.side == "player"
-                        and a.name in seated_pc_names
-                        and not a.withdrawn
+                        if a.side == "player" and a.name in seated_pc_names and not a.withdrawn
                     )
                 else:
                     remaining = sum(
-                        1
-                        for a in post_encounter.actors
-                        if a.side == "player" and not a.withdrawn
+                        1 for a in post_encounter.actors if a.side == "player" and not a.withdrawn
                     )
                 logger.info(
                     "session.yield_partial encounter_type=%r remaining_player_actors=%d",

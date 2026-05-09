@@ -450,12 +450,8 @@ def test_party_member_uses_per_character_location_when_set() -> None:
 
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/sq-test-saves"))
 
-    laverne_member = views.party_member_from_character(
-        handler, sd, laverne, "p:laverne", "Laverne"
-    )
-    shirley_member = views.party_member_from_character(
-        handler, sd, shirley, "p:shirley", "Shirley"
-    )
+    laverne_member = views.party_member_from_character(handler, sd, laverne, "p:laverne", "Laverne")
+    shirley_member = views.party_member_from_character(handler, sd, shirley, "p:shirley", "Shirley")
 
     assert str(laverne_member.current_location) == "Galley"
     assert str(shirley_member.current_location) == "Cockpit"
@@ -547,5 +543,3 @@ def test_apply_narration_writes_per_character_location_for_acting_pc() -> None:
     # to "also advance" — character_locations is the only source of truth.
     assert sd.snapshot.character_locations["Shirley"] == "Cockpit"
     assert sd.snapshot.character_locations["Laverne"] == "Galley"
-
-

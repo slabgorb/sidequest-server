@@ -58,11 +58,7 @@ def _bootstrap_coyote_star_snapshot() -> GameSnapshot:
 
 def _span_attrs_by_name(otel_capture, name: str) -> list[dict]:
     """Return the attribute dicts for every span with the given name."""
-    return [
-        dict(s.attributes)
-        for s in otel_capture.get_finished_spans()
-        if s.name == name
-    ]
+    return [dict(s.attributes) for s in otel_capture.get_finished_spans() if s.name == name]
 
 
 # ---------------------------------------------------------------------------
@@ -104,12 +100,10 @@ def test_skipped_span_emitted_when_room_not_in_any_chassis(
     )
 
     attrs_list = _span_attrs_by_name(otel_capture, SPAN_ROOM_ENTRY_SKIPPED)
-    assert attrs_list, (
-        "room.entry_skipped span not emitted on non-chassis room input"
+    assert attrs_list, "room.entry_skipped span not emitted on non-chassis room input"
+    assert any(a.get("reason") == "not_chassis_room" for a in attrs_list), (
+        f"expected reason=not_chassis_room; saw {attrs_list}"
     )
-    assert any(
-        a.get("reason") == "not_chassis_room" for a in attrs_list
-    ), f"expected reason=not_chassis_room; saw {attrs_list}"
 
 
 @pytest.mark.integration
@@ -130,12 +124,10 @@ def test_skipped_span_emitted_when_no_bond_for_actor(otel_capture) -> None:
     )
 
     attrs_list = _span_attrs_by_name(otel_capture, SPAN_ROOM_ENTRY_SKIPPED)
-    assert attrs_list, (
-        "room.entry_skipped span not emitted when actor has no bond entry"
+    assert attrs_list, "room.entry_skipped span not emitted when actor has no bond entry"
+    assert any(a.get("reason") == "no_bond_for_actor" for a in attrs_list), (
+        f"expected reason=no_bond_for_actor; saw {attrs_list}"
     )
-    assert any(
-        a.get("reason") == "no_bond_for_actor" for a in attrs_list
-    ), f"expected reason=no_bond_for_actor; saw {attrs_list}"
 
 
 @pytest.mark.integration
@@ -159,12 +151,10 @@ def test_skipped_span_emitted_when_magic_state_missing(otel_capture) -> None:
     )
 
     attrs_list = _span_attrs_by_name(otel_capture, SPAN_ROOM_ENTRY_SKIPPED)
-    assert attrs_list, (
-        "room.entry_skipped span not emitted when magic_state is None"
+    assert attrs_list, "room.entry_skipped span not emitted when magic_state is None"
+    assert any(a.get("reason") == "no_magic_state" for a in attrs_list), (
+        f"expected reason=no_magic_state; saw {attrs_list}"
     )
-    assert any(
-        a.get("reason") == "no_magic_state" for a in attrs_list
-    ), f"expected reason=no_magic_state; saw {attrs_list}"
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +178,7 @@ def test_evaluated_span_emitted_on_galley_entry(otel_capture) -> None:
     )
 
     attrs_list = _span_attrs_by_name(otel_capture, SPAN_ROOM_ENTRY_EVALUATED)
-    assert attrs_list, (
-        "room.entry_evaluated span not emitted on a successful galley entry"
-    )
+    assert attrs_list, "room.entry_evaluated span not emitted on a successful galley entry"
     attrs = attrs_list[-1]
     assert attrs.get("chassis_id") == "kestrel", attrs
     assert attrs.get("room_local_id") == "galley", attrs
@@ -225,9 +213,7 @@ def test_evaluated_span_emitted_with_fired_zero_when_cooldown_blocks(
 
     attrs_list = _span_attrs_by_name(otel_capture, SPAN_ROOM_ENTRY_EVALUATED)
     # Two evaluations: first fires, second is cooldown-blocked.
-    assert len(attrs_list) >= 2, (
-        f"expected ≥2 room.entry_evaluated spans; saw {len(attrs_list)}"
-    )
+    assert len(attrs_list) >= 2, f"expected ≥2 room.entry_evaluated spans; saw {len(attrs_list)}"
     second = attrs_list[1]
     # Story 47-6 review finding (cross-confirmed by 3 reviewer subagents):
     # the span's stated purpose is to let the GM panel distinguish
@@ -241,6 +227,5 @@ def test_evaluated_span_emitted_with_fired_zero_when_cooldown_blocks(
         f"reflecting matched-before-cooldown candidates. saw {second}"
     )
     assert second.get("fired_count", -1) == 0, (
-        f"second entry should be cooldown-blocked (fired_count==0); "
-        f"saw {second}"
+        f"second entry should be cooldown-blocked (fired_count==0); saw {second}"
     )

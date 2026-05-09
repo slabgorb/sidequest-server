@@ -105,15 +105,21 @@ def test_record_heartbeat_updates_last_seen_ts() -> None:
     mirror = DaemonStateMirror(heartbeat_interval_seconds=30.0)
 
     mirror.record_heartbeat(
-        queue="image", state="ready", queue_depth=0,
-        ts_monotonic=100.0, now_monotonic=1000.0,
+        queue="image",
+        state="ready",
+        queue_depth=0,
+        ts_monotonic=100.0,
+        now_monotonic=1000.0,
     )
     assert mirror.last_heartbeat_ts() == pytest.approx(100.0)
     assert mirror.last_received_at() == pytest.approx(1000.0)
 
     mirror.record_heartbeat(
-        queue="image", state="busy", queue_depth=1,
-        ts_monotonic=105.5, now_monotonic=1005.5,
+        queue="image",
+        state="busy",
+        queue_depth=1,
+        ts_monotonic=105.5,
+        now_monotonic=1005.5,
     )
     assert mirror.last_heartbeat_ts() == pytest.approx(105.5)
     assert mirror.last_received_at() == pytest.approx(1005.5)
@@ -131,8 +137,11 @@ def test_is_unresponsive_after_2x_interval_gap() -> None:
     # Record with a server-side receive ts of 100.0 — the daemon's
     # ts_monotonic is irrelevant to is_unresponsive.
     mirror.record_heartbeat(
-        queue="image", state="ready", queue_depth=0,
-        ts_monotonic=100.0, now_monotonic=100.0,
+        queue="image",
+        state="ready",
+        queue_depth=0,
+        ts_monotonic=100.0,
+        now_monotonic=100.0,
     )
 
     # 60s elapsed — exactly 2× interval — boundary case, still considered alive.
@@ -208,9 +217,7 @@ def test_record_heartbeat_rejects_invalid_state() -> None:
     mirror = DaemonStateMirror(heartbeat_interval_seconds=30.0)
 
     with pytest.raises(ValueError):
-        mirror.record_heartbeat(
-            queue="image", state="nonsense", queue_depth=0, ts_monotonic=1.0
-        )
+        mirror.record_heartbeat(queue="image", state="nonsense", queue_depth=0, ts_monotonic=1.0)
 
 
 def test_mirror_singleton_accessor_is_module_level() -> None:

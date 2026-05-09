@@ -1,4 +1,5 @@
 """Geometry helpers for course rendering — pure math, no SideQuest deps."""
+
 from __future__ import annotations
 
 import pytest
@@ -24,9 +25,7 @@ def test_chord_angular_distance_takes_short_arc() -> None:
 
 
 def test_chord_angular_distance_symmetric() -> None:
-    assert chord_angular_distance_deg(45.0, 270.0) == chord_angular_distance_deg(
-        270.0, 45.0
-    )
+    assert chord_angular_distance_deg(45.0, 270.0) == chord_angular_distance_deg(270.0, 45.0)
 
 
 def test_prograde_sign_destination_ahead_returns_plus_one() -> None:

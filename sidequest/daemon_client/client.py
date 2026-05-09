@@ -252,7 +252,10 @@ class DaemonClient:
             # connection open lets the daemon emit additional heartbeats
             # if a render or embed lock cycles while we're listening.
             try:
-                req = json.dumps({"id": "heartbeat-listener", "method": "status", "params": {}}) + "\n"
+                req = (
+                    json.dumps({"id": "heartbeat-listener", "method": "status", "params": {}})
+                    + "\n"
+                )
                 writer.write(req.encode())
                 await writer.drain()
             except (ConnectionResetError, BrokenPipeError, OSError):
@@ -269,9 +272,7 @@ class DaemonClient:
             try:
                 while True:
                     try:
-                        raw = await asyncio.wait_for(
-                            reader.readline(), timeout=max_idle_seconds
-                        )
+                        raw = await asyncio.wait_for(reader.readline(), timeout=max_idle_seconds)
                     except TimeoutError:
                         # No heartbeat or reply for the full window —
                         # the mirror's is_unresponsive() will fire from
@@ -365,9 +366,7 @@ class DaemonClient:
                 reply: dict[str, Any] | None = None
                 while reply is None:
                     try:
-                        raw = await asyncio.wait_for(
-                            reader.readline(), timeout=self._timeout
-                        )
+                        raw = await asyncio.wait_for(reader.readline(), timeout=self._timeout)
                     except TimeoutError as exc:
                         span.set_attribute("daemon.outcome", "reply_timeout")
                         raise DaemonUnavailableError(
@@ -375,9 +374,7 @@ class DaemonClient:
                         ) from exc
                     if not raw:
                         span.set_attribute("daemon.outcome", "eof_before_reply")
-                        raise DaemonUnavailableError(
-                            "daemon closed socket before sending a reply"
-                        )
+                        raise DaemonUnavailableError("daemon closed socket before sending a reply")
                     line = raw.decode().strip()
                     if not line:
                         continue
@@ -385,9 +382,7 @@ class DaemonClient:
                         obj = json.loads(line)
                     except json.JSONDecodeError as exc:
                         span.set_attribute("daemon.outcome", "invalid_json")
-                        raise DaemonUnavailableError(
-                            f"daemon sent non-JSON reply: {exc}"
-                        ) from exc
+                        raise DaemonUnavailableError(f"daemon sent non-JSON reply: {exc}") from exc
                     if obj.get("event") == "heartbeat":
                         try:
                             _mirror.record_heartbeat(
@@ -397,9 +392,7 @@ class DaemonClient:
                                 ts_monotonic=float(obj.get("ts_monotonic") or 0.0),
                             )
                         except (ValueError, TypeError):
-                            logger.warning(
-                                "daemon_client.invalid_heartbeat %s", obj
-                            )
+                            logger.warning("daemon_client.invalid_heartbeat %s", obj)
                         continue
                     reply = obj
                 if "error" in reply and reply["error"] is not None:

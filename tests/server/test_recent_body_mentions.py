@@ -5,6 +5,7 @@ mentioned by narrator output or player input. Populated by
 ``Session.note_body_mentioned`` after each turn's narration is
 applied. Read by ``Orchestrator`` when assembling the <courses> block.
 """
+
 from __future__ import annotations
 
 from sidequest.orbital.loader import OrbitalContent

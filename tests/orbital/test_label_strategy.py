@@ -356,12 +356,18 @@ class TestGroupCallouts:
     def test_orphan_callouts_are_singletons(self):
         decisions = [
             LabelDecision(
-                body_id="x", parent_id=None, parent_type=None,
+                body_id="x",
+                parent_id=None,
+                parent_type=None,
                 strategy=LabelStrategy.CALLOUT,
                 reason=SelectionReason.FALLBACK_ARC_TOO_SHORT,
-                text="X", register="engraved", text_width_px=50.0,
-                radial_tier=None, arc_available_px=None,
-                textpath_path_id=None, path_circumference_px=None,
+                text="X",
+                register="engraved",
+                text_width_px=50.0,
+                radial_tier=None,
+                arc_available_px=None,
+                textpath_path_id=None,
+                path_circumference_px=None,
                 callout_tag=None,
             ),
         ]
@@ -442,9 +448,12 @@ class _FakeViewport:
 
 def _viewport_default() -> _FakeViewport:
     return _FakeViewport(
-        chart_min_x=-100, chart_max_x=100,
-        chart_top_y=-100, chart_bottom_y=100,
-        svg_min_x=-220, svg_max_x=220,
+        chart_min_x=-100,
+        chart_max_x=100,
+        chart_top_y=-100,
+        chart_bottom_y=100,
+        svg_min_x=-220,
+        svg_max_x=220,
     )
 
 
@@ -499,10 +508,7 @@ class TestLayOutGutter:
 
     def test_overflow_into_inset(self):
         decisions = [_make_decision(f"b{i}", None) for i in range(20)]
-        anchors = {
-            f"b{i}": (50.0, -10.0 + i * 0.001, 30.0)
-            for i in range(20)
-        }
+        anchors = {f"b{i}": (50.0, -10.0 + i * 0.001, 30.0) for i in range(20)}
         layout = lay_out_gutter(
             decisions=decisions,
             anchor_by_id=anchors,
@@ -517,9 +523,16 @@ class TestLayOutGutter:
 def _solo_block(anchor_x, anchor_y, bearing, bx, by, w, h):
     d = _make_decision("x", None)
     return CalloutBlock(
-        anchor_x=anchor_x, anchor_y=anchor_y, anchor_bearing_deg=bearing,
-        side="right", parent_label=None, members=(d,),
-        block_x=bx, block_y=by, block_width_px=w, block_height_px=h,
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        anchor_bearing_deg=bearing,
+        side="right",
+        parent_label=None,
+        members=(d,),
+        block_x=bx,
+        block_y=by,
+        block_width_px=w,
+        block_height_px=h,
     )
 
 

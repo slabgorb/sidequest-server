@@ -101,8 +101,7 @@ def test_galley_entry_with_eligible_bond_fires_tea_brew() -> None:
     kestrel = snap.chassis_registry["kestrel"]
     bond_after = kestrel.bond_ledger[0].bond_strength_chassis_to_character
     assert bond_after > bond_before, (
-        f"the_tea_brew did not fire on Galley entry: "
-        f"bond before={bond_before} after={bond_after}"
+        f"the_tea_brew did not fire on Galley entry: bond before={bond_before} after={bond_after}"
     )
 
 
@@ -143,9 +142,7 @@ def test_non_galley_room_does_not_fire_tea_brew() -> None:
     )
 
     kestrel = snap.chassis_registry["kestrel"]
-    assert (
-        kestrel.bond_ledger[0].bond_strength_chassis_to_character == bond_before
-    )
+    assert kestrel.bond_ledger[0].bond_strength_chassis_to_character == bond_before
     assert len(kestrel.lineage) == lineage_before
 
 
@@ -205,8 +202,7 @@ def test_galley_entry_emits_rig_outcome_span(otel_capture) -> None:
 
     span_names = {s.name for s in otel_capture.get_finished_spans()}
     assert SPAN_RIG_CONFRONTATION_OUTCOME in span_names, (
-        f"rig.confrontation_outcome not emitted on auto-fire; "
-        f"saw {sorted(span_names)}"
+        f"rig.confrontation_outcome not emitted on auto-fire; saw {sorted(span_names)}"
     )
 
 
@@ -220,6 +216,5 @@ def test_galley_entry_emits_rig_bond_event_span(otel_capture) -> None:
 
     span_names = {s.name for s in otel_capture.get_finished_spans()}
     assert SPAN_RIG_BOND_EVENT in span_names, (
-        f"rig.bond_event not emitted on auto-fire bond mutation; "
-        f"saw {sorted(span_names)}"
+        f"rig.bond_event not emitted on auto-fire bond mutation; saw {sorted(span_names)}"
     )

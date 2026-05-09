@@ -1,4 +1,5 @@
 """Verify the asset_url span emits with expected attributes."""
+
 from __future__ import annotations
 
 from opentelemetry.sdk.trace import TracerProvider

@@ -127,12 +127,8 @@ def handle_yield(
         seated_player_actors = list(all_player_actors)
         companion_actor_names: list[str] = []
     else:
-        seated_player_actors = [
-            a for a in all_player_actors if a.name in seated_pc_names
-        ]
-        companion_actor_names = [
-            a.name for a in all_player_actors if a.name not in seated_pc_names
-        ]
+        seated_player_actors = [a for a in all_player_actors if a.name in seated_pc_names]
+        companion_actor_names = [a.name for a in all_player_actors if a.name not in seated_pc_names]
 
     all_done = all(a.withdrawn for a in seated_player_actors)
     # GM-panel visibility for the seat-aware yield gate. Without this
@@ -148,9 +144,7 @@ def handle_yield(
             "encounter_type": enc.encounter_type,
             "yielded_actor": player_name,
             "seated_pc_count": len(seated_player_actors),
-            "seated_pcs_remaining": [
-                a.name for a in seated_player_actors if not a.withdrawn
-            ],
+            "seated_pcs_remaining": [a.name for a in seated_player_actors if not a.withdrawn],
             "all_seated_pcs_withdrawn": all_done,
             "companion_count_on_player_side": len(companion_actor_names),
             "companions_excluded_from_gate": companion_actor_names,

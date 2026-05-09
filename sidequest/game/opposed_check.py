@@ -265,12 +265,8 @@ def resolve_opposed_check(
     player_num_adv = 0
     opponent_num_adv = 0
     if edge_resolver is not None and encounter is not None:
-        player_num_adv = numerical_advantage_for(
-            player_actor, encounter, edge_resolver
-        )
-        opponent_num_adv = numerical_advantage_for(
-            opponent_actor, encounter, edge_resolver
-        )
+        player_num_adv = numerical_advantage_for(player_actor, encounter, edge_resolver)
+        opponent_num_adv = numerical_advantage_for(opponent_actor, encounter, edge_resolver)
 
     shift = (player_roll + player_mod + player_num_adv) - (
         opponent_roll + opponent_mod + opponent_num_adv

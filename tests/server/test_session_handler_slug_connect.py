@@ -891,10 +891,11 @@ async def test_slug_connect_backfills_seat_confirmed_for_existing_seats(tmp_path
         f"Back-fill frames must mirror snapshot.player_seats; got: {seat_pairs}"
     )
 
-    backfill_records = [r for r in caplog.records if "session.seat_backfill_emitted" in r.getMessage()]
+    backfill_records = [
+        r for r in caplog.records if "session.seat_backfill_emitted" in r.getMessage()
+    ]
     assert backfill_records, (
-        "Seat back-fill must emit session.seat_backfill_emitted log line "
-        "(CLAUDE.md OTEL mandate)"
+        "Seat back-fill must emit session.seat_backfill_emitted log line (CLAUDE.md OTEL mandate)"
     )
     text = backfill_records[0].getMessage()
     assert "count=2" in text, f"Log must report count=2; got: {text}"

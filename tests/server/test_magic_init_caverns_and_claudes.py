@@ -180,8 +180,7 @@ def test_caverns_sunden_class_aware_spell_slot_allocation(cc_pack_dir):
         bars = list(snapshot.magic_state.ledger.values())
         assert len(bars) == 1
         assert bars[0].value == expected_value, (
-            f"{char_class!r} expected spell_slots={expected_value}, "
-            f"got {bars[0].value}"
+            f"{char_class!r} expected spell_slots={expected_value}, got {bars[0].value}"
         )
 
 

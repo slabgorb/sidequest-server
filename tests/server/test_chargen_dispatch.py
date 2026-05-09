@@ -409,9 +409,7 @@ class TestSliceBOpeningHook:
                 "for a world that declares openings"
             )
             directive = captured.get("directive")
-            assert directive is not None, (
-                "opening_directive should be populated alongside the seed"
-            )
+            assert directive is not None, "opening_directive should be populated alongside the seed"
             assert directive.startswith("=== OPENING SCENARIO ===")
             assert directive.endswith("=== END OPENING ===")
 
@@ -474,15 +472,11 @@ class TestSliceAWiring:
             # those are universal. Other items vary by kit.
             items = char.core.inventory.items
             item_ids = [i["id"] for i in items]
-            assert "torch" in item_ids, (
-                f"every c&c class kit carries a torch; got {item_ids}"
-            )
+            assert "torch" in item_ids, f"every c&c class kit carries a torch; got {item_ids}"
             assert "rations_day" in item_ids, (
                 f"every c&c class kit carries rations_day; got {item_ids}"
             )
-            assert item_ids.count("torch") >= 3, (
-                "rolls_per_slot: light=3 → at least 3 torches"
-            )
+            assert item_ids.count("torch") >= 3, "rolls_per_slot: light=3 → at least 3 torches"
             # Items must come from the chosen class's kit only.
             pack = sd.genre_pack
             chosen = next(c for c in pack.classes if c.display_name == char.char_class)

@@ -191,12 +191,7 @@ def _fmt(v: float, digits: int = 2) -> str:
 
 
 def _xml_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _format_dv(dv: float) -> str:
@@ -471,9 +466,7 @@ def render_course_overlay(
     in `intent.py`); ``_resolve_drop_reason`` is exported so the caller
     reads the same enum without duplicating logic.
     """
-    drop = _resolve_drop_reason(
-        course=course, orbits=orbits, party_body_id=party_body_id
-    )
+    drop = _resolve_drop_reason(course=course, orbits=orbits, party_body_id=party_body_id)
     if drop is not None:
         return chart_svg
 

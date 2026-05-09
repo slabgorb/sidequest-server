@@ -398,9 +398,7 @@ def create_rest_router() -> APIRouter:
                         "character_level": int(resolved_level or 1),
                         "character_xp": int(getattr(char, "xp", 0) or 0),
                         "region_id": snap.current_region or "",
-                        "display_location": (
-                            snap.character_locations.get(resolved_name) or ""
-                        ),
+                        "display_location": (snap.character_locations.get(resolved_name) or ""),
                         "inventory": {
                             "items": [],
                             "gold": 0,

@@ -135,7 +135,5 @@ def test_narration_apply_non_chassis_location_is_silent_no_op() -> None:
     )
 
     kestrel = snap.chassis_registry["kestrel"]
-    assert (
-        kestrel.bond_ledger[0].bond_strength_chassis_to_character == bond_before
-    )
+    assert kestrel.bond_ledger[0].bond_strength_chassis_to_character == bond_before
     assert len(kestrel.lineage) == lineage_before

@@ -193,9 +193,13 @@ async def test_multiple_npcs_all_rendered():
     Tchesla (1) — a real roster. Losing any of them is drift.
     """
     entries = [
-        NpcPoolMember(name="Frandrew", role="captain", pronouns="she/her", drawn_from="legacy_registry"),
+        NpcPoolMember(
+            name="Frandrew", role="captain", pronouns="she/her", drawn_from="legacy_registry"
+        ),
         NpcPoolMember(name="Vey", role="engineer", pronouns="he/him", drawn_from="legacy_registry"),
-        NpcPoolMember(name="Marrien", role="scout", pronouns="they/them", drawn_from="legacy_registry"),
+        NpcPoolMember(
+            name="Marrien", role="scout", pronouns="they/them", drawn_from="legacy_registry"
+        ),
     ]
     prompt, _ = await _build_prompt_with_registry(entries)
     for name in ("Frandrew", "Vey", "Marrien"):

@@ -97,12 +97,20 @@ def test_s1_dedupe_by_id_prefers_existing_magic_state_entry() -> None:
         "genre_slug": "g",
         "world_slug": "w",
         "world_confrontations": [
-            {"id": "the_tea_brew", "register": "intimate", "outcomes": {"clear_win": {"mandatory_outputs": ["a"]}}},
+            {
+                "id": "the_tea_brew",
+                "register": "intimate",
+                "outcomes": {"clear_win": {"mandatory_outputs": ["a"]}},
+            },
         ],
         "magic_state": {
             "config": {"world_slug": "w", "ledger_bars": []},
             "confrontations": [
-                {"id": "the_tea_brew", "register": "intimate", "outcomes": {"clear_win": {"mandatory_outputs": ["b"]}}},
+                {
+                    "id": "the_tea_brew",
+                    "register": "intimate",
+                    "outcomes": {"clear_win": {"mandatory_outputs": ["b"]}},
+                },
             ],
         },
     }

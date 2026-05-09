@@ -73,9 +73,7 @@ def test_voidborn_freighter_loads_clean_through_genre_loader():
 
     pack = load_genre_pack(space_opera)
     assert pack.chassis_classes is not None
-    voidborn = next(
-        c for c in pack.chassis_classes.classes if c.id == "voidborn_freighter"
-    )
+    voidborn = next(c for c in pack.chassis_classes.classes if c.id == "voidborn_freighter")
     assert len(voidborn.stations) == 4
     station_ids = {s.id for s in voidborn.stations}
     assert station_ids == {"command", "helm", "weapons", "engineering_controls"}

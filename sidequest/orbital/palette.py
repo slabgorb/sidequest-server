@@ -45,7 +45,7 @@ BEARING_ROSE_OUTER_PX = 84
 # Tick lengths at every 10° / 30° / 90°. The longer ticks step outward from
 # the outer ring.
 BEARING_ROSE_TICK_LEN_10 = 4
-BEARING_ROSE_TICK_LEN_30 = 6   # 1.5x
+BEARING_ROSE_TICK_LEN_30 = 6  # 1.5x
 BEARING_ROSE_TICK_LEN_90 = 10  # 2.5x
 
 # Cardinal numerals (000/090/180/270) and intermediates (030..330).
@@ -66,7 +66,7 @@ STAR_RETICLE_OUTER_R = 28.0  # outer dashed ring
 STAR_RETICLE_INNER_R = 20.0  # inner solid ring
 STAR_RETICLE_TICK_INNER = 14.0  # crosshair tick from r=14
 STAR_RETICLE_TICK_OUTER = 22.0  # to r=22
-STAR_RETICLE_CORE_R = 6.0    # brass core disk
+STAR_RETICLE_CORE_R = 6.0  # brass core disk
 STAR_RETICLE_OUTER_STROKE = 2.0
 STAR_RETICLE_INNER_STROKE = 1.2
 
@@ -109,10 +109,10 @@ LABEL_PROSE_OPACITY = 0.85
 # When a parent body has children visible at system-root scope, moons are
 # placed in a band of fixed pixel radii around the parent (real moon orbits
 # are sub-pixel at system scope; the design inflates them).
-MOON_BAND_INNER_PX = 24    # closest moon
-MOON_BAND_STEP_PX = 18     # step outward per moon
-MOON_BAND_MAX = 8          # overflow threshold — beyond this, fall back to +N glyph
-MOON_DOT_R = 2.0           # moon body glyph at system-scope (small dot)
+MOON_BAND_INNER_PX = 24  # closest moon
+MOON_BAND_STEP_PX = 18  # step outward per moon
+MOON_BAND_MAX = 8  # overflow threshold — beyond this, fall back to +N glyph
+MOON_DOT_R = 2.0  # moon body glyph at system-scope (small dot)
 
 # ---- Label de-collision (§5) -------------------------------------------
 
@@ -145,8 +145,8 @@ HAZARD_GLYPH_STROKE_WIDTH = 1.4
 # callout, which is the safe failure mode (visible-and-correct vs.
 # overlapping). Calibrated against UI-rendered bbox at LABEL_*_FONT_SIZE.
 LABEL_ENGRAVED_CHAR_WIDTH_PX: float = 8.5  # Orbitron 700 + letter-spacing 2
-LABEL_CHALK_CHAR_WIDTH_PX: float = 9.0     # Orbitron 600 + letter-spacing 3
-LABEL_PROSE_CHAR_WIDTH_PX: float = 6.5     # VT323 italic at LABEL_PROSE_FONT_SIZE
+LABEL_CHALK_CHAR_WIDTH_PX: float = 9.0  # Orbitron 600 + letter-spacing 3
+LABEL_PROSE_CHAR_WIDTH_PX: float = 6.5  # VT323 italic at LABEL_PROSE_FONT_SIZE
 
 # Safety factors per ADR-094 §Decision rule 2 ("× 1.2") and the same-or-larger
 # recommendation for arc-length fit.
@@ -168,7 +168,7 @@ LEADER_TERMINATOR_SIZE_PX: float = 3.0
 # Gutter zone — width and minimum-viability threshold.
 GUTTER_WIDTH_PX: float = 120.0
 GUTTER_MIN_VIABLE_WIDTH_PX: float = 60.0  # below this, gutter is unavailable
-GUTTER_INNER_MARGIN_PX: float = 8.0       # space between chart bbox and gutter
+GUTTER_INNER_MARGIN_PX: float = 8.0  # space between chart bbox and gutter
 
 # Tag-line max length per ADR §Label-block content rule.
 CALLOUT_TAG_MAX_CHARS: int = 24

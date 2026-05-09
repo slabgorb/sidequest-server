@@ -144,9 +144,7 @@ def _make_visual_result(seq: int) -> NarrationTurnResult:
             mood="neutral",
             tags=[],
         ),
-        beat_selections=[
-            BeatSelection(actor="test", beat_id=f"backpressure_test_{seq}")
-        ],
+        beat_selections=[BeatSelection(actor="test", beat_id=f"backpressure_test_{seq}")],
     )
 
 
@@ -261,15 +259,14 @@ async def test_backpressure_warn_event_fires_past_threshold(
     await daemon.stop()
 
     assert len(daemon.requests) >= 4, (
-        f"warn mode must let the request through; got "
-        f"{len(daemon.requests)} requests at the daemon"
+        f"warn mode must let the request through; got {len(daemon.requests)} requests at the daemon"
     )
 
     # AC3: a WARN-level log line accompanies the backpressure event.
     backpressure_logs = [
-        rec for rec in caplog.records
-        if rec.levelno >= logging.WARNING
-        and "backpressure" in rec.getMessage().lower()
+        rec
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING and "backpressure" in rec.getMessage().lower()
     ]
     assert backpressure_logs, (
         "AC3 specifies a loud WARN log alongside the OTEL event — "
@@ -329,6 +326,5 @@ async def test_backpressure_below_threshold_emits_no_event(
         and e.get("fields", {}).get("op") == "enqueue.backpressure"
     ]
     assert backpressure_events == [], (
-        "depth at the threshold must not warn — got "
-        f"{len(backpressure_events)} events"
+        f"depth at the threshold must not warn — got {len(backpressure_events)} events"
     )

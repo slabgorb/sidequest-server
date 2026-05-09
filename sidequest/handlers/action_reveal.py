@@ -53,9 +53,7 @@ class ActionRevealHandler:
 
         snapshot = session._room.snapshot
         if snapshot is None:
-            logger.warning(
-                "action_reveal received before room bound to world; dropping"
-            )
+            logger.warning("action_reveal received before room bound to world; dropping")
             return []
 
         payload: ActionRevealPayload = msg.payload  # type: ignore[attr-defined]

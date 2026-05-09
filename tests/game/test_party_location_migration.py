@@ -207,7 +207,9 @@ def test_canonicalize_span_fires_when_s3_migration_runs() -> None:
         legacy = _seated_legacy(location="Galley")
         migrate_legacy_snapshot(legacy)
 
-        canonicalize = [s for s in exporter.get_finished_spans() if s.name == "snapshot.canonicalize"]
+        canonicalize = [
+            s for s in exporter.get_finished_spans() if s.name == "snapshot.canonicalize"
+        ]
         assert canonicalize, "canonicalize span did not fire for S3 migration"
         attrs = dict(canonicalize[-1].attributes or {})
         assert attrs.get("s3_party_location_seeded", 0) >= 1

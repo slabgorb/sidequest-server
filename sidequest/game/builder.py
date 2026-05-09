@@ -1725,13 +1725,8 @@ class CharacterBuilder:
         if self._rolled_stats is None:
             return scene
         stats_dict = dict(self._rolled_stats)
-        qualifying_names = {
-            c.display_name for c in qualifying_classes(stats_dict, self._classes)
-        }
-        kept = [
-            c for c in scene.choices
-            if c.mechanical_effects.class_hint in qualifying_names
-        ]
+        qualifying_names = {c.display_name for c in qualifying_classes(stats_dict, self._classes)}
+        kept = [c for c in scene.choices if c.mechanical_effects.class_hint in qualifying_names]
         return scene.model_copy(update={"choices": kept})
 
     # --- Stat generation ---

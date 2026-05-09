@@ -47,11 +47,11 @@ def _make_eligible_result(**kwargs):
     NarrationTurnResult directly and bypass this helper.
     """
     from sidequest.agents.orchestrator import BeatSelection, NarrationTurnResult
+
     if "beat_selections" not in kwargs:
-        kwargs["beat_selections"] = [
-            BeatSelection(actor="test", beat_id="dispatch_test")
-        ]
+        kwargs["beat_selections"] = [BeatSelection(actor="test", beat_id="dispatch_test")]
     return NarrationTurnResult(**kwargs)
+
 
 @pytest.fixture
 def short_sock(tmp_path: Path) -> Path:
@@ -62,6 +62,7 @@ def short_sock(tmp_path: Path) -> Path:
     yield p
     if p.exists():
         p.unlink()
+
 
 class _FakeDaemon:
     """Unix-domain echo server matching the daemon protocol."""
@@ -96,6 +97,7 @@ class _FakeDaemon:
             self._server.close()
             await self._server.wait_closed()
 
+
 def _make_session_data(player_id: str = "p-1") -> _SessionData:
     from unittest.mock import MagicMock
 
@@ -122,6 +124,7 @@ def _make_session_data(player_id: str = "p-1") -> _SessionData:
         game_slug=f"test-session-{player_id}",
     )
     return sd
+
 
 def _make_session_data_with_pc(
     player_name: str = "Rux",
@@ -172,11 +175,13 @@ def _make_session_data_with_pc(
     )
     return sd
 
+
 def _make_handler_with_queue() -> tuple[WebSocketSessionHandler, asyncio.Queue]:
     handler = WebSocketSessionHandler(save_dir=Path("/tmp/never-used"))
     queue: asyncio.Queue[object] = asyncio.Queue()
     handler._out_queue = queue  # noqa: SLF001 — test wiring
     return handler, queue
+
 
 @pytest.mark.asyncio
 async def test_render_dispatch_fires_daemon_and_enqueues_image(
@@ -262,6 +267,7 @@ async def test_render_dispatch_fires_daemon_and_enqueues_image(
         "back to a styleless raw prompt"
     )
 
+
 @pytest.mark.asyncio
 async def test_render_dispatch_otel_includes_genre_and_world(
     tmp_path: Path,
@@ -343,6 +349,7 @@ async def test_render_dispatch_otel_includes_genre_and_world(
         "spot a styleless silent fallback before the image arrives"
     )
 
+
 @pytest.mark.asyncio
 async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
     tmp_path: Path,
@@ -422,6 +429,7 @@ async def test_portrait_dispatch_emits_structured_pc_ref_and_descriptor(
     # name has only the hyphen which is preserved.
     assert "-" in descriptor["id"]
 
+
 @pytest.mark.asyncio
 async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
     tmp_path: Path,
@@ -490,6 +498,7 @@ async def test_scene_illustration_dispatch_uses_characters_key_not_participants(
     # Descriptor still flows through so the daemon can register the PC.
     assert params["pc_descriptor"]["id"] == "hokulea"
 
+
 @pytest.mark.asyncio
 async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
     tmp_path: Path,
@@ -535,6 +544,7 @@ async def test_portrait_dispatch_omits_descriptor_when_no_character_seated(
     # Ref still ships — daemon's try_compose handles the catalog miss.
     assert params["characters"] == ["pc:rux"]
     assert "pc_descriptor" not in params
+
 
 @pytest.mark.asyncio
 async def test_landscape_dispatch_strips_free_form_location(
@@ -594,6 +604,7 @@ async def test_landscape_dispatch_strips_free_form_location(
         "COMPOSE_FAILED. Pre-fix every landscape render in single-player "
         "Coyote Star failed this way."
     )
+
 
 @pytest.mark.asyncio
 async def test_render_dispatch_includes_session_id_for_r2_keying(
@@ -666,6 +677,7 @@ async def test_render_dispatch_includes_session_id_for_r2_keying(
         "of the server uses to name the session"
     )
 
+
 @pytest.mark.asyncio
 async def test_render_skipped_when_flag_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -680,6 +692,7 @@ async def test_render_skipped_when_flag_disabled(
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
 
+
 @pytest.mark.asyncio
 async def test_render_skipped_when_no_visual_scene(
     monkeypatch: pytest.MonkeyPatch,
@@ -690,6 +703,7 @@ async def test_render_skipped_when_no_visual_scene(
     result = _make_eligible_result(narration="flat text turn")
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
+
 
 @pytest.mark.asyncio
 async def test_render_skipped_when_daemon_socket_missing(
@@ -710,12 +724,14 @@ async def test_render_skipped_when_daemon_socket_missing(
     assert handler._maybe_dispatch_render(sd, result) is None  # noqa: SLF001
     assert queue.empty()
 
+
 def _client_bound_to(path: Path):
     """Return a DaemonClient fixed on a given socket path — used to swap
     the default-constructed client in the handler."""
     from sidequest.daemon_client import DaemonClient
 
     return DaemonClient(socket_path=path, timeout_seconds=2.0)
+
 
 @pytest.mark.asyncio
 async def test_render_dispatch_self_heals_after_daemon_restart(
@@ -819,6 +835,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
         render_mounts.reset_for_app(app)
         render_mounts.set_active_app(None)
 
+
 # ---------------------------------------------------------------------------
 # Story 45-30: Render trigger policy contract + OTEL render.trigger reasons
 #
@@ -842,6 +859,7 @@ async def test_render_dispatch_self_heals_after_daemon_restart(
 #   AC6 Felix-shape replay       → test_felix_shape_replay_eight_turn_sequence
 # ---------------------------------------------------------------------------
 
+
 def _capture_watcher_events() -> tuple[object, list[dict]]:
     """Subscribe a fake socket to ``watcher_hub`` for the current loop and
     return ``(capture, events)`` so a test can inspect emitted events."""
@@ -859,6 +877,7 @@ def _capture_watcher_events() -> tuple[object, list[dict]]:
             self.events.append(data)
 
     return _Cap(), []  # caller uses .events on the cap object
+
 
 def _watcher_events_matching(
     cap: object, *, field: str | None = None, op: str | None = None
@@ -878,6 +897,7 @@ def _watcher_events_matching(
             continue
         out.append(ev)
     return out
+
 
 async def _bind_capture() -> object:
     """Bind a ``_Cap`` to ``watcher_hub`` and return it."""
@@ -900,6 +920,7 @@ async def _bind_capture() -> object:
     await watcher_hub.subscribe(cap)  # type: ignore[arg-type]
     return cap
 
+
 def _visual_scene_for_turn() -> VisualScene:
     """A canonical scene_illustration ``VisualScene`` — used so the
     pre-story short-circuit (`visual is None or not subject.strip()`)
@@ -913,8 +934,10 @@ def _visual_scene_for_turn() -> VisualScene:
         tags=["wasteland"],
     )
 
+
 def _visual_scene_or_none(*, with_visual: bool) -> VisualScene | None:
     return _visual_scene_for_turn() if with_visual else None
+
 
 @pytest.mark.asyncio
 async def test_render_trigger_span_route_registered() -> None:
@@ -941,6 +964,7 @@ async def test_render_trigger_span_route_registered() -> None:
     assert skip_route.event_type == "state_transition"
     assert skip_route.component == "render"
 
+
 def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
     """Yields (reason_name, NarrationTurnResult kwargs) — one positive
     fixture per trigger reason. Each kwargs dict produces a result whose
@@ -964,9 +988,7 @@ def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
             {
                 "narration": "Felix triggers the trap.",
                 "visual_scene": _visual_scene_for_turn(),
-                "beat_selections": [
-                    BeatSelection(actor="Felix", beat_id="trap_sprung")
-                ],
+                "beat_selections": [BeatSelection(actor="Felix", beat_id="trap_sprung")],
             },
         ),
         (
@@ -986,6 +1008,7 @@ def _reason_drives_dispatch_params() -> list[tuple[str, dict]]:
             },
         ),
     ]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -1035,8 +1058,7 @@ async def test_render_trigger_emits_reason_and_dispatches(
 
     queued = handler._maybe_dispatch_render(sd, result)  # noqa: SLF001
     assert queued is not None, (
-        f"reason={reason} fixture did not dispatch — the policy gate "
-        "rejected an eligible turn"
+        f"reason={reason} fixture did not dispatch — the policy gate rejected an eligible turn"
     )
 
     # Drain the background daemon round-trip so we don't leak the task.
@@ -1050,12 +1072,12 @@ async def test_render_trigger_emits_reason_and_dispatches(
     )
     fields = triggers[0]["fields"]
     assert fields.get("reason") == reason, (
-        f"render.trigger fired with reason={fields.get('reason')!r}; "
-        f"expected {reason!r}"
+        f"render.trigger fired with reason={fields.get('reason')!r}; expected {reason!r}"
     )
     assert fields.get("eligible") is True
     assert fields.get("queued") is True
     assert fields.get("turn_number") == sd.snapshot.turn_manager.interaction
+
 
 @pytest.mark.asyncio
 async def test_render_trigger_resolved_encounter_emits_resolved(
@@ -1118,6 +1140,7 @@ async def test_render_trigger_resolved_encounter_emits_resolved(
     assert len(triggers) == 1
     assert triggers[0]["fields"].get("reason") == "resolved"
 
+
 @pytest.mark.asyncio
 async def test_render_trigger_banter_emits_none_policy_skip(
     tmp_path: Path,
@@ -1174,8 +1197,7 @@ async def test_render_trigger_banter_emits_none_policy_skip(
     # settle so the assertion below isn't racing a pending coroutine.
     await asyncio.sleep(0.1)
     assert daemon.requests == [], (
-        f"banter turn produced {len(daemon.requests)} daemon request(s) "
-        "— policy gate is bypassed"
+        f"banter turn produced {len(daemon.requests)} daemon request(s) — policy gate is bypassed"
     )
     await daemon.stop()
 
@@ -1195,12 +1217,11 @@ async def test_render_trigger_banter_emits_none_policy_skip(
     )
 
     skips = _watcher_events_matching(cap, field="render", op="policy_skip")
-    assert len(skips) == 1, (
-        f"banter turn must emit one render.policy_skip; got {len(skips)}"
-    )
+    assert len(skips) == 1, f"banter turn must emit one render.policy_skip; got {len(skips)}"
     skip_fields = skips[0]["fields"]
     assert skip_fields.get("reason") == "none_policy"
     assert skip_fields.get("narrator_emitted_subject") is True
+
 
 @pytest.mark.asyncio
 async def test_render_trigger_priority_beat_fire_over_npc_intro(
@@ -1258,6 +1279,7 @@ async def test_render_trigger_priority_beat_fire_over_npc_intro(
         "priority order broken: BEAT_FIRE must outrank NPC_INTRO so the "
         "GM panel reports the mechanical event, not the NPC mention"
     )
+
 
 @pytest.mark.asyncio
 async def test_felix_shape_replay_eight_turn_sequence(
@@ -1406,13 +1428,10 @@ async def test_felix_shape_replay_eight_turn_sequence(
         )
         if expected_reason == "none_policy":
             assert queued is None, (
-                f"turn {idx} ({expected_reason}) dispatched — should have "
-                "been suppressed"
+                f"turn {idx} ({expected_reason}) dispatched — should have been suppressed"
             )
         else:
-            assert queued is not None, (
-                f"turn {idx} ({expected_reason}) failed to dispatch"
-            )
+            assert queued is not None, f"turn {idx} ({expected_reason}) failed to dispatch"
             dispatched_count += 1
             await asyncio.wait_for(queue.get(), timeout=2.0)
         # Advance the snapshot's location for the next turn so the

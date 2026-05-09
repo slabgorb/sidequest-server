@@ -5,6 +5,7 @@ The narration_apply pipeline parses the JSON, dispatches typed
 intents to handlers/course_intent.py, which validates against the
 current turn's compute_courses output and emits state patches.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -95,9 +95,7 @@ def _make_visual_result() -> NarrationTurnResult:
             mood="ominous",
             tags=["desert", "ruin"],
         ),
-        beat_selections=[
-            BeatSelection(actor="test", beat_id="unavailable_fallback_test")
-        ],
+        beat_selections=[BeatSelection(actor="test", beat_id="unavailable_fallback_test")],
     )
 
 
@@ -219,9 +217,7 @@ async def test_unresponsive_daemon_emits_render_unavailable_event(
             and e.get("fields", {}).get("field") == "render"
             and e.get("fields", {}).get("op") == "unavailable"
         ]
-        assert len(unavail) == 1, (
-            f"expected exactly 1 render.unavailable event, got {len(unavail)}"
-        )
+        assert len(unavail) == 1, f"expected exactly 1 render.unavailable event, got {len(unavail)}"
         fields = unavail[0]["fields"]
         assert fields["reason"] == "heartbeat_lost"
         assert fields.get("last_heartbeat_ts") is not None, (
@@ -290,8 +286,7 @@ def test_render_status_persists_to_database_end_to_end(tmp_path: Path) -> None:
 
         # Read back from SQL — this proves the value reached storage.
         row = store._conn.execute(  # noqa: SLF001
-            "SELECT render_status, narrative_excerpt FROM scrapbook_entries "
-            "WHERE turn_id = ?",
+            "SELECT render_status, narrative_excerpt FROM scrapbook_entries WHERE turn_id = ?",
             (42,),
         ).fetchone()
         assert row is not None, "scrapbook_entries row not persisted"
@@ -323,9 +318,7 @@ async def test_unresponsive_pipeline_stamps_scrapbook_payload_render_status(
 
     mirror = get_mirror()
     mirror.clear_for_test()
-    mirror.record_heartbeat(
-        queue="image", state="ready", queue_depth=0, ts_monotonic=0.0
-    )
+    mirror.record_heartbeat(queue="image", state="ready", queue_depth=0, ts_monotonic=0.0)
     mirror.force_unresponsive_for_test()
 
     persisted: list[ScrapbookEntryPayload] = []

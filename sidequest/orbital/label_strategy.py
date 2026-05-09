@@ -55,22 +55,23 @@ class LabelDecision:
     text: str
     register: Register
     text_width_px: float
-    radial_tier: int | None              # RADIAL only
-    arc_available_px: float | None       # RADIAL only
-    textpath_path_id: str | None         # TEXTPATH only
+    radial_tier: int | None  # RADIAL only
+    arc_available_px: float | None  # RADIAL only
+    textpath_path_id: str | None  # TEXTPATH only
     path_circumference_px: float | None  # TEXTPATH only
-    callout_tag: str | None              # CALLOUT optional second line
+    callout_tag: str | None  # CALLOUT optional second line
 
 
 @dataclass(frozen=True)
 class CalloutBlock:
     """A single callout slot — singleton body or sibling group."""
+
     anchor_x: float
     anchor_y: float
     anchor_bearing_deg: float
     side: Literal["right", "left", "inset"]
-    parent_label: str | None             # set when this is a grouped block
-    members: tuple[LabelDecision, ...]   # 1+ decisions; >1 ⇒ grouped block
+    parent_label: str | None  # set when this is a grouped block
+    members: tuple[LabelDecision, ...]  # 1+ decisions; >1 ⇒ grouped block
     block_x: float
     block_y: float
     block_width_px: float
@@ -112,23 +113,24 @@ class _StrategyInput:
     Built once per render by the driver from orbits/chart/placements.
     Pure data: rule functions don't need the renderer.
     """
+
     body_id: str
     parent_id: str | None
-    parent_type: str | None       # str rather than BodyType to avoid orbital→models→here cycle
-    text: str                     # the label text (already stripped)
+    parent_type: str | None  # str rather than BodyType to avoid orbital→models→here cycle
+    text: str  # the label text (already stripped)
     register: Register
     text_width_px: float
-    is_moon_band_child: bool      # body is rendered inside a moon band
-    callout_label_annotation: object | None   # Annotation if explicit override exists, else None
+    is_moon_band_child: bool  # body is rendered inside a moon band
+    callout_label_annotation: object | None  # Annotation if explicit override exists, else None
     textpath_path_id: str | None  # set if engraved_label with curve_along resolves to this body
     path_circumference_px: float | None  # resolved path length when textpath_path_id set
-    arc_to_neighbor_px: float | None     # smallest applicable arc to a peer's label edge
-    radial_tier: int              # tier from existing _assign_collision_tiers (0..LABEL_TIER_MAX+1)
+    arc_to_neighbor_px: float | None  # smallest applicable arc to a peer's label edge
+    radial_tier: int  # tier from existing _assign_collision_tiers (0..LABEL_TIER_MAX+1)
     # Anchor data (used by SVG handler later, threaded through unchanged):
     anchor_x: float
     anchor_y: float
     anchor_bearing_deg: float
-    callout_tag: str | None       # for explicit callout_label, the tag line
+    callout_tag: str | None  # for explicit callout_label, the tag line
 
 
 def _rule_forced_moon_band(inp: _StrategyInput) -> LabelDecision | None:
@@ -372,8 +374,10 @@ def _side_for_bearing(bearing_deg: float) -> Literal["right", "left"]:
 
 
 def _segments_intersect(
-    p1: tuple[float, float], p2: tuple[float, float],
-    p3: tuple[float, float], p4: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    p4: tuple[float, float],
 ) -> bool:
     """True if open segments p1-p2 and p3-p4 cross (excluding shared endpoints)."""
     if {p1, p2} & {p3, p4}:
@@ -491,18 +495,20 @@ def lay_out_gutter(
         is_grouped = len(members) >= palette.CALLOUT_GROUP_MIN_MEMBERS
         parent_label = members[0].parent_id if is_grouped else None
 
-        blocks.append(CalloutBlock(
-            anchor_x=ax,
-            anchor_y=ay,
-            anchor_bearing_deg=bearing,
-            side=chosen_side,
-            parent_label=parent_label,
-            members=members,
-            block_x=chosen_x,
-            block_y=chosen_y,
-            block_width_px=block_width_px,
-            block_height_px=height,
-        ))
+        blocks.append(
+            CalloutBlock(
+                anchor_x=ax,
+                anchor_y=ay,
+                anchor_bearing_deg=bearing,
+                side=chosen_side,
+                parent_label=parent_label,
+                members=members,
+                block_x=chosen_x,
+                block_y=chosen_y,
+                block_width_px=block_width_px,
+                block_height_px=height,
+            )
+        )
 
     crossings = _count_cross_group_crossings(blocks)
     return GutterLayout(

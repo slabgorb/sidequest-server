@@ -13,6 +13,23 @@ from pydantic import BaseModel, Field, model_validator
 from sidequest.game.beat_kinds import BeatKind
 
 
+class MoraleTrigger(StrEnum):
+    """B/X morale check triggers. Per spec §2.2."""
+
+    first_blood = "first_blood"
+    half_killed = "half_killed"
+    intimidated = "intimidated"
+    leader_killed = "leader_killed"
+
+
+class FleeConsequence(StrEnum):
+    """How the opponent side breaks off when morale fails."""
+
+    chase = "chase"
+    surrender = "surrender"
+    rout = "rout"
+
+
 class InitiativeRule(BaseModel):
     """Maps an encounter type to its primary stat for turn ordering."""
 
@@ -114,6 +131,7 @@ class BeatDef(BaseModel):
     # numerical-advantage rule (Step 3).
     target_select: str | None = None
     resource_deltas: dict[str, float] | None = None
+    class_filter: list[str] | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> BeatDef:
@@ -139,6 +157,8 @@ class BeatDef(BaseModel):
                     f"beat '{self.id}' target_select={self.target_select!r} "
                     f"not in {sorted(valid_modes)}"
                 )
+        if self.class_filter is not None and not self.class_filter:
+            raise ValueError(f"beat '{self.id}' class_filter must be None or non-empty list")
         return self
 
 
@@ -162,6 +182,27 @@ class MetricDef(BaseModel):
                 f"metric '{self.name}' threshold ({self.threshold}) must be "
                 f"> starting ({self.starting})"
             )
+        return self
+
+
+class MoraleDef(BaseModel):
+    """Optional morale block on a combat ConfrontationDef. B/X port.
+
+    Score is the 2d6 target; total ≤ score = stay, > = flee.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    score: int = 8
+    triggers: list[MoraleTrigger]
+    flee_consequence: FleeConsequence = FleeConsequence.chase
+
+    @model_validator(mode="after")
+    def _validate(self) -> MoraleDef:
+        if not (2 <= self.score <= 12):
+            raise ValueError(f"morale score {self.score} not in 2..12")
+        if not self.triggers:
+            raise ValueError("morale.triggers must be non-empty")
         return self
 
 
@@ -271,6 +312,7 @@ class ConfrontationDef(BaseModel):
     # opposed_check — only valid when ``resolution_mode`` is something
     # other than ``opposed_check``.
     opponent_default_stats: dict[str, int] | None = None
+    morale: MoraleDef | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -1,5 +1,6 @@
 """Wiring: orchestrator includes <courses> block when world has
 orbital tier and the snapshot/session yields any computed courses."""
+
 from __future__ import annotations
 
 from sidequest.orbital.course import (

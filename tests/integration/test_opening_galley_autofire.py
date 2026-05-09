@@ -36,9 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPACE_OPERA = REPO_ROOT / "sidequest-content" / "genre_packs" / "space_opera"
 
 
-def _bootstrap_session_opened_in_galley(
-    *, character_id: str = "player_character"
-) -> GameSnapshot:
+def _bootstrap_session_opened_in_galley(*, character_id: str = "player_character") -> GameSnapshot:
     """Snapshot in the same shape a fresh session takes when the opening
     places the player in the galley — chassis registered and location
     set to the chassis-qualified galley.

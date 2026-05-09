@@ -333,8 +333,7 @@ class PlayerActionHandler:
             # before narrator dispatch. Send to everyone — even the last
             # submitter, whose own row needs to clear.
             party_members = [
-                {"player_id": pid, "character_name": p.character_name}
-                for pid, p in pending
+                {"player_id": pid, "character_name": p.character_name} for pid, p in pending
             ]
             _broadcast_cleared_to_party(
                 session._room,

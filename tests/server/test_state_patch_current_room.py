@@ -6,7 +6,6 @@ preserved through model_dump → model_validate (the same path the patch
 applier uses).
 """
 
-
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import Npc

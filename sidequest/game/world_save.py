@@ -34,12 +34,12 @@ class Hireling(BaseModel):
     # picks UUIDs, the other expects vol_1). The recruit generator owns
     # the construction; this field locks the contract.
     id: str = Field(pattern=r"^[a-z][a-z0-9_]+$")
-    name: str                                # display name
-    archetype: str                           # archetype slug from world archetypes.yaml
-    stress: int = 0                          # 0..100 (item 3 enforces bounds)
+    name: str  # display name
+    archetype: str  # archetype slug from world archetypes.yaml
+    stress: int = 0  # 0..100 (item 3 enforces bounds)
     status: Literal["active", "dead", "missing"] = "active"
-    recruited_at_delve: int = 0              # the WorldSave.delve_count when added
-    notes: str = ""                          # narrator-emitted flavor; free text
+    recruited_at_delve: int = 0  # the WorldSave.delve_count when added
+    notes: str = ""  # narrator-emitted flavor; free text
 
 
 class WallEntry(BaseModel):
@@ -51,10 +51,10 @@ class WallEntry(BaseModel):
 
     model_config = {"extra": "ignore"}
 
-    delve_number: int                        # 1-indexed, matches WorldSave.delve_count at write-time
-    sin: str                                 # the dungeon's sin slug ("pride" | "greed" | "gluttony"); read from Dungeon.config.sin at write-time
-    dungeon: str                             # dungeon slug ("grimvault" | "horden" | "mawdeep")
-    party_hireling_ids: list[str]            # ids of the hirelings who delved (alive or dead)
+    delve_number: int  # 1-indexed, matches WorldSave.delve_count at write-time
+    sin: str  # the dungeon's sin slug ("pride" | "greed" | "gluttony"); read from Dungeon.config.sin at write-time
+    dungeon: str  # dungeon slug ("grimvault" | "horden" | "mawdeep")
+    party_hireling_ids: list[str]  # ids of the hirelings who delved (alive or dead)
 
     # Party fate. Three orthogonal-to-wound outcomes: cleared dungeon
     # without TPK (victory), TPK (defeat), or chose to leave alive
@@ -70,7 +70,7 @@ class WallEntry(BaseModel):
     # to flip ``WorldSave.dungeon_wounds[dungeon]``.
     wounded_boss: bool = False
 
-    timestamp: datetime                      # write-time, UTC
+    timestamp: datetime  # write-time, UTC
 
 
 class WorldSave(BaseModel):

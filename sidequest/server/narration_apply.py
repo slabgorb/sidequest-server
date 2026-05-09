@@ -1110,9 +1110,7 @@ def _apply_narration_result_to_snapshot(
         # rather than silently dropping them.
         actor_for_location = acting_character_name or player_name
         old_loc = (
-            snapshot.character_locations.get(actor_for_location)
-            if actor_for_location
-            else None
+            snapshot.character_locations.get(actor_for_location) if actor_for_location else None
         )
         # Story 47-4: rig-coupled auto-fire hook. Any narrator-emitted
         # location change runs through process_room_entry, which resolves
@@ -1387,12 +1385,7 @@ def _apply_narration_result_to_snapshot(
         # same room is filtered here.
         # Fall back to player_name when callers haven't threaded
         # acting_character_name (parity with actor_for_location above).
-        room_id = (
-            snapshot.party_location(
-                perspective=acting_character_name or player_name
-            )
-            or ""
-        )
+        room_id = snapshot.party_location(perspective=acting_character_name or player_name) or ""
         round_number = snapshot.turn_manager.round
         for entry in result.items_gained or []:
             container_id = str(entry.get("from_container", "") or "").strip()
@@ -1850,9 +1843,7 @@ def _apply_narration_result_to_snapshot(
             # only reject seats that map to live players. Without this
             # filter every recruited hireling's beat would be silently
             # dropped (playtest 2026-05-06 Donut defend regression).
-            seated_pc_names = (
-                set(snapshot.player_seats.values()) if snapshot.player_seats else None
-            )
+            seated_pc_names = set(snapshot.player_seats.values()) if snapshot.player_seats else None
             gated_selections = _filter_inferred_pc_beats(
                 result.beat_selections,
                 enc,
@@ -2294,9 +2285,7 @@ def _apply_companion_changes(
             description=str(entry.get("description", "")).strip(),
             notes=str(entry.get("notes", "")).strip(),
             recruited_turn=turn_num,
-            recruited_by=str(
-                entry.get("recruited_by", "") or acting_character_name or ""
-            ).strip(),
+            recruited_by=str(entry.get("recruited_by", "") or acting_character_name or "").strip(),
         )
         snapshot.companions.append(companion)
         existing_names_lower.add(companion.name.casefold())
@@ -2739,10 +2728,7 @@ def _brace_counteracts(
     target_norm = str(target_raw).strip().lower()
     if target_norm == attacker_actor_name.strip().lower():
         return True
-    return bool(
-        attacker_target
-        and target_norm == str(attacker_target).strip().lower()
-    )
+    return bool(attacker_target and target_norm == str(attacker_target).strip().lower())
 
 
 # Legacy alias retained for any in-repo callers / tests that imported
@@ -2940,12 +2926,8 @@ def _resolve_opposed_check_branch(
     # bearing for ``apply_beat``.
     player_dc = _opposed_dc(player_beat)
     opponent_dc = _opposed_dc(opponent_beat)
-    player_tier_raw = _classify_legacy_tier(
-        pending_player_d20, roll_result.player_mod, player_dc
-    )
-    opponent_tier_raw = _classify_legacy_tier(
-        opponent_d20, roll_result.opponent_mod, opponent_dc
-    )
+    player_tier_raw = _classify_legacy_tier(pending_player_d20, roll_result.player_mod, player_dc)
+    opponent_tier_raw = _classify_legacy_tier(opponent_d20, roll_result.opponent_mod, opponent_dc)
 
     # Roll + classify each companion's beat. Their tiers feed both the
     # ally-counteract gate (companion brace shielding the player from
@@ -3036,15 +3018,12 @@ def _resolve_opposed_check_branch(
             }
         )
 
-    opponent_counteracts_player = (
-        _brace_counteracts(
-            defender_beat=opponent_beat,
-            defender_selection=opponent_selection,
-            attacker_actor_name=player_actor.name,
-            attacker_target=getattr(player_beat, "target_tag", None),
-        )
-        and opponent_tier_raw in (RollOutcome.Success, RollOutcome.CritSuccess)
-    )
+    opponent_counteracts_player = _brace_counteracts(
+        defender_beat=opponent_beat,
+        defender_selection=opponent_selection,
+        attacker_actor_name=player_actor.name,
+        attacker_target=getattr(player_beat, "target_tag", None),
+    ) and opponent_tier_raw in (RollOutcome.Success, RollOutcome.CritSuccess)
     # Player→opponent counteract requires knowing the player's beat
     # target. The dispatch path does not currently plumb that through,
     # so v1 leaves player counteracts as False; opponent always resolves
@@ -3077,9 +3056,7 @@ def _resolve_opposed_check_branch(
     ally_counteracts_opponent = bool(ally_counteract_sources)
 
     player_tier_final = (
-        _downgrade_one_step(player_tier_raw)
-        if opponent_counteracts_player
-        else player_tier_raw
+        _downgrade_one_step(player_tier_raw) if opponent_counteracts_player else player_tier_raw
     )
     # Opponent gets downgraded if either the player counteracts (v1
     # placeholder) OR an ally counteracts. Single-step downgrade

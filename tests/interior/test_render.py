@@ -42,8 +42,10 @@ def _kestrel_instance(name="Kestrel"):
     """Minimal stand-in matching the runtime ChassisInstance attributes
     the renderer reads. Real ChassisInstance has more fields, but the
     renderer only touches id, name, class_id."""
+
     class _C:
         pass
+
     c = _C()
     c.id = "kestrel"
     c.name = name
@@ -62,6 +64,7 @@ def _snapshot(*, characters=(), npcs=()):
 
     class _Snap:
         pass
+
     s = _Snap()
     s.characters = [_Actor(n, r) for n, r in characters]
     s.npcs = [_Actor(n, r) for n, r in npcs]
@@ -69,17 +72,13 @@ def _snapshot(*, characters=(), npcs=()):
 
 
 def test_render_includes_all_four_rooms():
-    svg = render_interior_svg(
-        _voidborn_freighter_class(), _kestrel_instance(), _snapshot()
-    )
+    svg = render_interior_svg(_voidborn_freighter_class(), _kestrel_instance(), _snapshot())
     for room_id in ["cockpit", "engineering", "galley", "deck_three_corridor"]:
         assert f'data-room="{room_id}"' in svg, f"missing room {room_id}"
 
 
 def test_render_includes_all_four_stations():
-    svg = render_interior_svg(
-        _voidborn_freighter_class(), _kestrel_instance(), _snapshot()
-    )
+    svg = render_interior_svg(_voidborn_freighter_class(), _kestrel_instance(), _snapshot())
     for sid in ["command", "helm", "weapons", "engineering_controls"]:
         assert f'data-station="{sid}"' in svg
 

@@ -90,9 +90,7 @@ def test_classify_beat_fire_when_beat_selections_non_empty(
     R = render_trigger_module.RenderTriggerReason
     classify = render_trigger_module.classify_trigger
 
-    result = _result(
-        beat_selections=[BeatSelection(actor="Felix", beat_id="trap_sprung")]
-    )
+    result = _result(beat_selections=[BeatSelection(actor="Felix", beat_id="trap_sprung")])
     reason = classify(
         result,
         snapshot_location_before="Tood's Dome — Nest Crack",
@@ -150,9 +148,7 @@ def test_classify_npc_intro_only_when_is_new_true(render_trigger_module) -> None
     )
     assert reason is R.NONE_POLICY
 
-    result_new = _result(
-        npcs_present=[NpcMention(name="Sallow Dree", is_new=True)]
-    )
+    result_new = _result(npcs_present=[NpcMention(name="Sallow Dree", is_new=True)])
     reason_new = classify(
         result_new,
         snapshot_location_before="Tood's Dome — Nest Crack",

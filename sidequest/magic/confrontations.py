@@ -162,9 +162,7 @@ def evaluate_auto_fire_triggers(
             continue
         m = _TRIGGER_RE.match(c.auto_fire_trigger)
         if m is None:
-            raise ValueError(
-                f"cannot parse auto_fire_trigger {c.auto_fire_trigger!r} for {c.id}"
-            )
+            raise ValueError(f"cannot parse auto_fire_trigger {c.auto_fire_trigger!r} for {c.id}")
         bar_id, op, value_str = m.groups()
         threshold = float(value_str)
         actual = bar_values.get(bar_id)

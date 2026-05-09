@@ -240,18 +240,14 @@ def _class_keyed_world_config() -> WorldMagicConfig:
 def test_add_character_class_aware_resolution_mage_gets_slot():
     state = MagicState.from_config(_class_keyed_world_config())
     state.add_character("Gandalf", character_class="Mage")
-    bar = state.get_bar(
-        BarKey(scope="character", owner_id="Gandalf", bar_id="spell_slots")
-    )
+    bar = state.get_bar(BarKey(scope="character", owner_id="Gandalf", bar_id="spell_slots"))
     assert bar.value == 1.0
 
 
 def test_add_character_class_aware_resolution_cleric_gets_zero():
     state = MagicState.from_config(_class_keyed_world_config())
     state.add_character("Sister_Anya", character_class="Cleric")
-    bar = state.get_bar(
-        BarKey(scope="character", owner_id="Sister_Anya", bar_id="spell_slots")
-    )
+    bar = state.get_bar(BarKey(scope="character", owner_id="Sister_Anya", bar_id="spell_slots"))
     assert bar.value == 0.0
 
 
@@ -282,12 +278,8 @@ def test_add_character_scalar_spec_ignores_class_param(world_config):
     state_b = MagicState.from_config(world_config)
     state_b.add_character("bob", character_class="Mage")
 
-    sanity_a = state_a.get_bar(
-        BarKey(scope="character", owner_id="alice", bar_id="sanity")
-    )
-    sanity_b = state_b.get_bar(
-        BarKey(scope="character", owner_id="bob", bar_id="sanity")
-    )
+    sanity_a = state_a.get_bar(BarKey(scope="character", owner_id="alice", bar_id="sanity"))
+    sanity_b = state_b.get_bar(BarKey(scope="character", owner_id="bob", bar_id="sanity"))
     assert sanity_a.value == sanity_b.value
 
 

@@ -288,7 +288,9 @@ class TestEngravedLabelCurveAlong:
         chart = ChartConfig(
             version="0.1.0",
             annotations=[
-                Annotation(kind="engraved_label", text="the Last Drift", curve_along="orbit_outermost"),
+                Annotation(
+                    kind="engraved_label", text="the Last Drift", curve_along="orbit_outermost"
+                ),
                 Annotation(kind="engraved_label", text="broken drift", curve_along="body:belt"),
             ],
         )
@@ -299,7 +301,7 @@ class TestEngravedLabelCurveAlong:
         # Specifically, no <text … x="0" y="-370">…</text> matches either label.
         bad_pattern = re.compile(
             r'<text[^>]*\bx="0"[^>]*\by="-370"[^>]*>\s*'
-            r'(?:the Last Drift|broken drift)\s*</text>'
+            r"(?:the Last Drift|broken drift)\s*</text>"
         )
         assert not bad_pattern.search(svg), (
             "Both engraved_labels collapsed into the same fixed-top-center <text> — "
@@ -550,10 +552,7 @@ class TestStarReticle:
         """AC#16 wiring test: course_render.py must reference the shared
         palette constants, not its own private _RETICLE_* literals."""
         course_render_src = (
-            Path(__file__).resolve().parents[2]
-            / "sidequest"
-            / "orbital"
-            / "course_render.py"
+            Path(__file__).resolve().parents[2] / "sidequest" / "orbital" / "course_render.py"
         ).read_text()
         # The pre-fix file had `_RETICLE_OUTER_R = 13.0` etc. as private
         # literals. After the refactor those literals must be replaced by
@@ -597,9 +596,7 @@ class TestRegisterField:
             r'<ellipse[^>]*data-body-id="outpost"[^>]*/>',
             svg,
         )
-        assert outpost_ellipse_match is not None, (
-            "outpost ellipse not found in output"
-        )
+        assert outpost_ellipse_match is not None, "outpost ellipse not found in output"
         ellipse_tag = outpost_ellipse_match.group(0)
         assert "stroke-dasharray" in ellipse_tag or "stroke_dasharray" in ellipse_tag, (
             f"chalk-register orbit must have a dashed stroke, got: {ellipse_tag}"
@@ -645,18 +642,14 @@ class TestRegisterField:
         svg = _render_root(orbits)
         # Find the label text element for "Last Drift".
         label_match = re.search(
-            r'<text[^>]*>\s*Last Drift\s*</text>',
+            r"<text[^>]*>\s*Last Drift\s*</text>",
             svg,
         )
         assert label_match is not None, "Last Drift label missing from output"
         label_tag = label_match.group(0)
         # Prose register: VT323 monospace, italic.
-        assert "VT323" in label_tag, (
-            f"prose label must use VT323 font, got: {label_tag}"
-        )
-        assert 'font-style="italic"' in label_tag, (
-            f"prose label must be italic, got: {label_tag}"
-        )
+        assert "VT323" in label_tag, f"prose label must use VT323 font, got: {label_tag}"
+        assert 'font-style="italic"' in label_tag, f"prose label must be italic, got: {label_tag}"
 
     def test_register_chalk_label_is_orbitron_caps(self):
         """AC#5: chalk-register label is Orbitron CAPS, not VT323 italic.
@@ -675,12 +668,10 @@ class TestRegisterField:
             }
         )
         svg = _render_root(orbits)
-        match = re.search(r'<text[^>]*>\s*GRAND GATE\s*</text>', svg)
+        match = re.search(r"<text[^>]*>\s*GRAND GATE\s*</text>", svg)
         assert match is not None
         label_tag = match.group(0)
-        assert "Orbitron" in label_tag, (
-            f"chalk label must use Orbitron, got: {label_tag}"
-        )
+        assert "Orbitron" in label_tag, f"chalk label must use Orbitron, got: {label_tag}"
 
     def test_register_prose_label_is_vt323(self):
         """register=prose (no override) gives a VT323 italic label."""
@@ -698,7 +689,7 @@ class TestRegisterField:
             }
         )
         svg = _render_root(orbits)
-        match = re.search(r'<text[^>]*>\s*moonet\s*</text>', svg)
+        match = re.search(r"<text[^>]*>\s*moonet\s*</text>", svg)
         assert match is not None
         label_tag = match.group(0)
         assert "VT323" in label_tag
@@ -762,9 +753,7 @@ class TestMoonsAtSystemScope:
         assert 'data-body-id="moon_a"' in svg, (
             "moon_a not rendered at system_root — §4.6 system-scope moon band failed"
         )
-        assert 'data-body-id="moon_b"' in svg, (
-            "moon_b not rendered at system_root"
-        )
+        assert 'data-body-id="moon_b"' in svg, "moon_b not rendered at system_root"
 
     def test_visible_moon_labels_appear_at_system_scope(self, giant_with_moons):
         """AC#8: moons are labeled at system_root, not just dotted."""
@@ -808,9 +797,7 @@ class TestMoonsAtSystemScope:
                 f"drill-in scope dropped moon {moon_id!r} — §4.6 broke drill-in"
             )
 
-    def test_parent_with_moons_no_longer_emits_plus_n_cluster_glyph(
-        self, giant_with_moons
-    ):
+    def test_parent_with_moons_no_longer_emits_plus_n_cluster_glyph(self, giant_with_moons):
         """Spec §4.6: 'The drillable cluster glyph (+N) goes away for bodies
         that are now showing moons.'"""
         svg = _render_root(giant_with_moons)
@@ -833,13 +820,12 @@ class TestMoonsAtSystemScope:
         carry a callout class, not silently dropped.
         """
         svg = _render_root(giant_with_moons)
-        match = re.search(r'<text[^>]*>\s*moon a\s*</text>', svg)
+        match = re.search(r"<text[^>]*>\s*moon a\s*</text>", svg)
         assert match is not None, "moon a label missing from output"
         # Moon-band children render via callout blocks per ADR-094 §9.
-        assert "callout-singleton-title" in match.group(0) or \
-               "callout-group-member" in match.group(0), (
-            f"moon label should render in a callout block class; got: {match.group(0)}"
-        )
+        assert "callout-singleton-title" in match.group(0) or "callout-group-member" in match.group(
+            0
+        ), f"moon label should render in a callout block class; got: {match.group(0)}"
 
 
 # =========================================================================
@@ -858,9 +844,7 @@ class TestLabelDeCollision:
             "MIN_ANGULAR_SEPARATION_DEG",
             "LABEL_TIER_RADIAL_OFFSET_PX",
         ):
-            assert hasattr(palette, name), (
-                f"palette.{name} missing — AC#17 / §5"
-            )
+            assert hasattr(palette, name), f"palette.{name} missing — AC#17 / §5"
 
     def test_inner_cluster_labels_have_distinct_anchor_positions(self):
         """AC#1: alpha/beta/gamma at au≈1, within 25° arc, must NOT all share
@@ -902,7 +886,7 @@ class TestLabelDeCollision:
             m = re.search(
                 r'<text[^>]*\bx="([\-\d.eE]+)"[^>]*\by="([\-\d.eE]+)"[^>]*>\s*'
                 + body_id
-                + r'\s*</text>',
+                + r"\s*</text>",
                 svg,
             )
             assert m, f"label {body_id!r} missing from output"
@@ -940,7 +924,7 @@ class TestLabelDeCollision:
         svg = _render_root(orbits)
         match = re.search(
             r'<text[^>]*\bx="([\-\d.eE]+)"[^>]*\by="([\-\d.eE]+)"[^>]*>\s*'
-            r'INNER\s*</text>',
+            r"INNER\s*</text>",
             svg,
         )
         assert match is not None
@@ -965,7 +949,7 @@ class TestLabelDeCollision:
                     parent="sun",
                     semi_major_au=1.00,
                     period_days=365.0,
-                    epoch_phase_deg=60,   # tier 0
+                    epoch_phase_deg=60,  # tier 0
                     label="ALPHA",
                 ),
                 "beta": BodyDef(
@@ -973,7 +957,7 @@ class TestLabelDeCollision:
                     parent="sun",
                     semi_major_au=1.00,
                     period_days=365.0,
-                    epoch_phase_deg=70,   # 10° from alpha → tier 1
+                    epoch_phase_deg=70,  # 10° from alpha → tier 1
                     label="BETA",
                 ),
                 "gamma": BodyDef(
@@ -981,7 +965,7 @@ class TestLabelDeCollision:
                     parent="sun",
                     semi_major_au=1.00,
                     period_days=365.0,
-                    epoch_phase_deg=80,   # 20° from alpha, 10° from beta → tier 2
+                    epoch_phase_deg=80,  # 20° from alpha, 10° from beta → tier 2
                     label="GAMMA",
                 ),
             }
@@ -992,14 +976,12 @@ class TestLabelDeCollision:
             m = re.search(
                 r'<text[^>]*\bx="([\-\d.eE]+)"[^>]*\by="([\-\d.eE]+)"[^>]*>\s*'
                 + body_id
-                + r'\s*</text>',
+                + r"\s*</text>",
                 svg,
             )
             assert m, f"label {body_id!r} missing from output"
             positions[body_id] = (float(m.group(1)), float(m.group(2)))
-        radials = {
-            bid: (x * x + y * y) ** 0.5 for bid, (x, y) in positions.items()
-        }
+        radials = {bid: (x * x + y * y) ** 0.5 for bid, (x, y) in positions.items()}
         # ALPHA tier 0, BETA tier 1, GAMMA tier 2 — strictly increasing radial
         # by at least LABEL_TIER_RADIAL_OFFSET_PX per tier (sort order is
         # bearing-sorted, which for these 3 yields ALPHA, BETA, GAMMA).
@@ -1051,9 +1033,7 @@ class TestHazardNonColorSignal:
         assert body_id_match is not None
         # Look for stroke-dasharray on the matched tag itself.
         glyph_tag = body_id_match.group(0)
-        nearby_window = svg[
-            max(0, body_id_match.start() - 200) : body_id_match.end() + 400
-        ]
+        nearby_window = svg[max(0, body_id_match.start() - 200) : body_id_match.end() + 400]
         assert "stroke-dasharray" in glyph_tag or "stroke-dasharray" in nearby_window, (
             f"hazard body 'trap' has no dashed-outline signal on or near its "
             f"glyph — AC#11 violated. Tag: {glyph_tag}"
@@ -1172,8 +1152,7 @@ class TestOtelChartRenderAttributes:
         )
         # Two visible moons; one elided.
         assert attrs["body_count_moons_rendered"] == 2, (
-            f"expected 2 moons rendered (moon_a + moon_b); "
-            f"got {attrs['body_count_moons_rendered']}"
+            f"expected 2 moons rendered (moon_a + moon_b); got {attrs['body_count_moons_rendered']}"
         )
 
     def test_chart_render_span_has_label_collision_tier_max(self, otel_capture):
@@ -1281,9 +1260,7 @@ class TestOrreryV2FixtureWiring:
         hidden = world_orrery_v2.orbits.bodies["moon_hidden"]
         assert hidden.show_at_system_scope is False
 
-    def test_fixture_render_emits_full_otel_attribute_set(
-        self, world_orrery_v2, otel_capture
-    ):
+    def test_fixture_render_emits_full_otel_attribute_set(self, world_orrery_v2, otel_capture):
         """Wiring test: the v2 fixture render emits all five new OTEL attrs."""
         render_chart(
             orbits=world_orrery_v2.orbits,
@@ -1292,9 +1269,7 @@ class TestOrreryV2FixtureWiring:
             t_hours=0.0,
             party_at=None,
         )
-        spans = [
-            s for s in otel_capture.get_finished_spans() if s.name == "chart.render"
-        ]
+        spans = [s for s in otel_capture.get_finished_spans() if s.name == "chart.render"]
         assert len(spans) == 1
         attrs = spans[0].attributes
         for key in (

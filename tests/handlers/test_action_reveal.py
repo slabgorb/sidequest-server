@@ -142,8 +142,6 @@ def test_module_exports_handler_singleton() -> None:
     assert isinstance(HANDLER, ActionRevealHandler)
 
 
-
-
 @pytest.mark.asyncio
 async def test_client_cleared_is_silently_dropped() -> None:
     handler = ActionRevealHandler()
@@ -193,9 +191,7 @@ async def test_seq_resets_on_new_round() -> None:
     # Advance the snapshot's round.
     snapshot = session._room.snapshot
     snapshot.turn_manager.round = 8
-    new_round = _make_msg(
-        status=ActionRevealStatus.COMPOSING, action="x", seq=0, round=8
-    )
+    new_round = _make_msg(status=ActionRevealStatus.COMPOSING, action="x", seq=0, round=8)
     await handler.handle(session, new_round)
 
     assert session._room.broadcast.call_count == 2
