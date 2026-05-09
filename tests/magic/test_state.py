@@ -169,6 +169,133 @@ def test_apply_working_unrouted_cost_logs_warning(world_config, caplog):
 
 
 # ---------------------------------------------------------------------------
+# Story 47-7 — magic.unrouted_cost watcher event (Task 3.5 promotion)
+#
+# AC1: MagicState.apply_working dual-emits the unrouted-cost path —
+# preserves the existing logger.warning AND adds a watcher_publish so
+# the GM panel surfaces the skip live, not just in post-crash logs.
+# AC4 + AC7 wiring: this test uses the REAL watcher_hub.subscribe path
+# (not a monkeypatch), proving the call chain reaches the same hook the
+# GM dashboard consumes. Per CLAUDE.md "Every Test Suite Needs a Wiring
+# Test."
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_working_unrouted_cost_publishes_watcher_event(world_config):
+    import asyncio
+
+    from sidequest.magic.state import MagicState
+    from sidequest.telemetry.watcher_hub import watcher_hub
+
+    watcher_hub.bind_loop(asyncio.get_running_loop())
+    async with watcher_hub._lock:  # noqa: SLF001 — same shape as test_lore_wiring
+        watcher_hub._subscribers.clear()  # noqa: SLF001
+
+    captured: list[dict] = []
+
+    class _Sock:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await watcher_hub.subscribe(_Sock())  # type: ignore[arg-type]
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+
+    # `karma` has no character bar in the conftest world_config — the
+    # routing miss is the path under test.
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="condition",
+        actor="sira_mendes",
+        costs={"karma": 0.10},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="involuntary",
+    )
+    state.apply_working(working)
+
+    # publish_event spawns the broadcast as a coroutine on the bound
+    # loop; yield long enough for it to drain into _Sock.send_json.
+    await asyncio.sleep(0.05)
+
+    matching = [
+        e
+        for e in captured
+        if e.get("event_type") == "magic.unrouted_cost"
+        and e.get("component") == "magic"
+        and e.get("fields", {}).get("cost_type") == "karma"
+    ]
+    assert len(matching) == 1, (
+        "Expected exactly one magic.unrouted_cost watcher event with "
+        f"cost_type='karma'; captured events: {captured}"
+    )
+    fields = matching[0]["fields"]
+    assert fields["actor"] == "sira_mendes"
+    assert fields["cost_type"] == "karma"
+    assert fields["amount"] == pytest.approx(0.10)
+    # bar_lookup_key is the serialized BarKey the lookup missed —
+    # forensic value lets the GM dashboard show "we tried to find this
+    # exact key and it wasn't there."
+    assert "bar_lookup_key" in fields
+    assert "karma" in fields["bar_lookup_key"]
+    assert matching[0]["severity"] == "warning"
+
+
+@pytest.mark.asyncio
+async def test_apply_working_multiple_unrouted_costs_publish_one_event_per_miss(
+    world_config,
+):
+    """A single working with two unrouted cost types must produce TWO
+    separate watcher events — one per miss — so the GM panel can see
+    the full picture, not just the first miss. Defends against a future
+    refactor that batches the warning into a single 'one or more
+    unrouted costs' event and loses per-cost forensics.
+    """
+    import asyncio
+
+    from sidequest.magic.state import MagicState
+    from sidequest.telemetry.watcher_hub import watcher_hub
+
+    watcher_hub.bind_loop(asyncio.get_running_loop())
+    async with watcher_hub._lock:  # noqa: SLF001
+        watcher_hub._subscribers.clear()  # noqa: SLF001
+
+    captured: list[dict] = []
+
+    class _Sock:
+        async def send_json(self, data: dict) -> None:
+            captured.append(data)
+
+    await watcher_hub.subscribe(_Sock())  # type: ignore[arg-type]
+
+    state = MagicState.from_config(world_config)
+    state.add_character("sira_mendes")
+
+    working = MagicWorking(
+        plugin="innate_v1",
+        mechanism="condition",
+        actor="sira_mendes",
+        costs={"karma": 0.10, "soulstain": 0.25},
+        domain="psychic",
+        narrator_basis="x",
+        flavor="acquired",
+        consent_state="involuntary",
+    )
+    state.apply_working(working)
+    await asyncio.sleep(0.05)
+
+    unrouted = [e for e in captured if e.get("event_type") == "magic.unrouted_cost"]
+    cost_types_emitted = sorted(e["fields"]["cost_type"] for e in unrouted)
+    assert cost_types_emitted == ["karma", "soulstain"], (
+        f"Expected one unrouted_cost event per missed cost type; "
+        f"got {cost_types_emitted}. Captured: {captured}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Wiring tests — GameSnapshot.magic_state (Task 2.3)
 # ---------------------------------------------------------------------------
 
