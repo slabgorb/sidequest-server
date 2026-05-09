@@ -91,7 +91,6 @@ def _make_full_chargen_scenes() -> list[CharCreationScene]:
             narration="Roll your stats.",
             mechanical_effects=MechanicalEffects(
                 stat_generation="roll_3d6_strict",
-                class_qualification_loop=True,
             ),
         ),
         CharCreationScene(
@@ -202,7 +201,6 @@ def test_class_qualifying_emits_qualifying_list():
         allows_freeform=True,
         mechanical_effects=MechanicalEffects(
             stat_generation="roll_3d6_strict",
-            class_qualification_loop=True,
         ),
     )
     rules = RulesConfig(

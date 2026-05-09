@@ -79,7 +79,6 @@ class MechanicalEffects(BaseModel):
     pronoun_hint: str | None = None
     stat_generation: str | None = None
     equipment_generation: str | None = None
-    class_qualification_loop: bool = False
     jungian_hint: str | None = None
     rpg_role_hint: str | None = None
     # spaghetti_western: chargen-choice-applied reputation tag

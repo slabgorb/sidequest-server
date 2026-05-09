@@ -687,9 +687,7 @@ class CharacterBuilder:
             if eff is None or eff.stat_generation is None:
                 continue
             if eff.stat_generation == "roll_3d6_strict":
-                self._roll_3d6_with_qualification(
-                    qualification_loop=eff.class_qualification_loop,
-                )
+                self._roll_3d6_strict()
             elif eff.stat_generation == "roll_3d6_arrange_visible":
                 self._roll_3d6_arrange_visible()
             break
@@ -1398,9 +1396,11 @@ class CharacterBuilder:
         # generate_stats() calls.
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
-                self._roll_3d6_with_qualification(
-                    qualification_loop=effects.class_qualification_loop,
-                )
+                self._roll_3d6_strict()
+            elif effects.stat_generation == "roll_3d6_arrange_visible":
+                # Scene-flow method, not a generate_stats method.
+                # confirm_arrangement materializes _rolled_stats.
+                pass
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1484,9 +1484,7 @@ class CharacterBuilder:
         if effects.stat_generation is not None:
             if effects.stat_generation == "roll_3d6_strict":
                 if self._rolled_stats is None:
-                    self._roll_3d6_with_qualification(
-                        qualification_loop=effects.class_qualification_loop,
-                    )
+                    self._roll_3d6_strict()
                 elif self._classes and self._rolled_stats is not None:
                     # Stats already rolled (eager construction roll fired before
                     # with_classes() was called). Emit class_qualifying now that
@@ -1497,6 +1495,13 @@ class CharacterBuilder:
                         "chargen.class_qualifying",
                         {"class_ids": [c.id for c in qual]},
                     )
+            elif effects.stat_generation == "roll_3d6_arrange_visible":
+                # The pool was rolled at construction; arrangement
+                # materializes _rolled_stats. generate_stats() reuses the
+                # ``roll_3d6_strict`` branch — both materialize stats
+                # before generate_stats runs, so don't override
+                # ``self._stat_generation`` with the scene-flow string.
+                pass
             else:
                 self._stat_generation = effects.stat_generation
 
@@ -1654,21 +1659,6 @@ class CharacterBuilder:
             )
         self._results.pop()
         target = len(self._results)
-        self._phase = InProgress(scene_index=target)
-
-    def go_to_scene(self, target: int) -> None:
-        """Jump to a specific scene index, discarding results from that
-        scene onward.
-
-        Used by the "edit" action from the review/confirmation screen.
-        Raises WrongPhaseError if target is out of range.
-        """
-        if target >= len(self._scenes):
-            raise WrongPhaseError(
-                expected=f"scene index < {len(self._scenes)}",
-                actual=f"target scene index {target}",
-            )
-        self._results = self._results[:target]
         self._phase = InProgress(scene_index=target)
 
     def revert(self) -> None:
@@ -2107,32 +2097,16 @@ class CharacterBuilder:
         }
         # rolled_stats stays None until confirm_arrangement materializes it.
 
-    def _roll_3d6_with_qualification(self, *, qualification_loop: bool) -> None:
-        """Roll 3d6 stats, optionally re-rolling until at least one class qualifies.
+    def _roll_3d6_strict(self) -> None:
+        """Roll 3d6 stats once into self._rolled_stats.
 
-        When `qualification_loop` is True and self._classes is non-empty,
-        re-rolls until qualifying_classes(stats, self._classes) is non-empty.
-        Each rejected roll emits a chargen.class_qualification_reroll OTEL
-        event. Caps at 100 rerolls (defensive — 3d6 ≥9 has p≈0.625, so
-        the loop should never trip legitimately).
+        No qualification loop. C&C uses the visible
+        ``roll_3d6_arrange_visible`` flow with a player-driven reject
+        button instead. This method remains for genres whose chargen
+        flow is in-order roll-and-stop with no qualification gate.
         """
         self._rolled_stats = self._roll_3d6_stats()
-        if not qualification_loop or not self._classes:
-            return
-        rerolls = 0
-        while not qualifying_classes(dict(self._rolled_stats), self._classes):
-            rerolls += 1
-            if rerolls > 100:
-                raise RuntimeError(
-                    "class_qualification_loop exceeded 100 rerolls — "
-                    "check minimum_score values in classes.yaml"
-                )
-            trace.get_current_span().add_event(
-                "chargen.class_qualification_reroll",
-                {"rejected_stats": dict(self._rolled_stats), "attempt": rerolls},
-            )
-            self._rolled_stats = self._roll_3d6_stats()
-        if self._rolled_stats is not None:
+        if self._rolled_stats is not None and self._classes:
             qual = qualifying_classes(dict(self._rolled_stats), self._classes)
             trace.get_current_span().add_event(
                 "chargen.class_qualifying",
