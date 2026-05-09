@@ -51,9 +51,13 @@ def test_mage_declares_magic_config_with_arcane_tradition(cc_classes):
 
 def test_mage_magic_config_starting_known_spells(cc_classes):
     mage = _by_id(cc_classes, "mage")
-    assert mage.magic_config.starting_known_spells == 2, (
-        "B/X canon: Magic-User starts with 2 known L1 spells. (The catalog "
-        "ships 12; 2 is what the Mage memorizes / has in spellbook on day 1.)"
+    assert mage.magic_config.starting_known_spells == 3, (
+        "C&C deviation from B/X canon: Magic-User starts with 3 known L1 "
+        "spells (B/X canon = 2). The Sünden Mage gets the Detect Magic / "
+        "Read Magic / Sleep package as a guild-outsider's working baseline "
+        "— three workings give the L1 Mage one daily-cast option even "
+        "after Read Magic burns the morning slot. (The catalog ships 12; "
+        "3 is what the Mage memorizes / has in spellbook on day 1.)"
     )
 
 
