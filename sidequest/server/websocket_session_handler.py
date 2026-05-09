@@ -1570,6 +1570,7 @@ class WebSocketSessionHandler:
                 genre_pack_source_dir=sd.genre_pack.source_dir,
                 world_slug=sd.world_slug,
                 character_id=character.core.name,
+                character_class=character.char_class,
             )
             # Re-bind active_scenario on this socket from whatever the
             # peer wrote — its presence on sd.active_scenario is what
