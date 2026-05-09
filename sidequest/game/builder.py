@@ -375,6 +375,15 @@ class NoQualifyingClassesError(Exception):
     """confirm_arrangement called but the arrangement qualifies for no classes."""
 
 
+class ArrangementSceneActiveError(Exception):
+    """apply_response called while the_arrangement scene is active.
+
+    Arrangement scenes (mechanical_effects.assignment_required=True) only
+    accept apply_arrangement_confirm / apply_arrangement_reject — generic
+    ChoiceInput / FreeformInput are not valid here.
+    """
+
+
 # Attach subclass aliases so callers can write `BuilderError.InvalidChoice`
 # in catch blocks without importing each variant.
 BuilderError.InvalidChoice = InvalidChoiceError  # type: ignore[attr-defined]
@@ -1388,6 +1397,75 @@ class CharacterBuilder:
 
         self._advance_scene(scene_index)
 
+    def apply_response(self, response: SceneInputType) -> None:
+        """Unified dispatcher for ChoiceInput / FreeformInput.
+
+        Routes ``ChoiceInput`` to :meth:`apply_choice` and ``FreeformInput``
+        to :meth:`apply_freeform`. Guards against the arrangement scene:
+        when the current scene's ``mechanical_effects.assignment_required``
+        is True, neither input variant is valid — callers must use
+        :meth:`apply_arrangement_confirm` / :meth:`apply_arrangement_reject`.
+        """
+        if isinstance(self._phase, InProgress):
+            scene = self._scenes[self._phase.scene_index]
+            eff = scene.mechanical_effects
+            if eff is not None and eff.assignment_required:
+                raise ArrangementSceneActiveError(
+                    f"scene {scene.id!r} requires "
+                    f"apply_arrangement_confirm/reject, not apply_response"
+                )
+        if isinstance(response, ChoiceInput):
+            self.apply_choice(response.index)
+        elif isinstance(response, FreeformInput):
+            self.apply_freeform(response.text)
+        else:  # pragma: no cover
+            raise TypeError(f"unknown SceneInputType: {type(response).__name__}")
+
+    def apply_arrangement_confirm(self) -> None:
+        """Confirm the arrangement, materialize ``rolled_stats``, and advance.
+
+        Records a SceneResult mirroring the scene's mechanical_effects so
+        ``go_back`` parity holds. Raises ``UnfilledArrangementError`` /
+        ``NoQualifyingClassesError`` from :meth:`confirm_arrangement` if
+        the arrangement is incomplete or qualifies for no class.
+        """
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        eff = scene.mechanical_effects
+        if not (eff is not None and eff.assignment_required):
+            raise RuntimeError(
+                f"scene {scene.id!r} is not an arrangement scene"
+            )
+        # confirm_arrangement may raise UnfilledArrangementError /
+        # NoQualifyingClassesError — let them propagate.
+        self.confirm_arrangement()
+
+        self._results.append(
+            SceneResult(
+                input_type=ChoiceInput(index=0),
+                effects_applied=eff,
+                hooks_added=[],
+                anchors_added=[],
+                choice_description=None,
+            )
+        )
+        self._advance_scene(scene_index)
+
+    def apply_arrangement_reject(self) -> None:
+        """Reject the current pool, reroll, and stay on the arrangement scene."""
+        if not isinstance(self._phase, InProgress):
+            raise WrongPhaseError(expected="InProgress", actual=self._phase_name())
+        scene_index = self._phase.scene_index
+        scene = self._scenes[scene_index]
+        eff = scene.mechanical_effects
+        if not (eff is not None and eff.assignment_required):
+            raise RuntimeError(
+                f"scene {scene.id!r} is not an arrangement scene"
+            )
+        self.reject_arrangement()
+
     def go_back(self) -> None:
         """Navigate backward, undoing the last scene result.
 
@@ -2088,6 +2166,10 @@ __all__ = [
     "UnknownStatGenerationError",
     "NumericNameError",
     "EdgeConfigMissingClassError",
+    "PoolValueNotPresentError",
+    "UnfilledArrangementError",
+    "NoQualifyingClassesError",
+    "ArrangementSceneActiveError",
     # Builder
     "CharacterBuilder",
     # String helpers
