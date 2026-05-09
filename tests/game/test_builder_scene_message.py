@@ -324,7 +324,6 @@ class TestToSceneMessageInProgress:
         assert p.character is None
         assert p.character_preview is None
         assert p.action is None
-        assert p.target_step is None
 
     def test_name_entry_scene_sets_name_input_type(self) -> None:
         scenes = [make_scene("name", allows_freeform=True, narration="What is your name?")]

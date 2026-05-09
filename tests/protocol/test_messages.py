@@ -317,22 +317,6 @@ def test_chargen_payload_deserializes_action_back() -> None:
     assert payload.action == "back"
 
 
-def test_chargen_payload_deserializes_action_edit_with_target_step() -> None:
-    """The UI sends action:'edit' + target_step from the review screen."""
-    wire = json.dumps(
-        {
-            "type": "CHARACTER_CREATION",
-            "payload": {"phase": "confirmation", "action": "edit", "target_step": 2},
-            "player_id": "test-player",
-        }
-    )
-    msg = parse_wire(wire)
-    payload = msg.payload
-    assert isinstance(payload, CharacterCreationPayload)
-    assert payload.action == "edit"
-    assert payload.target_step == 2
-
-
 def test_chargen_payload_action_back_without_phase() -> None:
     """The UI sends `{action: 'back'}` with no `phase` field — must deserialize."""
     wire = json.dumps(
@@ -346,23 +330,6 @@ def test_chargen_payload_action_back_without_phase() -> None:
     payload = msg.payload
     assert isinstance(payload, CharacterCreationPayload)
     assert payload.action == "back"
-    assert payload.phase is None
-
-
-def test_chargen_payload_action_edit_without_phase() -> None:
-    """The UI sends `{action: 'edit', target_step: N}` with no `phase` field."""
-    wire = json.dumps(
-        {
-            "type": "CHARACTER_CREATION",
-            "payload": {"action": "edit", "target_step": 0},
-            "player_id": "test-player",
-        }
-    )
-    msg = parse_wire(wire)
-    payload = msg.payload
-    assert isinstance(payload, CharacterCreationPayload)
-    assert payload.action == "edit"
-    assert payload.target_step == 0
     assert payload.phase is None
 
 

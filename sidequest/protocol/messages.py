@@ -305,9 +305,7 @@ class CharacterCreationPayload(ProtocolBase):
     character: Any | None = None
     """Completed character data."""
     action: str | None = None
-    """Navigation action from client: 'back' or 'edit'."""
-    target_step: int | None = None
-    """Target scene index for 'edit' action (0-based)."""
+    """Navigation action from client: 'back'."""
 
     # --- the_arrangement (server → client) ---
     pool: list[int] | None = None
