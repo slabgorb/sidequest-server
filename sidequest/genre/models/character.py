@@ -39,6 +39,20 @@ class NpcArchetype(BaseModel):
     saves_as_class: str = "Fighter"
 
 
+class IdentityCapture(BaseModel):
+    """Story-scene identity capture flags (pronouns + freeform fields).
+
+    Used by the_story scene in genre packs that fold pronouns into a
+    combined identity scene.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    pronouns_required: bool = True
+    background_optional: bool = True
+    description_optional: bool = True
+
+
 class MechanicalEffects(BaseModel):
     """Mechanical effects of a character creation choice or scene-level directive."""
 
@@ -70,6 +84,14 @@ class MechanicalEffects(BaseModel):
     # (e.g. "intimidation", "stealth", "network"). Rust dropped it;
     # reputation system unwired. Pass-through.
     reputation_bonus: str | None = None
+
+    # Arrange-scene flags (the_arrangement)
+    assignment_required: bool | None = None
+    allow_reject: bool | None = None
+
+    # Story-scene flags (the_story)
+    identity_capture: IdentityCapture | None = None
+    background_autogen_source: str | None = None
 
     model_config = {"extra": "forbid", "populate_by_name": True}
 
