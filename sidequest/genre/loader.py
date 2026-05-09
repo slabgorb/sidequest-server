@@ -552,6 +552,27 @@ def _validate_class_filter_refs(rules: RulesConfig, classes: list[ClassDef]) -> 
                 )
 
 
+def _validate_saving_throws_refs(classes: list[ClassDef], *, has_spell_catalogs: bool) -> None:
+    """When the pack ships any spell catalog, every class must declare
+    saving_throws. Otherwise spells with save effects cannot resolve.
+
+    No-op for packs without spells (heavy_metal, victoria, etc.) where
+    saves aren't a wired subsystem yet.
+
+    Task 8 — C&C B/X saving throws pack-load validation.
+    """
+    if not has_spell_catalogs:
+        return
+    if not classes:
+        return
+    missing = [c.display_name for c in classes if c.saving_throws is None]
+    if missing:
+        raise PackError(
+            f"pack has spell catalogs but classes missing saving_throws: {missing}. "
+            f"Spells with save effects cannot resolve without a B/X B26 table per class."
+        )
+
+
 # ---------------------------------------------------------------------------
 # World loader
 # ---------------------------------------------------------------------------
@@ -946,6 +967,14 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     # Cross-reference validation: class_filter / encounter_beat_choices consistency.
     # Only enforced when a classes.yaml is present (classes_list is non-empty).
     _validate_class_filter_refs(rules, classes_list)
+
+    # Task 8 — saving_throws required on every class when the pack ships spell catalogs.
+    # Detection: spells/ directory adjacent to magic.yaml at genre pack root.
+    # Packs without a spells/ dir (heavy_metal, victoria, …) are exempt.
+    _validate_saving_throws_refs(
+        classes_list,
+        has_spell_catalogs=(path / "spells").is_dir(),
+    )
 
     # Base archetypes and npc_traits live at content root (parent of genre_packs/)
     content_root: Path | None = None
