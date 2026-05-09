@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 import time
 import uuid
 from collections.abc import Callable
@@ -39,6 +40,10 @@ from sidequest.game.archetype_apply import apply_archetype_resolved
 from sidequest.game.builder import (
     BuilderError,
     CharacterBuilder,
+    NoQualifyingClassesError,
+    PoolValueNotPresentError,
+    StoryInput,
+    UnfilledArrangementError,
 )
 from sidequest.game.character import Character
 from sidequest.game.chassis import (
@@ -921,6 +926,151 @@ class WebSocketSessionHandler:
             builder.apply_auto_advance()
         except BuilderError as exc:
             return [_error_msg(f"Cannot continue from current scene: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=arrange_assign ------------------------------------------
+    def _chargen_arrange_assign(
+        self,
+        builder: CharacterBuilder,
+        payload: CharacterCreationPayload,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        if payload.stat is None or payload.value is None:
+            return [_error_msg("arrange_assign requires stat and value fields")]
+        span.add_event(
+            "character_creation.arrange_assign",
+            {
+                "stat": payload.stat,
+                "value": payload.value,
+                "player_id": player_id,
+            },
+        )
+        try:
+            builder.assign_stat(stat_name=payload.stat, value=payload.value)
+        except PoolValueNotPresentError as exc:
+            return [_error_msg(f"arrange_assign rejected: {exc!r}")]
+        except BuilderError as exc:
+            return [_error_msg(f"arrange_assign failed: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=arrange_clear -------------------------------------------
+    def _chargen_arrange_clear(
+        self,
+        builder: CharacterBuilder,
+        payload: CharacterCreationPayload,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        if payload.stat is None:
+            return [_error_msg("arrange_clear requires stat field")]
+        span.add_event(
+            "character_creation.arrange_clear",
+            {"stat": payload.stat, "player_id": player_id},
+        )
+        try:
+            builder.clear_stat(stat_name=payload.stat)
+        except BuilderError as exc:
+            return [_error_msg(f"arrange_clear failed: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=arrange_confirm -----------------------------------------
+    def _chargen_arrange_confirm(
+        self,
+        builder: CharacterBuilder,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        span.add_event(
+            "character_creation.arrange_confirm",
+            {"player_id": player_id},
+        )
+        try:
+            builder.apply_arrangement_confirm()
+        except UnfilledArrangementError as exc:
+            return [_error_msg(f"arrange_confirm rejected: {exc!r}")]
+        except NoQualifyingClassesError as exc:
+            return [_error_msg(f"arrange_confirm has no qualifying class: {exc!r}")]
+        except BuilderError as exc:
+            return [_error_msg(f"arrange_confirm failed: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=arrange_reject ------------------------------------------
+    def _chargen_arrange_reject(
+        self,
+        builder: CharacterBuilder,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        span.add_event(
+            "character_creation.arrange_reject",
+            {"player_id": player_id},
+        )
+        try:
+            builder.apply_arrangement_reject()
+        except BuilderError as exc:
+            return [_error_msg(f"arrange_reject failed: {exc!r}")]
+        return self._next_message(builder, sd, player_id)
+
+    # ---- phase=story_autogen -------------------------------------------
+    def _chargen_story_autogen(
+        self,
+        builder: CharacterBuilder,
+        payload: CharacterCreationPayload,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        seed = payload.seed if payload.seed is not None else random.randint(0, 2**31 - 1)
+        span.add_event(
+            "character_creation.story_autogen",
+            {"seed": seed, "player_id": player_id},
+        )
+        try:
+            autogen_result = builder.autogen_backstory(seed=seed)
+        except BuilderError as exc:
+            return [_error_msg(f"story_autogen failed: {exc!r}")]
+        # Render the next scene message and inject autogen_result into the
+        # payload. Builder state remains in the_story (autogen is rerollable;
+        # we don't commit it to the builder).
+        msgs = self._next_message(builder, sd, player_id)
+        if msgs and isinstance(msgs[0], CharacterCreationMessage):
+            msgs[0].payload.autogen_result = autogen_result
+        return msgs
+
+    # ---- phase=story_confirm -------------------------------------------
+    def _chargen_story_confirm(
+        self,
+        builder: CharacterBuilder,
+        payload: CharacterCreationPayload,
+        sd: _SessionData,
+        player_id: str,
+        span: trace.Span,
+    ) -> list[object]:
+        span.add_event(
+            "character_creation.story_confirm",
+            {
+                "pronouns_present": bool(payload.pronouns),
+                "background_present": bool(payload.background),
+                "description_present": bool(payload.description),
+                "player_id": player_id,
+            },
+        )
+        story = StoryInput(
+            pronouns=payload.pronouns or "",
+            background=payload.background or "",
+            description=payload.description or "",
+        )
+        try:
+            builder.apply_response(story)
+        except UnfilledArrangementError as exc:
+            return [_error_msg(f"story_confirm rejected: {exc!r}")]
+        except BuilderError as exc:
+            return [_error_msg(f"story_confirm failed: {exc!r}")]
         return self._next_message(builder, sd, player_id)
 
     # ---- archetype resolution helper (Story 2.3 Slice A) ----------------

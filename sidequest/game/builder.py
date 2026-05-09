@@ -36,7 +36,7 @@ from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
 )
-from sidequest.protocol.models import CreationChoice, RolledStat
+from sidequest.protocol.models import ClassRequirement, CreationChoice, RolledStat
 from sidequest.protocol.types import NonBlankString
 
 # ---------------------------------------------------------------------------
@@ -1158,6 +1158,16 @@ class CharacterBuilder:
         match self._phase:
             case InProgress(scene_index=scene_index):
                 scene = self._filter_class_choices(self._scenes[scene_index])
+                eff = scene.mechanical_effects
+
+                # the_arrangement — assignment-required scenes get a custom payload.
+                if eff is not None and eff.assignment_required:
+                    return self._render_arrangement_message(scene, scene_index, player_id)
+
+                # the_story — identity-capture scenes get a custom payload.
+                if eff is not None and eff.identity_capture is not None:
+                    return self._render_story_message(scene, scene_index, player_id)
+
                 choices = [
                     CreationChoice(
                         label=NonBlankString(c.label),
@@ -1224,6 +1234,72 @@ class CharacterBuilder:
 
             case _:  # pragma: no cover — exhaustive
                 raise AssertionError(f"unknown phase: {self._phase!r}")
+
+    def _render_arrangement_message(
+        self,
+        scene: CharCreationScene,
+        scene_index: int,
+        player_id: str,
+    ) -> CharacterCreationMessage:
+        """Render the_arrangement scene payload with pool/assignment/qualify state."""
+        pool = list(self._arrangement_pool) if self._arrangement_pool is not None else []
+        assignment: dict[str, int | None] = (
+            dict(self._arrangement_assignment)
+            if self._arrangement_assignment is not None
+            else {name: None for name in self._ability_score_names}
+        )
+        qualifying = qualifying_classes_arrangement(assignment, self._classes)
+        qualifying_names = [c.display_name for c in qualifying]
+        class_requirements = [
+            ClassRequirement(
+                name=c.display_name,
+                requirement_label=f"{c.prime_requisite} {c.minimum_score}+",
+            )
+            for c in self._classes
+        ]
+        all_filled = bool(assignment) and all(v is not None for v in assignment.values())
+        confirm_enabled = all_filled and bool(qualifying)
+        payload = CharacterCreationPayload(
+            phase="scene",
+            scene_index=scene_index,
+            total_scenes=len(self._scenes),
+            prompt=self.interpolate_scene_narration(scene.narration),
+            input_type="stat_arrange",
+            loading_text=scene.loading_text,
+            pool=pool,
+            assignment=assignment,
+            qualifying_classes=qualifying_names,
+            class_requirements=class_requirements,
+            confirm_enabled=confirm_enabled,
+        )
+        return CharacterCreationMessage(payload=payload, player_id=player_id)
+
+    def _render_story_message(
+        self,
+        scene: CharCreationScene,
+        scene_index: int,
+        player_id: str,
+    ) -> CharacterCreationMessage:
+        """Render the_story scene payload with pronouns/background/description fields."""
+        eff = scene.mechanical_effects
+        ic = eff.identity_capture if eff is not None else None
+        autogen_available = bool(
+            eff is not None and eff.background_autogen_source is not None
+        )
+        payload = CharacterCreationPayload(
+            phase="scene",
+            scene_index=scene_index,
+            total_scenes=len(self._scenes),
+            prompt=self.interpolate_scene_narration(scene.narration),
+            input_type="story",
+            loading_text=scene.loading_text,
+            pronouns_options=["she/her", "he/him", "they/them"],
+            pronouns_allow_freeform=True,
+            background_optional=ic.background_optional if ic is not None else True,
+            description_optional=ic.description_optional if ic is not None else True,
+            autogen_available=autogen_available,
+        )
+        return CharacterCreationMessage(payload=payload, player_id=player_id)
 
     # --- Actions: scene walking ---
 
