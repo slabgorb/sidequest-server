@@ -46,7 +46,7 @@ from sidequest.genre.models.npc_traits import NpcTraitsDatabase
 from sidequest.genre.models.ocean import DramaThresholds
 from sidequest.genre.models.progression import ProgressionConfig
 from sidequest.genre.models.rigs_world import ChassisInstanceConfig
-from sidequest.genre.models.rules import RulesConfig
+from sidequest.genre.models.rules import RulesConfig, SavingThrowsTable
 from sidequest.genre.models.scenario import ScenarioPack
 from sidequest.genre.models.theme import GenreTheme
 from sidequest.genre.models.tropes import TropeDefinition
@@ -188,3 +188,10 @@ class GenrePack(BaseModel):
     @property
     def name(self) -> str:
         return self.meta.name
+
+
+# ClassDef.saving_throws uses a TYPE_CHECKING-only import of SavingThrowsTable to
+# avoid a circular dependency (character → rules → game.beat_kinds → game → genre).
+# Now that pack.py has resolved rules.py (SavingThrowsTable is in scope), we rebuild
+# ClassDef so pydantic v2 can materialise the forward reference.
+ClassDef.model_rebuild(_types_namespace={"SavingThrowsTable": SavingThrowsTable})
