@@ -400,14 +400,29 @@ def test_init_class_def_invalid_publishes_watcher_event(
         for e in captured_magic_init_events
         if e.get("event_type") == "magic.init_class_def_invalid" and e.get("component") == "magic"
     ]
-    assert len(matching) >= 1, (
-        "Expected at least one magic.init_class_def_invalid watcher event "
-        f"for the bad_entry; captured: {captured_magic_init_events}"
+    # Fixture has exactly one bad entry — exactly one event must fire.
+    # Reviewer (Queen of Hearts) tightened from `>= 1` to `== 1` so a future
+    # retry-loop bug that emitted twice wouldn't pass silently.
+    assert len(matching) == 1, (
+        "Expected exactly one magic.init_class_def_invalid watcher event "
+        f"for the single bad_entry; captured: {captured_magic_init_events}"
     )
-    bad = next(e for e in matching if e["fields"].get("entry_id") == "bad_entry")
+    bad = matching[0]
     assert bad["fields"]["genre_pack_source_dir"] == str(tmp_path)
     assert bad["fields"]["entry_id"] == "bad_entry"
-    assert "error" in bad["fields"] and bad["fields"]["error"]  # non-empty error string
+    # Bind the error string to the ValidationError this test exercises —
+    # `bad_entry` is missing prime_requisite/minimum_score/kit_table, so the
+    # Pydantic error must mention at least one of them. A bare truthy check
+    # would pass for any non-empty string, masking a regression where some
+    # other exception path produced the event.
+    error_str = bad["fields"]["error"]
+    assert any(
+        marker in error_str
+        for marker in ("prime_requisite", "minimum_score", "kit_table", "Field required")
+    ), (
+        f"error field {error_str!r} does not reference any expected ValidationError "
+        f"marker — captured event may not originate from the Pydantic path under test"
+    )
     assert bad["severity"] == "warning"
 
 
