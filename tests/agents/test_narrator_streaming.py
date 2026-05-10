@@ -345,6 +345,27 @@ async def test_streaming_path_degrades_when_client_lacks_send_stream(monkeypatch
                 session_id="sync-sess",
             )
 
+        async def send_stateless(
+            self,
+            system_prompt,
+            user_message,
+            model,
+            allowed_tools=None,
+            env_vars=None,
+        ):
+            from sidequest.agents.claude_client import ClaudeResponse
+
+            raw = (
+                "**Test location**\n\nSync fallback prose.\n\n"
+                '```game_patch\n{"location": "Test location"}\n```\n'
+            )
+            return ClaudeResponse(
+                text=raw,
+                input_tokens=10,
+                output_tokens=5,
+                session_id=None,
+            )
+
     client = SyncOnlyClient()
 
     from sidequest.agents.orchestrator import Orchestrator, TurnContext

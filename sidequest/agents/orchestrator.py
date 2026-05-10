@@ -78,6 +78,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 NARRATOR_MODEL: str = "opus"
+SOFT_PROMPT_BUDGET_BYTES = 2_000_000  # ~500K tokens, half of Opus 4.7's 1M window (ADR-098)
 
 
 class NarratorPromptTier:
@@ -2133,7 +2134,7 @@ class Orchestrator:
             agent_name = self._narrator.name()
 
             tier = self.select_prompt_tier(context)
-            prompt_text, _registry = await self.build_narrator_prompt(action, context, tier=tier)
+            prompt_text, _registry = await self.build_narrator_prompt(action, context)
 
             with self._session_lock:
                 current_session_id = self._narrator_session_id
@@ -2435,221 +2436,231 @@ class Orchestrator:
                 secret_routes=list(self._last_secret_routes),
             )
 
+    async def _invoke_with_retry_once(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        phase_timings,
+    ) -> tuple[ClaudeResponse | None, int]:
+        """Send via send_stateless; retry once on transient failure (ADR-098 §Error handling).
+
+        Returns (response, elapsed_ms). On unrecoverable failure returns
+        (None, elapsed_ms) — caller renders the degraded in-fiction stall.
+        """
+        with turn_agent_llm_inference_span(
+            model=NARRATOR_MODEL,
+            prompt_len=len(system_prompt) + len(user_message),
+        ):
+            for attempt in (1, 2):
+                call_start = time.monotonic()
+                try:
+                    with phase_timings.phase("narrator_subprocess"):
+                        response = await self._client.send_stateless(
+                            system_prompt=system_prompt,
+                            user_message=user_message,
+                            model=NARRATOR_MODEL,
+                            allowed_tools=[],
+                            env_vars={},
+                        )
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    return response, elapsed_ms
+                except _ClaudeTimeoutError as e:
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    if attempt == 1:
+                        logger.warning(
+                            "narrator.transient_retry attempt=%d duration_ms=%d error=%s",
+                            attempt, elapsed_ms, e,
+                        )
+                        continue  # retry
+                    logger.error("narrator.unrecoverable error=%s after retry", e)
+                    return None, elapsed_ms
+                except Exception as e:  # noqa: BLE001 - degraded fallback path
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    logger.error("narrator.unrecoverable error=%s", e)
+                    return None, elapsed_ms
+            return None, 0  # unreachable; keeps type-checker happy
+
+    def _maybe_emit_oversized_canary(
+        self,
+        system_prompt: str,
+        user_message: str,
+        registry: PromptRegistry,
+        agent_name: str,
+    ) -> None:
+        """Soft canary for unbounded growth regressions (ADR-098 §Bound canary)."""
+        total = len(system_prompt) + len(user_message)
+        if total <= SOFT_PROMPT_BUDGET_BYTES:
+            return
+        from sidequest.telemetry.watcher_hub import publish_event as _pub
+        breakdown = [
+            {"name": s.name, "chars": len(s.content)}
+            for s in registry.registry(agent_name)
+        ]
+        logger.warning(
+            "narrator.prompt_oversized total_bytes=%d budget=%d sections=%d",
+            total, SOFT_PROMPT_BUDGET_BYTES, len(breakdown),
+        )
+        _pub("prompt_oversized", {
+            "total_bytes": total,
+            "budget": SOFT_PROMPT_BUDGET_BYTES,
+            "sections": breakdown,
+        }, component="orchestrator")
+
+    def _degraded_result(self, *, action: str, context: TurnContext) -> NarrationTurnResult:
+        """Render the in-fiction stall on unrecoverable narrator failure."""
+        return NarrationTurnResult(
+            narration="The world holds its breath.",
+            agent_name=self._narrator.name(),
+        )
+
+    def _assemble_turn_result(
+        self,
+        *,
+        response: ClaudeResponse,
+        prompt_text: str,
+        registry: PromptRegistry,
+        context: TurnContext,
+        elapsed_ms: int,
+        action: str,
+    ) -> NarrationTurnResult:
+        """Parse the narrator response into a NarrationTurnResult.
+
+        Mechanical lift from the pre-refactor _run_narration_turn_synchronous body.
+        The session-id storage block is intentionally NOT lifted — sessions are gone (ADR-098).
+        """
+        agent_name = self._narrator.name()
+        raw_response = response.text
+        logger.info(
+            "Claude CLI returned narration len=%d duration_ms=%d",
+            len(raw_response), elapsed_ms,
+        )
+
+        with context.phase_timings.phase("narrator_extraction"):
+            extraction = extract_structured_from_response(raw_response)
+
+        prose = extraction["prose"]
+
+        if context.dispatch_package is not None:
+            audit_canonical_prose(
+                prose=prose,
+                package=context.dispatch_package,
+                entity_tokens_by_id=self._entity_tokens_for_registry(context),
+            )
+
+        if extraction["action_rewrite"] is None:
+            logger.warning("action_rewrite absent from extraction — using default (empty rewrite)")
+
+        if extraction["confrontation"]:
+            logger.info(
+                "encounter.confrontation_initiated confrontation_type=%s",
+                extraction["confrontation"],
+            )
+
+        for bs_dict in extraction["beat_selections"]:
+            if isinstance(bs_dict, dict):
+                logger.info(
+                    "encounter.agent_beat_selection actor=%s beat_id=%s target=%r",
+                    bs_dict.get("actor"), bs_dict.get("beat_id"), bs_dict.get("target"),
+                )
+
+        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
+        beat_selections = [
+            BeatSelection.from_dict(d)
+            for d in extraction["beat_selections"]
+            if isinstance(d, dict)
+        ]
+
+        visual_scene: VisualScene | None = None
+        if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
+            visual_scene = VisualScene.from_dict(extraction["visual_scene"])
+
+        action_rewrite: ActionRewrite | None = None
+        if isinstance(extraction["action_rewrite"], dict):
+            action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
+
+        return NarrationTurnResult(
+            narration=prose,
+            is_degraded=False,
+            location=extraction["location"],
+            scene_mood=extraction["scene_mood"],
+            visual_scene=visual_scene,
+            confrontation=extraction["confrontation"],
+            beat_selections=beat_selections,
+            npcs_present=npc_mentions,
+            items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
+            items_lost=extraction.get("items_lost", []),
+            items_discarded=extraction.get("items_discarded", []),
+            items_consumed=extraction.get("items_consumed", []),
+            footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
+            quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
+            sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],
+            action_rewrite=action_rewrite,
+            affinity_progress=extraction["affinity_progress"],
+            gold_change=extraction["gold_change"],
+            lore_established=extraction["lore_established"],
+            status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+            magic_working=(
+                extraction["magic_working"]
+                if isinstance(extraction.get("magic_working"), dict)
+                else None
+            ),
+            companions_added=extraction.get("companions_added", []),
+            companions_dismissed=extraction.get("companions_dismissed", []),
+            game_patch_dict=_extract_game_patch_json(raw_response),
+            agent_name=agent_name,
+            agent_duration_ms=elapsed_ms,
+            token_count_in=response.input_tokens,
+            token_count_out=response.output_tokens,
+            prompt_tier="",  # vestigial field; tier system removed per ADR-098
+            prompt_text=prompt_text,
+            raw_response_text=raw_response,
+            secret_routes=list(self._last_secret_routes),
+        )
+
     async def _run_narration_turn_synchronous(
         self,
         action: str,
         context: TurnContext,
     ) -> NarrationTurnResult:
-        """Synchronous narrator pipeline (send_with_session + extraction).
+        """Stateless narrator pipeline (ADR-098).
 
-        This is the primary entry point for Story 41-6 server dispatch.
+        Build the prompt, partition into (system_prompt, user_message),
+        send via :meth:`LlmClient.send_stateless`, parse, return.
 
-        Pipeline:
-          action → build_narrator_prompt → send_with_session (ClaudeClient)
-               → extract_structured_from_response → NarrationTurnResult
-
-        Phase 1 slice: Phase 3 combat dispatch is deferred.
-        Phase 1 slice: Phase 2 dice routing is deferred.
-        If in_combat and a confrontation is active, reaching here still works —
-        the narrator handles encounters via beat_selections in the game_patch.
-
-        Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
+        No session id is read or written. No first-turn-vs-subsequent
+        branching. If the first attempt fails transiently, retry once;
+        otherwise return a degraded :class:`NarrationTurnResult`.
         """
         with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
-            tier = self.select_prompt_tier(context)
-            prompt_text, registry = await self.build_narrator_prompt(action, context, tier=tier)
+            prompt_text, registry = await self.build_narrator_prompt(action, context)
+            system_prompt, user_message = registry.compose_split(agent_name)
 
-            logger.info("Invoking Claude CLI for narration action=%r", action)
+            self._maybe_emit_oversized_canary(system_prompt, user_message, registry, agent_name)
 
-            # ADR-066: persistent session (--resume on subsequent turns)
-            with self._session_lock:
-                current_session_id = self._narrator_session_id
-
-            is_first_turn = current_session_id is None
-
-            # First turn: full prompt is the system prompt; action is the user message.
-            # Subsequent turns: only dynamic state + action is sent.
-            system_prompt_for_establish = prompt_text if is_first_turn else None
-            send_prompt = action if is_first_turn else prompt_text
-
-            response: ClaudeResponse | None = None
-            first_attempt_error: Exception | None = None
-            with turn_agent_llm_inference_span(
-                model=NARRATOR_MODEL,
-                prompt_len=len(send_prompt),
-            ):
-                call_start = time.monotonic()
-                try:
-                    with context.phase_timings.phase("narrator_subprocess"):
-                        response = await self._client.send_with_session(
-                            prompt=send_prompt,
-                            model=NARRATOR_MODEL,
-                            session_id=current_session_id,
-                            system_prompt=system_prompt_for_establish,
-                            allowed_tools=[],
-                            env_vars={},
-                        )
-                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                except Exception as e:
-                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                    first_attempt_error = e
-                    logger.warning(
-                        "narrator.first_attempt_failed agent=%s duration_ms=%d error=%s",
-                        agent_name,
-                        elapsed_ms,
-                        e,
-                    )
-
-            # ADR-066 §8: classify error, retry/rotate as needed.
-            # On recovery success, tier/prompt_text/elapsed_ms are reassigned
-            # so the success path below sees the rebuild's values.
-            if first_attempt_error is not None:
-                recovery = await self._recover_from_narrator_failure(
-                    action=action,
-                    context=context,
-                    agent_name=agent_name,
-                    first_error=first_attempt_error,
-                    original_prompt_text=prompt_text,
-                    original_tier=tier,
-                )
-                if isinstance(recovery, NarrationTurnResult):
-                    # Recovery itself failed — narrator.unrecoverable already
-                    # emitted; return the in-fiction stall to the player.
-                    return recovery
-                response, tier, prompt_text, elapsed_ms = recovery
-
-            assert response is not None  # narrowing for type-checkers
-
-            # Store session ID from response (ADR-066)
-            if response.session_id:
-                with self._session_lock:
-                    if self._narrator_session_id is None:
-                        logger.info(
-                            "narrator.session_established — persistent Opus session created "
-                            "session_id=%s",
-                            response.session_id,
-                        )
-                        if context.genre:
-                            self._session_genre = context.genre
-                    self._narrator_session_id = response.session_id
-
-            raw_response = response.text
             logger.info(
-                "Claude CLI returned narration len=%d duration_ms=%d",
-                len(raw_response),
-                elapsed_ms,
+                "narrator.stateless_turn action=%r system_len=%d user_len=%d",
+                action, len(system_prompt), len(user_message),
             )
 
-            # Parse narrator response
-            with context.phase_timings.phase("narrator_extraction"):
-                extraction = extract_structured_from_response(raw_response)
+            response, elapsed_ms = await self._invoke_with_retry_once(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                phase_timings=context.phase_timings,
+            )
 
-            prose = extraction["prose"]
+            if response is None:
+                return self._degraded_result(action=action, context=context)
 
-            # Group G Task 7 — canonical-leak audit (safety net).
-            # Structural hiding (Task 5) is the primary defense; this is
-            # the lie-detector. Pass the ORIGINAL DispatchPackage so the
-            # audit knows what was supposed to be hidden. Expected-zero
-            # in steady state; any non-zero fire is a hiding-hole bug.
-            if context.dispatch_package is not None:
-                audit_canonical_prose(
-                    prose=prose,
-                    package=context.dispatch_package,
-                    entity_tokens_by_id=self._entity_tokens_for_registry(context),
-                )
-
-            # Warn on missing action_rewrite
-            if extraction["action_rewrite"] is None:
-                logger.warning(
-                    "action_rewrite absent from extraction — using default (empty rewrite)"
-                )
-
-            # Log confrontation initiation
-            if extraction["confrontation"]:
-                logger.info(
-                    "encounter.confrontation_initiated confrontation_type=%s",
-                    extraction["confrontation"],
-                )
-
-            # Log beat selections
-            for bs_dict in extraction["beat_selections"]:
-                if isinstance(bs_dict, dict):
-                    logger.info(
-                        "encounter.agent_beat_selection actor=%s beat_id=%s target=%r",
-                        bs_dict.get("actor"),
-                        bs_dict.get("beat_id"),
-                        bs_dict.get("target"),
-                    )
-
-            # Build NpcMention list
-            npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
-
-            # Build BeatSelection list
-            beat_selections = [
-                BeatSelection.from_dict(d)
-                for d in extraction["beat_selections"]
-                if isinstance(d, dict)
-            ]
-
-            # Build VisualScene
-            visual_scene: VisualScene | None = None
-            if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
-                visual_scene = VisualScene.from_dict(extraction["visual_scene"])
-
-            # Build ActionRewrite
-            action_rewrite: ActionRewrite | None = None
-            if isinstance(extraction["action_rewrite"], dict):
-                action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
-
-            return NarrationTurnResult(
-                narration=prose,
-                is_degraded=False,
-                location=extraction["location"],
-                scene_mood=extraction["scene_mood"],
-                visual_scene=visual_scene,
-                confrontation=extraction["confrontation"],
-                beat_selections=beat_selections,
-                npcs_present=npc_mentions,
-                items_gained=extraction["items_gained"]
-                if isinstance(extraction["items_gained"], list)
-                else [],
-                items_lost=extraction.get("items_lost", []),
-                items_discarded=extraction.get("items_discarded", []),
-                items_consumed=extraction.get("items_consumed", []),
-                footnotes=extraction["footnotes"]
-                if isinstance(extraction["footnotes"], list)
-                else [],
-                quest_updates=extraction["quest_updates"]
-                if isinstance(extraction["quest_updates"], dict)
-                else {},
-                sfx_triggers=extraction["sfx_triggers"]
-                if isinstance(extraction["sfx_triggers"], list)
-                else [],
-                action_rewrite=action_rewrite,
-                affinity_progress=extraction["affinity_progress"],
-                gold_change=extraction["gold_change"],
-                lore_established=extraction["lore_established"],
-                status_changes=extraction["status_changes"]
-                if isinstance(extraction["status_changes"], list)
-                else [],
-                magic_working=(
-                    extraction["magic_working"]
-                    if isinstance(extraction.get("magic_working"), dict)
-                    else None
-                ),
-                companions_added=extraction.get("companions_added", []),
-                companions_dismissed=extraction.get("companions_dismissed", []),
-                game_patch_dict=_extract_game_patch_json(raw_response),
-                agent_name=agent_name,
-                agent_duration_ms=elapsed_ms,
-                token_count_in=response.input_tokens,
-                token_count_out=response.output_tokens,
-                prompt_tier=tier,
+            return self._assemble_turn_result(
+                response=response,
                 prompt_text=prompt_text,
-                raw_response_text=raw_response,
-                secret_routes=list(self._last_secret_routes),
+                registry=registry,
+                context=context,
+                elapsed_ms=elapsed_ms,
+                action=action,
             )
 
 

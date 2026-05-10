@@ -513,30 +513,6 @@ def test_narrator_per_turn_prompt_includes_action_invariant(build_registry):
 # ──────────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def simple_turn_context():
-    """Minimal TurnContext for turn 0 (opening turn)."""
-    from sidequest.agents.orchestrator import TurnContext
-
-    return TurnContext(
-        character_name="Kael",
-        genre="caverns_and_claudes",
-        turn_number=0,
-    )
-
-
-@pytest.fixture
-def simple_turn_context_turn_three():
-    """Minimal TurnContext for turn 3 (mid-session, post-opening)."""
-    from sidequest.agents.orchestrator import TurnContext
-
-    return TurnContext(
-        character_name="Kael",
-        genre="caverns_and_claudes",
-        turn_number=3,
-    )
-
-
 @pytest.mark.asyncio
 async def test_build_narrator_prompt_signature_no_tier_param(simple_turn_context):
     """build_narrator_prompt no longer accepts `tier` or `rebuild_header`.
