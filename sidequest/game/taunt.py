@@ -5,14 +5,16 @@ themselves), how many rounds remain on the effect, and how many damage
 redirects have already fired this round (capped at 1 per spec §8).
 
 Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §8.
+
+Pydantic BaseModel (not dataclass) so it can be embedded as a field in
+``StructuredEncounter`` which uses ``model_config = {"extra": "forbid"}``.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel
 
 
-@dataclass
-class TauntState:
+class TauntState(BaseModel):
     """Mutable per-encounter taunt tracker.
 
     Attributes:
@@ -20,6 +22,8 @@ class TauntState:
         remaining_rounds: Rounds left on the current taunt; decays to 0 at end of round.
         redirects_this_round: Number of damage redirects fired this round (cap: 1 per spec §8).
     """
+
+    model_config = {"extra": "forbid"}
 
     active_actor: str | None = None
     remaining_rounds: int = 0

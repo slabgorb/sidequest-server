@@ -5,8 +5,6 @@ test_taunt_targeting.py.
 """
 from __future__ import annotations
 
-import pytest
-
 from sidequest.game.taunt import TauntState
 
 
@@ -49,3 +47,31 @@ def test_taunt_redirect_capped_at_one_per_round():
     assert state.try_consume_redirect() is True
     assert state.try_consume_redirect() is False  # second attempt rejected
     assert state.redirects_this_round == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 3: beat-resolution wiring + OTEL
+# ---------------------------------------------------------------------------
+
+
+def test_taunt_beat_resolution_activates_state(taunt_test_encounter):
+    """Resolving a 'taunt' beat for the Fighter sets active_actor and remaining_rounds."""
+    enc = taunt_test_encounter.enc
+    fighter_id = taunt_test_encounter.fighter_id
+
+    taunt_test_encounter.resolve_beat(actor_id=fighter_id, beat_id="taunt", outcome="success")
+
+    assert enc.taunt.active_actor == fighter_id
+    assert enc.taunt.remaining_rounds == 1
+
+
+def test_taunt_activation_emits_otel(taunt_test_encounter, otel_capture):
+    enc = taunt_test_encounter.enc
+    fighter_id = taunt_test_encounter.fighter_id
+
+    taunt_test_encounter.resolve_beat(actor_id=fighter_id, beat_id="taunt", outcome="success")
+
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.activated"]
+    assert len(spans) == 1
+    assert spans[0].attributes["actor_id"] == fighter_id
+    assert spans[0].attributes["round"] == enc.beat

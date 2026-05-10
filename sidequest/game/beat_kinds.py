@@ -179,12 +179,14 @@ from sidequest.game.encounter import (  # noqa: E402
 )
 from sidequest.game.encounter_tag import EncounterTag  # noqa: E402
 from sidequest.telemetry.spans import (  # noqa: E402
+    SPAN_ENCOUNTER_TAUNT_ACTIVATED,
     encounter_composure_break_span,
     encounter_edge_debit_span,
     encounter_metric_advance_span,
     encounter_tag_backfire_span,
     encounter_tag_created_span,
 )
+from sidequest.telemetry.spans.span import Span  # noqa: E402
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish  # noqa: E402
 
 EdgeResolver = Callable[[str], CreatureCore | None]
@@ -620,6 +622,35 @@ def apply_beat(
 
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)
+
+    # Story 2026-05-10 — taunt beat activation (Task 3).
+    # When a Fighter resolves the taunt beat with a non-failure outcome,
+    # activate the encounter's TauntState and emit an OTEL lie-detector span
+    # so the GM panel can verify taunt engaged rather than the narrator
+    # improvising the attention-pull effect.
+    if getattr(beat, "id", None) == "taunt" and outcome not in (
+        RollOutcome.Fail,
+        RollOutcome.CritFail,
+    ):
+        enc.taunt.activate(actor_id=actor.name)
+        with Span.open(
+            SPAN_ENCOUNTER_TAUNT_ACTIVATED,
+            {
+                "actor_id": actor.name,
+                "round": enc.beat,
+            },
+        ):
+            pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter.taunt",
+                "op": "activated",
+                "actor_id": actor.name,
+                "round": enc.beat,
+            },
+            component="encounter",
+        )
 
     # GM-panel visibility for inert beats. Per spec, default delta tables
     # for Fail tier on every kind are {own=0, opponent=0} — a Fail rolls
