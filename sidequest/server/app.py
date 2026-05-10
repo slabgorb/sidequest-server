@@ -12,11 +12,13 @@ import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from sidequest.agents.claude_client import LlmClient
 from sidequest.agents.llm_factory import build_llm_client
@@ -32,8 +34,15 @@ from sidequest.server.watcher import (
 )
 from sidequest.server.websocket import ws_endpoint
 from sidequest.telemetry.validator import Validator
+from sidequest.telemetry.watcher_hub import publish_event
 
 logger = logging.getLogger(__name__)
+
+
+class WatcherEmitPayload(BaseModel):
+    event_type: str
+    fields: dict[str, Any]
+    component: str = "daemon"
 
 
 def _install_uvicorn_log_bridge() -> None:
@@ -225,6 +234,17 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # --- /internal/watcher/emit — daemon → server watcher bridge (ADR-031). ---
+    # The daemon cannot import sidequest.telemetry.watcher_hub directly
+    # (cross-process boundary). It POSTs here and we forward to publish_event.
+    @app.post("/internal/watcher/emit", status_code=204)
+    async def watcher_emit(payload: WatcherEmitPayload) -> None:
+        publish_event(
+            event_type=payload.event_type,
+            fields=payload.fields,
+            component=payload.component,
+        )
 
     # --- /ws WebSocket endpoint ---
     @app.websocket("/ws")
