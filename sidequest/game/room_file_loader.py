@@ -17,6 +17,7 @@ from sidequest.protocol.models import (
     TacticalGridPayload,
 )
 from sidequest.server.asset_urls import resolve_asset_url
+from sidequest.telemetry.spans.cavern_room import cavern_room_load_span
 
 
 class RoomNotFoundError(Exception):
@@ -79,6 +80,16 @@ def load_room_payload(
         f"rooms/{room_id}.cavern.png"
     )
     image_url = resolve_asset_url(relative)
+
+    with cavern_room_load_span(
+        room_id=room_id,
+        seed=cellular["seed"],
+        density=cellular.get("density", 0.55),
+        floor_count=derived["floor_count"],
+        mask=mask,
+        cavern_image_url=image_url,
+    ):
+        pass
 
     return TacticalGridPayload(
         room_id=room_id,
