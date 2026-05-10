@@ -69,3 +69,23 @@ def test_class_def_default_empty_abilities():
         }
     )
     assert cd.abilities == []
+
+
+def test_caverns_classes_have_signature_abilities():
+    pack = load_genre_pack(GENRE_ROOT.resolve() / "caverns_and_claudes")
+
+    by_id = {c.id: c for c in pack.classes}
+    cleric, fighter, thief, mage = by_id["cleric"], by_id["fighter"], by_id["thief"], by_id["mage"]
+
+    assert len(cleric.abilities) == 1 and cleric.abilities[0].name == "Turn Undead"
+    assert len(fighter.abilities) == 1 and fighter.abilities[0].name == "Taunt"
+    assert len(thief.abilities) == 1 and thief.abilities[0].name == "Backstab"
+    assert mage.abilities == []  # signature filled by magic plugin
+
+    # Prose is non-empty (no {writer agent fills} placeholder).
+    for c in (cleric, fighter, thief):
+        gd = c.abilities[0].genre_description
+        assert gd and "{writer agent" not in gd, (
+            f"{c.id} genre_description still has placeholder text"
+        )
+        assert c.abilities[0].mechanical_effect, f"{c.id} mechanical_effect blank"
