@@ -876,9 +876,13 @@ function renderPrompt() {
   const zonesHtml = zones.map(z => {
     const pct = totalTokens > 0 ? (z.total_tokens / totalTokens * 100) : 0;
     const color = ZONE_COLORS[z.zone] || 'var(--muted)';
-    const sections = (z.sections || []).map(s =>
-      `<div style="margin-left:24px;font-size:11px;color:var(--muted)">${esc(s.name)} <span style="color:var(--sky)">${s.token_estimate} tok</span> <span style="color:var(--border)">${s.category}</span></div>`
-    ).join('');
+    const sections = (z.sections || []).map(s => {
+      const summary = `<summary style="cursor:pointer;font-size:11px;color:var(--muted);margin-left:24px;list-style:revert">${esc(s.name)} <span style="color:var(--sky)">${s.token_estimate} tok</span> <span style="color:var(--border)">${s.category}</span></summary>`;
+      const body = s.content
+        ? `<pre style="margin:4px 0 8px 36px;padding:6px 8px;background:var(--surface);border-left:2px solid ${color};white-space:pre-wrap;word-break:break-word;color:var(--text);font-size:11px;max-height:400px;overflow-y:auto">${esc(s.content)}</pre>`
+        : `<div style="margin:4px 0 8px 36px;font-size:11px;color:var(--border);font-style:italic">(no content shipped — server not updated?)</div>`;
+      return `<details>${summary}${body}</details>`;
+    }).join('');
     return `<div style="margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="width:70px;text-align:right;color:${color};font-size:12px;font-weight:bold">${esc(z.zone)}</span>
