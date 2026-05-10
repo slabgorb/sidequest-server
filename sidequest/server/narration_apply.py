@@ -938,6 +938,104 @@ def _build_magic_confrontation_payload(
     }
 
 
+def _promote_pool_member_to_npc(member: NpcPoolMember) -> Npc:
+    """Build an ``Npc`` from an ``NpcPoolMember``, preserving identity
+    (name, pronouns, appearance, role) and recording ``pool_origin`` so
+    Sebastien's mechanical-visibility lens can trace the NPC back to the
+    pool entry it was promoted from. Stat block is the same placeholder
+    shape ``Session._npc_from_patch`` uses — fresh edge pool, empty
+    inventory, level 1.
+    """
+    from sidequest.game.creature_core import (
+        CreatureCore,
+        Inventory,
+        placeholder_edge_pool,
+    )
+
+    core = CreatureCore(
+        name=member.name,
+        description=member.appearance or "No description",
+        personality=member.role or "Unknown",
+        level=1,
+        xp=0,
+        inventory=Inventory(),
+        statuses=[],
+        edge=placeholder_edge_pool(),
+    )
+    return Npc(
+        core=core,
+        pronouns=member.pronouns,
+        appearance=member.appearance,
+        pool_origin=member.name,
+    )
+
+
+def resolve_status_target(
+    snapshot: GameSnapshot,
+    *,
+    actor_name: str,
+    turn_num: int,
+    trigger: str,
+):
+    """Resolve a status-mutation actor name to a creature whose
+    ``core.statuses`` can be appended to or popped from.
+
+    Search order:
+    1. ``snapshot.characters`` — PCs.
+    2. ``snapshot.npcs`` — mechanically-active NPCs.
+    3. ``snapshot.npc_pool`` — auto-registered or world-authored pool
+       members. A pool hit is *promoted* to ``Npc`` (per Wave 2A docs:
+       "when the same name engages mechanically … an Npc is created with
+       pool_origin = self.name") so the status can land on a real
+       ``CreatureCore``. The pool entry is left in place — it remains a
+       re-citable cast member, shadowed by the ``Npc`` lookup.
+
+    Returns ``None`` when the name doesn't match any of the three; the
+    caller emits its own unknown-actor warning so the warning label can
+    distinguish add (``status_change.unknown_actor``) from clear
+    (``status_clear.unknown_actor``).
+
+    Playtest 2026-05-09 fix: previously this lookup was hand-rolled at
+    each call site against ``snapshot.characters`` only, so injuries
+    minted on auto-registered NPCs (e.g. the dying delver in Sünden)
+    silently fell on the floor with ``status_change.unknown_actor``.
+    """
+    for ch in snapshot.characters:
+        if ch.core.name == actor_name:
+            return ch
+    for npc in snapshot.npcs:
+        if npc.core.name == actor_name:
+            return npc
+    pool_match = next(
+        (m for m in snapshot.npc_pool if m.name == actor_name),
+        None,
+    )
+    if pool_match is None:
+        return None
+    promoted = _promote_pool_member_to_npc(pool_match)
+    snapshot.npcs.append(promoted)
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "npcs",
+            "op": "promoted_from_pool",
+            "name": pool_match.name,
+            "pool_origin": pool_match.name,
+            "drawn_from": pool_match.drawn_from,
+            "trigger": trigger,
+            "turn": turn_num,
+        },
+        component="npc_registry",
+    )
+    logger.info(
+        "npc.promoted_from_pool name=%r trigger=%s turn=%d",
+        pool_match.name,
+        trigger,
+        turn_num,
+    )
+    return promoted
+
+
 def _append_status_to_actor(
     *,
     target,
@@ -2780,9 +2878,11 @@ def _apply_narration_result_to_snapshot(
                 continue
             if not actor_name or not text:
                 continue
-            target = next(
-                (c for c in snapshot.characters if c.core.name == actor_name),
-                None,
+            target = resolve_status_target(
+                snapshot,
+                actor_name=actor_name,
+                turn_num=turn_num,
+                trigger="status_change",
             )
             if target is None:
                 logger.warning(
