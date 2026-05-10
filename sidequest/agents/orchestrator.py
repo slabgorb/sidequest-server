@@ -2479,7 +2479,9 @@ class Orchestrator:
                     elapsed_ms = int((time.monotonic() - call_start) * 1000)
                     logger.error("narrator.unrecoverable error=%s", e)
                     return None, elapsed_ms
-            return None, 0  # unreachable; keeps type-checker happy
+            raise AssertionError(
+                "_invoke_with_retry_once: loop exhausted without return — should be unreachable"
+            )
 
     def _maybe_emit_oversized_canary(
         self,
@@ -2519,7 +2521,6 @@ class Orchestrator:
         *,
         response: ClaudeResponse,
         prompt_text: str,
-        registry: PromptRegistry,
         context: TurnContext,
         elapsed_ms: int,
         action: str,
@@ -2657,7 +2658,6 @@ class Orchestrator:
             return self._assemble_turn_result(
                 response=response,
                 prompt_text=prompt_text,
-                registry=registry,
                 context=context,
                 elapsed_ms=elapsed_ms,
                 action=action,
