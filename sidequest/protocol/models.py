@@ -8,6 +8,7 @@ this single file — do not fragment into sub-modules.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -417,37 +418,73 @@ class CompanionMember(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
-# TacticalGridPayload — grid layout
+# TacticalGridPayload — cellular cavern grid layout (ADR-096)
 # ---------------------------------------------------------------------------
 
 
-class TacticalFeaturePayload(ProtocolBase):
-    """A named feature placed on the grid via legend glyph.
+class CellularParams(ProtocolBase):
+    """Cellular automata parameters for a cavern room. ADR-096."""
 
-    Port of sidequest_protocol::TacticalFeaturePayload.
-    """
+    size: tuple[int, int]
+    """(width, height) in cells."""
+    seed: int
+    density: float
+    cutoff: int
+    passes: int
 
-    glyph: str
-    """The uppercase letter glyph (A-Z) from the ASCII grid."""
-    feature_type: str
-    """Feature type (cover, hazard, difficult_terrain, atmosphere, interactable, door)."""
-    label: NonBlankString
-    """Human-readable label for UI tooltip. Non-blank."""
-    positions: list[list[int]]
-    """Grid positions where this feature appears ([x, y] pairs)."""
+
+class DerivedRoomData(ProtocolBase):
+    """Tool-derived room facts (exits, POIs, floor count). ADR-096."""
+
+    floor_count: int
+    exits: dict[str, tuple[int, int] | None]
+    """{north|south|east|west: [x, y] | None}."""
+    pois: list[tuple[int, int]]
+
+
+class TokenPayload(ProtocolBase):
+    """A token placed on the tactical grid (placeholder — populated at dispatch)."""
+
+    token_id: str
+    label: str
+    position: tuple[int, int]
+
+
+class InitiativeEntry(ProtocolBase):
+    """One entry in the initiative order (placeholder — populated at dispatch)."""
+
+    token_id: str
+    value: int
 
 
 class TacticalGridPayload(ProtocolBase):
-    """Grid layout — cell types as strings for JSON simplicity.
+    """Per-room tactical layout for the Map tab. ADR-096.
 
-    Port of sidequest_protocol::TacticalGridPayload.
+    Cavern rooms render as a Pillow-rendered PNG floor + token overlay.
+    Settlement rooms render as a name/description card; cavern fields are
+    None.
     """
 
-    width: int
-    """Grid width in cells."""
-    height: int
-    """Grid height in cells."""
-    cells: list[list[str]]
-    """2D grid of cell type strings (e.g., 'floor', 'wall', 'water')."""
-    features: list[TacticalFeaturePayload]
-    """Named features placed on the grid via legend."""
+    room_id: str
+    room_name: str
+    room_type: Literal["cavern", "settlement"]
+
+    mask: str | None = None
+    """ASCII mask: '.' floor, '#' wall, rows newline-separated. None for settlements."""
+    cavern_image_url: str | None = None
+    """Resolved (CDN or /genre/) URL for the rendered cavern PNG."""
+    cell_size: int | None = None
+    cellular: CellularParams | None = None
+    derived: DerivedRoomData | None = None
+
+    tokens: list[TokenPayload] = Field(default_factory=list)
+    initiative: list[InitiativeEntry] | None = None
+
+    # Settlement-specific fields (ADR-096 Task 20b). Populated from the
+    # room YAML for settlement rooms so the UI can render a description
+    # card without a separate round-trip. None for cavern rooms.
+    settlement_description: str | None = None
+    """Human-readable room description from the room YAML. Settlement rooms only."""
+    settlement_exits: list[dict] | None = None
+    """Exit list from the room YAML, e.g. [{to: "room_id", label: "..."}].
+    Settlement rooms only; the Automapper's SettlementRoomView consumes this."""

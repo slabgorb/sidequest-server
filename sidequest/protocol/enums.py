@@ -78,6 +78,12 @@ class MessageType(StrEnum):
     # responds with an ORBITAL_CHART message carrying a fresh SVG.
     ORBITAL_INTENT = "ORBITAL_INTENT"
     ORBITAL_CHART = "ORBITAL_CHART"
+    # Cavern renderer revival (ADR-096 Task 20b). Emitted on room entry
+    # when the world uses room_graph navigation and the room has a YAML
+    # file in rooms/. Carries TacticalGridPayload; the UI Automapper
+    # routes cavern rooms to TacticalGridRenderer and settlement rooms
+    # to SettlementRoomView.
+    TACTICAL_GRID = "TACTICAL_GRID"
 
 
 class NarratorVerbosity(StrEnum):
