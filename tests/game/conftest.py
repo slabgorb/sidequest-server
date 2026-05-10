@@ -28,6 +28,10 @@ _TAUNT_BEAT = BeatDef.model_validate(
     }
 )
 
+_BEAT_REGISTRY: dict[str, BeatDef] = {
+    "taunt": _TAUNT_BEAT,
+}
+
 _OUTCOME_MAP: dict[str, RollOutcome] = {
     "crit_success": RollOutcome.CritSuccess,
     "success": RollOutcome.Success,
@@ -69,11 +73,6 @@ class TauntTestEncounter:
             )
 
         apply_beat(self.enc, actor, beat_def, roll_outcome)
-
-
-_BEAT_REGISTRY: dict[str, BeatDef] = {
-    "taunt": _TAUNT_BEAT,
-}
 
 
 # ---------------------------------------------------------------------------
