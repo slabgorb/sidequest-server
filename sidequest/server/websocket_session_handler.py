@@ -2446,7 +2446,29 @@ class WebSocketSessionHandler:
                     # so it does not bump either counter. The first
                     # PLAYER_ACTION turn is the first real exchange.
                     if not is_opening_turn:
+                        # Capture the round *before* incrementing so the
+                        # taunt-expiry OTEL span labels it correctly as
+                        # "the round that just ended" (Task 6).
+                        _prior_round = snapshot.turn_manager.round
                         snapshot.turn_manager.record_interaction()
+
+                        # Story 2026-05-10 — taunt decay tick (Task 6).
+                        # Runs on every round-advance so the 1-round taunt
+                        # duration is enforced mechanically, not left to
+                        # narrator improvisation. Only fires when an encounter
+                        # is active and unresolved — no-op outside combat.
+                        if (
+                            snapshot.encounter is not None
+                            and not snapshot.encounter.resolved
+                        ):
+                            from sidequest.game.taunt_tick import (  # noqa: PLC0415
+                                tick_taunt_round_advance,
+                            )
+
+                            tick_taunt_round_advance(
+                                snapshot.encounter,
+                                prior_round=_prior_round,
+                            )
 
                     # Story 45-19: arc-recompute tick. Closes Felix's
                     # Playtest 3 bug where world_history froze at turn 30.

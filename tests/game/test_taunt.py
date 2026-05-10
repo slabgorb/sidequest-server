@@ -75,3 +75,69 @@ def test_taunt_activation_emits_otel(taunt_test_encounter, otel_capture):
     assert len(spans) == 1
     assert spans[0].attributes["actor_id"] == fighter_id
     assert spans[0].attributes["round"] == enc.beat
+
+
+# ---------------------------------------------------------------------------
+# Task 6: taunt decay + OTEL expiration on round-advance hook
+# ---------------------------------------------------------------------------
+
+
+def test_taunt_expires_at_end_of_round_emits_otel(taunt_test_encounter, otel_capture):
+    """When the round advances after taunt is active, tick_taunt_round_advance()
+    clears the taunter and emits encounter.taunt.expired with the prior
+    actor_id and the round that just ended.
+
+    The round counter used here is TurnManager.round — the same counter
+    that record_interaction() increments on every player-narrator exchange.
+    The production hook calls tick_taunt_round_advance() right after
+    record_interaction() in _execute_narration_turn.
+    """
+    from sidequest.game.taunt_tick import tick_taunt_round_advance
+    from sidequest.game.turn import TurnManager
+
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_id = helper.fighter_id
+
+    # Activate taunt.
+    enc.taunt.activate(actor_id=fighter_id)
+    assert enc.taunt.active_actor == fighter_id
+
+    # Simulate TurnManager at a known round.
+    tm = TurnManager(round=5)
+    round_before = tm.round  # 5 — the round that is about to end
+
+    # Advance the round (mirrors record_interaction()'s increment).
+    tm.record_interaction()
+
+    # Now call the production hook: decay + conditional OTEL.
+    tick_taunt_round_advance(enc, prior_round=round_before)
+
+    # Taunt must be cleared.
+    assert enc.taunt.active_actor is None
+
+    # Exactly one expiry span must have fired.
+    events = [
+        s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"
+    ]
+    assert len(events) == 1, (
+        f"Expected 1 expired event, got {len(events)}: "
+        f"{[s.name for s in otel_capture.get_finished_spans()]}"
+    )
+    assert events[0].attributes["actor_id"] == fighter_id
+    assert events[0].attributes["round"] == round_before  # the round that just ended
+
+
+def test_taunt_no_expiry_event_when_inactive(taunt_test_encounter, otel_capture):
+    """tick_taunt_round_advance is a no-op (no span) when taunt is not active."""
+    from sidequest.game.taunt_tick import tick_taunt_round_advance
+
+    enc = taunt_test_encounter.enc
+    assert enc.taunt.active_actor is None
+
+    tick_taunt_round_advance(enc, prior_round=1)
+
+    events = [
+        s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"
+    ]
+    assert len(events) == 0
