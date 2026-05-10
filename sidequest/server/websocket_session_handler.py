@@ -339,6 +339,67 @@ def _populate_opening_directive_on_chargen_complete(
     session_data.opening_directive = directive
     session_data._resolved_opening_id = opening.id
 
+    # sq-playtest 2026-05-09 [OBS] projection.party_zone_absent_with_characters:
+    # ``party_location()`` returned None at game start because no seated PC
+    # had a ``character_locations`` entry — the perception rewriter then
+    # fell back to "you can't identify them" mode and the narrator had to
+    # call PCs *"another figure — armed, by the silhouette"* instead of by
+    # name. Bootstrap every seated PC's location to the resolved Opening's
+    # ``setting.location_label`` so ``visible_to()`` / ``in_same_zone()``
+    # return true on turn 1. Idempotent: only writes when an entry is
+    # absent. Both PCs land on the same string, so consensus matches.
+    _bootstrap_character_locations_from_opening(snapshot, opening)
+
+
+def _bootstrap_character_locations_from_opening(
+    snapshot: GameSnapshot, opening: object
+) -> None:
+    """Write the opening's ``setting.location_label`` to every seated PC
+    without a ``character_locations`` entry.
+
+    Idempotent — preserves any prior entry (turn-1 narration apply or a
+    resumed save's last-known location). Only fills the *empty* slots that
+    cause ``party_location()`` to return None at game start.
+
+    Emits ``snapshot.character_locations_bootstrapped`` (watcher event +
+    span event) so the GM panel can verify the chargen-complete bootstrap
+    fired and which seats were populated.
+    """
+    location = getattr(getattr(opening, "setting", None), "location_label", None)
+    if not location:
+        return
+    seated = [name for name in snapshot.player_seats.values() if name]
+    bootstrapped: list[str] = []
+    for name in seated:
+        if name not in snapshot.character_locations:
+            snapshot.character_locations[name] = location
+            bootstrapped.append(name)
+    if bootstrapped:
+        opening_id = getattr(opening, "id", "") or ""
+        _watcher_publish(
+            "snapshot.character_locations_bootstrapped",
+            {
+                "source": "opening.setting.location_label",
+                "opening_id": opening_id,
+                "bootstrapped_pcs": bootstrapped,
+                "bootstrapped_count": len(bootstrapped),
+                "seated_count": len(seated),
+            },
+            component="opening_hook",
+            severity="info",
+        )
+        trace.get_current_span().add_event(
+            "snapshot.character_locations_bootstrapped",
+            {
+                "event": "snapshot.character_locations_bootstrapped",
+                "source": "opening.setting.location_label",
+                "opening_id": opening_id,
+                "bootstrapped_pcs": ",".join(bootstrapped),
+                "bootstrapped_count": len(bootstrapped),
+                "seated_count": len(seated),
+            },
+        )
+
 
 def _should_fire_opening_narration(session_data: object, room: object) -> bool:
     """Decide whether to run opening narration on this chargen.complete.
@@ -1884,17 +1945,38 @@ class WebSocketSessionHandler:
         # to chargen instead of auto-claiming an existing PC.
         if sd.player_id and character.core.name:
             sd.snapshot.player_seats[sd.player_id] = character.core.name
-            # Wave 2B (story 45-48): seed the joiner's per-character
-            # location from the party consensus when one exists. This
-            # gives a joiner whose opening was suppressed a sensible
-            # last-known scene immediately, rather than the empty header
-            # that a missed narration would otherwise produce. When the
-            # party is split (or pre-narration), no consensus exists and
-            # we leave the entry absent — the next narration apply will
-            # populate it.
-            party_consensus = sd.snapshot.party_location()
-            if party_consensus and character.core.name not in sd.snapshot.character_locations:
-                sd.snapshot.character_locations[character.core.name] = party_consensus
+            # Wave 2B (story 45-48) + sq-playtest 2026-05-09 [OBS]: seed
+            # the joiner's per-character location from another seated PC.
+            # The original branch used strict ``party_location()`` consensus
+            # (all seated PCs agree on the same location), which fails the
+            # moment a new player commits because *their* slot is still
+            # empty — so MP commits 2..N never inherited and the
+            # post-chargen window had no consensus at all. Loose
+            # inheritance: take any other seated PC's known location. The
+            # chargen-complete bootstrap from
+            # ``_bootstrap_character_locations_from_opening`` ensures the
+            # FIRST committer has a location to inherit.
+            if character.core.name not in sd.snapshot.character_locations:
+                inherited_from: str | None = None
+                inherited_loc: str | None = None
+                for seated_name in sd.snapshot.player_seats.values():
+                    if not seated_name or seated_name == character.core.name:
+                        continue
+                    candidate = sd.snapshot.character_locations.get(seated_name)
+                    if candidate:
+                        inherited_from = seated_name
+                        inherited_loc = candidate
+                        break
+                if inherited_loc:
+                    sd.snapshot.character_locations[character.core.name] = inherited_loc
+                    span.add_event(
+                        "snapshot.character_location_inherited",
+                        {
+                            "event": "snapshot.character_location_inherited",
+                            "joiner": character.core.name,
+                            "inherited_from": inherited_from or "",
+                        },
+                    )
             span.add_event(
                 "session.player_seat_bound",
                 {
