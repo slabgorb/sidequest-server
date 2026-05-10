@@ -110,12 +110,11 @@ def test_maybe_emit_tactical_grid_cavern_room() -> None:
     if not _packs_available():
         pytest.skip("caverns_and_claudes content pack not present")
 
-    from sidequest.game.persistence import GameMode, SqliteStore
+    from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import load_genre_pack
     from sidequest.protocol.messages import TacticalGridMessage
     from sidequest.server.session_handler import _SessionData
-    from sidequest.server.session_room import SessionRoom
     from sidequest.server.websocket_session_handler import _maybe_emit_tactical_grid
 
     pack = load_genre_pack(CAVERNS_PACK)
@@ -127,7 +126,6 @@ def test_maybe_emit_tactical_grid_cavern_room() -> None:
     snap.discovered_rooms = ["mouth"]
 
     # Build a minimal _SessionData (only the fields _maybe_emit_tactical_grid reads).
-    from sidequest.game.persistence import GameMode as _GM
     from sidequest.agents.orchestrator import Orchestrator
 
     orchestrator = Orchestrator.__new__(Orchestrator)  # don't __init__ — no claude needed
@@ -180,13 +178,13 @@ def test_maybe_emit_tactical_grid_settlement_room() -> None:
     if not _packs_available():
         pytest.skip("caverns_and_claudes content pack not present")
 
+    from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import load_genre_pack
     from sidequest.protocol.messages import TacticalGridMessage
     from sidequest.server.session_handler import _SessionData
     from sidequest.server.websocket_session_handler import _maybe_emit_tactical_grid
-    from sidequest.agents.orchestrator import Orchestrator
 
     pack = load_genre_pack(CAVERNS_PACK)
     snap = GameSnapshot(
@@ -241,12 +239,12 @@ def test_maybe_emit_tactical_grid_missing_room_is_silent() -> None:
     if not _packs_available():
         pytest.skip("caverns_and_claudes content pack not present")
 
+    from sidequest.agents.orchestrator import Orchestrator
     from sidequest.game.persistence import SqliteStore
     from sidequest.game.session import GameSnapshot
     from sidequest.genre.loader import load_genre_pack
     from sidequest.server.session_handler import _SessionData
     from sidequest.server.websocket_session_handler import _maybe_emit_tactical_grid
-    from sidequest.agents.orchestrator import Orchestrator
 
     pack = load_genre_pack(CAVERNS_PACK)
     snap = GameSnapshot(

@@ -3,7 +3,6 @@
 Per CLAUDE.md 'every test suite needs a wiring test'.
 """
 
-import os
 from pathlib import Path
 
 import pytest
