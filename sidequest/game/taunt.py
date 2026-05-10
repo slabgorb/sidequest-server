@@ -9,14 +9,19 @@ Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §8.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class TauntState:
-    """Mutable per-encounter taunt tracker."""
+    """Mutable per-encounter taunt tracker.
 
-    active_actor: Optional[str] = None
+    Attributes:
+        active_actor: Actor ID currently taunting, or None when no taunt is active.
+        remaining_rounds: Rounds left on the current taunt; decays to 0 at end of round.
+        redirects_this_round: Number of damage redirects fired this round (cap: 1 per spec §8).
+    """
+
+    active_actor: str | None = None
     remaining_rounds: int = 0
     redirects_this_round: int = 0
 
