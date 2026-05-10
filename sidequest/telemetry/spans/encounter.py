@@ -857,6 +857,31 @@ def encounter_saving_throw_resolved_span(
         yield span
 
 
+# Story 2026-05-10: Taunt mechanic — force enemy attention.
+# See docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §8.
+SPAN_ENCOUNTER_TAUNT_ACTIVATED = "encounter.taunt.activated"
+SPAN_ROUTES[SPAN_ENCOUNTER_TAUNT_ACTIVATED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.taunt",
+        "op": "activated",
+        "actor": (span.attributes or {}).get("actor", ""),
+        "remaining_rounds": (span.attributes or {}).get("remaining_rounds", 0),
+    },
+)
+SPAN_ENCOUNTER_TAUNT_EXPIRED = "encounter.taunt.expired"
+SPAN_ROUTES[SPAN_ENCOUNTER_TAUNT_EXPIRED] = SpanRoute(
+    event_type="state_transition",
+    component="encounter",
+    extract=lambda span: {
+        "field": "encounter.taunt",
+        "op": "expired",
+        "actor": (span.attributes or {}).get("actor", ""),
+    },
+)
+
+
 @contextmanager
 def encounter_composure_break_span(
     *,
