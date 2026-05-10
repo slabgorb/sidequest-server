@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,9 +20,8 @@ async def test_oversized_prompt_warns_but_completes(simple_turn_context, caplog)
     )
 
     orch = Orchestrator(client=client)
-    with patch("sidequest.agents.orchestrator.SOFT_PROMPT_BUDGET_BYTES", 10):
-        with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
-            result = await orch._run_narration_turn_synchronous("look", simple_turn_context)
+    with patch("sidequest.agents.orchestrator.SOFT_PROMPT_BUDGET_BYTES", 10), caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+        result = await orch._run_narration_turn_synchronous("look", simple_turn_context)
 
     assert result.narration
 
