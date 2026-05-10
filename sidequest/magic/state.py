@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from sidequest.magic.confrontations import ConfrontationDefinition
 from sidequest.magic.models import LedgerBarSpec, MagicWorking, WorldMagicConfig
+from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 _log = logging.getLogger(__name__)
 
@@ -266,13 +267,26 @@ class MagicState(BaseModel):
                 # (bar declared but owner not instantiated). Playtest
                 # 2026-05-09 enriched this from a single bucket
                 # ("world/item scope routing pending") to a four-way
-                # taxonomy.
+                # taxonomy. Story 47-7 (develop) promoted unrouted costs
+                # to a `magic.unrouted_cost` watcher event so the GM panel
+                # surfaces them live, not just in post-crash logs.
                 _log.warning(
                     "magic.unrouted_cost actor=%s cost_type=%s amount=%s reason=%s",
                     working.actor,
                     cost_type,
                     amount,
                     skip_reason,
+                )
+                _watcher_publish(
+                    "magic.unrouted_cost",
+                    {
+                        "actor": working.actor,
+                        "cost_type": cost_type,
+                        "amount": amount,
+                        "reason": skip_reason,
+                    },
+                    component="magic",
+                    severity="warning",
                 )
                 continue
             serialized = _serialize_bar_key(key)
@@ -292,6 +306,17 @@ class MagicState(BaseModel):
                     amount,
                     key.scope,
                     key.owner_id,
+                )
+                _watcher_publish(
+                    "magic.unrouted_cost",
+                    {
+                        "actor": working.actor,
+                        "cost_type": cost_type,
+                        "amount": amount,
+                        "bar_lookup_key": serialized,
+                    },
+                    component="magic",
+                    severity="warning",
                 )
                 continue
             bar = self.ledger[serialized]

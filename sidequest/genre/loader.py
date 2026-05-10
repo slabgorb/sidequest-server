@@ -1035,7 +1035,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     except Exception as e:
         raise GenreLoadError(path=path / "lethality_policy.yaml", detail=str(e)) from e
 
-    return GenrePack(
+    pack = GenrePack(
         meta=meta,
         rules=rules,
         lore=lore,
@@ -1070,6 +1070,29 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         lethality_policy=lethality_policy,
         source_dir=path,
     )
+
+    # Sprint 3 cold-subsystem audit: pack load was invisible to the GM
+    # panel. A failed load raises GenreLoadError above (caught by callers,
+    # which is its own dashboard-visible path) — this event covers the
+    # success path so the panel can prove a pack actually loaded vs.
+    # serving stale cache state.
+    from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "genre_pack",
+            "op": "loaded",
+            "genre_slug": path.name,
+            "world_count": len(worlds),
+            "scenario_count": len(scenarios),
+            "archetype_count": len(archetypes),
+            "trope_count": len(genre_tropes),
+            "source_dir": str(path),
+        },
+        component="genre",
+    )
+    return pack
 
 
 # ---------------------------------------------------------------------------

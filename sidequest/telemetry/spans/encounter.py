@@ -193,9 +193,35 @@ FLAT_ONLY_SPANS.update(
         SPAN_ENCOUNTER_YIELD_RESOLVED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_EMITTED,
         SPAN_ENCOUNTER_RESOLUTION_SIGNAL_CONSUMED,
-        SPAN_ENCOUNTER_EDGE_DEBIT,
-        SPAN_ENCOUNTER_COMPOSURE_BREAK,
     }
+)
+# Promoted from flat-only — combat resolution lie-detector (sprint 3 cold-subsystem
+# audit). Without typed events the GM panel's state_transition tab can't show damage
+# application; the events sat in the firehose as agent_span_close only.
+SPAN_ROUTES[SPAN_ENCOUNTER_EDGE_DEBIT] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "encounter.edge_debit",
+        "source_actor": (span.attributes or {}).get("source_actor", ""),
+        "target_actor": (span.attributes or {}).get("target_actor", ""),
+        "debit_kind": (span.attributes or {}).get("debit_kind", ""),
+        "delta": (span.attributes or {}).get("delta", 0),
+        "before": (span.attributes or {}).get("before", 0),
+        "after": (span.attributes or {}).get("after", 0),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+        "target_select": (span.attributes or {}).get("target_select", ""),
+    },
+)
+SPAN_ROUTES[SPAN_ENCOUNTER_COMPOSURE_BREAK] = SpanRoute(
+    event_type="state_transition",
+    component="combat",
+    extract=lambda span: {
+        "field": "encounter.composure_break",
+        "char_name": (span.attributes or {}).get("char_name", ""),
+        "side": (span.attributes or {}).get("side", ""),
+        "beat_id": (span.attributes or {}).get("beat_id", ""),
+    },
 )
 # C&C B/X Task 12 — promote beat_filter from flat-only to routed so the GM
 # panel's state_transition tab shows filter decisions (lie-detector discipline).

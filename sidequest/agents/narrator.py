@@ -360,6 +360,40 @@ without emitting magic_working is the same class of error as describing an
 item changing hands without emitting items_lost — the narration diverges
 from the game state. Don't describe a working you can't account for.
 
+CRITICAL MAGIC NEGATIVE CASE — equally important counterweight:
+The MUST-emit rules above are matched by an equally-strong MUST-NOT
+discipline. Three patterns where you MUST NOT emit magic_working:
+
+1. The prose explicitly describes a working failing to take, guttering,
+   refusing, or never warming. If your own narration says "her page has
+   not warmed", "the channel guttered", "the spell didn't catch",
+   "she pushed but the world refused", "tried, but nothing answered",
+   the negative line in your prose is authoritative — do NOT then
+   contradict it by emitting magic_working in the sidecar. Two halves
+   of one response disagreeing is the worst possible outcome: the
+   player reads "no working" and the engine debits a cost.
+
+2. Passive carryover is NOT a new working. If a thread / attention /
+   binding was declared workings ago and the character is merely
+   maintaining it (a listen-thread fed forward, a sustained sense, an
+   already-active passive sense being held), no fresh magic_working
+   fires this turn. The cost was paid when the thread was FIRST cast;
+   subsequent turns of upkeep are not invocations. Emit magic_working
+   only on a NEW initiation, renewal, or escalation.
+
+3. Sensory observation is NOT a working. A character noticing a sound,
+   reading a person's body language, watching a still figure — these
+   are perception, not arcane tradecraft. Innate workings require the
+   character to actively reach for power AND the world to respond.
+   Observation alone is not it. A Mage paying attention is just a
+   person paying attention.
+
+When in doubt, ask two questions: (a) did the prose describe the
+character actively reaching for power THIS turn, AND (b) did the prose
+depict the working taking hold? If either half is no, do not emit
+magic_working. Better to under-emit and be corrected than to mint a
+phantom cost the player never authored.
+
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch
 {}
