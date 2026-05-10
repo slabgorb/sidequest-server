@@ -106,6 +106,7 @@ from sidequest.protocol.messages import (
     ScrapbookEntryPayload,
     SecretNotePayload,
     SessionEventPayload,
+    TacticalGridMessage,
     TurnStatusMessage,
     TurnStatusPayload,
 )
@@ -448,6 +449,159 @@ def _should_fire_opening_narration(session_data: object, room: object) -> bool:
     snapshot = getattr(session_data, "snapshot", None)
     chars = getattr(snapshot, "characters", []) if snapshot is not None else []
     return len(chars) >= seat_count
+
+
+def _maybe_emit_tactical_grid(
+    handler: object,
+    *,
+    sd: _SessionData,
+    snapshot: GameSnapshot,
+    actor: str | None,
+    emit_fn: object,
+    room_id_override: str | None = None,
+) -> None:
+    """Emit a TACTICAL_GRID message when the player enters a room-graph room.
+
+    ADR-096 Task 20b. Wires ``load_room_payload`` into the room-enter dispatch
+    path so the UI's Automapper receives live cavern/settlement data.
+
+    Called from two sites:
+    1. Narrator location-change branch (narration turn loop) — ``actor`` is the
+       acting character, room_id comes from ``snapshot.character_locations``.
+    2. Chargen room-graph init — ``room_id_override`` is the entrance room id
+       returned by ``init_room_graph_location``.
+
+    OTEL: emits ``tactical_grid.emitted`` on success,
+    ``tactical_grid.room_not_found`` when the room YAML is absent (non-fatal —
+    many worlds use room_graph without per-room YAMLs), and
+    ``tactical_grid.load_failed`` on unexpected loader errors.
+    """
+    from sidequest.game.room_file_loader import RoomNotFoundError, load_room_payload
+    from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, GenreLoader
+
+    world = sd.genre_pack.worlds.get(sd.world_slug)
+    if world is None:
+        return
+
+    if room_id_override is not None:
+        room_id = room_id_override
+    else:
+        # Read the post-apply location for this actor.
+        room_id = (
+            snapshot.character_locations.get(actor or "") if actor else None
+        )
+    if not room_id:
+        return
+
+    try:
+        loader = GenreLoader(search_paths=DEFAULT_GENRE_PACK_SEARCH_PATHS)
+        world_dir = loader.find(sd.genre_slug) / "worlds" / sd.world_slug
+    except Exception as exc:  # noqa: BLE001 — non-fatal; world dir lookup must not crash a turn
+        logger.warning(
+            "tactical_grid.world_dir_lookup_failed genre=%s world=%s error=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            exc,
+        )
+        return
+
+    try:
+        payload = load_room_payload(world_dir, room_id, genre_slug=sd.genre_slug)
+    except RoomNotFoundError:
+        # Room YAML missing — world uses room_graph without per-room files.
+        # Non-fatal: log and skip. Per CLAUDE.md no-silent-fallback: log at
+        # debug so the absence IS visible to Keith/Sebastien at low verbosity,
+        # but not loud enough to alarm on every non-YAML room.
+        logger.debug(
+            "tactical_grid.room_not_found genre=%s world=%s room_id=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            room_id,
+        )
+        _watcher_publish(
+            "tactical_grid.room_not_found",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "room_id": room_id,
+            },
+            component="cavern_renderer",
+        )
+        return
+    except FileNotFoundError as exc:
+        # Mask .txt or .cavern.png missing — authoring error, log loud.
+        logger.warning(
+            "tactical_grid.load_failed genre=%s world=%s room_id=%s error=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            room_id,
+            exc,
+        )
+        _watcher_publish(
+            "tactical_grid.load_failed",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "room_id": room_id,
+                "error": str(exc),
+            },
+            component="cavern_renderer",
+            severity="warning",
+        )
+        return
+    except Exception as exc:  # noqa: BLE001 — must not crash a turn
+        logger.warning(
+            "tactical_grid.load_failed genre=%s world=%s room_id=%s error=%s",
+            sd.genre_slug,
+            sd.world_slug,
+            room_id,
+            exc,
+        )
+        _watcher_publish(
+            "tactical_grid.load_failed",
+            {
+                "genre": sd.genre_slug,
+                "world": sd.world_slug,
+                "room_id": room_id,
+                "error": str(exc),
+            },
+            component="cavern_renderer",
+            severity="warning",
+        )
+        return
+
+    # Tokens and initiative are populated from game state.
+    # TODO: populate tokens from snapshot encounter/party at room_id when
+    # the token placement system (ADR-096 Phase 3) lands. For now, empty
+    # list is correct — the plan task description explicitly notes this is
+    # out of scope for Phase E.
+    tactical_msg = TacticalGridMessage(
+        payload=payload,
+        player_id=getattr(sd, "player_id", ""),
+    )
+    _watcher_publish(
+        "tactical_grid.emitted",
+        {
+            "genre": sd.genre_slug,
+            "world": sd.world_slug,
+            "room_id": room_id,
+            "room_type": payload.room_type,
+            "room_name": payload.room_name,
+        },
+        component="cavern_renderer",
+    )
+    logger.info(
+        "tactical_grid.emitted genre=%s world=%s room_id=%s room_type=%s",
+        sd.genre_slug,
+        sd.world_slug,
+        room_id,
+        payload.room_type,
+    )
+    # Dispatch via the shared-world emit function (broadcasts to all connected
+    # sockets). The emit_fn is the closure from the turn dispatch loop; it
+    # handles both the room.broadcast path and the outbound-list fallback for
+    # test fixtures without a real SessionRoom.
+    emit_fn(tactical_msg, "TACTICAL_GRID")  # type: ignore[operator]
 
 
 class WebSocketSessionHandler:
@@ -1734,6 +1888,20 @@ class WebSocketSessionHandler:
                         sd.world_slug,
                         entrance_id,
                         len(sd.snapshot.discovered_rooms),
+                    )
+                    # ADR-096 Task 20b: emit TACTICAL_GRID for the entrance room so
+                    # the UI Automapper has grid data from session start, not only on
+                    # the first narrator-driven location change.
+                    def _chargen_emit_tactical_grid(msg: object, _kind: str) -> None:
+                        out.append(msg)
+
+                    _maybe_emit_tactical_grid(
+                        self,
+                        sd=sd,
+                        snapshot=sd.snapshot,
+                        actor=None,
+                        emit_fn=_chargen_emit_tactical_grid,
+                        room_id_override=entrance_id,
                     )
                 except RoomGraphInitError as exc:
                     logger.error(
@@ -3183,6 +3351,17 @@ class WebSocketSessionHandler:
                             player_id=sd.player_id,
                         )
                         _emit_shared_world_frame(chapter_marker_msg, "CHAPTER_MARKER")
+                        # ADR-096 Task 20b: emit TACTICAL_GRID when the world
+                        # uses room_graph navigation and the new location has
+                        # a room YAML file on disk. This closes the wiring
+                        # gap: load_room_payload is now reachable from gameplay.
+                        _maybe_emit_tactical_grid(
+                            self,
+                            sd=sd,
+                            snapshot=snapshot,
+                            actor=_acting_for_render_trigger,
+                            emit_fn=_emit_shared_world_frame,
+                        )
                     # Story 45-1 — sealed-letter shared-world handshake.
                     # Build the canonical delta from the post-resolution
                     # snapshot and ride it on NARRATION_END so peers see

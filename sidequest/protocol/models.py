@@ -469,13 +469,22 @@ class TacticalGridPayload(ProtocolBase):
     room_name: str
     room_type: Literal["cavern", "settlement"]
 
-    mask: str | None
+    mask: str | None = None
     """ASCII mask: '.' floor, '#' wall, rows newline-separated. None for settlements."""
-    cavern_image_url: str | None
+    cavern_image_url: str | None = None
     """Resolved (CDN or /genre/) URL for the rendered cavern PNG."""
-    cell_size: int | None
-    cellular: CellularParams | None
-    derived: DerivedRoomData | None
+    cell_size: int | None = None
+    cellular: CellularParams | None = None
+    derived: DerivedRoomData | None = None
 
-    tokens: list[TokenPayload]
-    initiative: list[InitiativeEntry] | None
+    tokens: list[TokenPayload] = Field(default_factory=list)
+    initiative: list[InitiativeEntry] | None = None
+
+    # Settlement-specific fields (ADR-096 Task 20b). Populated from the
+    # room YAML for settlement rooms so the UI can render a description
+    # card without a separate round-trip. None for cavern rooms.
+    settlement_description: str | None = None
+    """Human-readable room description from the room YAML. Settlement rooms only."""
+    settlement_exits: list[dict] | None = None
+    """Exit list from the room YAML, e.g. [{to: "room_id", label: "..."}].
+    Settlement rooms only; the Automapper's SettlementRoomView consumes this."""

@@ -56,6 +56,8 @@ def load_room_payload(
             derived=None,
             tokens=[],
             initiative=None,
+            settlement_description=data.get("description"),
+            settlement_exits=data.get("exits"),
         )
 
     # Cavern path

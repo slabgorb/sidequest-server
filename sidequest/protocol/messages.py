@@ -39,6 +39,7 @@ from sidequest.protocol.models import (
     PartyMember,
     RolledStat,
     StateDelta,
+    TacticalGridPayload,
 )
 from sidequest.protocol.orbital_intent import OrbitalIntent, OrbitalIntentResponse
 from sidequest.protocol.types import NonBlankString
@@ -945,6 +946,20 @@ class OrbitalChartMessage(ProtocolBase):
     player_id: str = ""
 
 
+class TacticalGridMessage(ProtocolBase):
+    """GameMessage::TacticalGrid — per-room cavern/settlement layout (ADR-096 Task 20b).
+
+    Emitted by the server when the player enters a room in a world that uses
+    room_graph navigation and whose room directory contains a matching YAML
+    file. Carries a TacticalGridPayload; the UI Automapper routes cavern rooms
+    to TacticalGridRenderer and settlement rooms to SettlementRoomView.
+    """
+
+    type: Literal[MessageType.TACTICAL_GRID] = MessageType.TACTICAL_GRID
+    payload: TacticalGridPayload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -976,6 +991,7 @@ _Phase1Variant = Annotated[
     | DiceResultMessage
     | OrbitalIntentMessage
     | OrbitalChartMessage
+    | TacticalGridMessage
     | YieldMessage,
     Field(discriminator="type"),
 ]

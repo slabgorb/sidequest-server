@@ -61,6 +61,7 @@ from sidequest.protocol.messages import (
     ScrapbookEntryPayload,
     SecretNoteMessage,
     SecretNotePayload,
+    TacticalGridMessage,
 )
 from sidequest.protocol.models import (
     PartyFormationWireEntry,
@@ -141,6 +142,10 @@ _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     # Ephemeral streaming delta — NOT event-sourced, NOT replayed on reconnect.
     # Registered here for protocol-catalog completeness only.
     "narration.delta": NarrationDelta,
+    # Cavern renderer revival (ADR-096 Task 20b). Emitted on room entry; not
+    # event-sourced (no replay on reconnect — room payloads are re-emitted on
+    # the next room transition; the initial room is emitted at chargen time).
+    "TACTICAL_GRID": TacticalGridMessage,
 }
 
 # Kinds persisted to the events table by side-channel writers (e.g.
