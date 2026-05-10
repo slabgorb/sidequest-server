@@ -45,9 +45,27 @@ _ENEMY_STRIKE_BEAT = BeatDef.model_validate(
     }
 )
 
+# Enemy spread beat — used by taunt redirect tests (test_taunt_targeting.py).
+# target_edge_delta=6 across 2 player-side targets = 3 per target, which is
+# non-zero after integer division so apply_beat actually fires edge debits.
+# Spec: 2026-05-10 class-mechanical-surface §8 — taunt damage redirect (cap 1/round).
+_ENEMY_SPREAD_BEAT = BeatDef.model_validate(
+    {
+        "id": "enemy_spread",
+        "label": "Enemy Spread Attack",
+        "kind": "strike",
+        "base": 1,
+        "stat_check": "STR",
+        "target_edge_delta": 6,
+        "target_select": "spread",
+        "effect": "A sweeping attack that hits all enemies",
+    }
+)
+
 _BEAT_REGISTRY: dict[str, BeatDef] = {
     "taunt": _TAUNT_BEAT,
     "enemy_strike": _ENEMY_STRIKE_BEAT,
+    "enemy_spread": _ENEMY_SPREAD_BEAT,
 }
 
 _OUTCOME_MAP: dict[str, RollOutcome] = {
@@ -83,6 +101,7 @@ class TauntTestEncounter:
     - ``cleric_id``        — name of the Cleric PC actor
     - ``_cores``           — dict mapping actor name → CreatureCore (mutable edge pools)
     - ``enemy_strike_beat``— the _ENEMY_STRIKE_BEAT def for targeting tests
+    - ``enemy_spread_beat``— the _ENEMY_SPREAD_BEAT def for spread-redirect tests
     """
 
     enc: StructuredEncounter
@@ -90,6 +109,7 @@ class TauntTestEncounter:
     cleric_id: str
     _cores: dict[str, CreatureCore] = field(default_factory=dict)
     enemy_strike_beat: BeatDef = field(default_factory=lambda: _ENEMY_STRIKE_BEAT)
+    enemy_spread_beat: BeatDef = field(default_factory=lambda: _ENEMY_SPREAD_BEAT)
 
     def edge_resolver(self, name: str) -> CreatureCore | None:
         """Return the CreatureCore for *name*, or None if unknown."""

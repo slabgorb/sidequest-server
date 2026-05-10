@@ -142,3 +142,106 @@ def test_enemy_strike_with_taunt_on_cleric_routes_to_cleric(taunt_test_encounter
         f"Fighter should be untouched (taunt redirected to cleric); "
         f"edge unchanged at {fighter_before}"
     )
+
+
+def test_spread_damage_redirects_one_ally_to_taunter(taunt_test_encounter):
+    """Spread attack hits both allies — with taunt active on fighter, one ally's
+    hit is redirected to the taunter (cap 1/round).
+
+    Spread loop iteration order (encounter declaration order): fighter-1 first,
+    cleric-1 second.  per_target = 6 // 2 = 3.
+
+    Iteration 1 — fighter-1: fighter IS the taunter → no redirect, fighter takes 3.
+    Iteration 2 — cleric-1:  cleric is NOT the taunter, taunter is live, cap not
+                              reached → redirect consumed → fighter takes 3 instead.
+
+    Result: fighter_drop=6, cleric_drop=0; redirects_this_round=1.
+
+    Spec: 2026-05-10 class-mechanical-surface §8 — taunt damage redirect (cap 1/round).
+    """
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_core = helper.edge_resolver(helper.fighter_id)
+    cleric_core = helper.edge_resolver(helper.cleric_id)
+
+    enc.taunt.activate(actor_id=helper.fighter_id)
+
+    fighter_before = fighter_core.edge.current
+    cleric_before = cleric_core.edge.current
+
+    enemy_actor = enc.find_actor("enemy-1")
+    apply_beat(
+        enc,
+        enemy_actor,
+        helper.enemy_spread_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
+    )
+
+    fighter_drop = fighter_before - fighter_core.edge.current
+    cleric_drop = cleric_before - cleric_core.edge.current
+
+    assert fighter_drop == 6, (
+        f"Fighter should absorb own hit (3) + redirected cleric hit (3) = 6; "
+        f"got fighter_drop={fighter_drop}, cleric_drop={cleric_drop}"
+    )
+    assert cleric_drop == 0, (
+        f"Cleric hit was redirected to fighter; cleric should be untouched; "
+        f"got cleric_drop={cleric_drop}"
+    )
+    assert enc.taunt.redirects_this_round == 1, (
+        f"Expected exactly 1 redirect consumed; got {enc.taunt.redirects_this_round}"
+    )
+
+
+def test_spread_damage_redirect_capped_at_one_per_round(taunt_test_encounter):
+    """Two enemy spread beats fired in one round consume only one redirect total.
+
+    Beat 1 (enemy-1): redirect consumed on cleric's hit → fighter=6 drop, cleric=0.
+    Beat 2 (enemy-2): cap reached → no redirect → both take 3 normally.
+                      fighter += 3, cleric += 3.
+
+    Final: fighter_drop=9, cleric_drop=3, total=12; redirects_this_round=1 (capped).
+
+    Spec: 2026-05-10 class-mechanical-surface §8 — taunt damage redirect (cap 1/round).
+    """
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_core = helper.edge_resolver(helper.fighter_id)
+    cleric_core = helper.edge_resolver(helper.cleric_id)
+
+    enc.taunt.activate(actor_id=helper.fighter_id)
+
+    fighter_before = fighter_core.edge.current
+    cleric_before = cleric_core.edge.current
+
+    # First spread fires — one redirect consumed.
+    apply_beat(
+        enc, enc.find_actor("enemy-1"), helper.enemy_spread_beat,
+        RollOutcome.Success, turn=1, edge_resolver=helper.edge_resolver,
+    )
+    # Second spread same round — cap is reached; no redirect.
+    apply_beat(
+        enc, enc.find_actor("enemy-2"), helper.enemy_spread_beat,
+        RollOutcome.Success, turn=1, edge_resolver=helper.edge_resolver,
+    )
+
+    fighter_drop = fighter_before - fighter_core.edge.current
+    cleric_drop = cleric_before - cleric_core.edge.current
+
+    assert enc.taunt.redirects_this_round == 1, (
+        f"Cap should hold at 1; got {enc.taunt.redirects_this_round}"
+    )
+    assert fighter_drop + cleric_drop == 12, (
+        f"Total damage across two spread beats (6+6=12); "
+        f"got fighter={fighter_drop}, cleric={cleric_drop}"
+    )
+    assert fighter_drop == 9, (
+        f"Fighter: own hit beat1 (3) + redirected cleric beat1 (3) + own hit beat2 (3) = 9; "
+        f"got {fighter_drop}"
+    )
+    assert cleric_drop == 3, (
+        f"Cleric: only beat2 hit (cap reached, no redirect) = 3; "
+        f"got {cleric_drop}"
+    )

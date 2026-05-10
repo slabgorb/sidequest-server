@@ -585,6 +585,20 @@ def apply_beat(
                     per_target = target_edge_delta // len(live_targets)
                     if per_target > 0:
                         for target_name in live_targets:
+                            # Spec: 2026-05-10 class-mechanical-surface §8 —
+                            # taunt damage redirect (cap 1/round).
+                            # When taunt is active and the original target is NOT
+                            # the taunter, attempt a redirect.  If the per-round
+                            # cap (1) hasn't been reached, the hit lands on the
+                            # taunter instead.  The original ally is untouched.
+                            original_target = target_name
+                            if (
+                                enc.taunt.active_actor
+                                and target_name != enc.taunt.active_actor
+                                and enc.taunt.active_actor in live_targets
+                                and enc.taunt.try_consume_redirect()
+                            ):
+                                target_name = enc.taunt.active_actor
                             target_core = edge_resolver(target_name)
                             if target_core is None:
                                 raise ValueError(
@@ -603,6 +617,7 @@ def apply_beat(
                                 after=after,
                                 beat_id=getattr(beat, "id", "?"),
                                 target_select="spread",
+                                taunt_redirected=(target_name != original_target),
                             ):
                                 pass
                             if after <= 0 and composure_break is None:
