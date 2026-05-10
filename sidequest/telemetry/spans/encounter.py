@@ -866,8 +866,8 @@ SPAN_ROUTES[SPAN_ENCOUNTER_TAUNT_ACTIVATED] = SpanRoute(
     extract=lambda span: {
         "field": "encounter.taunt",
         "op": "activated",
-        "actor": (span.attributes or {}).get("actor", ""),
-        "remaining_rounds": (span.attributes or {}).get("remaining_rounds", 0),
+        "actor_id": (span.attributes or {}).get("actor_id", ""),
+        "round": (span.attributes or {}).get("round", 0),
     },
 )
 SPAN_ENCOUNTER_TAUNT_EXPIRED = "encounter.taunt.expired"
@@ -877,7 +877,8 @@ SPAN_ROUTES[SPAN_ENCOUNTER_TAUNT_EXPIRED] = SpanRoute(
     extract=lambda span: {
         "field": "encounter.taunt",
         "op": "expired",
-        "actor": (span.attributes or {}).get("actor", ""),
+        "actor_id": (span.attributes or {}).get("actor_id", ""),
+        "round": (span.attributes or {}).get("round", 0),
     },
 )
 
