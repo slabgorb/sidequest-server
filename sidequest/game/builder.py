@@ -98,6 +98,20 @@ def _seed_class_abilities(
         )
 
 
+def _seed_item_abilities(
+    abilities: list[AbilityDefinition], kit_def: object
+) -> None:
+    """Populate Item-source abilities from the starting kit.
+
+    DOCUMENTED STUB — empty body retained as the architectural seam for
+    the imminent next story (item-source ability content). Removing this
+    function or its call site requires updating spec
+    docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §6.2.
+    Reviewer guard: contract test in tests/game/test_chargen_class_abilities.py.
+    """
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
 # ---------------------------------------------------------------------------
@@ -2011,6 +2025,9 @@ class CharacterBuilder:
                     ),
                 },
             )
+
+        # Stub seam — next story owns Item-source ability population (spec §6.2).
+        _seed_item_abilities(abilities, kit_def=getattr(self, "_kit_def", None))
 
         # EdgePool seeding: edge_config path OR placeholder for legacy
         # packs (Story 39-3). Missing class → raise the builder's

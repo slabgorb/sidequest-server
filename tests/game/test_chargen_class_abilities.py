@@ -72,3 +72,18 @@ def test_seed_class_abilities_preserves_prior_entries():
     assert len(abilities) == 2
     assert abilities[0] is prior
     assert abilities[1].name == "Turn Undead"
+
+
+def test_seed_item_abilities_is_callable_and_returns_none():
+    """Contract test — locks the documented stub against accidental deletion.
+    Spec 2026-05-10 §6.2."""
+    from sidequest.game.builder import _seed_item_abilities
+
+    abilities: list[AbilityDefinition] = []
+    # `kit_def=None` is the current-story shape — the next story replaces this with
+    # KitDefinition. The contract that matters here: callable, returns None,
+    # leaves abilities untouched.
+    result = _seed_item_abilities(abilities, kit_def=None)
+
+    assert result is None
+    assert abilities == []
