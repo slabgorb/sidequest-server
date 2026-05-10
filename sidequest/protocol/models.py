@@ -9,11 +9,52 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from sidequest.protocol.base import ProtocolBase
 from sidequest.protocol.provenance import Provenance
 from sidequest.protocol.types import NonBlankString
+
+# ---------------------------------------------------------------------------
+# AbilitySource / AbilityDefinition
+# ---------------------------------------------------------------------------
+# Defined here (not in sidequest.game.ability) to avoid triggering the
+# sidequest.game package __init__ during protocol import, which creates a
+# circular dependency through genre/archetype/resolved → protocol → game →
+# genre → game. sidequest.game.ability re-exports AbilitySource from here.
+# ---------------------------------------------------------------------------
+
+
+class AbilitySource(StrEnum):
+    """How a character acquired an ability."""
+
+    Race = "Race"
+    """Innate to the character's race/species."""
+    Class = "Class"
+    """Granted by the character's class/archetype."""
+    Item = "Item"
+    """Bestowed by an item or artifact."""
+    Play = "Play"
+    """Acquired during gameplay through experience."""
+
+
+class AbilityDefinition(BaseModel):
+    """Dual-voice ability representation.
+
+    genre_description: player-facing narrative description.
+    mechanical_effect: engine-facing trigger text.
+    involuntary: if True, narrator can trigger without player choice.
+    source: how the character acquired this ability (Race/Class/Item/Play).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    genre_description: str
+    mechanical_effect: str
+    involuntary: bool = False
+    source: AbilitySource
+
 
 # ---------------------------------------------------------------------------
 # FactCategory — from Footnote / Journal
@@ -292,8 +333,10 @@ class CharacterSheetDetails(ProtocolBase):
     """Character race/origin. Non-blank post-chargen."""
     stats: dict[str, int]
     """Ability scores / stats."""
-    abilities: list[str]
-    """Known abilities."""
+    abilities: list[AbilityDefinition]
+    """Full ability records, including source classification."""
+    class_moves: list[str] = Field(default_factory=list)
+    """Pre-filtered encounter_beat_choices (universal beats + scaffolding stripped)."""
     backstory: NonBlankString
     """Character backstory. Non-blank post-chargen."""
     personality: NonBlankString

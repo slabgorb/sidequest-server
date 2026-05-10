@@ -379,7 +379,15 @@ def test_party_status_round_trip() -> None:
         sheet={
             "race": "Orc",
             "stats": {"strength": 16, "dexterity": 12},
-            "abilities": ["Power Strike"],
+            "abilities": [
+                {
+                    "name": "Power Strike",
+                    "genre_description": "A mighty blow.",
+                    "mechanical_effect": "+2 damage.",
+                    "involuntary": False,
+                    "source": "Class",
+                }
+            ],
             "backstory": "A wandering fighter.",
             "personality": "Gruff",
             "pronouns": "he/him",

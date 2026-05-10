@@ -9,7 +9,7 @@ import random as _random
 import re as _re
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from sidequest.genre.models.ocean import OceanProfile
 
@@ -115,6 +115,34 @@ class ClassMagicConfig(BaseModel):
     turn_undead: bool = False  # cleric-only class-special
 
 
+class ClassAbilityDef(BaseModel):
+    """Class-source signature ability authored in classes.yaml.
+
+    Mirrors AbilityDefinition (sidequest.game.character) minus the
+    `source` field. Loader stamps source=AbilitySource.Class on each
+    entry during chargen seeding so authors don't have to type a
+    discriminator they never vary.
+
+    Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §5.2.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    genre_description: str
+    mechanical_effect: str
+    involuntary: bool = False
+
+    @field_validator("name", "genre_description", "mechanical_effect")
+    @classmethod
+    def _non_blank(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                f"ClassAbilityDef field {info.field_name!r} must be non-blank"
+            )
+        return v
+
+
 class ClassDef(BaseModel):
     """A character class definition loaded from classes.yaml.
 
@@ -134,6 +162,7 @@ class ClassDef(BaseModel):
     kit_table: str
     flavor: str = ""
     encounter_beat_choices: list[str] = Field(default_factory=list)
+    abilities: list[ClassAbilityDef] = Field(default_factory=list)
     magic_access: str | None = None
     magic_config: ClassMagicConfig | None = None
     saving_throws: SavingThrowsTable | None = None

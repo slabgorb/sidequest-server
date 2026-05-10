@@ -179,12 +179,14 @@ from sidequest.game.encounter import (  # noqa: E402
 )
 from sidequest.game.encounter_tag import EncounterTag  # noqa: E402
 from sidequest.telemetry.spans import (  # noqa: E402
+    SPAN_ENCOUNTER_TAUNT_ACTIVATED,
     encounter_composure_break_span,
     encounter_edge_debit_span,
     encounter_metric_advance_span,
     encounter_tag_backfire_span,
     encounter_tag_created_span,
 )
+from sidequest.telemetry.spans.span import Span  # noqa: E402
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish  # noqa: E402
 
 EdgeResolver = Callable[[str], CreatureCore | None]
@@ -219,11 +221,25 @@ def _opposite_side_first_actor(
     enc: StructuredEncounter,
     side: str,
 ) -> str | None:
+    """Return the primary target on the opposite side from *side*.
+
+    Taunt bias (spec §8): when ``enc.taunt.active_actor`` is set AND the
+    taunter is among the live candidates on the opposite side, the taunter
+    is returned instead of the first-listed actor.  This makes taunt absorb
+    enemy strikes on the real production damage path (``apply_beat`` focus /
+    swarm branch).
+
+    Default (no taunt, or taunter not in candidates): first live actor in
+    encounter declaration order.
+    """
     other = "opponent" if side == "player" else "player"
-    for a in enc.actors:
-        if a.side == other and not a.withdrawn:
-            return a.name
-    return None
+    candidates = [a.name for a in enc.actors if a.side == other and not a.withdrawn]
+    if not candidates:
+        return None
+    taunter = enc.taunt.active_actor
+    if taunter is not None and taunter in candidates:
+        return taunter
+    return candidates[0]
 
 
 def _opposite_side_live_actors(
@@ -569,6 +585,20 @@ def apply_beat(
                     per_target = target_edge_delta // len(live_targets)
                     if per_target > 0:
                         for target_name in live_targets:
+                            # Spec: 2026-05-10 class-mechanical-surface §8 —
+                            # taunt damage redirect (cap 1/round).
+                            # When taunt is active and the original target is NOT
+                            # the taunter, attempt a redirect.  If the per-round
+                            # cap (1) hasn't been reached, the hit lands on the
+                            # taunter instead.  The original ally is untouched.
+                            original_target = target_name
+                            if (
+                                enc.taunt.active_actor
+                                and target_name != enc.taunt.active_actor
+                                and enc.taunt.active_actor in live_targets
+                                and enc.taunt.try_consume_redirect()
+                            ):
+                                target_name = enc.taunt.active_actor
                             target_core = edge_resolver(target_name)
                             if target_core is None:
                                 raise ValueError(
@@ -587,6 +617,7 @@ def apply_beat(
                                 after=after,
                                 beat_id=getattr(beat, "id", "?"),
                                 target_select="spread",
+                                taunt_redirected=(target_name != original_target),
                             ):
                                 pass
                             if after <= 0 and composure_break is None:
@@ -620,6 +651,35 @@ def apply_beat(
 
     enc.beat += 1
     enc.structured_phase = _phase_for_beat(enc.beat)
+
+    # Story 2026-05-10 — taunt beat activation (Task 3).
+    # When a Fighter resolves the taunt beat with a non-failure outcome,
+    # activate the encounter's TauntState and emit an OTEL lie-detector span
+    # so the GM panel can verify taunt engaged rather than the narrator
+    # improvising the attention-pull effect.
+    if getattr(beat, "id", None) == "taunt" and outcome not in (
+        RollOutcome.Fail,
+        RollOutcome.CritFail,
+    ):
+        enc.taunt.activate(actor_id=actor.name)
+        with Span.open(
+            SPAN_ENCOUNTER_TAUNT_ACTIVATED,
+            {
+                "actor_id": actor.name,
+                "round": enc.beat,
+            },
+        ):
+            pass
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "encounter.taunt",
+                "op": "activated",
+                "actor_id": actor.name,
+                "round": enc.beat,
+            },
+            component="encounter",
+        )
 
     # GM-panel visibility for inert beats. Per spec, default delta tables
     # for Fail tier on every kind are {own=0, opponent=0} — a Fail rolls

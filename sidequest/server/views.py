@@ -37,6 +37,17 @@ _HIDDEN_STATUS_TOKENS: frozenset[str] = frozenset(
     }
 )
 
+_UNIVERSAL_BEATS: frozenset[str] = frozenset({"attack", "defend", "flee"})
+
+
+def _filter_class_moves(raw: list[str]) -> list[str]:
+    """Drop universal beats and any 'auto-filled' scaffolding from a raw
+    encounter_beat_choices list before sending to the UI.
+
+    Spec: 2026-05-10 class-mechanical-surface §7.1 — UI receives a clean list.
+    """
+    return [b for b in raw if b not in _UNIVERSAL_BEATS and "auto-filled" not in b]
+
 
 def is_hidden_status_list(statuses: list[Status]) -> bool:
     """Return True iff any status's lowercased text matches a hidden-marker
@@ -351,15 +362,25 @@ def party_member_from_character(
     ]
 
     stats = dict(character.stats)
-    abilities = [a.name for a in character.abilities]
+    abilities = list(character.abilities)
     equipment = [
         f"{item['name']} [equipped]" if item.get("equipped") else item["name"] for item in carried
     ]
+
+    # Compute class_moves from genre pack class definition.
+    class_moves: list[str] = []
+    class_def = next(
+        (c for c in sd.genre_pack.classes if c.display_name == character.char_class),
+        None,
+    )
+    if class_def is not None:
+        class_moves = _filter_class_moves(class_def.encounter_beat_choices)
 
     sheet = CharacterSheetDetails(
         race=NonBlankString(character.race),
         stats=stats,
         abilities=abilities,
+        class_moves=class_moves,
         backstory=NonBlankString(character.backstory or "(no backstory)"),
         personality=NonBlankString(character.core.personality),
         pronouns=NonBlankString(character.pronouns) if character.pronouns else None,

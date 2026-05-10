@@ -4,27 +4,17 @@ ADR-007: ability is a narrative + mechanical pair. `source` records how
 the ability was acquired so later systems (advancement, narrator) can
 reason about its origin.
 
-AbilityDefinition itself lives in sidequest/game/character.py alongside
-Character for now; a future cleanup can pull AbilityDefinition over to
-match.
+AbilitySource is defined in sidequest.protocol.models to avoid the
+sidequest.game package __init__ circular dependency. It is re-exported
+here so existing ``from sidequest.game.ability import AbilitySource``
+call sites continue to work without change.
+
+AbilityDefinition also lives in sidequest.protocol.models for the same
+reason. Import it from there if needed outside of game/character.py.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
-
-
-class AbilitySource(StrEnum):
-    """How a character acquired an ability."""
-
-    Race = "Race"
-    """Innate to the character's race/species."""
-    Class = "Class"
-    """Granted by the character's class/archetype."""
-    Item = "Item"
-    """Bestowed by an item or artifact."""
-    Play = "Play"
-    """Acquired during gameplay through experience."""
-
+from sidequest.protocol.models import AbilitySource
 
 __all__ = ["AbilitySource"]

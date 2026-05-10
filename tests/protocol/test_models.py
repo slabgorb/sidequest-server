@@ -13,6 +13,8 @@ import pytest
 from pydantic import ValidationError
 
 from sidequest.protocol.models import (
+    AbilityDefinition,
+    AbilitySource,
     CharacterSheetDetails,
     CharacterState,
     CreationChoice,
@@ -413,7 +415,14 @@ def test_character_sheet_details_basic() -> None:
     sheet = CharacterSheetDetails(
         race=nbs("Orc"),
         stats={"strength": 16, "dexterity": 12},
-        abilities=["Power Strike"],
+        abilities=[
+            AbilityDefinition(
+                name="Power Strike",
+                genre_description="A mighty blow.",
+                mechanical_effect="+2 damage.",
+                source=AbilitySource.Class,
+            )
+        ],
         backstory=nbs("A wandering fighter."),
         personality=nbs("Gruff"),
         pronouns=nbs("he/him"),
@@ -423,6 +432,7 @@ def test_character_sheet_details_basic() -> None:
     assert sheet.stats["strength"] == 16
     assert sheet.pronouns is not None
     assert str(sheet.pronouns) == "he/him"
+    assert sheet.abilities[0].name == "Power Strike"
 
 
 def test_character_sheet_optional_pronouns() -> None:

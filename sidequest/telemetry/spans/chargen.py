@@ -137,3 +137,23 @@ SPAN_ROUTES[SPAN_CHARGEN_STARTING_KIT_DEDUP_FIRED] = SpanRoute(
         "player_id": (span.attributes or {}).get("player_id", ""),
     },
 )
+
+
+# Story 2026-05-10: Class abilities seeding.
+# See docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md.
+# Fires when chargen wires class-specific abilities (innate actives, taunts, etc)
+# into character.abilities after the builder populates the base pool.
+SPAN_CHARGEN_CLASS_ABILITIES_SEEDED = "chargen.class_abilities.seeded"
+SPAN_ROUTES[SPAN_CHARGEN_CLASS_ABILITIES_SEEDED] = SpanRoute(
+    event_type="state_transition",
+    component="character_creation",
+    extract=lambda span: {
+        "field": "chargen.class_abilities",
+        "op": "seeded",
+        "class_name": (span.attributes or {}).get("class_name", ""),
+        "abilities_seeded": (span.attributes or {}).get("abilities_seeded", 0),
+        "genre": (span.attributes or {}).get("genre", ""),
+        "world": (span.attributes or {}).get("world", ""),
+        "player_id": (span.attributes or {}).get("player_id", ""),
+    },
+)

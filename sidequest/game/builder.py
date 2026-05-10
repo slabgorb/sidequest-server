@@ -75,6 +75,43 @@ def qualifying_classes_arrangement(
     ]
 
 
+def _seed_class_abilities(
+    abilities: list[AbilityDefinition], class_def: ClassDef
+) -> None:
+    """Append Class-source signature abilities from class_def.abilities.
+
+    Loader stamps source=AbilitySource.Class on each entry; authors do not
+    type the discriminator. Empty class_def.abilities (e.g., Mage —
+    signature lives in magic plugin) is a no-op.
+
+    Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §6.1.
+    """
+    for ca in class_def.abilities:
+        abilities.append(
+            AbilityDefinition(
+                name=ca.name,
+                genre_description=ca.genre_description,
+                mechanical_effect=ca.mechanical_effect,
+                involuntary=ca.involuntary,
+                source=AbilitySource.Class,
+            )
+        )
+
+
+def _seed_item_abilities(
+    abilities: list[AbilityDefinition], kit_def: object
+) -> None:
+    """Populate Item-source abilities from the starting kit.
+
+    DOCUMENTED STUB — empty body retained as the architectural seam for
+    the imminent next story (item-source ability content). Removing this
+    function or its call site requires updating spec
+    docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §6.2.
+    Reviewer guard: contract test in tests/game/test_chargen_class_abilities.py.
+    """
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Narrative hook extraction
 # ---------------------------------------------------------------------------
@@ -1962,6 +1999,35 @@ class CharacterBuilder:
                 "names": ", ".join(a.name for a in abilities),
             },
         )
+
+        # Class signature seeding (spec 2026-05-10 §6.1).
+        # Resolve the ClassDef from the pack's class list using class_str.
+        # No-op when self._classes is empty (packs without classes.yaml)
+        # or when the class name isn't found (silently skips rather than
+        # raising — a missing class will already have been flagged by the
+        # class_kit_unresolved event above or by a future gate).
+        _resolved_class_def = next(
+            (c for c in self._classes if c.display_name == class_str), None
+        )
+        if _resolved_class_def is not None:
+            _class_seed_start = len(abilities)
+            _seed_class_abilities(abilities, _resolved_class_def)
+            _class_seed_count = len(abilities) - _class_seed_start
+            from sidequest.telemetry.spans import SPAN_CHARGEN_CLASS_ABILITIES_SEEDED
+
+            span.add_event(
+                SPAN_CHARGEN_CLASS_ABILITIES_SEEDED,
+                {
+                    "class_id": _resolved_class_def.id,
+                    "ability_count": _class_seed_count,
+                    "ability_names": ", ".join(
+                        a.name for a in abilities[_class_seed_start:]
+                    ),
+                },
+            )
+
+        # Stub seam — next story owns Item-source ability population (spec §6.2).
+        _seed_item_abilities(abilities, kit_def=getattr(self, "_kit_def", None))
 
         # EdgePool seeding: edge_config path OR placeholder for legacy
         # packs (Story 39-3). Missing class → raise the builder's

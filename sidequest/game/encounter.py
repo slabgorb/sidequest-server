@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from sidequest.game.encounter_tag import EncounterTag
+from sidequest.game.taunt import TauntState
 
 
 class RigType(StrEnum):
@@ -171,6 +172,11 @@ class StructuredEncounter(BaseModel):
     # Both fields are server-only (not forwarded to UI in V1).
     flee_consequence_pending: str | None = None
     opponents_disposition: str | None = None
+    # Story 2026-05-10 — taunt mechanic (Task 3 wire-up).
+    # Tracks which Fighter PC is currently taunting and how many rounds remain.
+    # Always present (default_factory) so callers can always read/write
+    # without a None guard. See sidequest/game/taunt.py and spec §8.
+    taunt: TauntState = Field(default_factory=TauntState)
 
     @model_validator(mode="before")
     @classmethod
