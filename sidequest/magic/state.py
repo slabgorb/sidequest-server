@@ -259,22 +259,53 @@ class MagicState(BaseModel):
         bar_changes: dict[str, tuple[float, float]] = {}
 
         for cost_type, amount in working.costs.items():
-            key = BarKey(scope="character", owner_id=working.actor, bar_id=cost_type)
-            serialized = _serialize_bar_key(key)
-            if serialized not in self.ledger:
-                # World-scope and item-scope cost propagation are wired in
-                # later iterations. Until then, costs targeting non-character
-                # bars are skipped — but the skip MUST be auditable per
-                # CLAUDE.md "GM panel is the lie detector". Story 47-7
-                # promoted this to a `magic.unrouted_cost` watcher event
-                # (dual-emit alongside the structured log) so the GM panel
-                # surfaces the skip live, not just in post-crash logs.
+            key, skip_reason = self._route_cost(cost_type=cost_type, working=working)
+            if key is None:
+                # No silent fallback per CLAUDE.md — every routing failure
+                # carries a `reason=` field so the GM panel can distinguish
+                # config gaps (no bar declared at all) from wiring gaps
+                # (bar declared but owner not instantiated). Playtest
+                # 2026-05-09 enriched this from a single bucket
+                # ("world/item scope routing pending") to a four-way
+                # taxonomy. Story 47-7 (develop) promoted unrouted costs
+                # to a `magic.unrouted_cost` watcher event so the GM panel
+                # surfaces them live, not just in post-crash logs.
                 _log.warning(
-                    "magic.unrouted_cost actor=%s cost_type=%s amount=%s "
-                    "(no character-scope bar; world/item scope routing pending)",
+                    "magic.unrouted_cost actor=%s cost_type=%s amount=%s reason=%s",
                     working.actor,
                     cost_type,
                     amount,
+                    skip_reason,
+                )
+                _watcher_publish(
+                    "magic.unrouted_cost",
+                    {
+                        "actor": working.actor,
+                        "cost_type": cost_type,
+                        "amount": amount,
+                        "reason": skip_reason,
+                    },
+                    component="magic",
+                    severity="warning",
+                )
+                continue
+            serialized = _serialize_bar_key(key)
+            if serialized not in self.ledger:
+                # Spec says this bar should exist (e.g. world-scope hegemony_heat
+                # at world_slug, or item-scope components at item_id) but the
+                # ledger has no instance. Distinct from `no_ledger_bar_spec`:
+                # the bar is *declared* in config; the owner just hasn't been
+                # registered (forgot add_character / add_item, world_slug
+                # mismatch, etc.). Sebastien's lie-detector wants this
+                # separable from a content gap.
+                _log.warning(
+                    "magic.unrouted_cost actor=%s cost_type=%s amount=%s "
+                    "reason=bar_not_instantiated scope=%s owner_id=%s",
+                    working.actor,
+                    cost_type,
+                    amount,
+                    key.scope,
+                    key.owner_id,
                 )
                 _watcher_publish(
                     "magic.unrouted_cost",
@@ -329,6 +360,56 @@ class MagicState(BaseModel):
 
         self.working_log.append(record)
         return ApplyWorkingResult(working=record, crossings=crossings, bar_changes=bar_changes)
+
+    def _route_cost(
+        self, *, cost_type: str, working: MagicWorking
+    ) -> tuple[BarKey | None, str | None]:
+        """Resolve ``cost_type`` to a ``BarKey`` using the cost's bar spec.
+
+        Returns ``(BarKey, None)`` on success or ``(None, reason)`` on
+        a routing failure. The reason is a short token suitable for
+        ``magic.unrouted_cost reason=...`` log/OTEL correlation.
+
+        Routing rules per ledger-bar scope:
+        - ``character``: owner_id = ``working.actor``
+        - ``world``:     owner_id = ``self.config.world_slug``
+        - ``item``:      owner_id = ``working.item_id`` (required;
+                         falls back to ``item_scope_missing_item_id`` if absent)
+        - ``faction``, ``location``, ``bond_pair``: not yet wired —
+          ``scope_not_yet_wired`` until a future story lands them.
+
+        Playtest 2026-05-09 fix: pre-fix `apply_working` always tried
+        ``scope=character`` regardless of the bar's declared scope, so
+        innate-tier costs (e.g. caverns_sunden's `backlash`) and
+        world-scope costs (`hegemony_heat`) silently warned
+        unrouted_cost. The dispatch is now spec-driven.
+        """
+        spec = next(
+            (s for s in self.config.ledger_bars if s.id == cost_type),
+            None,
+        )
+        if spec is None:
+            # Validator issues YELLOW `unknown_cost_type` for this case;
+            # we still log here as a runtime safety net (validate() may
+            # be skipped, and YELLOW is non-blocking).
+            return None, "no_ledger_bar_spec"
+        if spec.scope == "character":
+            return BarKey(
+                scope="character", owner_id=working.actor, bar_id=cost_type
+            ), None
+        if spec.scope == "world":
+            return BarKey(
+                scope="world", owner_id=self.config.world_slug, bar_id=cost_type
+            ), None
+        if spec.scope == "item":
+            if not working.item_id:
+                return None, "item_scope_missing_item_id"
+            return BarKey(
+                scope="item", owner_id=working.item_id, bar_id=cost_type
+            ), None
+        # faction / location / bond_pair — declared in the type union
+        # but no engine wiring yet. Loud failure beats silent skip.
+        return None, "scope_not_yet_wired"
 
     @staticmethod
     def _clamp(value: float, spec: LedgerBarSpec) -> float:
