@@ -211,6 +211,7 @@ SPAN_ROUTES[SPAN_ENCOUNTER_EDGE_DEBIT] = SpanRoute(
         "after": (span.attributes or {}).get("after", 0),
         "beat_id": (span.attributes or {}).get("beat_id", ""),
         "target_select": (span.attributes or {}).get("target_select", ""),
+        "taunt_redirected": (span.attributes or {}).get("taunt_redirected", False),
     },
 )
 SPAN_ROUTES[SPAN_ENCOUNTER_COMPOSURE_BREAK] = SpanRoute(
