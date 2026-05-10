@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
 from sidequest.game.beat_kinds import apply_beat
+from sidequest.game.creature_core import CreatureCore, placeholder_edge_pool
 from sidequest.game.encounter import EncounterActor, EncounterMetric, StructuredEncounter
 from sidequest.genre.models.rules import BeatDef
 from sidequest.protocol.dice import RollOutcome
@@ -28,8 +29,25 @@ _TAUNT_BEAT = BeatDef.model_validate(
     }
 )
 
+# Enemy strike beat — used by targeting tests (test_taunt_targeting.py).
+# target_edge_delta=3 so apply_beat routes a concrete debit through
+# _opposite_side_first_actor and into CreatureCore.apply_edge_delta.
+_ENEMY_STRIKE_BEAT = BeatDef.model_validate(
+    {
+        "id": "enemy_strike",
+        "label": "Enemy Strike",
+        "kind": "strike",
+        "base": 1,
+        "stat_check": "STR",
+        "target_edge_delta": 3,
+        "target_select": "focus",
+        "effect": "A basic enemy attack",
+    }
+)
+
 _BEAT_REGISTRY: dict[str, BeatDef] = {
     "taunt": _TAUNT_BEAT,
+    "enemy_strike": _ENEMY_STRIKE_BEAT,
 }
 
 _OUTCOME_MAP: dict[str, RollOutcome] = {
@@ -41,19 +59,41 @@ _OUTCOME_MAP: dict[str, RollOutcome] = {
 }
 
 
+def _make_creature_core(name: str, edge_max: int = 10) -> CreatureCore:
+    """Build a minimal CreatureCore for use in edge_resolver mocks."""
+    pool = placeholder_edge_pool()
+    pool.current = edge_max
+    pool.max = edge_max
+    pool.base_max = edge_max
+    return CreatureCore(
+        name=name,
+        description=f"{name} (test creature)",
+        personality="neutral",
+        edge=pool,
+    )
+
+
 @dataclass
 class TauntTestEncounter:
     """Thin wrapper exposing a convenience ``resolve_beat`` for test callsites.
 
     Exposes:
-    - ``enc``         — the ``StructuredEncounter`` (actor state + taunt state)
-    - ``fighter_id``  — name of the Fighter PC actor
-    - ``cleric_id``   — name of the Cleric PC actor
+    - ``enc``              — the ``StructuredEncounter`` (actor state + taunt state)
+    - ``fighter_id``       — name of the Fighter PC actor
+    - ``cleric_id``        — name of the Cleric PC actor
+    - ``_cores``           — dict mapping actor name → CreatureCore (mutable edge pools)
+    - ``enemy_strike_beat``— the _ENEMY_STRIKE_BEAT def for targeting tests
     """
 
     enc: StructuredEncounter
     fighter_id: str
     cleric_id: str
+    _cores: dict[str, CreatureCore] = field(default_factory=dict)
+    enemy_strike_beat: BeatDef = field(default_factory=lambda: _ENEMY_STRIKE_BEAT)
+
+    def edge_resolver(self, name: str) -> CreatureCore | None:
+        """Return the CreatureCore for *name*, or None if unknown."""
+        return self._cores.get(name)
 
     def resolve_beat(self, *, actor_id: str, beat_id: str, outcome: str) -> None:
         """Convenience wrapper: find the actor by name, look up the beat def,
@@ -87,6 +127,11 @@ def taunt_test_encounter() -> TauntTestEncounter:
     Encounter starts unresolved with both dials at 0/10.  Actor names
     double as IDs — the encounter engine uses ``actor.name`` as the
     lookup key throughout.
+
+    ``_cores`` is populated so that tests can pass ``helper.edge_resolver``
+    directly to ``apply_beat`` and inspect Edge mutations after resolution.
+    Fighter is listed first in the player side so it is the default
+    first-actor target for enemy strikes when taunt is inactive.
     """
     enc = StructuredEncounter(
         encounter_type="combat",
@@ -99,7 +144,18 @@ def taunt_test_encounter() -> TauntTestEncounter:
             EncounterActor(name="enemy-2", role="grunt", side="opponent"),
         ],
     )
-    return TauntTestEncounter(enc=enc, fighter_id="fighter-1", cleric_id="cleric-1")
+    cores = {
+        "fighter-1": _make_creature_core("fighter-1"),
+        "cleric-1": _make_creature_core("cleric-1"),
+        "enemy-1": _make_creature_core("enemy-1"),
+        "enemy-2": _make_creature_core("enemy-2"),
+    }
+    return TauntTestEncounter(
+        enc=enc,
+        fighter_id="fighter-1",
+        cleric_id="cleric-1",
+        _cores=cores,
+    )
 
 
 @pytest.fixture

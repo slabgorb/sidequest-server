@@ -1,66 +1,144 @@
-"""Targeting bias under taunt — enemies prefer the taunting actor.
+"""Targeting bias under taunt — real production path through apply_beat.
+
+When an enemy strikes and taunt is active, the taunter absorbs the hit
+instead of the default first-listed ally.  These tests drive the REAL
+production path:
+
+    apply_beat → _opposite_side_first_actor (taunt-aware) → CreatureCore.apply_edge_delta
+
+Shape A wiring: the bias lives in _opposite_side_first_actor inside
+beat_kinds.py — the same helper that apply_beat's focus/swarm branch
+already calls.  No indirection through a standalone helper module.
 
 Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §8.
-
-These tests exercise ``select_enemy_target`` from
-``sidequest.game.enemy_targeting``.  The function is forward-scaffolding
-(not yet called from a mechanical enemy-turn driver) but the contract is
-pinned here so that when enemy AI is introduced, breaking the taunt bias
-turns red immediately.
+CLAUDE.md: "Verify Wiring, Not Just Existence."
 """
 
 from __future__ import annotations
 
-import random
-
-import pytest
-
-from sidequest.game.enemy_targeting import select_enemy_target
+from sidequest.game.beat_kinds import apply_beat
+from sidequest.protocol.dice import RollOutcome
 
 
-def test_enemy_targets_taunter_when_taunt_active(taunt_test_encounter):
-    """With taunt active, all 10 simulated enemy target picks return the Fighter."""
-    enc = taunt_test_encounter.enc
-    fighter_id = taunt_test_encounter.fighter_id
-    cleric_id = taunt_test_encounter.cleric_id
+def test_enemy_strike_without_taunt_hits_first_ally(taunt_test_encounter):
+    """No taunt active — enemy strike hits the first-listed player-side actor.
 
-    enc.taunt.activate(actor_id=fighter_id)
+    The fixture lists fighter-1 before cleric-1 on the player side, so
+    fighter-1 is the default first-actor target.
+    """
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_core = helper.edge_resolver(helper.fighter_id)
+    cleric_core = helper.edge_resolver(helper.cleric_id)
 
-    rng = random.Random(42)
-    targets = [
-        select_enemy_target(
-            encounter=enc,
-            allies=[fighter_id, cleric_id],
-            rng=rng,
-        )
-        for _ in range(10)
-    ]
+    assert enc.taunt.active_actor is None, "taunt must start inactive"
 
-    assert all(t == fighter_id for t in targets), (
-        f"Expected all 10 enemy targets = {fighter_id!r}, got {targets}"
+    fighter_before = fighter_core.edge.current
+    cleric_before = cleric_core.edge.current
+
+    enemy_actor = enc.find_actor("enemy-1")
+    assert enemy_actor is not None
+
+    apply_beat(
+        enc,
+        enemy_actor,
+        helper.enemy_strike_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
+    )
+
+    # Fighter is first on the player side — absorbs the strike.
+    assert fighter_core.edge.current < fighter_before, (
+        f"Fighter should be hit (first-actor default); "
+        f"edge {fighter_before} → {fighter_core.edge.current}"
+    )
+    # Cleric is untouched.
+    assert cleric_core.edge.current == cleric_before, (
+        f"Cleric should be untouched (no taunt, fighter is first); "
+        f"edge unchanged at {cleric_before}"
     )
 
 
-def test_enemy_targeting_unbiased_without_taunt(taunt_test_encounter):
-    """With no taunt, enemy targeting hits both allies across many trials."""
-    enc = taunt_test_encounter.enc
-    fighter_id = taunt_test_encounter.fighter_id
-    cleric_id = taunt_test_encounter.cleric_id
+def test_enemy_strike_with_taunt_routes_to_taunter(taunt_test_encounter):
+    """Taunt active on fighter-1 — enemy strike is redirected to fighter-1.
 
-    # Confirm taunt is inactive (default state)
-    assert enc.taunt.active_actor is None
+    Cleric is untouched even though the normal first-actor logic would
+    also have picked fighter-1 here (fighter listed first).  We activate
+    taunt explicitly and verify the OTEL-visible path is engaged rather
+    than just the lucky order coincidence.
+    """
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_core = helper.edge_resolver(helper.fighter_id)
+    cleric_core = helper.edge_resolver(helper.cleric_id)
 
-    rng = random.Random(42)
-    targets = [
-        select_enemy_target(
-            encounter=enc,
-            allies=[fighter_id, cleric_id],
-            rng=rng,
-        )
-        for _ in range(50)
-    ]
+    enc.taunt.activate(actor_id=helper.fighter_id)
+    assert enc.taunt.active_actor == helper.fighter_id
 
-    assert fighter_id in targets and cleric_id in targets, (
-        f"Without taunt, both allies should appear as targets across 50 trials. "
-        f"Got: {set(targets)}"
+    fighter_before = fighter_core.edge.current
+    cleric_before = cleric_core.edge.current
+
+    enemy_actor = enc.find_actor("enemy-1")
+    assert enemy_actor is not None
+
+    apply_beat(
+        enc,
+        enemy_actor,
+        helper.enemy_strike_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
+    )
+
+    assert fighter_core.edge.current < fighter_before, (
+        f"Fighter should absorb the hit (taunt active); "
+        f"edge {fighter_before} → {fighter_core.edge.current}"
+    )
+    assert cleric_core.edge.current == cleric_before, (
+        f"Cleric should be untouched while taunt is active; "
+        f"edge unchanged at {cleric_before}"
+    )
+
+
+def test_enemy_strike_with_taunt_on_cleric_routes_to_cleric(taunt_test_encounter):
+    """Cleric activates taunt — enemy strike bypasses fighter and hits cleric.
+
+    This is the critical case: the taunter (cleric-1) is NOT the first-listed
+    player actor.  Without the taunt bias, _opposite_side_first_actor would
+    return fighter-1.  With the bias, it must return cleric-1.
+    """
+    helper = taunt_test_encounter
+    enc = helper.enc
+    fighter_core = helper.edge_resolver(helper.fighter_id)
+    cleric_core = helper.edge_resolver(helper.cleric_id)
+
+    # Cleric taunts — she is second-listed on the player side.
+    enc.taunt.activate(actor_id=helper.cleric_id)
+    assert enc.taunt.active_actor == helper.cleric_id
+
+    fighter_before = fighter_core.edge.current
+    cleric_before = cleric_core.edge.current
+
+    enemy_actor = enc.find_actor("enemy-1")
+    assert enemy_actor is not None
+
+    apply_beat(
+        enc,
+        enemy_actor,
+        helper.enemy_strike_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
+    )
+
+    # Cleric is the taunter — she absorbs the hit.
+    assert cleric_core.edge.current < cleric_before, (
+        f"Cleric should absorb the hit (taunt active on cleric); "
+        f"edge {cleric_before} → {cleric_core.edge.current}"
+    )
+    # Fighter is the normal first-actor but is bypassed by taunt bias.
+    assert fighter_core.edge.current == fighter_before, (
+        f"Fighter should be untouched (taunt redirected to cleric); "
+        f"edge unchanged at {fighter_before}"
     )

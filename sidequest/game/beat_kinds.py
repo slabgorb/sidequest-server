@@ -221,11 +221,25 @@ def _opposite_side_first_actor(
     enc: StructuredEncounter,
     side: str,
 ) -> str | None:
+    """Return the primary target on the opposite side from *side*.
+
+    Taunt bias (spec §8): when ``enc.taunt.active_actor`` is set AND the
+    taunter is among the live candidates on the opposite side, the taunter
+    is returned instead of the first-listed actor.  This makes taunt absorb
+    enemy strikes on the real production damage path (``apply_beat`` focus /
+    swarm branch).
+
+    Default (no taunt, or taunter not in candidates): first live actor in
+    encounter declaration order.
+    """
     other = "opponent" if side == "player" else "player"
-    for a in enc.actors:
-        if a.side == other and not a.withdrawn:
-            return a.name
-    return None
+    candidates = [a.name for a in enc.actors if a.side == other and not a.withdrawn]
+    if not candidates:
+        return None
+    taunter = enc.taunt.active_actor
+    if taunter is not None and taunter in candidates:
+        return taunter
+    return candidates[0]
 
 
 def _opposite_side_live_actors(
