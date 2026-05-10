@@ -15,9 +15,11 @@ from pydantic import ValidationError
 from sidequest.protocol.models import (
     AbilityDefinition,
     AbilitySource,
+    CellularParams,
     CharacterSheetDetails,
     CharacterState,
     CreationChoice,
+    DerivedRoomData,
     FactCategory,
     Footnote,
     InitialState,
@@ -27,7 +29,6 @@ from sidequest.protocol.models import (
     PartyMember,
     RolledStat,
     StateDelta,
-    TacticalFeaturePayload,
     TacticalGridPayload,
 )
 from sidequest.protocol.types import NonBlankString
@@ -528,42 +529,64 @@ def test_party_member_deny_unknown_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TacticalGridPayload / TacticalFeaturePayload
+# TacticalGridPayload — ADR-096 cellular cavern shape
 # ---------------------------------------------------------------------------
 
 
-def test_tactical_feature_payload_basic() -> None:
-    feature = TacticalFeaturePayload(
-        glyph="A",
-        feature_type="cover",
-        label=nbs("Barrel"),
-        positions=[[2, 3], [3, 3]],
-    )
-    assert feature.glyph == "A"
-    assert feature.feature_type == "cover"
-    assert feature.positions == [[2, 3], [3, 3]]
-
-
-def test_tactical_grid_payload_basic() -> None:
+def test_tactical_grid_cavern_payload_basic() -> None:
     grid = TacticalGridPayload(
-        width=10,
-        height=8,
-        cells=[["floor"] * 10 for _ in range(8)],
-        features=[],
+        room_id="mouth",
+        room_name="The Mouth",
+        room_type="cavern",
+        mask="##.\n.##\n###",
+        cavern_image_url="/genre/caverns_and_claudes/worlds/caverns_sunden/rooms/mouth.cavern.png",
+        cell_size=28,
+        cellular=CellularParams(
+            size=(18, 18), seed=1042, density=0.55, cutoff=5, passes=4
+        ),
+        derived=DerivedRoomData(
+            floor_count=142,
+            exits={"north": (9, 0), "east": (17, 9), "south": None, "west": None},
+            pois=[(8, 8), (13, 6)],
+        ),
+        tokens=[],
+        initiative=None,
     )
-    assert grid.width == 10
-    assert grid.height == 8
-    assert len(grid.cells) == 8
+    assert grid.room_type == "cavern"
+    assert grid.cellular is not None
+    assert grid.cellular.seed == 1042
 
 
-def test_tactical_grid_deny_unknown_fields() -> None:
+def test_tactical_grid_settlement_payload_basic() -> None:
+    grid = TacticalGridPayload(
+        room_id="confessional",
+        room_name="The Confessional",
+        room_type="settlement",
+        mask=None,
+        cavern_image_url=None,
+        cell_size=None,
+        cellular=None,
+        derived=None,
+        tokens=[],
+        initiative=None,
+    )
+    assert grid.room_type == "settlement"
+    assert grid.cavern_image_url is None
+
+
+def test_tactical_grid_invalid_room_type_rejected() -> None:
     with pytest.raises(ValidationError):
         TacticalGridPayload.model_validate(
             {
-                "width": 5,
-                "height": 5,
-                "cells": [["floor"] * 5 for _ in range(5)],
-                "features": [],
-                "extra": "bad",
+                "room_id": "x",
+                "room_name": "x",
+                "room_type": "dungeon",
+                "mask": None,
+                "cavern_image_url": None,
+                "cell_size": None,
+                "cellular": None,
+                "derived": None,
+                "tokens": [],
+                "initiative": None,
             }
         )
