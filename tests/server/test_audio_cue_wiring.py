@@ -82,7 +82,13 @@ def _narration_result(text: str) -> NarrationTurnResult:
 
 def test_turn_end_outbound_includes_audio_cue_after_narration(
     audio_pack: tuple[Path, AudioConfig],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Pin to local-mode so the on-disk existence check below stays
+    # meaningful — CDN-mode URLs intentionally don't reflect filesystem
+    # layout. The default (CDN) routing is covered by
+    # tests/audio/test_build_audio_cue_payload.py.
+    monkeypatch.setenv("SIDEQUEST_ASSET_BASE_URL", "local")
     pack_dir, cfg = audio_pack
     sd = _build_session_data(pack_dir, cfg)
     handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
@@ -97,10 +103,9 @@ def test_turn_end_outbound_includes_audio_cue_after_narration(
     assert isinstance(audio_msg, AudioCueMessage)
     assert audio_msg.type == MessageType.AUDIO_CUE
     assert audio_msg.payload.mood == "tension"
-    # Playtest 2026-04-24: paths carry the /genre/{slug}/ prefix so the
-    # client fetches via the FastAPI static mount rather than the Vite
-    # dev root (which was 404ing and surfacing as "Unable to decode
-    # audio data" in the browser console every turn).
+    # Local mode: paths carry the /genre/{slug}/ prefix so the client
+    # fetches via the FastAPI static mount rather than the Vite dev
+    # root (which 404s as "Unable to decode audio data").
     assert audio_msg.payload.music_track == ("/genre/fixture_genre/audio/music/tension/a.ogg")
     assert audio_msg.player_id == "p-1"
 
@@ -111,6 +116,31 @@ def test_turn_end_outbound_includes_audio_cue_after_narration(
     expected_rel = audio_msg.payload.music_track.removeprefix("/genre/fixture_genre/")
     full = pack_dir / expected_rel
     assert full.exists(), f"library resolved a non-existent path: {full}"
+
+
+def test_turn_end_audio_cue_routes_through_cdn_by_default(
+    audio_pack: tuple[Path, AudioConfig],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Playtest 2026-05-10 — audio_cue had been bypassing the asset_urls
+    seam, so even with R2 sync live, music_track always pointed at the
+    local /genre/ mount and silently 404'd. This locks in CDN routing
+    end-to-end through ``_maybe_dispatch_audio``."""
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
+    pack_dir, cfg = audio_pack
+    sd = _build_session_data(pack_dir, cfg)
+    handler = WebSocketSessionHandler.__new__(WebSocketSessionHandler)
+    result = _narration_result(
+        "A door creaks open behind you. Shadows flicker across the "
+        "chamber as something ominous stirs in the darkness."
+    )
+
+    audio_msg = handler._maybe_dispatch_audio(sd, result)
+
+    assert audio_msg is not None
+    assert audio_msg.payload.music_track == (
+        "https://cdn.slabgorb.com/genre_packs/fixture_genre/audio/music/tension/a.ogg"
+    )
 
 
 def test_turn_end_without_audio_backend_emits_no_audio_cue() -> None:
