@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sidequest.agents.prompt_framework.bucket import (
     STABLE_SECTION_NAMES,
     SectionBucket,
