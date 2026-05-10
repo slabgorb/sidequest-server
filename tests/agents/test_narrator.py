@@ -372,3 +372,94 @@ def test_narrator_output_format_keeps_action_rewrite():
     assert "action_rewrite" in NARRATOR_OUTPUT_ONLY, (
         "NARRATOR_OUTPUT_ONLY must still contain 'action_rewrite' (it's live)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Story 45-53: Recurring NPC presence — prompt content
+#
+# Playtest 3 (2026-04-19) and follow-up sessions surfaced a recurring failure:
+# named NPCs (allies, merchants, quest-givers, bystanders) introduced in turn
+# N would vanish from ``npcs_met`` on turns N+1..N+k even when narration prose
+# clearly placed them onstage. The CRITICAL ADVERSARY RULE only forces
+# emission for confrontation adversaries; outside combat the existing prompt
+# language ("every named NPC ... the player encounters") is ambiguous about
+# recurring presence. James (narrative-first) and Sebastien (mechanical lie-
+# detector) both feel the gap — once an NPC drops out of npcs_met the
+# narrator prompt and the GM panel both stop knowing the NPC is in the
+# scene, breaking encounter continuity and NPC-centric narrative arcs.
+# ---------------------------------------------------------------------------
+
+
+def test_narrator_prompt_requires_npcs_met_emission_every_turn_npc_is_onstage():
+    """AC1 — Every turn a named, persistent NPC is described onstage, the
+    narrator MUST re-emit them in npcs_met (regardless of is_new). The
+    prompt must state this rule explicitly so the narrator does not treat
+    npcs_met as a one-shot introduction list.
+    """
+    text = NARRATOR_OUTPUT_ONLY.lower()
+    assert "every turn" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'every turn' to make "
+        "the recurring-emission rule unambiguous. Without it, the narrator "
+        "treats npcs_met as a one-shot introduction list and recurring NPCs "
+        "vanish from game state (Playtest 3 pattern)."
+    )
+    assert "onstage" in text, (
+        "NARRATOR_OUTPUT_ONLY must use the word 'onstage' (or equivalent "
+        "explicit term) to define the trigger for npcs_met emission. The "
+        "prompt currently says 'encounters' which is ambiguous between "
+        "first-encounter and ongoing-presence."
+    )
+
+
+def test_narrator_prompt_distinguishes_named_onstage_from_passing_mention():
+    """AC4 sub-point — the prompt must distinguish 'named and onstage'
+    (must emit) from 'passing mention' (optional). Without that line the
+    narrator may collapse the rule into "emit everything ever named" and
+    over-emit, or under-emit and treat every onstage NPC as a passing
+    mention.
+    """
+    text = NARRATOR_OUTPUT_ONLY.lower()
+    assert "passing mention" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'passing mention' to "
+        "define the negative case (NPC named in dialogue but not present). "
+        "Without it, narrator can't tell which mentions require emission."
+    )
+    # The rule must explicitly contrast the two — the prompt should say one
+    # is required and the other is optional.
+    assert "named and onstage" in text or "named & onstage" in text, (
+        "NARRATOR_OUTPUT_ONLY must contain the phrase 'named and onstage' "
+        "(or 'named & onstage') as the positive case for the every-turn "
+        "emission rule. The 'named and onstage' vs 'passing mention' "
+        "distinction is the operational definition for AC2/AC4."
+    )
+
+
+def test_narrator_prompt_introduces_dedicated_recurring_rule_block():
+    """AC4 sub-point — the recurring-presence rule must be its own labeled
+    block, paralleling the CRITICAL ADVERSARY RULE label. A discoverable
+    uppercase marker (e.g. 'RECURRING PRESENCE RULE' or
+    'RECURRING NPC RULE') makes the rule easy to find in the prompt and
+    prevents it from being collapsed into the existing free-form
+    npcs_met paragraph where the playtest pattern hid for weeks.
+
+    The CRITICAL ADVERSARY RULE must coexist (the recurring rule extends,
+    does not replace it).
+    """
+    assert "CRITICAL ADVERSARY RULE" in NARRATOR_OUTPUT_ONLY, (
+        "CRITICAL ADVERSARY RULE must remain — the recurring-presence rule "
+        "extends it, does not replace it (Playtest 2026-04-24 regression "
+        "guard)."
+    )
+    assert "RECURRING" in NARRATOR_OUTPUT_ONLY, (
+        "NARRATOR_OUTPUT_ONLY must contain the uppercase token 'RECURRING' "
+        "as the marker for the new rule block (parallel to "
+        "'CRITICAL ADVERSARY RULE'). Without a dedicated label the rule "
+        "lives inside the free-form npcs_met paragraph and the narrator "
+        "treats it as advisory rather than mandatory — the exact failure "
+        "mode that produced the Playtest 3 vanishing-NPC pattern."
+    )
+    # The recurring rule must contain the word 'MANDATORY' to mirror the
+    # CRITICAL ADVERSARY RULE's strength (it currently uses MANDATORY too).
+    # We don't reassert MANDATORY here — the AC1 'every turn' / 'onstage'
+    # tests above are the operational guard. This test is purely about the
+    # rule having its own labeled block.

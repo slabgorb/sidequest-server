@@ -84,6 +84,32 @@ SPAN_ROUTES[SPAN_NPC_REFERENCED] = SpanRoute(
     },
 )
 
+# Story 45-53: recurring-presence detector — fires when narration prose
+# names a known recurring NPC (in snapshot.npcs or snapshot.npc_pool) but
+# the narrator failed to emit them in npcs_present. The lie-detector
+# signal: per-session counts of these misses tell the GM panel when the
+# narrator is "forgetting" recurring characters between turns.
+SPAN_NPC_RECURRING_PRESENCE_MISSED = "npc.recurring_presence_missed"
+SPAN_ROUTES[SPAN_NPC_RECURRING_PRESENCE_MISSED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        # ``field`` mirrors ``source``: stateful Npc misses surface as
+        # ``npc_registry`` (parallel to npc.auto_registered / npc.reinvented),
+        # pool-only misses surface as ``npc_pool`` (parallel to npc.referenced).
+        # The GM panel filters on ``field``; mis-routing would put npcs-sourced
+        # misses in the wrong column.
+        "field": "npc_registry"
+        if (span.attributes or {}).get("source") == "npcs"
+        else "npc_pool",
+        "op": "recurring_presence_missed",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "source": (span.attributes or {}).get("source", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+        "last_seen_turn": (span.attributes or {}).get("last_seen_turn", 0),
+    },
+)
+
 # Story 45-21: combat-stats write into npc_registry entry.
 # Fired when an encounter handshake (or other combat-stats emit) publishes
 # HP/max_hp into a registry entry so HP-check subsystems can see real data
@@ -254,4 +280,39 @@ def npc_reinvented_span(
         **attrs,
     }
     with Span.open(SPAN_NPC_REINVENTED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_recurring_presence_missed_span(
+    *,
+    npc_name: str,
+    source: str,
+    turn_number: int,
+    last_seen_turn: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 45-53: emitted when narration prose names a known recurring
+    NPC but the narrator omitted them from ``npcs_present``.
+
+    ``source`` is ``"npcs"`` (stateful Npc match) or ``"npc_pool"``
+    (pool member match) — when both stores hold the same name, ``"npcs"``
+    wins (parallel to the npcs-shadows-pool rule in
+    ``_apply_npc_mentions``). ``last_seen_turn`` propagates from the
+    matched Npc's ``last_seen_turn`` (0 for pool-only matches).
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "source": source,
+        "turn_number": turn_number,
+        "last_seen_turn": last_seen_turn,
+        "severity": "warning",
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_RECURRING_PRESENCE_MISSED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
         yield span

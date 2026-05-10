@@ -53,6 +53,7 @@ from sidequest.server.dispatch.sealed_letter import (
     resolve_sealed_letter_lookup,
 )
 from sidequest.server.session_helpers import (
+    _detect_missed_recurring_npcs,
     _detect_npc_identity_drift,
 )
 from sidequest.telemetry.spans import (
@@ -2222,6 +2223,16 @@ def _apply_narration_result_to_snapshot(
         mentions=list(result.npcs_present),
         turn_num=turn_num,
         acting_character_name=acting_character_name,
+    )
+
+    # Story 45-53: detect known recurring NPCs named in prose but missing
+    # from npcs_present. Soft warning span (no exception) — the GM panel
+    # surfaces the miss for human follow-up.
+    _detect_missed_recurring_npcs(
+        snapshot=snapshot,
+        narration_text=result.narration or "",
+        emitted_mentions=list(result.npcs_present),
+        turn_num=turn_num,
     )
 
     # Plot-a-course: parse course sidecar variants out of the

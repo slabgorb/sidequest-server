@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import NpcMention, TurnContext
@@ -20,6 +21,7 @@ from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.session import (
+    GameSnapshot,
     PartyPeer,
 )
 from sidequest.game.shared_world_delta import (
@@ -36,6 +38,7 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
+    npc_recurring_presence_missed_span,
     npc_reinvented_span,
     orchestrator_notorious_party_gate_span,
     room_state_injected_span,
@@ -577,6 +580,89 @@ def _publish_image_unavailable(image_path: str, *, reason: str) -> None:
         component="render",
         severity="warning",
     )
+
+
+def _detect_missed_recurring_npcs(
+    *,
+    snapshot: GameSnapshot,
+    narration_text: str,
+    emitted_mentions: list[NpcMention],
+    turn_num: int,
+) -> None:
+    """Story 45-53: emit a warning span for every known recurring NPC whose
+    name appears in ``narration_text`` but is missing from
+    ``emitted_mentions``.
+
+    Known recurring NPCs are names found in ``snapshot.npcs`` (stateful) or
+    ``snapshot.npc_pool``. PC names are filtered out. Match is
+    word-boundary case-insensitive on the name. When a name lives in both
+    ``npcs`` and ``npc_pool``, ``npcs`` wins (single span,
+    ``source="npcs"``).
+
+    Side-effect only: emits ``SPAN_NPC_RECURRING_PRESENCE_MISSED`` and a
+    ``logger.warning`` per miss. No exception is raised — the runtime
+    pattern is "subsystem emits span; GM panel surfaces; human notices"
+    (CLAUDE.md OTEL Observability Principle).
+    """
+    if not narration_text:
+        return
+
+    # Build the PC-name skip set (case-folded).
+    pc_names = {
+        c.core.name.casefold()
+        for c in snapshot.characters
+        if getattr(getattr(c, "core", None), "name", None)
+    }
+
+    # Build the emitted-name set (case-folded). Narrator emission, even
+    # bare, suppresses the miss warning.
+    emitted_names = {m.name.casefold() for m in emitted_mentions if m.name}
+
+    # Build candidate map: case-folded name → (canonical_name, source, last_seen_turn).
+    # ``npcs`` wins on conflict — pool entries with the same name are
+    # shadowed (parallel to ``_apply_npc_mentions``).
+    candidates: dict[str, tuple[str, str, int]] = {}
+    for member in snapshot.npc_pool:
+        if not member.name:
+            continue
+        key = member.name.casefold()
+        if key in pc_names:
+            continue
+        candidates[key] = (member.name, "npc_pool", 0)
+    for npc in snapshot.npcs:
+        name = npc.core.name
+        if not name:
+            continue
+        key = name.casefold()
+        if key in pc_names:
+            continue
+        candidates[key] = (name, "npcs", npc.last_seen_turn)
+
+    if not candidates:
+        return
+
+    folded_text = narration_text.casefold()
+    for key, (canonical_name, source, last_seen_turn) in candidates.items():
+        if key in emitted_names:
+            continue
+        # Word-boundary match on case-folded prose. ``re.escape`` guards
+        # against names containing regex metacharacters.
+        if not re.search(rf"\b{re.escape(key)}\b", folded_text):
+            continue
+        with npc_recurring_presence_missed_span(
+            npc_name=canonical_name,
+            source=source,
+            turn_number=turn_num,
+            last_seen_turn=last_seen_turn,
+        ):
+            logger.warning(
+                "npc.recurring_presence_missed name=%r source=%s turn=%d "
+                "last_seen_turn=%d — narration named the NPC but npcs_present omitted them",
+                canonical_name,
+                source,
+                turn_num,
+                last_seen_turn,
+            )
 
 
 def _detect_npc_identity_drift(
