@@ -85,6 +85,19 @@ NARRATOR_PROACTIVE_RULE_PHRASES = [
     "plugin-aware and proactive",
 ]
 
+# Playtest 2026-05-09 turn 9 surfaced the inverse of 47-9: the narrator
+# wrote "Willes' page has not warmed" (an explicit non-working signal)
+# but still emitted ``magic_working`` with backlash 0.05. The proactive
+# rule was unbalanced — MUST-emit had no equally-strong DON'T-emit
+# counterweight. ``NARRATOR_NEGATIVE_CASE_PHRASES`` pins the negative
+# rule so future prompt edits don't silently strip it.
+NARRATOR_NEGATIVE_CASE_PHRASES = [
+    "CRITICAL MAGIC NEGATIVE CASE",
+    "MUST NOT emit magic_working",
+    "passive carryover",
+    "observation alone is not",
+]
+
 
 # ---------------------------------------------------------------------------
 # Local fixtures
@@ -338,6 +351,48 @@ def test_narrator_output_only_documents_magic_working_field():
     since pre-47-9 and must continue to hold."""
     assert "magic_working" in NARRATOR_OUTPUT_ONLY
     assert "CRITICAL MAGIC RULE" in NARRATOR_OUTPUT_ONLY
+
+
+def test_narrator_output_only_contains_negative_case_phrases():
+    """Playtest 2026-05-09 fix: the narrator's MUST-emit rules need an
+    equally-strong MUST-NOT-emit counterweight, or it over-emits
+    magic_working on non-working turns ("page has not warmed", passive
+    listen-thread carryover, sensory observation). Pin every phrase in
+    NARRATOR_NEGATIVE_CASE_PHRASES so future prompt edits don't silently
+    strip the negative rule.
+    """
+    haystack = NARRATOR_OUTPUT_ONLY.lower()
+    missing = [p for p in NARRATOR_NEGATIVE_CASE_PHRASES if p.lower() not in haystack]
+    assert not missing, (
+        f"NARRATOR_OUTPUT_ONLY is missing negative-case phrases: {missing}. "
+        f"The CRITICAL MAGIC NEGATIVE CASE rule must include each of: "
+        f"{NARRATOR_NEGATIVE_CASE_PHRASES}."
+    )
+
+
+async def test_narrator_prompt_includes_negative_case_phrases_on_innate_world():
+    """The negative-case rule must survive prompt assembly (Full tier)
+    on innate-active worlds — same wiring contract as the proactive rule."""
+    config = _world_config_innate_active()
+    state = MagicState.from_config(config)
+    state.add_character("sira_mendes")
+
+    canned = "**Galley**\n\nNothing.\n\n```game_patch\n{}\n```"
+    orch = Orchestrator(client=_make_canned_client(canned))
+    context = TurnContext(character_name="sira_mendes", magic_state=state)
+    prompt, _ = await orch.build_narrator_prompt(
+        "the airlock hisses open and a stranger steps in",
+        context,
+        tier=NarratorPromptTier.Full,
+    )
+
+    haystack = prompt.lower()
+    missing = [p for p in NARRATOR_NEGATIVE_CASE_PHRASES if p.lower() not in haystack]
+    assert not missing, (
+        f"Assembled narrator prompt is missing negative-case phrases: "
+        f"{missing}. The CRITICAL MAGIC NEGATIVE CASE rule must reach the "
+        f"final prompt without redaction."
+    )
 
 
 async def test_narrator_prompt_includes_proactive_rule_phrases_on_innate_world():
