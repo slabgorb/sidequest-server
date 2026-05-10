@@ -2045,6 +2045,7 @@ class Orchestrator:
                                 "name": s.name,
                                 "token_estimate": s.token_estimate(),
                                 "category": s.category.value,
+                                "content": s.content,
                             }
                             for s in bucket
                         ],
