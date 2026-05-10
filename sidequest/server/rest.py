@@ -32,6 +32,7 @@ from sidequest.game.persistence import (
     upsert_game,
 )
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS, load_genre_pack_cached
+from sidequest.server.asset_urls import resolve_asset_url
 
 logger = logging.getLogger(__name__)
 
@@ -196,26 +197,19 @@ def create_rest_router() -> APIRouter:
                     if not isinstance(waxis, dict):
                         waxis = {}
 
-                    # Resolve cover_poi → hero_image URL
+                    # Resolve cover_poi → hero_image URL via the asset_urls
+                    # seam (default: https://cdn.slabgorb.com; "local" override
+                    # rewrites to /genre/* against $SIDEQUEST_GENRE_PACKS).
+                    # POI generator (scripts/render_common.py) emits .png only;
+                    # the multi-extension probe was a Rust-port leftover.
                     cover_poi = wraw.get("cover_poi")
                     hero_image: str | None = None
                     if cover_poi:
-                        poi_dir = world_entry / "assets" / "poi"
-                        for ext in ("jpg", "png", "webp"):
-                            candidate = poi_dir / f"{cover_poi}.{ext}"
-                            if candidate.exists():
-                                hero_image = (
-                                    f"/genre/{genre_slug}/worlds/{world_slug}"
-                                    f"/assets/poi/{cover_poi}.{ext}"
-                                )
-                                break
-                        if hero_image is None:
-                            logger.warning(
-                                "list_genres: cover_poi '%s' not found for %s/%s",
-                                cover_poi,
-                                genre_slug,
-                                world_slug,
-                            )
+                        rel_path = (
+                            f"genre_packs/{genre_slug}/worlds/{world_slug}"
+                            f"/assets/poi/{cover_poi}.png"
+                        )
+                        hero_image = resolve_asset_url(rel_path)
                     else:
                         logger.warning(
                             "list_genres: no cover_poi in world.yaml for %s/%s — "
