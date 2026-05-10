@@ -20,7 +20,12 @@ from sidequest.server.app import create_app
 # ---------------------------------------------------------------------------
 
 
-def _create_mock_genre_pack(packs_dir: Path, genre_slug: str, world_slug: str) -> None:
+def _create_mock_genre_pack(
+    packs_dir: Path,
+    genre_slug: str,
+    world_slug: str,
+    cover_poi: str | None = None,
+) -> None:
     """Write minimal pack.yaml + world/world.yaml under packs_dir."""
     genre_dir = packs_dir / genre_slug
     genre_dir.mkdir(parents=True, exist_ok=True)
@@ -46,20 +51,18 @@ def _create_mock_genre_pack(packs_dir: Path, genre_slug: str, world_slug: str) -
     # worlds/world_slug/world.yaml
     world_dir = genre_dir / "worlds" / world_slug
     world_dir.mkdir(parents=True, exist_ok=True)
-    (world_dir / "world.yaml").write_text(
-        yaml.dump(
-            {
-                "name": f"{world_slug.replace('_', ' ').title()}",
-                "description": f"A world called {world_slug}",
-                "starting_location": "Town Square",
-                "era": "1878",
-                "setting": "The frontier",
-                "inspirations": ["Tombstone", "High Noon"],
-                "axis_snapshot": {"tension": 0.4, "mystery": 0.6},
-            }
-        ),
-        encoding="utf-8",
-    )
+    world_yaml: dict[str, object] = {
+        "name": f"{world_slug.replace('_', ' ').title()}",
+        "description": f"A world called {world_slug}",
+        "starting_location": "Town Square",
+        "era": "1878",
+        "setting": "The frontier",
+        "inspirations": ["Tombstone", "High Noon"],
+        "axis_snapshot": {"tension": 0.4, "mystery": 0.6},
+    }
+    if cover_poi is not None:
+        world_yaml["cover_poi"] = cover_poi
+    (world_dir / "world.yaml").write_text(yaml.dump(world_yaml), encoding="utf-8")
 
 
 def _make_app(tmp_path: Path) -> TestClient:
@@ -149,6 +152,59 @@ def test_list_genres_skips_symlinked_world_aliases(tmp_path):
     worlds = client.get("/api/genres").json()["caverns_and_claudes"]["worlds"]
     slugs = [w["slug"] for w in worlds]
     assert slugs == ["dungeon_survivor"], f"symlinked alias must be skipped; got {slugs}"
+
+
+def _make_app_with_cover_poi(
+    tmp_path: Path,
+    cover_poi: str | None,
+) -> TestClient:
+    packs_dir = tmp_path / "genre_packs"
+    packs_dir.mkdir()
+    _create_mock_genre_pack(
+        packs_dir, "spaghetti_western", "dust_and_lead", cover_poi=cover_poi
+    )
+    saves_dir = tmp_path / "saves"
+    saves_dir.mkdir()
+    app = create_app(genre_pack_search_paths=[packs_dir], save_dir=saves_dir)
+    return TestClient(app)
+
+
+def test_list_genres_hero_image_uses_cdn_seam_by_default(tmp_path, monkeypatch):
+    """When cover_poi is set and no SIDEQUEST_ASSET_BASE_URL override is in
+    effect, hero_image must be a fully-qualified CDN URL produced by
+    resolve_asset_url. Bug fix: rest.py used to do an on-disk Path.exists()
+    check and return null whenever the file wasn't local — hiding R2-hosted
+    POI images from the lobby. The seam (asset_urls.resolve_asset_url) is
+    the canonical resolver for all genre-pack-relative media URLs.
+    """
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
+    client = _make_app_with_cover_poi(tmp_path, cover_poi="town_square")
+    world = client.get("/api/genres").json()["spaghetti_western"]["worlds"][0]
+    assert world["hero_image"] == (
+        "https://cdn.slabgorb.com/genre_packs/spaghetti_western"
+        "/worlds/dust_and_lead/assets/poi/town_square.png"
+    )
+
+
+def test_list_genres_hero_image_local_mode_uses_genre_mount(tmp_path, monkeypatch):
+    """SIDEQUEST_ASSET_BASE_URL=local must rewrite hero_image to the
+    /genre/* static mount (matches audio_cue + portrait pipelines)."""
+    monkeypatch.setenv("SIDEQUEST_ASSET_BASE_URL", "local")
+    client = _make_app_with_cover_poi(tmp_path, cover_poi="town_square")
+    world = client.get("/api/genres").json()["spaghetti_western"]["worlds"][0]
+    assert world["hero_image"] == (
+        "/genre/spaghetti_western/worlds/dust_and_lead/assets/poi/town_square.png"
+    )
+
+
+def test_list_genres_hero_image_null_when_cover_poi_absent(tmp_path, monkeypatch):
+    """No cover_poi key in world.yaml → hero_image is null (placeholder).
+    Existence-on-disk is no longer probed; only a missing cover_poi key
+    yields null."""
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
+    client = _make_app_with_cover_poi(tmp_path, cover_poi=None)
+    world = client.get("/api/genres").json()["spaghetti_western"]["worlds"][0]
+    assert world["hero_image"] is None
 
 
 def test_list_genres_empty_when_no_packs_dir(tmp_path):
