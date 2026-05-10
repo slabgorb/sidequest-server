@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sidequest.audio.models import AudioCue, AudioLane, AudioResult, MoodCategory
 from sidequest.audio.protocol import AudioBackend
 from sidequest.protocol.messages import AudioCuePayload
@@ -91,11 +93,15 @@ def test_sfx_cue_without_backend_keeps_raw_sfx_id() -> None:
     assert payload.sfx_triggers == ["door_creak"]
 
 
-def test_genre_slug_prefixes_music_track_for_static_mount(tmp_path: Path) -> None:
-    """Playtest 2026-04-24 'Unable to decode audio data' — client was
-    fetching a pack-relative path ``audio/music/...`` against the Vite
-    dev root (404). Prefixing with ``/genre/{slug}/`` routes to the
-    FastAPI static mount."""
+def test_genre_slug_routes_music_track_through_asset_base_url_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Playtest 2026-05-10: audio_cue was the only media path that
+    hand-rolled its prefix and bypassed the asset_urls seam, so even
+    after R2 sync went live the client kept fetching local /genre/ URLs
+    that 404'd. The default base is the CDN; music_track must resolve
+    to a full https URL."""
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
     resolved = tmp_path / "audio" / "music" / "tension" / "a.ogg"
     resolved.parent.mkdir(parents=True)
     resolved.touch()
@@ -104,10 +110,15 @@ def test_genre_slug_prefixes_music_track_for_static_mount(tmp_path: Path) -> Non
 
     payload = build_audio_cue_payload([cue], audio_backend=backend, genre_slug="spaghetti_western")
 
-    assert payload.music_track == ("/genre/spaghetti_western/audio/music/tension/a.ogg")
+    assert payload.music_track == (
+        "https://cdn.slabgorb.com/genre_packs/spaghetti_western/audio/music/tension/a.ogg"
+    )
 
 
-def test_genre_slug_prefixes_sfx_triggers_for_static_mount(tmp_path: Path) -> None:
+def test_genre_slug_routes_sfx_triggers_through_asset_base_url_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SIDEQUEST_ASSET_BASE_URL", raising=False)
     resolved = tmp_path / "audio" / "sfx" / "door_creak.ogg"
     resolved.parent.mkdir(parents=True)
     resolved.touch()
@@ -118,7 +129,26 @@ def test_genre_slug_prefixes_sfx_triggers_for_static_mount(tmp_path: Path) -> No
         [cue], audio_backend=backend, genre_slug="caverns_and_claudes"
     )
 
-    assert payload.sfx_triggers == ["/genre/caverns_and_claudes/audio/sfx/door_creak.ogg"]
+    assert payload.sfx_triggers == [
+        "https://cdn.slabgorb.com/genre_packs/caverns_and_claudes/audio/sfx/door_creak.ogg"
+    ]
+
+
+def test_genre_slug_local_mode_falls_back_to_static_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``SIDEQUEST_ASSET_BASE_URL=local`` preserves the offline-dev path —
+    this is the rollback / no-CDN behavior."""
+    monkeypatch.setenv("SIDEQUEST_ASSET_BASE_URL", "local")
+    resolved = tmp_path / "audio" / "music" / "tension" / "a.ogg"
+    resolved.parent.mkdir(parents=True)
+    resolved.touch()
+    backend = _StubBackend(tmp_path, {("music", "tension"): resolved})
+    cue = AudioCue(lane=AudioLane.MUSIC, mood=MoodCategory.TENSION, intensity=0.6)
+
+    payload = build_audio_cue_payload([cue], audio_backend=backend, genre_slug="spaghetti_western")
+
+    assert payload.music_track == "/genre/spaghetti_western/audio/music/tension/a.ogg"
 
 
 def test_absolute_url_music_track_passes_through(tmp_path: Path) -> None:

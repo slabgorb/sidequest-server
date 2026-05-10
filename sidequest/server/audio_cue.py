@@ -5,6 +5,7 @@ from __future__ import annotations
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.audio.models import AudioCue, AudioLane
 from sidequest.protocol.messages import AudioCuePayload
+from sidequest.server.asset_urls import resolve_asset_url
 
 
 def build_audio_cue_payload(
@@ -23,14 +24,18 @@ def build_audio_cue_payload(
             ``audio_backend.base_path``). When absent, music_track stays
             ``None`` and sfx_triggers carry the raw sfx_id.
         genre_slug: Optional genre pack slug. When provided, each resolved
-            pack-relative path is prefixed with ``/genre/{genre_slug}/``
-            so the client can fetch directly via the FastAPI static mount
-            for the genre pack dir (app.py line 207). Without the prefix,
-            a path like ``audio/music/foo.ogg`` is fetched relative to
-            the Vite dev server root (``http://localhost:5173/audio/...``)
-            which 404s and surfaces as "Unable to decode audio data" on
-            every narration turn (playtest 2026-04-24). Leave ``None`` for
-            tests / CLI consumers that don't live behind the HTTP mount.
+            pack-relative path is routed through ``resolve_asset_url`` so
+            the URL targets either the CDN (default) or the local
+            ``/genre/{slug}/`` mount when ``SIDEQUEST_ASSET_BASE_URL=local``.
+            Without this, a turn would emit ``audio/music/foo.ogg`` and the
+            client would fetch it from the Vite dev-server root, 404ing as
+            "Unable to decode audio data" (playtest 2026-04-24). Routing
+            through the asset_urls seam matches renders, room files, and
+            the genre loader; previously, audio_cue was the only media
+            path that hand-rolled its own prefix and bypassed the seam,
+            so even with R2 sync live, audio always pointed at the local
+            mount and silently 404'd (playtest 2026-05-10). Leave ``None``
+            for tests / CLI consumers that don't live behind the HTTP mount.
 
     Returns:
         Fully-populated AudioCuePayload. All fields default to
@@ -41,12 +46,11 @@ def build_audio_cue_payload(
     sfx_triggers: list[str] = []
 
     def _maybe_prefix(relative: str) -> str:
-        """Wrap a pack-relative path with the /genre/{slug}/ mount prefix
-        so the client's ``AudioCache`` fetches it from the server's
-        static file mount rather than the Vite dev-server root. Paths
-        that are already absolute URLs (``http://…``, ``https://…``) or
-        server-absolute (``/genre/…``) pass through untouched so callers
-        that pre-wrap don't double-prefix.
+        """Resolve a pack-relative path through the ``asset_urls`` seam so
+        the client fetches it from the configured asset base (CDN by
+        default, local mount when ``SIDEQUEST_ASSET_BASE_URL=local``).
+        Paths that are already absolute URLs or server-absolute pass
+        through untouched so callers that pre-wrap don't double-prefix.
         """
         if not relative:
             return relative
@@ -54,7 +58,7 @@ def build_audio_cue_payload(
             return relative
         if genre_slug is None:
             return relative
-        return f"/genre/{genre_slug}/{relative}"
+        return resolve_asset_url(f"genre_packs/{genre_slug}/{relative}")
 
     for cue in cues:
         if cue.lane == AudioLane.MUSIC and cue.mood is not None:
