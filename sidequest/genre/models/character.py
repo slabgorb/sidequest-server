@@ -9,7 +9,7 @@ import random as _random
 import re as _re
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from sidequest.genre.models.ocean import OceanProfile
 
@@ -132,6 +132,15 @@ class ClassAbilityDef(BaseModel):
     genre_description: str
     mechanical_effect: str
     involuntary: bool = False
+
+    @field_validator("name", "genre_description", "mechanical_effect")
+    @classmethod
+    def _non_blank(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                f"ClassAbilityDef field {info.field_name!r} must be non-blank"
+            )
+        return v
 
 
 class ClassDef(BaseModel):

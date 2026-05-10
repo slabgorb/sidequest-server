@@ -89,3 +89,36 @@ def test_caverns_classes_have_signature_abilities():
             f"{c.id} genre_description still has placeholder text"
         )
         assert c.abilities[0].mechanical_effect, f"{c.id} mechanical_effect blank"
+
+
+def test_blank_genre_description_raises():
+    """Empty genre_description fails loud, not silent."""
+    import pytest
+
+    from sidequest.genre.models.character import ClassDef
+
+    with pytest.raises(Exception) as exc:
+        ClassDef.model_validate(
+            {
+                "id": "cleric",
+                "display_name": "Cleric",
+                "rpg_role": "healer",
+                "jungian_default": "caregiver",
+                "prime_requisite": "WIS",
+                "minimum_score": 9,
+                "kit_table": "cleric_kit",
+                "encounter_beat_choices": ["attack"],
+                "abilities": [
+                    {
+                        "name": "Turn Undead",
+                        "genre_description": "",  # blank — must fail
+                        "mechanical_effect": "2d6 vs HD",
+                    }
+                ],
+            }
+        )
+    # Error message should mention which field is blank.
+    msg = str(exc.value).lower()
+    assert "genre_description" in msg or "blank" in msg, (
+        f"Expected error to mention genre_description or 'blank', got: {exc.value}"
+    )
