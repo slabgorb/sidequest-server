@@ -25,7 +25,6 @@ import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.agents.orchestrator import (
-    NarratorPromptTier,
     Orchestrator,
     TurnContext,
 )
@@ -73,7 +72,7 @@ async def test_build_narrator_prompt_publishes_zones_for_dashboard(
         state_summary="You are in a tavern.",
         turn_number=0,
     )
-    await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    await orch.build_narrator_prompt("look around", context)
     await asyncio.sleep(0.05)
 
     prompt_events = [e for e in sock.events if e.get("event_type") == "prompt_assembled"]

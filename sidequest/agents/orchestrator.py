@@ -1179,16 +1179,15 @@ class Orchestrator:
         self,
         action: str,
         context: TurnContext,
-        tier: str = NarratorPromptTier.Full,
-        rebuild_header: str | None = None,
     ) -> tuple[str, PromptRegistry]:
         """Build the narrator prompt for a turn (without invoking the LLM).
 
         Returns (prompt_text, registry) so callers can inspect zone breakdown.
         This is the Phase 1 port of build_narrator_prompt_tiered() in orchestrator.rs.
 
-        ``rebuild_header`` is the warm-reboot frame prepended in the
-        Primacy zone on session-rotation recovery turns (ADR-066 §9).
+        ADR-098: Full/Delta tier gating removed. Every turn builds the same
+        prompt shape. The only turn-number-gated section is
+        ``opening_scene_constraint`` (turn 0 only).
 
         Phase 1 omissions (all deferred):
           - LoreFilter world-graph injection (Phase 2 — story 23-4)
@@ -1202,7 +1201,6 @@ class Orchestrator:
         """
         registry = PromptRegistry()
         agent_name = self._narrator.name()
-        is_full = tier == NarratorPromptTier.Full
 
         # Group G Task 5 — Structural hiding. Strip every DispatchPackage
         # entry flagged ``redact_from_narrator_canonical`` BEFORE anything
@@ -1219,46 +1217,30 @@ class Orchestrator:
         else:
             self._last_secret_routes = []
 
-        # === STATIC SECTIONS (Full tier only — already in session history on Delta) ===
+        # === STATIC SECTIONS (every turn — ADR-098 drops Full/Delta tier gating) ===
 
-        if is_full:
-            # Rebuild header (ADR-066 §9) — registered FIRST in Primacy so
-            # the model sees the [SESSION CONTINUATION] cue before
-            # narrator identity, on a recovery turn that re-establishes
-            # the session after a rotation.
-            if rebuild_header:
-                registry.register_section(
-                    agent_name,
-                    PromptSection.new(
-                        "rebuild_header",
-                        rebuild_header,
-                        AttentionZone.Primacy,
-                        SectionCategory.Soul,
-                    ),
-                )
+        # ADR-067: Always narrator identity (unified agent)
+        self._narrator.build_context(registry)
 
-            # ADR-067: Always narrator identity (unified agent)
-            self._narrator.build_context(registry)
+        # Always inject dialogue rules — short and NPCs can appear anytime
+        self._narrator.build_dialogue_context(registry)
 
-            # Always inject dialogue rules — short and NPCs can appear anytime
-            self._narrator.build_dialogue_context(registry)
+        # SOUL principles (Early zone)
+        if self._soul_data is not None:
+            from sidequest.agents.prompt_framework.soul import SoulData
 
-            # SOUL principles (Early zone)
-            if self._soul_data is not None:
-                from sidequest.agents.prompt_framework.soul import SoulData
-
-                if isinstance(self._soul_data, SoulData):
-                    filtered = self._soul_data.as_prompt_text_for(agent_name)
-                    if filtered:
-                        registry.register_section(
-                            agent_name,
-                            PromptSection.new(
-                                "soul_principles",
-                                filtered,
-                                AttentionZone.Early,
-                                SectionCategory.Soul,
-                            ),
-                        )
+            if isinstance(self._soul_data, SoulData):
+                filtered = self._soul_data.as_prompt_text_for(agent_name)
+                if filtered:
+                    registry.register_section(
+                        agent_name,
+                        PromptSection.new(
+                            "soul_principles",
+                            filtered,
+                            AttentionZone.Early,
+                            SectionCategory.Soul,
+                        ),
+                    )
 
         # === OUTPUT FORMAT (every tier — narrator must always know game_patch schema) ===
         self._narrator.build_output_format(registry)
@@ -1268,9 +1250,8 @@ class Orchestrator:
         if context.genre:
             genre_display = context.genre.replace("_", " ")
             logger.info(
-                "orchestrator.genre_identity_injection genre=%s tier=%s",
+                "orchestrator.genre_identity_injection genre=%s",
                 context.genre,
-                tier,
             )
             registry.register_section(
                 agent_name,
@@ -1363,52 +1344,51 @@ class Orchestrator:
                     ),
                 )
 
-            # Full-tier-only genre sections
-            if is_full:
-                if gp.keeper_monologue:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_keeper_monologue",
-                            f"<genre-keeper>\n{gp.keeper_monologue}\n</genre-keeper>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            # ADR-098: formerly Full-tier-only; now fire every turn
+            if gp.keeper_monologue:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_keeper_monologue",
+                        f"<genre-keeper>\n{gp.keeper_monologue}\n</genre-keeper>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.town:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_town",
-                            f"<genre-town>\n{gp.town}\n</genre-town>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            if gp.town:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_town",
+                        f"<genre-town>\n{gp.town}\n</genre-town>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.chargen:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_chargen",
-                            f"<genre-chargen>\n{gp.chargen}\n</genre-chargen>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            if gp.chargen:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_chargen",
+                        f"<genre-chargen>\n{gp.chargen}\n</genre-chargen>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.transition_hints:
-                    hints = [f'  {k}: "{v}"' for k, v in gp.transition_hints.items()]
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_transition_hints",
-                            "transition_hints:\n" + "\n".join(hints),
-                            AttentionZone.Late,
-                            SectionCategory.Format,
-                        ),
-                    )
+            if gp.transition_hints:
+                hints = [f'  {k}: "{v}"' for k, v in gp.transition_hints.items()]
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_transition_hints",
+                        "transition_hints:\n" + "\n".join(hints),
+                        AttentionZone.Late,
+                        SectionCategory.Format,
+                    ),
+                )
 
         # === STATE-DEPENDENT SECTIONS (every tier) ===
 
@@ -1670,8 +1650,8 @@ class Orchestrator:
                 ),
             )
 
-        # SFX library (Valley zone) — static, only on Full tier
-        if is_full and context.available_sfx:
+        # SFX library (Valley zone) — ADR-098: fires every turn
+        if context.available_sfx:
             sfx_list = ", ".join(context.available_sfx)
             registry.register_section(
                 agent_name,
@@ -1701,8 +1681,8 @@ class Orchestrator:
             ),
         )
 
-        # Opening scene constraint (Recency zone, Full tier only)
-        if is_full:
+        # Opening scene constraint (Recency zone, turn 0 only — ADR-098)
+        if context.turn_number == 0:
             registry.register_section(
                 agent_name,
                 PromptSection.new(
@@ -1878,17 +1858,16 @@ class Orchestrator:
             ),
         )
 
-        # Narrator vocabulary (Late zone, Full tier only)
-        if is_full:
-            registry.register_section(
-                agent_name,
-                PromptSection.new(
-                    "narrator_vocabulary",
-                    _build_vocabulary_section(context.narrator_vocabulary),
-                    AttentionZone.Late,
-                    SectionCategory.Format,
-                ),
-            )
+        # Narrator vocabulary (Late zone) — ADR-098: fires every turn
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "narrator_vocabulary",
+                _build_vocabulary_section(context.narrator_vocabulary),
+                AttentionZone.Late,
+                SectionCategory.Format,
+            ),
+        )
 
         # PacingHint (Late zone, every tier — combat pacing can change
         # mid-session, so per-turn dynamic state must reach Delta tier too).
@@ -2068,7 +2047,6 @@ class Orchestrator:
                     "section_count": section_count,
                     "prompt_len": len(prompt_text),
                     "total_tokens": max(1, len(prompt_text) // 4),
-                    "tier": str(tier),
                     "zones": zones_payload,
                 },
                 component="prompt_builder",

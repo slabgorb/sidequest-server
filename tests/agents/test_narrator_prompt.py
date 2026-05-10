@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import pytest
+
 from sidequest.agents.narrator import NARRATOR_OUTPUT_ONLY
 
 
@@ -502,3 +506,81 @@ def test_narrator_per_turn_prompt_includes_action_invariant(build_registry):
     )
     rendered = registry.render_for("narrator")
     assert "Do not narrate actions outside that list as performed" in rendered
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# ADR-098 stateless narrator: build_narrator_prompt signature + tier gates
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def simple_turn_context():
+    """Minimal TurnContext for turn 0 (opening turn)."""
+    from sidequest.agents.orchestrator import TurnContext
+
+    return TurnContext(
+        character_name="Kael",
+        genre="caverns_and_claudes",
+        turn_number=0,
+    )
+
+
+@pytest.fixture
+def simple_turn_context_turn_three():
+    """Minimal TurnContext for turn 3 (mid-session, post-opening)."""
+    from sidequest.agents.orchestrator import TurnContext
+
+    return TurnContext(
+        character_name="Kael",
+        genre="caverns_and_claudes",
+        turn_number=3,
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_narrator_prompt_signature_no_tier_param(simple_turn_context):
+    """build_narrator_prompt no longer accepts `tier` or `rebuild_header`.
+
+    ADR-098 removes the Full/Delta tier system. Every turn builds the
+    same shape; no per-turn gating beyond turn_number.
+    """
+    from sidequest.agents.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    # The new signature accepts only (action, context). Calling with
+    # `tier=` must fail at the call site (TypeError) and the kwargs-free
+    # path must succeed.
+    prompt_text, registry = await orch.build_narrator_prompt("test action", simple_turn_context)
+    assert isinstance(prompt_text, str)
+    assert len(registry.registry(orch._narrator.name())) > 0
+
+
+@pytest.mark.asyncio
+async def test_opening_scene_constraint_fires_only_on_turn_zero(
+    simple_turn_context, simple_turn_context_turn_three
+):
+    """Formerly Full-tier-only; now gated by context.turn_number == 0."""
+    from sidequest.agents.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    _, registry_t0 = await orch.build_narrator_prompt("hi", simple_turn_context)
+    _, registry_t3 = await orch.build_narrator_prompt("hi", simple_turn_context_turn_three)
+
+    names_t0 = {s.name for s in registry_t0.registry(orch._narrator.name())}
+    names_t3 = {s.name for s in registry_t3.registry(orch._narrator.name())}
+    assert "opening_scene_constraint" in names_t0
+    assert "opening_scene_constraint" not in names_t3
+
+
+@pytest.mark.asyncio
+async def test_narrator_identity_fires_every_turn(
+    simple_turn_context_turn_three,
+):
+    """Formerly Full-tier-only; now fires unconditionally."""
+    from sidequest.agents.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    _, registry = await orch.build_narrator_prompt("hi", simple_turn_context_turn_three)
+    names = {s.name for s in registry.registry(orch._narrator.name())}
+    assert "narrator_identity" in names
+    assert "narrator_dialogue_rules" in names
