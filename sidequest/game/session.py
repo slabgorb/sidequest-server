@@ -1097,14 +1097,19 @@ class GameSnapshot(BaseModel):
             for name, delta in patch.hp_changes.items():
                 self._apply_hp_change(name, delta)
         if patch.npc_attitudes is not None:
-            from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Emitter
+            from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Span
 
             for name, delta in patch.npc_attitudes.items():
                 for npc in self.npcs:
                     if npc.core.name == name:
                         before = int(npc.disposition)
                         npc.disposition = max(-100, min(100, npc.disposition + delta))
-                        Emitter.fire(
+                        # Real span (was Emitter.fire add_event — sprint 3 cold-subsystem
+                        # audit). add_event decorates the parent span only;
+                        # WatcherSpanProcessor sees span closes, so the GM panel never
+                        # received affinity shifts. A zero-duration span hops through
+                        # SPAN_ROUTES[disposition.shift] → state_transition.
+                        with Span.open(
                             SPAN_DISPOSITION_SHIFT,
                             {
                                 "npc_name": name,
@@ -1112,7 +1117,8 @@ class GameSnapshot(BaseModel):
                                 "before": before,
                                 "after": int(npc.disposition),
                             },
-                        )
+                        ):
+                            pass
         if patch.npcs_present is not None:
             for npc_patch in patch.npcs_present:
                 existing = next((n for n in self.npcs if n.core.name == npc_patch.name), None)

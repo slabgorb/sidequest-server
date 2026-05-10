@@ -37,6 +37,13 @@ class GenreCache:
         If the genre code has been loaded before, returns the cached object.
         Otherwise, loads from disk via loader.load(code) and caches the result.
 
+        Emits a watcher event per call (sprint 3 cold-subsystem audit) so
+        the GM panel can distinguish a cache hit (cheap) from a fresh
+        load (heavy + does YAML I/O). Without this the dashboard sees
+        ``genre_pack:loaded`` events from ``load_genre_pack`` only on
+        first-load turns; subsequent turns look "silent" because cache
+        hits skip the inner loader.
+
         Args:
             code: Genre pack code string (e.g. "caverns_and_claudes").
             loader: Object with a .load(code: str) -> GenrePack method.
@@ -48,11 +55,33 @@ class GenreCache:
         Raises:
             GenreError: Propagated from loader.load() on failure.
         """
+        from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
         with self._lock:
             if code in self._packs:
+                _watcher_publish(
+                    "state_transition",
+                    {
+                        "field": "genre_pack",
+                        "op": "cache_hit",
+                        "genre_slug": code,
+                        "cache_size": len(self._packs),
+                    },
+                    component="genre",
+                )
                 return self._packs[code]
             pack = loader.load(code)
             self._packs[code] = pack
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "genre_pack",
+                    "op": "cache_miss",
+                    "genre_slug": code,
+                    "cache_size": len(self._packs),
+                },
+                component="genre",
+            )
             return pack
 
     def invalidate(self, code: str) -> None:

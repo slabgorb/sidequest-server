@@ -792,6 +792,39 @@ def apply_magic_working(*, snapshot: GameSnapshot, patch_field: dict) -> MagicAp
         bar_values=actor_bar_values,
     )
 
+    # Lie-detector for "did the engine evaluate auto-fire at all"
+    # (sprint 3 cold-subsystem audit). Per-firing events below cover
+    # the matched case; silent passes where 0 confrontations fired
+    # were indistinguishable from "engine never ran" without this
+    # summary event. ``candidates`` counts only confrontations whose
+    # bar appears in ``bar_values`` — those are the only ones whose
+    # trigger expression can match for this actor this turn.
+    candidates = [
+        c
+        for c in snapshot.magic_state.confrontations
+        if c.auto_fire and c.auto_fire_trigger is not None
+    ]
+    actor_bar_ids = set(actor_bar_values.keys())
+    actor_candidates = [
+        c
+        for c in candidates
+        if c.auto_fire_trigger
+        and (m := re.match(r"^\s*(\w+)\s*", c.auto_fire_trigger))
+        and m.group(1) in actor_bar_ids
+    ]
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "magic_state",
+            "op": "confrontation_evaluation",
+            "actor": working.actor,
+            "candidates_total": len(candidates),
+            "candidates_for_actor": len(actor_candidates),
+            "fired_count": len(auto_fired),
+        },
+        component="magic",
+    )
+
     for conf, character_id in auto_fired:
         _watcher_publish(
             "state_transition",

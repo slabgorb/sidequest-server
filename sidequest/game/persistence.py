@@ -360,6 +360,10 @@ class SqliteStore:
 
         Serializes GameSnapshot to JSON and stores in game_state table.
         Updates last_played in session_meta. Atomic via transaction.
+
+        Emits a watcher event on success (sprint 3 cold-subsystem audit)
+        so the GM panel can prove the save actually committed every
+        turn — not just "we got to the end of the apply pipeline."
         """
         now = datetime.now(tz=UTC)
         snapshot_copy = snapshot.model_copy(update={"last_saved_at": now})
@@ -376,6 +380,22 @@ class SqliteStore:
                 "UPDATE session_meta SET last_played = ? WHERE id = 1",
                 (now_str,),
             )
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "save",
+                "op": "snapshot_saved",
+                "genre_slug": snapshot.genre_slug,
+                "world_slug": snapshot.world_slug,
+                "round": snapshot.turn_manager.round if snapshot.turn_manager else 0,
+                "interaction": snapshot.turn_manager.interaction if snapshot.turn_manager else 0,
+                "character_count": len(snapshot.characters),
+                "npc_count": len(snapshot.npcs),
+                "byte_size": len(state_json),
+                "save_path": str(self._path) if self._path else "<in-memory>",
+            },
+            component="persistence",
+        )
 
     def load(self) -> SavedSession | None:
         """Load the saved session, or None if no save exists.
@@ -389,6 +409,15 @@ class SqliteStore:
         """
         row = self._conn.execute("SELECT snapshot_json FROM game_state WHERE id = 1").fetchone()
         if row is None:
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "save",
+                    "op": "snapshot_load_empty",
+                    "save_path": str(self._path) if self._path else "<in-memory>",
+                },
+                component="persistence",
+            )
             return None
 
         try:
@@ -449,6 +478,26 @@ class SqliteStore:
         # MP returns the shared location when seated PCs agree, "" when split.
         recap = _generate_recap(
             entries, character_names, snapshot.party_location() or "", known_facts
+        )
+        # Sprint 3 cold-subsystem audit: resume reconstruction was nearly
+        # invisible to the GM panel — only the slot reinit span fired,
+        # which doesn't say anything about the actual snapshot integrity.
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "save",
+                "op": "snapshot_loaded",
+                "genre_slug": snapshot.genre_slug,
+                "world_slug": snapshot.world_slug,
+                "round": snapshot.turn_manager.round if snapshot.turn_manager else 0,
+                "interaction": snapshot.turn_manager.interaction if snapshot.turn_manager else 0,
+                "character_count": len(snapshot.characters),
+                "npc_count": len(snapshot.npcs),
+                "narrative_entries_in_recap": len(entries),
+                "migration_applied": migrated != raw,
+                "save_path": str(self._path) if self._path else "<in-memory>",
+            },
+            component="persistence",
         )
         return SavedSession(meta=meta, snapshot=snapshot, recap=recap)
 

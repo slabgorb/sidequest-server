@@ -430,6 +430,33 @@ class TensionTracker:
         else:  # Normal
             self.record_event(CombatEvent.Normal)
 
+        # Sprint 3 cold-subsystem audit: tone/axis tension was invisible.
+        # Emit per-observe so the GM panel can plot drama_weight + the
+        # individual axes against rounds, and see when classifications
+        # actually fire (Boring streak, Dramatic event triggered, etc.).
+        # One event per call matches the per-round cadence; not noisy.
+        from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+        _watcher_publish(
+            "state_transition",
+            {
+                "field": "tension",
+                "op": "round_observed",
+                "classification": classification.kind,
+                "event": (
+                    classification.event.value
+                    if classification.event is not None
+                    else ""
+                ),
+                "action_tension": self._action_tension,
+                "stakes_tension": self._stakes_tension,
+                "drama_weight": self.drama_weight(),
+                "boring_streak": self._boring_streak,
+                "active_spike": self._effective_spike(),
+            },
+            component="tension",
+        )
+
         return classification
 
     # --- Private helpers ---------------------------------------------
