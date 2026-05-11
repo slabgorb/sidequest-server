@@ -1765,6 +1765,29 @@ class Orchestrator:
             # read `total_tokens` and `agent` directly off the event,
             # so we ship `agent` as an alias of `agent_name` to keep
             # both old and new consumers happy (playtest 2026-04-30 #1A).
+            # Compute system/user split lengths for telemetry. The actual
+            # send-time split happens in process_action via compose_split;
+            # here we mirror the same bucketing logic for the OTEL payload
+            # so the GM panel Prompt tab can show the system/user breakdown
+            # without waiting for a full narration turn.
+            from sidequest.agents.prompt_framework.bucket import (
+                SectionBucket,
+                default_bucket_for_section,
+            )
+
+            system_chars = sum(
+                len(s.content)
+                for s in sections
+                if not s.is_empty()
+                and default_bucket_for_section(s.name) == SectionBucket.System
+            )
+            user_chars = sum(
+                len(s.content)
+                for s in sections
+                if not s.is_empty()
+                and default_bucket_for_section(s.name) == SectionBucket.User
+            )
+
             _pub(
                 "prompt_assembled",
                 {
@@ -1773,6 +1796,9 @@ class Orchestrator:
                     "turn_number": context.turn_number,
                     "section_count": section_count,
                     "prompt_len": len(prompt_text),
+                    "system_len": system_chars,
+                    "user_len": user_chars,
+                    "bounded": True,
                     "total_tokens": max(1, len(prompt_text) // 4),
                     "zones": zones_payload,
                 },
