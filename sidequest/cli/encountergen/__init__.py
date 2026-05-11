@@ -1,1 +1,1 @@
-# Placeholder — populated in later phases per ADR-082 port plan.
+"""Encounter generator CLI — ported from ``crates/sidequest-encountergen``."""
