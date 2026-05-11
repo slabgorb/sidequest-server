@@ -548,6 +548,12 @@ class TurnContext:
     # bars before composing narration for any magic working.
     magic_state: Any = None  # runtime type: sidequest.magic.state.MagicState | None
 
+    # World-tier items catalog (Story 47-5). When non-None, the
+    # reliquaries section drives the Cleric's <available-reliquaries>
+    # block in build_magic_context_block. Typed Any to keep this dataclass
+    # free of the items model — the builder receives the typed list directly.
+    world_items: Any = None  # runtime type: sidequest.genre.models.items.WorldItemsCatalog | None
+
     # Per-turn phase-timing accumulator (Story: phase-timing instrumentation).
     # Defaults to PhaseTimings.NULL so legacy fixtures and partial mocks
     # continue to work without provisioning a real timer. Real instances
@@ -1350,9 +1356,13 @@ class Orchestrator:
         if context.magic_state is not None:
             from sidequest.magic.context_builder import build_magic_context_block
 
+            reliquaries = None
+            if context.world_items is not None:
+                reliquaries = list(context.world_items.reliquaries)
             magic_block = build_magic_context_block(
                 magic_state=context.magic_state,
                 actor_id=context.character_name or None,
+                reliquaries=reliquaries,
             )
             if magic_block:
                 registry.register_section(
@@ -2432,6 +2442,25 @@ def _resolve_spell_slots_for_pc(session: GameSnapshot, character_name: str) -> f
     return float(bar.value)
 
 
+def _resolve_world_items(genre: GenrePack, session: GameSnapshot) -> Any:
+    """Return the current world's items catalog, or None.
+
+    Story 47-5: the Cleric's <available-reliquaries> block in the
+    narrator pre-prompt is driven by ``World.items.reliquaries``.
+    Worlds without an ``items.yaml`` (the common case) yield None and
+    the magic-context builder skips the reliquary section entirely.
+    """
+    world_slug = getattr(session, "world_slug", None) or getattr(
+        session, "world_id", None
+    )
+    if not world_slug:
+        return None
+    world = genre.worlds.get(world_slug) if hasattr(genre, "worlds") else None
+    if world is None:
+        return None
+    return getattr(world, "items", None)
+
+
 async def run_narration_turn(
     client: LlmClient,
     session: GameSnapshot,
@@ -2557,6 +2586,7 @@ async def run_narration_turn(
         pc_classes_by_name=pc_classes_by_name,
         pending_resolution_signal=pending_signal,
         magic_state=session.magic_state,
+        world_items=_resolve_world_items(genre, session),
     )
 
     orchestrator = Orchestrator(client=client)

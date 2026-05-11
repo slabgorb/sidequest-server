@@ -7,11 +7,35 @@ absent, returns empty string and narrator pre-prompt is unchanged.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from sidequest.magic.reliquary_ops import DEFAULT_DIVINE_FAVOR_THRESHOLD
 from sidequest.magic.state import BarKey, MagicState
 
+if TYPE_CHECKING:
+    # Guarded to break the circular import:
+    # sidequest.magic.__init__ → context_builder → genre.models.items →
+    # genre.__init__ → genre.archetype → ... → game → telemetry.spans →
+    # back to sidequest.magic during its still-loading state.
+    from sidequest.genre.models.items import WorldItem
 
-def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str | None) -> str:
-    """Return the pre-prompt magic-context block (or empty string if state absent)."""
+
+def build_magic_context_block(
+    *,
+    magic_state: MagicState | None,
+    actor_id: str | None,
+    reliquaries: list[WorldItem] | None = None,
+) -> str:
+    """Return the pre-prompt magic-context block (or empty string if state absent).
+
+    ``reliquaries`` is the world's item-catalog reliquaries section
+    (``World.items.reliquaries``). When the actor holds a ``divine_favor``
+    bar at or above the reliquary threshold and the session's free use
+    hasn't yet been spent, the eligible reliquary effect texts are
+    rendered into an ``<available-reliquaries>`` block so the narrator
+    can ground the Cleric's options without the daemon hallucinating a
+    relic that doesn't exist.
+    """
     if magic_state is None:
         return ""
 
@@ -124,6 +148,55 @@ def build_magic_context_block(*, magic_state: MagicState | None, actor_id: str |
                 "<prepared> list above. Unprepared spells are not available to "
                 "the actor this turn — do not narrate them as cast."
             )
+
+    # Cleric reliquary register (Story 47-5). Surfaced only when:
+    #   1. the actor has a `divine_favor` ledger bar (Cleric class),
+    #   2. that bar is at or above the reliquary threshold (0.7), and
+    #   3. the session's once-per-session free use has not been spent.
+    # The narrator reads the verbatim divine_favor_effect text to ground
+    # the Cleric's invocation prose — see reliquary_ops.invoke_reliquary
+    # for the mechanical gate that runs when the player commits.
+    if actor_id is not None and reliquaries:
+        favor_key = BarKey(scope="character", owner_id=actor_id, bar_id="divine_favor")
+        try:
+            favor_bar = magic_state.get_bar(favor_key)
+        except KeyError:
+            favor_bar = None
+        free_use_spent = actor_id in magic_state.reliquary_free_use_spent
+        eligible = [
+            r for r in reliquaries if r.model_dump().get("divine_favor_effect")
+        ]
+        if (
+            favor_bar is not None
+            and favor_bar.value >= DEFAULT_DIVINE_FAVOR_THRESHOLD
+            and not free_use_spent
+            and eligible
+        ):
+            lines.append("")
+            lines.append(
+                f'<available-reliquaries actor="{actor_id}" '
+                f'divine_favor="{favor_bar.value:.2f}">'
+            )
+            lines.append(
+                f"  The Cleric holds reliquaries that, at "
+                f"divine_favor >= {DEFAULT_DIVINE_FAVOR_THRESHOLD:.1f}, "
+                "may be invoked for one free narrative effect this session. "
+                "Spending the effect closes the option for the remainder of "
+                "the session — describe the invocation only when the player "
+                "explicitly commits to it."
+            )
+            for r in eligible:
+                dump = r.model_dump()
+                effect = str(dump.get("divine_favor_effect", "")).strip()
+                # Render multi-line effect text as a yaml-style block so the
+                # narrator sees a clean shape without our indentation
+                # bleeding into the prose.
+                indented = "\n".join("    " + ln for ln in effect.splitlines() if ln)
+                lines.append(f"  - id: {r.id}")
+                lines.append(f"    name: {r.name}")
+                lines.append("    effect: |")
+                lines.append(indented)
+            lines.append("</available-reliquaries>")
 
     if "innate_v1" in config.active_plugins:
         lines.append("")
