@@ -531,6 +531,167 @@ async def test_recent_narrative_span_truth_invariant_across_window_sizes(
             )
 
 
+# ---------------------------------------------------------------------------
+# Per-entry byte cap (Queen-of-Hearts review M4).
+#
+# K=4 caps the entry COUNT but the body has no byte cap. Reviewer
+# reproduced a 40,086-char Recency section (4 × 10kB) inside a
+# 72,218-char composed prompt — a single verbose narrator turn alone
+# starves Late-zone sections of attention. ADR-009 (attention-aware
+# prompt zones) treats Late as load-bearing for vocabulary / format
+# guardrails; flooding Recency drops them out of the model's working
+# memory.
+#
+# Pinned contract:
+#   - Per-entry rendered body length is capped at ``PER_ENTRY_CAP_BYTES``
+#     (2048 chars — Reviewer's recommendation). When an entry exceeds the
+#     cap, the rendered version contains the marker ``… [truncated]`` (or
+#     ``[truncated]`` — Dev may pick the surface text but the substring
+#     must be present so Sebastien's GM panel can see the cut).
+#   - Within-cap entries are NOT marked.
+#   - Section total content stays bounded (≤ ``SECTION_BUDGET_BYTES``,
+#     allowing 4 entries × per-entry cap + author/round label overhead).
+#
+# Numbers picked deliberately: 2kB × 4 entries = 8kB body, ~9kB after
+# labels. The model has plenty of room for the recency window AND the
+# Late-zone Format guardrails (verbosity / vocabulary blocks together
+# weigh ~1.6kB).
+# ---------------------------------------------------------------------------
+
+
+PER_ENTRY_CAP_BYTES = 2048
+SECTION_BUDGET_BYTES = 12_000  # 4×2kB + label overhead + safety margin
+TRUNCATION_MARKER = "[truncated]"
+
+
+@pytest.mark.asyncio
+async def test_oversized_entry_is_truncated_with_marker(
+    simple_turn_context_turn_three,
+):
+    """Single 10kB entry — verbose narrator turn — MUST be truncated so it
+    cannot eat the whole prompt budget on its own. Marker must be
+    present so the cut is visible to anyone reading the prompt
+    (Sebastien on the GM panel, Keith debugging a save)."""
+    big_content = "X" * 10_000
+    log = [_entry(round_=1, author="narrator", content=big_content)]
+
+    ctx = replace(simple_turn_context_turn_three, recent_narrative_log=log)
+    orch = Orchestrator()
+    _, registry = await orch.build_narrator_prompt("act", ctx)
+
+    section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+    assert section is not None
+    body = section.content
+
+    # The full 10kB must not ride into the prompt — that's the whole point.
+    assert big_content not in body, (
+        "10kB entry shipped verbatim — no per-entry cap. A single verbose "
+        f"narrator turn produced a {len(body)}-char Recency section."
+    )
+
+    # Section body stays well under the budget envelope.
+    assert len(body) <= SECTION_BUDGET_BYTES, (
+        f"single 10kB entry rendered a {len(body)}-char section; "
+        f"budget is {SECTION_BUDGET_BYTES}"
+    )
+
+    # The truncation cut must be visible — silent truncation hides bugs.
+    assert TRUNCATION_MARKER in body, (
+        f"oversized entry was truncated but the marker {TRUNCATION_MARKER!r} "
+        "is absent — a future reader cannot tell whether the prose was the "
+        "narrator's actual output or a system cut"
+    )
+
+
+@pytest.mark.asyncio
+async def test_four_oversized_entries_stay_within_section_budget(
+    simple_turn_context_turn_three,
+):
+    """K=4 × 10kB stress: the section MUST stay within the byte budget.
+    Reviewer reproduced 40,086-char section / 72,218-char full prompt —
+    Late-zone Format guardrails (vocabulary, verbosity) fall out of the
+    model's working memory at that scale.
+    """
+    big_content = "X" * 10_000
+    log = [
+        _entry(
+            round_=i + 1,
+            author=("Player" if i % 2 == 0 else "narrator"),
+            content=big_content + f" <<entry-{i + 1}>>",
+        )
+        for i in range(4)
+    ]
+
+    ctx = replace(simple_turn_context_turn_three, recent_narrative_log=log)
+    orch = Orchestrator()
+    prompt_text, registry = await orch.build_narrator_prompt("act", ctx)
+
+    section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+    assert section is not None
+    body = section.content
+
+    assert len(body) <= SECTION_BUDGET_BYTES, (
+        f"4 × 10kB stress produced {len(body)}-char section; budget is "
+        f"{SECTION_BUDGET_BYTES}. Reviewer reproduced 40,086 chars on this "
+        "exact shape — same disease."
+    )
+
+    # Truncation marker must be present (at least one — likely all four).
+    assert TRUNCATION_MARKER in body, (
+        "oversized entries were truncated silently — marker missing"
+    )
+
+    # Even after truncation, every entry's sigil tail should ideally survive
+    # so the narrator still sees ALL 4 turns rather than 4 truncated heads
+    # of one. (Dev's choice: truncate from the tail or the middle. Either
+    # way, the per-entry sigil at the END of each content tells us whether
+    # truncation kept the start or the end.) Soft assertion: at minimum the
+    # author/round labels for all four entries must survive — pinning total
+    # turn coverage, not specific truncation strategy.
+    for round_n in (1, 2, 3, 4):
+        assert f"Round {round_n}" in body, (
+            f"entry round={round_n} lost its label after truncation — all "
+            "four turns must still be visible even if their bodies are cut"
+        )
+
+    # And the full composed prompt should be in a sane envelope too —
+    # the byte cap is upstream defense for the bounded-prompt invariant.
+    assert len(prompt_text) <= 60_000, (
+        f"composed prompt is {len(prompt_text)} chars after the K=4 × 10kB "
+        "stress; byte cap on the Recency section did not flow through to "
+        "the bounded-prompt invariant"
+    )
+
+
+@pytest.mark.asyncio
+async def test_within_cap_entries_are_not_truncated(
+    simple_turn_context_turn_three,
+):
+    """Counterpart guard: entries under the per-entry cap MUST NOT carry
+    the truncation marker. Marker-spam would erode its meaning and the
+    GM panel could no longer tell a truncated turn from a clean one.
+    """
+    # Four entries (not 2) so this test is independent of the partial-
+    # window bug — pins per-entry cap behavior cleanly even if the
+    # partial-window gate were still broken.
+    short_log = [
+        _entry(round_=1, author="Player", content="A short player line."),
+        _entry(round_=1, author="narrator", content="A short narrator response under 1kB."),
+        _entry(round_=2, author="Player", content="Another short player turn."),
+        _entry(round_=2, author="narrator", content="And another short narrator reply."),
+    ]
+    ctx = replace(simple_turn_context_turn_three, recent_narrative_log=short_log)
+    orch = Orchestrator()
+    _, registry = await orch.build_narrator_prompt("act", ctx)
+
+    section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+    assert section is not None
+    assert TRUNCATION_MARKER not in section.content, (
+        "short entries got a truncation marker they didn't deserve — "
+        "marker must only appear when an entry exceeded the cap"
+    )
+
+
 @pytest.mark.asyncio
 async def test_recent_narrative_section_preserves_chronological_order(
     simple_turn_context_turn_three,
