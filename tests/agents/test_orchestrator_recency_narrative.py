@@ -895,17 +895,36 @@ async def test_gender_flip_regression_father_appears_in_recent_narrative(
 async def test_recent_narrative_section_does_not_blow_bounded_prompt():
     """ADR-098 invariant: prompt size does not grow with turn count.
 
-    The new Recency section is bounded by K=4 entries, so it must not
-    cause the bounded-prompt test to regress. Walk 30 simulated turns
-    with an ever-growing narrative_log; assert the *recency section
-    itself* stays within a fixed envelope rather than scaling with log
-    length.
+    Walks 30 simulated turns with an ever-growing narrative_log and
+    pins TWO bounded-prompt invariants on the recency section:
+
+    1. **Absolute byte envelope (M4 tie-in):** every turn's section is
+       below ``SECTION_BUDGET_BYTES`` (12 kB). This is the load-bearing
+       bound — without it, a 4-entry × 10 kB stress (per Queen-of-Hearts
+       M4) silently produces a 40 kB section and starves Late-zone
+       Format guardrails of attention regardless of turn count.
+
+    2. **Steady-state shape stability:** once the K=4 window has filled
+       (turn index 3+), section size plateaus. Earlier turns (0..2) are
+       legitimately smaller — the partial-window fix per C1 means a
+       turn-1 prompt carries 1 entry, turn-2 carries 2, turn-3 carries
+       3. Asserting a flat ratio across the ramp-up would penalize that
+       fix; the right invariant is "flat once full".
+
+    Why both invariants? Either alone is insufficient:
+    - Ratio alone: a section that oscillates 100 → 12 000 → 100 chars
+      passes a 1.5 plateau ratio if measured at the right slice.
+    - Envelope alone: a section that crept from 1 kB to 11 999 kB across
+      turns 5..29 would satisfy the byte cap but break ADR-098.
     """
     from unittest.mock import AsyncMock
 
     from sidequest.agents.claude_client import ClaudeResponse
 
-    section_sizes: list[int] = []
+    # All section sizes per turn (None when the section was not
+    # registered — should never happen post-C1 since turn 0 has 1
+    # entry available).
+    per_turn_sizes: list[int | None] = []
 
     async def capture(system_prompt: str, user_message: str, **kwargs):
         return ClaudeResponse(text='{"narration":"ok"}', session_id=None)
@@ -931,14 +950,51 @@ async def test_recent_narrative_section_does_not_blow_bounded_prompt():
         )
         _, registry = await orch.build_narrator_prompt(f"turn {turn_n} action", ctx)
         sec = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
-        if sec is not None:
-            section_sizes.append(len(sec.content))
+        per_turn_sizes.append(len(sec.content) if sec is not None else None)
 
-    assert section_sizes, "recency section never registered across 30 turns"
-    # Ratio of largest to smallest section must stay tight — the cap
-    # holds entries to last K so the envelope is essentially flat.
-    ratio = max(section_sizes) / min(section_sizes)
-    assert ratio <= 1.5, (
-        f"recency section grew unbounded across turns: "
-        f"min={min(section_sizes)} max={max(section_sizes)} ratio={ratio:.2f}"
+    # Wiring: post-C1 every turn must register a section (even turn 0,
+    # with a 1-entry partial window).
+    assert all(s is not None for s in per_turn_sizes), (
+        f"recency section unregistered on some turns: "
+        f"{[i for i, s in enumerate(per_turn_sizes) if s is None]} — partial-"
+        "window registration regressed (C1)"
     )
+    section_sizes: list[int] = [s for s in per_turn_sizes if s is not None]
+
+    # Invariant 1 — absolute byte envelope across ALL turns (M4 tie-in).
+    assert max(section_sizes) <= SECTION_BUDGET_BYTES, (
+        f"recency section blew the byte envelope: "
+        f"max={max(section_sizes)} budget={SECTION_BUDGET_BYTES}. "
+        "Per-entry truncation (M4) is what holds this line."
+    )
+
+    # Invariant 2 — steady-state ratio after the K=4 window fills.
+    # Index K-1 = 3 is the first turn with all 4 entries available, so
+    # the section reaches the steady-state shape from there on.
+    K = 4
+    steady_state = section_sizes[K - 1 :]
+    assert len(steady_state) >= K, "not enough steady-state turns to measure"
+    ratio = max(steady_state) / min(steady_state)
+    assert ratio <= 1.5, (
+        f"steady-state recency section size oscillated: "
+        f"min={min(steady_state)} max={max(steady_state)} "
+        f"ratio={ratio:.2f}. Post-K window fill, the section size should "
+        "be essentially flat (entry content shape is fixed across the "
+        "synthetic fixture)."
+    )
+
+    # Sanity: partial-window ramp-up is real but monotone. Turns 0..K-2
+    # should grow strictly (more entries = more bytes) until the cap
+    # kicks in. This guards against accidentally re-introducing the K-
+    # floor gate (which would make turns 0..2 register zero-byte
+    # sections or no section at all).
+    ramp = section_sizes[: K - 1]
+    assert ramp == sorted(ramp), (
+        f"partial-window ramp-up is not monotone: {ramp}. Either the gate "
+        "regressed or entry ordering is wrong."
+    )
+    if len(ramp) >= 2:
+        assert ramp[0] < ramp[-1], (
+            f"partial-window ramp-up is flat: {ramp}. Turn 0 (1 entry) "
+            "should be smaller than turn K-2 (K-1 entries)."
+        )
