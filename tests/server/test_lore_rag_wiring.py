@@ -254,13 +254,18 @@ class TestLoreRagWiring:
             # (2) The narrator prompt received the <lore> block with
             # the seeded fragment id. This proves retrieve_lore_context's
             # return value flowed through TurnContext → build_narrator_prompt.
-            send_calls = mock_claude.send_with_session.call_args_list
+            # Post-ADR-098: narrator path uses send_stateless; system_prompt
+            # and user_message ride on kwargs.
+            send_calls = mock_claude.send_stateless.call_args_list
             assert send_calls, "narrator must be invoked at least once"
 
             def _prompt_of(call: Any) -> str:
-                if call.args:
-                    return str(call.args[0])
-                return str(call.kwargs.get("prompt", ""))
+                # Combine system_prompt + user_message — the lore block
+                # is registered as a dynamic section so it lands in user.
+                return " ".join(
+                    str(call.kwargs.get(k, ""))
+                    for k in ("system_prompt", "user_message")
+                )
 
             all_prompts = [_prompt_of(c) for c in send_calls]
             lore_prompts = [p for p in all_prompts if "<lore>" in p]
