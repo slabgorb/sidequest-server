@@ -622,12 +622,7 @@ def _detect_missed_recurring_npcs(
     if not narration_text:
         return
 
-    # Build the PC-name skip set (case-folded).
-    pc_names = {
-        c.core.name.casefold()
-        for c in snapshot.characters
-        if getattr(getattr(c, "core", None), "name", None)
-    }
+    pc_names = _pc_name_skip_set(snapshot)
 
     # Build the emitted-name set (case-folded). Narrator emission, even
     # bare, suppresses the miss warning.
@@ -747,6 +742,30 @@ _GENDER_PAIRED_ROLES: dict[str, str] = {
     "daughter": "son",
 }
 
+# Bare-role token regexes — compiled once at module load. Auto-minter
+# runs on every narration turn; recompiling these 14 patterns per call
+# is wasted work. Keyed by the same role token used in
+# ``_BARE_ROLE_PUBLIC_NAMES`` / ``_ARTICLE_ROLE_PUBLIC_NAMES``.
+_BARE_ROLE_PATTERNS: dict[str, re.Pattern[str]] = {
+    role_token: re.compile(rf"\b{re.escape(role_token)}\b", re.IGNORECASE)
+    for role_token in (*_BARE_ROLE_PUBLIC_NAMES, *_ARTICLE_ROLE_PUBLIC_NAMES)
+}
+
+
+def _pc_name_skip_set(snapshot: GameSnapshot) -> set[str]:
+    """Return the case-folded set of PC names — the always-deny list for
+    NPC promotion. Shared by ``_detect_missed_recurring_npcs`` and
+    ``_auto_mint_prose_only_npcs`` (and any future NPC-detector
+    sibling). The MP joiner-orientation auto-narration playtest
+    2026-04-29 demonstrated why both detectors need an identical filter:
+    a narrator naming a PC must NEVER promote them into the NPC stores.
+    """
+    return {
+        c.core.name.casefold()
+        for c in snapshot.characters
+        if getattr(getattr(c, "core", None), "name", None)
+    }
+
 
 def _infer_pronouns_from_role_context(
     narration_text: str, role_end: int
@@ -817,13 +836,7 @@ def _auto_mint_prose_only_npcs(
     if not narration_text:
         return
 
-    # PC-name skip set (case-folded). Mirror of _apply_npc_mentions and
-    # _detect_missed_recurring_npcs.
-    pc_names = {
-        c.core.name.casefold()
-        for c in snapshot.characters
-        if getattr(getattr(c, "core", None), "name", None)
-    }
+    pc_names = _pc_name_skip_set(snapshot)
 
     # Known-name and known-role skip sets, seeded from existing stores and
     # the narrator's structured emission this turn.
@@ -911,12 +924,13 @@ def _auto_mint_prose_only_npcs(
 
     # Phase 2 — bare role tokens (Father, mother, the doctor, ...). Process
     # each role at most once per turn; first matching occurrence wins.
+    # Patterns are pre-compiled at module load (``_BARE_ROLE_PATTERNS``).
     all_role_names: dict[str, str] = {
         **_BARE_ROLE_PUBLIC_NAMES,
         **_ARTICLE_ROLE_PUBLIC_NAMES,
     }
     for role_token, public_name in all_role_names.items():
-        pattern = re.compile(rf"\b{re.escape(role_token)}\b", re.IGNORECASE)
+        pattern = _BARE_ROLE_PATTERNS[role_token]
         match = None
         for candidate in pattern.finditer(narration_text):
             c_start, c_end = candidate.span()
