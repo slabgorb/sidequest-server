@@ -2506,6 +2506,32 @@ class WebSocketSessionHandler:
                 # turn_context.dispatch_package stays None; build_narrator_prompt's
                 # is-None guards skip redaction and the dispatch bank.
 
+                # Monster Manual injection (ADR-059, port of Rust
+                # dispatch/mod.rs:643-681). Materialize Manual NPCs and
+                # encounter creatures into snapshot.npcs BEFORE the
+                # narrator runs so the gaslighting doctrine path
+                # delivers them as world truth — never as appended
+                # "available list" text.  TurnContext was already built
+                # in the handler from the pre-injection snapshot, so
+                # refresh its ``npcs`` reference from the post-patch
+                # snapshot before dispatch.
+                from sidequest.server.dispatch import monster_manual_inject
+
+                manual = monster_manual_inject.ensure_loaded(sd)
+                if manual is not None:
+                    mm_location = (
+                        turn_context.current_location
+                        if isinstance(turn_context.current_location, str)
+                        else ""
+                    )
+                    monster_manual_inject.inject(
+                        sd,
+                        snapshot,
+                        current_location=mm_location,
+                        in_combat=bool(turn_context.in_combat),
+                    )
+                    turn_context.npcs = list(snapshot.npcs)
+
                 with orchestrator_process_action_span(action_len=len(action)):
                     result = await sd.orchestrator.run_narration_turn(
                         action, turn_context, room=self._room
@@ -2590,6 +2616,30 @@ class WebSocketSessionHandler:
                     encounter_resolved_this_turn = encounter_unresolved_before and (
                         snapshot.encounter is None or snapshot.encounter.resolved
                     )
+                    # Monster Manual lifecycle post-apply (ADR-059, port of
+                    # Rust dispatch/mod.rs:1671-1695). Dormant-on-scene-change
+                    # runs FIRST so a location change clears Active anchors
+                    # before this turn's narration is scanned for new
+                    # activations — otherwise the post-change party_location
+                    # would re-activate NPCs that should have aged out with
+                    # the scene.  Save() runs last so the mutated lifecycle
+                    # is persisted before the broader snapshot persist.
+                    if sd.monster_manual is not None:
+                        post_apply_location = snapshot.party_location(
+                            perspective=_acting_for_render_trigger
+                        )
+                        if (
+                            snapshot_location_before_apply
+                            and post_apply_location
+                            and snapshot_location_before_apply != post_apply_location
+                        ):
+                            monster_manual_inject.mark_all_dormant(sd.monster_manual)
+                        monster_manual_inject.mark_active_from_narration(
+                            sd.monster_manual,
+                            getattr(result, "narration", "") or "",
+                            post_apply_location or "",
+                        )
+                        sd.monster_manual.save()
                     # Phase 5 (Story 47-3): drain magic-confrontation
                     # outbound queues. ``narration_apply.apply_magic_working``
                     # populates ``pending_magic_auto_fires`` (one CONFRONTATION

@@ -1,0 +1,358 @@
+"""Tests for ``sidequest.server.dispatch.monster_manual_inject``.
+
+Covers the per-turn injection seam that materializes Monster Manual
+entries into ``snapshot.npcs`` instead of appending text to the narrator
+prompt (gaslighting doctrine — the Python deviation from the Rust port).
+
+Includes a wiring test that asserts the module is actually called from
+``_execute_narration_turn`` (CLAUDE.md: every test suite needs a wiring
+test).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+from sidequest.game.monster_manual import EntryState, ManualEncounter, ManualNpc, MonsterManual
+from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
+from sidequest.server.dispatch import monster_manual_inject
+
+
+def _snapshot() -> GameSnapshot:
+    return GameSnapshot(
+        genre_slug="mutant_wasteland",
+        world_slug="flickering_reach",
+        characters=[],
+        npc_registry=[],
+        quest_log={},
+        lore_established=[],
+        discovered_regions=[],
+        turn_manager=TurnManager(),
+    )
+
+
+def _manual_with(npcs: list[ManualNpc] | None = None, encounters: list[ManualEncounter] | None = None) -> MonsterManual:
+    return MonsterManual(
+        genre="mutant_wasteland",
+        world="flickering_reach",
+        npcs=list(npcs or []),
+        encounters=list(encounters or []),
+    )
+
+
+def _human(name: str, *, state: EntryState = EntryState.AVAILABLE, activated_location: str | None = None) -> ManualNpc:
+    return ManualNpc(
+        data={"name": name, "role": "scavenger", "culture": "Scrapborn", "ocean_summary": "blunt and competitive", "dialogue_quirks": ["shouts prices"]},
+        name=name,
+        role="scavenger",
+        culture="Scrapborn",
+        state=state,
+        activated_location=activated_location,
+    )
+
+
+def _creature_encounter(*, enemy_name: str, tier: int = 2, hp: int = 9) -> ManualEncounter:
+    return ManualEncounter(
+        data={
+            "enemies": [
+                {
+                    "name": enemy_name,
+                    "class": "salt_burrower",
+                    "tier": tier,
+                    "hp": hp,
+                    "role": "burrowing ambusher",
+                    "abilities": ["Burrow — emerges from a tile within 5m"],
+                    "morale": "steady",
+                }
+            ]
+        },
+        label=f"1x {enemy_name} (tier {tier})",
+        tier=tier,
+        state=EntryState.AVAILABLE,
+    )
+
+
+class _FakeSessionData:
+    """Minimal stand-in for ``_SessionData`` used by ``ensure_loaded``.
+
+    Only the attributes ``ensure_loaded`` and ``inject`` touch are
+    populated; everything else stays unset so the test fails loudly if
+    the helper grows new dependencies without us noticing.
+    """
+
+    def __init__(self, *, genre_slug: str = "mutant_wasteland", world_slug: str = "flickering_reach", genre_pack: object | None = None) -> None:
+        self.genre_slug = genre_slug
+        self.world_slug = world_slug
+        self.genre_pack = genre_pack
+        self.monster_manual: MonsterManual | None = None
+
+
+# ---------------------------------------------------------------------------
+# ensure_loaded
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_loaded_returns_none_without_genre() -> None:
+    sd = _FakeSessionData(genre_slug="")
+    assert monster_manual_inject.ensure_loaded(sd) is None
+    assert sd.monster_manual is None
+
+
+def test_ensure_loaded_is_idempotent() -> None:
+    manual = _manual_with(npcs=[_human("Krag"), _human("Vex"), _human("Mab"), _human("Tess")], encounters=[_creature_encounter(enemy_name="Salt Burrower")])
+    sd = _FakeSessionData()
+    sd.monster_manual = manual
+    # No seeding (already populated) — second call returns the same instance.
+    first = monster_manual_inject.ensure_loaded(sd)
+    second = monster_manual_inject.ensure_loaded(sd)
+    assert first is manual
+    assert second is manual
+
+
+def test_ensure_loaded_skips_seed_without_source_dir(tmp_path: Path) -> None:
+    sd = _FakeSessionData(genre_slug="ghost_genre", world_slug="ghost_world", genre_pack=None)
+    # Redirect manuals dir to tmp so the test doesn't touch ~/.sidequest.
+    with mock.patch("sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path):
+        loaded = monster_manual_inject.ensure_loaded(sd)
+    assert loaded is not None
+    assert loaded.needs_seeding()  # would-have-seeded but no source_dir → empty pool
+    assert sd.monster_manual is loaded
+
+
+def test_ensure_loaded_swallows_seed_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Pack:
+        source_dir = tmp_path / "packs" / "mutant_wasteland"
+
+    sd = _FakeSessionData(genre_pack=_Pack())
+
+    def _explode(**_kwargs: object) -> None:
+        raise RuntimeError("encountergen unavailable")
+
+    monkeypatch.setattr(
+        "sidequest.server.dispatch.pregen.seed_manual",
+        _explode,
+    )
+    with mock.patch("sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path):
+        loaded = monster_manual_inject.ensure_loaded(sd)
+    # Seed crashed; helper continues with whatever was on disk (empty Manual).
+    assert loaded is not None
+    assert sd.monster_manual is loaded
+
+
+# ---------------------------------------------------------------------------
+# inject — patch generation
+# ---------------------------------------------------------------------------
+
+
+def test_inject_no_manual_is_noop() -> None:
+    sd = _FakeSessionData()
+    snap = _snapshot()
+    assert monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=False) == 0
+    assert snap.npcs == []
+
+
+def test_inject_materializes_available_humans_top_three() -> None:
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        npcs=[_human(f"Person{i}") for i in range(5)],
+    )
+    snap = _snapshot()
+    count = monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=False)
+    assert count == 3
+    names = [n.core.name for n in snap.npcs]
+    assert names == ["Person0", "Person1", "Person2"]
+    # Humans default to neutral disposition (creature fields absent).
+    assert all(n.disposition == 0 for n in snap.npcs)
+
+
+def test_inject_filters_active_humans_by_location_substring() -> None:
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        npcs=[
+            _human("Anchored", state=EntryState.ACTIVE, activated_location="The Collapsed Transit Hub"),
+            _human("Elsewhere", state=EntryState.ACTIVE, activated_location="Far Plateau"),
+            _human("FloatAvail"),
+        ],
+    )
+    snap = _snapshot()
+    monster_manual_inject.inject(sd, snap, current_location="Collapsed Transit", in_combat=False)
+    names = [n.core.name for n in snap.npcs]
+    assert "Anchored" in names
+    assert "Elsewhere" not in names
+    assert "FloatAvail" in names  # available NPCs always surface (top 3 cap)
+
+
+def test_inject_skips_dormant_humans() -> None:
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        npcs=[
+            _human("DormantOne", state=EntryState.DORMANT, activated_location="The Dome"),
+            _human("DormantTwo", state=EntryState.DORMANT, activated_location="The Dome"),
+        ],
+    )
+    snap = _snapshot()
+    count = monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=False)
+    assert count == 0
+    assert snap.npcs == []
+
+
+def test_inject_materializes_encounter_creatures_with_hostile_disposition() -> None:
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        encounters=[_creature_encounter(enemy_name="Salt Burrower", tier=2, hp=12)],
+    )
+    snap = _snapshot()
+    count = monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=True)
+    assert count == 1
+    npc = snap.npcs[0]
+    assert npc.core.name == "Salt Burrower"
+    # Hostile default from _npc_from_patch when creature fields are present.
+    assert npc.disposition == -20
+    assert npc.threat_level == 2
+    assert npc.creature_id == "salt_burrower"
+    # HP→EdgePool translation (ADR-078).
+    assert npc.core.edge.current == 12
+    assert npc.core.edge.max == 12
+
+
+def test_inject_out_of_combat_caps_encounters() -> None:
+    encs = [_creature_encounter(enemy_name=f"Mob{i}") for i in range(5)]
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(encounters=encs)
+    snap = _snapshot()
+    count = monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=False)
+    # Out of combat: only the first 2 encounters' enemies materialize.
+    assert count == 2
+    assert [n.core.name for n in snap.npcs] == ["Mob0", "Mob1"]
+
+
+def test_inject_in_combat_materializes_all_available_encounters() -> None:
+    encs = [_creature_encounter(enemy_name=f"Mob{i}") for i in range(5)]
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(encounters=encs)
+    snap = _snapshot()
+    count = monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=True)
+    assert count == 5
+
+
+def test_inject_is_idempotent_across_turns() -> None:
+    """Re-injecting the same Manual into a snapshot merges, doesn't duplicate."""
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        encounters=[_creature_encounter(enemy_name="Salt Burrower", hp=9)],
+    )
+    snap = _snapshot()
+    monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=True)
+    monster_manual_inject.inject(sd, snap, current_location="The Dome", in_combat=True)
+    # _merge_npc_patch path — same name lands once.
+    assert len(snap.npcs) == 1
+
+
+def test_inject_threat_tier_falls_back_to_encounter_tier() -> None:
+    enc = ManualEncounter(
+        data={
+            "enemies": [
+                {"name": "Tier-less Foe", "class": "shade", "hp": 3, "role": "lurker"},
+            ]
+        },
+        label="1x Tier-less Foe (tier 3)",
+        tier=3,
+        state=EntryState.AVAILABLE,
+    )
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(encounters=[enc])
+    snap = _snapshot()
+    monster_manual_inject.inject(sd, snap, current_location="", in_combat=True)
+    assert snap.npcs[0].threat_level == 3
+
+
+# ---------------------------------------------------------------------------
+# mark_active_from_narration
+# ---------------------------------------------------------------------------
+
+
+def test_mark_active_from_narration_flips_state_for_named_npcs() -> None:
+    manual = _manual_with(npcs=[_human("Krag Dustwelder"), _human("Vex")])
+    activated = monster_manual_inject.mark_active_from_narration(
+        manual,
+        "Krag Dustwelder waves you over to the workbench.",
+        current_location="The Workbench",
+    )
+    assert activated == ["Krag Dustwelder"]
+    krag = next(n for n in manual.npcs if n.name == "Krag Dustwelder")
+    assert krag.state == EntryState.ACTIVE
+    assert krag.activated_location == "The Workbench"
+    vex = next(n for n in manual.npcs if n.name == "Vex")
+    assert vex.state == EntryState.AVAILABLE
+
+
+def test_mark_active_from_narration_skips_already_active() -> None:
+    """Only AVAILABLE → ACTIVE transitions are returned (Rust parity)."""
+    manual = _manual_with(
+        npcs=[_human("Krag", state=EntryState.ACTIVE, activated_location="Older Scene")],
+    )
+    activated = monster_manual_inject.mark_active_from_narration(
+        manual,
+        "Krag turns toward the door.",
+        current_location="New Scene",
+    )
+    assert activated == []
+    # activated_location stays anchored to the first scene — mark_active
+    # only re-anchors if previously None.
+    assert manual.npcs[0].activated_location == "Older Scene"
+
+
+def test_mark_active_from_narration_empty_narration_returns_empty() -> None:
+    manual = _manual_with(npcs=[_human("Krag")])
+    assert monster_manual_inject.mark_active_from_narration(manual, "", "any") == []
+
+
+# ---------------------------------------------------------------------------
+# mark_all_dormant
+# ---------------------------------------------------------------------------
+
+
+def test_mark_all_dormant_none_safe() -> None:
+    monster_manual_inject.mark_all_dormant(None)  # must not raise
+
+
+def test_mark_all_dormant_transitions_active_entries() -> None:
+    manual = _manual_with(
+        npcs=[
+            _human("ActiveOne", state=EntryState.ACTIVE, activated_location="loc"),
+            _human("AvailableOne"),
+        ],
+        encounters=[_creature_encounter(enemy_name="ActiveCreature")],
+    )
+    manual.encounters[0].state = EntryState.ACTIVE
+    monster_manual_inject.mark_all_dormant(manual)
+    assert manual.npcs[0].state == EntryState.DORMANT
+    assert manual.npcs[1].state == EntryState.AVAILABLE  # unchanged
+    assert manual.encounters[0].state == EntryState.DORMANT
+
+
+# ---------------------------------------------------------------------------
+# Wiring — production path actually calls the helper
+# ---------------------------------------------------------------------------
+
+
+def test_websocket_session_handler_wires_monster_manual_inject() -> None:
+    """CLAUDE.md wiring rule: production code must actually call inject.
+
+    Tests can pass in isolation while the helper sits in a vestigial
+    module nobody imports. Read the handler source and assert the
+    inject + ensure_loaded calls survive any future refactor that
+    silently severs the wiring.
+    """
+    handler_src = Path(__file__).resolve().parents[3] / "sidequest" / "server" / "websocket_session_handler.py"
+    text = handler_src.read_text(encoding="utf-8")
+    assert "monster_manual_inject" in text, "websocket_session_handler.py no longer imports monster_manual_inject"
+    assert "monster_manual_inject.ensure_loaded" in text, "_execute_narration_turn no longer calls ensure_loaded"
+    assert "monster_manual_inject.inject" in text, "_execute_narration_turn no longer calls inject"
+    assert "monster_manual_inject.mark_active_from_narration" in text, "post-narration mark_active_from_narration wire missing"
+    assert "monster_manual_inject.mark_all_dormant" in text, "location-change mark_all_dormant wire missing"
+    assert "sd.monster_manual.save()" in text, "Manual.save() is not called after each turn — lifecycle won't persist"

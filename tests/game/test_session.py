@@ -219,6 +219,187 @@ def test_npc_patch_whitespace_name_rejected():
 
 
 # ---------------------------------------------------------------------------
+# Monster Manual creature patches (ADR-059 + ADR-078 HP→Edge)
+# ---------------------------------------------------------------------------
+
+
+def test_npc_patch_creature_fields_default_to_none() -> None:
+    """The creature-shape fields are optional and don't affect human NPC patches."""
+    patch = NpcPatch(name="Mira", description="A traveling scholar")
+    assert patch.creature_id is None
+    assert patch.threat_level is None
+    assert patch.hp is None
+    assert patch.abilities is None
+    assert patch.morale is None
+
+
+def test_apply_patch_creature_translates_hp_to_edge() -> None:
+    """Patch with creature ``hp`` materializes an Npc with EdgePool seeded from hp."""
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[
+                NpcPatch(
+                    name="Chalk Moth",
+                    creature_id="chalk_moth",
+                    threat_level=1,
+                    hp=1,
+                    abilities=["Color Feed — Drains pigment from cloth."],
+                    morale="cowardly",
+                )
+            ]
+        )
+    )
+    moth = next(n for n in s.npcs if n.core.name == "Chalk Moth")
+    assert moth.creature_id == "chalk_moth"
+    assert moth.threat_level == 1
+    assert moth.morale == "cowardly"
+    assert moth.abilities == ["Color Feed — Drains pigment from cloth."]
+    # EdgePool seeded full from B/X hp
+    assert moth.core.edge.current == 1
+    assert moth.core.edge.max == 1
+    assert moth.core.edge.base_max == 1
+    # Level reflects threat_level
+    assert moth.core.level == 1
+    # Creatures default hostile (matches encountergen output)
+    assert moth.disposition == -20
+
+
+def test_apply_patch_creature_hp_zero_clamps_to_one() -> None:
+    """A creature authored with ``hp: 0`` clamps to EdgePool max=1 (positive ceiling)."""
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[NpcPatch(name="Faint Echo", creature_id="echo", hp=0)]
+        )
+    )
+    echo = next(n for n in s.npcs if n.core.name == "Faint Echo")
+    assert echo.core.edge.max == 1
+
+
+def test_apply_patch_creature_threat_level_seeds_level_field() -> None:
+    """``CreatureCore.level`` reflects ``threat_level`` for creature patches."""
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[
+                NpcPatch(
+                    name="Patient Butcher",
+                    creature_id="patient_butcher",
+                    threat_level=4,
+                    hp=30,
+                )
+            ]
+        )
+    )
+    boss = next(n for n in s.npcs if n.core.name == "Patient Butcher")
+    assert boss.core.level == 4
+    assert boss.core.edge.max == 30
+
+
+def test_apply_patch_human_npc_unchanged_by_creature_signal_absence() -> None:
+    """A patch with no creature fields still produces a human-shape NPC."""
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(npcs_present=[NpcPatch(name="Mira", description="scholar")])
+    )
+    mira = next(n for n in s.npcs if n.core.name == "Mira")
+    assert mira.creature_id is None
+    assert mira.threat_level is None
+    assert mira.abilities == []
+    assert mira.morale is None
+    # Human NPC default disposition is neutral
+    assert mira.disposition == 0
+    # Placeholder edge pool (not creature-seeded)
+    assert mira.core.edge.max > 1  # PLACEHOLDER_EDGE_BASE_MAX is the constant
+
+
+def test_apply_patch_creature_merge_updates_edge_and_flavor() -> None:
+    """Re-emitting a creature patch updates EdgePool, abilities, and morale in place."""
+    s = _make_snapshot()
+    # First emission — chalk_moth at hp=1
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[
+                NpcPatch(name="Chalk Moth", creature_id="chalk_moth", hp=1, morale="cowardly")
+            ]
+        )
+    )
+    # Second emission — same name, updated stats (e.g. enraged variant)
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[
+                NpcPatch(
+                    name="Chalk Moth",
+                    hp=3,
+                    abilities=["Shimmer Cloud — Disorients onlookers."],
+                    morale="enraged",
+                )
+            ]
+        )
+    )
+    moth = next(n for n in s.npcs if n.core.name == "Chalk Moth")
+    assert moth.core.edge.max == 3
+    assert moth.morale == "enraged"
+    assert moth.abilities == ["Shimmer Cloud — Disorients onlookers."]
+
+
+def test_creature_npc_roundtrips_through_json() -> None:
+    """A creature-materialized Npc serializes and reloads losslessly.
+
+    Required so the gaslighting payload reaches the narrator's
+    ``state_summary`` JSON dump intact.
+    """
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(
+            npcs_present=[
+                NpcPatch(
+                    name="Chalk Moth",
+                    creature_id="chalk_moth",
+                    threat_level=1,
+                    hp=1,
+                    abilities=["Color Feed — Drains pigment."],
+                    morale="cowardly",
+                )
+            ]
+        )
+    )
+    serialized = s.model_dump_json()
+    reloaded = GameSnapshot.model_validate_json(serialized)
+    moth = next(n for n in reloaded.npcs if n.core.name == "Chalk Moth")
+    assert moth.creature_id == "chalk_moth"
+    assert moth.threat_level == 1
+    assert moth.abilities == ["Color Feed — Drains pigment."]
+    assert moth.morale == "cowardly"
+    assert moth.core.edge.max == 1
+
+
+def test_creature_edge_pool_from_hp_helper() -> None:
+    """Direct test of the HP→Edge translation helper."""
+    from sidequest.game.session import _creature_edge_pool_from_hp
+
+    pool = _creature_edge_pool_from_hp(12)
+    assert pool.current == 12
+    assert pool.max == 12
+    assert pool.base_max == 12
+    # Same recovery trigger as placeholder_edge_pool
+    assert len(pool.recovery_triggers) == 1
+    assert pool.thresholds == []
+
+
+def test_creature_threat_level_only_still_signals_creature_branch() -> None:
+    """``threat_level`` alone (no hp, no creature_id) still triggers creature defaults."""
+    s = _make_snapshot()
+    s.apply_world_patch(
+        WorldStatePatch(npcs_present=[NpcPatch(name="Lurker", threat_level=2)])
+    )
+    lurker = next(n for n in s.npcs if n.core.name == "Lurker")
+    assert lurker.disposition == -20  # creature default hostile
+    assert lurker.core.level == 2
+
+
+# ---------------------------------------------------------------------------
 # lowest_friendly_hp_ratio
 # ---------------------------------------------------------------------------
 
