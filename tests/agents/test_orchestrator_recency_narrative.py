@@ -253,8 +253,17 @@ async def test_recent_narrative_section_caps_at_last_four_entries(
     entries. Without a cap the section grows unbounded, defeating the
     ADR-098 bounded-prompt invariant (every turn carries the same shape).
     """
+    # Sigil-delimited, zero-padded markers — naive substring check above
+    # (``"line 1" in "line 16"`` was True with the prior ``f"line {i}"``
+    # fixture, making the negative assertion unsatisfiable regardless of
+    # the cap behavior). The ``<<…>>`` brackets ensure ``"<<line-01>>"``
+    # is NOT a substring of ``"<<line-19>>"``.
     long_log = [
-        _entry(round_=i, author=("Player" if i % 2 == 0 else "narrator"), content=f"line {i}")
+        _entry(
+            round_=i,
+            author=("Player" if i % 2 == 0 else "narrator"),
+            content=f"<<line-{i:02d}>>",
+        )
         for i in range(20)
     ]
     ctx = replace(simple_turn_context_turn_three, recent_narrative_log=long_log)
@@ -267,12 +276,15 @@ async def test_recent_narrative_section_caps_at_last_four_entries(
 
     # Last 4 entries (rounds 16..19) must be present.
     for i in range(16, 20):
-        assert f"line {i}" in body, f"entry round={i} missing — cap dropped it accidentally"
+        marker = f"<<line-{i:02d}>>"
+        assert marker in body, f"entry round={i} ({marker}) missing — cap dropped it accidentally"
 
     # Earlier entries (rounds 0..15) must NOT be present.
     for i in range(16):
-        assert f"line {i}" not in body, (
-            f"entry round={i} leaked through cap — section should hold only last 4"
+        marker = f"<<line-{i:02d}>>"
+        assert marker not in body, (
+            f"entry round={i} ({marker}) leaked through cap — "
+            "section should hold only last 4"
         )
 
 
