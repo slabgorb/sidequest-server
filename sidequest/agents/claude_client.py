@@ -329,8 +329,9 @@ class ClaudeClient:
                 logger.info("narrator.session_create session_id=%s", new_id)
 
             if allowed:
-                args.append("--allowedTools")
-                args.extend(allowed)
+                args += ["--tools", ",".join(allowed)]
+            else:
+                args += ["--tools", ""]
 
             args += ["-p", prompt, "--output-format", "json"]
 
@@ -373,8 +374,9 @@ class ClaudeClient:
             if system_prompt:
                 args += ["--system-prompt", system_prompt]
             if allowed:
-                args.append("--allowedTools")
-                args.extend(allowed)
+                args += ["--tools", ",".join(allowed)]
+            else:
+                args += ["--tools", ""]
             args += ["-p", user_message, "--output-format", "json"]
 
             process_env = self._build_env(env)
