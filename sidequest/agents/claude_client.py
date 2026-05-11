@@ -634,11 +634,21 @@ class ClaudeClient:
             returncode = proc.returncode
 
             if returncode != 0:
+                stderr_text = ""
+                if proc.stderr is not None:
+                    try:
+                        stderr_bytes = await proc.stderr.read()
+                        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()[:4096]
+                    except Exception:
+                        stderr_text = ""
+                detail = f"claude CLI exited with code {returncode}"
+                if stderr_text:
+                    detail = f"{detail} stderr={stderr_text}"
                 yield StreamError(
                     kind="subprocess_failed",
                     elapsed_seconds=elapsed,
                     partial_text=accumulated,
-                    detail=f"claude CLI exited with code {returncode}",
+                    detail=detail,
                     exit_code=returncode,
                 )
                 return
@@ -729,7 +739,7 @@ class ClaudeClient:
                 args.append("--allowedTools")
                 args.extend(allowed)
 
-            args += ["-p", prompt, "--output-format", "stream-json"]
+            args += ["-p", prompt, "--output-format", "stream-json", "--verbose"]
 
             process_env = self._build_env(env)
             start = time.monotonic()
