@@ -288,6 +288,249 @@ async def test_recent_narrative_section_caps_at_last_four_entries(
         )
 
 
+# ---------------------------------------------------------------------------
+# Partial windows (K_actual ∈ {1, 2, 3}) — Queen-of-Hearts review C1+C2+M2.
+#
+# The first GREEN pass gated section registration on
+# ``_recent_turn_count >= _recent_k`` — treating K as a FLOOR rather than
+# a CAP. Turns 1-3 of every fresh save then carried zero high-attention
+# recency context (exactly the scenario the story exists to fix). The
+# OTEL span fires regardless, so on partial-window turns the span lies:
+# ``turn_count=2 / total_tokens=25`` while ``section_registered=False`` —
+# Sebastien's lie-detector flips a false-positive ("injector engaged")
+# when the injector engaged with NOTHING (no high-attention bytes).
+#
+# These tests pin the corrected semantics:
+#   - K=4 caps the window (already covered above).
+#   - Any non-empty window registers the section with all available
+#     entries.
+#   - The OTEL span's ``total_tokens`` matches the actually-registered
+#     body (or is 0 when no section is registered). No-lie invariant.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("k_actual", [1, 2, 3])
+async def test_partial_window_registers_section_with_available_entries(
+    simple_turn_context_turn_three, k_actual: int
+):
+    """Partial windows of 1, 2, or 3 entries (turns 1-3 of a fresh save)
+    MUST still register ``recent_narrative_context``. K=4 is a cap, not
+    a floor — the whole point of the story is to make turn 2's narrator
+    read turn 1's prose at high attention.
+
+    Currently fails: GREEN at orchestrator.py:1622 gates on
+    ``_recent_turn_count >= _recent_k``, leaving turns 1-3 with no
+    high-attention recency at all.
+    """
+    log = [
+        _entry(
+            round_=i + 1,
+            author=("Player" if i % 2 == 0 else "narrator"),
+            # Sigil-delimited markers per the K=4 cap fixture lesson —
+            # ``"slice-01"`` is not a substring of ``"slice-12"``.
+            content=f"<<slice-{i + 1:02d}>> distinctive prose for partial-window test",
+        )
+        for i in range(k_actual)
+    ]
+    assert len(log) == k_actual
+
+    ctx = replace(simple_turn_context_turn_three, recent_narrative_log=log)
+    orch = Orchestrator()
+    _, registry = await orch.build_narrator_prompt("act", ctx)
+
+    section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+    assert section is not None, (
+        f"recent_narrative_context NOT registered for K_actual={k_actual} — "
+        "K is being treated as a floor instead of a cap. Turns 1-3 of every "
+        "fresh save lose their high-attention recency window."
+    )
+    assert section.zone == AttentionZone.Recency
+
+    body = section.content
+    # Every entry in the available window must be rendered into the
+    # section — partial means "give me what you've got", not "give me
+    # nothing".
+    for i in range(k_actual):
+        marker = f"<<slice-{i + 1:02d}>>"
+        assert marker in body, (
+            f"partial-window section missing entry {marker} for K_actual={k_actual}"
+        )
+
+    # Author labels must still appear (consistent with the K=4 prose-
+    # rendering contract).
+    assert "Player" in body or "narrator" in body
+    # Chronological order — first entry comes before last.
+    if k_actual >= 2:
+        first_marker = "<<slice-01>>"
+        last_marker = f"<<slice-{k_actual:02d}>>"
+        assert body.index(first_marker) < body.index(last_marker), (
+            "partial-window entries are out of chronological order"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("k_actual", [1, 2, 3])
+async def test_partial_window_otel_span_attrs_match_injected_body(
+    simple_turn_context_turn_three, otel_capture, k_actual: int
+):
+    """The ``recent_narrative_context_injected`` span MUST NOT lie.
+
+    Either:
+      (a) turn_count == 0 AND total_tokens == 0 AND no section registered, OR
+      (b) turn_count > 0 AND section registered AND total_tokens is the
+          token estimate of the registered section's body.
+
+    Currently fails on K_actual ∈ {1, 2, 3}: the span fires with
+    ``turn_count=K_actual`` and positive ``total_tokens`` while the
+    section was never registered — Sebastien's GM panel sees
+    "injector engaged" for a turn with zero high-attention recency
+    bytes. The dashboard cannot distinguish "engaged + injected" from
+    "engaged + silently dropped".
+    """
+    log = [
+        _entry(
+            round_=i + 1,
+            author="Player" if i % 2 == 0 else "narrator",
+            content=f"<<slice-{i + 1:02d}>> distinctive prose",
+        )
+        for i in range(k_actual)
+    ]
+    ctx = replace(simple_turn_context_turn_three, recent_narrative_log=log)
+    orch = Orchestrator()
+    _, registry = await orch.build_narrator_prompt("act", ctx)
+
+    spans = [
+        s
+        for s in otel_capture.get_finished_spans()
+        if s.name == "recent_narrative_context_injected"
+    ]
+    assert len(spans) == 1, (
+        f"expected exactly one recent_narrative_context_injected span, got "
+        f"{[s.name for s in otel_capture.get_finished_spans()]}"
+    )
+    attrs = dict(spans[0].attributes or {})
+    assert attrs.get("turn_count") == k_actual
+
+    section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+    assert section is not None, (
+        f"no section registered for K_actual={k_actual} — span/section "
+        "agreement cannot be tested while the partial-window gate is broken"
+    )
+
+    # The "no-lie" invariant — span attrs reflect what was actually
+    # injected. The token-count formula in the orchestrator (``len(body)
+    # // 4`` with ``max(1, ...)``) is the contract; if Dev later swaps
+    # in PromptSection.token_estimate() during GREEN, this assertion
+    # still anchors them together.
+    expected_total_tokens = max(1, len(section.content) // 4)
+    assert attrs.get("total_tokens") == expected_total_tokens, (
+        f"span lies on K_actual={k_actual}: span says total_tokens="
+        f"{attrs.get('total_tokens')} but the registered section body "
+        f"({len(section.content)} chars) computes to "
+        f"{expected_total_tokens} tokens"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recent_narrative_span_truth_invariant_across_window_sizes(
+    simple_turn_context,
+    simple_turn_context_turn_three,
+    otel_capture,
+):
+    """No-lie invariant, property form: across the K∈{0..5} sweep, the
+    span's claims must MATCH the registry. Either everything zero AND
+    no section, OR everything non-zero AND section registered. The
+    asymmetric "engaged + silently dropped" state (span says
+    ``turn_count=2, total_tokens=25`` while section is absent) is what
+    the partial-window bug introduced; it makes Sebastien's GM panel
+    structurally unable to distinguish a working injector from a broken
+    one on turns 1-3 of a fresh save.
+
+    Currently fails on the K∈{1,2,3} cases: span fires with positive
+    counts while the section is unregistered.
+    """
+    cases = [
+        ("empty", simple_turn_context),
+        (
+            "K=1",
+            replace(
+                simple_turn_context_turn_three,
+                recent_narrative_log=[_entry(round_=1, author="Player", content="aaaa")],
+            ),
+        ),
+        (
+            "K=3",
+            replace(
+                simple_turn_context_turn_three,
+                recent_narrative_log=[
+                    _entry(round_=1, author="Player", content="aaaa"),
+                    _entry(round_=1, author="narrator", content="bbbb"),
+                    _entry(round_=2, author="Player", content="cccc"),
+                ],
+            ),
+        ),
+        (
+            "K=5",
+            replace(
+                simple_turn_context_turn_three,
+                recent_narrative_log=[
+                    _entry(round_=i + 1, author="Player", content="long enough content here")
+                    for i in range(5)
+                ],
+            ),
+        ),
+    ]
+
+    spans_before = len(otel_capture.get_finished_spans())
+    orch = Orchestrator()
+    section_present_by_label: dict[str, bool] = {}
+    for label, ctx in cases:
+        _, registry = await orch.build_narrator_prompt(f"act {label}", ctx)
+        section_present_by_label[label] = (
+            _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
+            is not None
+        )
+
+    spans = [
+        s
+        for s in otel_capture.get_finished_spans()[spans_before:]
+        if s.name == "recent_narrative_context_injected"
+    ]
+    assert len(spans) == len(cases), (
+        f"expected one span per case ({len(cases)}); got {len(spans)}"
+    )
+
+    for (label, _), span in zip(cases, spans, strict=True):
+        attrs = dict(span.attributes or {})
+        tc = attrs.get("turn_count", 0)
+        tt = attrs.get("total_tokens", 0)
+        section_present = section_present_by_label[label]
+
+        # turn_count > 0 IFF section was registered. Anything else is
+        # the asymmetric lie the partial-window bug introduced.
+        if section_present:
+            assert tc > 0, (
+                f"[{label}] section IS registered but span turn_count={tc}; "
+                "span under-reports a real injection"
+            )
+            assert tt > 0, (
+                f"[{label}] section IS registered but span total_tokens={tt}; "
+                "the registered body cost more than zero tokens"
+            )
+        else:
+            assert tc == 0, (
+                f"[{label}] section NOT registered but span turn_count={tc} — "
+                "lying span: dashboard reads 'engaged' for a turn with zero "
+                "high-attention recency bytes"
+            )
+            assert tt == 0, (
+                f"[{label}] section NOT registered but span total_tokens={tt} — "
+                "lying span: claims tokens that were never injected into the "
+                "prompt"
+            )
+
+
 @pytest.mark.asyncio
 async def test_recent_narrative_section_preserves_chronological_order(
     simple_turn_context_turn_three,
