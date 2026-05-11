@@ -62,6 +62,12 @@ from sidequest.game.encounter import (
     StatValue,
     StructuredEncounter,
 )
+from sidequest.game.monster_manual import (
+    EntryState,
+    ManualEncounter,
+    ManualNpc,
+    MonsterManual,
+)
 from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.persistence import (
     DatabaseError,
@@ -135,6 +141,11 @@ __all__ = [
     "StateSnapshot",
     "compute_delta",
     "snapshot",
+    # monster_manual (ADR-059)
+    "EntryState",
+    "ManualEncounter",
+    "ManualNpc",
+    "MonsterManual",
     # encounter
     "EncounterActor",
     "EncounterMetric",

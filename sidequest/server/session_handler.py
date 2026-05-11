@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 
 if TYPE_CHECKING:
+    from sidequest.game.monster_manual import MonsterManual
     from sidequest.game.persistence import GameMode
     from sidequest.server.session_room import SessionRoom
 
@@ -552,6 +553,16 @@ class _SessionData:
     # the daemon round-trip (the scrapbook row already carries
     # ``render_status="unavailable"``, no second persist needed).
     render_unavailable_pending: bool = False
+    # Monster Manual (ADR-059 port). Persistent pre-generated NPC and
+    # encounter pool keyed by (genre, world). Lazy-loaded on the first
+    # narration turn by ``monster_manual_inject.ensure_loaded`` —
+    # ``None`` before that and for any session whose genre never bound.
+    # Saved to disk after each turn so activations / dormancy persist
+    # across reconnects.  Rust parity: ``DispatchContext.monster_manual``
+    # was a per-dispatch reference reloaded from disk on every turn;
+    # Python keeps the same Manual instance for the session's lifetime
+    # and saves at turn end (fewer JSON parses, identical on-disk state).
+    monster_manual: MonsterManual | None = None
     # Story 45-19: parsed history chapters cached at chargen so the
     # arc-recompute tick doesn't re-parse history.yaml on every turn.
     # Populated alongside the chargen-time materialization in

@@ -18,7 +18,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sidequest.game.belief_state import BeliefState
 from sidequest.game.character import Character
 from sidequest.game.chassis import ChassisInstance
-from sidequest.game.creature_core import CreatureCore, Inventory, placeholder_edge_pool
+from sidequest.game.creature_core import (
+    CreatureCore,
+    EdgePool,
+    Inventory,
+    RecoveryTrigger,
+    placeholder_edge_pool,
+)
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import LoreStore
@@ -168,6 +174,23 @@ class Npc(BaseModel):
     npc_role_id: str | None = None
     resolved_archetype: str | None = None
 
+    # Creature-shape fields (ADR-059 Monster Manual port). Populated when
+    # a creature is materialized from a Monster Manual patch; ``None`` /
+    # empty for narrator-declared human NPCs. The narrator reads these
+    # from the serialized snapshot and treats them as world truth
+    # (gaslighting doctrine, see CLAUDE.md).
+    creature_id: str | None = None
+    """Stable bestiary id this Npc was materialized from. ``None`` for narrator-declared NPCs."""
+
+    threat_level: int | None = None
+    """B/X threat tier 1-4. ``None`` for non-creature NPCs."""
+
+    abilities: list[str] = Field(default_factory=list)
+    """Creature ability summaries. Empty for non-creature NPCs."""
+
+    morale: str | None = None
+    """B/X morale descriptor. ``None`` for non-creature NPCs."""
+
     def name(self) -> str:
         return self.core.name
 
@@ -270,8 +293,47 @@ class PartyPeer(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _creature_edge_pool_from_hp(hp: int) -> EdgePool:
+    """Translate a B/X-shaped creature HP value into an :class:`EdgePool`.
+
+    Per ADR-078, runtime entities carry an ``EdgePool`` instead of raw HP.
+    ``creatures.yaml`` is authored against the B/X content schema (an ``hp``
+    integer per creature, e.g. ``1`` for a chalk_moth, ``30`` for a Patient
+    Butcher), so the Monster Manual seeder ships the HP as-authored and the
+    materializer translates it here. The pool is seeded full
+    (``current == max == base_max``) with the same ``OnResolution`` recovery
+    trigger ``placeholder_edge_pool`` uses; thresholds stay empty pending
+    advancement-side wiring (ADR-081 deferred).
+
+    Clamped at 1 because EdgePool requires a positive ceiling — a creature
+    authored with ``hp: 0`` would otherwise be unrepresentable as a
+    materialized actor.
+    """
+    seed = max(1, hp)
+    return EdgePool(
+        current=seed,
+        max=seed,
+        base_max=seed,
+        recovery_triggers=[RecoveryTrigger.OnResolution],
+        thresholds=[],
+    )
+
+
 class NpcPatch(BaseModel):
-    """Patch for NPC upsert — used in npcs_present."""
+    """Patch for NPC upsert — used in npcs_present.
+
+    Used by two emitters:
+
+    1. The narrator (declared NPCs the prose introduced): name + the
+       human-facing flavor fields (description, personality, pronouns,
+       appearance, ...).
+    2. The Monster Manual pre-narrator seeder (ADR-059, port of
+       ``crates/sidequest-server/src/dispatch/pregen.rs``): adds creature
+       mechanical fields — ``creature_id``, ``threat_level``, ``hp``,
+       ``abilities``, ``morale``. ``hp`` is content-shape B/X HP and is
+       translated to an :class:`EdgePool` at materialization
+       (``Session._npc_from_patch``) per ADR-078.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -286,6 +348,26 @@ class NpcPatch(BaseModel):
     height: str | None = None
     distinguishing_features: list[str] | None = None
     location: str | None = None
+
+    # Creature-shape fields (ADR-059 Monster Manual port). All optional;
+    # narrator-emitted patches leave them None and inherit human-NPC defaults.
+    creature_id: str | None = None
+    """Stable bestiary id (e.g. ``"chalk_moth"``). Distinguishes creature
+    patches from narrator-declared NPC patches at the materializer."""
+
+    threat_level: int | None = None
+    """B/X threat tier 1-4 from ``creatures.yaml``. Also flags this patch
+    as a creature so the materializer applies hostile-disposition default."""
+
+    hp: int | None = None
+    """B/X HP from ``creatures.yaml``. Translated to EdgePool per ADR-078
+    when the runtime Npc is built. Content shape, not runtime shape."""
+
+    abilities: list[str] | None = None
+    """Creature ability summaries (e.g. ``"Color Feed — Drains pigment..."``)."""
+
+    morale: str | None = None
+    """B/X morale descriptor (e.g. ``"cowardly"``, ``"steady"``)."""
 
     @field_validator("name")
     @classmethod
@@ -1176,16 +1258,44 @@ class GameSnapshot(BaseModel):
         if patch.location is not None:
             npc.location = patch.location
 
+        # Creature-shape fields (ADR-059): patches re-emitted on
+        # re-encounter (e.g. Monster Manual seed during a save+load
+        # roundtrip) update creature flavor and re-derive the edge pool
+        # from the latest hp claim.
+        if patch.creature_id is not None:
+            npc.creature_id = patch.creature_id
+        if patch.threat_level is not None:
+            npc.threat_level = patch.threat_level
+        if patch.abilities is not None:
+            npc.abilities = list(patch.abilities)
+        if patch.morale is not None:
+            npc.morale = patch.morale
+        if patch.hp is not None:
+            npc.core.edge = _creature_edge_pool_from_hp(patch.hp)
+
     def _npc_from_patch(self, patch: NpcPatch) -> Npc:
+        # Creature signal: presence of any creature-shape field flags this
+        # as a Monster Manual patch (ADR-059). Translate B/X hp → EdgePool
+        # per ADR-078 and default hostile disposition matching encountergen.
+        is_creature = (
+            patch.creature_id is not None
+            or patch.threat_level is not None
+            or patch.hp is not None
+        )
+        if patch.hp is not None:
+            edge = _creature_edge_pool_from_hp(patch.hp)
+        else:
+            edge = placeholder_edge_pool()
+
         core = CreatureCore(
             name=patch.name,
             description=patch.description or "No description",
             personality=patch.personality or "Unknown",
-            level=1,
+            level=patch.threat_level if patch.threat_level is not None else 1,
             xp=0,
             inventory=Inventory(),
             statuses=[],
-            edge=placeholder_edge_pool(),
+            edge=edge,
         )
         return Npc(
             core=core,
@@ -1196,6 +1306,12 @@ class GameSnapshot(BaseModel):
             height=patch.height,
             distinguishing_features=patch.distinguishing_features or [],
             location=patch.location,
+            # Creatures default to hostile (-20), matching encountergen output.
+            disposition=-20 if is_creature else 0,
+            creature_id=patch.creature_id,
+            threat_level=patch.threat_level,
+            abilities=list(patch.abilities) if patch.abilities is not None else [],
+            morale=patch.morale,
         )
 
     def lowest_friendly_hp_ratio(self) -> float:
