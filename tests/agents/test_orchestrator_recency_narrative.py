@@ -233,8 +233,7 @@ async def test_recent_narrative_section_labels_author_and_round(
     # prefix so the narrator can read entries in chronological order.
     for round_n in sorted({e.round for e in log}):
         assert str(round_n) in section.content, (
-            f"recent_narrative_context omits round={round_n} label; "
-            "narrator cannot order entries"
+            f"recent_narrative_context omits round={round_n} label; narrator cannot order entries"
         )
 
 
@@ -283,8 +282,7 @@ async def test_recent_narrative_section_caps_at_last_four_entries(
     for i in range(16):
         marker = f"<<line-{i:02d}>>"
         assert marker not in body, (
-            f"entry round={i} ({marker}) leaked through cap — "
-            "section should hold only last 4"
+            f"entry round={i} ({marker}) leaked through cap — section should hold only last 4"
         )
 
 
@@ -497,9 +495,7 @@ async def test_recent_narrative_span_truth_invariant_across_window_sizes(
         for s in otel_capture.get_finished_spans()[spans_before:]
         if s.name == "recent_narrative_context_injected"
     ]
-    assert len(spans) == len(cases), (
-        f"expected one span per case ({len(cases)}); got {len(spans)}"
-    )
+    assert len(spans) == len(cases), f"expected one span per case ({len(cases)}); got {len(spans)}"
 
     for (label, _), span in zip(cases, spans, strict=True):
         attrs = dict(span.attributes or {})
@@ -591,8 +587,7 @@ async def test_oversized_entry_is_truncated_with_marker(
 
     # Section body stays well under the budget envelope.
     assert len(body) <= SECTION_BUDGET_BYTES, (
-        f"single 10kB entry rendered a {len(body)}-char section; "
-        f"budget is {SECTION_BUDGET_BYTES}"
+        f"single 10kB entry rendered a {len(body)}-char section; budget is {SECTION_BUDGET_BYTES}"
     )
 
     # The truncation cut must be visible — silent truncation hides bugs.
@@ -637,9 +632,7 @@ async def test_four_oversized_entries_stay_within_section_budget(
     )
 
     # Truncation marker must be present (at least one — likely all four).
-    assert TRUNCATION_MARKER in body, (
-        "oversized entries were truncated silently — marker missing"
-    )
+    assert TRUNCATION_MARKER in body, "oversized entries were truncated silently — marker missing"
 
     # Even after truncation, every entry's sigil tail should ideally survive
     # so the narrator still sees ALL 4 turns rather than 4 truncated heads
@@ -864,9 +857,7 @@ async def test_gender_flip_regression_father_appears_in_recent_narrative(
     log = _glenross_gender_flip_log()
     ctx = replace(simple_turn_context_turn_three, recent_narrative_log=log)
     orch = Orchestrator()
-    prompt_text, registry = await orch.build_narrator_prompt(
-        "I take Father's hand.", ctx
-    )
+    prompt_text, registry = await orch.build_narrator_prompt("I take Father's hand.", ctx)
 
     section = _section_by_name(registry, orch._narrator.name(), "recent_narrative_context")
     assert section is not None, "recency section missing — gender cues will not reach the narrator"
@@ -881,8 +872,7 @@ async def test_gender_flip_regression_father_appears_in_recent_narrative(
     # And the prose-only fact ("secateurs on the blotter") must also
     # survive — that's the second regression from the playtest.
     assert "secateurs" in body.lower(), (
-        "prose-only fact 'secateurs' missing — the 'set down twice' "
-        "regression will recur"
+        "prose-only fact 'secateurs' missing — the 'set down twice' regression will recur"
     )
 
 
