@@ -88,6 +88,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 SPAN_NAME = "npc.auto_minted_from_prose"
+SKIP_SPAN_NAME = "npc.auto_mint_skipped"
 
 
 def _core(name: str) -> CreatureCore:
@@ -133,6 +134,27 @@ def _pool_member(snapshot: GameSnapshot, *, role: str) -> NpcPoolMember | None:
         if (member.role or "").casefold() == target:
             return member
     return None
+
+
+def _skipped_spans(
+    otel_capture: "InMemorySpanExporter",
+    expected_reason: str | None = None,
+    expected_role: str | None = None,
+) -> list:
+    """Filter captured spans by the auto-mint-skipped span name and optional
+    reason/role. The skip span is the lie-detector contract added in
+    Reviewer rework — fires whenever the auto-minter declines to mint
+    (ambiguous pronouns, gender-paired conflict)."""
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == SKIP_SPAN_NAME]
+    if expected_reason is not None:
+        spans = [s for s in spans if (s.attributes or {}).get("reason") == expected_reason]
+    if expected_role is not None:
+        spans = [
+            s
+            for s in spans
+            if (s.attributes or {}).get("role", "").casefold() == expected_role.casefold()
+        ]
+    return spans
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +503,11 @@ def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(
 ):
     """AC2 — conflicting pronouns near the role are ambiguous too. 'The
     doctor said... she walked over... he opened the door.' Mixed he and
-    she near 'doctor' must NOT resolve to either; skip mint."""
+    she near 'doctor' must NOT resolve to either; skip mint AND log a
+    warning naming the role (parallel to the no-pronoun sibling test;
+    pinned in Reviewer rework — the caplog assertion was missing in the
+    original RED and let a logging regression slip silently).
+    """
     from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
 
     snapshot = GameSnapshot()
@@ -499,6 +525,19 @@ def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(
         "by AC2 — must skip rather than pick one."
     )
     assert _minted_spans(otel_capture) == []
+    matched_warn = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and "doctor" in r.getMessage().casefold()
+    ]
+    assert matched_warn, (
+        "AC2 'warn (log) + skip mint': a WARNING-level log must name the "
+        "role the auto-minter skipped due to conflicting pronouns. The "
+        "no-pronoun sibling test (above) asserts the same contract — this "
+        "test was missing it (caught in Reviewer rework). "
+        f"Caplog records: {[r.getMessage() for r in caplog.records]}"
+    )
 
 
 def test_pronoun_window_is_local_not_full_text(otel_capture):
@@ -832,4 +871,319 @@ def test_wiring_auto_minter_runs_after_recurring_presence_detector(otel_capture)
         "Recurring-presence detector (45-53) must still fire for Boris — "
         "the auto-minter does not subsume or replace it. The two signals "
         "are distinct lie-detector channels."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reviewer rework — OTEL skip span (CLAUDE.md OTEL Observability Principle)
+# ---------------------------------------------------------------------------
+# The original RED contract documented in this module's docstring promised:
+# "the ambiguous-pronoun skip path also fires an OTEL span (distinct event
+# name) so Sebastien's GM panel can see when the system bites its tongue.
+# Without a span the skip is invisible." The first-pass implementation
+# emitted only logger.warning on the skip paths — invisible to the GM
+# panel. Reviewer caught the gap (HIGH, [RULE] A5 + [TEST] missing-negative).
+# These tests pin the contract: every skip path emits SPAN_NPC_AUTO_MINT_SKIPPED.
+
+
+def test_span_npc_auto_mint_skipped_is_defined_in_catalog():
+    """The skip span must register a stable name in the telemetry catalog
+    so the GM panel filter can subscribe to it. Constant name is
+    ``npc.auto_mint_skipped`` — distinct from ``npc.auto_minted_from_prose``
+    (the success span) so Sebastien can tell mints from declines at a
+    glance."""
+    from sidequest.telemetry import spans as spans_module
+
+    assert hasattr(spans_module, "SPAN_NPC_AUTO_MINT_SKIPPED"), (
+        "SPAN_NPC_AUTO_MINT_SKIPPED missing from telemetry catalog — without "
+        "it the GM panel cannot see when the auto-minter bit its tongue. "
+        "Required by CLAUDE.md OTEL Observability Principle (every backend "
+        "subsystem decision MUST emit a watcher event)."
+    )
+    assert spans_module.SPAN_NPC_AUTO_MINT_SKIPPED == SKIP_SPAN_NAME, (
+        f"Span name must be exactly {SKIP_SPAN_NAME!r} for the GM panel filter to match."
+    )
+
+
+def test_npc_auto_mint_skipped_span_is_routed():
+    """Every live span must be either routed (in SPAN_ROUTES) or flat-only
+    (in FLAT_ONLY_SPANS). The skip span is a state_transition event
+    under the npc_registry component (parallel to npc.auto_minted_from_prose).
+    """
+    from sidequest.telemetry.spans import SPAN_ROUTES
+
+    assert SKIP_SPAN_NAME in SPAN_ROUTES, (
+        f"{SKIP_SPAN_NAME!r} not in SPAN_ROUTES — GameWatcher will drop it "
+        "on the floor and the GM panel will never receive the event."
+    )
+    route = SPAN_ROUTES[SKIP_SPAN_NAME]
+    assert route.event_type == "state_transition", (
+        "Skip events must route as state_transition so the GM panel renders "
+        "them alongside auto_minted_from_prose."
+    )
+    assert route.component == "npc_registry", (
+        "Component must be 'npc_registry' to share the GM-panel column "
+        "with other NPC-state spans."
+    )
+
+
+def test_npc_auto_mint_skipped_span_helper_is_exported():
+    """Helper must be importable via ``from sidequest.telemetry.spans
+    import npc_auto_mint_skipped_span`` (parallel to
+    ``npc_auto_minted_from_prose_span``)."""
+    from sidequest.telemetry import spans as spans_module
+
+    assert hasattr(spans_module, "npc_auto_mint_skipped_span"), (
+        "npc_auto_mint_skipped_span helper must be exported from "
+        "sidequest.telemetry.spans (parallel to "
+        "npc_auto_minted_from_prose_span)."
+    )
+
+
+def test_auto_mint_skipped_span_attributes_round_trip_via_route():
+    """The SpanRoute extract function must surface the four attributes the
+    GM panel needs: name, role, reason, turn_number. The ``reason``
+    attribute is the discriminator — ``ambiguous_pronouns_role``,
+    ``ambiguous_pronouns_honorific``, or ``gender_paired_conflict`` —
+    so Sebastien can tell WHY each skip fired."""
+    from sidequest.telemetry.spans import SPAN_ROUTES
+
+    pytest.importorskip("opentelemetry")
+    route = SPAN_ROUTES[SKIP_SPAN_NAME]
+
+    class _Stub:
+        attributes = {
+            "npc_name": "the doctor",
+            "role": "doctor",
+            "reason": "ambiguous_pronouns_role",
+            "turn_number": 4,
+        }
+
+    extracted = route.extract(_Stub())  # type: ignore[arg-type]
+    assert extracted.get("op") == "auto_mint_skipped", (
+        "op must be 'auto_mint_skipped' so the GM panel filters distinctly "
+        "from 'auto_minted_from_prose' (mints) and 'auto_registered' "
+        "(structured-patch mints)."
+    )
+    assert extracted.get("name") == "the doctor"
+    assert extracted.get("role") == "doctor"
+    assert extracted.get("reason") == "ambiguous_pronouns_role"
+    assert extracted.get("turn_number") == 4
+
+
+def test_skip_span_fires_on_ambiguous_pronouns_no_pronoun(otel_capture):
+    """The no-pronoun skip path MUST emit SPAN_NPC_AUTO_MINT_SKIPPED with
+    reason='ambiguous_pronouns_role'. Pairs the warn-log assertion in
+    test_ambiguous_pronouns_no_pronoun_skips_mint_and_warns. CLAUDE.md
+    OTEL Observability Principle: every subsystem decision (including
+    the decision to decline) needs a watcher event.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="The doctor said something. The wind picked up.",
+        emitted_mentions=[],
+        turn_num=2,
+    )
+    skip_spans = _skipped_spans(
+        otel_capture, expected_reason="ambiguous_pronouns_role"
+    )
+    assert len(skip_spans) == 1, (
+        "Exactly one skip span must fire when the auto-minter declines to "
+        "mint due to no nearby subject pronoun. The GM panel needs this "
+        "signal to distinguish 'auto-minter never engaged' from "
+        "'auto-minter engaged but bit its tongue'."
+    )
+    attrs = skip_spans[0].attributes or {}
+    assert attrs.get("role") == "doctor", (
+        f"Skip span must carry the role token ('doctor'), got {attrs.get('role')!r}."
+    )
+    assert attrs.get("turn_number") == 2
+
+
+def test_skip_span_fires_on_ambiguous_pronouns_conflicting(otel_capture):
+    """Conflicting subject pronouns (she + he near 'the doctor') must also
+    fire the skip span. Same reason tag as the no-pronoun case (the
+    AC2 contract is 'ambiguous → skip', regardless of whether ambiguity
+    came from zero pronouns or multiple)."""
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text=(
+            "The doctor enters. She moves to the window. He opens the door."
+        ),
+        emitted_mentions=[],
+        turn_num=4,
+    )
+    skip_spans = _skipped_spans(
+        otel_capture, expected_reason="ambiguous_pronouns_role"
+    )
+    assert len(skip_spans) == 1, (
+        "Conflicting pronouns must also fire a skip span with "
+        "reason='ambiguous_pronouns_role'."
+    )
+
+
+def test_skip_span_fires_on_honorific_ambiguous_pronouns(otel_capture):
+    """The honorific skip path (Mrs. Hardin appearing with no subject
+    pronoun nearby) must fire the skip span with reason=
+    ``ambiguous_pronouns_honorific``. Distinguishing the honorific
+    reason tag from the role reason tag lets Sebastien see which path
+    bit its tongue."""
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="Mrs. Hardin said nothing. The wind howled.",
+        emitted_mentions=[],
+        turn_num=3,
+    )
+    skip_spans = _skipped_spans(
+        otel_capture, expected_reason="ambiguous_pronouns_honorific"
+    )
+    assert len(skip_spans) == 1, (
+        "Honorific-path skip (Mrs. Hardin with no subject pronoun within "
+        "the local window) must fire a skip span with reason="
+        "'ambiguous_pronouns_honorific'."
+    )
+    attrs = skip_spans[0].attributes or {}
+    assert "hardin" in attrs.get("npc_name", "").casefold()
+
+
+def test_skip_span_fires_on_gender_paired_conflict(otel_capture):
+    """When the gender-paired guard refuses to mint Mother because Father
+    is in the pool (Glenross turn-6 scenario), the skip path MUST emit
+    a skip span with reason='gender_paired_conflict'. This is the
+    Sebastien-visibility hook for the most subtle of the three skip
+    paths — the narrator slip the auto-minter declined to canonize.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot(
+        npc_pool=[
+            NpcPoolMember(
+                name="Father",
+                role="father",
+                pronouns="he/him",
+                drawn_from="dialogue_extraction",
+            )
+        ]
+    )
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text=(
+            "The wee one's mother kneels at the hearth. She does not look up."
+        ),
+        emitted_mentions=[],
+        turn_num=6,
+    )
+    skip_spans = _skipped_spans(
+        otel_capture, expected_reason="gender_paired_conflict"
+    )
+    assert len(skip_spans) == 1, (
+        "Gender-paired conflict skip must fire a skip span with "
+        "reason='gender_paired_conflict' so the GM panel surfaces the "
+        "narrator's potential gender-flip slip."
+    )
+    attrs = skip_spans[0].attributes or {}
+    assert attrs.get("role") == "mother"
+
+
+def test_no_skip_span_on_successful_mint(otel_capture):
+    """Sanity check: when the auto-minter successfully mints, the skip
+    span MUST NOT fire (the mint span fires instead). Confirms the
+    skip and mint paths are mutually exclusive."""
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="Father lies pale. He cannot speak.",
+        emitted_mentions=[],
+        turn_num=5,
+    )
+    assert _skipped_spans(otel_capture) == [], (
+        "Successful mint must NOT also fire a skip span — the two paths "
+        "are mutually exclusive."
+    )
+    # Sanity: the mint span DID fire.
+    assert len(_minted_spans(otel_capture, expected_role="father")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Reviewer rework — missing edge-case coverage
+# ---------------------------------------------------------------------------
+
+
+def test_possessive_only_pronoun_does_not_mint(otel_capture, caplog):
+    """Pins the subject-only-pronoun design decision: prose where the only
+    pronoun near the role is a possessive ('his', 'her') or object ('him')
+    — NOT a subject (he, she, they) — must be ambiguous → skip + warn +
+    no mint span.
+
+    Without this test, a future edit that adds 'his' to the he/him subject
+    group would silently start minting on possessive-only prose, which is
+    exactly the Glenross 'Mrs. Gow laid him after' shape that the
+    subject-only design was built to refuse.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    with caplog.at_level(logging.WARNING):
+        _auto_mint_prose_only_npcs(
+            snapshot=snapshot,
+            narration_text="Father set his hat down on the table. The door was locked.",
+            emitted_mentions=[],
+            turn_num=2,
+        )
+    assert _pool_member(snapshot, role="father") is None, (
+        "Possessive-only prose ('his', no 'he' subject) must NOT mint. "
+        "Subject-only window is the documented design (forward window scans "
+        "subjects, not possessives) — this test pins that contract."
+    )
+    assert _minted_spans(otel_capture) == [], (
+        "No mint span on possessive-only prose."
+    )
+    # The skip span SHOULD fire (CLAUDE.md OTEL Observability Principle).
+    assert len(_skipped_spans(otel_capture, expected_reason="ambiguous_pronouns_role")) == 1, (
+        "Possessive-only skip must fire the skip span — the GM panel needs "
+        "to see when the auto-minter declined on a fail-loud path."
+    )
+
+
+def test_role_mentioned_twice_in_turn_mints_exactly_once(otel_capture):
+    """Pins first-match-wins: a role mentioned twice in the same turn must
+    produce exactly one NpcPoolMember and one mint span. The bare-role
+    loop uses ``break`` after the first non-consumed occurrence; a
+    regression that processes all occurrences would double-mint without
+    this test catching it.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text=(
+            "Father rose. He bowed deeply. Father returned to his seat. "
+            "He sat down without a word."
+        ),
+        emitted_mentions=[],
+        turn_num=3,
+    )
+    fathers = [
+        m for m in snapshot.npc_pool if (m.role or "").casefold() == "father"
+    ]
+    assert len(fathers) == 1, (
+        "Father mentioned twice in one turn must produce exactly one "
+        f"pool member. Got {len(fathers)}: "
+        f"{[(m.name, m.pronouns, m.drawn_from) for m in fathers]}"
+    )
+    assert len(_minted_spans(otel_capture, expected_role="father")) == 1, (
+        "Exactly one mint span must fire per role per turn — the bare-role "
+        "loop's ``break`` after first match is what enforces this."
     )

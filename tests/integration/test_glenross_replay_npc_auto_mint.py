@@ -272,10 +272,18 @@ def test_glenross_turn6_replay_with_father_in_pool_does_not_mint_mother():
         "identity fields are write-once per ``_apply_npc_mentions`` "
         "additive-upsert rules."
     )
-    # Pool size only allowed to grow if mints are for unrelated roles —
-    # never beyond a tight bound.
-    assert len(snapshot.npc_pool) <= pool_size_before + 2, (
-        "Pool size grew suspiciously after turn-6 replay — auto-minter "
-        f"may be greedy ({pool_size_before} → {len(snapshot.npc_pool)}). "
+    # The turn-6 fixture has exactly one role-mention ("mother") which the
+    # gender-paired guard must block. No other role tokens or honorifics
+    # appear in TURN_6_NARRATION_BUGGY ("You bend to the wee one's mother.
+    # She is through here, behind the screen, her breath shallow."). Pool
+    # size must therefore be unchanged. Tightened from <= +2 slack to ==
+    # exact during Reviewer rework — the slack mode would let a greedy
+    # auto-minter with 1–2 false positives slip past undetected.
+    assert len(snapshot.npc_pool) == pool_size_before, (
+        f"Pool size must be unchanged after turn-6 replay "
+        f"({pool_size_before} → {len(snapshot.npc_pool)}): the only "
+        "role-mention in the buggy narration is 'mother', which the "
+        "gender-paired guard blocks against the pre-seeded Father. Any "
+        "growth indicates a false-positive role match. "
         f"Pool: {[(m.name, m.role, m.pronouns) for m in snapshot.npc_pool]}"
     )
