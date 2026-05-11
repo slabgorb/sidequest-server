@@ -57,10 +57,7 @@ class LibraryBackend(AudioBackend):
             )
             if chosen_path is None:
                 return None
-            path = (self._base_path / chosen_path).resolve()
-            if not path.exists():
-                return None
-            return path
+            return (self._base_path / chosen_path).resolve()
 
         # Fall back to mood_tracks
         mood_val = cue.mood.value if hasattr(cue.mood, "value") else cue.mood
@@ -70,10 +67,7 @@ class LibraryBackend(AudioBackend):
         chosen_path = self._rotator.pick(tracks, intensity=cue.intensity, mood=cue.mood)
         if chosen_path is None:
             return None
-        path = (self._base_path / chosen_path).resolve()
-        if not path.exists():
-            return None
-        return path
+        return (self._base_path / chosen_path).resolve()
 
     def _resolve_sfx(self, cue: AudioCue) -> Path | None:
         if cue.sfx_id is None:
@@ -82,10 +76,7 @@ class LibraryBackend(AudioBackend):
         if not variants:
             return None
         chosen = random.choice(variants)
-        path = (self._base_path / chosen).resolve()
-        if not path.exists():
-            return None
-        return path
+        return (self._base_path / chosen).resolve()
 
     def list_tracks(self, lane: str) -> list[Path]:
         """List available tracks for a lane, excluding missing files."""
