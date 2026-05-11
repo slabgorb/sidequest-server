@@ -67,6 +67,7 @@ from .persistence import *  # noqa: F401, F403
 from .pregen import *  # noqa: F401, F403
 from .projection import *  # noqa: F401, F403
 from .rag import *  # noqa: F401, F403
+from .recent_narrative import *  # noqa: F401, F403
 from .region_state import *  # noqa: F401, F403
 from .reminder import *  # noqa: F401, F403
 from .render import *  # noqa: F401, F403
