@@ -32,7 +32,6 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from threading import Lock
 from typing import Any
 
 from sidequest.agents.claude_client import (
@@ -70,23 +69,11 @@ from sidequest.telemetry.spans import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Prompt tier (ADR-066)
+# Narrator constants
 # ---------------------------------------------------------------------------
 
 NARRATOR_MODEL: str = "opus"
 SOFT_PROMPT_BUDGET_BYTES = 2_000_000  # ~500K tokens, half of Opus 4.7's 1M window (ADR-098)
-
-
-class NarratorPromptTier:
-    """Prompt tier selection (ADR-066).
-
-    Full = first turn of a new session — everything included.
-    Delta = subsequent turns on a resumed session — static context already
-            in conversation history; only dynamic state + action sent.
-    """
-
-    Full = "full"
-    Delta = "delta"
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +318,7 @@ class NarrationTurnResult:
     agent_duration_ms: int | None = None
     token_count_in: int | None = None
     token_count_out: int | None = None
-    prompt_tier: str = NarratorPromptTier.Full
+    prompt_tier: str = ""  # ADR-098: tier system removed
     prompt_text: str | None = None
     raw_response_text: str | None = None
 
@@ -856,11 +843,6 @@ class Orchestrator:
         self._client: LlmClient = client if client is not None else ClaudeClient()
         self._narrator = NarratorAgent()
 
-        # Persistent session management (ADR-066)
-        self._narrator_session_id: str | None = None
-        self._session_genre: str | None = None
-        self._session_lock: Lock = Lock()
-
         # SOUL.md principles (optional)
         if soul_data is not None:
             self._soul_data = soul_data
@@ -881,26 +863,6 @@ class Orchestrator:
         # attach onto the NarrationTurnResult so the session handler can route
         # them as SECRET_NOTE events (Task 6).
         self._last_secret_routes: list[object] = []
-
-    # ------------------------------------------------------------------
-    # Session lifecycle (ADR-066)
-    # ------------------------------------------------------------------
-
-    def reset_narrator_session(self) -> None:
-        """Reset the narrator session, forcing next prompt to use Full tier.
-
-        Call when switching games, loading a different save, or after genre switch.
-        Port of orchestrator.rs::Orchestrator::reset_narrator_session.
-        """
-        with self._session_lock:
-            logger.info("orchestrator.narrator_session_reset reason=session_lifecycle")
-            self._narrator_session_id = None
-            self._session_genre = None
-
-    def set_narrator_session_id(self, session_id: str) -> None:
-        """Set the narrator session ID (for testing and server dispatch)."""
-        with self._session_lock:
-            self._narrator_session_id = session_id
 
     # ------------------------------------------------------------------
     # Group G Task 7 — entity token resolver for the leak audit
@@ -935,39 +897,6 @@ class Orchestrator:
             toks = [name]
             tokens[name] = toks
         return tokens
-
-    def has_active_narrator_session(self) -> bool:
-        """Check whether a narrator session is currently active."""
-        with self._session_lock:
-            return self._narrator_session_id is not None
-
-    def select_prompt_tier(self, context: TurnContext) -> str:
-        """Select the prompt tier based on session state and genre match.
-
-        Returns Full if no session exists or if the genre has changed.
-        Port of orchestrator.rs::Orchestrator::select_prompt_tier.
-        """
-        with self._session_lock:
-            current_session = self._narrator_session_id is not None
-            if not current_session:
-                return NarratorPromptTier.Full
-
-            # Genre switch detection
-            if (
-                context.genre is not None
-                and self._session_genre is not None
-                and context.genre != self._session_genre
-            ):
-                logger.warning(
-                    "Genre switch detected — clearing stale session and forcing Full tier "
-                    "incoming_genre=%s",
-                    context.genre,
-                )
-                self._narrator_session_id = None
-                self._session_genre = None
-                return NarratorPromptTier.Full
-
-        return NarratorPromptTier.Delta
 
     # ------------------------------------------------------------------
     # Prompt assembly
@@ -1930,15 +1859,12 @@ class Orchestrator:
         with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
-            tier = self.select_prompt_tier(context)
             prompt_text, _registry = await self.build_narrator_prompt(action, context)
 
-            with self._session_lock:
-                current_session_id = self._narrator_session_id
-
-            is_first_turn = current_session_id is None
-            system_prompt_for_establish = prompt_text if is_first_turn else None
-            send_prompt = action if is_first_turn else prompt_text
+            # ADR-098: stateless — no persistent session; every turn is a fresh call.
+            current_session_id: str | None = None
+            system_prompt_for_establish = prompt_text
+            send_prompt = action
 
             # Mint a turn_id for delta sequencing.  Use the interaction counter
             # when available so deltas are correlated with the canonical event.
@@ -2045,7 +1971,7 @@ class Orchestrator:
                         is_degraded=True,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
-                        prompt_tier=tier,
+                        prompt_tier="",  # ADR-098: tier system removed
                         prompt_text=prompt_text,
                         secret_routes=list(self._last_secret_routes),
                     )
@@ -2085,7 +2011,7 @@ class Orchestrator:
                         is_degraded=True,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
-                        prompt_tier=tier,
+                        prompt_tier="",  # ADR-098: tier system removed
                         prompt_text=prompt_text,
                         secret_routes=list(self._last_secret_routes),
                     )
@@ -2103,19 +2029,6 @@ class Orchestrator:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-
-            # Store session ID from StreamComplete (ADR-066)
-            if isinstance(terminal, StreamComplete) and terminal.session_id:
-                with self._session_lock:
-                    if self._narrator_session_id is None:
-                        logger.info(
-                            "narrator.session_established — persistent Opus session created "
-                            "(streaming) session_id=%s",
-                            terminal.session_id,
-                        )
-                        if context.genre:
-                            self._session_genre = context.genre
-                    self._narrator_session_id = terminal.session_id
 
             # Use the full_text from StreamComplete for extraction (authoritative
             # source — avoids double-reconstruction from chunk list).
@@ -2227,7 +2140,7 @@ class Orchestrator:
                 agent_duration_ms=elapsed_ms,
                 token_count_in=input_tokens,
                 token_count_out=output_tokens,
-                prompt_tier=tier,
+                prompt_tier="",  # ADR-098: tier system removed
                 prompt_text=prompt_text,
                 raw_response_text=raw_response,
                 secret_routes=list(self._last_secret_routes),
