@@ -169,6 +169,14 @@ class MagicState(BaseModel):
     # cast resolves; cleared by learned_ops.rest alongside prepared_spells.
     spent_spells: dict[str, dict[int, list[str]]] = Field(default_factory=dict)
 
+    # Story 47-5 (Cleric reliquary wiring): per-actor flag tracking whether
+    # the once-per-session free reliquary invocation has been spent. Set by
+    # reliquary_ops.invoke_reliquary; never cleared mid-session (session-
+    # scoped, NOT rest-scoped per the alms-bowl text "spends the
+    # free-reliquary-effect for the session"). Stored as a list of actor
+    # ids rather than a set for json/pydantic round-trip stability.
+    reliquary_free_use_spent: list[str] = Field(default_factory=list)
+
     @classmethod
     def from_config(cls, config: WorldMagicConfig) -> MagicState:
         """Construct empty MagicState; world-scope bars instantiated immediately."""

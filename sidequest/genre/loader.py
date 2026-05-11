@@ -34,6 +34,7 @@ from sidequest.genre.models.character import (
 from sidequest.genre.models.chassis import ChassisClassesConfig
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.models.inventory import InventoryConfig
+from sidequest.genre.models.items import WorldItemsCatalog
 from sidequest.genre.models.legends import Legend
 from sidequest.genre.models.lore import Lore, WorldLore
 from sidequest.genre.models.narrative import (
@@ -626,6 +627,69 @@ def _load_portrait_manifest(path: Path) -> list[PortraitManifestEntry]:
     return []
 
 
+def _load_world_items(items_path: Path, *, world_slug: str) -> WorldItemsCatalog | None:
+    """Load a world's optional ``items.yaml`` into a ``WorldItemsCatalog``.
+
+    Returns ``None`` if the file is absent — distinguishes "world has no
+    items file" from "world authored empty sections". Raises
+    ``GenreLoadError`` for any other failure: malformed yaml, schema
+    mismatch, or a duplicate item ``id`` across sections. Loud-fails per
+    the project's no-silent-fallback rule.
+
+    Emits a ``state_transition`` watcher event on successful load with
+    per-section item counts, mirroring the genre-pack-loaded event so
+    the GM panel can prove items wiring actually engaged.
+    """
+    if not items_path.exists():
+        return None
+
+    raw = _load_yaml_raw(items_path)
+    try:
+        catalog = WorldItemsCatalog.model_validate(raw)
+    except Exception as e:
+        raise GenreLoadError(path=items_path, detail=str(e)) from e
+
+    # Duplicate-id check across all sections — items are addressed by id
+    # in narrator context and game state, so a collision is a content bug
+    # we must surface, not paper over.
+    seen: dict[str, str] = {}
+    for section_name, items in (
+        ("named_items", catalog.named_items),
+        ("modifier_items", catalog.modifier_items),
+        ("reliquaries", catalog.reliquaries),
+        ("crimson_remnants", catalog.crimson_remnants),
+        ("consumable_items", catalog.consumable_items),
+    ):
+        for item in items:
+            prior = seen.get(item.id)
+            if prior is not None:
+                raise GenreLoadError(
+                    path=items_path,
+                    detail=(
+                        f"duplicate item id {item.id!r}: first in {prior!r}, "
+                        f"again in {section_name!r}. Item ids must be unique "
+                        "across the whole items.yaml."
+                    ),
+                )
+            seen[item.id] = section_name
+
+    from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
+
+    _watcher_publish(
+        "state_transition",
+        {
+            "field": "world_items",
+            "op": "loaded",
+            "world_slug": world_slug,
+            "item_count": len(seen),
+            **catalog.section_counts(),
+            "source": str(items_path),
+        },
+        component="genre",
+    )
+    return catalog
+
+
 def _load_single_world(
     world_path: Path,
     genre_tropes: list[TropeDefinition],
@@ -768,6 +832,14 @@ def _load_single_world(
 
     portrait_manifest = _load_portrait_manifest(world_path / "portrait_manifest.yaml")
 
+    # === World-tier items.yaml — OPTIONAL ===
+    # Surfaces named_items / modifier_items / reliquaries / crimson_remnants /
+    # consumable_items to the narrator and downstream subsystems (Cleric
+    # divine_favor wiring reads reliquaries[].divine_favor_effect at
+    # >= 0.7). See docs/design/magic-plugins/item_legacy_v1.md and
+    # docs/research/items-as-confrontation-modifiers.md.
+    items = _load_world_items(world_path / "items.yaml", world_slug=world_path.name)
+
     return World(
         config=config,
         lore=lore,
@@ -786,6 +858,7 @@ def _load_single_world(
         char_creation=char_creation,
         chassis_instances=chassis_instances,
         magic_register=magic_register,
+        items=items,
     )
 
 

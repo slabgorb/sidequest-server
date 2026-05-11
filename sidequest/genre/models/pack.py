@@ -32,6 +32,7 @@ from sidequest.genre.models.character import (
 from sidequest.genre.models.chassis import ChassisClassesConfig
 from sidequest.genre.models.culture import Culture
 from sidequest.genre.models.inventory import InventoryConfig
+from sidequest.genre.models.items import WorldItemsCatalog
 from sidequest.genre.models.legends import Legend
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.lore import Lore, WorldLore
@@ -139,6 +140,7 @@ class World(BaseModel):
     char_creation: list[CharCreationScene] = Field(default_factory=list)
     chassis_instances: list[ChassisInstanceConfig] = Field(default_factory=list)
     magic_register: str = ""
+    items: WorldItemsCatalog | None = None
 
 
 class GenrePack(BaseModel):
