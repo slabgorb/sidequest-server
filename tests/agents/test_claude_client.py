@@ -373,6 +373,55 @@ async def test_send_with_session_new_session_uses_session_id_flag(
 
 
 @pytest.mark.asyncio
+async def test_send_with_session_passes_tools_empty_by_default() -> None:
+    """No allowed_tools → '--tools ""' so claude CLI does not load tool schemas."""
+    captured_args: list = []
+
+    async def capture_spawn(command: str, *args: str, **kwargs: object) -> FakeProcess:
+        captured_args.extend(args)
+        return FakeProcess(stdout=json_envelope("ok"))
+
+    client = ClaudeClient(spawn_fn=capture_spawn)
+    await client.send_with_session("Go north.", "opus", session_id=None)
+    assert "--tools" in captured_args
+    idx = captured_args.index("--tools")
+    assert captured_args[idx + 1] == ""
+    assert "--allowedTools" not in captured_args
+
+
+@pytest.mark.asyncio
+async def test_send_stateless_passes_tools_empty_by_default() -> None:
+    """send_stateless mirrors send_with_session: --tools '' by default."""
+    captured_args: list = []
+
+    async def capture_spawn(command: str, *args: str, **kwargs: object) -> FakeProcess:
+        captured_args.extend(args)
+        return FakeProcess(stdout=json_envelope("ok"))
+
+    client = ClaudeClient(spawn_fn=capture_spawn)
+    await client.send_stateless("sys", "user", "opus")
+    assert "--tools" in captured_args
+    idx = captured_args.index("--tools")
+    assert captured_args[idx + 1] == ""
+
+
+@pytest.mark.asyncio
+async def test_send_stateless_passes_tools_comma_joined_when_allowed() -> None:
+    """Non-empty allowed_tools → comma-joined --tools value."""
+    captured_args: list = []
+
+    async def capture_spawn(command: str, *args: str, **kwargs: object) -> FakeProcess:
+        captured_args.extend(args)
+        return FakeProcess(stdout=json_envelope("ok"))
+
+    client = ClaudeClient(spawn_fn=capture_spawn)
+    await client.send_stateless("sys", "user", "opus", allowed_tools=["Bash", "Read"])
+    assert "--tools" in captured_args
+    idx = captured_args.index("--tools")
+    assert captured_args[idx + 1] == "Bash,Read"
+
+
+@pytest.mark.asyncio
 async def test_send_with_session_passes_system_prompt_on_new_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
