@@ -764,6 +764,69 @@ _BARE_ROLE_PATTERNS: dict[str, re.Pattern[str]] = {
     for role_token in (*_BARE_ROLE_PUBLIC_NAMES, *_ARTICLE_ROLE_PUBLIC_NAMES)
 }
 
+# Subject-pronoun token regexes — compiled once at module load
+# (parallel to ``_BARE_ROLE_PATTERNS``). ``_infer_pronouns_from_role_
+# context`` runs once per role/honorific mention per turn, so any
+# regex-recompilation in that hot path is wasted work.
+_SUBJECT_PRONOUN_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    group: tuple(re.compile(rf"\b{re.escape(tok)}\b") for tok in tokens)
+    for group, tokens in _SUBJECT_PRONOUN_GROUPS.items()
+}
+
+# Skip-reason taxonomy for the auto-minter. Each constant matches the
+# ``reason`` attribute on ``SPAN_NPC_AUTO_MINT_SKIPPED`` and lets the GM
+# panel filter by skip cause. Extracted from inline string literals
+# during verify-round-2 simplify so future skip reasons (e.g.
+# ``"pc_role_collision"``) get a single grep target instead of being
+# scattered across emit sites.
+_SKIP_REASON_PRONOUNS_HONORIFIC = "ambiguous_pronouns_honorific"
+_SKIP_REASON_PRONOUNS_ROLE = "ambiguous_pronouns_role"
+_SKIP_REASON_GENDER_PAIRED = "gender_paired_conflict"
+
+
+def _emit_auto_mint_skip(
+    *,
+    public_name: str,
+    role: str,
+    reason: str,
+    turn_num: int,
+    **extra_attrs: object,
+) -> None:
+    """Emit ``SPAN_NPC_AUTO_MINT_SKIPPED`` + a matching ``logger.warning``.
+
+    Centralizes the three skip emit sites in ``_auto_mint_prose_only_npcs``
+    (honorific-ambiguous, role-ambiguous, gender-paired-conflict). The
+    ``reason`` value (one of the ``_SKIP_REASON_*`` constants) drives
+    both the span attribute and the human-readable log explanation.
+    ``extra_attrs`` flows into the span (currently used for
+    ``paired_role`` on the gender-paired path).
+    """
+    if reason == _SKIP_REASON_GENDER_PAIRED:
+        explanation = (
+            "gender-paired role conflict; narrator may have slipped between "
+            "turns; not canonizing"
+        )
+    else:
+        explanation = (
+            "pronouns ambiguous in local window (no clean subject pronoun); "
+            "skipping mint rather than guessing"
+        )
+    with npc_auto_mint_skipped_span(
+        npc_name=public_name,
+        role=role,
+        reason=reason,
+        turn_number=turn_num,
+        **extra_attrs,
+    ):
+        logger.warning(
+            "npc.auto_mint_skipped name=%r role=%r turn=%d reason=%s — %s",
+            public_name,
+            role,
+            turn_num,
+            reason,
+            explanation,
+        )
+
 
 def _pc_name_skip_set(snapshot: GameSnapshot) -> set[str]:
     """Return the case-folded set of PC names — the always-deny list for
@@ -802,11 +865,9 @@ def _infer_pronouns_from_role_context(
     hi = min(len(narration_text), role_end + _AUTO_MINT_FORWARD_WINDOW)
     window = narration_text[role_end:hi].casefold()
     seen_groups: list[str] = []
-    for group, tokens in _SUBJECT_PRONOUN_GROUPS.items():
-        for tok in tokens:
-            if re.search(rf"\b{re.escape(tok)}\b", window):
-                seen_groups.append(group)
-                break
+    for group, patterns in _SUBJECT_PRONOUN_PATTERNS.items():
+        if any(p.search(window) for p in patterns):
+            seen_groups.append(group)
     if len(seen_groups) == 1:
         return seen_groups[0]
     # Zero pronouns → no signal. Multiple genders → ambiguous. AC2: skip.
@@ -926,20 +987,12 @@ def _auto_mint_prose_only_npcs(
             continue
         pronouns = _infer_pronouns_from_role_context(narration_text, end)
         if pronouns is None:
-            with npc_auto_mint_skipped_span(
-                npc_name=public_name,
+            _emit_auto_mint_skip(
+                public_name=public_name,
                 role="",
-                reason="ambiguous_pronouns_honorific",
-                turn_number=turn_num,
-            ):
-                logger.warning(
-                    "npc.auto_mint_skipped name=%r turn=%d reason=%s — "
-                    "pronouns ambiguous in local window (no clean subject "
-                    "pronoun); skipping mint rather than guessing",
-                    public_name,
-                    turn_num,
-                    "ambiguous_pronouns_honorific",
-                )
+                reason=_SKIP_REASON_PRONOUNS_HONORIFIC,
+                turn_num=turn_num,
+            )
             continue
         # Honorifics carry no canonical role tag (Mrs./Mr./Dr. are titles,
         # not roles). Role is None — narrator may refine via a later
@@ -979,41 +1032,23 @@ def _auto_mint_prose_only_npcs(
         # Gender-paired role conflict — refuse to canonize a slip.
         paired = _GENDER_PAIRED_ROLES.get(cf_role)
         if paired and paired in known_roles:
-            with npc_auto_mint_skipped_span(
-                npc_name=public_name,
+            _emit_auto_mint_skip(
+                public_name=public_name,
                 role=role_token,
-                reason="gender_paired_conflict",
-                turn_number=turn_num,
+                reason=_SKIP_REASON_GENDER_PAIRED,
+                turn_num=turn_num,
                 paired_role=paired,
-            ):
-                logger.warning(
-                    "npc.auto_mint_skipped name=%r role=%r turn=%d "
-                    "reason=gender_paired_conflict paired_role=%r — narrator "
-                    "may have slipped between turns; not canonizing",
-                    public_name,
-                    role_token,
-                    turn_num,
-                    paired,
-                )
+            )
             continue
 
         pronouns = _infer_pronouns_from_role_context(narration_text, match.end())
         if pronouns is None:
-            with npc_auto_mint_skipped_span(
-                npc_name=public_name,
+            _emit_auto_mint_skip(
+                public_name=public_name,
                 role=role_token,
-                reason="ambiguous_pronouns_role",
-                turn_number=turn_num,
-            ):
-                logger.warning(
-                    "npc.auto_mint_skipped name=%r role=%r turn=%d "
-                    "reason=ambiguous_pronouns_role — pronouns ambiguous in "
-                    "local window (no clean subject pronoun); skipping mint "
-                    "rather than guessing",
-                    public_name,
-                    role_token,
-                    turn_num,
-                )
+                reason=_SKIP_REASON_PRONOUNS_ROLE,
+                turn_num=turn_num,
+            )
             continue
 
         _mint(public_name=public_name, role_token=role_token, pronouns=pronouns)
