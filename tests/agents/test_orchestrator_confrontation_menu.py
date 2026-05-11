@@ -23,7 +23,6 @@ import json
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
-    NarratorPromptTier,
     Orchestrator,
     TurnContext,
 )
@@ -92,7 +91,7 @@ async def test_available_confrontations_renders_menu_when_no_encounter() -> None
         character_name="Carrot",
         available_confrontations=_SPACE_OPERA_MENU,
     )
-    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
+    _, registry = await orch.build_narrator_prompt("look around", ctx)
     section = _section(
         registry,
         _agent_name(orch),
@@ -130,8 +129,7 @@ async def test_available_confrontations_suppressed_when_encounter_active() -> No
         available_confrontations=_SPACE_OPERA_MENU,
     )
     _, registry = await orch.build_narrator_prompt(
-        "shoot the corvette", ctx, tier=NarratorPromptTier.Full
-    )
+        "shoot the corvette", ctx    )
     section = _section(
         registry,
         _agent_name(orch),
@@ -153,7 +151,7 @@ async def test_available_confrontations_suppressed_when_encounter_active() -> No
 async def test_available_confrontations_empty_menu_does_not_register() -> None:
     orch = Orchestrator(client=_make_client())
     ctx = TurnContext(character_name="Carrot", available_confrontations=[])
-    _, registry = await orch.build_narrator_prompt("look around", ctx, tier=NarratorPromptTier.Full)
+    _, registry = await orch.build_narrator_prompt("look around", ctx)
     assert (
         _section(
             registry,

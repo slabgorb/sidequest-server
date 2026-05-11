@@ -13,7 +13,7 @@ from typing import Any
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.narrator import NARRATOR_OUTPUT_ONLY
-from sidequest.agents.orchestrator import NarratorPromptTier, Orchestrator, TurnContext
+from sidequest.agents.orchestrator import Orchestrator, TurnContext
 from sidequest.magic.models import (
     HardLimit,
     LedgerBarSpec,
@@ -99,7 +99,7 @@ async def test_narrator_pre_prompt_contains_magic_context_when_state_present():
         magic_state=state,
     )
     prompt, _ = await orch.build_narrator_prompt(
-        "reach out with your mind", context, tier=NarratorPromptTier.Full
+        "reach out with your mind", context
     )
     assert "ACTIVE MAGIC CONTEXT" in prompt
     assert "allowed_sources" in prompt
@@ -113,7 +113,7 @@ async def test_narrator_pre_prompt_omits_magic_context_when_state_absent():
         magic_state=None,
     )
     prompt, _ = await orch.build_narrator_prompt(
-        "look around", context, tier=NarratorPromptTier.Full
+        "look around", context
     )
     assert "ACTIVE MAGIC CONTEXT" not in prompt
 

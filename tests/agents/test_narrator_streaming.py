@@ -175,9 +175,6 @@ async def test_streaming_path_broadcasts_deltas_then_returns_canonical(monkeypat
     # items_lost was parsed from the game_patch block
     assert result.items_lost == []
 
-    # Session ID was stored from StreamComplete
-    assert orch._narrator_session_id == "sess-1"
-
 
 @pytest.mark.asyncio
 async def test_streaming_path_with_room_fans_out_deltas(monkeypatch):
