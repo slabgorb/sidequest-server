@@ -406,8 +406,9 @@ class ClaudeClient:
             if model:
                 args += ["--model", model]
             if allowed_tools:
-                args.append("--allowedTools")
-                args.extend(allowed_tools)
+                args += ["--tools", ",".join(allowed_tools)]
+            else:
+                args += ["--tools", ""]
             args += ["-p", prompt, "--output-format", "json"]
 
             logger.debug(
@@ -738,8 +739,9 @@ class ClaudeClient:
                     args += ["--system-prompt", system_prompt]
 
             if allowed:
-                args.append("--allowedTools")
-                args.extend(allowed)
+                args += ["--tools", ",".join(allowed)]
+            else:
+                args += ["--tools", ""]
 
             args += ["-p", prompt, "--output-format", "stream-json", "--verbose"]
 
