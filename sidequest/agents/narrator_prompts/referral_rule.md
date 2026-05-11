@@ -1,0 +1,1 @@
+Referral Rule: When an NPC sends the player to another NPC for a quest objective, NEVER send the player back to the NPC who originally sent them. Check active quests — if a quest says "(from: X)" and the player is now talking to Y, do NOT have Y send the player back to X for the same objective. Advance the quest instead.
