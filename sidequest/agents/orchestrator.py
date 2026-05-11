@@ -2249,6 +2249,7 @@ class Orchestrator:
         """Render the in-fiction stall on unrecoverable narrator failure."""
         return NarrationTurnResult(
             narration="The world holds its breath.",
+            is_degraded=True,
             agent_name=self._narrator.name(),
         )
 

@@ -634,7 +634,7 @@ async def test_run_narration_turn_degraded_on_claude_error():
     context = TurnContext(character_name="Kael", current_location="The Tavern")
     result = await orch.run_narration_turn("look around", context)
     assert result.is_degraded
-    assert "The Tavern" in result.narration
+    assert "world holds its breath" in result.narration.lower()
 
 
 @pytest.mark.asyncio
