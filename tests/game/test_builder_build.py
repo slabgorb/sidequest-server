@@ -498,7 +498,18 @@ class TestEdgeSeeding:
         assert char.core.edge.current == 10
 
     def test_edge_config_path(self) -> None:
-        rules = base_rules()
+        # Story 39-10: edge_pool_from_config now applies a CON modifier
+        # ((CON-10)//2, floored at 1). Pin CON to 10 with roll_3d6_strict
+        # + _rolled_stats so the modifier is 0 and the test's intent
+        # (base_max comes from edge_config) is preserved without
+        # entangling this test in the new CON math (which has its own
+        # dedicated suite in test_chargen_edge_con_modifier.py).
+        rules = RulesConfig(
+            stat_generation="roll_3d6_strict",
+            ability_score_names=list(ABILITY_NAMES),
+            default_class="Ranger",
+            default_race="Human",
+        )
         rules.edge_config = EdgeConfig(
             base_max_by_class={"Ranger": 6, "Fighter": 8},
             thresholds=[
@@ -512,10 +523,17 @@ class TestEdgeSeeding:
             ),
         ]
         b = CharacterBuilder(scenes=scenes, rules=rules)
+        b._rolled_stats = [
+            ("STR", 10),
+            ("DEX", 10),
+            ("CON", 10),
+            ("INT", 10),
+            ("WIS", 10),
+            ("CHA", 10),
+        ]
         b.apply_choice(0)
         char = b.build("Kara")
-        # Ranger base_max = 6 from edge_config. Ranger is not Fighter,
-        # so no +2 stub.
+        # Ranger base_max = 6 from edge_config. CON 10 mod = 0. No +2 stub.
         assert char.core.edge.base_max == 6
         assert char.core.edge.max == 6
         assert len(char.core.edge.thresholds) == 1
@@ -540,9 +558,20 @@ class TestEdgeSeeding:
             b.build("Kara")
         assert excinfo.value.class_name == "Ranger"
 
-    def test_fighter_plus_two_stub_applied(self) -> None:
-        """Story 39-4 hardcoded stub: Fighter class → edge_max += 2."""
-        rules = base_rules()
+    def test_fighter_plus_two_stub_retired(self) -> None:
+        """Story 39-10: the Story 39-4 Fighter +2 stub is retired. With
+        CON 10 (mod 0) the seeded Edge should equal the class base
+        verbatim — no class-specific bonus.
+
+        Detailed CON math lives in test_chargen_edge_con_modifier.py;
+        this test just guards against silent resurrection of the stub.
+        """
+        rules = RulesConfig(
+            stat_generation="roll_3d6_strict",
+            ability_score_names=list(ABILITY_NAMES),
+            default_class="Fighter",
+            default_race="Human",
+        )
         rules.edge_config = EdgeConfig(
             base_max_by_class={"Fighter": 8},
         )
@@ -553,14 +582,25 @@ class TestEdgeSeeding:
             ),
         ]
         b = CharacterBuilder(scenes=scenes, rules=rules)
+        b._rolled_stats = [
+            ("STR", 10),
+            ("DEX", 10),
+            ("CON", 10),
+            ("INT", 10),
+            ("WIS", 10),
+            ("CHA", 10),
+        ]
         b.apply_choice(0)
         char = b.build("Arc")
-        # base 8 + 2 stub = 10
-        assert char.core.edge.base_max == 10
-        assert char.core.edge.max == 10
-        assert char.core.edge.current == 10
+        # Base 8 + CON mod 0 = 8. Was 10 with the +2 stub.
+        assert char.core.edge.base_max == 8
+        assert char.core.edge.max == 8
+        assert char.core.edge.current == 8
 
-    def test_non_fighter_stub_not_applied(self) -> None:
+    def test_non_fighter_placeholder_unaffected(self) -> None:
+        """Placeholder edge pool (no edge_config) path: CON modifier
+        applies only via edge_pool_from_config, so the placeholder
+        branch is unchanged. Ranger keeps base 10."""
         b = minimal_happy_path_builder()
         char = b.build("Kara")
         # Ranger, placeholder base 10, no stub → still 10.

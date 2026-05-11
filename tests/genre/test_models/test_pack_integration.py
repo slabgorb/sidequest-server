@@ -183,7 +183,11 @@ def test_backstory_tables_deserializes() -> None:
 
 def test_beat_vocabulary_deserializes() -> None:
     bv = BeatVocabulary.model_validate(_load(CC / "beat_vocabulary.yaml"))
-    assert len(bv.obstacles) == 12
+    assert len(bv.obstacles) == 17
+    con_obstacles = [o for o in bv.obstacles if o.stat_check == "CON"]
+    assert len(con_obstacles) >= 5, (
+        "caverns_and_claudes should have ≥5 CON obstacles (story 39-9 rebalance)"
+    )
 
 
 def test_power_tiers_deserializes() -> None:
@@ -318,7 +322,7 @@ def test_genre_pack_assembles_from_caverns_and_claudes() -> None:
     assert len(pack.tropes) == 4
     assert len(pack.cultures) == 3
     assert pack.beat_vocabulary is not None
-    assert len(pack.beat_vocabulary.obstacles) == 12
+    assert len(pack.beat_vocabulary.obstacles) == 17
     assert pack.inventory is not None
     assert pack.archetype_constraints is not None
 

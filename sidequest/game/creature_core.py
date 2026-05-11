@@ -102,15 +102,23 @@ class EdgeConfigMissingClassError(KeyError):
         super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
 
 
-def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:
+def edge_pool_from_config(
+    edge_config: object, class_name: str, *, con_score: int
+) -> EdgePool:
     """Build a genre-authored EdgePool from an EdgeConfig and a class name.
 
     Resolves base_max from edge_config.base_max_by_class[class] (raises
-    EdgeConfigMissingClassError when absent), converts every
+    EdgeConfigMissingClassError when absent), applies a CON modifier
+    ((con_score - 10) // 2) floored at 1, converts every
     EdgeThresholdDecl to an EdgeThreshold, and seeds recovery_triggers
     with OnResolution. The crossing-direction tag from YAML is
     informational — all EdgePool thresholds fire on downward crossings
     by construction.
+
+    CON modifier (ADR-078 amendment 2026-05-10, story 39-10): retires the
+    Story 39-4 hardcoded Fighter +2 stub and makes CON the universal
+    Edge-seed modifier across all classes. A character is alive, so a
+    Constitution that would zero out the pool is clamped to 1.
 
     The `edge_config` parameter is typed as `object` to avoid a circular
     import with sidequest.genre.models.rules (which imports from the
@@ -121,7 +129,9 @@ def edge_pool_from_config(edge_config: object, class_name: str) -> EdgePool:
     base_max_by_class = getattr(edge_config, "base_max_by_class", {})
     if class_name not in base_max_by_class:
         raise EdgeConfigMissingClassError(class_name=class_name)
-    base_max = base_max_by_class[class_name]
+    class_base = base_max_by_class[class_name]
+    con_modifier = (con_score - 10) // 2
+    base_max = max(1, class_base + con_modifier)
 
     thresholds: list[EdgeThreshold] = []
     for decl in getattr(edge_config, "thresholds", []):
