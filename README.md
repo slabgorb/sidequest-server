@@ -80,13 +80,15 @@ Run via `uv run python -m sidequest.cli.<name>` or the installed console scripts
 - One WebSocket connection = one asyncio task owning a `Session`.
 - Solo: one session, one orchestrator, no contention.
 - Multiplayer: sessions share a `SessionRoom` keyed by `genre:world` behind `asyncio.Lock`, with `TurnBarrier` for coordinated turn resolution (ADR-036, ADR-037).
-- Three turn modes: `FREE_PLAY`, `STRUCTURED` (submit-and-wait), `CINEMATIC`. Peer action text is visible during the structured wait phase (collaborative default per ADR-036 amendment).
+- Three turn modes exist in code: `FREE_PLAY`, `STRUCTURED`, `CINEMATIC`. **Cinematic is the live default**; FREE_PLAY is available; STRUCTURED is dead code retained for future activation. Peer action text is visible during the wait phase (collaborative default per ADR-036 amendment 2026-05-03); see `handlers/action_reveal.py` for the `ACTION_REVEAL` fan-out (live teammate typing).
 
 ## Key ADRs
 
-- **ADR-067** Unified narrator agent — one persistent Opus session handles exploration, dialogue, combat, and chase narration. Auxiliary agents run off the critical path.
-- **ADR-059** Monster Manual — NPCs and encounters are pre-generated server-side via CLI and injected into the narrator's `<game_state>` block. Narrator-side tool calling was abandoned.
+- **ADR-098** Stateless narrator turns — `claude -p` invoked fresh each turn with a bounded prompt (no `--resume`, no `narrator_session_id`). Supersedes ADR-066's persistent-session model and the §8 warm-reboot recovery path. Streaming narration is default-on (`SIDEQUEST_NARRATOR_STREAMING=1`).
+- **ADR-067** Unified narrator agent — one narrator handles exploration, dialogue, combat, and chase narration. Auxiliary subsystem agents (chassis_voice, distinctive_detail, npc_agency, reflect_absence) run off the critical path.
+- **ADR-059** Monster Manual — NPCs and encounters pre-generated server-side via CLI and injected into the narrator's `<game_state>` block. Narrator-side tool calling was abandoned (currently drift — ADR-087 P0 RESTORE).
 - **ADR-038** WebSocket transport — reader/writer task split, broadcast channels.
+- **ADR-036** Multiplayer turn coordination — barrier + CAS-guarded dispatcher; two amendments (2026-05-03 action-visibility model; 2026-05-09 sealed-letter disambiguation) document the collaborative-visibility default.
 - **ADR-005** Background-first — only text narration is on the critical path; media, deltas, trope tick, lore accumulation run async.
 
 See [`docs/architecture.md`](../docs/architecture.md) for the full system design and [`docs/adr/`](../docs/adr/) for all decisions.
