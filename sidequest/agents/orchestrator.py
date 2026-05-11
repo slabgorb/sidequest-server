@@ -76,6 +76,17 @@ logger = logging.getLogger(__name__)
 NARRATOR_MODEL: str = "opus"
 SOFT_PROMPT_BUDGET_BYTES = 2_000_000  # ~500K tokens, half of Opus 4.7's 1M window (ADR-098)
 
+# Recency-zone narrative-window tunables (Story 49-1).
+# K=4 = 2 player turns + 2 narrator turns. Cap (not floor): any non-empty
+# window registers the section with all available entries — partial windows
+# on turns 1-3 of a fresh save still ride into Recency.
+# PER_ENTRY_CAP_BYTES bounds a single entry's rendered content; oversized
+# entries are truncated and tagged with TRUNCATION_MARKER so the cut is
+# visible on the GM panel (Sebastien) and to anyone debugging a save (Keith).
+RECENT_NARRATIVE_WINDOW_K: int = 4
+RECENT_NARRATIVE_PER_ENTRY_CAP: int = 2048
+RECENT_NARRATIVE_TRUNCATION_MARKER: str = "[truncated]"
+
 
 # ---------------------------------------------------------------------------
 # Structured extraction types
@@ -744,6 +755,33 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers (ContextBuilder equivalent — inlined per spec)
 # ---------------------------------------------------------------------------
+
+
+def _render_recent_narrative_window(entries: list[NarrativeEntry]) -> str:
+    """Render the Recency-zone narrative window as readable prose.
+
+    Each entry becomes ``[Round N — author]\\n<content>`` (no JSON keys),
+    blocks joined by blank lines. Content longer than
+    :data:`RECENT_NARRATIVE_PER_ENTRY_CAP` is truncated and tagged with
+    :data:`RECENT_NARRATIVE_TRUNCATION_MARKER` so the cut is visible to
+    anyone reading the prompt (Sebastien on the GM panel, Keith debugging
+    a save). Truncation keeps the entry head so the early prose — the part
+    most likely to set scene state — survives.
+
+    Sole rendering path for ``recent_narrative_context`` — the body
+    returned here is the body registered and the body counted for the
+    OTEL span (no-lie invariant).
+    """
+    blocks: list[str] = []
+    for e in entries:
+        content = e.content
+        if len(content) > RECENT_NARRATIVE_PER_ENTRY_CAP:
+            content = (
+                content[:RECENT_NARRATIVE_PER_ENTRY_CAP]
+                + f" … {RECENT_NARRATIVE_TRUNCATION_MARKER}"
+            )
+        blocks.append(f"[Round {e.round} — {e.author}]\n{content}")
+    return "\n\n".join(blocks)
 
 
 def _build_verbosity_section(verbosity: str) -> str:
@@ -1607,28 +1645,40 @@ class Orchestrator:
         # Recent-narrative window (Recency zone, Story 49-1).
         # ADR-098 dropped --resume; the narrator lost its conversational
         # history because narrative_log lived in the Valley-zone game_state
-        # JSON dump. This section restores the last K=4 entries as readable
-        # prose in high-attention Recency — alongside player_action — so
-        # turn-N prose stays consistent with turn-(N-1) (2026-05-11 Glenross
-        # gender flip, secateurs-set-down-twice).
+        # JSON dump. This section restores the last K (default 4) entries
+        # as readable prose in high-attention Recency — alongside
+        # player_action — so turn-N prose stays consistent with
+        # turn-(N-1) (2026-05-11 Glenross gender flip, secateurs-set-
+        # down-twice).
         #
-        # The span fires on EVERY narrator turn (including empty-log case
-        # with turn_count=0) so the GM panel can distinguish "injector
-        # engaged with nothing to inject" from "injector not wired" —
-        # matches the room.state_injected no-op-fire discipline.
-        _recent_k = 4
-        _recent_window = list(context.recent_narrative_log)[-_recent_k:]
-        _recent_turn_count = len(_recent_window)
-        if _recent_turn_count >= _recent_k:
-            _recent_body = "\n\n".join(
-                f"[Round {e.round} — {e.author}]\n{e.content}" for e in _recent_window
-            )
+        # K is a CAP, not a floor: any non-empty window registers the
+        # section with all available entries. Turns 1-3 of a fresh save
+        # are exactly the scenario this story exists to fix — gating on
+        # >=K would re-create the regression on the early turns.
+        #
+        # Per-entry byte cap (RECENT_NARRATIVE_PER_ENTRY_CAP) bounds a
+        # single verbose narrator turn so it cannot eat the prompt
+        # budget on its own (Reviewer reproduced 40kB / 72kB shapes from
+        # 4×10kB entries — ADR-009 attention-zone collision with Late-
+        # zone Format guardrails). Truncated entries carry
+        # RECENT_NARRATIVE_TRUNCATION_MARKER so the cut is visible on
+        # the GM panel and in saved prompts.
+        #
+        # The span fires on EVERY narrator turn (including empty-log
+        # case with turn_count=0/total_tokens=0) so the GM panel can
+        # distinguish "injector engaged with nothing to inject" from
+        # "injector not wired" — matches the room.state_injected no-op-
+        # fire discipline. Truth invariant: section registered IFF
+        # (turn_count > 0 AND total_tokens > 0).
+        _recent_window = list(context.recent_narrative_log)[-RECENT_NARRATIVE_WINDOW_K:]
+        if _recent_window:
+            _recent_body = _render_recent_narrative_window(_recent_window)
+            _recent_turn_count = len(_recent_window)
             _recent_total_tokens = max(1, len(_recent_body) // 4)
         else:
             _recent_body = ""
-            _recent_total_tokens = (
-                max(1, sum(len(e.content) for e in _recent_window) // 4) if _recent_window else 0
-            )
+            _recent_turn_count = 0
+            _recent_total_tokens = 0
         with recent_narrative_context_injected_span(
             turn_count=_recent_turn_count,
             total_tokens=_recent_total_tokens,

@@ -16,7 +16,11 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from sidequest.agents.orchestrator import NpcMention, TurnContext
+from sidequest.agents.orchestrator import (
+    RECENT_NARRATIVE_WINDOW_K,
+    NpcMention,
+    TurnContext,
+)
 from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.projection.envelope import MessageEnvelope
@@ -459,7 +463,7 @@ def _build_turn_context(
         quest_anchors=quest_anchors,
         pending_trope_context=pending_trope_context,
         active_trope_summary=active_trope_summary,
-        recent_narrative_log=list(snapshot.narrative_log[-4:]),
+        recent_narrative_log=list(snapshot.narrative_log[-RECENT_NARRATIVE_WINDOW_K:]),
     )
 
 
