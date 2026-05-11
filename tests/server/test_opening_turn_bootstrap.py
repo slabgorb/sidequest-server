@@ -370,11 +370,11 @@ class TestOpeningDirectiveInjection:
                 "canned-openings flow did not fire"
             )
 
-            # Orchestrator invoked send_with_session at least once for the
-            # opening turn. The second positional argument is the rendered
-            # prompt string (ClaudeClient.send_with_session(system, prompt, ...)).
-            assert claude_mock.send_with_session.called
-            call_args = claude_mock.send_with_session.call_args
+            # Orchestrator invoked send_stateless at least once for the
+            # opening turn (post-ADR-098: stateless turns; system_prompt and
+            # user_message ride on kwargs).
+            assert claude_mock.send_stateless.called
+            call_args = claude_mock.send_stateless.call_args
             # Scan both args and kwargs for the rendered prompt.
             blob = " ".join([*map(str, call_args.args), *map(str, call_args.kwargs.values())])
             # The directive must have been injected into the prompt.
@@ -429,7 +429,7 @@ class TestOpeningDirectiveInjection:
             await _connect(handler)
             await _walk_and_confirm(handler)
             # Reset the call history so we can isolate the post-opening turn.
-            claude_mock.send_with_session.reset_mock()
+            claude_mock.send_stateless.reset_mock()
 
             # Fire a regular PLAYER_ACTION. The directive was consumed by
             # the opening turn; the prompt here should carry no directive.
@@ -798,23 +798,23 @@ class TestMPJoinerHostLocationAnchor:
             # Reset the mock so we only see the joiner's narrator call
             # (the host's turn never actually fired in this fixture —
             # we just seeded the post-turn snapshot state).
-            claude_mock.send_with_session.reset_mock()
+            claude_mock.send_stateless.reset_mock()
 
             await _walk_and_confirm(handler)
 
-            # Inspect the prompt sent to the narrator. The mock records
-            # every send_with_session call with the rendered prompt as
-            # the first positional arg.
-            calls = claude_mock.send_with_session.call_args_list
+            # Inspect the prompt sent to the narrator. Post-ADR-098 the
+            # narrator path uses send_stateless; system_prompt and
+            # user_message are kwargs.
+            calls = claude_mock.send_stateless.call_args_list
             assert calls, (
                 "Joiner-orientation must dispatch at least one narrator "
                 "turn so we can inspect the prompt"
             )
-            # The opening-turn prompt is the FIRST call after reset —
-            # subsequent intra-pipeline narrator calls (recap, etc.)
-            # may follow but the opening dispatch is first.
-            opening_prompt = (
-                calls[0].args[0] if calls[0].args else calls[0].kwargs.get("prompt", "")
+            # Combine system_prompt + user_message — the host-location
+            # anchor may live in either bucket depending on registration.
+            opening_prompt = " ".join(
+                str(calls[0].kwargs.get(k, ""))
+                for k in ("system_prompt", "user_message")
             )
             assert "The Kestrel — Galley, Mid-Coast" in opening_prompt, (
                 "Joiner-orientation prompt must name the host's "
@@ -895,7 +895,7 @@ class TestMPJoinerHostLocationAnchor:
             assert world is not None, "fixture world must be loaded"
             world.openings = []
 
-            claude_mock.send_with_session.reset_mock()
+            claude_mock.send_stateless.reset_mock()
             await _walk_and_confirm(handler)
 
             events = [e for span in otel_capture.get_finished_spans() for e in span.events]

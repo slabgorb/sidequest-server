@@ -500,17 +500,21 @@ def make_mock_claude_client(
     text: str | None = None,
     session_id: str = "test-session",
 ) -> MagicMock:
-    """Return a Claude client mock with ``send_with_session`` wired to
-    yield a canned :class:`ClaudeResponse`.
+    """Return a Claude client mock with both ``send_with_session`` and
+    ``send_stateless`` wired to yield a canned :class:`ClaudeResponse`.
 
-    Tests that want to inspect the prompt sent to Claude can access
-    ``mock.send_with_session`` (an :class:`AsyncMock`) and its
-    ``call_args`` after invocation.
+    Post-ADR-098 the narrator uses ``send_stateless``; ``send_with_session``
+    is preserved here for ``local_dm.py`` (the LocalDM preprocessor still
+    uses the session-bearing API).
+
+    Tests that want to inspect the prompt sent to Claude can access either
+    ``mock.send_stateless`` or ``mock.send_with_session`` (both are
+    :class:`AsyncMock`) and inspect ``call_args`` after invocation.
     """
     mock = MagicMock()
-    mock.send_with_session = AsyncMock(
-        return_value=canned_claude_response(text=text, session_id=session_id)
-    )
+    response = canned_claude_response(text=text, session_id=session_id)
+    mock.send_with_session = AsyncMock(return_value=response)
+    mock.send_stateless = AsyncMock(return_value=response)
     return mock
 
 

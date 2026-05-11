@@ -165,6 +165,26 @@ class OllamaClient:
             backend="ollama",
         )
 
+    async def send_stateless(
+        self,
+        system_prompt: str,
+        user_message: str,
+        model: str,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ClaudeResponse:
+        """Stateless send. Ollama has no native session concept, so we
+        compose system_prompt and user_message into a single prompt."""
+        combined = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
+        return await self.send_with_session(
+            prompt=combined,
+            model=model,
+            session_id=None,
+            system_prompt=None,
+            allowed_tools=allowed_tools,
+            env_vars=env_vars,
+        )
+
     def _cap_history(self, history: list[dict[str, str]]) -> None:
         """Keep leading system message + most recent exchanges up to cap."""
         max_total = OLLAMA_HISTORY_CAP * 2 + (

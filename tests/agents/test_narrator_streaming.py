@@ -175,9 +175,6 @@ async def test_streaming_path_broadcasts_deltas_then_returns_canonical(monkeypat
     # items_lost was parsed from the game_patch block
     assert result.items_lost == []
 
-    # Session ID was stored from StreamComplete
-    assert orch._narrator_session_id == "sess-1"
-
 
 @pytest.mark.asyncio
 async def test_streaming_path_with_room_fans_out_deltas(monkeypatch):
@@ -343,6 +340,27 @@ async def test_streaming_path_degrades_when_client_lacks_send_stream(monkeypatch
                 input_tokens=10,
                 output_tokens=5,
                 session_id="sync-sess",
+            )
+
+        async def send_stateless(
+            self,
+            system_prompt,
+            user_message,
+            model,
+            allowed_tools=None,
+            env_vars=None,
+        ):
+            from sidequest.agents.claude_client import ClaudeResponse
+
+            raw = (
+                "**Test location**\n\nSync fallback prose.\n\n"
+                '```game_patch\n{"location": "Test location"}\n```\n'
+            )
+            return ClaudeResponse(
+                text=raw,
+                input_tokens=10,
+                output_tokens=5,
+                session_id=None,
             )
 
     client = SyncOnlyClient()

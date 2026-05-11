@@ -18,7 +18,6 @@ import pytest
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
-    NarratorPromptTier,
     Orchestrator,
 )
 from sidequest.game.character import Character
@@ -99,7 +98,6 @@ async def test_zero_edge_pc_in_mutant_wasteland_injects_permadeath_directives():
     prompt, _ = await orch.build_narrator_prompt(
         "block the beast",
         ctx,
-        tier=NarratorPromptTier.Full,
     )
 
     assert "must_narrate" in prompt
@@ -120,7 +118,6 @@ async def test_zero_edge_pc_in_caverns_injects_comedic_directives():
     prompt, _ = await orch.build_narrator_prompt(
         "retreat",
         ctx,
-        tier=NarratorPromptTier.Full,
     )
     # Comedic verdict — "humiliated" — with one-liner + slapstick cues:
     assert "one-liner" in prompt or "slapstick" in prompt
@@ -139,7 +136,6 @@ async def test_no_lethality_directives_when_character_above_zero_edge():
     prompt, _ = await orch.build_narrator_prompt(
         "explore",
         ctx,
-        tier=NarratorPromptTier.Full,
     )
     assert "wasteland is indifferent" not in prompt
     assert "miraculous rescues" not in prompt

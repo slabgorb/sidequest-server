@@ -51,7 +51,7 @@ import yaml
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.narrator import NARRATOR_OUTPUT_ONLY
-from sidequest.agents.orchestrator import NarratorPromptTier, Orchestrator, TurnContext
+from sidequest.agents.orchestrator import Orchestrator, TurnContext
 from sidequest.magic.context_builder import build_magic_context_block
 from sidequest.magic.models import (
     HardLimit,
@@ -383,7 +383,6 @@ async def test_narrator_prompt_includes_negative_case_phrases_on_innate_world():
     prompt, _ = await orch.build_narrator_prompt(
         "the airlock hisses open and a stranger steps in",
         context,
-        tier=NarratorPromptTier.Full,
     )
 
     haystack = prompt.lower()
@@ -414,7 +413,6 @@ async def test_narrator_prompt_includes_proactive_rule_phrases_on_innate_world()
     prompt, _ = await orch.build_narrator_prompt(
         "the airlock hisses open and a stranger steps in",
         context,
-        tier=NarratorPromptTier.Full,
     )
 
     haystack = prompt.lower()
@@ -445,7 +443,6 @@ async def test_orchestrator_assembles_innate_worked_example_into_prompt():
     prompt, _ = await orch.build_narrator_prompt(
         "the airlock hisses open and a stranger steps in",
         context,
-        tier=NarratorPromptTier.Full,
     )
 
     assert CONTEXT_BUILDER_INNATE_EXAMPLE_SENTINEL in prompt, (
@@ -473,7 +470,7 @@ async def test_orchestrator_omits_innate_worked_example_when_innate_not_active()
     orch = Orchestrator(client=_make_canned_client(canned))
     context = TurnContext(character_name="kael", magic_state=state)
     prompt, _ = await orch.build_narrator_prompt(
-        "you take a step into the darkness", context, tier=NarratorPromptTier.Full
+        "you take a step into the darkness", context
     )
 
     assert CONTEXT_BUILDER_INNATE_EXAMPLE_SENTINEL not in prompt, (

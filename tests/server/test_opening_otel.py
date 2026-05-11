@@ -59,7 +59,6 @@ def test_record_opening_played_emits_span() -> None:
     with patch("sidequest.server.dispatch.opening.Span.open") as span_open:
         record_opening_played(
             opening_id="test_op",
-            narrator_session_id="session-abc",
             turn_id=1,
         )
         names = [call.args[0] for call in span_open.call_args_list]

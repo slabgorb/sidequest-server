@@ -20,7 +20,6 @@ import pytest
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.lethality_arbiter import LethalityArbiter
 from sidequest.agents.orchestrator import (
-    NarratorPromptTier,
     Orchestrator,
 )
 from sidequest.game.character import Character
@@ -87,7 +86,6 @@ async def test_arbiter_is_invoked_on_real_prompt_build_path():
         prompt, _ = await orch.build_narrator_prompt(
             "x",
             ctx,
-            tier=NarratorPromptTier.Full,
         )
 
     assert len(calls) == 1, "arbiter was not invoked on the real prompt-build path"

@@ -31,16 +31,13 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from threading import Lock
 from typing import Any
 
 from sidequest.agents.claude_client import (
     ClaudeClient,
     ClaudeResponse,
     LlmClient,
-    SubprocessFailed,
 )
 from sidequest.agents.claude_client import (
     TimeoutError as _ClaudeTimeoutError,
@@ -65,8 +62,6 @@ from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
-    narrator_session_rotated_span,
-    narrator_unrecoverable_span,
     orchestrator_process_action_span,
     turn_agent_llm_inference_span,
 )
@@ -74,22 +69,11 @@ from sidequest.telemetry.spans import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Prompt tier (ADR-066)
+# Narrator constants
 # ---------------------------------------------------------------------------
 
 NARRATOR_MODEL: str = "opus"
-
-
-class NarratorPromptTier:
-    """Prompt tier selection (ADR-066).
-
-    Full = first turn of a new session — everything included.
-    Delta = subsequent turns on a resumed session — static context already
-            in conversation history; only dynamic state + action sent.
-    """
-
-    Full = "full"
-    Delta = "delta"
+SOFT_PROMPT_BUDGET_BYTES = 2_000_000  # ~500K tokens, half of Opus 4.7's 1M window (ADR-098)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +318,7 @@ class NarrationTurnResult:
     agent_duration_ms: int | None = None
     token_count_in: int | None = None
     token_count_out: int | None = None
-    prompt_tier: str = NarratorPromptTier.Full
+    prompt_tier: str = ""  # ADR-098: tier system removed
     prompt_text: str | None = None
     raw_response_text: str | None = None
 
@@ -847,7 +831,6 @@ class Orchestrator:
         self,
         client: LlmClient | None = None,
         soul_data: object | None = None,
-        recap_provider: Callable[[], str | None] | None = None,
     ) -> None:
         """Create an orchestrator.
 
@@ -856,18 +839,9 @@ class Orchestrator:
                     If None, creates a default ClaudeClient.
             soul_data: Optional SoulData for SOUL.md principle injection.
                        If None, SOUL.md is loaded from CWD (if present).
-            recap_provider: Callable returning a markdown recap for the
-                       warm-reboot frame on session rotation (ADR-066 §9);
-                       None means no [PREVIOUSLY ON] section.
         """
         self._client: LlmClient = client if client is not None else ClaudeClient()
         self._narrator = NarratorAgent()
-        self._recap_provider: Callable[[], str | None] | None = recap_provider
-
-        # Persistent session management (ADR-066)
-        self._narrator_session_id: str | None = None
-        self._session_genre: str | None = None
-        self._session_lock: Lock = Lock()
 
         # SOUL.md principles (optional)
         if soul_data is not None:
@@ -889,220 +863,6 @@ class Orchestrator:
         # attach onto the NarrationTurnResult so the session handler can route
         # them as SECRET_NOTE events (Task 6).
         self._last_secret_routes: list[object] = []
-
-    # ------------------------------------------------------------------
-    # Session lifecycle (ADR-066)
-    # ------------------------------------------------------------------
-
-    def reset_narrator_session(self) -> None:
-        """Reset the narrator session, forcing next prompt to use Full tier.
-
-        Call when switching games, loading a different save, or after genre switch.
-        Port of orchestrator.rs::Orchestrator::reset_narrator_session.
-        """
-        with self._session_lock:
-            logger.info("orchestrator.narrator_session_reset reason=session_lifecycle")
-            self._narrator_session_id = None
-            self._session_genre = None
-
-    def set_narrator_session_id(self, session_id: str) -> None:
-        """Set the narrator session ID (for testing and server dispatch)."""
-        with self._session_lock:
-            self._narrator_session_id = session_id
-
-    # ------------------------------------------------------------------
-    # Reactive crash recovery (ADR-066 §8)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _classify_narrator_error(exc: Exception) -> str:
-        """Map a narrator failure to one of: transient, cli_error, session_expired, unknown."""
-        if isinstance(exc, _ClaudeTimeoutError):
-            return "transient"
-        if isinstance(exc, SubprocessFailed):
-            if exc.exit_code is None:
-                # Spawn failure (binary not found, OS error, network) — transient.
-                return "transient"
-            stderr = (exc.stderr or "").lower()
-            if "context_window_full" in stderr or "maximum_tokens_exceeded" in stderr:
-                return "cli_error"
-            if "session_not_found" in stderr or "session_expired" in stderr:
-                return "session_expired"
-            return "unknown"
-        return "unknown"
-
-    @staticmethod
-    def _narrator_error_signature(exc: Exception) -> str:
-        """Return a short stable identifier for a narrator failure, for OTEL attributes."""
-        if isinstance(exc, SubprocessFailed):
-            stderr = (exc.stderr or "").lower()
-            for marker in (
-                "context_window_full",
-                "maximum_tokens_exceeded",
-                "session_not_found",
-                "session_expired",
-            ):
-                if marker in stderr:
-                    return marker
-            return (exc.stderr or "subprocess_failed")[:100]
-        return type(exc).__name__
-
-    def _compose_rebuild_header(self) -> str:
-        """Return the [SESSION CONTINUATION] warm-reboot frame, including [PREVIOUSLY ON] when a recap is available."""
-        recap: str | None = None
-        if self._recap_provider is not None:
-            try:
-                recap = self._recap_provider()
-            except Exception as e:  # noqa: BLE001 - recap is best-effort
-                logger.warning(
-                    "narrator.recap_provider_failed error=%s — proceeding without recap",
-                    e,
-                )
-
-        parts = [
-            "[SESSION CONTINUATION]",
-            "",
-            "The narration that follows is a continuation of an in-progress game.",
-            "You do not have verbatim memory of prior turns, but the world state",
-            "and recap below are authoritative. Resume narration in the established",
-            "tone and voice. Honor the hooks and NPC arcs in play.",
-            "",
-        ]
-        if recap:
-            parts.extend(["[PREVIOUSLY ON]", recap, ""])
-        return "\n".join(parts)
-
-    async def _recover_from_narrator_failure(
-        self,
-        *,
-        action: str,
-        context: TurnContext,
-        agent_name: str,
-        first_error: Exception,
-        original_prompt_text: str,
-        original_tier: str,
-    ) -> tuple[ClaudeResponse, str, str, int] | NarrationTurnResult:
-        """Route a narrator failure through retry or rotation per ADR-066 §8; return rebuild result or a degraded NarrationTurnResult."""
-        classification = self._classify_narrator_error(first_error)
-        rotation_error: Exception = first_error
-
-        # Transient → retry once on the same session before escalating.
-        if classification == "transient":
-            with self._session_lock:
-                current_session_id = self._narrator_session_id
-            is_first_turn = current_session_id is None
-            system_prompt = original_prompt_text if is_first_turn else None
-            send_prompt = action if is_first_turn else original_prompt_text
-
-            retry_start = time.monotonic()
-            try:
-                response = await self._client.send_with_session(
-                    prompt=send_prompt,
-                    model=NARRATOR_MODEL,
-                    session_id=current_session_id,
-                    system_prompt=system_prompt,
-                    allowed_tools=[],
-                    env_vars={},
-                )
-                retry_elapsed_ms = int((time.monotonic() - retry_start) * 1000)
-                logger.info("narrator.transient_retry_succeeded duration_ms=%d", retry_elapsed_ms)
-                return (response, original_tier, original_prompt_text, retry_elapsed_ms)
-            except Exception as retry_exc:  # noqa: BLE001 - escalate to rotation
-                logger.warning(
-                    "narrator.transient_retry_failed error=%s — escalating to rotation",
-                    retry_exc,
-                )
-                rotation_error = retry_exc
-                classification = self._classify_narrator_error(retry_exc)
-
-        # Rotate: reset session, rebuild Full prompt with warm-reboot frame.
-        if classification == "cli_error":
-            reason = "cli_error"
-        elif classification == "session_expired":
-            reason = "session_expired"
-        else:
-            reason = "unknown"
-
-        first_signature = self._narrator_error_signature(rotation_error)
-        self.reset_narrator_session()
-        rebuild_header = self._compose_rebuild_header()
-        recap_chars = len(rebuild_header) if rebuild_header else 0
-
-        # Both build_narrator_prompt and send_with_session must run inside
-        # the guard — a failure in either reaches the caller as the same
-        # "uncaught exception in narrator pipeline" bug class this story
-        # is fixing. rebuild_prompt_text is seeded so the stall response
-        # has a non-None prompt_text even on a build-side failure.
-        rebuild_prompt_text: str = original_prompt_text
-        rebuild_start = time.monotonic()
-        try:
-            rebuild_prompt_text, _registry = await self.build_narrator_prompt(
-                action,
-                context,
-                tier=NarratorPromptTier.Full,
-                rebuild_header=rebuild_header,
-            )
-            # Recovery turn establishes a fresh session. Send the entire
-            # composed prompt as the user message so the [SESSION
-            # CONTINUATION] frame anchors the turn the model is responding
-            # to (rather than living only in --system-prompt).
-            response = await self._client.send_with_session(
-                prompt=rebuild_prompt_text,
-                model=NARRATOR_MODEL,
-                session_id=None,
-                system_prompt=None,
-                allowed_tools=[],
-                env_vars={},
-            )
-            rebuild_latency_ms = int((time.monotonic() - rebuild_start) * 1000)
-        except Exception as rebuild_exc:  # noqa: BLE001 - unrecoverable
-            rebuild_latency_ms = int((time.monotonic() - rebuild_start) * 1000)
-            rebuild_signature = self._narrator_error_signature(rebuild_exc)
-            with narrator_unrecoverable_span(
-                reason="rebuild_failed",
-                first_error_signature=first_signature,
-                rebuild_error_signature=rebuild_signature,
-                turn_number=context.turn_number or 0,
-            ):
-                pass
-            logger.error(
-                "NARRATOR UNRECOVERABLE — rotation rebuild also failed "
-                "first_error=%s rebuild_error=%s",
-                first_signature,
-                rebuild_signature,
-            )
-            return NarrationTurnResult(
-                narration=(
-                    f"**{context.current_location}**\n\n"
-                    "The world holds its breath for a moment... "
-                    "something shifts in the distance, but the moment passes."
-                ),
-                is_degraded=True,
-                agent_name=agent_name,
-                agent_duration_ms=rebuild_latency_ms,
-                prompt_tier=NarratorPromptTier.Full,
-                prompt_text=rebuild_prompt_text,
-                secret_routes=list(self._last_secret_routes),
-            )
-
-        # cumulative_tokens: not tracked on the reactive path; the proactive
-        # watchdog wires the live meter in per ADR-066 §10.
-        with narrator_session_rotated_span(
-            reason=reason,
-            cumulative_tokens=0,
-            turn_number=context.turn_number or 0,
-            recap_chars=recap_chars,
-            rebuild_latency_ms=rebuild_latency_ms,
-            cli_error_signature=first_signature,
-        ):
-            pass
-        logger.info(
-            "narrator.session_rotated reason=%s rebuild_latency_ms=%d signature=%s",
-            reason,
-            rebuild_latency_ms,
-            first_signature,
-        )
-        return (response, NarratorPromptTier.Full, rebuild_prompt_text, rebuild_latency_ms)
 
     # ------------------------------------------------------------------
     # Group G Task 7 — entity token resolver for the leak audit
@@ -1138,39 +898,6 @@ class Orchestrator:
             tokens[name] = toks
         return tokens
 
-    def has_active_narrator_session(self) -> bool:
-        """Check whether a narrator session is currently active."""
-        with self._session_lock:
-            return self._narrator_session_id is not None
-
-    def select_prompt_tier(self, context: TurnContext) -> str:
-        """Select the prompt tier based on session state and genre match.
-
-        Returns Full if no session exists or if the genre has changed.
-        Port of orchestrator.rs::Orchestrator::select_prompt_tier.
-        """
-        with self._session_lock:
-            current_session = self._narrator_session_id is not None
-            if not current_session:
-                return NarratorPromptTier.Full
-
-            # Genre switch detection
-            if (
-                context.genre is not None
-                and self._session_genre is not None
-                and context.genre != self._session_genre
-            ):
-                logger.warning(
-                    "Genre switch detected — clearing stale session and forcing Full tier "
-                    "incoming_genre=%s",
-                    context.genre,
-                )
-                self._narrator_session_id = None
-                self._session_genre = None
-                return NarratorPromptTier.Full
-
-        return NarratorPromptTier.Delta
-
     # ------------------------------------------------------------------
     # Prompt assembly
     # ------------------------------------------------------------------
@@ -1179,16 +906,15 @@ class Orchestrator:
         self,
         action: str,
         context: TurnContext,
-        tier: str = NarratorPromptTier.Full,
-        rebuild_header: str | None = None,
     ) -> tuple[str, PromptRegistry]:
         """Build the narrator prompt for a turn (without invoking the LLM).
 
         Returns (prompt_text, registry) so callers can inspect zone breakdown.
         This is the Phase 1 port of build_narrator_prompt_tiered() in orchestrator.rs.
 
-        ``rebuild_header`` is the warm-reboot frame prepended in the
-        Primacy zone on session-rotation recovery turns (ADR-066 §9).
+        ADR-098: Full/Delta tier gating removed. Every turn builds the same
+        prompt shape. The only turn-number-gated section is
+        ``opening_scene_constraint`` (turn 0 only).
 
         Phase 1 omissions (all deferred):
           - LoreFilter world-graph injection (Phase 2 — story 23-4)
@@ -1202,7 +928,6 @@ class Orchestrator:
         """
         registry = PromptRegistry()
         agent_name = self._narrator.name()
-        is_full = tier == NarratorPromptTier.Full
 
         # Group G Task 5 — Structural hiding. Strip every DispatchPackage
         # entry flagged ``redact_from_narrator_canonical`` BEFORE anything
@@ -1219,46 +944,30 @@ class Orchestrator:
         else:
             self._last_secret_routes = []
 
-        # === STATIC SECTIONS (Full tier only — already in session history on Delta) ===
+        # === STATIC SECTIONS (every turn — ADR-098 drops Full/Delta tier gating) ===
 
-        if is_full:
-            # Rebuild header (ADR-066 §9) — registered FIRST in Primacy so
-            # the model sees the [SESSION CONTINUATION] cue before
-            # narrator identity, on a recovery turn that re-establishes
-            # the session after a rotation.
-            if rebuild_header:
-                registry.register_section(
-                    agent_name,
-                    PromptSection.new(
-                        "rebuild_header",
-                        rebuild_header,
-                        AttentionZone.Primacy,
-                        SectionCategory.Soul,
-                    ),
-                )
+        # ADR-067: Always narrator identity (unified agent)
+        self._narrator.build_context(registry)
 
-            # ADR-067: Always narrator identity (unified agent)
-            self._narrator.build_context(registry)
+        # Always inject dialogue rules — short and NPCs can appear anytime
+        self._narrator.build_dialogue_context(registry)
 
-            # Always inject dialogue rules — short and NPCs can appear anytime
-            self._narrator.build_dialogue_context(registry)
+        # SOUL principles (Early zone)
+        if self._soul_data is not None:
+            from sidequest.agents.prompt_framework.soul import SoulData
 
-            # SOUL principles (Early zone)
-            if self._soul_data is not None:
-                from sidequest.agents.prompt_framework.soul import SoulData
-
-                if isinstance(self._soul_data, SoulData):
-                    filtered = self._soul_data.as_prompt_text_for(agent_name)
-                    if filtered:
-                        registry.register_section(
-                            agent_name,
-                            PromptSection.new(
-                                "soul_principles",
-                                filtered,
-                                AttentionZone.Early,
-                                SectionCategory.Soul,
-                            ),
-                        )
+            if isinstance(self._soul_data, SoulData):
+                filtered = self._soul_data.as_prompt_text_for(agent_name)
+                if filtered:
+                    registry.register_section(
+                        agent_name,
+                        PromptSection.new(
+                            "soul_principles",
+                            filtered,
+                            AttentionZone.Early,
+                            SectionCategory.Soul,
+                        ),
+                    )
 
         # === OUTPUT FORMAT (every tier — narrator must always know game_patch schema) ===
         self._narrator.build_output_format(registry)
@@ -1268,9 +977,8 @@ class Orchestrator:
         if context.genre:
             genre_display = context.genre.replace("_", " ")
             logger.info(
-                "orchestrator.genre_identity_injection genre=%s tier=%s",
+                "orchestrator.genre_identity_injection genre=%s",
                 context.genre,
-                tier,
             )
             registry.register_section(
                 agent_name,
@@ -1363,52 +1071,51 @@ class Orchestrator:
                     ),
                 )
 
-            # Full-tier-only genre sections
-            if is_full:
-                if gp.keeper_monologue:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_keeper_monologue",
-                            f"<genre-keeper>\n{gp.keeper_monologue}\n</genre-keeper>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            # ADR-098: formerly Full-tier-only; now fire every turn
+            if gp.keeper_monologue:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_keeper_monologue",
+                        f"<genre-keeper>\n{gp.keeper_monologue}\n</genre-keeper>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.town:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_town",
-                            f"<genre-town>\n{gp.town}\n</genre-town>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            if gp.town:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_town",
+                        f"<genre-town>\n{gp.town}\n</genre-town>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.chargen:
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_chargen",
-                            f"<genre-chargen>\n{gp.chargen}\n</genre-chargen>",
-                            AttentionZone.Valley,
-                            SectionCategory.Genre,
-                        ),
-                    )
+            if gp.chargen:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_chargen",
+                        f"<genre-chargen>\n{gp.chargen}\n</genre-chargen>",
+                        AttentionZone.Valley,
+                        SectionCategory.Genre,
+                    ),
+                )
 
-                if gp.transition_hints:
-                    hints = [f'  {k}: "{v}"' for k, v in gp.transition_hints.items()]
-                    registry.register_section(
-                        agent_name,
-                        PromptSection.new(
-                            "genre_transition_hints",
-                            "transition_hints:\n" + "\n".join(hints),
-                            AttentionZone.Late,
-                            SectionCategory.Format,
-                        ),
-                    )
+            if gp.transition_hints:
+                hints = [f'  {k}: "{v}"' for k, v in gp.transition_hints.items()]
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "genre_transition_hints",
+                        "transition_hints:\n" + "\n".join(hints),
+                        AttentionZone.Late,
+                        SectionCategory.Format,
+                    ),
+                )
 
         # === STATE-DEPENDENT SECTIONS (every tier) ===
 
@@ -1670,8 +1377,8 @@ class Orchestrator:
                 ),
             )
 
-        # SFX library (Valley zone) — static, only on Full tier
-        if is_full and context.available_sfx:
+        # SFX library (Valley zone) — ADR-098: fires every turn
+        if context.available_sfx:
             sfx_list = ", ".join(context.available_sfx)
             registry.register_section(
                 agent_name,
@@ -1701,8 +1408,8 @@ class Orchestrator:
             ),
         )
 
-        # Opening scene constraint (Recency zone, Full tier only)
-        if is_full:
+        # Opening scene constraint (Recency zone, turn 0 only — ADR-098)
+        if context.turn_number == 0:
             registry.register_section(
                 agent_name,
                 PromptSection.new(
@@ -1878,17 +1585,16 @@ class Orchestrator:
             ),
         )
 
-        # Narrator vocabulary (Late zone, Full tier only)
-        if is_full:
-            registry.register_section(
-                agent_name,
-                PromptSection.new(
-                    "narrator_vocabulary",
-                    _build_vocabulary_section(context.narrator_vocabulary),
-                    AttentionZone.Late,
-                    SectionCategory.Format,
-                ),
-            )
+        # Narrator vocabulary (Late zone) — ADR-098: fires every turn
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "narrator_vocabulary",
+                _build_vocabulary_section(context.narrator_vocabulary),
+                AttentionZone.Late,
+                SectionCategory.Format,
+            ),
+        )
 
         # PacingHint (Late zone, every tier — combat pacing can change
         # mid-session, so per-turn dynamic state must reach Delta tier too).
@@ -2059,6 +1765,29 @@ class Orchestrator:
             # read `total_tokens` and `agent` directly off the event,
             # so we ship `agent` as an alias of `agent_name` to keep
             # both old and new consumers happy (playtest 2026-04-30 #1A).
+            # Compute system/user split lengths for telemetry. The actual
+            # send-time split happens in process_action via compose_split;
+            # here we mirror the same bucketing logic for the OTEL payload
+            # so the GM panel Prompt tab can show the system/user breakdown
+            # without waiting for a full narration turn.
+            from sidequest.agents.prompt_framework.bucket import (
+                SectionBucket,
+                default_bucket_for_section,
+            )
+
+            system_chars = sum(
+                len(s.content)
+                for s in sections
+                if not s.is_empty()
+                and default_bucket_for_section(s.name) == SectionBucket.System
+            )
+            user_chars = sum(
+                len(s.content)
+                for s in sections
+                if not s.is_empty()
+                and default_bucket_for_section(s.name) == SectionBucket.User
+            )
+
             _pub(
                 "prompt_assembled",
                 {
@@ -2067,8 +1796,10 @@ class Orchestrator:
                     "turn_number": context.turn_number,
                     "section_count": section_count,
                     "prompt_len": len(prompt_text),
+                    "system_len": system_chars,
+                    "user_len": user_chars,
+                    "bounded": True,
                     "total_tokens": max(1, len(prompt_text) // 4),
-                    "tier": str(tier),
                     "zones": zones_payload,
                 },
                 component="prompt_builder",
@@ -2154,15 +1885,12 @@ class Orchestrator:
         with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
-            tier = self.select_prompt_tier(context)
-            prompt_text, _registry = await self.build_narrator_prompt(action, context, tier=tier)
+            prompt_text, _registry = await self.build_narrator_prompt(action, context)
 
-            with self._session_lock:
-                current_session_id = self._narrator_session_id
-
-            is_first_turn = current_session_id is None
-            system_prompt_for_establish = prompt_text if is_first_turn else None
-            send_prompt = action if is_first_turn else prompt_text
+            # ADR-098: stateless — no persistent session; every turn is a fresh call.
+            current_session_id: str | None = None
+            system_prompt_for_establish = prompt_text
+            send_prompt = action
 
             # Mint a turn_id for delta sequencing.  Use the interaction counter
             # when available so deltas are correlated with the canonical event.
@@ -2269,7 +1997,7 @@ class Orchestrator:
                         is_degraded=True,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
-                        prompt_tier=tier,
+                        prompt_tier="",  # ADR-098: tier system removed
                         prompt_text=prompt_text,
                         secret_routes=list(self._last_secret_routes),
                     )
@@ -2309,7 +2037,7 @@ class Orchestrator:
                         is_degraded=True,
                         agent_name=agent_name,
                         agent_duration_ms=elapsed_ms,
-                        prompt_tier=tier,
+                        prompt_tier="",  # ADR-098: tier system removed
                         prompt_text=prompt_text,
                         secret_routes=list(self._last_secret_routes),
                     )
@@ -2327,19 +2055,6 @@ class Orchestrator:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-
-            # Store session ID from StreamComplete (ADR-066)
-            if isinstance(terminal, StreamComplete) and terminal.session_id:
-                with self._session_lock:
-                    if self._narrator_session_id is None:
-                        logger.info(
-                            "narrator.session_established — persistent Opus session created "
-                            "(streaming) session_id=%s",
-                            terminal.session_id,
-                        )
-                        if context.genre:
-                            self._session_genre = context.genre
-                    self._narrator_session_id = terminal.session_id
 
             # Use the full_text from StreamComplete for extraction (authoritative
             # source — avoids double-reconstruction from chunk list).
@@ -2451,227 +2166,238 @@ class Orchestrator:
                 agent_duration_ms=elapsed_ms,
                 token_count_in=input_tokens,
                 token_count_out=output_tokens,
-                prompt_tier=tier,
+                prompt_tier="",  # ADR-098: tier system removed
                 prompt_text=prompt_text,
                 raw_response_text=raw_response,
                 secret_routes=list(self._last_secret_routes),
             )
+
+    async def _invoke_with_retry_once(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        phase_timings,
+    ) -> tuple[ClaudeResponse | None, int]:
+        """Send via send_stateless; retry once on transient failure (ADR-098 §Error handling).
+
+        Returns (response, elapsed_ms). On unrecoverable failure returns
+        (None, elapsed_ms) — caller renders the degraded in-fiction stall.
+        """
+        with turn_agent_llm_inference_span(
+            model=NARRATOR_MODEL,
+            prompt_len=len(system_prompt) + len(user_message),
+        ):
+            for attempt in (1, 2):
+                call_start = time.monotonic()
+                try:
+                    with phase_timings.phase("narrator_subprocess"):
+                        response = await self._client.send_stateless(
+                            system_prompt=system_prompt,
+                            user_message=user_message,
+                            model=NARRATOR_MODEL,
+                            allowed_tools=[],
+                            env_vars={},
+                        )
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    return response, elapsed_ms
+                except _ClaudeTimeoutError as e:
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    if attempt == 1:
+                        logger.warning(
+                            "narrator.transient_retry attempt=%d duration_ms=%d error=%s",
+                            attempt, elapsed_ms, e,
+                        )
+                        continue  # retry
+                    logger.error("narrator.unrecoverable error=%s after retry", e)
+                    return None, elapsed_ms
+                except Exception as e:  # noqa: BLE001 - degraded fallback path
+                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
+                    logger.error("narrator.unrecoverable error=%s", e)
+                    return None, elapsed_ms
+            raise AssertionError(
+                "_invoke_with_retry_once: loop exhausted without return — should be unreachable"
+            )
+
+    def _maybe_emit_oversized_canary(
+        self,
+        system_prompt: str,
+        user_message: str,
+        registry: PromptRegistry,
+        agent_name: str,
+    ) -> None:
+        """Soft canary for unbounded growth regressions (ADR-098 §Bound canary)."""
+        total = len(system_prompt) + len(user_message)
+        if total <= SOFT_PROMPT_BUDGET_BYTES:
+            return
+        from sidequest.telemetry.watcher_hub import publish_event as _pub
+        breakdown = [
+            {"name": s.name, "chars": len(s.content)}
+            for s in registry.registry(agent_name)
+        ]
+        logger.warning(
+            "narrator.prompt_oversized total_bytes=%d budget=%d sections=%d",
+            total, SOFT_PROMPT_BUDGET_BYTES, len(breakdown),
+        )
+        _pub("prompt_oversized", {
+            "total_bytes": total,
+            "budget": SOFT_PROMPT_BUDGET_BYTES,
+            "sections": breakdown,
+        }, component="orchestrator")
+
+    def _degraded_result(self, *, action: str, context: TurnContext) -> NarrationTurnResult:
+        """Render the in-fiction stall on unrecoverable narrator failure."""
+        return NarrationTurnResult(
+            narration="The world holds its breath.",
+            is_degraded=True,
+            agent_name=self._narrator.name(),
+        )
+
+    def _assemble_turn_result(
+        self,
+        *,
+        response: ClaudeResponse,
+        prompt_text: str,
+        context: TurnContext,
+        elapsed_ms: int,
+        action: str,
+    ) -> NarrationTurnResult:
+        """Parse the narrator response into a NarrationTurnResult.
+
+        Mechanical lift from the pre-refactor _run_narration_turn_synchronous body.
+        The session-id storage block is intentionally NOT lifted — sessions are gone (ADR-098).
+        """
+        agent_name = self._narrator.name()
+        raw_response = response.text
+        logger.info(
+            "Claude CLI returned narration len=%d duration_ms=%d",
+            len(raw_response), elapsed_ms,
+        )
+
+        with context.phase_timings.phase("narrator_extraction"):
+            extraction = extract_structured_from_response(raw_response)
+
+        prose = extraction["prose"]
+
+        if context.dispatch_package is not None:
+            audit_canonical_prose(
+                prose=prose,
+                package=context.dispatch_package,
+                entity_tokens_by_id=self._entity_tokens_for_registry(context),
+            )
+
+        if extraction["action_rewrite"] is None:
+            logger.warning("action_rewrite absent from extraction — using default (empty rewrite)")
+
+        if extraction["confrontation"]:
+            logger.info(
+                "encounter.confrontation_initiated confrontation_type=%s",
+                extraction["confrontation"],
+            )
+
+        for bs_dict in extraction["beat_selections"]:
+            if isinstance(bs_dict, dict):
+                logger.info(
+                    "encounter.agent_beat_selection actor=%s beat_id=%s target=%r",
+                    bs_dict.get("actor"), bs_dict.get("beat_id"), bs_dict.get("target"),
+                )
+
+        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
+        beat_selections = [
+            BeatSelection.from_dict(d)
+            for d in extraction["beat_selections"]
+            if isinstance(d, dict)
+        ]
+
+        visual_scene: VisualScene | None = None
+        if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
+            visual_scene = VisualScene.from_dict(extraction["visual_scene"])
+
+        action_rewrite: ActionRewrite | None = None
+        if isinstance(extraction["action_rewrite"], dict):
+            action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
+
+        return NarrationTurnResult(
+            narration=prose,
+            is_degraded=False,
+            location=extraction["location"],
+            scene_mood=extraction["scene_mood"],
+            visual_scene=visual_scene,
+            confrontation=extraction["confrontation"],
+            beat_selections=beat_selections,
+            npcs_present=npc_mentions,
+            items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
+            items_lost=extraction.get("items_lost", []),
+            items_discarded=extraction.get("items_discarded", []),
+            items_consumed=extraction.get("items_consumed", []),
+            footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
+            quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
+            sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],
+            action_rewrite=action_rewrite,
+            affinity_progress=extraction["affinity_progress"],
+            gold_change=extraction["gold_change"],
+            lore_established=extraction["lore_established"],
+            status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+            magic_working=(
+                extraction["magic_working"]
+                if isinstance(extraction.get("magic_working"), dict)
+                else None
+            ),
+            companions_added=extraction.get("companions_added", []),
+            companions_dismissed=extraction.get("companions_dismissed", []),
+            game_patch_dict=_extract_game_patch_json(raw_response),
+            agent_name=agent_name,
+            agent_duration_ms=elapsed_ms,
+            token_count_in=response.input_tokens,
+            token_count_out=response.output_tokens,
+            prompt_tier="",  # vestigial field; tier system removed per ADR-098
+            prompt_text=prompt_text,
+            raw_response_text=raw_response,
+            secret_routes=list(self._last_secret_routes),
+        )
 
     async def _run_narration_turn_synchronous(
         self,
         action: str,
         context: TurnContext,
     ) -> NarrationTurnResult:
-        """Synchronous narrator pipeline (send_with_session + extraction).
+        """Stateless narrator pipeline (ADR-098).
 
-        This is the primary entry point for Story 41-6 server dispatch.
+        Build the prompt, partition into (system_prompt, user_message),
+        send via :meth:`LlmClient.send_stateless`, parse, return.
 
-        Pipeline:
-          action → build_narrator_prompt → send_with_session (ClaudeClient)
-               → extract_structured_from_response → NarrationTurnResult
-
-        Phase 1 slice: Phase 3 combat dispatch is deferred.
-        Phase 1 slice: Phase 2 dice routing is deferred.
-        If in_combat and a confrontation is active, reaching here still works —
-        the narrator handles encounters via beat_selections in the game_patch.
-
-        Port of orchestrator.rs::Orchestrator::process_action (Phase 1 slice).
+        No session id is read or written. No first-turn-vs-subsequent
+        branching. If the first attempt fails transiently, retry once;
+        otherwise return a degraded :class:`NarrationTurnResult`.
         """
         with orchestrator_process_action_span(action_len=len(action)):
             agent_name = self._narrator.name()
 
-            tier = self.select_prompt_tier(context)
-            prompt_text, registry = await self.build_narrator_prompt(action, context, tier=tier)
+            prompt_text, registry = await self.build_narrator_prompt(action, context)
+            system_prompt, user_message = registry.compose_split(agent_name)
 
-            logger.info("Invoking Claude CLI for narration action=%r", action)
+            self._maybe_emit_oversized_canary(system_prompt, user_message, registry, agent_name)
 
-            # ADR-066: persistent session (--resume on subsequent turns)
-            with self._session_lock:
-                current_session_id = self._narrator_session_id
-
-            is_first_turn = current_session_id is None
-
-            # First turn: full prompt is the system prompt; action is the user message.
-            # Subsequent turns: only dynamic state + action is sent.
-            system_prompt_for_establish = prompt_text if is_first_turn else None
-            send_prompt = action if is_first_turn else prompt_text
-
-            response: ClaudeResponse | None = None
-            first_attempt_error: Exception | None = None
-            with turn_agent_llm_inference_span(
-                model=NARRATOR_MODEL,
-                prompt_len=len(send_prompt),
-            ):
-                call_start = time.monotonic()
-                try:
-                    with context.phase_timings.phase("narrator_subprocess"):
-                        response = await self._client.send_with_session(
-                            prompt=send_prompt,
-                            model=NARRATOR_MODEL,
-                            session_id=current_session_id,
-                            system_prompt=system_prompt_for_establish,
-                            allowed_tools=[],
-                            env_vars={},
-                        )
-                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                except Exception as e:
-                    elapsed_ms = int((time.monotonic() - call_start) * 1000)
-                    first_attempt_error = e
-                    logger.warning(
-                        "narrator.first_attempt_failed agent=%s duration_ms=%d error=%s",
-                        agent_name,
-                        elapsed_ms,
-                        e,
-                    )
-
-            # ADR-066 §8: classify error, retry/rotate as needed.
-            # On recovery success, tier/prompt_text/elapsed_ms are reassigned
-            # so the success path below sees the rebuild's values.
-            if first_attempt_error is not None:
-                recovery = await self._recover_from_narrator_failure(
-                    action=action,
-                    context=context,
-                    agent_name=agent_name,
-                    first_error=first_attempt_error,
-                    original_prompt_text=prompt_text,
-                    original_tier=tier,
-                )
-                if isinstance(recovery, NarrationTurnResult):
-                    # Recovery itself failed — narrator.unrecoverable already
-                    # emitted; return the in-fiction stall to the player.
-                    return recovery
-                response, tier, prompt_text, elapsed_ms = recovery
-
-            assert response is not None  # narrowing for type-checkers
-
-            # Store session ID from response (ADR-066)
-            if response.session_id:
-                with self._session_lock:
-                    if self._narrator_session_id is None:
-                        logger.info(
-                            "narrator.session_established — persistent Opus session created "
-                            "session_id=%s",
-                            response.session_id,
-                        )
-                        if context.genre:
-                            self._session_genre = context.genre
-                    self._narrator_session_id = response.session_id
-
-            raw_response = response.text
             logger.info(
-                "Claude CLI returned narration len=%d duration_ms=%d",
-                len(raw_response),
-                elapsed_ms,
+                "narrator.stateless_turn action=%r system_len=%d user_len=%d",
+                action, len(system_prompt), len(user_message),
             )
 
-            # Parse narrator response
-            with context.phase_timings.phase("narrator_extraction"):
-                extraction = extract_structured_from_response(raw_response)
+            response, elapsed_ms = await self._invoke_with_retry_once(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                phase_timings=context.phase_timings,
+            )
 
-            prose = extraction["prose"]
+            if response is None:
+                return self._degraded_result(action=action, context=context)
 
-            # Group G Task 7 — canonical-leak audit (safety net).
-            # Structural hiding (Task 5) is the primary defense; this is
-            # the lie-detector. Pass the ORIGINAL DispatchPackage so the
-            # audit knows what was supposed to be hidden. Expected-zero
-            # in steady state; any non-zero fire is a hiding-hole bug.
-            if context.dispatch_package is not None:
-                audit_canonical_prose(
-                    prose=prose,
-                    package=context.dispatch_package,
-                    entity_tokens_by_id=self._entity_tokens_for_registry(context),
-                )
-
-            # Warn on missing action_rewrite
-            if extraction["action_rewrite"] is None:
-                logger.warning(
-                    "action_rewrite absent from extraction — using default (empty rewrite)"
-                )
-
-            # Log confrontation initiation
-            if extraction["confrontation"]:
-                logger.info(
-                    "encounter.confrontation_initiated confrontation_type=%s",
-                    extraction["confrontation"],
-                )
-
-            # Log beat selections
-            for bs_dict in extraction["beat_selections"]:
-                if isinstance(bs_dict, dict):
-                    logger.info(
-                        "encounter.agent_beat_selection actor=%s beat_id=%s target=%r",
-                        bs_dict.get("actor"),
-                        bs_dict.get("beat_id"),
-                        bs_dict.get("target"),
-                    )
-
-            # Build NpcMention list
-            npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
-
-            # Build BeatSelection list
-            beat_selections = [
-                BeatSelection.from_dict(d)
-                for d in extraction["beat_selections"]
-                if isinstance(d, dict)
-            ]
-
-            # Build VisualScene
-            visual_scene: VisualScene | None = None
-            if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
-                visual_scene = VisualScene.from_dict(extraction["visual_scene"])
-
-            # Build ActionRewrite
-            action_rewrite: ActionRewrite | None = None
-            if isinstance(extraction["action_rewrite"], dict):
-                action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
-
-            return NarrationTurnResult(
-                narration=prose,
-                is_degraded=False,
-                location=extraction["location"],
-                scene_mood=extraction["scene_mood"],
-                visual_scene=visual_scene,
-                confrontation=extraction["confrontation"],
-                beat_selections=beat_selections,
-                npcs_present=npc_mentions,
-                items_gained=extraction["items_gained"]
-                if isinstance(extraction["items_gained"], list)
-                else [],
-                items_lost=extraction.get("items_lost", []),
-                items_discarded=extraction.get("items_discarded", []),
-                items_consumed=extraction.get("items_consumed", []),
-                footnotes=extraction["footnotes"]
-                if isinstance(extraction["footnotes"], list)
-                else [],
-                quest_updates=extraction["quest_updates"]
-                if isinstance(extraction["quest_updates"], dict)
-                else {},
-                sfx_triggers=extraction["sfx_triggers"]
-                if isinstance(extraction["sfx_triggers"], list)
-                else [],
-                action_rewrite=action_rewrite,
-                affinity_progress=extraction["affinity_progress"],
-                gold_change=extraction["gold_change"],
-                lore_established=extraction["lore_established"],
-                status_changes=extraction["status_changes"]
-                if isinstance(extraction["status_changes"], list)
-                else [],
-                magic_working=(
-                    extraction["magic_working"]
-                    if isinstance(extraction.get("magic_working"), dict)
-                    else None
-                ),
-                companions_added=extraction.get("companions_added", []),
-                companions_dismissed=extraction.get("companions_dismissed", []),
-                game_patch_dict=_extract_game_patch_json(raw_response),
-                agent_name=agent_name,
-                agent_duration_ms=elapsed_ms,
-                token_count_in=response.input_tokens,
-                token_count_out=response.output_tokens,
-                prompt_tier=tier,
+            return self._assemble_turn_result(
+                response=response,
                 prompt_text=prompt_text,
-                raw_response_text=raw_response,
-                secret_routes=list(self._last_secret_routes),
+                context=context,
+                elapsed_ms=elapsed_ms,
+                action=action,
             )
 
 

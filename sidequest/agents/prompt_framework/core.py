@@ -149,6 +149,47 @@ class PromptRegistry:
             span.set_attribute("rendered_chars", len(rendered))
             return rendered
 
+    def compose_split(self, agent_name: str) -> tuple[str, str]:
+        """Compose registered sections into a (system_prompt, user_message) pair.
+
+        Partitions sections by :func:`default_bucket_for_section` keyed on
+        section name. Within each bucket, sections are emitted in zone
+        order (Primacy → Early → Valley → Late → Recency) and joined
+        with double-newlines — same shape as :meth:`compose`.
+
+        Used by :class:`Orchestrator` for stateless narrator turns
+        (ADR-098). The system prompt carries the stable scaffold; the
+        user message carries turn-dynamic state plus the player's action.
+        """
+        from sidequest.agents.prompt_framework.bucket import (
+            SectionBucket,
+            default_bucket_for_section,
+        )
+        from sidequest.telemetry.spans import SPAN_COMPOSE, Span
+
+        with Span.open(SPAN_COMPOSE, {"agent_name": agent_name, "split": True}) as span:
+            sections = list(self._sections.get(agent_name, []))
+            sections.sort(key=lambda s: s.zone.order())
+
+            system_parts: list[str] = []
+            user_parts: list[str] = []
+            for s in sections:
+                if s.is_empty():
+                    continue
+                bucket = default_bucket_for_section(s.name)
+                if bucket == SectionBucket.System:
+                    system_parts.append(s.content)
+                else:
+                    user_parts.append(s.content)
+
+            system_text = "\n\n".join(system_parts)
+            user_text = "\n\n".join(user_parts)
+            span.set_attribute("system_chars", len(system_text))
+            span.set_attribute("user_chars", len(user_text))
+            span.set_attribute("system_section_count", len(system_parts))
+            span.set_attribute("user_section_count", len(user_parts))
+            return system_text, user_text
+
     def clear(self, agent_name: str) -> None:
         """Clear all sections for an agent."""
         self._sections.pop(agent_name, None)

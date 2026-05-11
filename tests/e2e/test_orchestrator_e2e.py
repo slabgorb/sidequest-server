@@ -18,7 +18,6 @@ import pytest
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
     NarrationTurnResult,
-    NarratorPromptTier,
     Orchestrator,
     TurnContext,
     run_narration_turn,
@@ -200,7 +199,6 @@ async def test_narrator_turn_end_to_end_with_caverns_claudes():
     assert result.agent_duration_ms is not None
     assert result.token_count_in == 150
     assert result.token_count_out == 80
-    assert result.prompt_tier in (NarratorPromptTier.Full, NarratorPromptTier.Delta)
     assert result.prompt_text is not None
     assert result.raw_response_text is not None
 
@@ -209,35 +207,6 @@ async def test_narrator_turn_end_to_end_with_caverns_claudes():
     assert pack.prompts.narrator, "caverns_and_claudes must have narrator prompt"
     # Verify genre voice appears in the assembled prompt
     assert pack.prompts.narrator in result.prompt_text
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(CAVERNS_PACK_DIR is None, reason=SKIP_REASON)
-async def test_narrator_turn_e2e_session_id_stored():
-    """Wiring gate: session ID from response is stored in orchestrator."""
-    assert CAVERNS_PACK_DIR is not None
-
-    pack = load_genre_pack(CAVERNS_PACK_DIR)
-    genre_slug = CAVERNS_PACK_DIR.name
-
-    canned = "**The Hall**\n\nProse.\n\n```game_patch\n{}\n```"
-    client = ClaudeClient(spawn_fn=make_canned_narrator_spawn(canned, session_id="e2e-sid-42"))
-
-    context = TurnContext(
-        character_name="Kael",
-        genre=genre_slug,
-        genre_prompts=pack.prompts,
-        current_location="The Hall",
-        state_summary="{}",
-    )
-
-    orch = Orchestrator(client=client)
-    await orch.run_narration_turn("look around", context)
-
-    assert orch.has_active_narrator_session()
-    with orch._session_lock:
-        assert orch._narrator_session_id == "e2e-sid-42"
-        assert orch._session_genre == genre_slug
 
 
 @pytest.mark.asyncio

@@ -25,9 +25,8 @@ import pytest
 
 from sidequest.agents.claude_client import ClaudeResponse
 from sidequest.agents.orchestrator import (
-    NarratorPromptTier,
     Orchestrator,
-    TurnContext,
+    TurnContext,  # noqa: F401 — used via fixture type annotation
 )
 from sidequest.telemetry.watcher_hub import WatcherHub, watcher_hub
 
@@ -73,7 +72,7 @@ async def test_build_narrator_prompt_publishes_zones_for_dashboard(
         state_summary="You are in a tavern.",
         turn_number=0,
     )
-    await orch.build_narrator_prompt("look around", context, tier=NarratorPromptTier.Full)
+    await orch.build_narrator_prompt("look around", context)
     await asyncio.sleep(0.05)
 
     prompt_events = [e for e in sock.events if e.get("event_type") == "prompt_assembled"]
@@ -104,3 +103,27 @@ async def test_build_narrator_prompt_publishes_zones_for_dashboard(
             assert {"name", "token_estimate", "category"} <= set(s)
             assert isinstance(s["token_estimate"], int)
             assert s["token_estimate"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_prompt_assembled_event_has_split_fields(
+    bound_hub: WatcherHub,
+    simple_turn_context: TurnContext,
+) -> None:
+    """ADR-098: prompt_assembled carries system_len, user_len, bounded; no tier."""
+
+    sock = _FakeSocket()
+    await bound_hub.subscribe(sock)  # type: ignore[arg-type]
+
+    orch = Orchestrator(client=_CannedClient())
+    await orch.build_narrator_prompt("look", simple_turn_context)
+    await asyncio.sleep(0.05)
+
+    prompt_events = [e for e in sock.events if e.get("event_type") == "prompt_assembled"]
+    assert prompt_events, "no prompt_assembled event published"
+    payload = prompt_events[-1]["fields"]
+
+    assert "system_len" in payload
+    assert "user_len" in payload
+    assert payload.get("bounded") is True
+    assert "tier" not in payload

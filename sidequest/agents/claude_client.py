@@ -339,6 +339,47 @@ class ClaudeClient:
 
             return await self._run_subprocess(args, process_env, span)
 
+    async def send_stateless(
+        self,
+        system_prompt: str,
+        user_message: str,
+        model: str,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ClaudeResponse:
+        """Execute a stateless `claude -p` call (ADR-098).
+
+        Neither `--resume` nor `--session-id` is passed; every call is a
+        fresh, independent conversation. The system_prompt carries the
+        stable scaffold (identity, voice, format); the user_message
+        carries turn-dynamic state plus the player action.
+
+        Unlike :meth:`send_with_session`, the returned
+        :attr:`ClaudeResponse.session_id` is not meaningful — callers
+        should ignore it.
+        """
+        allowed = allowed_tools or []
+        env = env_vars or {}
+
+        with agent_call_session_span(
+            model=model,
+            prompt_len=len(user_message),
+            backend="claude-cli",
+        ) as span:
+            if not user_message.strip():
+                raise EmptyResponse()
+
+            args: list[str] = ["--model", model]
+            if system_prompt:
+                args += ["--system-prompt", system_prompt]
+            if allowed:
+                args.append("--allowedTools")
+                args.extend(allowed)
+            args += ["-p", user_message, "--output-format", "json"]
+
+            process_env = self._build_env(env)
+            return await self._run_subprocess(args, process_env, span)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -781,4 +822,15 @@ class LlmClient(Protocol):
         env_vars: dict[str, str] | None = None,
     ) -> ClaudeResponse:
         """Execute a persistent-session call (ADR-066)."""
+        ...
+
+    async def send_stateless(
+        self,
+        system_prompt: str,
+        user_message: str,
+        model: str,
+        allowed_tools: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ClaudeResponse:
+        """Execute a stateless call with no --resume or --session-id (ADR-098)."""
         ...
