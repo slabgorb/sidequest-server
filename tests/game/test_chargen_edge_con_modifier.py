@@ -17,7 +17,6 @@ These tests are RED until Dev wires CON through and removes the stub.
 from __future__ import annotations
 
 import pytest
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -35,7 +34,6 @@ from sidequest.genre.models.rules import (
     EdgeThresholdDecl,
     RulesConfig,
 )
-
 
 ABILITY_NAMES = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 

@@ -2032,10 +2032,16 @@ class CharacterBuilder:
         # EdgePool seeding: edge_config path OR placeholder for legacy
         # packs (Story 39-3). Missing class → raise the builder's
         # EdgeConfigMissingClassError, not the core module's error
-        # directly.
+        # directly. Story 39-10: feed rolled CON into the seed so every
+        # class gets a CON modifier; the Story 39-4 Fighter +2 stub is
+        # retired here.
         if self._edge_config is not None:
+            con_score = int(stats.get("CON", 10))
+            con_modifier = (con_score - 10) // 2
             try:
-                edge = edge_pool_from_config(self._edge_config, class_str)
+                edge = edge_pool_from_config(
+                    self._edge_config, class_str, con_score=con_score
+                )
             except _CoreEdgeConfigMissingClassError as e:
                 raise EdgeConfigMissingClassError(class_name=e.class_name) from None
             span.add_event(
@@ -2044,6 +2050,9 @@ class CharacterBuilder:
                     "source": "edge_config",
                     "class": class_str,
                     "base_max": edge.base_max,
+                    "con_score": con_score,
+                    "con_modifier": con_modifier,
+                    "seed_formula": "class_base+con_mod",
                     "threshold_count": len(edge.thresholds),
                 },
             )
@@ -2057,23 +2066,6 @@ class CharacterBuilder:
                     "base_max": edge.base_max,
                     "reason": "genre pack has no edge_config",
                     "severity": "warn",
-                },
-            )
-
-        # Story 39-4: hardcoded Fighter +2 Edge stub. Smoke-gate so the
-        # Edge system can be playtested before authored AdvancementTree
-        # lands in 39-5. Replacing it is a future-story concern.
-        if class_str == "Fighter":
-            edge.max += 2
-            edge.base_max += 2
-            edge.current = edge.max
-            span.add_event(
-                "chargen.advancement_stub_applied",
-                {
-                    "advancement_id": "fighter_base_plus_2_edge",
-                    "class": class_str,
-                    "edge_max_after": edge.max,
-                    "source": "hardcoded_stub_story_39_4",
                 },
             )
 
