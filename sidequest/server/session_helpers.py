@@ -43,6 +43,7 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
+    npc_auto_mint_skipped_span,
     npc_auto_minted_from_prose_span,
     npc_recurring_presence_missed_span,
     npc_reinvented_span,
@@ -702,17 +703,29 @@ _ARTICLE_ROLE_PUBLIC_NAMES: dict[str, str] = {
     "magistrate": "the magistrate",
 }
 
-# Honorific patterns — ``Mrs. <Name>``, ``Mr. <Name>``, etc. The proper
-# name must be Capitalized (``[A-Z][a-z]+``) so common mid-sentence words
-# don't false-match.
+# Honorific patterns — ``Mrs. <Name>``, ``Mr. <Name>``, ``Dr. <Name>``,
+# ``Reverend <Name>``, ``Father <Name>``, ``Mother <Name>``, ``Captain
+# <Name>``, ``Sergeant <Name>``, ``Sir <Name>``, ``Lady <Name>``, ``Lord
+# <Name>``. The proper name must be Capitalized (``[A-Z][a-z]+``) so
+# common mid-sentence words don't false-match.
+#
+# NOTE: ``Father``/``Mother``/``Reverend`` overlap with bare-role tokens
+# in ``_BARE_ROLE_PUBLIC_NAMES`` / ``_ARTICLE_ROLE_PUBLIC_NAMES``. The
+# ``consumed_spans`` guard in Phase 2 of ``_auto_mint_prose_only_npcs``
+# prevents the bare-role scan from re-firing on positions already
+# matched by the honorific pattern. Without that guard, "Reverend
+# Murchison" would mint twice — once as the full honorific name, once
+# as the bare role.
 _HONORIFIC_PROPER_RE = re.compile(
     r"\b(Mrs|Mr|Dr|Reverend|Father|Mother|Captain|Sergeant|Sir|Lady|Lord)\.?\s+([A-Z][a-z]+)\b"
 )
 
-# Subject pronouns by gender group — the disambiguator. Object/possessive
-# tokens (him, his, her, hers, them, their) are intentionally NOT in this
-# map; in dense prose those refer to surrounding NPCs as often as to the
-# role-mentioned one, and including them mis-genders too freely.
+# Subject pronouns by gender group — the disambiguator. Object pronouns
+# (him, her, them) and possessive pronouns (his, hers, their) are
+# intentionally NOT in this map; in dense prose those refer to
+# surrounding NPCs as often as to the role-mentioned one, and including
+# them mis-genders too freely (Glenross 2026-05-11 "Mrs. Gow laid him
+# after" — ``him`` is Father, not Mrs. Gow).
 _SUBJECT_PRONOUN_GROUPS: dict[str, tuple[str, ...]] = {
     "he/him": ("he",),
     "she/her": ("she",),
@@ -816,8 +829,12 @@ def _auto_mint_prose_only_npcs(
     (``snapshot.npcs``, ``snapshot.npc_pool``, ``emitted_mentions``).
 
     Detection paths:
-      1. **Honorifics** (Mrs. <Name>, Mr. <Name>, Dr. <Name>, etc.) —
-         capture the full ``Title. Proper`` form as the public name.
+      1. **Honorifics** (Mrs. <Name>, Mr. <Name>, Dr. <Name>, Reverend
+         <Name>, Father <Name>, Mother <Name>, Captain <Name>, Sergeant
+         <Name>, Sir <Name>, Lady <Name>, Lord <Name>) — capture the
+         full ``Title. Proper`` form as the public name. Father/Mother/
+         Reverend overlap with bare-role tokens; the consumed-span
+         tracker prevents Phase 2 from double-processing those positions.
       2. **Bare roles** (Father, mother, the doctor, the Reverend, ...) —
          the token IS the public name (with article for ``the doctor``-
          style cases).
@@ -909,13 +926,20 @@ def _auto_mint_prose_only_npcs(
             continue
         pronouns = _infer_pronouns_from_role_context(narration_text, end)
         if pronouns is None:
-            logger.warning(
-                "npc.auto_mint_skipped name=%r turn=%d — pronouns "
-                "ambiguous in local window (no clean subject pronoun); "
-                "skipping mint rather than guessing",
-                public_name,
-                turn_num,
-            )
+            with npc_auto_mint_skipped_span(
+                npc_name=public_name,
+                role="",
+                reason="ambiguous_pronouns_honorific",
+                turn_number=turn_num,
+            ):
+                logger.warning(
+                    "npc.auto_mint_skipped name=%r turn=%d reason=%s — "
+                    "pronouns ambiguous in local window (no clean subject "
+                    "pronoun); skipping mint rather than guessing",
+                    public_name,
+                    turn_num,
+                    "ambiguous_pronouns_honorific",
+                )
             continue
         # Honorifics carry no canonical role tag (Mrs./Mr./Dr. are titles,
         # not roles). Role is None — narrator may refine via a later
@@ -955,27 +979,41 @@ def _auto_mint_prose_only_npcs(
         # Gender-paired role conflict — refuse to canonize a slip.
         paired = _GENDER_PAIRED_ROLES.get(cf_role)
         if paired and paired in known_roles:
-            logger.warning(
-                "npc.auto_mint_skipped name=%r role=%r turn=%d — "
-                "gender-paired role conflict (%s already in roster); "
-                "narrator may have slipped between turns",
-                public_name,
-                role_token,
-                turn_num,
-                paired,
-            )
+            with npc_auto_mint_skipped_span(
+                npc_name=public_name,
+                role=role_token,
+                reason="gender_paired_conflict",
+                turn_number=turn_num,
+                paired_role=paired,
+            ):
+                logger.warning(
+                    "npc.auto_mint_skipped name=%r role=%r turn=%d "
+                    "reason=gender_paired_conflict paired_role=%r — narrator "
+                    "may have slipped between turns; not canonizing",
+                    public_name,
+                    role_token,
+                    turn_num,
+                    paired,
+                )
             continue
 
         pronouns = _infer_pronouns_from_role_context(narration_text, match.end())
         if pronouns is None:
-            logger.warning(
-                "npc.auto_mint_skipped name=%r role=%r turn=%d — pronouns "
-                "ambiguous in local window (no clean subject pronoun); "
-                "skipping mint rather than guessing",
-                public_name,
-                role_token,
-                turn_num,
-            )
+            with npc_auto_mint_skipped_span(
+                npc_name=public_name,
+                role=role_token,
+                reason="ambiguous_pronouns_role",
+                turn_number=turn_num,
+            ):
+                logger.warning(
+                    "npc.auto_mint_skipped name=%r role=%r turn=%d "
+                    "reason=ambiguous_pronouns_role — pronouns ambiguous in "
+                    "local window (no clean subject pronoun); skipping mint "
+                    "rather than guessing",
+                    public_name,
+                    role_token,
+                    turn_num,
+                )
             continue
 
         _mint(public_name=public_name, role_token=role_token, pronouns=pronouns)

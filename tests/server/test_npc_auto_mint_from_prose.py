@@ -106,11 +106,17 @@ def _result(
 
 
 def _minted_spans(
-    otel_capture: "InMemorySpanExporter",
+    otel_capture: InMemorySpanExporter,
     expected_role: str | None = None,
     expected_name: str | None = None,
 ) -> list:
-    """Filter captured spans by the auto-mint span name and optional role/name."""
+    """Filter captured spans by the auto-mint span name and optional role/name.
+
+    Return type is bare ``list`` because the OTEL exporter yields
+    ``ReadableSpan`` instances under a name that varies between
+    opentelemetry SDK versions; binding the element type would force
+    a brittle import.
+    """
     spans = [s for s in otel_capture.get_finished_spans() if s.name == SPAN_NAME]
     if expected_role is not None:
         spans = [
@@ -137,7 +143,7 @@ def _pool_member(snapshot: GameSnapshot, *, role: str) -> NpcPoolMember | None:
 
 
 def _skipped_spans(
-    otel_capture: "InMemorySpanExporter",
+    otel_capture: InMemorySpanExporter,
     expected_reason: str | None = None,
     expected_role: str | None = None,
 ) -> list:

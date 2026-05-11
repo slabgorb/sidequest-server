@@ -1,4 +1,4 @@
-"""Story 49-2 RED — Recency-zone npc_extraction_constraint section.
+"""Story 49-2 — Recency-zone ``npc_extraction_constraint`` section.
 
 AC4 — paired with the server-side auto-minter (49-2 main fix). The
 auto-mint catches the failure POST-hoc; this Recency-zone Guardrail
@@ -14,15 +14,18 @@ zones) prescribes restating load-bearing rules in Recency as a Guardrail
 section. This is the same pattern as ``npc_intro_visual_constraint``
 and ``confrontation_trigger_constraint``.
 
-These tests assert the FUTURE behavior — they will fail until Dev wires
-the section in ``Orchestrator.build_narrator_prompt``.
+These tests pin the section's registration in
+``Orchestrator.build_narrator_prompt``: present on every turn, in
+Recency zone, categorized as Guardrail, with the AC4 required content
+phrases (role-named, patients/parents/children/siblings, MUST appear
+in npcs_present).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.orchestrator import Orchestrator
 from sidequest.agents.prompt_framework.types import AttentionZone, SectionCategory
 
 
