@@ -286,6 +286,41 @@ class PlayerActionHandler:
                 },
                 component="multiplayer",
             )
+            # Broadcast TURN_STATUS{status="submitted"} so the sealed-letter
+            # strip on every peer tab can flip this player's entry from
+            # "Composing…" (pending) to "✓ Sealed" (submitted). Without
+            # this, the only TurnStatusPayload statuses the server ever
+            # emitted were "active" (at action receipt) and "resolved" (at
+            # narration completion) — there was no per-player submission
+            # signal in between, so the panel stayed stuck on "(0/N)"
+            # forever even after every PC had submitted (sq-playtest
+            # 2026-05-11 [BUG-LOW] caverns_sunden MP). Emitting *after* the
+            # buffer write and barrier.wait so submitted_count above is
+            # already consistent with this player counting as sealed.
+            if sd.player_name:
+                try:
+                    submitted_msg = TurnStatusMessage(
+                        payload=TurnStatusPayload(
+                            player_name=NonBlankString(acting_name),
+                            status="submitted",
+                        ),
+                        player_id=sd.player_id or "",
+                    )
+                    session._room.broadcast(submitted_msg, exclude_socket_id=None)
+                    _watcher_publish(
+                        "turn_status",
+                        {
+                            "status": "submitted",
+                            "player_name": acting_name,
+                            "player_id": sd.player_id,
+                            "slug": session._room.slug,
+                        },
+                        component="session",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "session.turn_status_submitted_broadcast_failed error=%s", exc
+                    )
             if barrier_fired:
                 # Barrier just fired on this submission — emit before the
                 # dispatch CAS so a failed dispatch still leaves the
