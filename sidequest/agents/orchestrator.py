@@ -52,7 +52,7 @@ from sidequest.agents.prompt_framework.types import (
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.npc_pool import NpcPoolMember
-from sidequest.game.session import GameSnapshot, Npc, NpcRegistryEntry, PartyPeer
+from sidequest.game.session import GameSnapshot, NarrativeEntry, Npc, NpcRegistryEntry, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
@@ -63,6 +63,7 @@ from sidequest.telemetry.leak_audit import audit_canonical_prose
 from sidequest.telemetry.phase_timing import PhaseTimings
 from sidequest.telemetry.spans import (
     orchestrator_process_action_span,
+    recent_narrative_context_injected_span,
     turn_agent_llm_inference_span,
 )
 
@@ -74,6 +75,17 @@ logger = logging.getLogger(__name__)
 
 NARRATOR_MODEL: str = "opus"
 SOFT_PROMPT_BUDGET_BYTES = 2_000_000  # ~500K tokens, half of Opus 4.7's 1M window (ADR-098)
+
+# Recency-zone narrative-window tunables (Story 49-1).
+# K=4 = 2 player turns + 2 narrator turns. Cap (not floor): any non-empty
+# window registers the section with all available entries — partial windows
+# on turns 1-3 of a fresh save still ride into Recency.
+# PER_ENTRY_CAP_BYTES bounds a single entry's rendered content; oversized
+# entries are truncated and tagged with TRUNCATION_MARKER so the cut is
+# visible on the GM panel (Sebastien) and to anyone debugging a save (Keith).
+RECENT_NARRATIVE_WINDOW_K: int = 4
+RECENT_NARRATIVE_PER_ENTRY_CAP: int = 2048
+RECENT_NARRATIVE_TRUNCATION_MARKER: str = "[truncated]"
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +590,14 @@ class TurnContext:
     recent_body_mentions: Any = field(default_factory=list)  # deque[str] or list[str]
     quest_anchors: list[str] = field(default_factory=list)
 
+    # Recent narrative-log window (Recency zone, Story 49-1).
+    # Last K=4 narrative_log entries (two player turns + two narrator turns),
+    # populated by _build_turn_context from the live snapshot. Rendered as a
+    # high-attention prose block by build_narrator_prompt to give the narrator
+    # the recent-narration context that ADR-098 lost when --resume was dropped.
+    # Empty list = section not registered (zero-byte-leak).
+    recent_narrative_log: list[NarrativeEntry] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -735,6 +755,33 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers (ContextBuilder equivalent — inlined per spec)
 # ---------------------------------------------------------------------------
+
+
+def _render_recent_narrative_window(entries: list[NarrativeEntry]) -> str:
+    """Render the Recency-zone narrative window as readable prose.
+
+    Each entry becomes ``[Round N — author]\\n<content>`` (no JSON keys),
+    blocks joined by blank lines. Content longer than
+    :data:`RECENT_NARRATIVE_PER_ENTRY_CAP` is truncated and tagged with
+    :data:`RECENT_NARRATIVE_TRUNCATION_MARKER` so the cut is visible to
+    anyone reading the prompt (Sebastien on the GM panel, Keith debugging
+    a save). Truncation keeps the entry head so the early prose — the part
+    most likely to set scene state — survives.
+
+    Sole rendering path for ``recent_narrative_context`` — the body
+    returned here is the body registered and the body counted for the
+    OTEL span (no-lie invariant).
+    """
+    blocks: list[str] = []
+    for e in entries:
+        content = e.content
+        if len(content) > RECENT_NARRATIVE_PER_ENTRY_CAP:
+            content = (
+                content[:RECENT_NARRATIVE_PER_ENTRY_CAP]
+                + f" … {RECENT_NARRATIVE_TRUNCATION_MARKER}"
+            )
+        blocks.append(f"[Round {e.round} — {e.author}]\n{content}")
+    return "\n\n".join(blocks)
 
 
 def _build_verbosity_section(verbosity: str) -> str:
@@ -1595,6 +1642,63 @@ class Orchestrator:
             ),
         )
 
+        # Recent-narrative window (Recency zone, Story 49-1).
+        # ADR-098 dropped --resume; the narrator lost its conversational
+        # history because narrative_log lived in the Valley-zone game_state
+        # JSON dump. This section restores the last K (default 4) entries
+        # as readable prose in high-attention Recency — alongside
+        # player_action — so turn-N prose stays consistent with
+        # turn-(N-1) (2026-05-11 Glenross gender flip, secateurs-set-
+        # down-twice).
+        #
+        # K is a CAP, not a floor: any non-empty window registers the
+        # section with all available entries. Turns 1-3 of a fresh save
+        # are exactly the scenario this story exists to fix — gating on
+        # >=K would re-create the regression on the early turns.
+        #
+        # Per-entry byte cap (RECENT_NARRATIVE_PER_ENTRY_CAP) bounds a
+        # single verbose narrator turn so it cannot eat the prompt
+        # budget on its own (Reviewer reproduced 40kB / 72kB shapes from
+        # 4×10kB entries — ADR-009 attention-zone collision with Late-
+        # zone Format guardrails). Truncated entries carry
+        # RECENT_NARRATIVE_TRUNCATION_MARKER so the cut is visible on
+        # the GM panel and in saved prompts.
+        #
+        # The span fires on EVERY narrator turn (including empty-log
+        # case with turn_count=0/total_tokens=0) so the GM panel can
+        # distinguish "injector engaged with nothing to inject" from
+        # "injector not wired" — matches the room.state_injected no-op-
+        # fire discipline. Truth invariant: section registered IFF
+        # (turn_count > 0 AND total_tokens > 0).
+        _recent_window = list(context.recent_narrative_log)[-RECENT_NARRATIVE_WINDOW_K:]
+        if _recent_window:
+            _recent_body = _render_recent_narrative_window(_recent_window)
+            _recent_turn_count = len(_recent_window)
+            _recent_total_tokens = max(1, len(_recent_body) // 4)
+        else:
+            _recent_body = ""
+            _recent_turn_count = 0
+            _recent_total_tokens = 0
+        with recent_narrative_context_injected_span(
+            turn_count=_recent_turn_count,
+            total_tokens=_recent_total_tokens,
+        ):
+            logger.info(
+                "orchestrator.recent_narrative_context_injected turn_count=%d total_tokens=%d",
+                _recent_turn_count,
+                _recent_total_tokens,
+            )
+        if _recent_body:
+            registry.register_section(
+                agent_name,
+                PromptSection.new(
+                    "recent_narrative_context",
+                    _recent_body,
+                    AttentionZone.Recency,
+                    SectionCategory.State,
+                ),
+            )
+
         # Narrator vocabulary (Late zone) — ADR-098: fires every turn
         registry.register_section(
             agent_name,
@@ -1788,14 +1892,12 @@ class Orchestrator:
             system_chars = sum(
                 len(s.content)
                 for s in sections
-                if not s.is_empty()
-                and default_bucket_for_section(s.name) == SectionBucket.System
+                if not s.is_empty() and default_bucket_for_section(s.name) == SectionBucket.System
             )
             user_chars = sum(
                 len(s.content)
                 for s in sections
-                if not s.is_empty()
-                and default_bucket_for_section(s.name) == SectionBucket.User
+                if not s.is_empty() and default_bucket_for_section(s.name) == SectionBucket.User
             )
 
             _pub(
@@ -2216,7 +2318,9 @@ class Orchestrator:
                     if attempt == 1:
                         logger.warning(
                             "narrator.transient_retry attempt=%d duration_ms=%d error=%s",
-                            attempt, elapsed_ms, e,
+                            attempt,
+                            elapsed_ms,
+                            e,
                         )
                         continue  # retry
                     logger.error("narrator.unrecoverable error=%s after retry", e)
@@ -2241,19 +2345,25 @@ class Orchestrator:
         if total <= SOFT_PROMPT_BUDGET_BYTES:
             return
         from sidequest.telemetry.watcher_hub import publish_event as _pub
+
         breakdown = [
-            {"name": s.name, "chars": len(s.content)}
-            for s in registry.registry(agent_name)
+            {"name": s.name, "chars": len(s.content)} for s in registry.registry(agent_name)
         ]
         logger.warning(
             "narrator.prompt_oversized total_bytes=%d budget=%d sections=%d",
-            total, SOFT_PROMPT_BUDGET_BYTES, len(breakdown),
+            total,
+            SOFT_PROMPT_BUDGET_BYTES,
+            len(breakdown),
         )
-        _pub("prompt_oversized", {
-            "total_bytes": total,
-            "budget": SOFT_PROMPT_BUDGET_BYTES,
-            "sections": breakdown,
-        }, component="orchestrator")
+        _pub(
+            "prompt_oversized",
+            {
+                "total_bytes": total,
+                "budget": SOFT_PROMPT_BUDGET_BYTES,
+                "sections": breakdown,
+            },
+            component="orchestrator",
+        )
 
     def _degraded_result(self, *, action: str, context: TurnContext) -> NarrationTurnResult:
         """Render the in-fiction stall on unrecoverable narrator failure."""
@@ -2281,7 +2391,8 @@ class Orchestrator:
         raw_response = response.text
         logger.info(
             "Claude CLI returned narration len=%d duration_ms=%d",
-            len(raw_response), elapsed_ms,
+            len(raw_response),
+            elapsed_ms,
         )
 
         with context.phase_timings.phase("narrator_extraction"):
@@ -2309,14 +2420,14 @@ class Orchestrator:
             if isinstance(bs_dict, dict):
                 logger.info(
                     "encounter.agent_beat_selection actor=%s beat_id=%s target=%r",
-                    bs_dict.get("actor"), bs_dict.get("beat_id"), bs_dict.get("target"),
+                    bs_dict.get("actor"),
+                    bs_dict.get("beat_id"),
+                    bs_dict.get("target"),
                 )
 
         npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
         beat_selections = [
-            BeatSelection.from_dict(d)
-            for d in extraction["beat_selections"]
-            if isinstance(d, dict)
+            BeatSelection.from_dict(d) for d in extraction["beat_selections"] if isinstance(d, dict)
         ]
 
         visual_scene: VisualScene | None = None
@@ -2336,18 +2447,26 @@ class Orchestrator:
             confrontation=extraction["confrontation"],
             beat_selections=beat_selections,
             npcs_present=npc_mentions,
-            items_gained=extraction["items_gained"] if isinstance(extraction["items_gained"], list) else [],
+            items_gained=extraction["items_gained"]
+            if isinstance(extraction["items_gained"], list)
+            else [],
             items_lost=extraction.get("items_lost", []),
             items_discarded=extraction.get("items_discarded", []),
             items_consumed=extraction.get("items_consumed", []),
             footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
-            quest_updates=extraction["quest_updates"] if isinstance(extraction["quest_updates"], dict) else {},
-            sfx_triggers=extraction["sfx_triggers"] if isinstance(extraction["sfx_triggers"], list) else [],
+            quest_updates=extraction["quest_updates"]
+            if isinstance(extraction["quest_updates"], dict)
+            else {},
+            sfx_triggers=extraction["sfx_triggers"]
+            if isinstance(extraction["sfx_triggers"], list)
+            else [],
             action_rewrite=action_rewrite,
             affinity_progress=extraction["affinity_progress"],
             gold_change=extraction["gold_change"],
             lore_established=extraction["lore_established"],
-            status_changes=extraction["status_changes"] if isinstance(extraction["status_changes"], list) else [],
+            status_changes=extraction["status_changes"]
+            if isinstance(extraction["status_changes"], list)
+            else [],
             magic_working=(
                 extraction["magic_working"]
                 if isinstance(extraction.get("magic_working"), dict)
@@ -2390,7 +2509,9 @@ class Orchestrator:
 
             logger.info(
                 "narrator.stateless_turn action=%r system_len=%d user_len=%d",
-                action, len(system_prompt), len(user_message),
+                action,
+                len(system_prompt),
+                len(user_message),
             )
 
             response, elapsed_ms = await self._invoke_with_retry_once(
@@ -2450,9 +2571,7 @@ def _resolve_world_items(genre: GenrePack, session: GameSnapshot) -> Any:
     Worlds without an ``items.yaml`` (the common case) yield None and
     the magic-context builder skips the reliquary section entirely.
     """
-    world_slug = getattr(session, "world_slug", None) or getattr(
-        session, "world_id", None
-    )
+    world_slug = getattr(session, "world_slug", None) or getattr(session, "world_id", None)
     if not world_slug:
         return None
     world = genre.worlds.get(world_slug) if hasattr(genre, "worlds") else None

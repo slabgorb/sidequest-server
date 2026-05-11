@@ -16,7 +16,11 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from sidequest.agents.orchestrator import NpcMention, TurnContext
+from sidequest.agents.orchestrator import (
+    RECENT_NARRATIVE_WINDOW_K,
+    NpcMention,
+    TurnContext,
+)
 from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.projection.envelope import MessageEnvelope
@@ -306,6 +310,14 @@ def _build_turn_context(
     handshake_delta = build_shared_world_delta(snapshot, room=room)
     merge_shared_delta_into_snapshot(snapshot, handshake_delta)
     state_summary_payload = json.loads(snapshot.model_dump_json())
+    # Story 49-1 — drop narrative_log from the Valley-zone state_summary
+    # JSON dump. The last K=4 entries now ride into the narrator prompt
+    # via the Recency-zone ``recent_narrative_context`` section (see
+    # orchestrator.build_narrator_prompt). Keeping the duplicate here
+    # would put the same prose in two zones — high-attention Recency
+    # AND decayed Valley — re-creating the attention-decay disease this
+    # story exists to cure.
+    state_summary_payload.pop("narrative_log", None)
     # Story 45-8 — when the gate is engaged, also redact non-self PCs
     # from the state_summary JSON. Without this redaction the canonical
     # party names ride into the narrator's <game_state> block via the
@@ -451,6 +463,7 @@ def _build_turn_context(
         quest_anchors=quest_anchors,
         pending_trope_context=pending_trope_context,
         active_trope_summary=active_trope_summary,
+        recent_narrative_log=list(snapshot.narrative_log[-RECENT_NARRATIVE_WINDOW_K:]),
     )
 
 
