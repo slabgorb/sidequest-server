@@ -445,7 +445,6 @@ def build_directive(
 def record_opening_played(
     *,
     opening_id: str,
-    narrator_session_id: str,
     turn_id: int,
 ) -> None:
     """Emit ``opening.played`` at first-turn consumption.
@@ -459,7 +458,6 @@ def record_opening_played(
         SPAN_OPENING_PLAYED,
         {
             "opening_id": opening_id,
-            "narrator_session_id": narrator_session_id,
             "turn_id": turn_id,
         },
     ):

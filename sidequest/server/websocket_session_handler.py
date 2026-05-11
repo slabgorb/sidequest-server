@@ -3974,8 +3974,6 @@ class WebSocketSessionHandler:
         if sd.opening_directive is not None:
             record_opening_played(
                 opening_id=getattr(sd, "_resolved_opening_id", None) or "<unknown>",
-                narrator_session_id=getattr(sd.orchestrator, "_narrator_session_id", None)
-                or "<unknown>",
                 turn_id=sd.snapshot.turn_manager.interaction,
             )
 

@@ -173,11 +173,12 @@ class SessionRoom:
     # Canonical narrator orchestrator (ADR-067 — single persistent narrator
     # session per slug). Each WS session bound to this room uses the
     # same Orchestrator so that two players acting on the same slug
-    # share one Claude --resume session, one ``_narrator_session_id``,
-    # and one consistent narration of the shared world. Without this,
-    # each player constructs their own Orchestrator at connect time and
-    # the system collapses into parallel solo games — see playtest
-    # 2026-04-26 "MP — players run as parallel solo games".
+    # share one consistent narration of the shared world. Turns are
+    # stateless (ADR-098) — no --resume flag, no session ID tracking.
+    # Without this room-level singleton, each player constructs their
+    # own Orchestrator at connect time and the system collapses into
+    # parallel solo games — see playtest 2026-04-26 "MP — players run
+    # as parallel solo games".
     _orchestrator: Orchestrator | None = field(default=None, repr=False)
     # ADR-036 Cinematic mode — round-level action buffer keyed by player_id.
     # Drained by the elected dispatcher when TurnManager.submit_input flips
