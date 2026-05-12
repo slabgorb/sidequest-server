@@ -35,7 +35,9 @@ def test_narrative_entry_uses_npc_encounter_log_tag() -> None:
 def test_scene_momentum_encounter_tag_unchanged() -> None:
     """The OTHER EncounterTag (game/encounter_tag.py — leverage/target/fleeting)
     is unaffected. This test pins the distinction so a future rename doesn't
-    silently merge the two types."""
+    silently merge the two types, and asserts the Wave-1 package-level alias
+    stays gone (regression guard for story 45-46)."""
+    import sidequest.game
     from sidequest.game.encounter_tag import EncounterTag as SceneMomentumTag
 
     tag = SceneMomentumTag(
@@ -48,3 +50,6 @@ def test_scene_momentum_encounter_tag_unchanged() -> None:
     )
     assert tag.text == "The floor is lava"
     assert tag.leverage == 2
+
+    # 45-46 regression guard: the package-level alias must stay removed.
+    assert not hasattr(sidequest.game, "EncounterTag")
