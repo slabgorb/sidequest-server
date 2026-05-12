@@ -115,13 +115,22 @@ def _npc_patches_for_available_humans(
     Mirrors :meth:`MonsterManual.format_nearby_npcs` selection logic:
 
     - Active NPCs whose ``activated_location`` overlaps ``current_location``
-      (substring either direction) — full-profile patch.
+      (substring either direction) — full-profile patch, stamped with
+      the explicit anchor location.
     - First :data:`_AVAILABLE_NPC_INJECT_LIMIT` Available NPCs — name-only
-      patch so the narrator can introduce them when it makes sense.
+      patch stamped with the party's ``current_location`` so the
+      projection layer's ``in_same_zone()`` matches them.
 
     Dormant NPCs are skipped — same exclusion as the Rust formatter.
+
+    Playtest 2026-05-11 regression: prior versions left ``location=None``
+    on every patch, which silently masked every co-located target from
+    ``in_same_zone()`` and gave the narrator ``npcs_present=0`` for the
+    whole dive. Blank ``current_location`` (pre-bind / pre-chargen) is
+    kept as None — there's no meaningful zone to stamp.
     """
     loc_lower = (current_location or "").lower()
+    fallback_location = current_location or None
 
     patches: list[NpcPatch] = []
 
@@ -130,28 +139,30 @@ def _npc_patches_for_available_humans(
             continue
         anchor = npc.activated_location
         if anchor is None:
-            patches.append(_human_patch(npc))
+            patches.append(_human_patch(npc, location=fallback_location))
             continue
         anchor_lower = anchor.lower()
         if loc_lower and (anchor_lower in loc_lower or loc_lower in anchor_lower):
-            patches.append(_human_patch(npc))
+            patches.append(_human_patch(npc, location=anchor))
 
     available = [n for n in manual.npcs if n.state == EntryState.AVAILABLE][
         :_AVAILABLE_NPC_INJECT_LIMIT
     ]
     for npc in available:
-        patches.append(_human_patch(npc))
+        patches.append(_human_patch(npc, location=fallback_location))
 
     return patches
 
 
-def _human_patch(npc: Any) -> NpcPatch:
+def _human_patch(npc: Any, *, location: str | None) -> NpcPatch:
     """Build an :class:`NpcPatch` for a human Manual NPC.
 
     Pulls flavor fields (personality summary, dialogue quirks) from the
     namegen ``data`` blob but does NOT set creature fields — the
     materializer defaults disposition to 0 (neutral) for non-creature
-    patches.
+    patches. ``location`` is the zone the projection should bind the NPC
+    to so ``in_same_zone()`` can match them; ``None`` is reserved for the
+    pre-bind / pre-chargen case where no meaningful zone exists yet.
     """
     data = npc.data if isinstance(npc.data, dict) else {}
     ocean_summary = data.get("ocean_summary") or None
@@ -176,11 +187,12 @@ def _human_patch(npc: Any) -> NpcPatch:
         description=description,
         personality=personality,
         role=npc.role or None,
+        location=location,
     )
 
 
 def _npc_patches_for_encounters(
-    manual: MonsterManual, in_combat: bool
+    manual: MonsterManual, in_combat: bool, current_location: str
 ) -> list[NpcPatch]:
     """Build creature patches from Available encounters.
 
@@ -189,24 +201,34 @@ def _npc_patches_for_encounters(
     real creatures the encounter intends.  Out of combat: cap at the
     first :data:`_OUT_OF_COMBAT_ENCOUNTER_LIMIT` encounters to avoid
     materializing eight monsters around a calm scene.
+
+    Stamps ``location=current_location`` on every creature patch so the
+    projection layer's ``in_same_zone()`` matches them (playtest
+    2026-05-11). Blank ``current_location`` keeps ``location=None`` —
+    there's no meaningful zone to bind to.
     """
     available = manual.available_encounters()
     if not available:
         return []
     limit = len(available) if in_combat else _OUT_OF_COMBAT_ENCOUNTER_LIMIT
+    creature_location = current_location or None
     patches: list[NpcPatch] = []
     for encounter in available[:limit]:
         enemies = encounter.data.get("enemies") if isinstance(encounter.data, dict) else None
         if not isinstance(enemies, list):
             continue
         for enemy in enemies:
-            patch = _creature_patch_from_enemy(enemy, tier=encounter.tier)
+            patch = _creature_patch_from_enemy(
+                enemy, tier=encounter.tier, location=creature_location
+            )
             if patch is not None:
                 patches.append(patch)
     return patches
 
 
-def _creature_patch_from_enemy(enemy: Any, *, tier: int) -> NpcPatch | None:
+def _creature_patch_from_enemy(
+    enemy: Any, *, tier: int, location: str | None
+) -> NpcPatch | None:
     """Translate one encountergen ``enemies[i]`` row into a creature patch.
 
     Required: ``name``.  The threat_level falls back to the encounter
@@ -252,6 +274,7 @@ def _creature_patch_from_enemy(enemy: Any, *, tier: int) -> NpcPatch | None:
         hp=hp,
         abilities=abilities or None,
         morale=morale,
+        location=location,
     )
 
 
@@ -277,11 +300,18 @@ def inject(
         return 0
 
     human_patches = _npc_patches_for_available_humans(manual, current_location)
-    creature_patches = _npc_patches_for_encounters(manual, in_combat)
+    creature_patches = _npc_patches_for_encounters(manual, in_combat, current_location)
     all_patches = human_patches + creature_patches
 
     available_npcs = len(manual.available_npcs())
     available_encounters = len(manual.available_encounters())
+
+    # Playtest 2026-05-11 lie-detector: count how many patches actually
+    # land with a bound location. Pre-fix this was always 0 (every patch
+    # had location=None) which silently masked every NPC from
+    # ``in_same_zone()``. Post-fix this matches ``len(all_patches)`` whenever
+    # ``current_location`` is meaningful.
+    patches_with_location = sum(1 for p in all_patches if p.location)
 
     with Span.open(
         SPAN_MONSTER_MANUAL_INJECTED,
@@ -292,6 +322,7 @@ def inject(
             "total_encounters": len(manual.encounters),
             "npcs_injected": len(human_patches),
             "creatures_injected": len(creature_patches),
+            "patches_with_location": patches_with_location,
             "in_combat": bool(in_combat),
             "location": current_location or "",
         },

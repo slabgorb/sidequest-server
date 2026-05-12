@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sidequest.audio.library_backend import LibraryBackend
 from sidequest.audio.models import AudioCue, AudioLane
 from sidequest.protocol.messages import AudioCuePayload
@@ -82,13 +84,28 @@ def build_audio_cue_payload(
 
 
 def _relative_to_backend(backend: LibraryBackend, cue: AudioCue) -> str | None:
-    """Resolve a cue through the backend and return a base-relative string,
-    or ``None`` when the backend can't resolve it."""
+    """Resolve a cue through the backend and return the wire-shape locator.
+
+    ``backend.resolve(cue)`` returns either an absolute URL (post genre-load,
+    the production shape per ``sidequest.genre.loader._resolve_audio_urls``)
+    or an absolute filesystem path (pre-load fixtures and tests that bypass
+    the loader). URLs flow through unchanged so ``_maybe_prefix``'s
+    startswith check correctly passes them through; filesystem paths get
+    their ``base_path`` prefix stripped so ``_maybe_prefix`` can re-prefix
+    through ``resolve_asset_url``.
+
+    The playtest 2026-05-11 doubled-URL regression came from
+    ``str((base / "https://x").resolve().relative_to(base))`` producing
+    ``"https:/x"`` (single slash, pathlib normalization) — that string
+    failed the ``startswith("https://")`` gate and got prepended again.
+    """
     resolved = backend.resolve(cue)
     if resolved is None:
         return None
+    if resolved.startswith(("http://", "https://")):
+        return resolved
     base = backend.base_path
     try:
-        return str(resolved.relative_to(base))
+        return str(Path(resolved).relative_to(base))
     except ValueError:
-        return str(resolved)
+        return resolved
