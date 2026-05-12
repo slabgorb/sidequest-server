@@ -21,13 +21,17 @@ refactors can't silently bypass the OTEL backend tag.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import importlib.util
 import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.request import Request
 
 import pytest
 
@@ -35,6 +39,7 @@ from sidequest.agents.claude_client import LlmClient
 from sidequest.agents.llm_factory import (
     ENV_BACKEND,
     ENV_OLLAMA_URL,
+    UnknownBackend,
     build_llm_client,
 )
 from sidequest.agents.ollama_client import (
@@ -94,13 +99,17 @@ def _chat_body(text: str = "ok") -> bytes:
 def _capture_http(
     responder: list[bytes],
     captured_bodies: list[dict[str, Any]] | None = None,
+    captured_requests: list[Request] | None = None,
     delay_s: float = 0.0,
-):
+) -> Callable[[Request], _FakeHttpResponse]:
     """Build a fake http_fn that records request bodies and returns a
     queued response. `responder` is consumed FIFO so each call gets the
-    next prepared payload."""
+    next prepared payload. Pass `captured_bodies` to inspect JSON payloads,
+    `captured_requests` to inspect URLs / headers."""
 
-    def fake(req) -> _FakeHttpResponse:
+    def fake(req: Request) -> _FakeHttpResponse:
+        if captured_requests is not None:
+            captured_requests.append(req)
         if captured_bodies is not None:
             captured_bodies.append(json.loads(req.data))
         payload = responder.pop(0) if responder else _chat_body()
@@ -131,7 +140,12 @@ def test_ac1_factory_ollama_send_stateless_roundtrips_end_to_end(
     """The narrator's canonical post-ADR-098 path is send_stateless.
     With SIDEQUEST_LLM_BACKEND=ollama, the factory must yield a client
     that completes a send_stateless call against a (mocked) Ollama
-    server and returns a ClaudeResponse tagged backend='ollama'."""
+    server, returns a ClaudeResponse tagged backend='ollama', AND
+    actually sends the system+user content over the wire — the test
+    captures the outbound `messages` array and asserts the merge contract
+    in ollama_client.py:178-186 (send_stateless folds system_prompt into
+    a single user-role message). Without this body check the test would
+    pass even if user_message were silently dropped."""
     monkeypatch.setenv(ENV_BACKEND, "ollama")
     monkeypatch.setenv(ENV_OLLAMA_URL, "http://localhost:11434")
 
@@ -139,15 +153,21 @@ def test_ac1_factory_ollama_send_stateless_roundtrips_end_to_end(
     assert isinstance(client, OllamaClient)
     assert isinstance(client, LlmClient)
 
+    captured_bodies: list[dict[str, Any]] = []
     # Inject the fake http function. The factory built OllamaClient with the
     # default http_fn, but we can swap the private slot for this test — it's
     # the documented dependency injection seam (see test_ollama_client.py).
-    client._http = _capture_http([_chat_body("narrator reply")])  # noqa: SLF001
+    client._http = _capture_http(  # noqa: SLF001
+        [_chat_body("narrator reply")],
+        captured_bodies=captured_bodies,
+    )
 
+    system_text = "You are a SideQuest narrator."
+    user_text = "The party enters the cave."
     response = asyncio.run(
         client.send_stateless(
-            system_prompt="You are a SideQuest narrator.",
-            user_message="The party enters the cave.",
+            system_prompt=system_text,
+            user_message=user_text,
             model="sonnet",
         )
     )
@@ -162,13 +182,39 @@ def test_ac1_factory_ollama_send_stateless_roundtrips_end_to_end(
     assert response.input_tokens == 7
     assert response.output_tokens == 5
 
+    # Verify the actual wire format. send_stateless merges system_prompt
+    # and user_message into a single user-role entry — no separate system
+    # message. Both texts must reach Ollama.
+    assert len(captured_bodies) == 1, (
+        f"send_stateless must result in exactly one HTTP call to /api/chat; "
+        f"got {len(captured_bodies)} call(s)"
+    )
+    messages = captured_bodies[0]["messages"]
+    assert isinstance(messages, list) and len(messages) == 1, (
+        f"send_stateless must produce a single-entry messages array (system+user "
+        f"merged into one user message per ollama_client.py:178-186); got: {messages!r}"
+    )
+    only_message = messages[0]
+    assert only_message["role"] == "user", (
+        f"merged stateless message must use role='user' (system text is folded "
+        f"into the user prompt); got role={only_message['role']!r}"
+    )
+    assert system_text in only_message["content"], (
+        f"system_prompt content must reach Ollama as part of the merged user "
+        f"message; got content={only_message['content']!r}"
+    )
+    assert user_text in only_message["content"], (
+        f"user_message content must reach Ollama; got content={only_message['content']!r}"
+    )
+
 
 def test_ac1_factory_ollama_send_with_session_supports_multi_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LocalDM and any future stateful caller use send_with_session.
-    Two consecutive turns must produce a session_id on turn 1 and
-    replay full history on turn 2."""
+    """Any future stateful caller uses send_with_session (the LocalDM
+    preprocessor — historically the in-tree stateful consumer — is dormant
+    per the 2026-04-28 spec). Two consecutive turns must produce a
+    session_id on turn 1 and replay full history on turn 2."""
     monkeypatch.setenv(ENV_BACKEND, "ollama")
 
     client = build_llm_client()
@@ -214,15 +260,47 @@ def test_ac1_factory_default_ollama_url_when_env_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With SIDEQUEST_LLM_BACKEND=ollama but SIDEQUEST_OLLAMA_URL unset,
-    the factory must point at the DEFAULT_OLLAMA_URL constant — not at
-    some hardcoded duplicate. Regression guard against silent URL drift."""
+    HTTP requests must target DEFAULT_OLLAMA_URL — not a hardcoded duplicate.
+    Asserts observable behavior (the URL actually sent over the wire),
+    not internal storage form, so a refactor that normalises the URL at
+    call time instead of construction time would not falsely break."""
     monkeypatch.setenv(ENV_BACKEND, "ollama")
     monkeypatch.delenv(ENV_OLLAMA_URL, raising=False)
 
     client = build_llm_client()
     assert isinstance(client, OllamaClient)
-    assert client._base_url == DEFAULT_OLLAMA_URL.rstrip("/"), (  # noqa: SLF001
-        "factory must use DEFAULT_OLLAMA_URL when env unset, not a duplicate literal"
+
+    captured_requests: list[Request] = []
+    client._http = _capture_http(  # noqa: SLF001
+        [_chat_body("ok")],
+        captured_requests=captured_requests,
+    )
+    asyncio.run(
+        client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet")
+    )
+
+    assert len(captured_requests) == 1
+    full_url = captured_requests[0].full_url
+    assert full_url.startswith(DEFAULT_OLLAMA_URL.rstrip("/")), (
+        f"factory must route HTTP calls to DEFAULT_OLLAMA_URL when env unset; "
+        f"got full_url={full_url!r}"
+    )
+
+
+def test_ac1_factory_raises_unknown_backend_on_bad_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The factory's no-silent-fallback guarantee: an unrecognised
+    SIDEQUEST_LLM_BACKEND value must raise UnknownBackend rather than
+    falling through to a default. This pins the loud-failure contract
+    in llm_factory.py:27-29 against future "helpful" defaulting."""
+    monkeypatch.setenv(ENV_BACKEND, "groq")
+    with pytest.raises(UnknownBackend) as exc_info:
+        build_llm_client()
+    # The error message must name the offending value so the operator can
+    # debug the env without re-reading source.
+    assert "groq" in str(exc_info.value), (
+        f"UnknownBackend should name the rejected value; got {exc_info.value!r}"
     )
 
 
@@ -234,20 +312,24 @@ def test_ac1_factory_default_ollama_url_when_env_unset(
 def test_wiring_create_app_default_client_factory_is_build_llm_client() -> None:
     """`create_app` must default `claude_client_factory` to
     `build_llm_client` so production deployments honour
-    SIDEQUEST_LLM_BACKEND without manual factory injection. If this
-    binding regresses, the env-var would silently do nothing in prod."""
-    from sidequest.server import app as app_module
+    SIDEQUEST_LLM_BACKEND without manual factory injection.
 
-    # Source-level check: the import name is the resolved default. Reading
-    # the source pins it as the wire (an introspected default is harder
-    # since the resolution happens inside create_app's body, not in its
-    # signature).
-    src = Path(app_module.__file__).read_text(encoding="utf-8")
-    assert "from sidequest.agents.llm_factory import build_llm_client" in src, (
-        "server.app must import build_llm_client"
-    )
-    assert "else build_llm_client" in src, (
-        "server.app.create_app must default claude_client_factory to build_llm_client"
+    Behavioural wiring check: build the FastAPI app with no factory arg
+    and verify the resolved default on `app.state` is *the same object*
+    as `build_llm_client`. Per CLAUDE.md "Verify Wiring, Not Just
+    Existence" — an `is` identity check on the resolved attribute beats
+    any source-text grep because a refactor that satisfied the string
+    while inlining a different callable would slip past, but cannot
+    slip past `is`.
+    """
+    from sidequest.agents.llm_factory import build_llm_client as factory_under_test
+    from sidequest.server.app import create_app
+
+    app = create_app()
+    resolved = app.state.claude_client_factory
+    assert resolved is factory_under_test, (
+        f"create_app() must store build_llm_client on app.state.claude_client_factory "
+        f"when no factory arg is supplied; got {resolved!r}"
     )
 
 
@@ -256,9 +338,14 @@ def test_wiring_create_app_default_client_factory_is_build_llm_client() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _find_span(exporter, name: str):
+def _find_span(exporter: Any, name: str) -> Any | None:
     """Return the first finished span matching `name` from the in-memory
-    exporter. Returns None if none found."""
+    exporter. Returns None if none found.
+
+    `exporter` is the OTEL `InMemorySpanExporter`; declared as `Any` to
+    avoid importing the SDK type at module load (the fixture already
+    pulls it). Return type is `ReadableSpan | None` for the same reason.
+    """
     for span in exporter.get_finished_spans():
         if span.name == name:
             return span
@@ -356,10 +443,15 @@ def test_ac3_span_records_request_duration_observable_via_otel(
     assert span is not None
     duration_ns = span.end_time - span.start_time
     duration_s = duration_ns / 1_000_000_000
-    assert duration_s >= delay * 0.5, (
+    # Floor of delay * 0.8 — tight enough to catch a span that closed before
+    # the blocking call returned (an instrumentation-placement bug), still
+    # tolerant of scheduler jitter. A loose floor (e.g. delay * 0.5) would
+    # pass with quarter-elapsed timing, defeating the regression-guard intent.
+    assert duration_s >= delay * 0.8, (
         f"span duration {duration_s:.3f}s must reflect the simulated "
-        f"network delay of {delay:.3f}s — half-delay floor allows for "
-        f"timer resolution and async scheduling slop"
+        f"network delay of {delay:.3f}s within scheduler jitter (floor: "
+        f"{delay * 0.8:.3f}s); span may have closed before the blocking "
+        f"call completed."
     )
     # Sanity ceiling: not absurdly long
     assert duration_s < 5.0, (
@@ -402,6 +494,91 @@ def test_ac3_latency_comparison_script_exists_and_is_invocable() -> None:
     assert "latency" in result.stdout.lower() or "latency" in result.stderr.lower(), (
         f"{script} --help should describe the latency comparison; got: {result.stdout!r}"
     )
+
+
+def _load_latency_script() -> Any:
+    """Import `ollama_latency_check.py` as a module by file path so we
+    can call its `main()` function in-process. The script lives in
+    `sidequest-server/scripts/`, which is not a Python package — using
+    importlib.util is the standard way to load a single .py file."""
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "sidequest-server" / "scripts" / "ollama_latency_check.py"
+    spec = importlib.util.spec_from_file_location(
+        "_test_ollama_latency_check", script_path
+    )
+    assert spec is not None and spec.loader is not None, (
+        f"could not load script spec for {script_path}"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_ac3_script_imports_build_llm_client_at_module_top_level() -> None:
+    """Per CLAUDE.md "No Silent Fallbacks": a missing or broken
+    `sidequest` package install must surface AT SCRIPT LOAD, not be
+    deferred past --help. The `build_llm_client` import must live at
+    module top level — never inside a function body — so a partial venv
+    cannot pass --help and only fail later inside `_measure_one_call`.
+
+    Static check: parse the script with ast and verify the
+    `from sidequest.agents.llm_factory import ...` ImportFrom node is a
+    direct child of the Module body, not nested inside a FunctionDef or
+    AsyncFunctionDef.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "sidequest-server" / "scripts" / "ollama_latency_check.py"
+    src = script_path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    sidequest_imports = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom)
+        and n.module is not None
+        and n.module.startswith("sidequest.")
+    ]
+    assert sidequest_imports, (
+        f"latency-check script must import from sidequest.* at least once; "
+        f"none found in {script_path}"
+    )
+
+    module_level = [n for n in sidequest_imports if any(stmt is n for stmt in tree.body)]
+    assert module_level, (
+        "latency-check script must import sidequest.* AT MODULE TOP LEVEL, not "
+        "inside a function body. Deferred imports mask ModuleNotFoundError past "
+        "--help, violating CLAUDE.md's No Silent Fallbacks rule. Move "
+        "`from sidequest.agents.llm_factory import build_llm_client` out of "
+        f"_measure_one_call() to the top-level imports block. File: {script_path}"
+    )
+
+
+def test_ac3_script_rejects_zero_or_negative_baseline_claude_s() -> None:
+    """A negative or zero `--baseline-claude-s` produces nonsensical
+    output (negative budget → guaranteed FAIL regardless of elapsed;
+    zero is short-circuited to float('inf') and silently produces a
+    bogus ratio). The script must validate the argument and exit loudly
+    via `argparse.error` (SystemExit) before reaching `send_stateless`.
+
+    This test exercises `main()` in-process with `pytest.raises` —
+    catching the argparse SystemExit. After Dev's fix, main() raises
+    SystemExit immediately on argparse error; before the fix, main()
+    proceeds to asyncio.run and returns 1 or 2 depending on Ollama
+    reachability (no exception raised), so the test fails.
+    """
+    module = _load_latency_script()
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main(["--baseline-claude-s", "-1.5"])
+    # argparse.error() conventionally exits with code 2.
+    assert exc_info.value.code != 0, (
+        f"argparse.error on negative baseline must exit non-zero; got "
+        f"{exc_info.value.code}"
+    )
+
+    # Same guard for zero.
+    with pytest.raises(SystemExit):
+        module.main(["--baseline-claude-s", "0"])
 
 
 # ---------------------------------------------------------------------------
@@ -515,4 +692,52 @@ def test_ac4_audit_outcome_documented_in_as_installed_spec() -> None:
     assert found_markers, (
         f"as-installed spec must contain an explicit AC4 audit conclusion. "
         f"Looked for any of: {conclusion_markers}. Spec at {spec} has none."
+    )
+
+
+def test_ac4_audit_outcome_notes_send_stateless_system_user_merge() -> None:
+    """The audit conclusion describes the `/api/chat` body shape for
+    `send_stateless`. The shape is technically `{"model", "messages", "stream"}`,
+    but the `messages` array is NOT the standard `[system, user]` two-role
+    structure — `send_stateless` (ollama_client.py:178-186) merges
+    system_prompt into a single combined string and passes it as one
+    user-role entry with `system_prompt=None`. A reader who skims the
+    audit and assumes a normal `[system, user]` shape will be surprised
+    by Ollama-specific behavior (some models weight system messages
+    differently from user content).
+
+    The audit doc must acknowledge this merge — otherwise the prose
+    over-claims fidelity to standard chat semantics.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    spec = (
+        repo_root
+        / "docs"
+        / "superpowers"
+        / "specs"
+        / "2026-05-06-local-qwen-code-editor-as-installed.md"
+    )
+    text = spec.read_text(encoding="utf-8")
+    # Look for either: an explicit "merge" / "merged" / "merges" reference
+    # in the AC4 section, or a parenthetical naming "single combined" /
+    # "single user" / "user-role entry" / "one user". Any of these phrases
+    # signals the merge has been documented.
+    merge_markers = [
+        "merges system_prompt",
+        "merge system_prompt",
+        "merged into",
+        "single user",
+        "one user-role",
+        "single combined",
+        "user-role entry",
+    ]
+    found = [m for m in merge_markers if m.lower() in text.lower()]
+    assert found, (
+        f"as-installed spec must note that send_stateless merges system_prompt "
+        f"into a single user-role message (not a standard [system, user] pair). "
+        f"Looked for any of: {merge_markers}. Spec at {spec} has none. "
+        f"Suggested addition (parenthetical for the /api/chat row): "
+        f"'(note: send_stateless merges system_prompt into the user message as a "
+        f"single combined string before calling send_with_session; the messages "
+        f"array therefore contains one user-role entry, not a system+user pair).'"
     )
