@@ -44,7 +44,6 @@ import pytest
 
 from sidequest.agents.claude_client import ClaudeClient
 from sidequest.agents.orchestrator import (
-    NarrationTurnResult,
     Orchestrator,
     TurnContext,
 )

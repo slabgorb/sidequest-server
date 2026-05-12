@@ -52,11 +52,10 @@ from sidequest.agents.prompt_framework.types import (
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.npc_pool import NpcPoolMember
-from sidequest.game.session import GameSnapshot, NarrativeEntry, Npc, NpcRegistryEntry, PartyPeer
+from sidequest.game.session import NarrativeEntry, Npc, NpcRegistryEntry, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
-from sidequest.genre.models.pack import GenrePack
 from sidequest.protocol.dice import RollOutcome
 from sidequest.protocol.dispatch import DispatchPackage, NarratorDirective
 from sidequest.telemetry.leak_audit import audit_canonical_prose
