@@ -41,4 +41,5 @@ class NpcPoolMember(BaseModel):
     provenance was lost."""
     drawn_from: str
     """Source tag: ``"name_generator"``, ``"world_authored"``,
-    ``"legacy_registry"``, ``"narrator_invented"``."""
+    ``"legacy_registry"``, ``"narrator_invented"``,
+    ``"dialogue_extraction"`` (Story 49-2)."""

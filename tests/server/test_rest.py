@@ -331,12 +331,16 @@ def test_debug_state_projects_saved_game(tmp_path):
     assert view["current_location"] == ""
     assert "Sangre River Ford" in view["discovered_regions"]
     # Wave 2A (story 45-47) migrates orphan ``npc_registry`` entries into
-    # ``npc_pool`` on load. The /api/debug/state projection reads the
-    # legacy ``npc_registry`` field, so a fresh-shape save with only a
-    # registry entry projects empty after the migration runs. Verifying
-    # both halves keeps the lie-detector wired up to the new structure
-    # while leaving the rest endpoint's legacy path documented.
-    assert view["npc_registry"] == []
+    # ``npc_pool`` on load. The /api/debug/state projection then surfaces
+    # both ``snap.npcs`` and ``snap.npc_pool`` under the legacy
+    # ``npc_registry`` wire field (rest.py:325-364), so the GM panel sees
+    # cast members regardless of which store they live in. El Paso must
+    # appear in the projection even though the in-memory snap had only a
+    # registry entry — because the on-load migration promoted him to the
+    # pool and the projection reads the pool.
+    assert any(entry["name"] == "El Paso" for entry in view["npc_registry"]), (
+        f"El Paso missing from /api/debug/state projection: {view['npc_registry']!r}"
+    )
     assert len(snap.npc_pool) == 0  # we constructed in-memory before save
     # Reload to assert post-migration shape (this is what the projection
     # actually reads).

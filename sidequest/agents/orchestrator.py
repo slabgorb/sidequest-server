@@ -1642,6 +1642,60 @@ class Orchestrator:
             ),
         )
 
+        # Story 49-2 — NPC extraction constraint (Recency zone Guardrail).
+        # Paired with the server-side prose-only auto-minter
+        # (sidequest.server.session_helpers._auto_mint_prose_only_npcs).
+        # 2026-05-11 Glenross narrator wrote dialogue about Father in
+        # detail ("He's through the back passage", "Mrs. Gow laid him
+        # after", "set the secateurs down on the blotter") but emitted
+        # npcs_present covering only Reverend Murchison + the pinafore
+        # girl. Father lived only in prose. Turn 6 then invented "the
+        # wee one's mother / her" with no roster constraint to refuse.
+        #
+        # The extraction rule lives in the System-zone schema block but
+        # attention has decayed there by turn 20+. Same disease as
+        # confrontation_trigger_constraint above; same cure: restate the
+        # rule per-turn in Recency-zone Guardrail attention. The
+        # server-side auto-minter is the post-hoc safety net; this
+        # section is the narration-time prevention.
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "npc_extraction_constraint",
+                (
+                    "<npc-extraction>\n"
+                    "Any person named or role-named in this turn's "
+                    "prose — including patients, parents, children, "
+                    "siblings, and recurring townsfolk — MUST appear "
+                    "in ``npcs_present``. If your prose names "
+                    "``Father``, ``Mother``, ``the doctor``, ``the "
+                    "Reverend``, ``Mrs. <Name>``, ``Mr. <Name>``, "
+                    "``Dr. <Name>``, or any other role-named or "
+                    "honorific-named individual, they MUST be emitted "
+                    "with a ``name``, ``role``, and ``pronouns`` in "
+                    "``npcs_present`` — even if they don't speak this "
+                    "turn, even if they're only mentioned in passing.\n"
+                    "Patients on a sickbed count. Parents at a hearth "
+                    "count. Children at a doorway count. Siblings in "
+                    "the next room count. The grieving widow, the "
+                    "stable-boy holding the lantern, the apothecary's "
+                    "apprentice — all count.\n"
+                    "This is how the roster stays consistent across "
+                    "turns. A name or role mentioned only in prose, "
+                    "never emitted in ``npcs_present``, is invisible "
+                    "to the next turn's reasoning — and the gap "
+                    "invites a slip (gender flip, role flip, name "
+                    "drift). The server runs a catch-loop that auto-"
+                    "mints prose-only first-mentions, but the catch-"
+                    "loop is a safety net, not the source of truth — "
+                    "you are."
+                    "\n</npc-extraction>"
+                ),
+                AttentionZone.Recency,
+                SectionCategory.Guardrail,
+            ),
+        )
+
         # Recent-narrative window (Recency zone, Story 49-1).
         # ADR-098 dropped --resume; the narrator lost its conversational
         # history because narrative_log lived in the Valley-zone game_state

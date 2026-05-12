@@ -110,6 +110,47 @@ SPAN_ROUTES[SPAN_NPC_RECURRING_PRESENCE_MISSED] = SpanRoute(
     },
 )
 
+# Story 49-2: prose-only auto-mint — fires when narrator names a person via
+# role (Father, mother, the doctor, etc.) or honorific (Mrs. <Name>) in
+# narration prose but omits them from npcs_present. Distinct from
+# npc.auto_registered (which fires for structured-patch mints) so the GM
+# panel can tell which path minted any given NPC.
+SPAN_NPC_AUTO_MINTED_FROM_PROSE = "npc.auto_minted_from_prose"
+SPAN_ROUTES[SPAN_NPC_AUTO_MINTED_FROM_PROSE] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "auto_minted_from_prose",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "pronouns": (span.attributes or {}).get("pronouns", ""),
+        "source": (span.attributes or {}).get("source", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
+# Story 49-2 (Reviewer rework): prose-only auto-mint skip path — fires when
+# the auto-minter declines to mint a role/honorific because pronouns are
+# ambiguous or because a gender-paired role conflict exists in the roster.
+# Required by CLAUDE.md OTEL Observability Principle so the GM panel can
+# see when the system bites its tongue. The ``reason`` attribute is the
+# discriminator: ``ambiguous_pronouns_role`` / ``ambiguous_pronouns_
+# honorific`` / ``gender_paired_conflict``.
+SPAN_NPC_AUTO_MINT_SKIPPED = "npc.auto_mint_skipped"
+SPAN_ROUTES[SPAN_NPC_AUTO_MINT_SKIPPED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "auto_mint_skipped",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "reason": (span.attributes or {}).get("reason", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 # Story 45-21: combat-stats write into npc_registry entry.
 # Fired when an encounter handshake (or other combat-stats emit) publishes
 # HP/max_hp into a registry entry so HP-check subsystems can see real data
@@ -280,6 +321,89 @@ def npc_reinvented_span(
         **attrs,
     }
     with Span.open(SPAN_NPC_REINVENTED, attributes, tracer_override=_tracer) as span:
+        yield span
+
+
+@contextmanager
+def npc_auto_minted_from_prose_span(
+    *,
+    npc_name: str,
+    role: str,
+    pronouns: str,
+    source: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 49-2: emitted when the prose-only auto-minter appends a
+    ``NpcPoolMember`` because the narrator named a person via role or
+    honorific in this turn's prose but omitted them from
+    ``npcs_present``.
+
+    Distinct from ``npc.auto_registered`` (which fires for
+    structured-patch mints via ``_apply_npc_mentions`` step 3). This
+    split lets the GM panel filter "narrator-extracted" vs
+    "server-extracted" first-mention NPCs.
+
+    ``source`` labels the extraction provenance — currently always
+    ``"dialogue_extraction"``; no other value is currently produced.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "role": role,
+        "pronouns": pronouns,
+        "source": source,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_AUTO_MINTED_FROM_PROSE,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def npc_auto_mint_skipped_span(
+    *,
+    npc_name: str,
+    role: str,
+    reason: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 49-2 (Reviewer rework): emitted when the auto-minter declines
+    to mint a role/honorific from prose. Distinct from
+    ``npc.auto_minted_from_prose`` (the success span) so the GM panel
+    can show mints vs declines as separate streams.
+
+    ``reason`` discriminates the skip cause:
+    - ``ambiguous_pronouns_role`` — bare-role mention with zero or
+      conflicting subject pronouns in the local window.
+    - ``ambiguous_pronouns_honorific`` — honorific (Mrs. Gow, Mr. Hodge,
+      etc.) with no clean pronoun signal.
+    - ``gender_paired_conflict`` — bare-role mention blocked because
+      the paired-opposite role is already in the roster (e.g. Mother
+      blocked when Father is in pool; the Glenross turn-6 scenario).
+
+    ``severity="warning"`` so the WatcherSpanProcessor renders this as
+    a soft alert (parallel to ``npc_recurring_presence_missed_span``).
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "role": role,
+        "reason": reason,
+        "turn_number": turn_number,
+        "severity": "warning",
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_AUTO_MINT_SKIPPED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
         yield span
 
 

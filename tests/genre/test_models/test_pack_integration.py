@@ -63,7 +63,7 @@ def _load(path: Path) -> Any:
 def test_pack_meta_deserializes() -> None:
     meta = PackMeta.model_validate(_load(CC / "pack.yaml"))
     assert meta.name == "Caverns & Claudes"
-    assert meta.version == "1.0.0"
+    assert meta.version  # semver string; content release tags bump this
     assert meta.recommended_players is not None
     assert meta.recommended_players.min == 2
     assert meta.recommended_players.max == 6

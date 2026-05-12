@@ -66,7 +66,7 @@ def test_hub_endpoint_returns_world_save_and_dungeons(
         tmp_path,
         "cnc-test",
         "caverns_and_claudes",
-        "caverns_three_sins",
+        "caverns_sunden",
     )
     store.save_world_save(
         WorldSave(
@@ -82,13 +82,20 @@ def test_hub_endpoint_returns_world_save_and_dungeons(
     body = r.json()
     assert body["slug"] == "cnc-test"
     assert body["genre_slug"] == "caverns_and_claudes"
-    assert body["world_slug"] == "caverns_three_sins"
+    assert body["world_slug"] == "caverns_sunden"
     dungeons = body["available_dungeons"]
-    assert [d["slug"] for d in dungeons] == ["grimvault", "horden", "mawdeep"]
+    # Post–Sünden fold (2026-05-10): the three dungeons are cartography
+    # regions on caverns_sunden tagged ``terrain: dungeon``. Endpoint
+    # returns them alphabetically by region slug.
+    assert [d["slug"] for d in dungeons] == [
+        "grimvault_descent",
+        "horden_warren",
+        "mawdeep_gullet",
+    ]
     assert {d["slug"]: d["sin"] for d in dungeons} == {
-        "grimvault": "pride",
-        "horden": "greed",
-        "mawdeep": "gluttony",
+        "grimvault_descent": "pride",
+        "horden_warren": "greed",
+        "mawdeep_gullet": "gluttony",
     }
     assert all(d["wounded"] is False for d in dungeons)
     assert body["world_save"]["currency"] == 33
@@ -105,11 +112,11 @@ def test_hub_endpoint_marks_wounded_dungeons(
         tmp_path,
         "cnc-wound",
         "caverns_and_claudes",
-        "caverns_three_sins",
+        "caverns_sunden",
     )
     store.save_world_save(
         WorldSave(
-            dungeon_wounds={"grimvault": True},
+            dungeon_wounds={"grimvault_descent": True},
         )
     )
     store.close()
@@ -117,9 +124,9 @@ def test_hub_endpoint_marks_wounded_dungeons(
     r = content_client.get("/api/games/cnc-wound/hub")
     assert r.status_code == 200
     dungeons = {d["slug"]: d for d in r.json()["available_dungeons"]}
-    assert dungeons["grimvault"]["wounded"] is True
-    assert dungeons["horden"]["wounded"] is False
-    assert dungeons["mawdeep"]["wounded"] is False
+    assert dungeons["grimvault_descent"]["wounded"] is True
+    assert dungeons["horden_warren"]["wounded"] is False
+    assert dungeons["mawdeep_gullet"]["wounded"] is False
 
 
 def test_hub_endpoint_fresh_hub_save_returns_empty_world_save(
@@ -132,7 +139,7 @@ def test_hub_endpoint_fresh_hub_save_returns_empty_world_save(
         tmp_path,
         "cnc-fresh",
         "caverns_and_claudes",
-        "caverns_three_sins",
+        "caverns_sunden",
     ).close()
     r = content_client.get("/api/games/cnc-fresh/hub")
     assert r.status_code == 200
@@ -140,4 +147,8 @@ def test_hub_endpoint_fresh_hub_save_returns_empty_world_save(
     assert body["world_save"]["roster"] == []
     assert body["world_save"]["currency"] == 0
     assert body["world_save"]["delve_count"] == 0
-    assert [d["slug"] for d in body["available_dungeons"]] == ["grimvault", "horden", "mawdeep"]
+    assert [d["slug"] for d in body["available_dungeons"]] == [
+        "grimvault_descent",
+        "horden_warren",
+        "mawdeep_gullet",
+    ]

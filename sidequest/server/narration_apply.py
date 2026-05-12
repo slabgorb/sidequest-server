@@ -53,6 +53,7 @@ from sidequest.server.dispatch.sealed_letter import (
     resolve_sealed_letter_lookup,
 )
 from sidequest.server.session_helpers import (
+    _auto_mint_prose_only_npcs,
     _detect_missed_recurring_npcs,
     _detect_npc_identity_drift,
 )
@@ -2229,6 +2230,20 @@ def _apply_narration_result_to_snapshot(
     # from npcs_present. Soft warning span (no exception) — the GM panel
     # surfaces the miss for human follow-up.
     _detect_missed_recurring_npcs(
+        snapshot=snapshot,
+        narration_text=result.narration or "",
+        emitted_mentions=list(result.npcs_present),
+        turn_num=turn_num,
+    )
+
+    # Story 49-2: auto-mint NPCs the narrator named in prose via role
+    # (Father, mother, the doctor, ...) or honorific (Mrs. Gow, Dr.
+    # Sallow, ...) but omitted from npcs_present. Runs AFTER the
+    # recurring-presence detector so known names hit the 45-53 detector
+    # first; this catches the FIRST-mention path. Side-effects only —
+    # appends NpcPoolMember(drawn_from="dialogue_extraction") and emits
+    # SPAN_NPC_AUTO_MINTED_FROM_PROSE per mint.
+    _auto_mint_prose_only_npcs(
         snapshot=snapshot,
         narration_text=result.narration or "",
         emitted_mentions=list(result.npcs_present),

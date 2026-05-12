@@ -648,13 +648,22 @@ def create_rest_router() -> APIRouter:
         )
         genre_pack = load_genre_pack_cached(row.genre_slug, search_paths=search_paths)
         world = genre_pack.worlds.get(row.world_slug)
-        if world is None or not world.dungeons:
+        # Post–Sünden world shape (revert 51822a2 + re-fold 2026-05-10): dungeons
+        # are no longer a separate ``World.dungeons`` map — they are regions in
+        # ``world.cartography.regions`` tagged with ``terrain: dungeon``. The
+        # ``sin`` attribute rides as a Region extra (``Region.model_config = {"extra": "allow"}``).
+        dungeon_regions: dict[str, Any] = {}
+        if world is not None:
+            for region_slug, region in world.cartography.regions.items():
+                if (region.terrain or "").lower() == "dungeon":
+                    dungeon_regions[region_slug] = region
+        if world is None or not dungeon_regions:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "not_a_hub_world",
                     "world_slug": row.world_slug,
-                    "reason": "world has no dungeons",
+                    "reason": "world has no dungeon-terrain regions",
                 },
             )
 
@@ -662,10 +671,10 @@ def create_rest_router() -> APIRouter:
         available_dungeons = [
             {
                 "slug": dungeon_slug,
-                "sin": world.dungeons[dungeon_slug].config.sin,
+                "sin": getattr(region, "sin", "") or "",
                 "wounded": world_save.dungeon_wounds.get(dungeon_slug, False),
             }
-            for dungeon_slug in sorted(world.dungeons)
+            for dungeon_slug, region in sorted(dungeon_regions.items())
         ]
         return {
             "slug": slug,

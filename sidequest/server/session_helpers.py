@@ -23,6 +23,7 @@ from sidequest.agents.orchestrator import (
 )
 from sidequest.game.builder import humanize_snake_case
 from sidequest.game.creature_core import CreatureCore
+from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.session import (
     GameSnapshot,
@@ -42,6 +43,8 @@ from sidequest.protocol.messages import (
 )
 from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
+    npc_auto_mint_skipped_span,
+    npc_auto_minted_from_prose_span,
     npc_recurring_presence_missed_span,
     npc_reinvented_span,
     orchestrator_notorious_party_gate_span,
@@ -620,12 +623,7 @@ def _detect_missed_recurring_npcs(
     if not narration_text:
         return
 
-    # Build the PC-name skip set (case-folded).
-    pc_names = {
-        c.core.name.casefold()
-        for c in snapshot.characters
-        if getattr(getattr(c, "core", None), "name", None)
-    }
+    pc_names = _pc_name_skip_set(snapshot)
 
     # Build the emitted-name set (case-folded). Narrator emission, even
     # bare, suppresses the miss warning.
@@ -676,6 +674,384 @@ def _detect_missed_recurring_npcs(
                 turn_num,
                 last_seen_turn,
             )
+
+
+# Story 49-2: prose-only auto-mint vocabulary.
+#
+# Bare-role tokens — the token IS the public name when minting. The narrator
+# uses these as quasi-proper-nouns in dense prose ("Father lies pale", "the
+# wee one's mother kneels").
+_BARE_ROLE_PUBLIC_NAMES: dict[str, str] = {
+    "father": "Father",
+    "mother": "Mother",
+    "son": "Son",
+    "daughter": "Daughter",
+    "brother": "Brother",
+    "sister": "Sister",
+}
+
+# Article+role tokens — public name preserves the article form so the GM
+# panel surfaces them as ``the doctor`` rather than just ``doctor``.
+_ARTICLE_ROLE_PUBLIC_NAMES: dict[str, str] = {
+    "doctor": "the doctor",
+    "reverend": "the Reverend",
+    "constable": "the constable",
+    "priest": "the priest",
+    "physician": "the physician",
+    "midwife": "the midwife",
+    "innkeeper": "the innkeeper",
+    "magistrate": "the magistrate",
+}
+
+# Honorific patterns — ``Mrs. <Name>``, ``Mr. <Name>``, ``Dr. <Name>``,
+# ``Reverend <Name>``, ``Father <Name>``, ``Mother <Name>``, ``Captain
+# <Name>``, ``Sergeant <Name>``, ``Sir <Name>``, ``Lady <Name>``, ``Lord
+# <Name>``. The proper name must be Capitalized (``[A-Z][a-z]+``) so
+# common mid-sentence words don't false-match.
+#
+# NOTE: ``Father``/``Mother``/``Reverend`` overlap with bare-role tokens
+# in ``_BARE_ROLE_PUBLIC_NAMES`` / ``_ARTICLE_ROLE_PUBLIC_NAMES``. The
+# ``consumed_spans`` guard in Phase 2 of ``_auto_mint_prose_only_npcs``
+# prevents the bare-role scan from re-firing on positions already
+# matched by the honorific pattern. Without that guard, "Reverend
+# Murchison" would mint twice — once as the full honorific name, once
+# as the bare role.
+_HONORIFIC_PROPER_RE = re.compile(
+    r"\b(Mrs|Mr|Dr|Reverend|Father|Mother|Captain|Sergeant|Sir|Lady|Lord)\.?\s+([A-Z][a-z]+)\b"
+)
+
+# Subject pronouns by gender group — the disambiguator. Object pronouns
+# (him, her, them) and possessive pronouns (his, hers, their) are
+# intentionally NOT in this map; in dense prose those refer to
+# surrounding NPCs as often as to the role-mentioned one, and including
+# them mis-genders too freely (Glenross 2026-05-11 "Mrs. Gow laid him
+# after" — ``him`` is Father, not Mrs. Gow).
+_SUBJECT_PRONOUN_GROUPS: dict[str, tuple[str, ...]] = {
+    "he/him": ("he",),
+    "she/her": ("she",),
+    "they/them": ("they",),
+    "it/its": ("it",),
+}
+
+# Forward-only window after a role mention. Tuned so a one-clause-later
+# pronoun resolves cleanly while not reaching across a paragraph break to
+# steal a pronoun that belongs to a different antecedent.
+_AUTO_MINT_FORWARD_WINDOW = 50
+
+# Gender-paired roles — if one is in the roster (in any source), don't
+# auto-mint the other from prose. Defensive against the Glenross 2026-05-11
+# pattern: turn 5 narrator referenced Father in prose; turn 6 narrator
+# slipped and wrote "mother" with no name. Without this rule the
+# auto-minter would canonize the slip as a separate NPC. Limitation: in
+# legitimate scenes with BOTH parents named without proper names, the
+# second-listed bare role won't auto-mint (the narrator must emit it in
+# ``npcs_present`` or use a proper name).
+_GENDER_PAIRED_ROLES: dict[str, str] = {
+    "father": "mother",
+    "mother": "father",
+    "brother": "sister",
+    "sister": "brother",
+    "son": "daughter",
+    "daughter": "son",
+}
+
+# Bare-role token regexes — compiled once at module load. Auto-minter
+# runs on every narration turn; recompiling these 14 patterns per call
+# is wasted work. Keyed by the same role token used in
+# ``_BARE_ROLE_PUBLIC_NAMES`` / ``_ARTICLE_ROLE_PUBLIC_NAMES``.
+_BARE_ROLE_PATTERNS: dict[str, re.Pattern[str]] = {
+    role_token: re.compile(rf"\b{re.escape(role_token)}\b", re.IGNORECASE)
+    for role_token in (*_BARE_ROLE_PUBLIC_NAMES, *_ARTICLE_ROLE_PUBLIC_NAMES)
+}
+
+# Subject-pronoun token regexes — compiled once at module load
+# (parallel to ``_BARE_ROLE_PATTERNS``). ``_infer_pronouns_from_role_
+# context`` runs once per role/honorific mention per turn, so any
+# regex-recompilation in that hot path is wasted work.
+_SUBJECT_PRONOUN_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    group: tuple(re.compile(rf"\b{re.escape(tok)}\b") for tok in tokens)
+    for group, tokens in _SUBJECT_PRONOUN_GROUPS.items()
+}
+
+# Skip-reason taxonomy for the auto-minter. Each constant matches the
+# ``reason`` attribute on ``SPAN_NPC_AUTO_MINT_SKIPPED`` and lets the GM
+# panel filter by skip cause. Extracted from inline string literals
+# during verify-round-2 simplify so future skip reasons (e.g.
+# ``"pc_role_collision"``) get a single grep target instead of being
+# scattered across emit sites.
+_SKIP_REASON_PRONOUNS_HONORIFIC = "ambiguous_pronouns_honorific"
+_SKIP_REASON_PRONOUNS_ROLE = "ambiguous_pronouns_role"
+_SKIP_REASON_GENDER_PAIRED = "gender_paired_conflict"
+
+
+def _emit_auto_mint_skip(
+    *,
+    public_name: str,
+    role: str,
+    reason: str,
+    turn_num: int,
+    **extra_attrs: object,
+) -> None:
+    """Emit ``SPAN_NPC_AUTO_MINT_SKIPPED`` + a matching ``logger.warning``.
+
+    Centralizes the three skip emit sites in ``_auto_mint_prose_only_npcs``
+    (honorific-ambiguous, role-ambiguous, gender-paired-conflict). The
+    ``reason`` value (one of the ``_SKIP_REASON_*`` constants) drives
+    both the span attribute and the human-readable log explanation.
+    ``extra_attrs`` flows into the span (currently used for
+    ``paired_role`` on the gender-paired path).
+    """
+    if reason == _SKIP_REASON_GENDER_PAIRED:
+        explanation = (
+            "gender-paired role conflict; narrator may have slipped between "
+            "turns; not canonizing"
+        )
+    else:
+        explanation = (
+            "pronouns ambiguous in local window (no clean subject pronoun); "
+            "skipping mint rather than guessing"
+        )
+    with npc_auto_mint_skipped_span(
+        npc_name=public_name,
+        role=role,
+        reason=reason,
+        turn_number=turn_num,
+        **extra_attrs,
+    ):
+        logger.warning(
+            "npc.auto_mint_skipped name=%r role=%r turn=%d reason=%s — %s",
+            public_name,
+            role,
+            turn_num,
+            reason,
+            explanation,
+        )
+
+
+def _pc_name_skip_set(snapshot: GameSnapshot) -> set[str]:
+    """Return the case-folded set of PC names — the always-deny list for
+    NPC promotion. Shared by ``_detect_missed_recurring_npcs`` and
+    ``_auto_mint_prose_only_npcs`` (and any future NPC-detector
+    sibling). The MP joiner-orientation auto-narration playtest
+    2026-04-29 demonstrated why both detectors need an identical filter:
+    a narrator naming a PC must NEVER promote them into the NPC stores.
+    """
+    return {
+        c.core.name.casefold()
+        for c in snapshot.characters
+        if getattr(getattr(c, "core", None), "name", None)
+    }
+
+
+def _infer_pronouns_from_role_context(
+    narration_text: str, role_end: int
+) -> str | None:
+    """Return the pronoun group inferred from the local prose window after
+    a role mention, or ``None`` if pronouns are ambiguous.
+
+    Story 49-2 — pronoun inference for prose-only auto-mint. AC2 forbids
+    guessing: when the window contains zero subject pronouns, or subject
+    pronouns from two distinct gender groups, the caller must skip the
+    mint (warn + no span).
+
+    Forward-only window: pronouns BEFORE the role mention often refer to
+    different antecedents (the prior subject of the paragraph), so the
+    scanner restricts itself to text after ``role_end``. Object/possessive
+    pronouns are deliberately ignored — in dense prose ``him`` can refer
+    to a different on-scene actor than the role-mentioned one (the
+    Glenross 2026-05-11 ``Mrs. Gow laid him after`` where ``him`` is
+    Father, not Mrs. Gow).
+    """
+    hi = min(len(narration_text), role_end + _AUTO_MINT_FORWARD_WINDOW)
+    window = narration_text[role_end:hi].casefold()
+    seen_groups: list[str] = []
+    for group, patterns in _SUBJECT_PRONOUN_PATTERNS.items():
+        if any(p.search(window) for p in patterns):
+            seen_groups.append(group)
+    if len(seen_groups) == 1:
+        return seen_groups[0]
+    # Zero pronouns → no signal. Multiple genders → ambiguous. AC2: skip.
+    return None
+
+
+def _auto_mint_prose_only_npcs(
+    *,
+    snapshot: GameSnapshot,
+    narration_text: str,
+    emitted_mentions: list[NpcMention],
+    turn_num: int,
+) -> None:
+    """Story 49-2: server-side catch-loop for NPCs the narrator named in
+    prose but omitted from ``npcs_present``.
+
+    Sibling to ``_detect_missed_recurring_npcs`` (which warns about
+    KNOWN names that got skipped). This function handles the FIRST-mention
+    path — role-named or honorific-named individuals not yet in any store
+    (``snapshot.npcs``, ``snapshot.npc_pool``, ``emitted_mentions``).
+
+    Detection paths:
+      1. **Honorifics** (Mrs. <Name>, Mr. <Name>, Dr. <Name>, Reverend
+         <Name>, Father <Name>, Mother <Name>, Captain <Name>, Sergeant
+         <Name>, Sir <Name>, Lady <Name>, Lord <Name>) — capture the
+         full ``Title. Proper`` form as the public name. Father/Mother/
+         Reverend overlap with bare-role tokens; the consumed-span
+         tracker prevents Phase 2 from double-processing those positions.
+      2. **Bare roles** (Father, mother, the doctor, the Reverend, ...) —
+         the token IS the public name (with article for ``the doctor``-
+         style cases).
+
+    Pronoun inference (AC2): forward-window subject-pronoun scan via
+    ``_infer_pronouns_from_role_context``. Ambiguous → warn + skip; never
+    guess. Side-effect only: appends to ``snapshot.npc_pool`` and emits
+    ``SPAN_NPC_AUTO_MINTED_FROM_PROSE`` per mint (CLAUDE.md OTEL
+    Observability Principle — the GM panel must see what got minted).
+
+    Gender-paired role guard: if a mention's role has a paired-opposite
+    role already in the roster (mother↔father, brother↔sister,
+    son↔daughter), skip the mint. Prevents the auto-minter from
+    canonizing a narrator gender-flip slip (Glenross 2026-05-11 turn 6).
+    """
+    if not narration_text:
+        return
+
+    pc_names = _pc_name_skip_set(snapshot)
+
+    # Known-name and known-role skip sets, seeded from existing stores and
+    # the narrator's structured emission this turn.
+    known_names: set[str] = set()
+    known_roles: set[str] = set()
+    for m in emitted_mentions:
+        if m.name:
+            known_names.add(m.name.casefold())
+        if m.role:
+            known_roles.add(m.role.casefold())
+    for npc in snapshot.npcs:
+        if npc.core.name:
+            known_names.add(npc.core.name.casefold())
+    for member in snapshot.npc_pool:
+        if member.name:
+            known_names.add(member.name.casefold())
+        if member.role:
+            known_roles.add(member.role.casefold())
+
+    # Track positions matched by the honorific scan so the bare-role scan
+    # doesn't double-process them ("Reverend Murchison" → honorific match;
+    # the bare ``Reverend`` inside it must not also fire).
+    consumed_spans: list[tuple[int, int]] = []
+
+    def _mint(
+        *,
+        public_name: str,
+        role_token: str,
+        pronouns: str,
+    ) -> None:
+        snapshot.npc_pool.append(
+            NpcPoolMember(
+                name=public_name,
+                role=role_token or None,
+                pronouns=pronouns,
+                drawn_from="dialogue_extraction",
+            )
+        )
+        known_names.add(public_name.casefold())
+        if role_token:
+            known_roles.add(role_token.casefold())
+        with npc_auto_minted_from_prose_span(
+            npc_name=public_name,
+            role=role_token,
+            pronouns=pronouns,
+            source="dialogue_extraction",
+            turn_number=turn_num,
+        ):
+            logger.info(
+                "npc.auto_minted_from_prose name=%r role=%r pronouns=%r "
+                "source=dialogue_extraction turn=%d",
+                public_name,
+                role_token,
+                pronouns,
+                turn_num,
+            )
+
+    # Phase 1 — honorific + proper-name (Mrs. Gow, Mr. Hodge, Dr. Sallow).
+    # Each match is at most one mint; same honorific with the same proper
+    # name appearing twice in a turn does not double-mint (dedup by name).
+    for hm in _HONORIFIC_PROPER_RE.finditer(narration_text):
+        start, end = hm.span()
+        title = hm.group(1)
+        proper = hm.group(2)
+        public_name = f"{title}. {proper}"
+        cf_name = public_name.casefold()
+        # Always mark the span as consumed so the bare-role scan skips it.
+        consumed_spans.append((start, end))
+        if cf_name in pc_names or cf_name in known_names:
+            continue
+        pronouns = _infer_pronouns_from_role_context(narration_text, end)
+        if pronouns is None:
+            _emit_auto_mint_skip(
+                public_name=public_name,
+                role="",
+                reason=_SKIP_REASON_PRONOUNS_HONORIFIC,
+                turn_num=turn_num,
+            )
+            continue
+        # Honorifics carry no canonical role tag (Mrs./Mr./Dr. are titles,
+        # not roles). Role is None — narrator may refine via a later
+        # structured patch.
+        _mint(public_name=public_name, role_token="", pronouns=pronouns)
+
+    # Phase 2 — bare role tokens (Father, mother, the doctor, ...). Process
+    # each role at most once per turn; first matching occurrence wins.
+    # Patterns are pre-compiled at module load (``_BARE_ROLE_PATTERNS``).
+    all_role_names: dict[str, str] = {
+        **_BARE_ROLE_PUBLIC_NAMES,
+        **_ARTICLE_ROLE_PUBLIC_NAMES,
+    }
+    for role_token, public_name in all_role_names.items():
+        pattern = _BARE_ROLE_PATTERNS[role_token]
+        match = None
+        for candidate in pattern.finditer(narration_text):
+            c_start, c_end = candidate.span()
+            # Skip occurrences inside an honorific consumed-span (e.g.
+            # ``Reverend`` inside ``Reverend Murchison``).
+            if any(s <= c_start < e for s, e in consumed_spans):
+                continue
+            match = candidate
+            break
+        if match is None:
+            continue
+
+        cf_name = public_name.casefold()
+        cf_role = role_token.casefold()
+
+        # Dedup checks.
+        if cf_name in pc_names or cf_role in pc_names:
+            continue
+        if cf_name in known_names or cf_role in known_roles:
+            continue
+
+        # Gender-paired role conflict — refuse to canonize a slip.
+        paired = _GENDER_PAIRED_ROLES.get(cf_role)
+        if paired and paired in known_roles:
+            _emit_auto_mint_skip(
+                public_name=public_name,
+                role=role_token,
+                reason=_SKIP_REASON_GENDER_PAIRED,
+                turn_num=turn_num,
+                paired_role=paired,
+            )
+            continue
+
+        pronouns = _infer_pronouns_from_role_context(narration_text, match.end())
+        if pronouns is None:
+            _emit_auto_mint_skip(
+                public_name=public_name,
+                role=role_token,
+                reason=_SKIP_REASON_PRONOUNS_ROLE,
+                turn_num=turn_num,
+            )
+            continue
+
+        _mint(public_name=public_name, role_token=role_token, pronouns=pronouns)
 
 
 def _detect_npc_identity_drift(
