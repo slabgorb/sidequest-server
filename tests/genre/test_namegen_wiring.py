@@ -86,9 +86,6 @@ def synthetic_corpus_dir(tmp_path: Path) -> Path:
     _write_corpus(corpus / "ample.txt", 1500)
     _write_corpus(corpus / "thin.txt", 300)
     _write_corpus(corpus / "floor.txt", 50)
-    # build_from_culture reads names/ at corpus_dir.parent / "names",
-    # so create a sibling directory even though we don't use it here.
-    (tmp_path / "names").mkdir()
     return corpus
 
 
@@ -269,6 +266,43 @@ def test_sub_fail_corpus_raises_and_emits_fail_loud_span(
     assert attrs.get("word_count") == 50
     assert attrs.get("culture") == "Floor Test Culture"
     assert attrs.get("reason") == "below_floor"
+
+
+def test_names_file_resolves_in_corpus_dir(tmp_path: Path) -> None:
+    """``CultureSlot.names_file`` resolves directly under ``corpus_dir``.
+
+    Regression: an earlier resolver looked in ``corpus_dir.parent / 'names'``
+    and silently produced zero names for every culture that used
+    ``names_file:`` (the Victoria pack — 12 slots — and a Monster Manual
+    pregen that booted with ``npcs_after=0``). Pack authors put the
+    curated name lists in ``corpus/`` alongside Markov sources; the
+    resolver must follow the content.
+    """
+    from sidequest.genre.models.culture import Culture, CultureSlot
+    from sidequest.genre.names.generator import build_from_culture
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "people.txt").write_text(
+        "\n".join(["Alasdair", "Catriona", "Effie", "Hamish", "Iain"]),
+        encoding="utf-8",
+    )
+
+    culture = Culture(
+        name="Names File Culture",
+        summary="curated list culture",
+        description="curated list culture",
+        slots={
+            "given_name": CultureSlot(names_file="people.txt"),
+        },
+        person_patterns=["{given_name}"],
+    )
+
+    generator = build_from_culture(culture, corpus, random.Random(45028))
+    name = generator.generate_person()
+    assert name in {"Alasdair", "Catriona", "Effie", "Hamish", "Iain"}, (
+        f"names_file slot must draw from the curated list under corpus/; got {name!r}"
+    )
 
 
 def test_thin_corpus_logs_warning(

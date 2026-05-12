@@ -280,7 +280,7 @@ def build_from_culture(
         word_list: list[str] = list(slot_config.word_list or [])
 
         if slot_config.names_file:
-            names_path = corpus_dir.parent / "names" / slot_config.names_file
+            names_path = corpus_dir / slot_config.names_file
             if not names_path.exists():
                 raise FileNotFoundError(
                     f"Names file '{slot_config.names_file}' not found at {names_path}"
