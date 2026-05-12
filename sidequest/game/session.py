@@ -58,8 +58,10 @@ class NpcEncounterLogTag(BaseModel):
     2026-05-04) to disambiguate from
     :class:`sidequest.game.encounter_tag.EncounterTag`, which is a
     different model (scene-momentum tag with leverage/target/fleeting per
-    ADR-078). The old name remains as an alias in
-    :mod:`sidequest.game.__init__` for one release window.
+    ADR-078). The legacy ``sidequest.game.EncounterTag`` package-level
+    alias was removed in story 45-46; import from
+    :class:`sidequest.game.NpcEncounterLogTag` (re-exported from this
+    module) or directly from :mod:`sidequest.game.session`.
     """
 
     model_config = {"extra": "forbid"}
