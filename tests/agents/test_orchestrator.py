@@ -1040,68 +1040,6 @@ async def test_run_narration_turn_skips_leak_audit_when_no_dispatch_package(
 
 
 # ---------------------------------------------------------------------------
-# Task 18 — module-level run_narration_turn wrapper: signal-clear safety
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_run_narration_turn_clears_pending_resolution_signal_on_error(
-    monkeypatch,
-):
-    """If the orchestrator raises, the one-shot resolution signal still gets
-    cleared from the snapshot — otherwise a transient failure causes the
-    [ENCOUNTER RESOLVED] zone to fire twice on the next turn (and the
-    encounter_resolution_signal_consumed_span fires twice).
-
-    Wraps the bare ``orchestrator.run_narration_turn(...) → assignment →
-    cleanup`` shape in a try/finally so the cleanup is exception-safe.
-    """
-    from types import SimpleNamespace
-
-    from sidequest.agents import orchestrator as orch_mod
-    from sidequest.game.resolution_signal import ResolutionSignal
-    from sidequest.game.session import GameSnapshot
-
-    # Snapshot with a pending resolution signal — the thing the wrapper must
-    # clear even on failure.
-    snapshot = GameSnapshot(
-        genre_slug="test",
-        world_slug="test",
-        location="The Pit",
-        pending_resolution_signal=ResolutionSignal(
-            encounter_type="combat",
-            outcome="opponent_victory",
-            final_player_metric=4,
-            final_opponent_metric=11,
-        ),
-    )
-    assert snapshot.pending_resolution_signal is not None  # arrange sanity
-
-    # Minimal genre stand-in: the wrapper only reads ``audio`` (for sfx) and
-    # ``prompts`` (passed through to TurnContext, never executed because we
-    # short-circuit the orchestrator).
-    fake_genre = SimpleNamespace(audio=SimpleNamespace(), prompts=None)
-
-    async def boom(self, player_action, context):
-        raise RuntimeError("simulated orchestrator failure")
-
-    monkeypatch.setattr(Orchestrator, "run_narration_turn", boom)
-
-    client = make_canned_client("unused")
-
-    with pytest.raises(RuntimeError, match="simulated orchestrator failure"):
-        await orch_mod.run_narration_turn(
-            client=client,
-            session=snapshot,
-            genre=fake_genre,
-            player_action="attack",
-        )
-
-    # The contract: signal cleared even though the orchestrator raised.
-    assert snapshot.pending_resolution_signal is None
-
-
-# ---------------------------------------------------------------------------
 # None-dispatch-package path — pins Group B / Group G guard behavior
 # ---------------------------------------------------------------------------
 

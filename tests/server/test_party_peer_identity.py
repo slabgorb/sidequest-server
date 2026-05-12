@@ -631,53 +631,6 @@ async def test_party_peer_injection_span_does_not_fire_on_empty_peers(caplog, mo
 # ---------------------------------------------------------------------------
 
 
-async def test_module_level_run_narration_turn_forwards_party_peers(sd_factory, monkeypatch):
-    """The module-level ``run_narration_turn`` helper in
-    ``sidequest.agents.orchestrator`` MUST forward ``snapshot.characters``
-    as ``party_peers`` on the ``TurnContext`` it builds. Without this
-    test, a future refactor could silently drop the field (see the
-    analogous 37-48 lock for ``npc_registry``).
-    """
-    from sidequest.agents import orchestrator as orch_module
-
-    sd = sd_factory([_blutka(), _orin()], acting_player="Blutka")
-    client = MagicMock(spec=ClaudeClient)
-
-    genre = MagicMock()
-    genre.audio = MagicMock(spec=[])
-    genre.prompts = MagicMock()
-
-    captured: dict[str, TurnContext] = {}
-
-    async def fake_method(self, player_action, context):  # noqa: ARG001
-        captured["context"] = context
-        return NarrationTurnResult(narration="", is_degraded=False)
-
-    monkeypatch.setattr(orch_module.Orchestrator, "run_narration_turn", fake_method)
-
-    await orch_module.run_narration_turn(
-        client=client,
-        session=sd.snapshot,
-        genre=genre,
-        player_action="look around",
-        character_name="Blutka",
-    )
-
-    assert "context" in captured, "Orchestrator.run_narration_turn was not invoked"
-    peers = getattr(captured["context"], "party_peers", None)
-    assert peers is not None, (
-        "Module-level run_narration_turn built a TurnContext with no "
-        "party_peers attribute at all — field is missing from the kwargs."
-    )
-    assert len(peers) == 1, (
-        f"Module-level run_narration_turn forwarded {len(peers)} peers; "
-        "expected 1 (Orin, with Blutka as acting player). Silent drop "
-        "of snapshot.characters → party_peers is the 37-48-class bug "
-        "for this subsystem."
-    )
-    assert peers[0].name == "Orin"
-
-
 async def test_wiring_sd_to_prompt_delivers_peer_identity(sd_factory):
     """End-to-end wire (CLAUDE.md: every test suite needs a wiring test):
     ``_SessionData`` with two characters → ``_build_turn_context`` →

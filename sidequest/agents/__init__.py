@@ -11,7 +11,7 @@ Phase 1 exports:
 - AttentionZone, SectionCategory, RuleTier
 - SoulData, SoulPrinciple, parse_soul_md
 - NarratorAgent (Phase 1 — story 41-5)
-- Orchestrator, TurnContext, NarrationTurnResult, run_narration_turn (Phase 1 — story 41-5)
+- Orchestrator, TurnContext, NarrationTurnResult (Phase 1 — story 41-5)
 - ActionRewrite, BeatSelection, VisualScene, NpcMention (Phase 1 — story 41-5)
 """
 
@@ -43,7 +43,6 @@ from sidequest.agents.orchestrator import (
     TurnContext,
     VisualScene,
     extract_structured_from_response,
-    run_narration_turn,
 )
 from sidequest.agents.prompt_framework import (
     AttentionZone,
@@ -71,7 +70,6 @@ __all__ = [
     "TurnContext",
     "VisualScene",
     "extract_structured_from_response",
-    "run_narration_turn",
     # agent
     "Agent",
     "AgentResponse",
