@@ -77,6 +77,8 @@ class DiceThrowHandler:
         stats: dict[str, int] = dict(character.stats) if character is not None else {}
 
         room_broadcast = None
+        connected_player_ids: list[str] | None = None
+        per_recipient_emit = None
         if session._room is not None:
             # Wrap the room's broadcast to a simple callable the dispatcher
             # can invoke without knowing about SessionRoom. exclude=None so
@@ -87,6 +89,35 @@ class DiceThrowHandler:
                 session._room.broadcast(m, exclude_socket_id=None)
 
             room_broadcast = _broadcast
+
+            # Story 49-7: per-PC CONFRONTATION overlay. Capture the room
+            # at handler entry so the dispatcher can fan a class-filtered
+            # CONFRONTATION to each connected player after the canonical
+            # full-union broadcast above. ``getattr`` with callable guards
+            # because a couple of older stub-room test fixtures
+            # (e.g. _StubRoom in test_dice_throw_*) don't expose the full
+            # SessionRoom API — those fixtures keep the legacy single-
+            # broadcast behavior and don't engage the per-PC overlay.
+            connected_player_ids_fn = getattr(session._room, "connected_player_ids", None)
+            socket_for_player_fn = getattr(session._room, "socket_for_player", None)
+            queue_for_socket_fn = getattr(session._room, "queue_for_socket", None)
+            if (
+                callable(connected_player_ids_fn)
+                and callable(socket_for_player_fn)
+                and callable(queue_for_socket_fn)
+            ):
+                connected_player_ids = list(connected_player_ids_fn())
+
+                def _per_recipient_emit(pid: str, m: object) -> None:
+                    sid = socket_for_player_fn(pid)
+                    if sid is None:
+                        return
+                    q = queue_for_socket_fn(sid)
+                    if q is None:
+                        return
+                    q.put_nowait(m)
+
+                per_recipient_emit = _per_recipient_emit
 
         try:
             outcome = dispatch_dice_throw(
@@ -101,6 +132,8 @@ class DiceThrowHandler:
                 round_number=snapshot.turn_manager.interaction,
                 room_broadcast=room_broadcast,
                 snapshot=snapshot,
+                connected_player_ids=connected_player_ids,
+                per_recipient_emit=per_recipient_emit,
             )
         except DiceDispatchError as exc:
             logger.warning("dice.dispatch_error error=%s", exc)

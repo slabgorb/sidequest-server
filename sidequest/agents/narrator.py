@@ -358,6 +358,10 @@ class NarratorAgent(BaseAgent):
                         "spell_slots_remaining": spell_slots,
                         "pool_size": len(cdef.beats),
                         "filtered_size": len(available),
+                        # Story 49-7: discriminate this emit from the panel-
+                        # projection one at dispatch/confrontation.py so the
+                        # GM panel renders the two filter runs separately.
+                        "source": "narrator_prompt",
                     }
                     if rejection_reason is not None:
                         span_kwargs["cast_spell_rejection_reason"] = rejection_reason
