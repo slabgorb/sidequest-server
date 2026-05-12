@@ -24,10 +24,12 @@ Usage::
         --prompt "The party enters the cave."
 
 Exit codes:
-    0  elapsed within 3x budget — PASS
+    0  elapsed within 3x budget — PASS (or informational run without --baseline-claude-s)
     1  elapsed exceeds 3x budget — FAIL
-    2  Ollama unreachable / client error
-    3  invocation error (bad args, env not set, etc.)
+    2  Ollama unreachable / client error during send_stateless
+
+Argparse handles bad CLI arguments via its own SystemExit (typically exit
+code 2 from argparse itself); main() does not return that code.
 """
 
 from __future__ import annotations
@@ -56,8 +58,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "baseline. Passes when Ollama latency <= 3x baseline."
         ),
         epilog=(
-            "Exit codes: 0=PASS, 1=FAIL (budget exceeded), 2=Ollama "
-            "unreachable, 3=invocation error."
+            "Exit codes from main(): 0=PASS (or no baseline supplied), "
+            "1=FAIL (budget exceeded), 2=Ollama unreachable."
         ),
     )
     parser.add_argument(
