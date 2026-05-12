@@ -169,7 +169,6 @@ def test_narration_apply_pipeline_invokes_apply_magic_working(coyote_snapshot):
     coyote_snapshot.discovered_regions = []
     coyote_snapshot.quest_log = {}
     coyote_snapshot.lore_established = []
-    coyote_snapshot.npc_registry = []
     coyote_snapshot.characters = []
     coyote_snapshot.encounter = None
 

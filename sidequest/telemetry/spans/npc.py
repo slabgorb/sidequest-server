@@ -183,21 +183,22 @@ SPAN_ROUTES[SPAN_NPC_OBSERVATION_GATE_PURGED] = SpanRoute(
     },
 )
 
-# Story 45-21: combat-stats write into npc_registry entry.
-# Fired when an encounter handshake (or other combat-stats emit) publishes
-# HP/max_hp into a registry entry so HP-check subsystems can see real data
-# instead of the always-zero shape that made the Crawling Scavenger appear
-# dead for all of Playtest 3.
-SPAN_NPC_REGISTRY_HP_SET = "npc_registry.hp_set"
-SPAN_ROUTES[SPAN_NPC_REGISTRY_HP_SET] = SpanRoute(
+# Story 45-21 / 45-52: combat-stats publish onto Npc.core.edge.
+# Fired when an encounter handshake (or other combat-stats emit) writes the
+# dial-derived edge pool onto a matched ``snapshot.npcs`` entry. Renamed from
+# ``npc_registry.hp_set`` in story 45-52 — the legacy registry is gone; the
+# canonical seam now writes ``current`` / ``max`` onto ``Npc.core.edge`` per
+# ADR-078 (HP→Edge) and ADR-014 (materialization seam).
+SPAN_NPC_EDGE_PUBLISHED = "npc.edge_published"
+SPAN_ROUTES[SPAN_NPC_EDGE_PUBLISHED] = SpanRoute(
     event_type="state_transition",
-    component="npc_registry",
+    component="npcs",
     extract=lambda span: {
-        "field": "npc_registry",
-        "op": "hp_set",
+        "field": "npcs",
+        "op": "edge_published",
         "name": (span.attributes or {}).get("npc_name", ""),
-        "hp": (span.attributes or {}).get("hp", 0),
-        "max_hp": (span.attributes or {}).get("max_hp", 0),
+        "current": (span.attributes or {}).get("current", 0),
+        "max": (span.attributes or {}).get("max", 0),
         "source": (span.attributes or {}).get("source", ""),
         "turn_number": (span.attributes or {}).get("turn_number", 0),
     },
@@ -299,32 +300,38 @@ def npc_pc_name_skipped_span(
 
 
 @contextmanager
-def npc_registry_hp_set_span(
+def npc_edge_published_span(
     *,
     npc_name: str,
-    hp: int,
-    max_hp: int,
+    current: int,
+    max: int,  # noqa: A002 — wire name mirrors the EdgePool field
     source: str,
     turn_number: int,
     _tracer: trace.Tracer | None = None,
     **attrs: Any,
 ) -> Iterator[trace.Span]:
-    """Story 45-21: emitted when combat stats are written into a registry entry.
+    """Story 45-21 / 45-52: emitted when combat stats publish onto an Npc's
+    ``core.edge`` pool.
+
+    Renamed from ``npc_registry_hp_set_span`` in story 45-52 — the legacy
+    registry is gone; the canonical seam now writes ``current`` / ``max``
+    onto ``Npc.core.edge`` per ADR-078 (HP→Edge) and ADR-014 (materialization
+    seam).
 
     ``source`` labels which subsystem published the stats (e.g.
     ``encounter_handshake``, ``apply_beat``). Allows the GM panel to
-    verify the registry-write seam is firing and not silently dropping.
+    verify the publish seam is firing and not silently dropping.
     """
     attributes: dict[str, Any] = {
         "npc_name": npc_name,
-        "hp": hp,
-        "max_hp": max_hp,
+        "current": current,
+        "max": max,
         "source": source,
         "turn_number": turn_number,
         **attrs,
     }
     with Span.open(
-        SPAN_NPC_REGISTRY_HP_SET,
+        SPAN_NPC_EDGE_PUBLISHED,
         attributes,
         tracer_override=_tracer,
     ) as span:

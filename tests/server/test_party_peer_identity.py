@@ -159,7 +159,7 @@ def test_party_peer_type_is_importable():
     """A canonical peer-identity type must exist. The exact import location
     is Dev's choice, but it must be reachable from somewhere stable in the
     ``sidequest`` package. Probe the likely homes: ``game.session`` (next
-    to ``NpcRegistryEntry``) or ``game.party``.
+    to ``NpcPoolMember``) or ``game.party``.
     """
     candidates = (
         "sidequest.game.session",

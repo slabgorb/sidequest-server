@@ -7,7 +7,7 @@ were impossible because the opponent was never registered as a combatant.
 
 These tests exercise the production wire end-to-end:
 
-    snapshot.npc_registry (scene NPCs)
+    snapshot.npcs (scene NPCs, post-Wave-2A canonical store)
         + narrator confrontation trigger
             → narration_apply._apply_narration_result_to_snapshot
                 → encounter_lifecycle.instantiate_encounter_from_trigger
@@ -15,9 +15,11 @@ These tests exercise the production wire end-to-end:
 
 Each test starts from the Playtest 3 shape: the narrator emits
 ``confrontation="combat"`` with an EMPTY ``npcs_present`` list (the
-extraction dropped the adversary), but ``snapshot.npc_registry`` already
-has the opponent recorded at the player's current location from prior turns.
-The handshake must register that opponent as an EncounterActor.
+extraction dropped the adversary), but ``snapshot.npcs`` already has the
+opponent recorded at the player's current location from prior turns
+(Wave 2A pool/state split — the legacy ``npc_registry`` is gone as of
+story 45-52). The handshake must register that opponent as an
+EncounterActor.
 
 References:
 - AC1: handshake registers every combatant (player + each active NPC)
@@ -48,7 +50,12 @@ from sidequest.agents.orchestrator import (
     NarrationTurnResult,
     NpcMention,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry
+from sidequest.game.creature_core import (
+    CreatureCore,
+    Inventory,
+    placeholder_edge_pool,
+)
+from sidequest.game.session import GameSnapshot, Npc
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.protocol.dice import RollOutcome
@@ -64,6 +71,42 @@ def _load_pack():
     return load_genre_pack(_FIXTURE_PACK)
 
 
+def _make_npc(
+    name: str,
+    *,
+    role: str | None = None,
+    pronouns: str | None = None,
+    appearance: str | None = None,
+    last_seen_location: str | None = None,
+    last_seen_turn: int = 0,
+) -> Npc:
+    """Build a minimal stateful ``Npc`` for fallback-source fixtures.
+
+    Story 45-52: the legacy ``NpcRegistryEntry`` fallback source moved to
+    ``snapshot.npcs`` with ``last_seen_location`` driving the
+    location-scoped match. ``Npc`` requires a CreatureCore + edge pool; the
+    placeholder pool is fine here — the tests assert on actor registration,
+    not edge values.
+    """
+    return Npc(
+        core=CreatureCore(
+            name=name,
+            description=appearance or "An NPC.",
+            personality="Neutral.",
+            level=1,
+            xp=0,
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+        ),
+        pronouns=pronouns,
+        appearance=appearance,
+        npc_role_id=role,
+        last_seen_location=last_seen_location,
+        last_seen_turn=last_seen_turn,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -74,9 +117,12 @@ def playtest3_snapshot():
     """Snapshot reproducing the Playtest 3 [Orin save] scene shape:
 
     - Player is at "Mawdeep Caverns".
-    - ``snapshot.npc_registry`` already lists "Crawling Scavenger" at that
-      same location from a prior turn (the narrator introduced the creature
-      narratively before combat began).
+    - ``snapshot.npcs`` already lists "Crawling Scavenger" at that same
+      location from a prior turn (the narrator introduced the creature
+      narratively before combat began). Story 45-52 cleanup: this used
+      to live on the legacy ``npc_registry``; canonical home now is
+      ``snapshot.npcs`` with ``last_seen_location`` driving the
+      location-scoped fallback.
     - No active encounter yet — the next narration turn will trigger one.
 
     The next narration turn emits ``confrontation="combat"`` with an EMPTY
@@ -90,9 +136,9 @@ def playtest3_snapshot():
     )
     # Wave 2B: per-character location replaces the party-level field.
     snap.character_locations["Orin"] = "Mawdeep Caverns"
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Crawling Scavenger",
+    snap.npcs.append(
+        _make_npc(
+            "Crawling Scavenger",
             role="hostile",
             pronouns="it/its",
             appearance="a chittering carapaced thing the size of a hound",
@@ -137,11 +183,12 @@ def test_handshake_registers_npc_from_registry_when_npcs_present_empty(
     """Playtest 3 reproduction.
 
     Given a player at "Mawdeep Caverns" and a Crawling Scavenger already in
-    ``npc_registry`` at the same location, when the narrator fires a
-    confrontation with empty ``npcs_present`` (dropped extraction), the
-    encounter-start handshake MUST still register the Crawling Scavenger as
-    an opponent EncounterActor. Otherwise per-actor tracking is impossible
-    and combat plays out as a one-sided dial advance for 6+ rounds.
+    ``snapshot.npcs`` at the same location (post-Wave-2A canonical home for
+    fallback-source NPCs), when the narrator fires a confrontation with
+    empty ``npcs_present`` (dropped extraction), the encounter-start
+    handshake MUST still register the Crawling Scavenger as an opponent
+    EncounterActor. Otherwise per-actor tracking is impossible and combat
+    plays out as a one-sided dial advance for 6+ rounds.
     """
     snap, pack = playtest3_snapshot
     result = NarrationTurnResult(
@@ -162,7 +209,7 @@ def test_handshake_registers_npc_from_registry_when_npcs_present_empty(
     actor_names = [a.name for a in enc.actors]
     assert "Orin" in actor_names, f"player not registered (actors={actor_names!r})"
     assert "Crawling Scavenger" in actor_names, (
-        "opponent NPC was not registered from the npc_registry — "
+        "opponent NPC was not registered from snapshot.npcs — "
         "handshake regressed to player-only actors. "
         f"actors={actor_names!r}"
     )
@@ -171,9 +218,9 @@ def test_handshake_registers_npc_from_registry_when_npcs_present_empty(
 def test_handshake_registers_multiple_npcs_from_registry(playtest3_snapshot):
     """Two opponents at the same location are both registered."""
     snap, pack = playtest3_snapshot
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Dust Strider",
+    snap.npcs.append(
+        _make_npc(
+            "Dust Strider",
             role="hostile",
             last_seen_location="Mawdeep Caverns",
             last_seen_turn=3,
@@ -201,12 +248,12 @@ def test_handshake_registers_multiple_npcs_from_registry(playtest3_snapshot):
 
 def test_handshake_skips_registry_npcs_at_other_locations(playtest3_snapshot):
     """An NPC last seen at a different location is NOT pulled into combat
-    in the Mawdeep Caverns. Otherwise the registry would over-register.
+    in the Mawdeep Caverns. Otherwise the fallback would over-register.
     """
     snap, pack = playtest3_snapshot
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Brother Halrik",
+    snap.npcs.append(
+        _make_npc(
+            "Brother Halrik",
             role="merchant",
             last_seen_location="Highvale Market",  # different location
             last_seen_turn=2,
@@ -237,8 +284,9 @@ def test_handshake_prefers_explicit_npcs_present_when_provided(
     playtest3_snapshot,
 ):
     """When the narrator DOES supply ``npcs_present``, those names are used
-    and the registry is not over-pulled. The registry fallback is for the
-    Playtest 3 shape (empty extraction), not for replacing the explicit list.
+    and the location-scoped fallback is not over-pulled. The fallback is
+    for the Playtest 3 shape (empty extraction), not for replacing the
+    explicit list.
     """
     snap, pack = playtest3_snapshot
     result = NarrationTurnResult(

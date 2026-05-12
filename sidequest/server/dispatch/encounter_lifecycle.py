@@ -23,7 +23,7 @@ from sidequest.telemetry.spans import (
     encounter_no_opponent_available_span,
     encounter_resolved_span,
     encounter_sealed_letter_arity_rejected_span,
-    npc_registry_hp_set_span,
+    npc_edge_published_span,
 )
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
@@ -83,7 +83,7 @@ def _validate_side(actor_name: str, declared: str) -> str:
     raise ValueError(f"actor {actor_name!r} declared_side={declared!r} not in {_VALID_SIDES}")
 
 
-def _publish_combat_stats_to_registry(
+def _publish_combat_edge_to_npcs(
     *,
     snapshot: GameSnapshot,
     actors: list[EncounterActor],
@@ -91,86 +91,102 @@ def _publish_combat_stats_to_registry(
     turn: int,
     source: str,
 ) -> None:
-    """Story 45-21: write HP/max_hp from a combat encounter into npc_registry.
+    """Story 45-21 / 45-52: publish dial-derived edge onto opponent ``Npc``s.
 
-    For each opponent-side ``EncounterActor`` whose ``name`` matches an entry
-    in ``snapshot.npc_registry``, populate the entry's ``hp`` / ``max_hp``
+    For each opponent-side ``EncounterActor`` whose ``name`` matches an
+    ``Npc`` in ``snapshot.npcs``, overwrite the npc's ``core.edge`` pool
     using the opponent dial as the canonical pool size:
 
-        max_hp = opponent_metric.threshold
-        hp     = max(0, threshold - current)
+        max     = opponent_metric.threshold
+        current = max(1, threshold - current)
 
     The opponent dial is ascending — when ``current`` reaches ``threshold``
-    the opponent loses (= dead). Inverting it into a descending HP view
-    gives HP-check subsystems a consistent "0 means dead, >0 means alive"
-    contract while keeping the dial as the single source of truth.
+    the opponent loses (= defeated). Inverting it into a descending edge
+    view gives narrator / GM panel a consistent "current > 0 = alive"
+    read while keeping the dial as the single source of truth.
 
-    Emits one ``npc_registry.hp_set`` OTEL span per write so the GM panel
-    can verify the seam fired (CLAUDE.md: every backend fix must add OTEL
-    so we can tell whether the subsystem engaged or Claude is improvising).
+    Renamed from ``_publish_combat_stats_to_registry`` in story 45-52 —
+    the legacy ``npc_registry`` is gone; per ADR-078 (HP→Edge) and
+    ADR-014 (materialization seam) the canonical home for runtime
+    creature pools is ``Npc.core.edge``. Emits one
+    ``npc.edge_published`` OTEL span per write so the GM panel can verify
+    the seam fired.
 
-    No-op for actors with no matching registry entry — the auto-register
-    seam in ``narration_apply`` adds entries; here we only update what is
-    already there. CLAUDE.md "no silent fallback": the no-match case is
-    expected for the player actor and registry-fallback synthetic mentions
-    that haven't been auto-registered yet.
+    No-op for actors with no matching ``Npc`` — the auto-promotion seam in
+    ``narration_apply`` promotes pool members on cite; here we only update
+    what is already there. CLAUDE.md "no silent fallback": the no-match
+    case is expected for the player actor and pool-fallback synthetic
+    mentions that haven't been promoted to stateful Npcs yet.
     """
     if opponent_metric is None:
         return
     threshold = int(getattr(opponent_metric, "threshold", 0) or 0)
-    current = int(getattr(opponent_metric, "current", 0) or 0)
+    current_dial = int(getattr(opponent_metric, "current", 0) or 0)
     if threshold <= 0:
-        # Defensive: a zero-threshold dial would publish hp=0/max_hp=0,
+        # Defensive: a zero-threshold dial would publish current=0/max=0,
         # which is exactly the bug shape this story exists to fix.
         return
-    max_hp = threshold
-    hp = max(0, threshold - current)
+    edge_max = threshold
+    # EdgePool requires a positive ceiling (see ``_creature_edge_pool_from_hp``)
+    # — clamp to 1 so an opponent already at the dial cap still publishes a
+    # representable pool. Dead-from-publish would be a contradiction since
+    # we are at encounter start.
+    edge_current = max(1, threshold - current_dial)
 
-    by_name = {entry.name: entry for entry in snapshot.npc_registry}
+    by_name = {npc.core.name: npc for npc in snapshot.npcs}
     for actor in actors:
         if actor.side != "opponent":
             continue
-        entry = by_name.get(actor.name)
-        if entry is None:
+        npc = by_name.get(actor.name)
+        if npc is None:
             continue
-        entry.hp = hp
-        entry.max_hp = max_hp
-        with npc_registry_hp_set_span(
+        npc.core.edge.max = edge_max
+        npc.core.edge.base_max = edge_max
+        npc.core.edge.current = edge_current
+        with npc_edge_published_span(
             npc_name=actor.name,
-            hp=hp,
-            max_hp=max_hp,
+            current=edge_current,
+            max=edge_max,
             source=source,
             turn_number=turn,
         ):
             pass
 
 
-def _registry_fallback_npcs(
+def _npc_fallback_at_location(
     snapshot: GameSnapshot,
     *,
     is_combat: bool,
     acting_character_name: str | None = None,
-) -> list:
-    """Synthesise NpcMention entries from snapshot.npc_registry.
+) -> tuple[list, bool]:
+    """Synthesise NpcMention entries from snapshot.npcs at the player's location.
 
     Story 45-18 (Playtest 3 Orin): when the narrator emits
     ``confrontation=combat`` with an empty ``npcs_present`` list (the
     structured-output extraction dropped the adversary), the encounter would
     start with ``actors=[player only]`` and opponent-side beats would either
     raise "unknown actor" or be silently dropped — opponent_metric stuck at 0
-    for 6 rounds. The registry already records who is in-scene at the
-    player's current location from prior turns, so we use it as a fallback
-    population source.
+    for 6 rounds. ``snapshot.npcs`` records each NPC's ``last_seen_location``
+    from prior turns, so we use it as a fallback population source.
+
+    Story 45-52: rewired from the legacy ``snapshot.npc_registry``
+    (removed) to ``snapshot.npcs``. Both stores carried ``last_seen_*``
+    fields; the post-Wave-2A canonical home is ``Npc.last_seen_location``.
 
     Filter: same location as the player. NPCs last seen elsewhere are NOT
     pulled into the encounter — that would over-register characters who
-    happened to be in the registry at all.
+    happened to be in the roster at all.
 
-    Side: combat encounters default to ``opponent`` for the registry-derived
-    NPCs (the per-side dials require this so the opposing-side dial can
-    advance when the NPC's beat fires). Non-combat encounters use
-    ``neutral`` — the narrator can re-classify them on a later turn via an
-    explicit ``npcs_present`` mention.
+    Side: combat encounters default to ``opponent`` for the fallback NPCs
+    (the per-side dials require this so the opposing-side dial can advance
+    when the NPC's beat fires). Non-combat encounters use ``neutral`` —
+    the narrator can re-classify them on a later turn via an explicit
+    ``npcs_present`` mention.
+
+    Returns ``(mentions, location_available)`` so the caller can decorate
+    the empty-result span: ``location_available=False`` means the player
+    had no resolved location (silent-failure detector — story 45-52,
+    Reviewer's findings) rather than "no NPCs at this location."
     """
     from sidequest.agents.orchestrator import NpcMention
 
@@ -180,22 +196,22 @@ def _registry_fallback_npcs(
     # "no global ⇒ no fallback" semantics).
     location = snapshot.party_location(perspective=acting_character_name)
     if not location:
-        return []
+        return [], False
     default_side = "opponent" if is_combat else "neutral"
     fallback: list = []
-    for entry in snapshot.npc_registry:
-        if entry.last_seen_location != location:
+    for npc in snapshot.npcs:
+        if npc.last_seen_location != location:
             continue
         fallback.append(
             NpcMention(
-                name=entry.name,
-                pronouns=entry.pronouns or "",
-                role=entry.role or "",
-                appearance=entry.appearance or "",
+                name=npc.core.name,
+                pronouns=npc.pronouns or "",
+                role=npc.npc_role_id or "",
+                appearance=npc.appearance or "",
                 side=default_side,
             )
         )
-    return fallback
+    return fallback, True
 
 
 def instantiate_encounter_from_trigger(
@@ -238,10 +254,10 @@ def instantiate_encounter_from_trigger(
     role tag and a third PC there would break role lookup.
 
     When ``npcs_present`` is empty the constructor falls back to NPCs from
-    ``snapshot.npc_registry`` whose ``last_seen_location`` matches the
-    player's current location (Story 45-18). The registry fallback is only
-    consulted when the explicit list is empty — an explicit ``npcs_present``
-    is always authoritative.
+    ``snapshot.npcs`` whose ``last_seen_location`` matches the player's
+    current location (Story 45-18, rewired from the legacy ``npc_registry``
+    in story 45-52). The fallback is only consulted when the explicit list
+    is empty — an explicit ``npcs_present`` is always authoritative.
 
     Note: ``GenrePack`` has no ``.slug`` attribute; ``genre_slug`` must be
     passed explicitly by the caller (e.g. from ``sd.genre_slug`` or
@@ -258,26 +274,32 @@ def instantiate_encounter_from_trigger(
     if cdef is None:
         raise ValueError(f"unknown encounter_type {encounter_type!r} — not in pack confrontations")
 
-    # Story 45-18: registry fallback when narrator's npcs_present is empty.
+    # Story 45-18: NPC fallback when narrator's npcs_present is empty.
     # Sealed-letter encounters (commit-reveal duels) require exactly one
-    # opponent passed explicitly — the registry fallback would leak any
-    # bystander NPC at the location into the duel, so only the legacy path
-    # uses the fallback. The sealed-letter validator below still raises if
+    # opponent passed explicitly — the fallback would leak any bystander
+    # NPC at the location into the duel, so only the legacy path uses the
+    # fallback. The sealed-letter validator below still raises if
     # npcs_present is wrong.
+    #
+    # Story 45-52: ``location_available`` discriminates "empty location"
+    # from "no location at all" — both produce an empty fallback, but only
+    # the former is a legitimate empty-scene shape. The flag rides on the
+    # ``encounter.no_opponent_available`` span below.
+    location_available = True
     if not npcs_present and cdef.resolution_mode != ResolutionMode.sealed_letter_lookup:
-        npcs_present = _registry_fallback_npcs(
+        npcs_present, location_available = _npc_fallback_at_location(
             snapshot,
             is_combat=cdef.category == "combat",
             acting_character_name=player_name,
         )
 
     # Story 45-33: combat empty+empty guard (CLAUDE.md "No Silent Fallbacks").
-    # If narrator's ``npcs_present`` was empty AND ``_registry_fallback_npcs``
-    # returned empty (no NPCs at the player's location, or
-    # ``snapshot.location is None``), a category=combat encounter would
-    # currently instantiate with ``actors=[player only]`` — the original
-    # Playtest 3 (Orin) bug shape. Refuse here and surface the lie-detector
-    # signal via OTEL so the GM panel can confirm the guard engaged.
+    # If narrator's ``npcs_present`` was empty AND ``_npc_fallback_at_location``
+    # returned empty (no NPCs at the player's location, or no resolved
+    # location), a category=combat encounter would currently instantiate
+    # with ``actors=[player only]`` — the original Playtest 3 (Orin) bug
+    # shape. Refuse here and surface the lie-detector signal via OTEL so
+    # the GM panel can confirm the guard engaged.
     #
     # Sealed-letter encounters bypass this guard — their own validator below
     # carries a more specific error message ("got 0 npcs_present") that
@@ -294,12 +316,14 @@ def instantiate_encounter_from_trigger(
             genre_slug=genre_slug or "",
             player_name=player_name,
             category=cdef.category,
+            location_available=location_available,
         ):
             pass
         raise NoOpponentAvailableError(
             f"no opponent available for combat encounter {encounter_type!r} "
-            f"after registry fallback (player_name={player_name!r}, "
-            f"location={snapshot.party_location(perspective=player_name)!r})"
+            f"after npc-location fallback (player_name={player_name!r}, "
+            f"location={snapshot.party_location(perspective=player_name)!r}, "
+            f"location_available={location_available})"
         )
 
     with encounter_confrontation_initiated_span(
@@ -435,20 +459,23 @@ def instantiate_encounter_from_trigger(
             component="encounter",
         )
 
-        # Story 45-21: combat-stats emit → write HP/max_hp into npc_registry.
-        # Playtest 3 (Orin save): the Crawling Scavenger sat in the registry
-        # with hp=0/max_hp=0, making it appear always-dead to HP-check
-        # subsystems. The handshake is the natural seam — by the time we get
-        # here we know the actor list AND the dial threshold (= per-side
-        # HP pool), so we can publish a real stat block.
+        # Story 45-21 / 45-52: combat-stats emit → publish dial-derived edge
+        # onto matching ``Npc.core.edge`` pools.
         #
-        # Per AC2 ("registry entry cannot report HP=0 unless the NPC is
-        # actually dead") we ONLY write when the encounter is combat-category
-        # and only for opponent-side actors that have a matching registry
-        # entry. Non-combat encounters leave hp/max_hp as ``None`` (= no
-        # claim) so the validator's dead-NPC check stays correct.
+        # Playtest 3 (Orin save): the Crawling Scavenger sat in the legacy
+        # registry with hp=0/max_hp=0, making it appear always-dead to
+        # HP-check subsystems. The handshake is the natural seam — by the
+        # time we get here we know the actor list AND the dial threshold
+        # (= per-side pool size), so we can publish a real edge block onto
+        # the canonical Npc store (post-Wave-2A, the registry is gone).
+        #
+        # Per AC2 of the original story ("entry cannot report empty pool
+        # unless the NPC is actually dead") we ONLY write when the encounter
+        # is combat-category and only for opponent-side actors that have a
+        # matching Npc. Non-combat encounters leave ``core.edge`` at its
+        # standing value so the validator's dead-NPC check stays correct.
         if cdef.category == "combat":
-            _publish_combat_stats_to_registry(
+            _publish_combat_edge_to_npcs(
                 snapshot=snapshot,
                 actors=actors,
                 opponent_metric=enc.opponent_metric,

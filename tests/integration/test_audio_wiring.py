@@ -45,7 +45,6 @@ def _make_session_data() -> object:
         world_slug="flickering_reach",
         location="Tood's Dome",
         discovered_regions=["Tood's Dome"],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         characters=[],

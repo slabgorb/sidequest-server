@@ -6,7 +6,7 @@ These tests assert the type contract the plan introduces:
 - ``Npc`` (existing, gains 3 fields) — ``pool_origin``, ``last_seen_location``,
   ``last_seen_turn``.
 - ``GameSnapshot`` (existing, swaps fields) — ``npc_pool: list[NpcPoolMember]``
-  replaces ``npc_registry: list[NpcRegistryEntry]``.
+  replaces the (dropped, story 45-52) ``npc_registry``.
 
 Per plan (docs/superpowers/plans/2026-05-04-snapshot-split-brain-wave-2a.md):
 Task 1 is the type-scaffolding pass. No behavior change — tests assert types

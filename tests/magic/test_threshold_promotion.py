@@ -207,7 +207,6 @@ def test_pipeline_wires_promotion_into_character_statuses(coyote_world_config):
     snapshot.discovered_regions = []
     snapshot.quest_log = {}
     snapshot.lore_established = []
-    snapshot.npc_registry = []
     snapshot.encounter = None
     snapshot.characters = [
         Character.model_construct(

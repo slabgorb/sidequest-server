@@ -1,12 +1,15 @@
 """Failing tests for Story 37-44: NPC identity drift across turns.
 
-The bug: NPCs extracted from narrator output land in ``snapshot.npc_registry``
+The bug: NPCs extracted from narrator output land in ``snapshot.npc_pool``
 (that part already works — see ``test_apply_npc_registry_new_npc`` in
-``test_dispatch.py``), but the registry is **never injected back into the
-narrator prompt**. ``TurnContext`` carries ``npc_registry`` into the
-orchestrator, but ``Orchestrator.build_narrator_prompt`` does not render it as
-a prompt section. Result: every turn the narrator sees no canonical identity
-data and reinvents name/pronouns/role from thin air.
+``test_dispatch.py``), but the pool was **never injected back into the
+narrator prompt**. ``TurnContext`` carries ``npc_pool`` into the
+orchestrator, but ``Orchestrator.build_narrator_prompt`` did not render it
+as a prompt section. Result: every turn the narrator sees no canonical
+identity data and reinvents name/pronouns/role from thin air.
+
+Story 45-52 cleanup: this test file used to reference the legacy
+``npc_registry``; the canonical store post-Wave-2A is ``npc_pool``.
 
 Playtest 3 (2026-04-19, Felix Surrone, aureate_span):
   - Frandrew introduced round 17 as "she/her, captain-level"
@@ -83,7 +86,7 @@ async def _build_prompt_with_registry(
 
 
 async def test_npc_registry_renders_as_prompt_section():
-    """When ``TurnContext.npc_registry`` is non-empty, the built prompt must
+    """When ``TurnContext.npc_pool`` is non-empty, the built prompt must
     include a dossier section listing each known NPC. This is the root-cause
     fix for identity drift: the narrator can only stay consistent if it sees
     the canonical roster every turn.
@@ -211,10 +214,10 @@ async def test_multiple_npcs_all_rendered():
 
 
 # ---------------------------------------------------------------------------
-# AC-4: Wire-first boundary test — registry write in turn N survives into
+# AC-4: Wire-first boundary test — pool write in turn N survives into
 # the turn N+1 prompt. Exercises the full wire:
 #   narrator output (NpcMention) → _apply_narration_result_to_snapshot
-#   → snapshot.npc_registry → TurnContext(npc_registry=...)
+#   → snapshot.npc_pool → TurnContext(npc_pool=...)
 #   → Orchestrator.build_narrator_prompt → prompt text
 # ---------------------------------------------------------------------------
 

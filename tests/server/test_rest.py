@@ -287,8 +287,9 @@ def test_debug_state_projects_saved_game(tmp_path):
     from datetime import date
 
     from sidequest.game.game_slug import generate_slug
+    from sidequest.game.npc_pool import NpcPoolMember
     from sidequest.game.persistence import SqliteStore, db_path_for_slug
-    from sidequest.game.session import GameSnapshot, NpcRegistryEntry, TurnManager
+    from sidequest.game.session import GameSnapshot, TurnManager
 
     # _make_app sets save_dir = tmp_path / "saves"
     client = _make_app(tmp_path)
@@ -298,18 +299,22 @@ def test_debug_state_projects_saved_game(tmp_path):
     db.parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db)
     store.initialize()
+    # Story 45-52: NpcRegistryEntry / GameSnapshot.npc_registry were dropped.
+    # The /api/debug/state projection reads from ``snap.npc_pool`` (and
+    # ``snap.npcs``) — surface El Paso in the pool directly. The legacy
+    # ``npc_registry`` wire field name is preserved on the projection side
+    # (rest.py) for dashboard back-compat; the in-memory snapshot stores
+    # the cast member in ``npc_pool``.
     snap = GameSnapshot(
         genre_slug="spaghetti_western",
         world_slug="dust_and_lead",
         discovered_regions=["Sangre River Ford", "Dust Town"],
-        npc_registry=[
-            NpcRegistryEntry(
+        npc_pool=[
+            NpcPoolMember(
                 name="El Paso",
                 pronouns="he/him",
                 role="sheriff",
-                appearance="",
-                last_seen_location="Dust Town",
-                last_seen_turn=3,
+                drawn_from="world_authored",
             )
         ],
         turn_manager=TurnManager(interaction=3),
@@ -330,26 +335,9 @@ def test_debug_state_projects_saved_game(tmp_path):
     # party-frame projection is empty (no consensus).
     assert view["current_location"] == ""
     assert "Sangre River Ford" in view["discovered_regions"]
-    # Wave 2A (story 45-47) migrates orphan ``npc_registry`` entries into
-    # ``npc_pool`` on load. The /api/debug/state projection then surfaces
-    # both ``snap.npcs`` and ``snap.npc_pool`` under the legacy
-    # ``npc_registry`` wire field (rest.py:325-364), so the GM panel sees
-    # cast members regardless of which store they live in. El Paso must
-    # appear in the projection even though the in-memory snap had only a
-    # registry entry — because the on-load migration promoted him to the
-    # pool and the projection reads the pool.
     assert any(entry["name"] == "El Paso" for entry in view["npc_registry"]), (
         f"El Paso missing from /api/debug/state projection: {view['npc_registry']!r}"
     )
-    assert len(snap.npc_pool) == 0  # we constructed in-memory before save
-    # Reload to assert post-migration shape (this is what the projection
-    # actually reads).
-    reload_store = SqliteStore(db)
-    reload_store.initialize()
-    reloaded = reload_store.load()
-    reload_store.close()
-    assert reloaded is not None
-    assert any(m.name == "El Paso" for m in reloaded.snapshot.npc_pool)
     assert view["player_count"] == 0
 
 

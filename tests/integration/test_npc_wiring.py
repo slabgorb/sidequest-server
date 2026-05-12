@@ -73,7 +73,6 @@ async def test_npc_auto_registered_emits_state_transition_via_span_route(
         world_slug="flickering_reach",
         location="Tood's Dome",
         discovered_regions=["Tood's Dome"],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         characters=[],
@@ -154,7 +153,6 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
         world_slug="coyote_star",
         location="The Bridge of the Coyote's Tooth",
         discovered_regions=["The Bridge"],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         characters=[laverne],
@@ -176,10 +174,10 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
     )
     await asyncio.sleep(0.05)
 
-    # Critical: registry must NOT have been mutated.
-    assert snapshot.npc_registry == [], (
+    # Critical: pool must NOT have been mutated.
+    assert snapshot.npc_pool == [], (
         "PC-name auto-register filter failed — Laverne was promoted to NPC: "
-        f"{snapshot.npc_registry}"
+        f"{snapshot.npc_pool}"
     )
 
     # The skip span must reach the hub (GM panel visibility).
@@ -243,7 +241,6 @@ async def test_pc_name_filter_is_case_insensitive(
         world_slug="coyote_star",
         location="Bridge",
         discovered_regions=["Bridge"],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         characters=[laverne],
@@ -260,7 +257,7 @@ async def test_pc_name_filter_is_case_insensitive(
         snapshot, result, player_name="Shirley", room=room_for(snapshot)
     )
     await asyncio.sleep(0.05)
-    assert snapshot.npc_registry == []
+    assert snapshot.npc_pool == []
     skipped = [
         e
         for e in captured

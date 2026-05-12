@@ -449,7 +449,6 @@ def _build_turn_context(
             or "Unknown"
         ),
         available_sfx=_sfx_ids_from_genre(sd.genre_pack),
-        npc_registry=list(snapshot.npc_registry),
         npc_pool=list(snapshot.npc_pool),
         npcs=list(snapshot.npcs),
         party_peers=party_peers,

@@ -728,8 +728,8 @@ def preload_authored_npcs(
 
     Fresh sessions only — defined as ``state.characters == []`` AND
     ``state.turn_manager.interaction == 0``. Resumed sessions skip
-    pre-loading; their npc_registry is already populated from prior
-    turns and we do not retroactively rewrite it.
+    pre-loading; their ``npcs`` / ``npc_pool`` are already populated
+    from prior turns and we do not retroactively rewrite them.
 
     Emits ``npc.authored_loaded`` per pre-loaded NPC for GM-panel
     visibility (CLAUDE.md "OTEL Observability Principle"). Empty

@@ -84,6 +84,12 @@ SPAN_ROUTES[SPAN_ENCOUNTER_NO_OPPONENT_AVAILABLE] = SpanRoute(
         "genre_slug": (span.attributes or {}).get("genre_slug", ""),
         "player_name": (span.attributes or {}).get("player_name", ""),
         "category": (span.attributes or {}).get("category", ""),
+        # Story 45-52 silent-failure detector: ``False`` means the
+        # location-scoped fallback returned [] because the player had no
+        # resolved location, not because no NPCs were at that location.
+        # Discriminates a genuine empty-scene from an unresolved-perspective
+        # bug shape that would otherwise look identical on the GM panel.
+        "location_available": (span.attributes or {}).get("location_available", False),
     },
 )
 # Playtest 2026-05-08: narrator staged a multi-NPC scene (drift gang pack) and

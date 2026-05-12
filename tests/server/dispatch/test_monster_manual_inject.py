@@ -27,7 +27,6 @@ def _snapshot() -> GameSnapshot:
         genre_slug="mutant_wasteland",
         world_slug="flickering_reach",
         characters=[],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         discovered_regions=[],

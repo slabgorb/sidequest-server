@@ -780,7 +780,7 @@ def _build_turn_context_for_test(sd):
         genre=sd.genre_slug,
         character_name=sd.player_name,
         current_location=(sd.snapshot.party_location(perspective=sd.player_name) or "Unknown"),
-        npc_registry=list(getattr(sd.snapshot, "npc_registry", [])),
+        npc_pool=list(getattr(sd.snapshot, "npc_pool", [])),
     )
 
 

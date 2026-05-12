@@ -1025,7 +1025,7 @@ class ConnectHandler:
                         "snapshot": snapshot.model_dump(mode="json"),
                         "current_location": resume_loc,
                         "discovered_regions": list(snapshot.discovered_regions),
-                        "npc_registry_count": len(snapshot.npc_registry),
+                        "npc_pool_count": len(snapshot.npc_pool),
                         "quest_log_count": len(snapshot.quest_log),
                         "lore_established_count": len(snapshot.lore_established),
                         "character_count": len(snapshot.characters),
