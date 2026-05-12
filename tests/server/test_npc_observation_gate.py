@@ -814,14 +814,14 @@ def test_glenross_two_turn_mother_dropped_is_purged(otel_capture):
 
 def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture):
     """Full AC regression: 4-turn fixture where the same pool sees one
-    ratification (Father) and one purge (Mother). Tests that the gate
+    ratification (Father) and one purge (the constable). Tests that the gate
     runs once per turn and processes each pending member based on its
     own turn-of-mint context — Father auto-minted turn 5, ratified turn
-    6; Mother auto-minted turn 7, purged turn 8.
+    6; the constable auto-minted turn 7, purged turn 8.
 
     Turn 6's gate evaluation only resolves turn 5's pending entries
     (Father), not turn 7's mints (which haven't happened yet). Turn 8's
-    gate evaluation resolves turn 7's pending entries (Mother).
+    gate evaluation resolves turn 7's pending entries (the constable).
     """
     from sidequest.server.session_helpers import (
         _apply_npc_observation_gate,
@@ -845,25 +845,25 @@ def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture)
         turn_num=6,
     )
 
-    # Turn 7 — mint Mother
+    # Turn 7 — mint the constable (non-gender-paired role, unlike Mother)
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
-        narration_text="The wee one's mother; she is weeping in the kitchen.",
+        narration_text="The constable arrives at the scene; she is weeping in the kitchen.",
         emitted_mentions=[],
         turn_num=7,
     )
 
-    # Mid-sequence guard: Father ratified, Mother pending.
+    # Mid-sequence guard: Father ratified, Nurse pending.
     father = next((m for m in snapshot.npc_pool if m.name == "Father"), None)
-    mother = next((m for m in snapshot.npc_pool if m.name == "Mother"), None)
+    constable = next((m for m in snapshot.npc_pool if m.name == "the constable"), None)
     assert father is not None and father.observation_pending is False, (
         "Mid-sequence: Father must already be ratified by turn 7."
     )
-    assert mother is not None and mother.observation_pending is True, (
-        "Mid-sequence: Mother must be observation_pending after turn 7 mint."
+    assert constable is not None and constable.observation_pending is True, (
+        "Mid-sequence: the constable must be observation_pending after turn 7 mint."
     )
 
-    # Turn 8 — gate purges Mother (narrator omits her). Father (already
+    # Turn 8 — gate purges the constable (narrator omits her). Father (already
     # ratified, non-pending) must be untouched even though he's also
     # absent from turn 8 mentions.
     _apply_npc_observation_gate(
@@ -875,15 +875,15 @@ def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture)
     names_after = {m.name for m in snapshot.npc_pool}
     assert names_after == {"Father", "Reverend Murchison"} or names_after == {"Father"}, (
         f"After turn 8: Father (ratified, persistent) must remain; "
-        f"Mother (pending, unmatched) must be purged. Got: {names_after}"
+        f"the constable (pending, unmatched) must be purged. Got: {names_after}"
     )
     father_final = next(m for m in snapshot.npc_pool if m.name == "Father")
     assert father_final.observation_pending is False, (
         "Father must remain ratified — gate does not re-evaluate "
         "already-ratified members."
     )
-    assert not any(m.name == "Mother" for m in snapshot.npc_pool), (
-        "Mother must be purged."
+    assert not any(m.name == "the constable" for m in snapshot.npc_pool), (
+        "the constable must be purged."
     )
 
     promotes = _spans_named(otel_capture, PROMOTED_SPAN_NAME)
@@ -893,16 +893,9 @@ def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture)
     )
     assert _attr(promotes[0], "npc_name") == "Father"
     assert _attr(promotes[0], "turn_number") == 6
-    assert len(purges) == 1, f"Exactly one purge (Mother, turn 8); got {len(purges)}."
-    assert _attr(purges[0], "npc_name") == "Mother"
+    assert len(purges) == 1, f"Exactly one purge (the constable, turn 8); got {len(purges)}."
+    assert _attr(purges[0], "npc_name") == "the constable"
     assert _attr(purges[0], "turn_number") == 8
-
-
-# ===========================================================================
-# Group F — Pipeline wiring (integration through full apply path)
-# ===========================================================================
-
-
 def test_apply_narration_result_invokes_observation_gate(otel_capture):
     """Wiring assertion (CLAUDE.md "Every Test Suite Needs a Wiring
     Test"): ``_apply_narration_result_to_snapshot`` must call the gate
