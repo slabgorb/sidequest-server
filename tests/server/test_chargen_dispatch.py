@@ -609,7 +609,9 @@ class TestSliceCWorldMaterialization:
 
             # caverns_sunden uses region-level navigation (no rooms.yaml),
             # so location is the chapter's authored location verbatim.
-            assert snap.location == "Sünden Square"
+            # Wave 2B (story 45-48): party-level ``location`` field removed
+            # — query via ``party_location()`` consensus accessor.
+            assert snap.party_location() == "Sünden Square"
             assert "quiet" in snap.atmosphere.lower()
             assert snap.time_of_day == "morning"
 

@@ -62,6 +62,17 @@ def test_classes_yaml_loads_entries(tmp_path: Path) -> None:
     # etc.) — _validate_class_filter_refs (Task 5) rejects undeclared names.
     # Classes in allowed_classes (Fighter, Mage, Cleric, Thief) must also have
     # non-empty encounter_beat_choices pointing to real beat IDs in rules.yaml.
+    # saving_throws are required by _validate_saving_throws_refs (Task 8)
+    # when the pack has spell catalogs; C&C ships them, so every class must
+    # declare a B/X B26 table here.
+    saves_block = (
+        "  saving_throws:\n"
+        "    death_ray_or_poison: 12\n"
+        "    magic_wands: 13\n"
+        "    paralysis_or_stone: 14\n"
+        "    dragon_breath: 15\n"
+        "    rods_staves_spells: 16\n"
+    )
     (pack_dir / "classes.yaml").write_text(
         "- id: fighter\n"
         "  display_name: Fighter\n"
@@ -71,7 +82,8 @@ def test_classes_yaml_loads_entries(tmp_path: Path) -> None:
         "  minimum_score: 9\n"
         "  kit_table: fighter_kit\n"
         "  encounter_beat_choices: [attack, defend, flee]\n"
-        "- id: thief\n"
+        + saves_block
+        + "- id: thief\n"
         "  display_name: Thief\n"
         "  rpg_role: stealth\n"
         "  jungian_default: outlaw\n"
@@ -79,7 +91,8 @@ def test_classes_yaml_loads_entries(tmp_path: Path) -> None:
         "  minimum_score: 9\n"
         "  kit_table: thief_kit\n"
         "  encounter_beat_choices: [attack, defend, flee]\n"
-        "- id: mage\n"
+        + saves_block
+        + "- id: mage\n"
         "  display_name: Mage\n"
         "  rpg_role: control\n"
         "  jungian_default: magician\n"
@@ -87,14 +100,16 @@ def test_classes_yaml_loads_entries(tmp_path: Path) -> None:
         "  minimum_score: 9\n"
         "  kit_table: mage_kit\n"
         "  encounter_beat_choices: [attack, defend, flee]\n"
-        "- id: cleric\n"
+        + saves_block
+        + "- id: cleric\n"
         "  display_name: Cleric\n"
         "  rpg_role: healer\n"
         "  jungian_default: caregiver\n"
         "  prime_requisite: WIS\n"
         "  minimum_score: 9\n"
         "  kit_table: cleric_kit\n"
-        "  encounter_beat_choices: [attack, defend, flee]\n",
+        "  encounter_beat_choices: [attack, defend, flee]\n"
+        + saves_block,
         encoding="utf-8",
     )
     pack = load_genre_pack(pack_dir)
