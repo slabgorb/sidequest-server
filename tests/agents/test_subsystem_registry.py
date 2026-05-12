@@ -157,28 +157,28 @@ async def test_run_dispatch_bank_subsystem_exception_is_caught():
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_threads_context_to_subsystems(minimal_npc_registry):
-    """npc_agency receives npc_registry via context kwargs."""
+async def test_run_dispatch_bank_threads_context_to_subsystems(minimal_npc_pool):
+    """npc_agency receives npc_pool via context kwargs."""
     d = _make_dispatch(
         "npc_agency",
         "k1",
         params={"npc_name": "Harlan", "situation": "spotted"},
     )
     pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg, context={"npc_registry": minimal_npc_registry})
+    res = await run_dispatch_bank(pkg, context={"npc_pool": minimal_npc_pool})
     out: SubsystemOutput = res.outputs_by_key["k1"]
     assert out.data["role"] == "innkeeper"
 
 
 @pytest.mark.asyncio
 async def test_run_dispatch_bank_filters_context_per_subsystem_signature(
-    minimal_npc_registry,
+    minimal_npc_pool,
 ):
     """Bank forwards only the kwargs each subsystem declares.
 
     `run_distinctive_detail` accepts only ``dispatch`` — without per-callable
-    filtering, blasting ``npc_registry`` into it would raise
-    ``TypeError: unexpected keyword argument 'npc_registry'``.
+    filtering, blasting ``npc_pool`` into it would raise
+    ``TypeError: unexpected keyword argument 'npc_pool'``.
     """
     d_npc = _make_dispatch(
         "npc_agency",
@@ -193,7 +193,7 @@ async def test_run_dispatch_bank_filters_context_per_subsystem_signature(
     pkg = _make_package([[d_npc], [d_dd]])
     res = await run_dispatch_bank(
         pkg,
-        context={"npc_registry": minimal_npc_registry},
+        context={"npc_pool": minimal_npc_pool},
     )
     # Both subsystems ran; neither raised.
     assert res.errors == []
@@ -202,8 +202,8 @@ async def test_run_dispatch_bank_filters_context_per_subsystem_signature(
 
 
 @pytest.mark.asyncio
-async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has_none():
-    """`run_npc_agency` requires ``npc_registry`` even when empty —
+async def test_run_dispatch_bank_passes_empty_npc_pool_when_orchestrator_has_none():
+    """`run_npc_agency` requires ``npc_pool`` even when empty —
     orchestrator now passes ``[]`` instead of omitting the kwarg, so the
     subsystem invokes without TypeError and degrades cleanly to
     ``npc_not_registered``."""
@@ -213,7 +213,7 @@ async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has
         params={"npc_name": "Stranger", "situation": "spotted"},
     )
     pkg = _make_package([[d]])
-    res = await run_dispatch_bank(pkg, context={"npc_registry": []})
+    res = await run_dispatch_bank(pkg, context={"npc_pool": []})
     # Subsystem ran without raising; data['error'] surfaces the lookup miss.
     assert res.errors == []
     out = res.outputs_by_key["k_empty"]
@@ -221,7 +221,7 @@ async def test_run_dispatch_bank_passes_empty_npc_registry_when_orchestrator_has
 
 
 @pytest.mark.asyncio
-async def test_npc_agency_noops_on_missing_npc_name(minimal_npc_registry):
+async def test_npc_agency_noops_on_missing_npc_name(minimal_npc_pool):
     """Playtest 2026-04-25 [P3-MED] regression. ``npc_agency`` must NOT
     raise when ``params.npc_name`` is missing — opening-crisis cascades
     fire on turn 1 of every fresh game across all packs, before any NPC
@@ -236,7 +236,7 @@ async def test_npc_agency_noops_on_missing_npc_name(minimal_npc_registry):
     pkg = _make_package([[d]])
     res = await run_dispatch_bank(
         pkg,
-        context={"npc_registry": minimal_npc_registry},
+        context={"npc_pool": minimal_npc_pool},
     )
     # Critical: no exceptions captured by the bank's try/except.
     assert res.errors == []

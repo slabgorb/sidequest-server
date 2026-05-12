@@ -197,32 +197,6 @@ class Npc(BaseModel):
         return self.core.name
 
 
-class NpcRegistryEntry(BaseModel):
-    """Lightweight NPC registry entry for narrator prompt consistency.
-
-    P1-required: narrator uses registry for name/identity consistency.
-
-    Story 45-21: ``hp`` / ``max_hp`` are written when combat stats are
-    emitted (encounter handshake). They are intentionally ``None`` until
-    combat actually publishes a stat block — once populated, ``hp == 0``
-    unambiguously means "this NPC is dead." HP-check subsystems must NOT
-    treat ``None`` as zero (Playtest 3 Orin: registry always-zero
-    appeared dead-everywhere; the fix is "absent = no claim").
-    """
-
-    model_config = {"extra": "forbid"}
-
-    name: str
-    role: str | None = None
-    pronouns: str | None = None
-    appearance: str | None = None
-    last_seen_location: str | None = None
-    last_seen_turn: int = 0
-    # Story 45-21: combat HP. None = "no combat stats published yet."
-    hp: int | None = None
-    max_hp: int | None = None
-
-
 class Companion(BaseModel):
     """Narrator-recruited NPC companion (hireling / retainer / ally).
 
@@ -264,7 +238,7 @@ class PartyPeer(BaseModel):
     must see canonical identity for the *other* PCs — otherwise pronouns
     and race/class drift across saves (playtest 3: Blutka he/him became
     she/her in Orin's save because Orin's narrator had no ground truth).
-    Parallels NpcRegistryEntry, but for peer PCs rather than NPCs.
+    Parallels ``NpcPoolMember``, but for peer PCs rather than NPCs.
 
     Physical identity is canonical (name/pronouns/race/char_class/level).
     Perception — mood, tactics, feelings — stays POV and is not stored here.
@@ -571,7 +545,7 @@ class GameSnapshot(BaseModel):
                  time_of_day, quest_log, notes, narrative_log, atmosphere,
                  current_region, discovered_regions, discovered_routes,
                  turn_manager, active_stakes, lore_established,
-                 npc_registry, player_dead.
+                 npc_pool, player_dead.
 
     Wave 2B (story 45-48): the legacy party-level ``location`` field is
     removed. Use ``self.party_location(perspective=name)`` for single-PC
@@ -658,18 +632,13 @@ class GameSnapshot(BaseModel):
     campaign_maturity: str = "Fresh"
     world_history: list[HistoryChapter] = Field(default_factory=list)
 
-    # NPC registry (P1-required: narrator uses for name consistency)
-    # DEPRECATED — Wave 2A (story 45-47) replaces this with ``npc_pool``
-    # (identity) + ``Npc.last_seen_*`` (state). Removed in Task 7 of the
-    # Wave 2A plan once all readers are repointed.
-    npc_registry: list[NpcRegistryEntry] = Field(default_factory=list)
-
     # NPC pool — identity-only members the narrator can cite as
-    # "people who exist in this world" (Wave 2A, story 45-47). Replaces
-    # the legacy ``npc_registry`` as the cast-pool channel. Pool members
-    # are promoted to ``Npc`` (in ``self.npcs``) when they engage
-    # mechanically; the pool member remains, shadowed by the ``Npc``
-    # lookup at narration_apply time.
+    # "people who exist in this world" (Wave 2A, story 45-47). Replaced
+    # the legacy ``npc_registry`` (dropped in story 45-52) as the cast-pool
+    # channel. Pool members are promoted to ``Npc`` (in ``self.npcs``) when
+    # they engage mechanically; the pool member remains, shadowed by the
+    # ``Npc`` lookup at narration_apply time. Legacy saves are migrated
+    # via ``_migrate_s2_npc_registry_split`` in ``game/migrations.py``.
     npc_pool: list[NpcPoolMember] = Field(default_factory=list)
 
     # Companion roster — narrator-recruited hirelings the party
@@ -683,8 +652,11 @@ class GameSnapshot(BaseModel):
     companions: list[Companion] = Field(default_factory=list)
 
     # Chassis registry (rig MVP slice — fresh-session only). Materialized from
-    # `worlds/<world>/rigs.yaml` at connect time. Each entry is also projected
-    # into `npc_registry` so narrator name-continuity sees the chassis.
+    # `worlds/<world>/rigs.yaml` at connect time. Wave 2A (story 45-47)
+    # removed the projection into the now-dropped ``npc_registry``;
+    # chassis surface in the narrator prompt via the dedicated
+    # ``register_chassis_voice_section`` (chassis voice zone, separate
+    # from the NPC roster).
     chassis_registry: dict[str, ChassisInstance] = Field(default_factory=dict)
 
     # (S1, 2026-05-04) world_confrontations REMOVED. The duplicate field has

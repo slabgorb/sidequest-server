@@ -52,7 +52,7 @@ from sidequest.agents.prompt_framework.types import (
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.npc_pool import NpcPoolMember
-from sidequest.game.session import NarrativeEntry, Npc, NpcRegistryEntry, PartyPeer
+from sidequest.game.session import NarrativeEntry, Npc, PartyPeer
 from sidequest.game.tension_tracker import PacingHint
 from sidequest.genre.models.lethality import LethalityPolicy
 from sidequest.genre.models.narrative import Prompts
@@ -429,14 +429,10 @@ class TurnContext:
     # Active trope summary for background context (Valley zone)
     active_trope_summary: str | None = None
 
-    # NPC registry entries — DEPRECATED Wave 2A (story 45-47). Kept on the
-    # context for transitional compatibility with subsystem callers that
-    # still consume it (e.g. ``run_npc_agency``); the prompt-rendering path
-    # now reads from ``npc_pool`` + ``npcs.last_seen_*`` instead.
-    npc_registry: list[NpcRegistryEntry] = field(default_factory=list)
-
     # NPC pool — identity-only members the narrator can cite (Wave 2A).
-    # Replaces the legacy registry as the cast-pool projection channel.
+    # Replaces the legacy ``npc_registry`` (dropped in story 45-52) as
+    # the cast-pool projection channel. The prompt-rendering path reads
+    # from ``npc_pool`` + ``npcs.last_seen_*``.
     npc_pool: list[NpcPoolMember] = field(default_factory=list)
 
     # Full NPC structs (for merchant context injection — Phase 1 slice: skipped)
@@ -938,24 +934,25 @@ class Orchestrator:
         self,
         context: TurnContext,
     ) -> dict[str, list[str]]:
-        """Build ``entity_id -> [tokens]`` from the session's NPC registry.
+        """Build ``entity_id -> [tokens]`` from the session's NPC stores.
 
-        In the current data model the ``target`` field in a SubsystemDispatch
-        is the NPC name (there is no separate entity_id on
-        :class:`NpcRegistryEntry` yet). We therefore key the token map by
-        ``entry.name`` and populate with ``[name, role]`` where ``role`` is
-        a non-empty role noun. No alias field exists today — a partial
-        token set is still a working audit.
+        Wave 2A (story 45-47) / story 45-52: reads from ``npc_pool`` plus
+        ``npcs`` rather than the dropped ``npc_registry``. In the current
+        data model the ``target`` field in a SubsystemDispatch is the NPC
+        name (there is no separate entity_id on :class:`NpcPoolMember` yet).
+        We key the token map by ``member.name`` and populate with
+        ``[name, role]`` where ``role`` is a non-empty role noun. No alias
+        field exists today — a partial token set is still a working audit.
         """
         tokens: dict[str, list[str]] = {}
-        for entry in context.npc_registry:
+        for member in context.npc_pool:
             toks: list[str] = []
-            if entry.name:
-                toks.append(entry.name)
-            if entry.role:
-                toks.append(entry.role)
+            if member.name:
+                toks.append(member.name)
+            if member.role:
+                toks.append(member.role)
             if toks:
-                tokens[entry.name] = toks
+                tokens[member.name] = toks
         for npc in context.npcs:
             name = npc.core.name if npc.core else None
             if not name or name in tokens:
@@ -1800,13 +1797,14 @@ class Orchestrator:
         if visible_dispatch_package is not None:
             from sidequest.agents.subsystems import run_dispatch_bank
 
-            # ``npc_registry`` is required by ``run_npc_agency`` (kw-only,
-            # no default). Always include it — even when empty — so the
-            # subsystem can invoke without TypeError. The bank filters
-            # context keys per subsystem signature so we don't accidentally
-            # blast ``npc_registry`` into subsystems that don't accept it.
+            # ``npc_pool`` is required by ``run_npc_agency`` (kw-only,
+            # no default; rewired from ``npc_registry`` in story 45-52).
+            # Always include it — even when empty — so the subsystem can
+            # invoke without TypeError. The bank filters context keys per
+            # subsystem signature so we don't accidentally blast
+            # ``npc_pool`` into subsystems that don't accept it.
             bank_context: dict[str, object] = {
-                "npc_registry": list(context.npc_registry or []),
+                "npc_pool": list(context.npc_pool or []),
             }
 
             with context.phase_timings.phase("dispatch_bank"):

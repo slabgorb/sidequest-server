@@ -489,10 +489,11 @@ If nothing new is revealed and nothing prior is referenced, omit the footnotes a
     ) -> None:
         """Inject chassis-as-speaker voice data into the narrator prompt.
 
-        The narrator already sees chassis names via register_npc_roster_section
-        (chassis project into npc_registry as ship_ai). This section adds the
-        register, vocal tics, silence register, and current bond-tier address
-        form so chassis dialogue stays consistent across turns.
+        The narrator already sees chassis names via the NPC roster section.
+        This section adds the register, vocal tics, silence register, and
+        current bond-tier address form so chassis dialogue stays consistent
+        across turns. (Pre-Wave-2A the chassis-as-ship_ai projection lived
+        in the legacy ``npc_registry``, dropped in story 45-52.)
 
         Empty registry or no-voice chassis produces no output (zero-byte
         leak discipline, mirrors npc_roster). Slice-scope: active character

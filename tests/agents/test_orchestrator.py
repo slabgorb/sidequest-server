@@ -956,7 +956,7 @@ async def test_run_narration_turn_emits_leak_audit_span_with_zero_leaks(
     This is the safety-net verification: structural hiding (Task 5) removed
     the redacted entry from the prompt, and the canned narration below does
     not mention the hidden target, so the audit fires clean."""
-    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.game.npc_pool import NpcPoolMember
     from sidequest.protocol.dispatch import SubsystemDispatch
 
     # Canned narrator response — no reference to the hidden target.
@@ -983,7 +983,9 @@ async def test_run_narration_turn_emits_leak_audit_span_with_zero_leaks(
     )
     ctx = TurnContext(
         dispatch_package=pkg,
-        npc_registry=[NpcRegistryEntry(name="Rickard", role="guard")],
+        npc_pool=[
+            NpcPoolMember(name="Rickard", role="guard", drawn_from="world_authored")
+        ],
     )
 
     await orch.run_narration_turn("sneak and strike", ctx)

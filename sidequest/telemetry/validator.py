@@ -39,15 +39,27 @@ async def entity_check(record: TurnRecord) -> None:
 
     Reads:
       - narration
-      - snapshot_after.npc_registry (mapping name -> NpcRegistryEntry)
+      - snapshot_after.npc_pool (iterable of NpcPoolMember)
+      - snapshot_after.npcs (iterable of stateful Npc)
       - snapshot_after.discovered_regions (iterable of region names)
       - snapshot_after.inventory.items (iterable of item names)
+
+    Wave 2A / story 45-52: reads from ``npc_pool`` + ``npcs`` rather than
+    the dropped ``npc_registry``. Both canonical stores expose a ``name``
+    (pool member: ``.name``; stateful npc: ``.core.name``) so the
+    name-presence audit just unions both.
     """
     snap = record.snapshot_after
     known_names: set[str] = set()
-    npc_registry = getattr(snap, "npc_registry", None) or {}
-    if isinstance(npc_registry, dict):
-        known_names.update(npc_registry.keys())
+    for member in getattr(snap, "npc_pool", None) or ():
+        name = getattr(member, "name", None)
+        if name:
+            known_names.add(str(name))
+    for npc in getattr(snap, "npcs", None) or ():
+        core = getattr(npc, "core", None)
+        name = getattr(core, "name", None) if core is not None else None
+        if name:
+            known_names.add(str(name))
     regions = getattr(snap, "discovered_regions", None) or ()
     known_names.update(str(r) for r in regions)
     inventory = getattr(snap, "inventory", None)
@@ -136,7 +148,7 @@ async def inventory_check(record: TurnRecord) -> None:
 def _iter_owned(coll: object) -> Iterable[tuple[str, object]]:
     """Yield ``(owner_name, entry)`` for snapshot collections.
 
-    ``GameSnapshot.characters`` and ``GameSnapshot.npc_registry`` are typed
+    ``GameSnapshot.characters`` and ``GameSnapshot.npcs`` are typed
     as ``list`` (each entry holds its own name on ``.core.name`` or
     ``.name``), but this validator was authored against the legacy
     ``dict[name, entry]`` shape. This helper accepts either: list entries
@@ -163,7 +175,10 @@ async def patch_legality_check(record: TurnRecord) -> None:
     """
     snap = record.snapshot_after
     characters = getattr(snap, "characters", None) or []
-    npc_registry = getattr(snap, "npc_registry", None) or []
+    # Wave 2A / story 45-52: post-Wave-2A canonical store for stateful
+    # NPCs (with edge pools) is ``snap.npcs``; the legacy ``npc_registry``
+    # is gone. Edge lives on ``Npc.core.edge`` (current / max) per ADR-078.
+    npcs = getattr(snap, "npcs", None) or []
 
     def _check_hp(label: str, owner: str, ch: object) -> None:
         hp = getattr(ch, "hp", None)
@@ -184,16 +199,27 @@ async def patch_legality_check(record: TurnRecord) -> None:
                 severity="error",
             )
 
+    def _edge_current(entry: object) -> int | None:
+        core = getattr(entry, "core", None)
+        if core is None:
+            return None
+        edge = getattr(core, "edge", None)
+        if edge is None:
+            return None
+        return getattr(edge, "current", None)
+
     for owner, ch in _iter_owned(characters):
         _check_hp("character", owner, ch)
-    for owner, npc in _iter_owned(npc_registry):
+    for owner, npc in _iter_owned(npcs):
         _check_hp("npc", owner, npc)
 
-    # Dead-actor check
+    # Dead-actor check — post-Wave-2A Npc liveness reads from the edge pool
+    # (``current <= 0``). Entries without an edge pool are treated as alive
+    # (no claim) to preserve the pre-Wave-2A "absent = no claim" contract.
     dead_npcs = {
         name
-        for name, npc in _iter_owned(npc_registry)
-        if isinstance(getattr(npc, "hp", None), int) and getattr(npc, "hp", 0) <= 0
+        for name, npc in _iter_owned(npcs)
+        if isinstance(_edge_current(npc), int) and (_edge_current(npc) or 0) <= 0
     }
     for patch in record.patches_applied:
         if patch.patch_type != "combat":

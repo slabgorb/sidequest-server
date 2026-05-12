@@ -2,7 +2,7 @@
 
 Phase 1 exports:
 - Character, CreatureCore, EdgePool, EdgeThreshold, Inventory
-- GameSnapshot, WorldStatePatch, NpcPatch, NpcRegistryEntry, NarrativeEntry
+- GameSnapshot, WorldStatePatch, NpcPatch, NpcPoolMember, NarrativeEntry
 - StateDelta (game-layer), StateSnapshot, snapshot, compute_delta
 - TurnManager, TurnPhase
 - CommandHandler, CommandResult, BUILTIN_COMMANDS
@@ -100,7 +100,6 @@ from sidequest.game.session import (
     Npc,
     NpcEncounterLogTag,
     NpcPatch,
-    NpcRegistryEntry,
     TropeState,
     WorldStatePatch,
 )
@@ -185,7 +184,6 @@ __all__ = [
     "NpcEncounterLogTag",
     "NpcPatch",
     "NpcPoolMember",
-    "NpcRegistryEntry",
     "TropeState",
     "WorldStatePatch",
     # turn

@@ -8,10 +8,13 @@ and asserts:
   ``has_character=True`` and skips the builder.
 - Session state flips from ``Creating`` to ``Playing`` at
   confirmation (not at first PLAYER_ACTION).
-- ``snapshot.npc_registry`` is cleared at confirmation and OTEL
-  emits ``npc_registry.cleared_on_chargen_complete``.
 - The OTEL persist event ``session.persisted_at_chargen_complete``
   fires with the session identity.
+
+Story 45-52 cleanup: the legacy ``npc_registry`` clear-on-confirmation
+and its ``npc_registry.cleared_on_chargen_complete`` OTEL event were
+removed alongside the field. Post-Wave-2A the pool channel is by-design
+persistent across chargen, so the clear had nothing valid to do.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
-from sidequest.game.session import NpcRegistryEntry
 from sidequest.protocol.messages import (
     CharacterCreationMessage,
     CharacterCreationPayload,
@@ -201,42 +203,6 @@ class TestChargenPersistAndPlay:
             assert sd2.snapshot.characters, "reconnect must load the persisted character"
             # Resumed session is already Playing — no chargen path to walk.
             assert h2._state == _State.Playing  # type: ignore[attr-defined]
-
-        asyncio.run(body())
-
-    def test_npc_registry_cleared_at_confirmation_with_otel(
-        self,
-        handler_factory,
-        otel_capture: InMemorySpanExporter,
-    ) -> None:
-        """The clear itself is defensive — ``materialize_from_genre_pack``
-        swaps in a fresh snapshot mid-confirmation, so a test that seeds
-        the registry before the walk can't observe nonzero previous_len.
-        What matters: the clear fires (registry empty) and the OTEL
-        event carries the expected identity attributes so the GM panel
-        can confirm the chargen narrative reset ran."""
-
-        async def body() -> None:
-            handler = handler_factory()
-            await _connect(handler)
-            sd = handler._session_data  # type: ignore[attr-defined]
-
-            await _walk_and_confirm(handler)
-
-            # Post-confirmation the registry is always empty.
-            assert sd.snapshot.npc_registry == []
-            # Sanity: the type-check also passes — the clear doesn't swap
-            # in a raw list of something weird.
-            for entry in sd.snapshot.npc_registry:  # pragma: no cover — empty
-                assert isinstance(entry, NpcRegistryEntry)
-
-            events = _events(otel_capture, "npc_registry.cleared_on_chargen_complete")
-            assert len(events) == 1
-            attrs = dict(events[0].attributes or {})
-            assert attrs["reason"] == "fresh_character_narrative_reset"
-            assert attrs["genre"] == "caverns_and_claudes"
-            assert attrs["world"] == "caverns_sunden"
-            assert "previous_len" in attrs  # numeric, may be 0 in chargen path
 
         asyncio.run(body())
 

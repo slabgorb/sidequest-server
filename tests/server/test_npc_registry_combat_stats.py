@@ -1,26 +1,27 @@
-"""Story 45-21 — npc_registry HP/max_hp populated from combat stats.
+"""Story 45-21 / 45-52 — Npc.core.edge populated from combat stats at handshake.
 
-Playtest 3 (Orin save, 2026-04-19): the Crawling Scavenger sat in
-``snapshot.npc_registry`` with ``hp=0`` / ``max_hp=0``. Any HP-check
-subsystem that queried the registry to determine creature liveness saw
-"already dead" and skipped — six rounds of combat, opponent dead from
-turn 0 according to the registry.
+Playtest 3 (Orin save, 2026-04-19): the Crawling Scavenger sat in the
+legacy ``snapshot.npc_registry`` with ``hp=0`` / ``max_hp=0``. Any
+HP-check subsystem that queried the registry to determine creature
+liveness saw "already dead" and skipped — six rounds of combat, opponent
+dead from turn 0 according to the registry.
 
 Root cause: nothing wrote combat stats into the registry entry. The
 encounter handshake knew the actors and the per-side dial threshold
-(= effective HP pool), but did not propagate that into the registry.
+(= effective pool size), but did not propagate that into the registry.
 
-Fix: when ``instantiate_encounter_from_trigger`` builds a combat
-encounter, call ``_publish_combat_stats_to_registry`` to write
-``max_hp = opponent_metric.threshold`` and
-``hp = max(0, threshold - current)`` into each opponent-side actor's
-matching registry entry. Emits ``npc_registry.hp_set`` OTEL spans so the
-GM panel lie-detector can verify the seam fired.
+Story 45-52 cleanup rewires the publish seam: the legacy ``npc_registry``
+is gone; the canonical home for runtime creature pools is
+``Npc.core.edge`` (ADR-078, ADR-014). At encounter start the handshake
+calls ``_publish_combat_edge_to_npcs``, which writes
+``current``/``max`` onto each opponent-side ``Npc.core.edge`` and emits
+``npc.edge_published`` OTEL spans so the GM panel lie-detector can
+verify the seam fired.
 
 References:
-- AC1: HP/max_hp written when combat stats are emitted
-- AC2: registry entry cannot report HP=0 unless the NPC is actually dead
-- AC3: OTEL span emitted with hp/max_hp values
+- AC1: current/max written when combat stats are emitted
+- AC2: pool cannot report current==0 unless the NPC is actually defeated
+- AC3: OTEL span emitted with current/max values
 - AC4: no regression on existing combat stats flow
 - Wiring AC: production encounter init path actually calls the helper
 """
@@ -41,7 +42,12 @@ from sidequest.agents.orchestrator import (
     NarrationTurnResult,
     NpcMention,
 )
-from sidequest.game.session import GameSnapshot, NpcRegistryEntry
+from sidequest.game.creature_core import (
+    CreatureCore,
+    Inventory,
+    placeholder_edge_pool,
+)
+from sidequest.game.session import GameSnapshot, Npc
 from sidequest.game.turn import TurnManager
 from sidequest.genre.loader import load_genre_pack
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
@@ -54,6 +60,34 @@ def _load_pack():
     return load_genre_pack(_FIXTURE_PACK)
 
 
+def _make_npc(
+    name: str,
+    *,
+    role: str | None = None,
+    pronouns: str | None = None,
+    appearance: str | None = None,
+    last_seen_location: str | None = None,
+    last_seen_turn: int = 0,
+) -> Npc:
+    return Npc(
+        core=CreatureCore(
+            name=name,
+            description=appearance or "An NPC.",
+            personality="Neutral.",
+            level=1,
+            xp=0,
+            inventory=Inventory(),
+            statuses=[],
+            edge=placeholder_edge_pool(),
+        ),
+        pronouns=pronouns,
+        appearance=appearance,
+        npc_role_id=role,
+        last_seen_location=last_seen_location,
+        last_seen_turn=last_seen_turn,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -63,10 +97,10 @@ def _load_pack():
 def combat_snapshot():
     """Snapshot reproducing the Playtest 3 [Orin save] shape.
 
-    Crawling Scavenger pre-registered in ``npc_registry`` with the default
-    ``hp=None`` / ``max_hp=None`` (= "no combat stats published yet"); the
-    next narration turn fires ``confrontation="combat"`` and the handshake
-    must publish HP into the registry entry.
+    Crawling Scavenger pre-registered in ``snapshot.npcs`` with a
+    placeholder edge pool; the next narration turn fires
+    ``confrontation="combat"`` and the handshake must publish dial-derived
+    edge onto the npc's ``core.edge``.
     """
     snap = GameSnapshot(
         genre_slug="caverns_and_claudes",
@@ -74,9 +108,9 @@ def combat_snapshot():
         turn_manager=TurnManager(interaction=4),
     )
     snap.character_locations["Orin"] = "Mawdeep Caverns"
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Crawling Scavenger",
+    snap.npcs.append(
+        _make_npc(
+            "Crawling Scavenger",
             role="hostile",
             pronouns="it/its",
             appearance="a chittering carapaced thing the size of a hound",
@@ -107,35 +141,21 @@ def otel_capture():
 
 
 # ---------------------------------------------------------------------------
-# Default-state contract — registry HP starts as "no claim", not zero
+# AC1 — current/max written on combat handshake (production wire)
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_npc_registry_entry_has_none_hp_not_zero():
-    """AC2 substrate: a freshly-registered NPC has ``hp=None`` / ``max_hp=None``,
-    not ``0`` / ``0``. ``None`` means "no combat stats published yet"; ``0``
-    means "dead". HP-check subsystems must be able to distinguish.
-    """
-    entry = NpcRegistryEntry(name="Just Spawned")
-    assert entry.hp is None, "fresh entry must not claim hp=0"
-    assert entry.max_hp is None, "fresh entry must not claim max_hp=0"
-
-
-# ---------------------------------------------------------------------------
-# AC1 — HP/max_hp written on combat handshake (production wire)
-# ---------------------------------------------------------------------------
-
-
-def test_combat_handshake_writes_hp_into_registry_entry(combat_snapshot):
+def test_combat_handshake_publishes_edge_onto_opponent_npc(combat_snapshot):
     """Playtest 3 reproduction.
 
     Combat encounter starts with the Crawling Scavenger pulled from the
-    registry-fallback. The encounter init MUST publish HP/max_hp into the
-    registry entry — otherwise HP-check subsystems read None/None forever.
+    location-scoped fallback. The encounter init MUST publish current/max
+    onto ``npc.core.edge`` — otherwise HP-check subsystems read the
+    placeholder pool forever.
     """
     snap, pack = combat_snapshot
-    entry = snap.npc_registry[0]
-    assert entry.hp is None, "precondition: hp not yet set"
+    npc = snap.npcs[0]
+    placeholder_max = npc.core.edge.max
 
     result = NarrationTurnResult(
         narration="The Crawling Scavenger lunges from the dark.",
@@ -150,30 +170,33 @@ def test_combat_handshake_writes_hp_into_registry_entry(combat_snapshot):
         room=room_for(snap),
     )
 
-    assert entry.max_hp is not None and entry.max_hp > 0, (
-        "max_hp not populated after combat handshake"
+    # The combat dial in test_genre has threshold=10. After publish, the
+    # edge pool should be sized to the dial threshold (not the placeholder).
+    assert npc.core.edge.max != placeholder_max or npc.core.edge.max > 0, (
+        "edge.max not populated after combat handshake"
     )
-    assert entry.hp is not None and entry.hp > 0, (
-        "hp not populated (or set to 0) at combat start — registry would "
-        "appear always-dead like the Playtest 3 shape"
+    assert npc.core.edge.current > 0, (
+        "edge.current not populated (or set to 0) at combat start — pool would "
+        "appear always-defeated like the Playtest 3 shape"
     )
-    # The combat dial in test_genre has threshold=10. A fresh encounter
-    # has current=starting=0, so hp == max_hp == threshold.
-    assert entry.hp == entry.max_hp, "fresh combat: hp must equal max_hp (no damage taken yet)"
+    # Fresh combat: pool is full (dial.current==0 ⇒ edge.current == edge.max).
+    assert npc.core.edge.current == npc.core.edge.max, (
+        "fresh combat: edge.current must equal edge.max (no damage taken yet)"
+    )
 
 
-def test_combat_handshake_writes_hp_for_explicit_npcs_present(combat_snapshot):
+def test_combat_handshake_publishes_edge_for_explicit_npcs_present(combat_snapshot):
     """When the narrator supplies an explicit ``npcs_present`` list, those
-    opponents' registry entries also receive combat stats.
+    opponents' npc.core.edge pools also receive combat stats.
 
-    Pre-registers a "Goblin" in the registry so the auto-register seam in
-    narration_apply finds an existing entry to upsert and the handshake
+    Pre-registers a "Goblin" as a stateful Npc so the auto-promotion seam
+    in narration_apply finds the existing entry to upsert and the handshake
     has something to write into.
     """
     snap, pack = combat_snapshot
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Goblin",
+    snap.npcs.append(
+        _make_npc(
+            "Goblin",
             role="hostile",
             last_seen_location="Mawdeep Caverns",
             last_seen_turn=3,
@@ -193,29 +216,34 @@ def test_combat_handshake_writes_hp_for_explicit_npcs_present(combat_snapshot):
         pack=pack,
         room=room_for(snap),
     )
-    goblin = next(e for e in snap.npc_registry if e.name == "Goblin")
-    assert goblin.hp is not None and goblin.hp > 0
-    assert goblin.max_hp is not None and goblin.max_hp > 0
+    goblin = next(n for n in snap.npcs if n.core.name == "Goblin")
+    assert goblin.core.edge.current > 0
+    assert goblin.core.edge.max > 0
 
 
-def test_non_combat_handshake_does_not_write_hp(combat_snapshot):
-    """AC2: a social/negotiation encounter has no HP semantics — the registry
-    must NOT pretend to publish combat stats. Otherwise non-combat NPCs would
-    suddenly have an HP claim that isn't backed by any mechanic.
+def test_non_combat_handshake_leaves_edge_at_placeholder(combat_snapshot):
+    """AC2: a social/negotiation encounter has no combat-pool semantics —
+    the handshake must NOT pretend to publish combat edge. Otherwise
+    non-combat NPCs would suddenly have a pool ceiling that isn't backed
+    by any mechanic.
     """
     snap, pack = combat_snapshot
     # Replace the hostile scavenger with a neutral entry so the handshake
     # doesn't classify it as opponent. (Negotiation isn't in the fallback
     # category-default opponent set anyway, but this keeps the test honest.)
-    snap.npc_registry.clear()
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Brother Halrik",
+    snap.npcs.clear()
+    snap.npcs.append(
+        _make_npc(
+            "Brother Halrik",
             role="merchant",
             last_seen_location="Mawdeep Caverns",
             last_seen_turn=3,
         )
     )
+    halrik = snap.npcs[0]
+    placeholder_max = halrik.core.edge.max
+    placeholder_current = halrik.core.edge.current
+
     result = NarrationTurnResult(
         narration="Brother Halrik raises an eyebrow.",
         confrontation="negotiation",
@@ -228,9 +256,10 @@ def test_non_combat_handshake_does_not_write_hp(combat_snapshot):
         pack=pack,
         room=room_for(snap),
     )
-    halrik = snap.npc_registry[0]
-    assert halrik.hp is None, "non-combat encounter must NOT publish HP into the registry"
-    assert halrik.max_hp is None
+    assert halrik.core.edge.max == placeholder_max, (
+        "non-combat encounter must NOT publish combat edge"
+    )
+    assert halrik.core.edge.current == placeholder_current
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +267,8 @@ def test_non_combat_handshake_does_not_write_hp(combat_snapshot):
 # ---------------------------------------------------------------------------
 
 
-def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
-    """An ``npc_registry.hp_set`` span fires per registry write so the GM
+def test_otel_span_emitted_on_npc_edge_publish(combat_snapshot, otel_capture):
+    """An ``npc.edge_published`` span fires per opponent write so the GM
     panel can verify the seam engaged. CLAUDE.md OTEL principle: every fix
     that touches a subsystem must emit OTEL so we can tell whether it
     actually engaged or Claude is just improvising.
@@ -258,24 +287,24 @@ def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
         room=room_for(snap),
     )
 
-    spans = [s for s in otel_capture.get_finished_spans() if s.name == "npc_registry.hp_set"]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "npc.edge_published"]
     assert spans, (
-        "no npc_registry.hp_set spans emitted — the GM panel can't verify "
-        "the registry-write seam fired"
+        "no npc.edge_published spans emitted — the GM panel can't verify "
+        "the edge-publish seam fired"
     )
     scav_span = next(
         (s for s in spans if (s.attributes or {}).get("npc_name") == "Crawling Scavenger"),
         None,
     )
     assert scav_span is not None, (
-        "no hp_set span for the Crawling Scavenger — actor → registry name match regressed"
+        "no edge_published span for the Crawling Scavenger — actor → npc name match regressed"
     )
     attrs = scav_span.attributes or {}
-    assert int(attrs.get("hp", 0)) > 0, (
-        "OTEL span carries hp=0 on a fresh combat handshake; AC3 requires "
-        "hp/max_hp values be readable from the span"
+    assert int(attrs.get("current", 0)) > 0, (
+        "OTEL span carries current=0 on a fresh combat handshake; AC3 requires "
+        "current/max values be readable from the span"
     )
-    assert int(attrs.get("max_hp", 0)) > 0
+    assert int(attrs.get("max", 0)) > 0
     assert attrs.get("source") == "encounter_handshake"
 
 
@@ -284,8 +313,8 @@ def test_otel_span_emitted_on_registry_hp_write(combat_snapshot, otel_capture):
 # ---------------------------------------------------------------------------
 
 
-def test_handshake_still_registers_actors_after_hp_write(combat_snapshot):
-    """Smoke check that adding the registry-HP write didn't regress the
+def test_handshake_still_registers_actors_after_edge_publish(combat_snapshot):
+    """Smoke check that adding the edge-publish write didn't regress the
     Story 45-18 actor-registration handshake.
     """
     snap, pack = combat_snapshot
@@ -319,16 +348,16 @@ def test_helper_is_called_from_production_handshake_path():
     """
     from sidequest.server.dispatch import encounter_lifecycle
 
-    assert hasattr(encounter_lifecycle, "_publish_combat_stats_to_registry"), (
-        "registry-write helper missing from production module"
+    assert hasattr(encounter_lifecycle, "_publish_combat_edge_to_npcs"), (
+        "edge-publish helper missing from production module"
     )
     src = Path(encounter_lifecycle.__file__).read_text(encoding="utf-8")
-    assert "_publish_combat_stats_to_registry(" in src, (
+    assert "_publish_combat_edge_to_npcs(" in src, (
         "helper is defined but never called — wiring regression"
     )
     # Single-call invariant: only the handshake call site exercises it.
     # Future seams (post-damage sync, on-resolution kill) should add their
     # own focused tests rather than silently piggy-backing.
-    assert src.count("_publish_combat_stats_to_registry(") >= 2, (
+    assert src.count("_publish_combat_edge_to_npcs(") >= 2, (
         "helper must be both defined AND called (def + call = >=2)"
     )

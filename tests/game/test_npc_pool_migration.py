@@ -360,6 +360,94 @@ def test_s1_and_s2_can_run_in_same_migration() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_malformed_npc_entries_counted_in_otel(otel_capture) -> None:
+    """Story 45-52 silent-failure detector.
+
+    Non-dict entries in legacy ``npc_registry`` are silently skipped by the
+    migration. The migration must publish a count so the GM panel can see
+    them rather than the migration eating them on the floor.
+    """
+    legacy = {
+        "npcs": [],
+        "npc_registry": [
+            "not-a-dict",
+            42,
+            _registry_entry("Real Entry"),
+        ],
+    }
+    out = migrate_legacy_snapshot(legacy)
+    # Only the valid entry made it through.
+    assert len(out["npc_pool"]) == 1
+    assert out["npc_pool"][0]["name"] == "Real Entry"
+
+    canonicalize_spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == "snapshot.canonicalize"
+    ]
+    assert len(canonicalize_spans) == 1
+    attrs = dict(canonicalize_spans[0].attributes or {})
+    assert attrs.get("s2_malformed_npcs_skipped") == 2, (
+        "Migration must count non-dict registry entries via "
+        f"s2_malformed_npcs_skipped; got {attrs!r}"
+    )
+
+
+def test_nameless_npc_entries_counted_in_otel(otel_capture) -> None:
+    """Story 45-52 silent-failure detector.
+
+    Entries with an empty/missing name are silently dropped. The migration
+    must publish a count so the GM panel can see them rather than the
+    migration eating them on the floor.
+    """
+    legacy = {
+        "npcs": [],
+        "npc_registry": [
+            _registry_entry(""),  # blank name
+            {"role": "merchant"},  # no name key at all
+            _registry_entry("Has-A-Name"),
+        ],
+    }
+    out = migrate_legacy_snapshot(legacy)
+    # Only the named entry made it through.
+    assert len(out["npc_pool"]) == 1
+    assert out["npc_pool"][0]["name"] == "Has-A-Name"
+
+    canonicalize_spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == "snapshot.canonicalize"
+    ]
+    assert len(canonicalize_spans) == 1
+    attrs = dict(canonicalize_spans[0].attributes or {})
+    assert attrs.get("s2_nameless_entries_dropped") == 2, (
+        "Migration must count nameless registry entries via "
+        f"s2_nameless_entries_dropped; got {attrs!r}"
+    )
+
+
+@pytest.fixture
+def otel_capture():
+    """Attach an in-memory exporter to the running TracerProvider."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry.setup import init_tracer
+
+    init_tracer()
+    provider = otel_trace.get_tracer_provider()
+    assert isinstance(provider, TracerProvider), (
+        f"expected SDK TracerProvider, got {type(provider)!r}"
+    )
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        yield exporter
+    finally:
+        processor.shutdown()
+
+
 def test_legacy_fixture_with_npc_registry_round_trips() -> None:
     """Real save (2026-05-03 coyote_star MP) round-trips through the
     migration. All registry entries are name-only in the captured fixture

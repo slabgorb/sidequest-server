@@ -40,11 +40,12 @@ def _filter_context_for_callable(fn: SubsystemCallable, context: dict[str, Any])
     """Return only the ``context`` keys that ``fn`` actually accepts.
 
     Subsystems have heterogeneous signatures — ``run_npc_agency`` requires
-    ``npc_registry`` (kw-only), ``run_distinctive_detail`` takes only the
-    ``dispatch``. Blasting ``**context`` into either raises TypeError:
-    the registry-required subsystem fails on missing kwarg if context is
-    empty, and the dispatch-only subsystem fails on unexpected kwarg if
-    context is full. Filtering by signature keeps both happy.
+    ``npc_pool`` (kw-only; rewired from ``npc_registry`` in story 45-52),
+    ``run_distinctive_detail`` takes only the ``dispatch``. Blasting
+    ``**context`` into either raises TypeError: the pool-required subsystem
+    fails on missing kwarg if context is empty, and the dispatch-only
+    subsystem fails on unexpected kwarg if context is full. Filtering by
+    signature keeps both happy.
 
     If ``fn`` declares ``**kwargs``, the full context is forwarded.
     """
@@ -222,7 +223,7 @@ async def run_dispatch_bank(
                     continue
                 # Filter ``context`` to only the kwargs ``fn`` declares —
                 # subsystems have heterogeneous signatures (e.g.,
-                # ``run_npc_agency`` requires ``npc_registry`` but
+                # ``run_npc_agency`` requires ``npc_pool`` but
                 # ``run_distinctive_detail`` accepts only ``dispatch``).
                 # Without filtering, blasting ``**context`` into the latter
                 # raises ``TypeError: unexpected keyword argument``.

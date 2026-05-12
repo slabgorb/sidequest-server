@@ -2,8 +2,10 @@
 
 Per docs/design/rig-taxonomy.md locked decision α (sibling framework) and
 the slice spec (docs/superpowers/specs/2026-04-29-rig-mvp-coyote-star-design.md
-§2.1) chassis state lives in its own container with a projection into
-npc_registry for narrator continuity.
+§2.1) chassis state lives in its own container. Wave 2A (story 45-47)
+removed the projection into the now-dropped ``npc_registry`` — chassis
+reach the narrator prompt via the dedicated chassis-voice section
+(``register_chassis_voice_section``), not the NPC roster.
 
 Slice scope: ChassisInstance + bond ledger + lineage + bond mutation +
 tier derivation. Hardpoints, subsystems, damage_history, registration
@@ -70,7 +72,8 @@ class ChassisLineageEntry(BaseModel):
 
 
 class ChassisInstance(BaseModel):
-    """Live chassis state. Source of truth; npc_registry has a projection."""
+    """Live chassis state. Source of truth — projected to the narrator via
+    the chassis-voice section, not via the (dropped) ``npc_registry``."""
 
     model_config = {"extra": "forbid"}
 
@@ -211,8 +214,9 @@ def init_chassis_registry(snapshot, genre_pack) -> None:
       - the world has no rigs.yaml authored
 
     Each chassis is added to ``snapshot.chassis_registry`` keyed by its id.
-    Wave 2A (story 45-47) removed the projection into ``npc_registry`` —
-    chassis surface in the narrator prompt via the dedicated
+    Wave 2A (story 45-47) removed the projection into the legacy
+    ``npc_registry`` (the registry was dropped in story 45-52); chassis
+    surface in the narrator prompt via the dedicated
     ``register_chassis_voice_section`` (chassis voice zone, separate from
     the NPC roster).
     """

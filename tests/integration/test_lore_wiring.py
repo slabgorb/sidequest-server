@@ -43,7 +43,6 @@ def _make_snapshot(*, lore: list[str] | None = None) -> GameSnapshot:
         world_slug="flickering_reach",
         location="Tood's Dome",
         discovered_regions=["Tood's Dome"],
-        npc_registry=[],
         quest_log={},
         lore_established=list(lore or []),
         characters=[],

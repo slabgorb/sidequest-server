@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sidequest.agents.prompt_framework.core import PromptRegistry
-from sidequest.game.session import NpcRegistryEntry
+from sidequest.game.npc_pool import NpcPoolMember
 
 
 @pytest.fixture
@@ -17,20 +17,21 @@ def build_registry():
 
 
 @pytest.fixture
-def minimal_npc_registry() -> list[NpcRegistryEntry]:
-    """A small registry list with one named NPC.
+def minimal_npc_pool() -> list[NpcPoolMember]:
+    """A small pool list with one named NPC.
 
-    The Python port stores the NPC registry as ``list[NpcRegistryEntry]`` on
-    ``WorldSnapshot.npc_registry`` (see ``sidequest/game/session.py``).
+    Story 45-52 cleanup: ``GameSnapshot.npc_registry`` was dropped; the
+    canonical identity-only cast pool is ``GameSnapshot.npc_pool``
+    (``list[NpcPoolMember]``). Last-seen state, when needed, lives on
+    a promoted ``Npc`` (``GameSnapshot.npcs``).
     """
     return [
-        NpcRegistryEntry(
+        NpcPoolMember(
             name="Harlan",
             role="innkeeper",
             pronouns="he/him",
             appearance="grey beard, apron",
-            last_seen_location="the inn",
-            last_seen_turn=1,
+            drawn_from="world_authored",
         ),
     ]
 

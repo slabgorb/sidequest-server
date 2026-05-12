@@ -499,9 +499,10 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
     """Story 45-33 AC1 (primary).
 
     A sealed-letter encounter with one explicit opponent must NOT also pull
-    a same-location NPC out of ``snapshot.npc_registry`` into the actor
-    list. The registry fallback (``_registry_fallback_npcs``) is gated at
-    ``encounter_lifecycle.py:226`` to non-sealed-letter modes precisely so
+    a same-location NPC out of ``snapshot.npcs`` into the actor list. The
+    location-scoped fallback (``_npc_fallback_at_location``, formerly
+    ``_registry_fallback_npcs`` pre-45-52) is gated at
+    ``encounter_lifecycle.py`` to non-sealed-letter modes precisely so
     the duel's 1-PC red / 1-NPC blue pairing stays inviolate.
 
     This test also asserts the OTEL ``encounter.confrontation_initiated``
@@ -509,9 +510,8 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
     held end-to-end (CLAUDE.md OTEL principle).
 
     Regression catch: dropping the guard or flipping ``!=`` to ``==`` would
-    let a registry bystander shadow the named opponent — the duel would
-    proceed against the wrong actor and the existing 2685 tests would
-    still pass.
+    let a bystander shadow the named opponent — the duel would proceed
+    against the wrong actor and the existing 2685 tests would still pass.
     """
     import opentelemetry.trace as otel_trace
     from opentelemetry.sdk.trace import TracerProvider
@@ -521,7 +521,12 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
     )
 
     from sidequest.agents.orchestrator import NpcMention
-    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.game.creature_core import (
+        CreatureCore,
+        Inventory,
+        placeholder_edge_pool,
+    )
+    from sidequest.game.session import Npc
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
@@ -538,11 +543,21 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
         snap = GameSnapshot(genre_slug="test_pack")
         snap.character_locations["Maverick"] = "Hangar Bay 7"
         # Bystander at the same location — would be pulled into a non-sealed-letter
-        # encounter via the registry fallback. Must NOT be pulled into the duel.
-        snap.npc_registry.append(
-            NpcRegistryEntry(
-                name="Deck Crew Chief",
-                role="bystander",
+        # encounter via the location-scoped fallback. Must NOT be pulled into
+        # the duel.
+        snap.npcs.append(
+            Npc(
+                core=CreatureCore(
+                    name="Deck Crew Chief",
+                    description="A bystander.",
+                    personality="Neutral.",
+                    level=1,
+                    xp=0,
+                    inventory=Inventory(),
+                    statuses=[],
+                    edge=placeholder_edge_pool(),
+                ),
+                npc_role_id="bystander",
                 last_seen_location="Hangar Bay 7",
                 last_seen_turn=2,
             )
@@ -567,8 +582,8 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
         assert "Maverick" in actor_names
         assert "Vulture" in actor_names
         assert "Deck Crew Chief" not in actor_names, (
-            "registry bystander leaked into sealed-letter duel — "
-            "the bypass guard at encounter_lifecycle.py:226 regressed. "
+            "bystander leaked into sealed-letter duel — "
+            "the bypass guard in encounter_lifecycle.py regressed. "
             f"actors={actor_names!r}"
         )
         assert len(enc.actors) == 2, (
@@ -588,35 +603,48 @@ def test_sealed_letter_does_not_consume_registry_fallback(sealed_letter_pack):
         processor.shutdown()
 
 
-def test_sealed_letter_empty_npcs_present_raises_without_consuming_registry(
+def test_sealed_letter_empty_npcs_present_raises_without_consuming_fallback(
     sealed_letter_pack,
 ):
     """Story 45-33 AC1 (defensive).
 
     When the narrator's ``npcs_present`` is EMPTY for a sealed-letter
-    encounter AND a same-location NPC sits in ``npc_registry``, the
-    sealed-letter validator at ``encounter_lifecycle.py:256`` must raise
-    "got 0 npcs_present". The registry fallback must NOT be consulted —
-    even in this degenerate empty path the bystander is not promoted into
-    the duel as a substitute opponent.
+    encounter AND a same-location NPC sits in ``snapshot.npcs``, the
+    sealed-letter validator must raise "got 0 npcs_present". The
+    location-scoped fallback must NOT be consulted — even in this
+    degenerate empty path the bystander is not promoted into the duel
+    as a substitute opponent.
 
-    Regression catch: dropping the resolution_mode guard at line 226
-    while keeping the validator length check would silently fall back to
-    the registry, then pass the validator with the wrong NPC — the test
-    above would catch the wrong-NPC path; this test catches the
-    "fallback ran at all" path.
+    Regression catch: dropping the resolution_mode guard while keeping
+    the validator length check would silently fall back, then pass the
+    validator with the wrong NPC — the test above would catch the
+    wrong-NPC path; this test catches the "fallback ran at all" path.
     """
-    from sidequest.game.session import NpcRegistryEntry
+    from sidequest.game.creature_core import (
+        CreatureCore,
+        Inventory,
+        placeholder_edge_pool,
+    )
+    from sidequest.game.session import Npc
     from sidequest.server.dispatch.encounter_lifecycle import (
         instantiate_encounter_from_trigger,
     )
 
     snap = GameSnapshot(genre_slug="test_pack")
     snap.character_locations["Maverick"] = "Hangar Bay 7"
-    snap.npc_registry.append(
-        NpcRegistryEntry(
-            name="Deck Crew Chief",
-            role="bystander",
+    snap.npcs.append(
+        Npc(
+            core=CreatureCore(
+                name="Deck Crew Chief",
+                description="A bystander.",
+                personality="Neutral.",
+                level=1,
+                xp=0,
+                inventory=Inventory(),
+                statuses=[],
+                edge=placeholder_edge_pool(),
+            ),
+            npc_role_id="bystander",
             last_seen_location="Hangar Bay 7",
             last_seen_turn=2,
         )
@@ -633,7 +661,7 @@ def test_sealed_letter_empty_npcs_present_raises_without_consuming_registry(
         )
 
     # No encounter must have been written. If the guard regressed and the
-    # registry was consumed, the encounter would have been instantiated
+    # fallback was consumed, the encounter would have been instantiated
     # with the bystander as the blue actor before any later rollback.
     assert snap.encounter is None, (
         f"snapshot.encounter must remain None when sealed-letter validator "

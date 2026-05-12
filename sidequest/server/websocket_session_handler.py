@@ -2082,32 +2082,12 @@ class WebSocketSessionHandler:
             component="rag",
         )
 
-        # NPC registry reset (Slice G / connect.rs:2136). Drops chargen-
-        # tier name extractions (player's own name, lobby filler) so the
-        # narrator starts clean. Lore / tropes / regions / history persist.
-        # MP: only the first commit clears — second-commit preservation
-        # avoids stranding peer-narrated NPCs mid-arc.
-        if is_first_commit:
-            prev_registry_len = len(sd.snapshot.npc_registry)
-            sd.snapshot.npc_registry.clear()
-            span.add_event(
-                "npc_registry.cleared_on_chargen_complete",
-                {
-                    "event": "npc_registry.cleared_on_chargen_complete",
-                    "genre": sd.genre_slug,
-                    "world": sd.world_slug,
-                    "player": sd.player_name,
-                    "previous_len": prev_registry_len,
-                    "reason": "fresh_character_narrative_reset",
-                },
-            )
-            logger.info(
-                "npc_registry.cleared genre=%s world=%s player=%s prev_len=%d",
-                sd.genre_slug,
-                sd.world_slug,
-                sd.player_name,
-                prev_registry_len,
-            )
+        # NPC registry reset removed in story 45-52. The pre-Wave-2A clear
+        # targeted the legacy ``npc_registry`` (chargen-tier name extractions
+        # — player's own name, lobby filler). With the registry dropped and
+        # the post-Wave-2A pool channel intentionally persistent across
+        # chargen (world-authored cast pre-seeds; recurring narrator-cited
+        # NPCs survive the seam), there is nothing to clear here.
 
         # MP per-player chargen binding (playtest 2026-04-25). Maps
         # player_id → character_name so slug-resume routes new players
@@ -3662,7 +3642,7 @@ class WebSocketSessionHandler:
                         if result.npcs_present:
                             _patch_summaries.append(
                                 PatchSummary(
-                                    patch_type="npc_registry",
+                                    patch_type="npc_pool",
                                     fields_changed=[n.name for n in result.npcs_present],
                                 )
                             )
@@ -3751,7 +3731,7 @@ class WebSocketSessionHandler:
                                 or ""
                             ),
                             "discovered_regions": list(snapshot.discovered_regions),
-                            "npc_registry_count": len(snapshot.npc_registry),
+                            "npc_pool_count": len(snapshot.npc_pool),
                             "quest_log_count": len(snapshot.quest_log),
                             "lore_established_count": len(snapshot.lore_established),
                             "character_count": len(snapshot.characters),

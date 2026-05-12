@@ -316,12 +316,12 @@ def create_rest_router() -> APIRouter:
             # Wave 2A snapshot split: NPCs live in two canonical stores —
             # ``snap.npcs`` (mechanically engaged, carries CreatureCore +
             # last_seen tracking) and ``snap.npc_pool`` (identity-only
-            # cast pool members). Legacy ``snap.npc_registry`` entries are
-            # migrated into ``snap.npc_pool`` on load, so on any post-
-            # migration snapshot ``npc_registry`` is always empty. Project
-            # both canonical stores so the GM panel actually surfaces the
-            # NPCs that exist (the panel's JSON field name stays
-            # ``npc_registry`` to preserve the wire contract).
+            # cast pool members). The legacy ``snap.npc_registry`` field
+            # was dropped in story 45-52; legacy saves migrate into
+            # ``snap.npc_pool`` on load. Project both canonical stores so
+            # the GM panel actually surfaces the NPCs that exist (the
+            # panel's JSON field name stays ``npc_registry`` to preserve
+            # the wire contract).
             npc_registry: list[dict[str, Any]] = []
             for npc in snap.npcs:
                 core = npc.core

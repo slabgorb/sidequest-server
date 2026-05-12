@@ -69,7 +69,6 @@ async def test_quest_updates_emit_state_transition_via_span_route(
         world_slug="flickering_reach",
         location="Tood's Dome",
         discovered_regions=["Tood's Dome"],
-        npc_registry=[],
         quest_log={},
         lore_established=[],
         characters=[],

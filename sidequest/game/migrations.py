@@ -86,6 +86,14 @@ def _migrate_s2_npc_registry_split(out: dict[str, Any]) -> dict[str, Any] | None
     - Otherwise, emit a ``NpcPoolMember`` dict into ``out["npc_pool"]``
       with ``drawn_from="legacy_registry"`` and ``archetype_id=None``.
 
+    Two silent-skip paths are counted into OTEL attributes (story 45-52,
+    Reviewer's silent-failure findings on 45-47):
+
+    - ``s2_malformed_npcs_skipped`` — entries that weren't dicts at all
+      (corrupt save / hand-edited JSON). Previously dropped on the floor.
+    - ``s2_nameless_entries_dropped`` — entries with an empty/missing name.
+      Previously dropped on the floor.
+
     Drops the ``npc_registry`` field on success. Returns OTEL attributes
     when anything was rewritten, else None.
     """
@@ -128,12 +136,16 @@ def _migrate_s2_npc_registry_split(out: dict[str, Any]) -> dict[str, Any] | None
     pool_added = 0
     last_seen_merged = 0
     orphans_dropped = 0
+    malformed_npcs_skipped = 0
+    nameless_entries_dropped = 0
 
     for entry in legacy:
         if not isinstance(entry, dict):
+            malformed_npcs_skipped += 1
             continue
         name = entry.get("name", "")
         if not name:
+            nameless_entries_dropped += 1
             continue
         match = by_name.get(name.casefold())
 
@@ -169,6 +181,8 @@ def _migrate_s2_npc_registry_split(out: dict[str, Any]) -> dict[str, Any] | None
         "s2_pool_added": pool_added,
         "s2_last_seen_merged": last_seen_merged,
         "s2_orphans_dropped": orphans_dropped,
+        "s2_malformed_npcs_skipped": malformed_npcs_skipped,
+        "s2_nameless_entries_dropped": nameless_entries_dropped,
     }
 
 

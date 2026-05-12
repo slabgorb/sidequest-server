@@ -116,10 +116,10 @@ def clear_scratch_on_scene_end(
     Boon was added 2026-04-30; it joins the same scene-end sweep because the
     semantics are symmetric: temporary effect, bounded by the current scene.
 
-    NPC statuses on ``snapshot.npc_registry`` are not touched here; NPCs
-    don't surface a condition pill in the party panel and the bug is
-    scoped to PC accumulation. If/when NPC statuses become first-class,
-    extend this function rather than scattering the sweep.
+    NPC statuses (``snapshot.npcs[*].core.statuses``) are not touched
+    here; NPCs don't surface a condition pill in the party panel and
+    the bug is scoped to PC accumulation. If/when NPC statuses become
+    first-class, extend this function rather than scattering the sweep.
     """
     cleared = 0
     for char in snapshot.characters:

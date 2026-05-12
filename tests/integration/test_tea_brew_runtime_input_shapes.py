@@ -66,7 +66,6 @@ def _bootstrap_coyote_star_snapshot(*, location: str = "Cockpit") -> GameSnapsho
     snap.discovered_regions = []
     snap.quest_log = {}
     snap.lore_established = []
-    snap.npc_registry = []
     snap.characters = []
     snap.encounter = None
     snap.magic_state = make_minimal_coyote_star_magic_state()

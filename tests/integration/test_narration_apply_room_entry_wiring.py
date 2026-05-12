@@ -55,7 +55,6 @@ def _bootstrap_coyote_star_snapshot() -> GameSnapshot:
     snap.discovered_regions = []
     snap.quest_log = {}
     snap.lore_established = []
-    snap.npc_registry = []
     snap.characters = []
     snap.encounter = None
     # S1 invariant (2026-05-04): magic_state initialized before chassis.

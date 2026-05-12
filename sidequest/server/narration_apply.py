@@ -1028,7 +1028,7 @@ def resolve_status_target(
             "trigger": trigger,
             "turn": turn_num,
         },
-        component="npc_registry",
+        component="npc_pool",
     )
     logger.info(
         "npc.promoted_from_pool name=%r trigger=%s turn=%d",
@@ -1566,8 +1566,8 @@ def _apply_narration_result_to_snapshot(
 ) -> NarrationApplyOutcome:
     """Apply narrator-extracted fields to the snapshot.
 
-    Phase 1: location, quest_updates, lore_established, npc_registry,
-    inventory items_gained / items_lost.
+    Phase 1: location, quest_updates, lore_established, npc_pool / npcs
+    upsert, inventory items_gained / items_lost.
     Story 3.4: encounter instantiation and beat application (when pack provided).
 
     ``dice_failed=True`` / ``False`` signals a dice-replay turn — the dice
