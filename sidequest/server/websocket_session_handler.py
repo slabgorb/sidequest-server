@@ -94,6 +94,7 @@ from sidequest.protocol.messages import (
     ChapterMarkerPayload,
     CharacterCreationMessage,
     CharacterCreationPayload,
+    ConfrontationMessage,
     ConfrontationPayload,
     ImageMessage,
     ImagePayload,
@@ -3082,10 +3083,21 @@ class WebSocketSessionHandler:
                                 f"active encounter type {now_encounter.encounter_type!r} "
                                 f"not in pack confrontations (genre={sd.genre_slug!r})"
                             )
+                        # Canonical (full-union) payload — persisted to
+                        # EventLog via ``_emit_event`` below for replay
+                        # parity, and also delivered to legacy stub-room
+                        # test fixtures that lack the full SessionRoom
+                        # API. ``recipient_pc=None`` is explicit: this
+                        # call deliberately does NOT project per-PC —
+                        # the per-recipient overlay loop below
+                        # overwrites each connected socket's
+                        # Confrontation tab with class-filtered beats
+                        # (Story 49-7).
                         payload_dict = build_confrontation_payload(
                             encounter=now_encounter,
                             cdef=cdef,
                             genre_slug=sd.genre_slug,
+                            recipient_pc=None,
                         )
                         confrontation_payload = ConfrontationPayload(**payload_dict)
                         confrontation_event_attrs = {
@@ -3140,6 +3152,63 @@ class WebSocketSessionHandler:
                                 "CONFRONTATION",
                                 confrontation_payload,
                             )
+
+                        # Story 49-7: per-PC beat projection overlay. The
+                        # canonical ``_emit_event`` call above persists the
+                        # full-union payload to EventLog (replay-safe) and
+                        # fans it to peers via the ProjectionFilter — but
+                        # every recipient sees the same 16-button beat list
+                        # regardless of class (the 2026-05-12 caverns_sunden
+                        # playtest bug: Fighter saw Backstab/Cast Spell/Turn
+                        # Undead). We follow the canonical emit with a per-
+                        # recipient direct-queue overlay that delivers a
+                        # class-filtered CONFRONTATION to each connected
+                        # socket. UI renders whichever arrives last for a
+                        # given encounter — filtered wins. EventLog retains
+                        # the canonical row for audit; reconnect rebuilds
+                        # via the slug-resume bootstrap which is itself per-
+                        # PC filtered (handlers/connect.py:1110).
+                        if now_live and now_encounter is not None and self._room is not None:
+                            from sidequest.server.dispatch.confrontation import (
+                                resolve_recipient_pc,
+                            )
+
+                            socket_for_player_fn = getattr(self._room, "socket_for_player", None)
+                            queue_for_socket_fn = getattr(self._room, "queue_for_socket", None)
+                            connected_player_ids_fn = getattr(
+                                self._room, "connected_player_ids", None
+                            )
+                            if (
+                                callable(socket_for_player_fn)
+                                and callable(queue_for_socket_fn)
+                                and callable(connected_player_ids_fn)
+                            ):
+                                for _pid in connected_player_ids_fn():
+                                    _recipient_pc, _recipient_actor = resolve_recipient_pc(
+                                        snapshot=sd.snapshot,
+                                        genre_pack=sd.genre_pack,
+                                        player_id=_pid,
+                                    )
+                                    if _recipient_pc is None:
+                                        continue
+                                    _per_pc_dict = build_confrontation_payload(
+                                        encounter=now_encounter,
+                                        cdef=cdef,
+                                        genre_slug=sd.genre_slug,
+                                        recipient_pc=_recipient_pc,
+                                        recipient_actor_name=_recipient_actor,
+                                    )
+                                    _per_pc_msg = ConfrontationMessage(
+                                        payload=ConfrontationPayload(**_per_pc_dict),
+                                        player_id="server",
+                                    )
+                                    _socket_id = socket_for_player_fn(_pid)
+                                    if _socket_id is None:
+                                        continue
+                                    _q = queue_for_socket_fn(_socket_id)
+                                    if _q is None:
+                                        continue
+                                    _q.put_nowait(_per_pc_msg)
                         assert confrontation_event_attrs is not None
                         trace.get_current_span().add_event(
                             "confrontation.dispatched",

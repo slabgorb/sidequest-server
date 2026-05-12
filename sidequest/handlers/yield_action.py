@@ -58,6 +58,7 @@ class YieldHandler:
             build_clear_confrontation_payload,
             build_confrontation_payload,
             find_confrontation_def,
+            resolve_recipient_pc,
         )
         from sidequest.server.dispatch.yield_action import handle_yield
 
@@ -137,10 +138,20 @@ class YieldHandler:
             elif cdef is not None:
                 # Encounter persists (multi-actor party, partial yield). Send
                 # the live state so the UI mirrors actor.withdrawn=True.
+                # Story 49-7: project beats to the yielding player's class so
+                # the Confrontation tab reflects the actor's legal moves
+                # (Fighter doesn't suddenly see Cast Spell mid-yield).
+                recipient_pc, recipient_actor = resolve_recipient_pc(
+                    snapshot=sd.snapshot,
+                    genre_pack=sd.genre_pack,
+                    player_id=player_id,
+                )
                 payload_dict = build_confrontation_payload(
                     encounter=post_encounter,
                     cdef=cdef,
                     genre_slug=sd.genre_slug,
+                    recipient_pc=recipient_pc,
+                    recipient_actor_name=recipient_actor,
                 )
                 # Seat-aware count: NPC companions on the player side are
                 # excluded so the log line matches the actual yield gate

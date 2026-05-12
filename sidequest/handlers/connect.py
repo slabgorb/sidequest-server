@@ -1099,6 +1099,7 @@ class ConnectHandler:
                     from sidequest.server.dispatch.confrontation import (
                         build_confrontation_payload,
                         find_confrontation_def,
+                        resolve_recipient_pc,
                     )
 
                     cdef = find_confrontation_def(
@@ -1107,10 +1108,21 @@ class ConnectHandler:
                     )
                     if cdef is not None:
                         try:
+                            # Story 49-7: filter the bootstrap CONFRONTATION
+                            # to the resuming player's class so the
+                            # Confrontation tab paints with class-legal
+                            # beats only, matching the live-encounter path.
+                            recipient_pc, recipient_actor = resolve_recipient_pc(
+                                snapshot=snapshot,
+                                genre_pack=session._session_data.genre_pack,
+                                player_id=player_id,
+                            )
                             conf_payload_dict = build_confrontation_payload(
                                 encounter=encounter,
                                 cdef=cdef,
                                 genre_slug=row.genre_slug,
+                                recipient_pc=recipient_pc,
+                                recipient_actor_name=recipient_actor,
                             )
                             bootstrap_msgs.append(
                                 ConfrontationMessage(

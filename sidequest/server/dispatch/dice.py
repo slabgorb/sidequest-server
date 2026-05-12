@@ -226,6 +226,8 @@ def dispatch_dice_throw(
     round_number: int,
     room_broadcast: Callable[[object], None] | None,
     snapshot: GameSnapshot,
+    connected_player_ids: list[str] | None = None,
+    per_recipient_emit: Callable[[str, object], None] | None = None,
 ) -> DiceThrowOutcome:
     """Apply a beat, resolve dice, broadcast wire messages, return outcome.
 
@@ -242,6 +244,17 @@ def dispatch_dice_throw(
     ``genre_slug`` is forwarded to ``build_confrontation_payload`` for
     the mid-turn CONFRONTATION frame (story 45-3); it must match the
     active genre pack's slug — there is no fallback resolution.
+
+    Story 49-7: ``connected_player_ids`` and ``per_recipient_emit`` (a
+    targeted ``(player_id, msg) -> None`` callable) drive the per-PC
+    CONFRONTATION overlay. After the canonical ``room_broadcast`` of the
+    mid-turn CONFRONTATION (which delivers the full-union payload to
+    every socket — matching pre-49-7 behavior), the dispatcher fans a
+    class-filtered CONFRONTATION to each connected player so the
+    Confrontation tab paints with only their class's legal beats.
+    Both params optional: when either is None the per-PC overlay is
+    skipped (legacy single-socket fixtures and tests that don't bind
+    a multi-player room).
     """
     if payload.beat_id is None:
         raise DiceDispatchError(
@@ -501,10 +514,18 @@ def dispatch_dice_throw(
         # detector flag from playtest 2026-04-19. Skipped on the opposed
         # branch where deltas are deferred to narration_apply.
         if not opposed_pending:
+            # Canonical (full-union) mid-turn payload — delivered via
+            # ``room_broadcast`` so legacy stub-room test fixtures and
+            # any non-MP fallback path see a CONFRONTATION carrying
+            # post-apply momentum. ``recipient_pc=None`` is explicit:
+            # this call deliberately does not project per-PC — the
+            # overlay loop below overwrites each connected player's
+            # Confrontation tab with class-filtered beats (Story 49-7).
             mid_turn_payload = build_confrontation_payload(
                 encounter=encounter,
                 cdef=cdef,
                 genre_slug=genre_slug,
+                recipient_pc=None,
             )
             with encounter_momentum_broadcast_span(
                 encounter_type=encounter.encounter_type,
@@ -519,6 +540,45 @@ def dispatch_dice_throw(
                         player_id="server",
                     ),
                 )
+
+                # Story 49-7: per-PC beat projection overlay on the mid-
+                # turn CONFRONTATION. The canonical room_broadcast above
+                # delivers the full-union payload to every socket (matches
+                # pre-49-7 behavior and what legacy single-PC tests
+                # exercise). Following it, fan a class-filtered
+                # CONFRONTATION to each connected player so the
+                # Confrontation tab paints with only their class's legal
+                # beats. UI renders whichever arrives last for a given
+                # encounter — filtered wins. Skipped when the caller did
+                # not bind both connected_player_ids and
+                # per_recipient_emit (legacy non-MP fixtures).
+                if connected_player_ids is not None and per_recipient_emit is not None:
+                    from sidequest.server.dispatch.confrontation import (
+                        resolve_recipient_pc,
+                    )
+
+                    for pid in connected_player_ids:
+                        recipient_pc, recipient_actor = resolve_recipient_pc(
+                            snapshot=snapshot,
+                            genre_pack=pack,
+                            player_id=pid,
+                        )
+                        if recipient_pc is None:
+                            continue
+                        per_pc_payload = build_confrontation_payload(
+                            encounter=encounter,
+                            cdef=cdef,
+                            genre_slug=genre_slug,
+                            recipient_pc=recipient_pc,
+                            recipient_actor_name=recipient_actor,
+                        )
+                        per_recipient_emit(
+                            pid,
+                            ConfrontationMessage(
+                                payload=ConfrontationPayload(**per_pc_payload),
+                                player_id="server",
+                            ),
+                        )
 
     replay_text = _format_replay_action(
         beat_label=beat.label,

@@ -83,9 +83,9 @@ def _build_confrontation_calls(tree: ast.AST) -> list[ast.Call]:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Name) and func.id == "build_confrontation_payload":
-            calls.append(node)
-        elif isinstance(func, ast.Attribute) and func.attr == "build_confrontation_payload":
+        if (isinstance(func, ast.Name) and func.id == "build_confrontation_payload") or (
+            isinstance(func, ast.Attribute) and func.attr == "build_confrontation_payload"
+        ):
             calls.append(node)
     return calls
 
@@ -119,9 +119,12 @@ def _call_has_recipient_pc_keyword(call: ast.Call) -> bool:
 def _loop_iter_calls_connected_player_ids(loop: ast.For) -> bool:
     """Does ``for X in <expr>:`` iterate over ``...connected_player_ids(...)``?"""
     for sub in ast.walk(loop.iter):
-        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
-            if sub.func.attr == "connected_player_ids":
-                return True
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "connected_player_ids"
+        ):
+            return True
         if isinstance(sub, ast.Attribute) and sub.attr == "connected_player_ids":
             return True
     return False
