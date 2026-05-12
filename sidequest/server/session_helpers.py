@@ -73,8 +73,6 @@ def build_secret_note_events(
     ``NarratorDirective`` and ``LethalityVerdict`` fall through.
     ``origin_seq=0`` — the event-log append assigns the real seq.
     """
-    import json
-
     from sidequest.protocol.dispatch import SubsystemDispatch
 
     out: list[MessageEnvelope] = []
