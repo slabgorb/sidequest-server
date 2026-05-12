@@ -45,6 +45,8 @@ from sidequest.protocol.types import NonBlankString
 from sidequest.telemetry.spans import (
     npc_auto_mint_skipped_span,
     npc_auto_minted_from_prose_span,
+    npc_observation_gate_promoted_span,
+    npc_observation_gate_purged_span,
     npc_recurring_presence_missed_span,
     npc_reinvented_span,
     orchestrator_notorious_party_gate_span,
@@ -71,8 +73,6 @@ def build_secret_note_events(
     ``NarratorDirective`` and ``LethalityVerdict`` fall through.
     ``origin_seq=0`` — the event-log append assigns the real seq.
     """
-    import json
-
     from sidequest.protocol.dispatch import SubsystemDispatch
 
     out: list[MessageEnvelope] = []
@@ -951,6 +951,7 @@ def _auto_mint_prose_only_npcs(
                 role=role_token or None,
                 pronouns=pronouns,
                 drawn_from="dialogue_extraction",
+                observation_pending=True,
             )
         )
         known_names.add(public_name.casefold())
@@ -1052,6 +1053,100 @@ def _auto_mint_prose_only_npcs(
             continue
 
         _mint(public_name=public_name, role_token=role_token, pronouns=pronouns)
+
+
+def _apply_npc_observation_gate(
+    *,
+    snapshot: GameSnapshot,
+    emitted_mentions: list[NpcMention],
+    turn_num: int,
+) -> None:
+    """Story 49-6: ratification gate for prose-mint NPCs.
+
+    Sibling to ``_auto_mint_prose_only_npcs``. The mint loop appends a
+    ``NpcPoolMember(observation_pending=True)`` whenever the narrator
+    role-names or honorific-names a person in prose but omits them
+    from ``npcs_present``. That mint is fire-and-forget — if the
+    narrator never re-cites the name, the pool fills with phantom
+    NPCs the playgroup never actually encountered (the failure mode
+    behind the 2026-05-11 Glenross turn-6 invented-Mother slip).
+
+    This gate runs once at the start of every narration-apply turn,
+    BEFORE the auto-minter scans this turn's prose. For each member
+    with ``observation_pending=True``, it checks whether the
+    member's name (case-folded) OR role (case-folded) appears in
+    ``emitted_mentions`` — the narrator's structured ``npcs_present``
+    patch for THIS turn. Two outcomes:
+
+    - **Promote.** Name or role matched. Flip the flag to ``False``
+      (member is now ratified — treat as canonical pool entry). Emit
+      ``npc.observation_gate_promoted``.
+    - **Purge.** No match. Remove the entry from ``snapshot.npc_pool``.
+      Emit ``npc.observation_gate_purged`` at severity=warning so the
+      GM panel renders the drop as a soft alert.
+
+    Pipeline ordering is load-bearing: the gate examines pending
+    members from PRIOR turns against THIS turn's mentions. Running
+    after the auto-minter would self-cancel — this turn's mints
+    would be evaluated against this turn's own (omitting) mentions
+    and immediately purged.
+
+    Non-pending members (``observation_pending=False`` — world-authored,
+    name-generator, legacy, or already-ratified) are not touched.
+    Durable retention (memory note feedback_durable_retention): pool
+    members that survive ratification are forever.
+    """
+    if not snapshot.npc_pool:
+        return
+
+    mention_names: set[str] = set()
+    mention_roles: set[str] = set()
+    for m in emitted_mentions:
+        if m.name:
+            mention_names.add(m.name.casefold())
+        if m.role:
+            mention_roles.add(m.role.casefold())
+
+    survivors: list[NpcPoolMember] = []
+    for member in snapshot.npc_pool:
+        if not member.observation_pending:
+            survivors.append(member)
+            continue
+
+        cf_name = member.name.casefold() if member.name else ""
+        cf_role = (member.role or "").casefold()
+        matched = (cf_name and cf_name in mention_names) or (
+            cf_role and cf_role in mention_roles
+        )
+
+        if matched:
+            member.observation_pending = False
+            survivors.append(member)
+            with npc_observation_gate_promoted_span(
+                npc_name=member.name,
+                role=member.role or "",
+                turn_number=turn_num,
+            ):
+                logger.info(
+                    "npc.observation_gate_promoted name=%r role=%r turn=%d",
+                    member.name,
+                    member.role,
+                    turn_num,
+                )
+        else:
+            with npc_observation_gate_purged_span(
+                npc_name=member.name,
+                role=member.role or "",
+                turn_number=turn_num,
+            ):
+                logger.warning(
+                    "npc.observation_gate_purged name=%r role=%r turn=%d",
+                    member.name,
+                    member.role,
+                    turn_num,
+                )
+
+    snapshot.npc_pool[:] = survivors
 
 
 def _detect_npc_identity_drift(
