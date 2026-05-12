@@ -111,6 +111,12 @@ def _capture_http(
         if captured_requests is not None:
             captured_requests.append(req)
         if captured_bodies is not None:
+            # urllib types req.data as a broad ReadableBuffer union; in
+            # practice OllamaClient always supplies bytes (see
+            # ollama_client.py:_post_generate / _post_chat).
+            assert isinstance(req.data, bytes), (
+                f"OllamaClient must serialize request bodies as bytes; got {type(req.data)}"
+            )
             captured_bodies.append(json.loads(req.data))
         payload = responder.pop(0) if responder else _chat_body()
         return _FakeHttpResponse(payload, delay_s=delay_s)

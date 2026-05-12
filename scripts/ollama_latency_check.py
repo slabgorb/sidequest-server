@@ -23,13 +23,22 @@ Usage::
         --model sonnet \\
         --prompt "The party enters the cave."
 
-Exit codes:
+Exit codes from main():
     0  elapsed within 3x budget — PASS (or informational run without --baseline-claude-s)
     1  elapsed exceeds 3x budget — FAIL
-    2  Ollama unreachable / client error during send_stateless
+    2  Ollama transport failure during send_stateless (network unreachable,
+       HTTP error, malformed response — anything that surfaces as
+       OllamaClientError or a lower-level transport exception)
+    3  configuration error — unknown model hint, unknown backend, or any
+       other client-side misconfiguration that does not indicate Ollama
+       itself is down
 
-Argparse handles bad CLI arguments via its own SystemExit (typically exit
-code 2 from argparse itself); main() does not return that code.
+Note: argparse handles bad CLI arguments via its own SystemExit (exit
+code 2 from argparse itself); main() does not return that code. The
+overlap between argparse's exit-2 and main()'s exit-2 is unfortunate
+but unavoidable without subclassing ArgumentParser — operators
+distinguish by reading stderr (argparse prints a "usage: …" prefix;
+main() prints "[ollama_latency_check] error: …").
 """
 
 from __future__ import annotations
@@ -40,6 +49,13 @@ import os
 import sys
 import time
 
+# Top-level import so a missing or broken `sidequest` package install
+# fails AT SCRIPT LOAD rather than silently passing --help and only
+# surfacing ModuleNotFoundError when the operator actually runs a
+# measurement (CLAUDE.md: No Silent Fallbacks).
+from sidequest.agents.llm_factory import UnknownBackend, build_llm_client
+from sidequest.agents.ollama_client import OllamaClientError, UnknownModel
+
 DEFAULT_PROMPT = (
     "You are a SideQuest narrator. The party enters the cave. "
     "Describe what they see in one paragraph."
@@ -47,6 +63,11 @@ DEFAULT_PROMPT = (
 DEFAULT_SYSTEM = "You are a SideQuest narrator. Keep replies short for this latency check."
 DEFAULT_MODEL = "sonnet"
 BUDGET_MULTIPLIER = 3.0
+
+EXIT_PASS = 0
+EXIT_BUDGET_EXCEEDED = 1
+EXIT_OLLAMA_TRANSPORT = 2
+EXIT_CONFIG_ERROR = 3
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -59,7 +80,8 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Exit codes from main(): 0=PASS (or no baseline supplied), "
-            "1=FAIL (budget exceeded), 2=Ollama unreachable."
+            "1=FAIL (budget exceeded), 2=Ollama transport failure, "
+            "3=configuration error (unknown model / backend)."
         ),
     )
     parser.add_argument(
@@ -68,9 +90,8 @@ def _build_parser() -> argparse.ArgumentParser:
         required=False,
         help=(
             "Claude baseline elapsed seconds for the same prompt. Required "
-            "for pass/fail evaluation. Without it the script runs but only "
-            "reports the elapsed time (no budget check; exits 0 unless "
-            "Ollama is unreachable)."
+            "for pass/fail evaluation; must be > 0. Without it the script "
+            "runs but only reports the elapsed time (no budget check)."
         ),
     )
     parser.add_argument(
@@ -98,17 +119,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _measure_one_call(model: str, system_prompt: str, user_prompt: str) -> float:
-    """Run a single send_stateless and return elapsed seconds.
+    """Run a single send_stateless against the Ollama backend and return
+    elapsed seconds.
 
-    Forces the Ollama backend by setting SIDEQUEST_LLM_BACKEND before the
-    factory imports decide. Caller already does this; this function
-    re-asserts it for defence-in-depth.
+    Sets ``SIDEQUEST_LLM_BACKEND=ollama`` unconditionally before invoking
+    the factory — this is the sole assignment, not a defence-in-depth
+    re-assert. The caller (main()) does not pre-set the env var.
     """
     os.environ["SIDEQUEST_LLM_BACKEND"] = "ollama"
-    # Late import so --help doesn't pay the import cost of the whole
-    # sidequest package (also keeps this script invokable when the venv
-    # has only a partial install).
-    from sidequest.agents.llm_factory import build_llm_client
 
     client = build_llm_client()
     start = time.perf_counter()
@@ -121,21 +139,35 @@ async def _measure_one_call(model: str, system_prompt: str, user_prompt: str) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    # Reject non-positive baselines loudly via argparse.error (SystemExit
+    # with exit code 2). A negative baseline produces a negative budget
+    # ceiling, guaranteeing a misleading FAIL verdict regardless of
+    # elapsed; zero would short-circuit the ratio guard to float('inf').
+    # Either case is operator-facing nonsense, not a usable measurement.
+    if args.baseline_claude_s is not None and args.baseline_claude_s <= 0:
+        parser.error(f"--baseline-claude-s must be > 0 (got: {args.baseline_claude_s})")
 
     try:
         elapsed = asyncio.run(_measure_one_call(args.model, args.system, args.prompt))
-    except Exception as exc:  # noqa: BLE001 — operator-facing tool, surface any failure verbatim
-        # Don't dress this up with an exception taxonomy — the operator
-        # needs the raw cause string to triage (Ollama down? model not
-        # pulled? URL wrong?). Distinguish "unreachable" from "bad args"
-        # via exit code for scripted callers.
-        msg = str(exc)
-        print(f"[ollama_latency_check] error: {msg}", file=sys.stderr)
-        # Treat any send_stateless failure as "unreachable" for the
-        # caller's purposes. Argparse handles its own usage errors via
-        # SystemExit before we get here.
-        return 2
+    except (UnknownModel, UnknownBackend) as exc:
+        # Client-side configuration error: bad --model hint, bad
+        # SIDEQUEST_LLM_BACKEND env var. Ollama itself may be fine.
+        print(f"[ollama_latency_check] config error: {exc}", file=sys.stderr)
+        return EXIT_CONFIG_ERROR
+    except OllamaClientError as exc:
+        # Ollama transport / response failure: server down, HTTP non-200,
+        # non-JSON body, session-id unknown after restart.
+        print(f"[ollama_latency_check] ollama error: {exc}", file=sys.stderr)
+        return EXIT_OLLAMA_TRANSPORT
+    except Exception as exc:  # noqa: BLE001 — operator-facing tool: surface unexpected failures verbatim
+        # Anything outside the taxonomies above (urllib OS error, asyncio
+        # TimeoutError, etc.) bubbles up as a transport failure so the
+        # operator at least sees the raw cause on stderr.
+        print(f"[ollama_latency_check] unexpected error: {exc}", file=sys.stderr)
+        return EXIT_OLLAMA_TRANSPORT
 
     print(f"ollama elapsed: {elapsed:.3f}s")
 
@@ -144,17 +176,18 @@ def main(argv: list[str] | None = None) -> int:
             "[ollama_latency_check] no --baseline-claude-s provided; "
             "skipping budget check (informational run only)"
         )
-        return 0
+        return EXIT_PASS
 
     budget = args.baseline_claude_s * args.budget_multiplier
-    ratio = elapsed / args.baseline_claude_s if args.baseline_claude_s > 0 else float("inf")
+    # baseline > 0 enforced above, so the ratio is always well-defined.
+    ratio = elapsed / args.baseline_claude_s
     verdict = "PASS" if elapsed <= budget else "FAIL"
     print(
         f"claude baseline: {args.baseline_claude_s:.3f}s | "
         f"budget ({args.budget_multiplier:g}x): {budget:.3f}s | "
         f"ratio: {ratio:.2f}x | verdict: {verdict}"
     )
-    return 0 if verdict == "PASS" else 1
+    return EXIT_PASS if verdict == "PASS" else EXIT_BUDGET_EXCEEDED
 
 
 if __name__ == "__main__":
