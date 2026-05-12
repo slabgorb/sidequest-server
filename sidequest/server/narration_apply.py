@@ -1686,6 +1686,47 @@ def _apply_narration_result_to_snapshot(
                 },
                 component="game",
             )
+            # sq-playtest 2026-05-12 [BUG] location chrome stuck — the
+            # narrator only emits state_delta.location on the acting PC's
+            # POV card, so when prose moves the party (all PCs together)
+            # the non-actor PCs' character_locations stays at the old
+            # location and the chrome breadcrumb on those tabs reads
+            # stale. Detect the divergence here and emit a watcher event
+            # so the GM panel can spot it live (CLAUDE.md OTEL principle).
+            # The propagation fix is deferred — auto-propagating creates
+            # false positives on legitimate solo moves and needs a story-
+            # track design (party_move flag in state_delta, or "move
+            # together" heuristic gated on prose markers). For now,
+            # surface the symptom so Sebastien can confirm every time it
+            # fires.
+            seated_pc_names = [name for name in snapshot.player_seats.values() if name]
+            if len(seated_pc_names) > 1:
+                seated_locations = {
+                    name: snapshot.character_locations.get(name, "")
+                    for name in seated_pc_names
+                }
+                distinct_locations = {loc for loc in seated_locations.values() if loc}
+                if len(distinct_locations) > 1:
+                    _watcher_publish(
+                        "state_party_location_diverged",
+                        {
+                            "acting_character": actor_for_location,
+                            "new_location": result.location,
+                            "seated_locations": seated_locations,
+                            "distinct_count": len(distinct_locations),
+                            "turn_number": snapshot.turn_manager.interaction,
+                            "player_name": player_name,
+                        },
+                        component="state.location",
+                    )
+                    logger.info(
+                        "state.party_location_diverged turn=%d actor=%s "
+                        "new=%r seated_locations=%r",
+                        snapshot.turn_manager.interaction,
+                        actor_for_location,
+                        result.location,
+                        seated_locations,
+                    )
         # Story 45-16: filter narrator-emitted location before adding
         # to the region graph. Playtest 3 leaked
         # `(aside — narrator brief)` into discovered_regions because
