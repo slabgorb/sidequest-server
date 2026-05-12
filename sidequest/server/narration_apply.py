@@ -61,6 +61,7 @@ from sidequest.telemetry.spans import (
     container_retrieval_blocked_span,
     container_retrieval_recorded_span,
     inventory_narrator_extracted_span,
+    location_drift_repaired_span,
     lore_established_span,
     magic_working_span,
     npc_auto_registered_span,
@@ -74,6 +75,32 @@ from sidequest.telemetry.spans import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 logger = logging.getLogger(__name__)
+
+
+# Story 49-3 — leading bold-title regex for the location-drift repair.
+# Matches the first non-whitespace block at the start of the narration
+# if it is a Markdown bold span, optionally heading-prefixed (``#`` /
+# ``##``). The captured group is the title text. Inline ``**emphasis**``
+# mid-paragraph cannot match because ``\A\s*`` anchors at the very
+# beginning of the string after only whitespace. ``[^*\n]+`` prevents
+# nested asterisks and stops at a newline so a runaway bold span
+# doesn't swallow paragraphs.
+_LEADING_BOLD_TITLE_RE = re.compile(r"\A\s*(?:#{1,2}\s+)?\*\*([^*\n]+)\*\*")
+
+
+def _extract_leading_bold_title(narration: str) -> str | None:
+    """Return the bold-title text at the start of ``narration``, stripped.
+
+    Returns ``None`` when no leading bold span is present so the caller
+    can short-circuit. The narrator's bold-title convention is the
+    Markdown ``**Title**`` / ``## **Title**`` shape; anything else is
+    treated as continuation prose and is not a scene header.
+    """
+    match = _LEADING_BOLD_TITLE_RE.match(narration)
+    if match is None:
+        return None
+    title = match.group(1).strip()
+    return title or None
 
 
 def _resolve_innate_cast_for_beat(
@@ -1637,6 +1664,47 @@ def _apply_narration_result_to_snapshot(
                 magic_result=outcome.magic,
                 player_name=player_name,
             )
+
+    # Story 49-3: location-drift repair. Glenross playtest 2026-05-11 —
+    # the narrator wrote new ``**Room Title**`` markdown headers across
+    # five turns without filling the structured ``patch.location`` field.
+    # State held ``the_manse`` for turns 1-5 while prose moved through
+    # four different rooms; the GM panel couldn't tell where the party
+    # was (SOUL.md "Illusionism" failure mode). The repair: when the
+    # narrator left ``result.location`` empty AND the prose opens with a
+    # bold room title that disagrees with current state, auto-promote the
+    # title into ``result.location`` so the existing apply pipeline (the
+    # ``if result.location:`` branch below) writes the canonical entry.
+    #
+    # Auto-fill, not fail-loud: blocking a turn is more expensive than
+    # an audited repair. ``narrator.location_drift_repaired`` is the
+    # load-bearing observability hook — Sebastien's GM panel surfaces
+    # every repair so the prompt can be iterated to prevent the drift
+    # at its source (Recency-zone guardrail in build_narrator_prompt).
+    if not result.location and result.narration:
+        _actor_for_drift = acting_character_name or player_name
+        if _actor_for_drift:
+            _candidate = _extract_leading_bold_title(result.narration)
+            if _candidate is not None:
+                _current = snapshot.character_locations.get(_actor_for_drift)
+                if _candidate != _current:
+                    logger.warning(
+                        "narrator.location_drift_repaired character=%s "
+                        "old_state=%r new_from_title=%r turn=%d player=%s",
+                        _actor_for_drift,
+                        _current,
+                        _candidate,
+                        snapshot.turn_manager.interaction,
+                        player_name,
+                    )
+                    with location_drift_repaired_span(
+                        old_state=_current or "",
+                        new_from_title=_candidate,
+                        character=_actor_for_drift,
+                        player_name=player_name,
+                        turn=snapshot.turn_manager.interaction,
+                    ):
+                        result.location = _candidate
 
     if result.location:
         # Wave 2B (story 45-48): per-character locations are the only
