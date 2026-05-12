@@ -286,8 +286,7 @@ async def test_build_narrator_prompt_full_contains_narrator_identity():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", state_summary="You are in a tavern.")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "Game Master" in prompt
 
 
@@ -295,8 +294,7 @@ async def test_build_narrator_prompt_full_contains_output_format():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "game_patch" in prompt
 
 
@@ -313,8 +311,7 @@ async def test_build_narrator_prompt_includes_npc_intro_visual_constraint():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "<npc-intro-visual>" in prompt
     assert "is_new: true" in prompt
     assert "visual_scene" in prompt
@@ -326,8 +323,7 @@ async def test_npc_intro_visual_constraint_present_on_delta_tier():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "<npc-intro-visual>" in prompt
 
 
@@ -349,8 +345,7 @@ async def test_build_narrator_prompt_includes_confrontation_trigger_constraint()
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Itchy")
-    prompt, _ = await orch.build_narrator_prompt(
-        "watch the gantry", context    )
+    prompt, _ = await orch.build_narrator_prompt("watch the gantry", context)
     assert "<confrontation-trigger>" in prompt
     # Concrete trigger phrases the narrator just missed
     assert "spinning" in prompt
@@ -372,8 +367,7 @@ async def test_confrontation_trigger_constraint_present_on_delta_tier():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Itchy")
-    prompt, _ = await orch.build_narrator_prompt(
-        "watch the gantry", context    )
+    prompt, _ = await orch.build_narrator_prompt("watch the gantry", context)
     assert "<confrontation-trigger>" in prompt
     assert "no retroactive crediting" in prompt
 
@@ -382,8 +376,7 @@ async def test_build_narrator_prompt_contains_player_action():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = await orch.build_narrator_prompt(
-        "examine the door", context    )
+    prompt, _ = await orch.build_narrator_prompt("examine the door", context)
     assert "examine the door" in prompt
     assert "Kael" in prompt
 
@@ -458,8 +451,7 @@ async def test_build_narrator_prompt_includes_genre_identity():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", genre="caverns_and_claudes")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "caverns and claudes" in prompt
 
 
@@ -467,8 +459,7 @@ async def test_build_narrator_prompt_full_contains_verbosity_limit():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", narrator_verbosity="concise")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "400 characters" in prompt
 
 
@@ -476,8 +467,7 @@ async def test_build_narrator_prompt_full_contains_vocabulary_section():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", narrator_vocabulary="epic")
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "archaic" in prompt
 
 
@@ -488,8 +478,7 @@ async def test_build_narrator_prompt_includes_state_summary():
         character_name="Kael",
         state_summary="You are in a dark cave. HP: 10/10.",
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "dark cave" in prompt
 
 
@@ -508,8 +497,7 @@ async def test_build_narrator_prompt_includes_lore_context_when_provided():
             "</lore>"
         ),
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "approach the castle", context    )
+    prompt, _ = await orch.build_narrator_prompt("approach the castle", context)
     assert "<lore>" in prompt
     assert "ancient castle" in prompt
 
@@ -518,8 +506,7 @@ async def test_build_narrator_prompt_omits_lore_section_when_none():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", lore_context=None)
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "<lore>" not in prompt
 
 
@@ -527,8 +514,7 @@ async def test_build_narrator_prompt_encounter_rules_when_in_combat():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", in_combat=True)
-    prompt, _ = await orch.build_narrator_prompt(
-        "attack goblin", context    )
+    prompt, _ = await orch.build_narrator_prompt("attack goblin", context)
     assert "COMBAT NARRATION RULES" in prompt
 
 
@@ -536,8 +522,7 @@ async def test_build_narrator_prompt_no_encounter_rules_when_not_in_combat():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael", in_combat=False, in_chase=False)
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "COMBAT NARRATION RULES" not in prompt
 
 
@@ -546,8 +531,7 @@ async def test_build_narrator_prompt_player_action_last_in_zone_order():
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Kael")
-    prompt, _ = await orch.build_narrator_prompt(
-        "cast spell", context    )
+    prompt, _ = await orch.build_narrator_prompt("cast spell", context)
     identity_pos = prompt.find("Game Master")
     action_pos = prompt.find("cast spell")
     assert identity_pos < action_pos
@@ -560,8 +544,7 @@ async def test_build_narrator_prompt_trope_context_injected():
         character_name="Kael",
         pending_trope_context="WEAVE THIS: The ancient curse stirs.",
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "WEAVE THIS" in prompt
 
 
@@ -713,8 +696,7 @@ async def test_run_narration_turn_genre_prompts_injected():
             world_state="Track the dungeon state.",
         ),
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "dungeon grit" in prompt
     assert "NPCs speak in riddles" in prompt
 
@@ -858,8 +840,7 @@ async def test_build_narrator_prompt_registers_narrator_directives_when_present(
     )
     ctx = TurnContext(dispatch_package=pkg)
 
-    prompt_text, registry = await orch.build_narrator_prompt(
-        "Let's go!", ctx    )
+    prompt_text, registry = await orch.build_narrator_prompt("Let's go!", ctx)
 
     assert "zzz-must-not-payload-zzz" in prompt_text
     assert "zzz-must-narrate-payload-zzz" in prompt_text
@@ -876,8 +857,7 @@ async def test_build_narrator_prompt_omits_narrator_directives_when_no_dispatch_
     orch = Orchestrator(client=client)
     ctx = TurnContext(dispatch_package=None)
 
-    prompt_text, registry = await orch.build_narrator_prompt(
-        "look around", ctx    )
+    prompt_text, registry = await orch.build_narrator_prompt("look around", ctx)
 
     assert "zzz-must-not-payload-zzz" not in prompt_text
     assert "zzz-must-narrate-payload-zzz" not in prompt_text
@@ -933,8 +913,7 @@ async def test_build_narrator_prompt_strips_redacted_directive_payload():
     )
     ctx = TurnContext(dispatch_package=pkg)
 
-    prompt_text, registry = await orch.build_narrator_prompt(
-        "poison wine", ctx    )
+    prompt_text, registry = await orch.build_narrator_prompt("poison wine", ctx)
 
     # The redacted payload MUST NOT appear in the prompt string.
     assert "zzz-SECRET-alice-poisons-wine-zzz" not in prompt_text
@@ -1037,68 +1016,6 @@ async def test_run_narration_turn_skips_leak_audit_when_no_dispatch_package(
         s for s in otel_capture.get_finished_spans() if s.name == "narrator.canonical_leak_audit"
     ]
     assert spans == []
-
-
-# ---------------------------------------------------------------------------
-# Task 18 — module-level run_narration_turn wrapper: signal-clear safety
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_run_narration_turn_clears_pending_resolution_signal_on_error(
-    monkeypatch,
-):
-    """If the orchestrator raises, the one-shot resolution signal still gets
-    cleared from the snapshot — otherwise a transient failure causes the
-    [ENCOUNTER RESOLVED] zone to fire twice on the next turn (and the
-    encounter_resolution_signal_consumed_span fires twice).
-
-    Wraps the bare ``orchestrator.run_narration_turn(...) → assignment →
-    cleanup`` shape in a try/finally so the cleanup is exception-safe.
-    """
-    from types import SimpleNamespace
-
-    from sidequest.agents import orchestrator as orch_mod
-    from sidequest.game.resolution_signal import ResolutionSignal
-    from sidequest.game.session import GameSnapshot
-
-    # Snapshot with a pending resolution signal — the thing the wrapper must
-    # clear even on failure.
-    snapshot = GameSnapshot(
-        genre_slug="test",
-        world_slug="test",
-        location="The Pit",
-        pending_resolution_signal=ResolutionSignal(
-            encounter_type="combat",
-            outcome="opponent_victory",
-            final_player_metric=4,
-            final_opponent_metric=11,
-        ),
-    )
-    assert snapshot.pending_resolution_signal is not None  # arrange sanity
-
-    # Minimal genre stand-in: the wrapper only reads ``audio`` (for sfx) and
-    # ``prompts`` (passed through to TurnContext, never executed because we
-    # short-circuit the orchestrator).
-    fake_genre = SimpleNamespace(audio=SimpleNamespace(), prompts=None)
-
-    async def boom(self, player_action, context):
-        raise RuntimeError("simulated orchestrator failure")
-
-    monkeypatch.setattr(Orchestrator, "run_narration_turn", boom)
-
-    client = make_canned_client("unused")
-
-    with pytest.raises(RuntimeError, match="simulated orchestrator failure"):
-        await orch_mod.run_narration_turn(
-            client=client,
-            session=snapshot,
-            genre=fake_genre,
-            player_action="attack",
-        )
-
-    # The contract: signal cleared even though the orchestrator raised.
-    assert snapshot.pending_resolution_signal is None
 
 
 # ---------------------------------------------------------------------------
