@@ -42,7 +42,6 @@ from sidequest.agents.ollama_client import (
     OllamaClient,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
@@ -290,15 +289,11 @@ def test_ac2_send_with_session_emits_session_span_with_backend_ollama(
     agent.backend='ollama'."""
     client = OllamaClient(http_fn=_capture_http([_chat_body("hi")]))
     asyncio.run(
-        client.send_with_session(
-            prompt="hi", model="sonnet", session_id=None, system_prompt="sys"
-        )
+        client.send_with_session(prompt="hi", model="sonnet", session_id=None, system_prompt="sys")
     )
 
     span = _find_span(otel_capture, "agent.call.session")
-    assert span is not None, (
-        "send_with_session must emit an `agent.call.session` span"
-    )
+    assert span is not None, "send_with_session must emit an `agent.call.session` span"
     assert span.attributes.get("agent.backend") == "ollama"
 
 
@@ -333,11 +328,7 @@ def test_ac2_factory_built_client_spans_tag_agent_backend_ollama(
     assert isinstance(client, OllamaClient)
     client._http = _capture_http([_chat_body("ok")])  # noqa: SLF001
 
-    asyncio.run(
-        client.send_stateless(
-            system_prompt="sys", user_message="hi", model="sonnet"
-        )
-    )
+    asyncio.run(client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet"))
 
     span = _find_span(otel_capture, "agent.call.session")
     assert span is not None
@@ -358,9 +349,7 @@ def test_ac3_span_records_request_duration_observable_via_otel(
     # 60ms simulated network round-trip — well above scheduler jitter
     # but cheap in CI.
     delay = 0.06
-    client = OllamaClient(
-        http_fn=_capture_http([_chat_body("hi")], delay_s=delay)
-    )
+    client = OllamaClient(http_fn=_capture_http([_chat_body("hi")], delay_s=delay))
     asyncio.run(client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet"))
 
     span = _find_span(otel_capture, "agent.call.session")
@@ -374,8 +363,7 @@ def test_ac3_span_records_request_duration_observable_via_otel(
     )
     # Sanity ceiling: not absurdly long
     assert duration_s < 5.0, (
-        f"span duration {duration_s:.3f}s is implausibly large — span "
-        f"timing may be broken"
+        f"span duration {duration_s:.3f}s is implausibly large — span timing may be broken"
     )
 
 
@@ -412,8 +400,7 @@ def test_ac3_latency_comparison_script_exists_and_is_invocable() -> None:
         f"{script} --help exited {result.returncode}; stderr: {result.stderr!r}"
     )
     assert "latency" in result.stdout.lower() or "latency" in result.stderr.lower(), (
-        f"{script} --help should describe the latency comparison; got: "
-        f"{result.stdout!r}"
+        f"{script} --help should describe the latency comparison; got: {result.stdout!r}"
     )
 
 
@@ -427,9 +414,7 @@ def test_ac4_send_with_model_request_body_has_no_num_ctx_anywhere() -> None:
     per call). OllamaClient must NEVER send num_ctx in the request body
     of /api/generate. Pin this as a regression guard."""
     captured: list[dict[str, Any]] = []
-    client = OllamaClient(
-        http_fn=_capture_http([_generate_body("ok")], captured_bodies=captured)
-    )
+    client = OllamaClient(http_fn=_capture_http([_generate_body("ok")], captured_bodies=captured))
     asyncio.run(client.send_with_model("hi", model="sonnet"))
 
     assert len(captured) == 1
@@ -444,20 +429,15 @@ def test_ac4_send_with_model_request_body_has_no_num_ctx_anywhere() -> None:
 def test_ac4_send_with_session_request_body_has_no_num_ctx_anywhere() -> None:
     """Same regression guard for /api/chat."""
     captured: list[dict[str, Any]] = []
-    client = OllamaClient(
-        http_fn=_capture_http([_chat_body("ok")], captured_bodies=captured)
-    )
+    client = OllamaClient(http_fn=_capture_http([_chat_body("ok")], captured_bodies=captured))
     asyncio.run(
-        client.send_with_session(
-            prompt="hi", model="sonnet", session_id=None, system_prompt="sys"
-        )
+        client.send_with_session(prompt="hi", model="sonnet", session_id=None, system_prompt="sys")
     )
 
     assert len(captured) == 1
     body = captured[0]
     assert not _walk_for_key(body, "num_ctx"), (
-        f"/api/chat body must NOT contain a `num_ctx` key anywhere. "
-        f"Body sent: {body!r}"
+        f"/api/chat body must NOT contain a `num_ctx` key anywhere. Body sent: {body!r}"
     )
 
 
@@ -465,20 +445,13 @@ def test_ac4_send_stateless_request_body_has_no_num_ctx_anywhere() -> None:
     """send_stateless is the narrator's hot path — guard it directly even
     though it currently delegates to send_with_session."""
     captured: list[dict[str, Any]] = []
-    client = OllamaClient(
-        http_fn=_capture_http([_chat_body("ok")], captured_bodies=captured)
-    )
-    asyncio.run(
-        client.send_stateless(
-            system_prompt="sys", user_message="hi", model="sonnet"
-        )
-    )
+    client = OllamaClient(http_fn=_capture_http([_chat_body("ok")], captured_bodies=captured))
+    asyncio.run(client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet"))
 
     assert len(captured) == 1
     body = captured[0]
     assert not _walk_for_key(body, "num_ctx"), (
-        f"send_stateless must not introduce num_ctx in its delegate body. "
-        f"Body sent: {body!r}"
+        f"send_stateless must not introduce num_ctx in its delegate body. Body sent: {body!r}"
     )
 
 
@@ -523,8 +496,7 @@ def test_ac4_audit_outcome_documented_in_as_installed_spec() -> None:
     # Require a marker that ties the audit to story 48-2 and the
     # OllamaClient subject.
     assert "48-2" in text, (
-        f"as-installed spec must reference story 48-2 to record the AC4 "
-        f"audit outcome at {spec}"
+        f"as-installed spec must reference story 48-2 to record the AC4 audit outcome at {spec}"
     )
     assert "OllamaClient" in text, (
         "as-installed spec must explicitly name OllamaClient in the audit conclusion"
