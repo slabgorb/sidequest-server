@@ -3148,6 +3148,21 @@ class WebSocketSessionHandler:
                         # the canonical row for audit; reconnect rebuilds
                         # via the slug-resume bootstrap which is itself per-
                         # PC filtered (handlers/connect.py:1110).
+                        # Track whether the per-PC overlay loop below
+                        # successfully queued a filtered CONFRONTATION to
+                        # the dispatcher's socket. The canonical
+                        # dispatcher push at the "Pingpong 2026-04-30
+                        # follow-on" block below (around line 3360) must
+                        # skip the dispatcher when the overlay already
+                        # covered them — otherwise the unfiltered canonical
+                        # lands AFTER the filtered overlay in the
+                        # dispatcher's queue and the UI's last-message-wins
+                        # render reverts the dispatcher's Confrontation tab
+                        # to the full 16-button union (pingpong 2026-05-12
+                        # 17:48: position-#3 PC always broke because
+                        # sd.player_id rotates to the last-narrated PC in
+                        # merged-dispatch order).
+                        _dispatcher_overlay_delivered = False
                         if now_live and now_encounter is not None and self._room is not None:
                             from sidequest.server.dispatch.confrontation import (
                                 resolve_recipient_pc,
@@ -3189,6 +3204,8 @@ class WebSocketSessionHandler:
                                     if _q is None:
                                         continue
                                     _q.put_nowait(_per_pc_msg)
+                                    if _pid == sd.player_id:
+                                        _dispatcher_overlay_delivered = True
                         assert confrontation_event_attrs is not None
                         trace.get_current_span().add_event(
                             "confrontation.dispatched",
@@ -3384,7 +3401,27 @@ class WebSocketSessionHandler:
                                 if dispatcher_socket is not None
                                 else None
                             )
-                            if dispatcher_queue is not None:
+                            # Pingpong 2026-05-12 17:48 (trailing-PC regression
+                            # of 49-7): only push the unfiltered canonical to
+                            # the dispatcher when the per-PC overlay above did
+                            # NOT already queue a filtered frame for them. The
+                            # overlay covers the dispatcher whenever
+                            # ``sd.player_id`` is connected AND seated to a PC
+                            # the genre pack can resolve a class for. When that
+                            # holds (the typical MP playtest case — every PC is
+                            # seated), the overlay's class-filtered frame
+                            # already sits in the dispatcher's queue; pushing
+                            # the unfiltered canonical here lands AFTER it and
+                            # the UI's last-message-wins render snaps back to
+                            # the full 16-button union. When the overlay
+                            # skipped the dispatcher (no PC seat / no class
+                            # resolution / clear branch / stub-room test
+                            # fixture without socket helpers), the canonical
+                            # remains the dispatcher's sole delivery path.
+                            if (
+                                dispatcher_queue is not None
+                                and not _dispatcher_overlay_delivered
+                            ):
                                 dispatcher_queue.put_nowait(confrontation_msg)
                             # OTEL lie-detector: per-recipient confrontation
                             # delivery for the GM panel. Mirrors the
@@ -3394,6 +3431,13 @@ class WebSocketSessionHandler:
                             # regression of this exact bug — frame_kind names
                             # the variant so confrontation events filter
                             # cleanly out of the broader frame stream.
+                            # ``dispatcher_delivery_path`` distinguishes
+                            # ``per_pc_overlay`` (the seated-PC branch the
+                            # 17:48 fix protects) from ``canonical_push``
+                            # (the legacy fallback for unseated dispatchers
+                            # / stub-room test fixtures) so a future
+                            # regression of either branch is visible from
+                            # the dashboard alone.
                             try:
                                 slug_attr = getattr(room, "slug", "")
                                 connected = (
@@ -3410,6 +3454,11 @@ class WebSocketSessionHandler:
                                         "recipient_player_ids": connected,
                                         "dispatcher_player_id": sd.player_id,
                                         "dispatcher_socket_attached": dispatcher_queue is not None,
+                                        "dispatcher_delivery_path": (
+                                            "per_pc_overlay"
+                                            if _dispatcher_overlay_delivered
+                                            else "canonical_push"
+                                        ),
                                     },
                                     component="multiplayer",
                                 )
