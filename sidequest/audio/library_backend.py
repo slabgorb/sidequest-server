@@ -14,6 +14,25 @@ from sidequest.audio.rotator import ThemeRotator
 from sidequest.genre.models import AudioConfig
 
 
+def _materialize_chosen(base_path: Path, chosen: str) -> str:
+    """Return the chosen library entry as a resource locator string.
+
+    Post genre-pack load (``sidequest.genre.loader._resolve_audio_urls``),
+    paths on ``AudioConfig`` are already absolute CDN/local URLs — pass
+    those through unchanged. Pre-load fixtures (and tests that bypass the
+    loader) carry relative paths; resolve those against ``base_path`` so
+    callers get an absolute filesystem path.
+
+    Returning the raw URL string for the eager-resolved case is mandatory
+    because ``pathlib.Path("https://x/y")`` collapses ``//`` to ``/`` —
+    the playtest 2026-05-11 doubled-URL regression came from feeding URLs
+    through ``base / chosen``.
+    """
+    if chosen.startswith(("http://", "https://")):
+        return chosen
+    return str((base_path / chosen).resolve())
+
+
 class LibraryBackend(AudioBackend):
     """Resolves AudioCues to file paths from a genre pack's audio directory."""
 
@@ -30,15 +49,21 @@ class LibraryBackend(AudioBackend):
     def base_path(self) -> Path:
         return self._base_path
 
-    def resolve(self, cue: AudioCue) -> Path | None:
-        """Map an AudioCue to an absolute file path, or None if unresolvable."""
+    def resolve(self, cue: AudioCue) -> str | None:
+        """Map an AudioCue to a resource locator string, or None if unresolvable.
+
+        The returned string is either an absolute URL (eager-resolved
+        production shape) or an absolute filesystem path (pre-load
+        fixture shape). Callers route URLs through unchanged and strip
+        the base prefix from filesystem paths before the asset-URL seam.
+        """
         if cue.lane == AudioLane.MUSIC:
             return self._resolve_music(cue)
         if cue.lane == AudioLane.SFX:
             return self._resolve_sfx(cue)
         return None
 
-    def _resolve_music(self, cue: AudioCue) -> Path | None:
+    def _resolve_music(self, cue: AudioCue) -> str | None:
         if cue.mood is None:
             return None
 
@@ -57,7 +82,7 @@ class LibraryBackend(AudioBackend):
             )
             if chosen_path is None:
                 return None
-            return (self._base_path / chosen_path).resolve()
+            return _materialize_chosen(self._base_path, chosen_path)
 
         # Fall back to mood_tracks
         mood_val = cue.mood.value if hasattr(cue.mood, "value") else cue.mood
@@ -67,16 +92,16 @@ class LibraryBackend(AudioBackend):
         chosen_path = self._rotator.pick(tracks, intensity=cue.intensity, mood=cue.mood)
         if chosen_path is None:
             return None
-        return (self._base_path / chosen_path).resolve()
+        return _materialize_chosen(self._base_path, chosen_path)
 
-    def _resolve_sfx(self, cue: AudioCue) -> Path | None:
+    def _resolve_sfx(self, cue: AudioCue) -> str | None:
         if cue.sfx_id is None:
             return None
         variants = self._config.sfx_library.get(cue.sfx_id, [])
         if not variants:
             return None
         chosen = random.choice(variants)
-        return (self._base_path / chosen).resolve()
+        return _materialize_chosen(self._base_path, chosen)
 
     def list_tracks(self, lane: str) -> list[Path]:
         """List available tracks for a lane, excluding missing files."""
@@ -99,12 +124,19 @@ class LibraryBackend(AudioBackend):
         return []
 
     async def play(self, cue: AudioCue) -> AudioResult:
-        """Resolve cue and return an AudioResult. Raises FileNotFoundError if unresolvable."""
-        path = self.resolve(cue)
-        if path is None:
+        """Resolve cue and return an AudioResult. Raises FileNotFoundError if unresolvable.
+
+        ``AudioResult.audio_path`` is typed ``Path`` — this method is the
+        local-disk playback surface (test/CLI only post-ADR-095, when
+        playback moved to the UI). For URL-shaped resolution results the
+        Path coercion is lossy, so this method is not called from the
+        production wire path.
+        """
+        resolved = self.resolve(cue)
+        if resolved is None:
             raise FileNotFoundError(f"No audio file for cue: {cue}")
         return AudioResult(
-            audio_path=path,
+            audio_path=Path(resolved),
             duration_ms=0,
             lane=cue.lane,
             cue=cue,

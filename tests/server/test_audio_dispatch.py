@@ -60,7 +60,10 @@ def test_library_backend_resolves_mood_track_under_pack_dir(
     cue = AudioCue(lane=AudioLane.MUSIC, mood=MoodCategory.TENSION, intensity=0.5)
     resolved = backend.resolve(cue)
     assert resolved is not None
-    assert resolved == (fake_audio_pack_dir / "audio/music/tension/a.ogg").resolve()
+    # post-2026-05-12: ``LibraryBackend.resolve`` returns a locator string
+    # (URL or absolute filesystem path) so URL-shaped inputs aren't
+    # corrupted by pathlib slash-collapse.
+    assert resolved == str((fake_audio_pack_dir / "audio/music/tension/a.ogg").resolve())
 
 
 def test_build_audio_backend_returns_library_backend_for_configured_pack(

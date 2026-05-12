@@ -13,7 +13,13 @@ from sidequest.server.audio_cue import build_audio_cue_payload
 
 
 class _StubBackend(AudioBackend):
-    """Minimal AudioBackend that returns canned resolved paths."""
+    """Minimal AudioBackend that returns canned resolved locators.
+
+    Mirrors ``LibraryBackend.resolve`` which post-2026-05-12 returns a
+    string locator (URL or absolute filesystem path) rather than a
+    ``Path``. Tests pass ``Path`` objects in the mapping for ergonomics
+    and the stub stringifies on the way out.
+    """
 
     def __init__(self, base: Path, mapping: dict[tuple[str, str | None], Path]) -> None:
         self._base = base
@@ -27,9 +33,10 @@ class _StubBackend(AudioBackend):
     def base_path(self) -> Path:
         return self._base
 
-    def resolve(self, cue: AudioCue) -> Path | None:
+    def resolve(self, cue: AudioCue) -> str | None:
         key = (cue.lane.value, cue.mood if cue.mood else cue.sfx_id)
-        return self._mapping.get(key)
+        value = self._mapping.get(key)
+        return str(value) if value is not None else None
 
     async def play(self, cue: AudioCue) -> AudioResult:  # pragma: no cover — unused here
         raise NotImplementedError

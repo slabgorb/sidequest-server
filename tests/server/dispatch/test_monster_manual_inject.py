@@ -252,6 +252,93 @@ def test_inject_is_idempotent_across_turns() -> None:
     assert len(snap.npcs) == 1
 
 
+# ---------------------------------------------------------------------------
+# Playtest 2026-05-11 regression — location stamp on injected NPCs.
+#
+# Manual-injected NPCs (humans + encounter creatures) were materialized
+# into ``snapshot.npcs`` with ``location=None``, ``last_seen_location=None``,
+# ``pool_origin=None``. Downstream, ``in_same_zone()`` masked every
+# co-located target, the narrator received ``npcs_present=0`` for the
+# entire dive, and the monster manual was effectively dormant. Inject
+# must stamp ``location=current_location`` (or the Active anchor) onto
+# every patch so the projection layer can match them to the party.
+# ---------------------------------------------------------------------------
+
+
+def test_inject_stamps_current_location_on_available_humans() -> None:
+    """Available (non-Active) humans materialize at the party's current location
+    so ``in_same_zone()`` matches them — otherwise the monster manual is
+    invisible to the narrator (playtest 2026-05-11)."""
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(npcs=[_human("Hob")])
+    snap = _snapshot()
+
+    monster_manual_inject.inject(sd, snap, current_location="Sünden Square", in_combat=False)
+
+    assert len(snap.npcs) == 1
+    assert snap.npcs[0].core.name == "Hob"
+    assert snap.npcs[0].location == "Sünden Square", (
+        "Available human injected with location=None; in_same_zone() will "
+        "mask this NPC from every co-located visibility query."
+    )
+
+
+def test_inject_uses_activated_location_for_active_humans() -> None:
+    """Active humans carry an explicit anchor — prefer that over the
+    party's current_location (the anchor is the substring-match seam that
+    gated their inclusion, so it's the canonical location)."""
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        npcs=[_human("Kern", state=EntryState.ACTIVE, activated_location="The Recruiter's Post")],
+    )
+    snap = _snapshot()
+
+    monster_manual_inject.inject(
+        sd, snap, current_location="Sünden Square — The Recruiter's Post", in_combat=False
+    )
+
+    npc = next(n for n in snap.npcs if n.core.name == "Kern")
+    assert npc.location == "The Recruiter's Post"
+
+
+def test_inject_stamps_current_location_on_encounter_creatures() -> None:
+    """Creature patches from encounters must carry the party's current
+    location too — otherwise creatures are invisible to in_same_zone()."""
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        encounters=[_creature_encounter(enemy_name="Chalk Moth", tier=1, hp=1)],
+    )
+    snap = _snapshot()
+
+    monster_manual_inject.inject(
+        sd, snap, current_location="Grimvault — Receiving", in_combat=True
+    )
+
+    creature = next(n for n in snap.npcs if n.core.name == "Chalk Moth")
+    assert creature.location == "Grimvault — Receiving", (
+        "Creature injected with location=None — invisible to in_same_zone()."
+    )
+
+
+def test_inject_leaves_location_none_when_current_location_blank() -> None:
+    """Empty current_location is not a valid zone — don't stamp it.
+
+    Pre-chargen and pre-opening turns sometimes call inject() without a
+    bound location. An empty string would be no better than None for
+    in_same_zone() matching and would pollute the projection. Leave
+    location=None in this case (loud failure shape — the warning fires
+    upstream)."""
+    sd = _FakeSessionData()
+    sd.monster_manual = _manual_with(
+        encounters=[_creature_encounter(enemy_name="Driftling", tier=1, hp=2)],
+    )
+    snap = _snapshot()
+
+    monster_manual_inject.inject(sd, snap, current_location="", in_combat=True)
+
+    assert snap.npcs[0].location is None
+
+
 def test_inject_threat_tier_falls_back_to_encounter_tier() -> None:
     enc = ManualEncounter(
         data={
