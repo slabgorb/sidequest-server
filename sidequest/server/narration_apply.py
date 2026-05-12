@@ -53,6 +53,7 @@ from sidequest.server.dispatch.sealed_letter import (
     resolve_sealed_letter_lookup,
 )
 from sidequest.server.session_helpers import (
+    _apply_npc_observation_gate,
     _auto_mint_prose_only_npcs,
     _detect_missed_recurring_npcs,
     _detect_npc_identity_drift,
@@ -2236,13 +2237,30 @@ def _apply_narration_result_to_snapshot(
         turn_num=turn_num,
     )
 
+    # Story 49-6: ratification gate. Resolves observation_pending pool
+    # members from the PRIOR turn against THIS turn's emitted_mentions —
+    # promote on match (clear the flag, keep entry), purge on miss
+    # (remove entry from npc_pool). Order is load-bearing: this MUST run
+    # BEFORE _auto_mint_prose_only_npcs below, otherwise the gate would
+    # evaluate this turn's own freshly-minted entries against this turn's
+    # (omitting) mentions and self-purge them. Emits
+    # SPAN_NPC_OBSERVATION_GATE_PROMOTED / SPAN_NPC_OBSERVATION_GATE_PURGED
+    # so Sebastien's GM panel sees every gate decision.
+    _apply_npc_observation_gate(
+        snapshot=snapshot,
+        emitted_mentions=list(result.npcs_present),
+        turn_num=turn_num,
+    )
+
     # Story 49-2: auto-mint NPCs the narrator named in prose via role
     # (Father, mother, the doctor, ...) or honorific (Mrs. Gow, Dr.
     # Sallow, ...) but omitted from npcs_present. Runs AFTER the
     # recurring-presence detector so known names hit the 45-53 detector
     # first; this catches the FIRST-mention path. Side-effects only —
-    # appends NpcPoolMember(drawn_from="dialogue_extraction") and emits
-    # SPAN_NPC_AUTO_MINTED_FROM_PROSE per mint.
+    # appends NpcPoolMember(drawn_from="dialogue_extraction",
+    # observation_pending=True) and emits SPAN_NPC_AUTO_MINTED_FROM_PROSE
+    # per mint. New mints face the 49-6 ratification gate on the NEXT
+    # turn — not this one.
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
         narration_text=result.narration or "",

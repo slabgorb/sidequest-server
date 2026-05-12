@@ -43,3 +43,16 @@ class NpcPoolMember(BaseModel):
     """Source tag: ``"name_generator"``, ``"world_authored"``,
     ``"legacy_registry"``, ``"narrator_invented"``,
     ``"dialogue_extraction"`` (Story 49-2)."""
+    observation_pending: bool = False
+    """Story 49-6 ratification gate flag. ``True`` means the member was
+    auto-minted from prose this turn and has not yet been re-cited by
+    the narrator on a subsequent turn. The gate evaluates pending members
+    each turn and either flips the flag to ``False`` (promote — narrator
+    cited the member again, treat as canonical) or removes the entry
+    entirely (purge — narrator dropped the one-off mention, do not pin
+    a phantom NPC).
+
+    Default ``False`` keeps legacy snapshots, world-authored, and
+    name-generator-sourced members exempt: they enter the pool already
+    ratified. Only ``_auto_mint_prose_only_npcs`` flags new entries as
+    pending."""

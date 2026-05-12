@@ -151,6 +151,38 @@ SPAN_ROUTES[SPAN_NPC_AUTO_MINT_SKIPPED] = SpanRoute(
     },
 )
 
+# Story 49-6: ratification gate — fires once per turn for each pool member
+# that was auto-minted from prose on a prior turn (``observation_pending=True``).
+# Promote fires when the narrator re-cites the member this turn (member stays
+# in pool with flag cleared); purge fires when the narrator omits the member
+# (member is removed from pool entirely). Two distinct spans so the GM panel
+# can render ratifications and drops as separate event streams.
+SPAN_NPC_OBSERVATION_GATE_PROMOTED = "npc.observation_gate_promoted"
+SPAN_ROUTES[SPAN_NPC_OBSERVATION_GATE_PROMOTED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "observation_gate_promoted",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
+SPAN_NPC_OBSERVATION_GATE_PURGED = "npc.observation_gate_purged"
+SPAN_ROUTES[SPAN_NPC_OBSERVATION_GATE_PURGED] = SpanRoute(
+    event_type="state_transition",
+    component="npc_registry",
+    extract=lambda span: {
+        "field": "npc_pool",
+        "op": "observation_gate_purged",
+        "name": (span.attributes or {}).get("npc_name", ""),
+        "role": (span.attributes or {}).get("role", ""),
+        "turn_number": (span.attributes or {}).get("turn_number", 0),
+    },
+)
+
 # Story 45-21: combat-stats write into npc_registry entry.
 # Fired when an encounter handshake (or other combat-stats emit) publishes
 # HP/max_hp into a registry entry so HP-check subsystems can see real data
@@ -401,6 +433,69 @@ def npc_auto_mint_skipped_span(
     }
     with Span.open(
         SPAN_NPC_AUTO_MINT_SKIPPED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def npc_observation_gate_promoted_span(
+    *,
+    npc_name: str,
+    role: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 49-6: emitted when the ratification gate re-cites a
+    previously-pending pool member (auto-minted from prose on a prior
+    turn) and clears its ``observation_pending`` flag. Distinct from
+    ``npc.auto_minted_from_prose`` (first-mint) and ``npc.auto_registered``
+    (structured-patch mint) so the GM panel can show ratifications as a
+    separate stream.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "role": role,
+        "turn_number": turn_number,
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_OBSERVATION_GATE_PROMOTED,
+        attributes,
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
+@contextmanager
+def npc_observation_gate_purged_span(
+    *,
+    npc_name: str,
+    role: str,
+    turn_number: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Story 49-6: emitted when the ratification gate removes a
+    previously-pending pool member that the narrator did NOT re-cite
+    this turn. Destructive op (the entry is removed from
+    ``snapshot.npc_pool``), surfaced at ``severity="warning"`` so
+    Sebastien's GM panel renders the drop as a soft alert — parallel
+    to ``npc_recurring_presence_missed_span``. Without this audit
+    span, NPC deletions would be silent, which is exactly the failure
+    mode CLAUDE.md "No Silent Fallbacks" prohibits.
+    """
+    attributes: dict[str, Any] = {
+        "npc_name": npc_name,
+        "role": role,
+        "turn_number": turn_number,
+        "severity": "warning",
+        **attrs,
+    }
+    with Span.open(
+        SPAN_NPC_OBSERVATION_GATE_PURGED,
         attributes,
         tracer_override=_tracer,
     ) as span:
