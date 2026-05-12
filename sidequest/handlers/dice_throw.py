@@ -72,7 +72,24 @@ class DiceThrowHandler:
 
         snapshot = sd.snapshot
         encounter = snapshot.encounter
-        character = snapshot.characters[0] if snapshot.characters else None
+        # Resolve the rolling PC from the multiplayer seat map first
+        # (snapshot.player_seats[rolling_player_id] -> character name) and
+        # only fall back to snapshot.characters[0] for legacy / solo paths
+        # where seats are absent. Pre-fix every DICE_THROW was attributed
+        # to characters[0] regardless of who clicked — in 3-PC MP this
+        # meant Donut's WIS roll resolved against Carl's stats, Carl's
+        # actor name was stashed as the opposed_check pending actor for
+        # everyone, and the secondary "opposed_check: no stat 'WIS' for
+        # opponent 'Carl'" error surfaced when Donut clicked Turn Undead
+        # against the moth. Playtest 2026-05-12 17:55–18:00 caverns_sunden.
+        rolling_pc_name = snapshot.player_seats.get(rolling_player_id) if snapshot.player_seats else None
+        if rolling_pc_name is not None:
+            character = next(
+                (c for c in snapshot.characters if c.core.name == rolling_pc_name),
+                None,
+            )
+        else:
+            character = snapshot.characters[0] if snapshot.characters else None
         character_name = character.core.name if character is not None else "Unknown"
         stats: dict[str, int] = dict(character.stats) if character is not None else {}
 
