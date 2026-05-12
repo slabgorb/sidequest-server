@@ -455,6 +455,89 @@ def test_honorific_doctor_with_name_mints(otel_capture):
     assert matched[0].pronouns == "she/her"
 
 
+def test_honorific_sir_mints_without_period(otel_capture):
+    """Glenross 2026-05-12: "Sir Iain" is one entity, not "Sir. Iain".
+
+    Knighthoods are spelled-out titles that take no period in English
+    style. The auto-mint name construction must omit the period for
+    ``Sir``/``Lady``/``Lord``/``Dame``/``Father``/``Mother``/``Reverend``/
+    ``Captain``/``Sergeant`` — only the abbreviated honorifics
+    ``Mrs.``/``Mr.``/``Dr.`` carry one.
+
+    Prior bug: ``public_name = f"{title}. {proper}"`` was unconditional,
+    so the warning span for the laird of Castle Ross read
+    ``name='Sir. Iain'`` — a malformed identifier that would never
+    match a later structured ``Sir Iain`` mention from the narrator,
+    silently fragmenting the NPC pool.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="Sir Iain crosses the stable yard. He nods to the gillie.",
+        emitted_mentions=[],
+        turn_num=1,
+    )
+    matched = [m for m in snapshot.npc_pool if "iain" in m.name.casefold()]
+    assert len(matched) == 1, (
+        f"Sir Iain must mint exactly once. Pool: "
+        f"{[(m.name, m.pronouns) for m in snapshot.npc_pool]}"
+    )
+    assert matched[0].name == "Sir Iain", (
+        f"public_name must be 'Sir Iain' (no period); got {matched[0].name!r}"
+    )
+    assert matched[0].pronouns == "he/him"
+
+
+def test_honorific_lady_mints_without_period(otel_capture):
+    """Parallel to Sir — Lady <Name> is spelled out, no period."""
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="Lady Annabel descends the stair. She greets the doctor.",
+        emitted_mentions=[],
+        turn_num=2,
+    )
+    matched = [m for m in snapshot.npc_pool if "annabel" in m.name.casefold()]
+    assert len(matched) == 1
+    assert matched[0].name == "Lady Annabel"
+    assert matched[0].pronouns == "she/her"
+
+
+def test_honorific_reverend_with_name_mints_without_period(otel_capture):
+    """``Reverend Murchison`` — spelled-out ecclesiastical title, no period.
+
+    Distinct from the ``Rev.`` abbreviation (which is not in the regex
+    set today and not under test). Also exercises the consumed-span
+    guard: the bare-role ``Reverend`` regex must NOT re-fire inside
+    ``Reverend Murchison`` and try to double-mint.
+    """
+    from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
+
+    snapshot = GameSnapshot()
+    _auto_mint_prose_only_npcs(
+        snapshot=snapshot,
+        narration_text="Reverend Murchison lifts his hands. He intones the rite.",
+        emitted_mentions=[],
+        turn_num=3,
+    )
+    matched = [m for m in snapshot.npc_pool if "murchison" in m.name.casefold()]
+    assert len(matched) == 1
+    assert matched[0].name == "Reverend Murchison"
+    assert matched[0].pronouns == "he/him"
+    # Consumed-span guard: bare ``Reverend`` must not also mint.
+    bare_reverend = [
+        m for m in snapshot.npc_pool if m.name.casefold() == "the reverend"
+    ]
+    assert bare_reverend == [], (
+        f"bare-role ``Reverend`` re-fired inside honorific span; pool: "
+        f"{[(m.name, m.pronouns) for m in snapshot.npc_pool]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — pronoun inference rules (AC2)
 # ---------------------------------------------------------------------------
