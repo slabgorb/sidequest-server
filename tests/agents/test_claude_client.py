@@ -77,6 +77,18 @@ def make_spawn_fn(
     return _spawn
 
 
+class _FakeStderrStream:
+    """Stream-like for FakeStreamingProcess.stderr — async ``.read()`` mirrors
+    asyncio.subprocess.Process.stderr so claude_client.send_stream can capture
+    stderr on subprocess_failed paths."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self) -> bytes:
+        return self._data
+
+
 class FakeStreamingProcess:
     """FakeProcess variant that emits stdout line-by-line for streaming tests.
 
@@ -98,6 +110,7 @@ class FakeStreamingProcess:
         self._stderr = stderr
         self._killed = False
         self.stdout = self  # asyncio uses `proc.stdout` as an async iterator
+        self.stderr = _FakeStderrStream(stderr)
 
     def __aiter__(self):
         return self
