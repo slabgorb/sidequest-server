@@ -1160,14 +1160,34 @@ def test_possessive_only_pronoun_does_not_mint(otel_capture, caplog):
         "Possessive-only skip must fire the skip span — the GM panel needs "
         "to see when the auto-minter declined on a fail-loud path."
     )
+    matched_warn = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and "father" in r.getMessage().casefold()
+    ]
+    assert matched_warn, (
+        "AC2 'warn (log) + skip mint': a WARNING-level log must name the "
+        "role the auto-minter skipped on possessive-only prose (parallel "
+        "to the no-pronoun and conflicting-pronoun sibling tests). Without "
+        "the log a future edit silencing the warning in ``_emit_auto_mint_skip`` "
+        "would slip past the test suite. "
+        f"Caplog records: {[r.getMessage() for r in caplog.records]}"
+    )
 
 
 def test_role_mentioned_twice_in_turn_mints_exactly_once(otel_capture):
-    """Pins first-match-wins: a role mentioned twice in the same turn must
-    produce exactly one NpcPoolMember and one mint span. The bare-role
-    loop uses ``break`` after the first non-consumed occurrence; a
-    regression that processes all occurrences would double-mint without
-    this test catching it.
+    """Pins the per-role single-mint invariant: a role mentioned twice in
+    the same turn must produce exactly one NpcPoolMember and one mint span.
+
+    The load-bearing mechanism is the ``known_roles`` dedup check inside
+    ``_auto_mint_prose_only_npcs`` (session_helpers.py): ``_mint`` adds
+    the role token to ``known_roles``, and the dedup check at the top of
+    each bare-role iteration (``if cf_role in known_roles: continue``)
+    refuses any further mint of the same role within the turn. A
+    refactor that drops that dedup check — or moves ``_mint`` calls
+    inside the per-occurrence inner loop — would double-mint, and this
+    test catches that regression.
     """
     from sidequest.server.session_helpers import _auto_mint_prose_only_npcs
 
