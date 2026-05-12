@@ -133,7 +133,34 @@ def build_game_state_view(handler: WebSocketSessionHandler) -> SessionGameStateV
     # existing session state — no new fields introduced.
     mapping: dict[str, str] = {}
     if snapshot.characters:
+        # Solo default: the active player_id owns the first (and usually
+        # only) character. Multiplayer overrides this from the room's
+        # seat assignments below.
         mapping[sd.player_id] = snapshot.characters[0].core.name
+
+    # Story 49-8: multiplayer mapping. The room tracks
+    # ``slot_to_player_id`` for seated peers (PARTY_STATUS already
+    # consumes this map in MP). Merging it into ``mapping`` here is the
+    # load-bearing wiring that lets the projection filter recognise
+    # peer player_ids — without it, ``visible_to(target)`` and the new
+    # POV-swap path collapse to "unknown player" for everyone but the
+    # emitter.
+    room = getattr(handler, "_room", None)
+    if room is not None:
+        slot_lookup = getattr(room, "slot_to_player_id", None)
+        if callable(slot_lookup):
+            try:
+                slot_map = slot_lookup()
+            except Exception:  # noqa: BLE001 — view build must never crash a turn
+                slot_map = {}
+            # ``slot_to_player_id`` keys by character_slot (the PC name
+            # at seat-time). Match against the live snapshot's PC
+            # roster so renamed characters (post-chargen edit) don't
+            # leak a stale name into the mapping.
+            roster_names = {c.core.name for c in snapshot.characters}
+            for slot_name, pid in slot_map.items():
+                if slot_name in roster_names:
+                    mapping[pid] = slot_name
 
     # Zone + hidden-character tracking from the live snapshot. Wave 2B
     # (story 45-48): per-character zones come from

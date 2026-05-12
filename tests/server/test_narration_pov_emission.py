@@ -131,6 +131,13 @@ def _make_handler_three_pcs(tmp_path: Path) -> WebSocketSessionHandler:
     room.connect("p_carl", socket_id="sock-carl")
     room.connect("p_donut", socket_id="sock-donut")
     room.connect("p_katia", socket_id="sock-katia")
+    # MP seat assignments — without these, build_game_state_view's
+    # player_id_to_character mapping only knows about the emitter.
+    # Story 49-8 reads this mapping at swap-time to resolve anchor_pc
+    # to a player_id.
+    room.seat("p_carl", character_slot="Carl")
+    room.seat("p_donut", character_slot="Donut")
+    room.seat("p_katia", character_slot="Katia")
     handler._room = room
     return handler
 
@@ -155,6 +162,14 @@ def test_anchor_recipient_sees_second_person_prose(
 ) -> None:
     """The recipient whose player_id maps to the card's anchor_pc must
     see the prose rewritten to 2nd-person ('You plant a boot...').
+
+    Architecture note: the emitter (Carl in this fixture) receives
+    their NARRATION frame via the return value of ``_emit_event``,
+    which production then pushes onto the emitter's outbound queue via
+    the websocket layer's outbound list. Single-delivery contract —
+    the emitter's queue stays clean inside emit_event's fan-out loop
+    (which is for peers only) so that production handle_message can
+    push the return value once.
 
     This is the load-bearing wiring assertion for Story 49-8. Without
     this, the 2026-05-12 playtest bug is unfixed: every player sees
@@ -186,9 +201,6 @@ def test_anchor_recipient_sees_second_person_prose(
         },
     }
 
-    # The handler must consult its view to map anchor_pc -> player_id.
-    # We seed the view's mapping via SessionGameStateView fixtures
-    # consumed by emit_event.
     from sidequest.server import views as views_module
 
     monkeypatch.setattr(
@@ -197,38 +209,19 @@ def test_anchor_recipient_sees_second_person_prose(
         lambda _h: {},
     )
 
-    handler._emit_event("NARRATION", payload)
+    out_to_self = handler._emit_event("NARRATION", payload)
 
-    # Carl is the emitter — his "out_to_self" path must also swap.
-    # The emit_event() return value is the message Carl-side sends, BUT
-    # in the existing pipeline emitter.out_to_self bypasses the rewriter.
-    # Story 49-8 explicitly fixes this: anchor=emitter must still swap.
-    # So we assert via the EMITTER queue if it has been wired through
-    # the room — otherwise via the return value.
-    carl_msgs = []
-    while not queues["p_carl"].empty():
-        carl_msgs.append(queues["p_carl"].get_nowait())
+    # Carl is the emitter — his frame returns from _emit_event and is
+    # NOT placed on his queue inside emit_event (production handle_message
+    # forwards it to his queue via the outbound list).
+    assert queues["p_carl"].qsize() == 0, (
+        "Carl is the emitter; his frame must NOT be queued by emit_event "
+        "(handle_message pushes the return value onto his queue exactly "
+        f"once); got {queues['p_carl'].qsize()} duplicate frame(s)"
+    )
 
-    # If the emitter sends through the room queue, his frame lands.
-    # Otherwise his frame is the return of _emit_event (handler stores
-    # it but doesn't route it here). Either way, we want to verify Carl's
-    # frame text. So we accept both shapes.
-    if carl_msgs:
-        carl_text = carl_msgs[0].payload["text"]
-    else:
-        # emit_event returns the emitter's message in the legacy path.
-        # We pull it from the test by running emit_event a second time
-        # and capturing the return; OR — the cleaner contract is that
-        # in MP, the emitter ALSO receives from the room queue. Story
-        # 49-8 must make that contract explicit. We assert here that
-        # Carl receives his own frame on the room queue so the swap
-        # applies uniformly.
-        pytest.fail(
-            "Carl (anchor + emitter) received no frame on his queue. "
-            "Story 49-8 requires the emitter to receive a swapped frame "
-            "through the same fan-out path as peers — otherwise his "
-            "own tab shows 'Carl plants a boot' instead of 'You plant'."
-        )
+    assert out_to_self is not None, "emit_event must return the emitter's frame"
+    carl_text = out_to_self.payload["text"]
 
     assert "You plant a boot" in carl_text, (
         f"Carl (anchor) must see 2nd-person prose; got: {carl_text!r}"
@@ -353,7 +346,16 @@ def test_anchor_swap_uses_recipient_pc_pronouns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Anchored on Katia (she/her), Katia's tab must see 2nd-person.
-    Reflexive 'herself' must become 'yourself' on her tab."""
+    Reflexive 'herself' must become 'yourself' on her tab.
+
+    This fixture seats Carl as the emitter (``handler._session_data.player_id
+    == "p_carl"``) but anchors the narration on Katia — modelling a
+    turn where one player submits an action that the narrator chose to
+    frame from Katia's POV. Carl is therefore both the emitter (return
+    value path) and a NON-anchor recipient — he should see Katia in
+    third-person. Katia, who is a peer recipient AND the anchor, must
+    receive the swapped frame on her queue.
+    """
     handler = _make_handler_three_pcs(tmp_path)
     queues = _attach_queues(handler._room)
 
@@ -379,8 +381,10 @@ def test_anchor_swap_uses_recipient_pc_pronouns(
             "pov_strategy": "pc_anchored",
         },
     }
-    handler._emit_event("NARRATION", payload)
+    out_to_self = handler._emit_event("NARRATION", payload)
 
+    # Katia is a peer recipient AND the anchor — her frame lands on the
+    # peer queue with the 2nd-person swap applied.
     assert queues["p_katia"].qsize() == 1, "Katia must receive her own card"
     katia_text = queues["p_katia"].get_nowait().payload["text"]
     assert "You brace yourself" in katia_text, (
@@ -389,9 +393,17 @@ def test_anchor_swap_uses_recipient_pc_pronouns(
     assert "herself" not in katia_text
     assert "Katia" not in katia_text
 
-    # Carl and Donut keep the 3rd-person form.
-    for pid in ("p_carl", "p_donut"):
-        text = queues[pid].get_nowait().payload["text"]
-        assert "Katia braces herself" in text, (
-            f"non-anchor {pid} must see 3rd-person; got: {text!r}"
-        )
+    # Donut is a peer non-anchor — sees Katia in 3rd-person.
+    assert queues["p_donut"].qsize() == 1
+    donut_text = queues["p_donut"].get_nowait().payload["text"]
+    assert "Katia braces herself" in donut_text, (
+        f"non-anchor Donut must see 3rd-person; got: {donut_text!r}"
+    )
+
+    # Carl is the emitter AND a non-anchor — his frame is the return
+    # value, unswapped (3rd-person).
+    assert out_to_self is not None
+    carl_text = out_to_self.payload["text"]
+    assert "Katia braces herself" in carl_text, (
+        f"emitter (Carl) is not the anchor and must see 3rd-person; got: {carl_text!r}"
+    )

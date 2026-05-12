@@ -17,17 +17,18 @@ These tests RED until both modules exist AND emit the named spans.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 
+from sidequest.agents.orchestrator import ActionRewrite, NarrationTurnResult
+
 # Imports at module scope — RED until the helpers exist.
 from sidequest.agents.pov_swap import swap_to_second_person
-from sidequest.server.visibility_classifier import classify_narration_visibility
-from sidequest.agents.orchestrator import ActionRewrite, NarrationTurnResult
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.session import GameSnapshot
+from sidequest.server.visibility_classifier import classify_narration_visibility
 
 
 @pytest.fixture
@@ -41,6 +42,7 @@ def otel_capture() -> Iterator:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
         InMemorySpanExporter,
     )
+
     from sidequest.telemetry.setup import init_tracer
 
     init_tracer()

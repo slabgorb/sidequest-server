@@ -48,7 +48,6 @@ import pytest
 # a strong RED signal in the runner output.
 from sidequest.agents.pov_swap import swap_to_second_person
 
-
 # ---------------------------------------------------------------------------
 # Basic substitution
 # ---------------------------------------------------------------------------

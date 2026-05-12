@@ -48,11 +48,6 @@ from __future__ import annotations
 
 import pytest
 
-# RED until module is created — import at module scope so collection
-# itself fails noisily.
-from sidequest.server.visibility_classifier import (  # noqa: F401
-    classify_narration_visibility,
-)
 from sidequest.agents.orchestrator import (
     ActionRewrite,
     NarrationTurnResult,
@@ -60,6 +55,12 @@ from sidequest.agents.orchestrator import (
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.session import GameSnapshot
+
+# RED until module is created — import at module scope so collection
+# itself fails noisily.
+from sidequest.server.visibility_classifier import (  # noqa: F401
+    classify_narration_visibility,
+)
 
 
 def _pc(name: str, pronouns: str = "he/him") -> Character:
