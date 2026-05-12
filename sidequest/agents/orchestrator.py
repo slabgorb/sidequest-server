@@ -530,11 +530,16 @@ class TurnContext:
     pc_cores_by_player: dict[str, CreatureCore] = field(default_factory=dict)
     npc_cores_by_name: dict[str, CreatureCore] = field(default_factory=dict)
 
-    # Per-actor status lists (Task 18 — dual-track momentum). Populated by
-    # run_narration_turn from session.characters so the live encounter zone
-    # renders Status objects per actor. Typed as dict[str, list[Any]] to avoid
-    # a circular import on Status — matches the existing pattern for
-    # ``confrontation_def: Any`` and ``encounter: Any``.
+    # Per-actor status lists (Task 18 — dual-track momentum). Consumed by
+    # the live encounter zone to render Status objects per actor. NOT
+    # currently populated by ``_build_turn_context`` (session_helpers.py) —
+    # the only code that ever populated this from ``session.characters``
+    # was the module-level ``run_narration_turn`` wrapper deleted in
+    # story 49-5. Field defaults to ``{}`` in production until the wiring
+    # gap is closed; see 49-5 Delivery Findings for the follow-up.
+    # Typed as dict[str, list[Any]] to avoid a circular import on Status
+    # — matches the existing pattern for ``confrontation_def: Any`` and
+    # ``encounter: Any``.
     statuses_by_actor: dict[str, list[Any]] = field(default_factory=dict)
 
     # Per-PC class + spell-slot lookup for the live encounter zone (Task 7,
@@ -545,12 +550,21 @@ class TurnContext:
     # to avoid a circular ClassDef import in this layer.
     pc_classes_by_name: dict[str, Any] = field(default_factory=dict)
 
-    # One-shot ResolutionSignal (Task 18 — dual-track momentum). Populated by
-    # run_narration_turn from session.pending_resolution_signal. Consumed in
-    # build_narrator_prompt: passed to build_encounter_context, span fired.
-    # Cleared on the snapshot in the module-level wrapper after the orchestrator
-    # returns — TurnContext is a local copy; the snapshot isn't in scope here.
-    # Typed as Any to avoid a circular import on ResolutionSignal.
+    # One-shot ResolutionSignal (Task 18 — dual-track momentum). Consumed in
+    # build_narrator_prompt: passed to build_encounter_context to fire the
+    # ``[ENCOUNTER RESOLVED]`` zone and the encounter_resolution_signal_consumed
+    # span. NOT currently populated by ``_build_turn_context`` (session_helpers.py)
+    # — the only code that ever copied ``snapshot.pending_resolution_signal``
+    # into this field, and the only code that cleared the signal from the snapshot
+    # after consumption, was the module-level ``run_narration_turn`` wrapper
+    # deleted in story 49-5. ``snapshot.pending_resolution_signal`` is still
+    # set by ``narration_apply.py`` and ``dispatch/yield_action.py`` on
+    # encounter resolution but never reaches this field; the [ENCOUNTER
+    # RESOLVED] zone is therefore dormant in production. See 49-5 Delivery
+    # Findings for the follow-up that must (a) thread the signal through
+    # ``_build_turn_context`` and (b) clear it at the session-handler call
+    # site after the orchestrator returns. Typed as Any to avoid a circular
+    # import on ResolutionSignal.
     pending_resolution_signal: Any = None
 
     # Magic state for the current world (Valley zone).
