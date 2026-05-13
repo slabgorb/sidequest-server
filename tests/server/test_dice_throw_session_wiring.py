@@ -176,3 +176,146 @@ async def test_dice_throw_raises_when_room_missing(session_handler_factory):
 
     with pytest.raises(RuntimeError, match="sd._room is None"):
         await handler.handle_message(_throw())
+
+
+@pytest.mark.asyncio
+async def test_dice_throw_resolves_rolling_pc_by_seat_not_first_character(
+    session_handler_factory,
+):
+    """Playtest 2026-05-12 17:55–18:00 caverns_sunden: when Donut clicked
+    Turn Undead the server error read ``opposed_check: no stat 'WIS' for
+    opponent 'Carl'`` — Donut's roll resolved against Carl's actor name
+    and stat sheet because ``handlers/dice_throw.py`` was reading
+    ``snapshot.characters[0]`` regardless of which connected player sent
+    the DICE_THROW frame. In a 3-PC MP session that always meant
+    "characters[0]", which happened to be Carl.
+
+    Post-fix: ``snapshot.player_seats[rolling_player_id]`` resolves the
+    seated PC name, and ``snapshot.characters`` is looked up by that
+    name. The fallback to ``characters[0]`` is preserved for legacy /
+    solo callers where ``player_seats`` is empty.
+
+    Asserts after a DICE_THROW from player_id=donut:
+
+      1. ``sd.pending_roll_actor`` is "Donut" (not "Carl"). This is what
+         ``websocket_session_handler.py`` reads back as
+         ``opposed_player_actor`` and forwards into
+         ``_resolve_opposed_check_branch``; the bug stashed Carl here.
+      2. ``apply_beat`` ran for Donut on the encounter — i.e. Donut's
+         actor is the one whose beat_applied event fires, not Carl's.
+    """
+    from sidequest.server.session_handler import _State
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    handler._state = _State.Playing
+    _install_combat_def(sd)
+    _install_active_encounter(sd)
+
+    # Seat three PCs and add their characters to the snapshot. The factory
+    # already gave us a "Rux" character at characters[0]; rename and add
+    # peers so the bug's "Donut clicked but Carl's stats applied" shape
+    # is exercisable. Order matters: characters[0] is Carl by construction
+    # so the pre-fix path would attribute every roll to him.
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    sd.snapshot.characters[0].core.name = "Carl"
+    sd.snapshot.characters[0].stats.clear()
+    sd.snapshot.characters[0].stats["STR"] = 14
+    sd.snapshot.characters.append(
+        Character(
+            core=CreatureCore(
+                name="Donut",
+                description="Donut the cleric",
+                personality="kind",
+                inventory=Inventory(),
+            ),
+            char_class="Cleric",
+            race="Human",
+            backstory="A devoted cleric",
+        ),
+    )
+    sd.snapshot.characters[-1].stats["WIS"] = 16
+    sd.snapshot.player_seats["carl"] = "Carl"
+    sd.snapshot.player_seats["donut"] = "Donut"
+
+    # Update encounter actors so Donut is a player-side combatant the
+    # dispatcher can find. Pre-fix this didn't matter because the wrong
+    # actor name was being used anyway.
+    sd.snapshot.encounter.actors.append(
+        EncounterActor(name="Donut", role="combatant", side="player"),
+    )
+    sd.snapshot.encounter.actors.append(
+        EncounterActor(name="Chalk Moth", role="hostile", side="opponent"),
+    )
+
+    async def _skip(sd_, action, ctx):  # noqa: ANN001, ARG001
+        return []
+
+    handler._execute_narration_turn = _skip  # type: ignore[method-assign]
+
+    # DICE_THROW from Donut — face=15 (passes a typical DC) so the beat
+    # actually applies and pending_roll_actor gets stashed by dispatch.
+    msg = DiceThrowMessage(
+        payload=DiceThrowPayload(
+            request_id="wire-req-donut-rolls",
+            throw_params=ThrowParams(
+                velocity=(0.0, 5.0, -2.0),
+                angular=(1.0, 1.0, 1.0),
+                position=(0.5, 0.5),
+            ),
+            face=[15],
+            beat_id="attack",
+        ),
+        player_id="donut",
+    )
+
+    await handler.handle_message(msg)
+
+    # Load-bearing assertion: pending_roll_actor is Donut, not Carl.
+    # Pre-fix this was "Carl" because the handler read characters[0] —
+    # downstream the opposed_check resolver would then look up Donut's
+    # beat under Carl's stat sheet (Carl has no WIS → "no stat 'WIS' for
+    # opponent 'Carl'" surfaces in production logs).
+    assert sd.pending_roll_actor == "Donut", (
+        f"DICE_THROW handler must resolve the rolling PC from player_seats; "
+        f"player_id='donut' should yield pending_roll_actor='Donut', got "
+        f"{sd.pending_roll_actor!r}. Pre-fix the handler read "
+        f"snapshot.characters[0].core.name and every roll in MP was "
+        f"attributed to whichever PC happened to be first in the list."
+    )
+
+
+@pytest.mark.asyncio
+async def test_dice_throw_falls_back_to_characters_zero_when_seats_empty(
+    session_handler_factory,
+):
+    """Legacy / solo guard: when ``snapshot.player_seats`` is empty (pre-
+    seat-aware paths, single-player connect, replay), the handler still
+    falls back to ``snapshot.characters[0]``. The fix only adds the
+    seat-lookup branch; the legacy fall-through must be intact.
+    """
+    from sidequest.server.session_handler import _State
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    handler._state = _State.Playing
+    _install_combat_def(sd)
+    _install_active_encounter(sd)
+    sd.snapshot.characters[0].stats["STRENGTH"] = 14
+    sd.snapshot.player_seats.clear()  # legacy / pre-seat-aware path
+
+    async def _skip(sd_, action, ctx):  # noqa: ANN001, ARG001
+        return []
+
+    handler._execute_narration_turn = _skip  # type: ignore[method-assign]
+
+    await handler.handle_message(_throw())
+
+    # Fall-through: characters[0] is "Rux" in the factory default, so
+    # pending_roll_actor must match that.
+    assert sd.pending_roll_actor == sd.snapshot.characters[0].core.name, (
+        f"With empty player_seats the handler must fall back to "
+        f"snapshot.characters[0]; got pending_roll_actor="
+        f"{sd.pending_roll_actor!r}, characters[0]="
+        f"{sd.snapshot.characters[0].core.name!r}"
+    )
