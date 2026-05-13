@@ -131,7 +131,7 @@ def _pass_a2_time_skip(
 
         rate = (
             tdef.passive_progression.rate_per_day if tdef.passive_progression else 0.0
-        ) or 0.0
+        )
 
         if rate <= 0.0:
             tropes_skipped_zero_rate.append(tstate.id)
