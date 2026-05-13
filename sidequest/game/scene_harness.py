@@ -194,11 +194,18 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
     Legacy ``hp``/``max_hp`` integers are mapped onto :class:`EdgePool`
     (current/max/base_max). ``ac`` has no current home in the Python
     Character shape and is dropped.
+
+    The ``or ""`` patterns on required string fields keep pyright happy
+    (``data.get(...)`` is ``str | None`` but the pydantic constructors
+    require ``str``). Pydantic's non-blank field validators then reject
+    the empty strings at construction time, so an omitted required
+    field still surfaces as a ``ValidationError`` that ``hydrate_fixture``
+    re-wraps as ``FixtureValidationError`` (HTTP 422).
     """
     core_kwargs: dict[str, Any] = {
         "name": data.get("name") or "",
-        "description": data.get("description", ""),
-        "personality": data.get("personality", ""),
+        "description": data.get("description") or "",
+        "personality": data.get("personality") or "",
         "level": int(data.get("level", 1)),
     }
     inv = data.get("inventory")
@@ -217,11 +224,11 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
 
     return Character(
         core=core,
-        backstory=data.get("backstory") or "Unknown background.",
+        backstory=data.get("backstory") or "",
         narrative_state=data.get("narrative_state", ""),
         hooks=list(data.get("hooks") or []),
-        char_class=data.get("char_class") or "Drifter",
-        race=data.get("race") or "Human",
+        char_class=data.get("char_class") or "",
+        race=data.get("race") or "",
         pronouns=data.get("pronouns", ""),
         stats=dict(data.get("stats") or {}),
     )
@@ -241,6 +248,11 @@ def _hydrate_npc(data: dict[str, Any]) -> Npc:
     validators are satisfied without ginning up prose the narrator
     might contradict.
     """
+    # ``name`` is required and pydantic catches missing/blank. ``description``
+    # and ``personality`` defaults are LOAD-BEARING: canonical fixtures
+    # (combat_test, dogfight) define NPCs with only name/role/disposition
+    # and rely on the narrator to fill in flavor; without seeded values
+    # CreatureCore's non-blank validators would reject every fixture NPC.
     role = data.get("role") or "fixture NPC"
     core = CreatureCore(
         name=data.get("name") or "",

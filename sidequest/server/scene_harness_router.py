@@ -175,16 +175,30 @@ def create_scene_harness_router() -> APIRouter:
     return router
 
 
+_MAX_DISAMBIGUATE_ATTEMPTS = 1000
+
+
 def _disambiguate(save_dir: Path, base_slug: str) -> str:
     """Pick the next free slug under ``save_dir`` by appending ``-2``, ``-3``...
 
     Same-day same-world scene loads must not silently overwrite each
     other; the scene harness is for iteration and devs reload the
     same fixture many times in a session.
+
+    Bounded at :data:`_MAX_DISAMBIGUATE_ATTEMPTS` so a pathological save
+    directory (or a misconfigured tests that points the harness at a
+    populated production save tree) fails loudly per CLAUDE.md
+    "No Silent Fallbacks" rather than spinning an O(n) filesystem scan.
     """
     candidate = base_slug
     n = 1
     while db_path_for_slug(save_dir, candidate).exists():
         n += 1
+        if n > _MAX_DISAMBIGUATE_ATTEMPTS:
+            raise RuntimeError(
+                f"scene_harness._disambiguate: {n - 1} consecutive same-day same-world "
+                f"saves already exist under {save_dir!s} for base_slug={base_slug!r}. "
+                "Either prune old scene-harness saves or rename the fixture."
+            )
         candidate = f"{base_slug}-{n}"
     return candidate
