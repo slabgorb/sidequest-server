@@ -315,3 +315,172 @@ async def test_confrontation_reaches_dispatcher_after_socket_cycle(
         f"got {outbound_kinds}. Re-introducing outbound.append would "
         "resurrect the dead-queue race."
     )
+
+
+@pytest.mark.asyncio
+async def test_seated_dispatcher_receives_class_filtered_not_unfiltered_canonical(
+    session_handler_factory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pingpong 2026-05-12 17:48: trailing-PC regression of Story 49-7.
+
+    Repro from the 3-PC Carl/Donut/Katia caverns_sunden playtest: per-PC
+    verb projection worked at confrontation-open, then after a couple of
+    resolved rounds the dispatcher's Confrontation tab regressed to the
+    full 16-button class union. oq-2 isolated the pattern: the broken
+    tab was always the PC who appeared LAST in the resolved-round
+    narration order — i.e. the one whose ``sd.player_id`` became the
+    dispatcher for the merged-dispatch turn.
+
+    Root cause: ``_emit_event("CONFRONTATION", ...)`` returns the raw
+    unfiltered canonical payload as ``confrontation_msg`` for the
+    emitter. The per-PC overlay loop above the dispatcher-current-socket
+    push queues a class-filtered CONFRONTATION to every connected socket
+    (including the dispatcher's). The dispatcher-current-socket push
+    then queues the unfiltered ``confrontation_msg`` to the dispatcher's
+    queue AFTER the filtered overlay. UI renders last-message-wins, so
+    the dispatcher's tab snapped back to the full 16-button union.
+
+    Fix: skip the canonical push to the dispatcher when the per-PC
+    overlay above already queued a filtered frame for them. The
+    canonical push remains the dispatcher's sole delivery path in the
+    legacy/unseated branch (no PC seat / no class resolution / clear
+    payload / stub-room fixtures).
+
+    This test exercises the seated-PC branch with a real
+    caverns_and_claudes genre pack so ``resolve_recipient_pc`` actually
+    finds the Thief class for Katia. Asserts:
+
+      1. Katia's queue receives exactly one CONFRONTATION (not two —
+         no canonical-clobber after the filtered overlay).
+      2. The frame Katia receives is Thief-filtered: contains
+         ``backstab`` (Thief-specific) and DOES NOT contain
+         ``shield_bash`` (Fighter), ``cast_spell`` (Mage), or
+         ``turn_undead`` (Cleric).
+    """
+    from sidequest.agents.orchestrator import NpcMention
+    from sidequest.game.character import Character
+    from sidequest.game.creature_core import CreatureCore, Inventory
+
+    # Repoint genre-pack search at the real sidequest-content pack so the
+    # loaded pack carries the real Fighter/Cleric/Thief classes with their
+    # distinct encounter_beat_choices. The autouse
+    # ``_fixture_pack_search_paths`` fixture points the loader at
+    # tests/fixtures/packs which has no classes.yaml in caverns_and_claudes
+    # — that fixture is fine for shape tests but cannot exercise per-class
+    # beat filtering. This monkeypatch supersedes the autouse one for the
+    # duration of this test only.
+    content_packs = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+    assert content_packs.is_dir(), (
+        f"real sidequest-content packs directory not found at {content_packs} — "
+        f"this test asserts behavior that only manifests with the production "
+        f"class definitions (Fighter has shield_bash, Thief has backstab, etc.)"
+    )
+    monkeypatch.setattr(
+        "sidequest.genre.loader.DEFAULT_GENRE_PACK_SEARCH_PATHS",
+        [content_packs],
+    )
+
+    sd, handler = session_handler_factory(genre="caverns_and_claudes")
+    sd.player_id = "katia"
+    sd.player_name = "Katia"
+    sd.mode = GameMode.MULTIPLAYER
+    sd.game_slug = _SLUG + "-seated-trail"
+
+    # Real EventLog + ProjectionFilter so the production emit path runs.
+    store = _seed_game_row(tmp_path)
+    handler._event_log = EventLog(store)
+    handler._projection_filter = ComposedFilter.with_no_genre_rules()
+    handler._projection_cache = ProjectionCache(store)
+
+    # Seat 3 PCs with distinct classes so the per-PC overlay produces
+    # different verb lists per recipient. The factory's default snapshot
+    # already has a "Rux" Fighter — append Donut (Cleric) and Katia
+    # (Thief). All three classes exist in caverns_and_claudes/classes.yaml
+    # with non-overlapping signature beats (shield_bash / turn_undead /
+    # backstab) — required for the class-filter assertion to be sharp.
+    snap = sd.snapshot
+    for char_name, char_class in (("Carl", "Fighter"), ("Donut", "Cleric"), ("Katia", "Thief")):
+        if not any(c.core.name == char_name for c in snap.characters):
+            snap.characters.append(
+                Character(
+                    core=CreatureCore(
+                        name=char_name,
+                        description=f"{char_name} the adventurer",
+                        personality="bold",
+                        inventory=Inventory(),
+                    ),
+                    char_class=char_class,
+                    race="Human",
+                    backstory="A wandering adventurer",
+                ),
+            )
+    snap.player_seats["carl"] = "Carl"
+    snap.player_seats["donut"] = "Donut"
+    snap.player_seats["katia"] = "Katia"
+
+    # Connect all 3 to a real SessionRoom. Katia is the dispatcher
+    # (sd.player_id), matching the playtest scenario where the last-
+    # narrated PC in merged dispatch became the dispatcher and broke.
+    registry = RoomRegistry()
+    room = registry.get_or_create(slug=sd.game_slug, mode=GameMode.MULTIPLAYER)
+    queues: dict[str, asyncio.Queue[object]] = {}
+    for pid, sid in (("carl", "sock-carl"), ("donut", "sock-donut"), ("katia", "sock-katia")):
+        q: asyncio.Queue[object] = asyncio.Queue()
+        queues[pid] = q
+        room.connect(pid, socket_id=sid)
+        room.attach_outbound(sid, q)
+    handler._room = room
+    handler._socket_id = "sock-katia"
+
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=NarrationTurnResult(
+            narration="Carl, Donut, and Katia square off against the Chalk Moth.",
+            confrontation="combat",
+            npcs_present=[NpcMention(name="Chalk Moth", side="opponent", role="hostile")],
+        ),
+    )
+
+    from sidequest.server.session_handler import _build_turn_context
+
+    await handler._execute_narration_turn(
+        sd,
+        "Open combat.",
+        _build_turn_context(sd),
+    )
+
+    # Drain Katia's queue and collect CONFRONTATION frames.
+    katia_frames: list[ConfrontationMessage] = []
+    while not queues["katia"].empty():
+        item = queues["katia"].get_nowait()
+        if isinstance(item, ConfrontationMessage):
+            katia_frames.append(item)
+
+    assert len(katia_frames) == 1, (
+        f"Dispatcher (Katia, seated as Thief) must receive EXACTLY ONE "
+        f"CONFRONTATION frame on their socket queue. Pre-fix the dispatcher "
+        f"received two frames — the per-PC overlay's filtered frame followed "
+        f"by the unfiltered canonical from the dispatcher-current-socket "
+        f"push — and the UI's last-message-wins render snapped the panel "
+        f"back to the full 16-button union (pingpong 2026-05-12 17:48). "
+        f"Got {len(katia_frames)} frames."
+    )
+
+    beat_ids = {b["id"] for b in katia_frames[0].payload.beats}
+    assert "backstab" in beat_ids, (
+        f"Katia is seated as Thief; her Confrontation panel must include "
+        f"the Thief-specific 'backstab' beat. Got beats: {sorted(beat_ids)}. "
+        f"If 'backstab' is missing the per-PC overlay didn't reach Katia at "
+        f"all — distinct failure mode from the canonical-clobber regression."
+    )
+    forbidden = {"shield_bash", "cast_spell", "turn_undead", "pray_for_aid", "cleave", "parry", "taunt"}
+    leaked = beat_ids & forbidden
+    assert not leaked, (
+        f"Thief-only Katia's CONFRONTATION leaked non-Thief beats: {sorted(leaked)}. "
+        f"This is the exact playtest 2026-05-12 17:30 regression — the "
+        f"unfiltered canonical landed in Katia's queue after the filtered "
+        f"overlay and the UI rendered the union. Pre-fix beats included "
+        f"Fighter (shield_bash/cleave/parry), Mage (cast_spell), and Cleric "
+        f"(turn_undead/pray_for_aid) beats Katia (Thief) cannot use."
+    )
