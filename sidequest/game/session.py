@@ -42,6 +42,7 @@ from sidequest.game.resource_pool import (
     mint_threshold_lore,
 )
 from sidequest.game.scenario_state import ScenarioState
+from sidequest.game.trope_time_skip import TimeSkipBeatEvent
 from sidequest.game.turn import TurnManager
 from sidequest.genre.models.rules import ResourceDeclaration
 from sidequest.magic.state import MagicState
@@ -584,6 +585,13 @@ class GameSnapshot(BaseModel):
 
     # P2-deferred: trope engine state
     active_tropes: list[TropeState] = Field(default_factory=list)
+
+    # Story 50-4 — in-game day counter and time-skip beat summary.
+    # ``days_elapsed`` is monotonic, advances by clamp(days_advanced, 0, 14)
+    # on every narrator turn that emits a multi-day jump. ``pending_time_skip_summary``
+    # is a one-shot queue: Pass A2 appends, narrator prompt builder consumes + clears.
+    days_elapsed: int = 0
+    pending_time_skip_summary: list[TimeSkipBeatEvent] = Field(default_factory=list)
 
     # World descriptors (P1-required)
     atmosphere: str = ""

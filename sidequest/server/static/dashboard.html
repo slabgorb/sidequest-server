@@ -53,6 +53,7 @@
   .turn-item .ti-badge { font-size: 9px; padding: 1px 5px; border-radius: 8px; }
   .ti-degraded { background: var(--red); color: white; }
   .ti-combat { background: var(--amber); color: black; }
+  .trope-day-badge { display: inline-block; margin-left: 0.4em; padding: 0 0.4em; border-radius: 3px; background: #fef; color: #530; font-size: 0.85em; }
 
   /* Summary stats row */
   .stats-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -352,6 +353,27 @@ function dispatch(ev) {
       if (S.activeTab === 7) renderStreaming();
     }
   }
+  // trope.time_skip — badge +Nd on affected trope rows (Story 50-4).
+  // Discriminated by component="tropes" + days_applied present (unique to
+  // time-skip spans; trope.tick carries trope_id/delta but not days_applied).
+  if (ev.event_type === 'state_transition' && ev.component === 'tropes' && ev.fields && ev.fields.days_applied !== undefined) {
+    const days = ev.fields.days_applied || 0;
+    const affected = ev.fields.tropes_affected || [];
+    affected.forEach(tropeId => {
+      if (!tropeId) return;
+      const el = document.querySelector(`[data-trope-id="${CSS.escape(tropeId)}"]`);
+      if (!el) return;
+      const badge = document.createElement('span');
+      badge.className = 'trope-day-badge';
+      badge.textContent = '+' + days + 'd';
+      const beats = ev.fields.beats_fired_count || 0;
+      badge.title = beats
+        ? `${beats} beat(s) fired during the time skip`
+        : 'No beats fired during skip';
+      el.appendChild(badge);
+      setTimeout(() => badge.remove(), 8000);
+    });
+  }
   // Claude tab removed (ADR-059 — tool infrastructure replaced by Monster Manual)
   updateHeader();
   if (S.activeTab === 0 && ev.event_type === 'turn_complete') renderTurnList();
@@ -457,7 +479,7 @@ function renderState() {
   // Location & World
   html += `<div class="card"><div class="card-title">Location</div>
     <div style="font-size:14px;color:var(--accent);margin-bottom:4px">${esc(s.location || 'Unknown')}</div>
-    <div style="font-size:11px;color:var(--muted)">${esc(s.genre_slug||'')} / ${esc(s.world_slug||'')}${s.current_region ? ' · Region: '+esc(s.current_region) : ''}${s.time_of_day ? ' · '+esc(s.time_of_day) : ''}</div>
+    <div style="font-size:11px;color:var(--muted)">${esc(s.genre_slug||'')} / ${esc(s.world_slug||'')}${s.current_region ? ' · Region: '+esc(s.current_region) : ''}${s.time_of_day ? ' · '+esc(s.time_of_day) : ''}${s.days_elapsed ? ' · Day '+esc(String(s.days_elapsed)) : ''}</div>
     ${(s.discovered_regions||[]).length ? '<div style="margin-top:6px;font-size:11px;color:var(--muted)">Discovered: '+(s.discovered_regions||[]).map(r=>'<span style="color:var(--teal)">'+esc(r)+'</span>').join(', ')+'</div>' : ''}
   </div>`;
 
@@ -580,7 +602,7 @@ function renderState() {
     tropes.forEach(t => {
       const pct = Math.round((t.progression || 0) * 100);
       const beats = (t.fired_beats || []).length;
-      html += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;font-size:11px">
+      html += `<div data-trope-id="${esc(t.trope_definition_id||'')}" style="display:flex;align-items:center;gap:12px;margin-bottom:4px;font-size:11px">
         <span style="color:var(--amber);min-width:140px">${esc(t.trope_definition_id)}</span>
         <span style="color:var(--muted)">${esc(t.status||'?')}</span>
         <div style="flex:1;max-width:120px;height:4px;background:var(--border);border-radius:2px"><div style="width:${pct}%;height:100%;background:var(--amber);border-radius:2px"></div></div>

@@ -51,6 +51,9 @@ class StateDelta(BaseModel):
     active_stakes: bool = False
     lore: bool = False
     magic: bool = False
+    # Story 50-4 — time-skip state changes.
+    days_elapsed: bool = False
+    pending_time_skip_summary: bool = False
     new_location: str | None = None
 
     def is_empty(self) -> bool:
@@ -69,6 +72,8 @@ class StateDelta(BaseModel):
             or self.active_stakes
             or self.lore
             or self.magic
+            or self.days_elapsed
+            or self.pending_time_skip_summary
         )
 
     def characters_changed(self) -> bool:
@@ -107,6 +112,10 @@ class StateSnapshot:
         self.quest_log_json = _to_json(state.quest_log)
         self.notes_json = _to_json(state.notes)
         self.active_tropes_json = _to_json(state.active_tropes)
+        self.days_elapsed = state.days_elapsed
+        self.pending_time_skip_summary_json = _to_json(
+            [event.model_dump() for event in state.pending_time_skip_summary]
+        )
         self.atmosphere = state.atmosphere
         self.current_region = state.current_region
         self.discovered_regions_json = _to_json(state.discovered_regions)
@@ -150,5 +159,9 @@ def compute_delta(before: StateSnapshot, after: StateSnapshot) -> StateDelta:
         active_stakes=before.active_stakes != after.active_stakes,
         lore=before.lore_established_json != after.lore_established_json,
         magic=before.magic_state_json != after.magic_state_json,
+        days_elapsed=before.days_elapsed != after.days_elapsed,
+        pending_time_skip_summary=(
+            before.pending_time_skip_summary_json != after.pending_time_skip_summary_json
+        ),
         new_location=None,
     )

@@ -55,6 +55,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from sidequest.game.session import GameSnapshot, TropeState
+from sidequest.game.trope_time_skip import _pass_a2_time_skip
 from sidequest.game.trope_tuning import (
     FIRE_COOLDOWN_TURNS,
     FOREGROUND_K,
@@ -67,6 +68,7 @@ from sidequest.telemetry.spans import (
     SPAN_TROPE_COOLDOWN_BLOCKED,
     SPAN_TROPE_RESOLVE,
     SPAN_TROPE_TICK_PER,
+    SPAN_TROPE_TIME_SKIP,
     SPAN_TURN_TROPES,
     Span,
 )
@@ -81,6 +83,7 @@ def tick_tropes(
     pack: Any,
     *,
     now_turn: int,
+    days_advanced: int = 0,
 ) -> None:
     """Advance the trope engine by one turn.
 
@@ -101,6 +104,36 @@ def tick_tropes(
     ) as turn_span:
         # PASS A — progression for already-progressing tropes.
         _advance_progress(snapshot.active_tropes, pack_tropes_by_id)
+
+        # PASS A2 — Story 50-4 time-skip drift. Only runs when the
+        # narrator's game_patch carried days_advanced > 0. Fires every
+        # crossed beat threshold (unlike Pass B's one-per-tick stagger)
+        # since a multi-day jump implies multiple narrative beats land
+        # off-screen between sessions.
+        if days_advanced > 0:
+            time_skip_fields = _pass_a2_time_skip(
+                snapshot,
+                pack_tropes_by_id,
+                days_advanced=days_advanced,
+                now_turn=now_turn,
+            )
+            with Span.open(
+                SPAN_TROPE_TIME_SKIP,
+                {
+                    "days_requested": time_skip_fields.days_requested,
+                    "days_applied": time_skip_fields.days_applied,
+                    "clamped": time_skip_fields.clamped,
+                    "tropes_affected": tuple(time_skip_fields.tropes_affected),
+                    "tropes_skipped_zero_rate": tuple(
+                        time_skip_fields.tropes_skipped_zero_rate
+                    ),
+                    "beats_fired_count": time_skip_fields.beats_fired_count,
+                    "resolved_during_skip": tuple(
+                        time_skip_fields.resolved_during_skip
+                    ),
+                },
+            ):
+                pass
 
         # PASS B — staggered beat fire (one beat per tick, max).
         # PASS C — implicit resolution after fire.

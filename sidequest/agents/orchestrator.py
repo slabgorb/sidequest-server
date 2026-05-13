@@ -32,7 +32,10 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sidequest.game.session import GameSnapshot
 
 from sidequest.agents.claude_client import (
     ClaudeClient,
@@ -316,6 +319,12 @@ class NarrationTurnResult:
     # (by name). Empty on every turn no recruit/dismiss happens.
     companions_added: list[dict[str, Any]] = field(default_factory=list)
     companions_dismissed: list[str] = field(default_factory=list)
+
+    # Story 50-4 — in-game day advancement signal from narrator.
+    # When > 0, narration_apply calls trope_tick with this value so
+    # Pass A2 advances every progressing trope by rate_per_day * clamp(N, 0, 14).
+    # Sub-day passage stays 0 (time_of_day handles intra-day cues).
+    days_advanced: int = 0
 
     # Raw game_patch dict (plot-a-course Bundle 5). Carries the full parsed
     # game_patch JSON so narration_apply can dispatch sidecar intents (e.g.
@@ -607,6 +616,12 @@ class TurnContext:
     # Empty list = section not registered (zero-byte-leak).
     recent_narrative_log: list[NarrativeEntry] = field(default_factory=list)
 
+    # Live snapshot reference (Story 50-4). Used by build_narrator_prompt to
+    # consume + clear ``snapshot.pending_time_skip_summary`` as part of the
+    # TIME-SKIP CONTEXT block (one-shot lifecycle — render then clear).
+    # None on legacy/fixture paths that never went through ``_build_turn_context``.
+    snapshot: GameSnapshot | None = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -758,6 +773,13 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "magic_working": patch.get("magic_working"),
         "companions_added": [d for d in patch.get("companions_added", []) if isinstance(d, dict)],
         "companions_dismissed": [str(n) for n in patch.get("companions_dismissed", []) if n],
+        # Story 50-4: Coerce to non-negative int. Anything else (string, float,
+        # negative, missing) maps to 0 — same silent-drop pattern as items.
+        "days_advanced": (
+            raw_days
+            if isinstance(raw_days := patch.get("days_advanced", 0), int) and raw_days >= 0
+            else 0
+        ),
     }
 
 
@@ -1428,6 +1450,32 @@ class Orchestrator:
                         "magic_context",
                         f"<magic-context>\n{magic_block}\n</magic-context>",
                         AttentionZone.Valley,
+                        SectionCategory.State,
+                    ),
+                )
+
+        # Story 50-4 — TIME-SKIP CONTEXT block. When the prior narrator turn
+        # advanced multiple in-game days, Pass A2 has queued beat events on
+        # ``snapshot.pending_time_skip_summary``; render and consume them.
+        snapshot = context.snapshot
+        if snapshot is not None and snapshot.pending_time_skip_summary:
+            from sidequest.agents.narrator import _render_time_skip_context  # noqa: PLC0415
+
+            time_skip_block = _render_time_skip_context(
+                snapshot.pending_time_skip_summary,
+                snapshot.days_elapsed,
+            )
+            if time_skip_block:
+                # One-shot lifecycle — clear BEFORE registering so a register
+                # failure cannot cause double-delivery of beats
+                # to the narrator on the next turn.
+                snapshot.pending_time_skip_summary = []
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "time_skip_context",
+                        time_skip_block,
+                        AttentionZone.Early,
                         SectionCategory.State,
                     ),
                 )
@@ -2360,6 +2408,7 @@ class Orchestrator:
                 ),
                 companions_added=extraction.get("companions_added", []),
                 companions_dismissed=extraction.get("companions_dismissed", []),
+                days_advanced=extraction.get("days_advanced", 0),
                 game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
@@ -2561,6 +2610,7 @@ class Orchestrator:
             ),
             companions_added=extraction.get("companions_added", []),
             companions_dismissed=extraction.get("companions_dismissed", []),
+            days_advanced=extraction.get("days_advanced", 0),
             game_patch_dict=_extract_game_patch_json(raw_response),
             agent_name=agent_name,
             agent_duration_ms=elapsed_ms,

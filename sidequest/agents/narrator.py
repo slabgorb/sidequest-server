@@ -36,6 +36,7 @@ from sidequest.agents.prompt_framework.types import (
     PromptSection,
     SectionCategory,
 )
+from sidequest.game.trope_time_skip import TimeSkipBeatEvent
 
 # Prompt section text lives in sidequest/agents/narrator_prompts/*.md and is
 # re-exported here so existing imports (tests, orchestrator) keep working.
@@ -53,6 +54,7 @@ __all__ = [
     "NarratorAgent",
     "narrator_output_format_text",
     "is_streaming_enabled",
+    "_render_time_skip_context",
 ]
 
 
@@ -77,6 +79,53 @@ def is_streaming_enabled() -> bool:
     existing synchronous behavior until the full streaming pipeline ships.
     """
     return os.environ.get("SIDEQUEST_NARRATOR_STREAMING", "0") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Story 50-4 — TIME-SKIP CONTEXT block renderer
+# ---------------------------------------------------------------------------
+
+
+def _render_time_skip_context(
+    summary: list[TimeSkipBeatEvent],
+    days_elapsed_total: int,
+) -> str:
+    """Story 50-4 — render the TIME-SKIP CONTEXT block for the next narrator turn.
+
+    Called when ``snapshot.pending_time_skip_summary`` is non-empty. After
+    rendering, the caller MUST clear ``snapshot.pending_time_skip_summary``
+    (one-shot lifecycle).
+
+    Returns an empty string if the summary is empty — the caller skips
+    registering the section in that case (zero-byte-leak / no phantom header).
+    """
+    if not summary:
+        return ""
+    skip_total = max(entry.days_into_skip for entry in summary)
+    lines = [
+        "## TIME-SKIP CONTEXT",
+        "",
+        (
+            f"The previous narration advanced time by {skip_total} in-game days "
+            f"(total elapsed: {days_elapsed_total}). The following developed off-screen "
+            "during that span. Weave these into your next narration as has-already-happened "
+            "context — the players are arriving INTO this changed state, not witnessing it unfold."
+        ),
+        "",
+    ]
+    for entry in summary:
+        npcs = ", ".join(entry.npcs_involved) if entry.npcs_involved else "—"
+        lines.append(
+            f"- Day {entry.days_into_skip} — {entry.trope_id} — "
+            f'"{entry.beat_event}" (stakes: {entry.stakes}; npcs: {npcs})'
+        )
+    lines.append("")
+    lines.append(
+        "Acknowledge the time passage. Reference the most impactful items by stakes. "
+        "You do not need to cite all beats — pick what serves the scene. "
+        "Do NOT contradict any beat that fired."
+    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

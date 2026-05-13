@@ -2744,6 +2744,7 @@ class WebSocketSessionHandler:
                         snapshot,
                         sd.genre_pack,
                         now_turn=snapshot.turn_manager.interaction,
+                        days_advanced=result.days_advanced,  # Story 50-4 — Pass A2 time skip
                     )
 
                     # Story 45-20: trope-resolution handshake. Diffs the
