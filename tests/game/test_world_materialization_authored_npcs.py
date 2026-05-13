@@ -36,8 +36,8 @@ def test_fresh_session_preloads_npcs() -> None:
 
     assert len(state.npcs) == 2
     assert state.npcs[0].core.name == "Authored-captain"
-    assert state.npcs[0].disposition == 60
-    assert state.npcs[1].disposition == 50
+    assert int(state.npcs[0].disposition) == 60
+    assert int(state.npcs[1].disposition) == 50
 
 
 def test_resumed_session_skips_preload_when_characters_exist() -> None:

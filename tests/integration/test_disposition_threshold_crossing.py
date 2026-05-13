@@ -15,12 +15,13 @@ Bands follow ADR-020's three-tier mapping (strict boundaries):
 - ``disposition < -10`` → ``"hostile"``
 - otherwise → ``"neutral"``
 
-Story 50-10 will centralise this into ``Attitude`` enum + ``Disposition
-.attitude()``. Until then, the source of truth is
-``sidequest.game.disposition.disposition_attitude`` (extracted from the
-private ``_disposition_attitude`` that lived inline in ``opening.py``);
-these tests assert against the string outputs that helper produces, which
-keeps the contract stable across the 50-10 refactor.
+Story 50-10 centralised the attitude derivation into ``Attitude`` enum +
+``Disposition.attitude()``. The source of truth is now
+``Disposition.attitude()``; the legacy ``disposition_attitude`` helper
+has been removed in 50-10 and these tests assert directly against the
+``Attitude`` enum's ``.value`` literals, which the wiring tests in
+``tests/game/test_disposition_call_site_migration.py`` enforce as the
+only production-callable path.
 
 These tests assert on the watcher-emitted event fields (the
 ``state_transition`` payload reachable by the GM panel), not on the raw
@@ -118,7 +119,7 @@ def _apply_shift(
         npcs=[_make_npc(npc_name, disposition=before)],
     )
     snapshot.apply_world_patch(WorldStatePatch(npc_attitudes={npc_name: delta}))
-    return snapshot, snapshot.npcs[0].disposition
+    return snapshot, int(snapshot.npcs[0].disposition)
 
 
 # ---------------------------------------------------------------------------
@@ -327,25 +328,22 @@ async def test_tiny_delta_across_boundary_sets_crossed_true(
 
 
 @pytest.mark.asyncio
-async def test_attitude_strings_match_existing_helper_vocabulary(
+async def test_attitude_strings_match_attitude_enum_vocabulary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The strings emitted must match the vocabulary already used by
-    ``disposition_attitude`` (the ADR-020 helper). When story 50-10
-    centralises this into ``Attitude`` enum, the enum's string values
-    must remain ``friendly``/``neutral``/``hostile`` for this contract
-    to hold."""
-    from sidequest.game.disposition import disposition_attitude
+    """The strings emitted must match the ``Attitude`` enum's vocabulary.
+    A refactor that renames a member's value from ``"friendly"`` to
+    ``"warm"`` (or otherwise drifts the wire contract) is caught here."""
+    from sidequest.game.disposition import Attitude
 
     captured = await _setup(monkeypatch, "test-disp-thresh-vocab")
     _apply_shift("Vocab", before=10, delta=5)  # neutral → friendly
     await asyncio.sleep(0)
 
     evt = await _wait_for_event(captured, "disposition.shift")
-    assert evt["fields"]["before_attitude"] == disposition_attitude(10)
-    assert evt["fields"]["after_attitude"] == disposition_attitude(15)
-    # And the actual string values, just so a refactor that renames
-    # the helper output to e.g. "warm"/"cool" is caught here too.
+    assert evt["fields"]["before_attitude"] == Attitude.NEUTRAL.value
+    assert evt["fields"]["after_attitude"] == Attitude.FRIENDLY.value
+    # Locked literal strings — the wire contract the GM panel matches on.
     assert evt["fields"]["before_attitude"] == "neutral"
     assert evt["fields"]["after_attitude"] == "friendly"
 

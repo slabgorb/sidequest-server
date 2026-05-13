@@ -165,7 +165,7 @@ def test_inject_materializes_available_humans_top_three() -> None:
     names = [n.core.name for n in snap.npcs]
     assert names == ["Person0", "Person1", "Person2"]
     # Humans default to neutral disposition (creature fields absent).
-    assert all(n.disposition == 0 for n in snap.npcs)
+    assert all(int(n.disposition) == 0 for n in snap.npcs)
 
 
 def test_inject_filters_active_humans_by_location_substring() -> None:
@@ -210,7 +210,7 @@ def test_inject_materializes_encounter_creatures_with_hostile_disposition() -> N
     npc = snap.npcs[0]
     assert npc.core.name == "Salt Burrower"
     # Hostile default from _npc_from_patch when creature fields are present.
-    assert npc.disposition == -20
+    assert int(npc.disposition) == -20
     assert npc.threat_level == 2
     assert npc.creature_id == "salt_burrower"
     # HP→EdgePool translation (ADR-078).
