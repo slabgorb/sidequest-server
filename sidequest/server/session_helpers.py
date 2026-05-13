@@ -705,8 +705,8 @@ _ARTICLE_ROLE_PUBLIC_NAMES: dict[str, str] = {
 # Honorific patterns — ``Mrs. <Name>``, ``Mr. <Name>``, ``Dr. <Name>``,
 # ``Reverend <Name>``, ``Father <Name>``, ``Mother <Name>``, ``Captain
 # <Name>``, ``Sergeant <Name>``, ``Sir <Name>``, ``Lady <Name>``, ``Lord
-# <Name>``. The proper name must be Capitalized (``[A-Z][a-z]+``) so
-# common mid-sentence words don't false-match.
+# <Name>``, ``Dame <Name>``. The proper name must be Capitalized
+# (``[A-Z][a-z]+``) so common mid-sentence words don't false-match.
 #
 # NOTE: ``Father``/``Mother``/``Reverend`` overlap with bare-role tokens
 # in ``_BARE_ROLE_PUBLIC_NAMES`` / ``_ARTICLE_ROLE_PUBLIC_NAMES``. The
@@ -716,8 +716,16 @@ _ARTICLE_ROLE_PUBLIC_NAMES: dict[str, str] = {
 # Murchison" would mint twice — once as the full honorific name, once
 # as the bare role.
 _HONORIFIC_PROPER_RE = re.compile(
-    r"\b(Mrs|Mr|Dr|Reverend|Father|Mother|Captain|Sergeant|Sir|Lady|Lord)\.?\s+([A-Z][a-z]+)\b"
+    r"\b(Mrs|Mr|Dr|Reverend|Father|Mother|Captain|Sergeant|Sir|Lady|Lord|Dame)\.?\s+([A-Z][a-z]+)\b"
 )
+
+# Honorifics that take a trailing period in English style. Knighthoods
+# and ecclesiastical titles spelled out ("Sir Iain", "Lady Annabel",
+# "Reverend Lachlan", "Father Tomas") do NOT take a period; abbreviated
+# titles ("Mrs. Gow", "Mr. Hodge", "Dr. Sallow") do. Glenross 2026-05-12
+# playtest surfaced the bug as "Sir. Iain" appearing in npc.auto_mint
+# spans — the construction ``f"{title}. {proper}"`` was unconditional.
+_PERIOD_BEARING_HONORIFICS: frozenset[str] = frozenset({"Mrs", "Mr", "Dr"})
 
 # Subject pronouns by gender group — the disambiguator. Object pronouns
 # (him, her, them) and possessive pronouns (his, hers, their) are
@@ -979,7 +987,10 @@ def _auto_mint_prose_only_npcs(
         start, end = hm.span()
         title = hm.group(1)
         proper = hm.group(2)
-        public_name = f"{title}. {proper}"
+        if title in _PERIOD_BEARING_HONORIFICS:
+            public_name = f"{title}. {proper}"
+        else:
+            public_name = f"{title} {proper}"
         cf_name = public_name.casefold()
         # Always mark the span as consumed so the bare-role scan skips it.
         consumed_spans.append((start, end))
