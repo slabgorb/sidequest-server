@@ -70,7 +70,7 @@ class TropeTimeSkipFields(BaseModel):
 
 def _pass_a2_time_skip(
     snapshot: GameSnapshot,
-    pack_or_tropes_by_id: object,
+    pack_or_tropes_by_id: dict[str, TropeDefinition] | object,
     *,
     days_advanced: int,
     now_turn: int,
