@@ -1153,6 +1153,7 @@ class GameSnapshot(BaseModel):
             for name, delta in patch.hp_changes.items():
                 self._apply_hp_change(name, delta)
         if patch.npc_attitudes is not None:
+            from sidequest.game.disposition import disposition_attitude
             from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Span
 
             for name, delta in patch.npc_attitudes.items():
@@ -1160,18 +1161,29 @@ class GameSnapshot(BaseModel):
                     if npc.core.name == name:
                         before = int(npc.disposition)
                         npc.disposition = max(-100, min(100, npc.disposition + delta))
+                        after = int(npc.disposition)
+                        before_attitude = disposition_attitude(before)
+                        after_attitude = disposition_attitude(after)
                         # Real span (was Emitter.fire add_event — sprint 3 cold-subsystem
                         # audit). add_event decorates the parent span only;
                         # WatcherSpanProcessor sees span closes, so the GM panel never
                         # received affinity shifts. A zero-duration span hops through
-                        # SPAN_ROUTES[disposition.shift] → state_transition.
+                        # SPAN_ROUTES[disposition.shift] → state_transition. Story 50-11
+                        # adds the threshold-crossing fields so the GM panel can tell
+                        # band flips (neutral→friendly) from intra-band drift; `crossed`
+                        # is derived from band identity, not |delta| vs a literal, so
+                        # 50-13's genre-configurable thresholds can land without
+                        # revisiting this callsite.
                         with Span.open(
                             SPAN_DISPOSITION_SHIFT,
                             {
                                 "npc_name": name,
                                 "delta": int(delta),
                                 "before": before,
-                                "after": int(npc.disposition),
+                                "after": after,
+                                "before_attitude": before_attitude,
+                                "after_attitude": after_attitude,
+                                "crossed": before_attitude != after_attitude,
                             },
                         ):
                             pass

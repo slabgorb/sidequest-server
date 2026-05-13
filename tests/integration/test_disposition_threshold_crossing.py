@@ -16,8 +16,9 @@ Bands follow ADR-020's three-tier mapping (strict boundaries):
 - otherwise → ``"neutral"``
 
 Story 50-10 will centralise this into ``Attitude`` enum + ``Disposition
-.attitude()``. Until then, the only source of truth is the
-``_disposition_attitude`` helper in ``sidequest.server.dispatch.opening``;
+.attitude()``. Until then, the source of truth is
+``sidequest.game.disposition.disposition_attitude`` (extracted from the
+private ``_disposition_attitude`` that lived inline in ``opening.py``);
 these tests assert against the string outputs that helper produces, which
 keeps the contract stable across the 50-10 refactor.
 
@@ -330,19 +331,19 @@ async def test_attitude_strings_match_existing_helper_vocabulary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The strings emitted must match the vocabulary already used by
-    ``_disposition_attitude`` (the ADR-020 helper). When story 50-10
+    ``disposition_attitude`` (the ADR-020 helper). When story 50-10
     centralises this into ``Attitude`` enum, the enum's string values
     must remain ``friendly``/``neutral``/``hostile`` for this contract
     to hold."""
-    from sidequest.server.dispatch.opening import _disposition_attitude
+    from sidequest.game.disposition import disposition_attitude
 
     captured = await _setup(monkeypatch, "test-disp-thresh-vocab")
     _apply_shift("Vocab", before=10, delta=5)  # neutral → friendly
     await asyncio.sleep(0)
 
     evt = await _wait_for_event(captured, "disposition.shift")
-    assert evt["fields"]["before_attitude"] == _disposition_attitude(10)
-    assert evt["fields"]["after_attitude"] == _disposition_attitude(15)
+    assert evt["fields"]["before_attitude"] == disposition_attitude(10)
+    assert evt["fields"]["after_attitude"] == disposition_attitude(15)
     # And the actual string values, just so a refactor that renames
     # the helper output to e.g. "warm"/"cool" is caught here too.
     assert evt["fields"]["before_attitude"] == "neutral"
