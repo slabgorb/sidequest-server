@@ -273,7 +273,7 @@ def test_names_file_resolves_in_corpus_dir(tmp_path: Path) -> None:
 
     Regression: an earlier resolver looked in ``corpus_dir.parent / 'names'``
     and silently produced zero names for every culture that used
-    ``names_file:`` (the Victoria pack — 12 slots — and a Monster Manual
+    ``names_file:`` (the Tea & Murder pack — 12 slots — and a Monster Manual
     pregen that booted with ``npcs_after=0``). Pack authors put the
     curated name lists in ``corpus/`` alongside Markov sources; the
     resolver must follow the content.

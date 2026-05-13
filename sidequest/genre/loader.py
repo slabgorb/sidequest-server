@@ -557,7 +557,7 @@ def _validate_saving_throws_refs(classes: list[ClassDef], *, has_spell_catalogs:
     """When the pack ships any spell catalog, every class must declare
     saving_throws. Otherwise spells with save effects cannot resolve.
 
-    No-op for packs without spells (heavy_metal, victoria, etc.) where
+    No-op for packs without spells (heavy_metal, tea_and_murder, etc.) where
     saves aren't a wired subsystem yet.
 
     Task 8 — C&C B/X saving throws pack-load validation.
@@ -1043,7 +1043,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
 
     # Task 8 — saving_throws required on every class when the pack ships spell catalogs.
     # Detection: spells/ directory adjacent to magic.yaml at genre pack root.
-    # Packs without a spells/ dir (heavy_metal, victoria, …) are exempt.
+    # Packs without a spells/ dir (heavy_metal, tea_and_murder, …) are exempt.
     _validate_saving_throws_refs(
         classes_list,
         has_spell_catalogs=(path / "spells").is_dir(),

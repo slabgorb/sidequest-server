@@ -768,14 +768,14 @@ class TestChargenFieldLabels:
     confirmation summary lines and the structured ``character_preview``
     dict that's emitted alongside the joined summary text.
 
-    Bug context: the Victoria pack rendered "Race: Colonial" because
+    Bug context: the Tea & Murder pack rendered "Race: Colonial" because
     the chargen summary hard-coded English fantasy labels regardless
     of the genre pack. The fix routes every label through
     ``field_label(rules, key)``, which prefers the per-pack override
     when present and falls back to the canonical default otherwise.
     """
 
-    def _victoria_rules(self) -> RulesConfig:
+    def _tea_and_murder_rules(self) -> RulesConfig:
         return RulesConfig(
             stat_generation="point_buy",
             point_buy_budget=27,
@@ -829,7 +829,7 @@ class TestChargenFieldLabels:
         assert field_label(rules, "backstory") == "Backstory"
 
     def test_summary_uses_overridden_labels(self, caverns_pack: GenrePack) -> None:
-        rules = self._victoria_rules()
+        rules = self._tea_and_murder_rules()
         scenes = [
             make_scene(
                 "origin",
@@ -869,7 +869,7 @@ class TestChargenFieldLabels:
         assert "Backstory:" not in summary
 
     def test_character_preview_dict_uses_resolved_labels(self, caverns_pack: GenrePack) -> None:
-        rules = self._victoria_rules()
+        rules = self._tea_and_murder_rules()
         scenes = [
             make_scene(
                 "origin",

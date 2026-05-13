@@ -216,7 +216,7 @@ class SceneResult:
     Drift", "Vault Dweller", etc.) — needed by the chargen-preview to
     display the chosen backstory hook on genres whose backstory scene
     doesn't write to ``MechanicalEffects.background`` (e.g. space_opera,
-    victoria). ``None`` for freeform inputs that have no label.
+    tea_and_murder). ``None`` for freeform inputs that have no label.
     """
 
     input_type: SceneInputType
@@ -1043,7 +1043,7 @@ class CharacterBuilder:
             # when it touches the inner-life triplet (relationship / goals /
             # emotional_state) WITHOUT also setting an origin/profession-shape
             # field (race_hint / class_hint / mutation_hint / rig_type_hint).
-            # space_opera's `drive` scene and victoria's `drive` scene match;
+            # space_opera's `drive` scene and tea_and_murder's `drive` scene match;
             # mutant_wasteland's `origins` (which sets race+background) does
             # NOT match — that genre's `background` IS the meaningful label
             # and stays the preview's source. Last-wins.

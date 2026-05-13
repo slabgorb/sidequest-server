@@ -88,7 +88,7 @@ class Session:
         """Loaded ``orbits.yaml`` + ``chart.yaml`` for the bound world.
 
         ``None`` for worlds without an orbital tier (caverns_and_claudes,
-        victoria, etc.). Set once at room bind time; never mutated.
+        tea_and_murder, etc.). Set once at room bind time; never mutated.
         """
         return self._orbital_content
 

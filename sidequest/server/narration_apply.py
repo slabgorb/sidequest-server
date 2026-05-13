@@ -1163,7 +1163,7 @@ def promote_crossings_to_status_changes(
     Reads the per-bar ``promote_to_status`` config from the world's
     ``LedgerBarSpec`` — NOT a hardcoded module-level dict (architect §5.3,
     2026-04-29). This keeps status text/severity world-tunable: a different
-    innate-using world (e.g. victoria-touched) can map ``sanity`` →
+    innate-using world (e.g. tea_and_murder-touched) can map ``sanity`` →
     ``"Slipping"``, ``Scar`` without code change. A bar without
     ``promote_to_status`` is silently skipped — the architect explicitly
     calls this out as the right behavior, not a fallback (not every bar

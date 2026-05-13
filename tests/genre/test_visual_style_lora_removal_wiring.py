@@ -133,7 +133,7 @@ class TestVisualStyleLoaderStillWorks:
 
         # Hard floor: the content tree currently ships 5 genre packs with
         # visual_style.yaml at the genre tier (caverns_and_claudes,
-        # elemental_harmony, mutant_wasteland, space_opera, victoria) plus
+        # elemental_harmony, mutant_wasteland, space_opera, tea_and_murder) plus
         # the two leaf worlds that ship their own override (caverns_sunden,
         # coyote_star) — 7 files. A misconfigured CONTENT_GENRE_PACKS path
         # finding fewer should fail loudly rather than vacuously pass.

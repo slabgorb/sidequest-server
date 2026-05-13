@@ -717,7 +717,7 @@ async def test_on_end_emits_typed_event_for_audio_backend_disabled_span() -> Non
     processor.on_end(
         fake(
             SPAN_AUDIO_BACKEND_DISABLED,
-            {"reason": "empty_config", "genre": "victoria"},
+            {"reason": "empty_config", "genre": "tea_and_murder"},
         )
     )
     await asyncio.sleep(0.05)
@@ -727,7 +727,7 @@ async def test_on_end_emits_typed_event_for_audio_backend_disabled_span() -> Non
     assert typed[0]["component"] == "audio"
     assert typed[0]["fields"]["op"] == "disabled"
     assert typed[0]["fields"]["reason"] == "empty_config"
-    assert typed[0]["fields"]["genre"] == "victoria"
+    assert typed[0]["fields"]["genre"] == "tea_and_murder"
 
 
 @pytest.mark.asyncio
