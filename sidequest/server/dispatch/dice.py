@@ -198,19 +198,30 @@ def _format_replay_action(
     opponent_metric_after: int,
     total: int,
     outcome: RollOutcome,
+    player_action: str | None = None,
 ) -> str:
     """Synthetic narrator input describing the mechanical beat result.
 
     Keeps the shape Rust produces (``[BEAT_RESOLVED] ...``) plus a roll
     summary so the narrator knows the total and outcome without having to
     re-derive them from footnotes.
+
+    When ``player_action`` is provided (the freeform text the player
+    typed into the InputBar before clicking a beat tile, D2 mock
+    2026-05-13), it's prepended as a ``PLAYER_ACTION:`` line so the
+    narrator runs with both the mechanical context AND the player's
+    invention. Empty / whitespace-only strings are treated the same as
+    None — we don't surface a blank cue to the narrator.
     """
-    return (
+    beat_summary = (
         f"[BEAT_RESOLVED] {beat_label} ({stat_check}, side={actor_side}): "
         f"player_momentum={player_metric_after} | "
         f"opponent_momentum={opponent_metric_after} | "
         f"Roll: {total} ({outcome.value})"
     )
+    if player_action and player_action.strip():
+        return f"PLAYER_ACTION: {player_action.strip()}\n{beat_summary}"
+    return beat_summary
 
 
 def dispatch_dice_throw(
@@ -588,6 +599,7 @@ def dispatch_dice_throw(
         opponent_metric_after=encounter.opponent_metric.current,
         total=resolved.total,
         outcome=resolved.outcome,
+        player_action=payload.player_action,
     )
 
     logger.info(

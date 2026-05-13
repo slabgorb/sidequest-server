@@ -330,6 +330,79 @@ class TestDispatchDiceThrow:
         # Mid-turn CONFRONTATION reflects post-apply momentum.
         assert broadcasts[2].payload.player_metric["current"] == enc.player_metric.current
 
+    def test_player_action_prepended_to_replay_text(self) -> None:
+        """D2 confrontation panel (2026-05-13): the freeform text the player
+        typed into the InputBar before clicking a beat tile must reach the
+        narrator. ``payload.player_action`` is the chandelier-swing — when
+        present, dispatch prepends a ``PLAYER_ACTION:`` line above the
+        synthetic ``[BEAT_RESOLVED]`` summary so the narrator runs with
+        both the mechanical outcome AND the player's invention.
+        """
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        payload = _throw(face=13)
+        payload = DiceThrowPayload(
+            request_id=payload.request_id,
+            throw_params=payload.throw_params,
+            face=payload.face,
+            beat_id=payload.beat_id,
+            player_action="I swing from the chandelier into the Bruiser's chest",
+        )
+        outcome = dispatch_dice_throw(
+            payload=payload,
+            rolling_player_id="p1",
+            character_name="Bob",
+            character_stats={"STRENGTH": 16},
+            encounter=enc,
+            pack=pack,  # type: ignore[arg-type]
+            genre_slug="test",
+            session_id="session-1",
+            round_number=1,
+            room_broadcast=None,
+            snapshot=_make_snapshot(),
+        )
+        text = outcome.replay_action_text
+        assert text.startswith(
+            "PLAYER_ACTION: I swing from the chandelier into the Bruiser's chest"
+        )
+        # And the mechanical beat summary still rides along, unchanged.
+        assert "[BEAT_RESOLVED] Kick Door" in text
+        assert "Roll: 16 (Success)" in text
+
+    def test_player_action_empty_falls_back_to_beat_summary_only(self) -> None:
+        """Whitespace-only or missing ``player_action`` MUST yield the
+        legacy synthetic line unchanged — empty player text is not a cue
+        the narrator should see."""
+        pack = _pack_with_combat()
+        enc = _make_encounter()
+        for blank in (None, "", "   ", "\n\t"):
+            payload_base = _throw(face=13)
+            payload = DiceThrowPayload(
+                request_id=payload_base.request_id,
+                throw_params=payload_base.throw_params,
+                face=payload_base.face,
+                beat_id=payload_base.beat_id,
+                player_action=blank,
+            )
+            enc_local = _make_encounter()
+            outcome = dispatch_dice_throw(
+                payload=payload,
+                rolling_player_id="p1",
+                character_name="Bob",
+                character_stats={"STRENGTH": 16},
+                encounter=enc_local,
+                pack=pack,  # type: ignore[arg-type]
+                genre_slug="test",
+                session_id="session-1",
+                round_number=1,
+                room_broadcast=None,
+                snapshot=_make_snapshot(),
+            )
+            assert outcome.replay_action_text.startswith("[BEAT_RESOLVED] Kick Door"), (
+                f"player_action={blank!r} should fall through to synthetic only"
+            )
+            assert "PLAYER_ACTION" not in outcome.replay_action_text
+
     def test_encounter_resolves_when_beat_hits_threshold(self) -> None:
         pack = _pack_with_combat()
         # Threshold=10; push player_metric to 9 so a +2 strike crosses it.
