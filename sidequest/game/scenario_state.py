@@ -144,8 +144,39 @@ class ScenarioState(BaseModel):
         self.tension = max(0.0, min(1.0, tension))
 
     def discover_clue(self, clue_id: str) -> None:
-        """Mark a clue as discovered."""
-        from sidequest.telemetry.spans import SPAN_SCENARIO_ADVANCE, Span
+        """Mark a clue as discovered, enforcing DAG prerequisites.
+
+        If ``clue_id`` is in the clue graph and any of its declared
+        ``requires`` are not yet in ``discovered_clues``, emits
+        ``SPAN_SCENARIO_CLUE_PREREQUISITE_VIOLATION`` and raises
+        :class:`PrerequisiteNotSatisfiedError`. Clues absent from the
+        graph are passed through unchanged (preserves the empty-graph
+        idempotency contract used by tests and by the dispatch
+        pre-filter in :func:`sidequest.server.dispatch.scenario_clue_intake.consume_clue_footnotes`).
+        """
+        from sidequest.telemetry.spans import (
+            SPAN_SCENARIO_ADVANCE,
+            SPAN_SCENARIO_CLUE_PREREQUISITE_VIOLATION,
+            Span,
+        )
+
+        node = next((n for n in self.clue_graph.nodes if n.id == clue_id), None)
+        if node is not None:
+            missing = [r for r in node.requires if r not in self.discovered_clues]
+            if missing:
+                with Span.open(
+                    SPAN_SCENARIO_CLUE_PREREQUISITE_VIOLATION,
+                    {
+                        "clue_id": clue_id,
+                        "missing_prerequisites": list(missing),
+                        "guilty_npc": self.guilty_npc,
+                    },
+                ):
+                    pass
+                raise PrerequisiteNotSatisfiedError(
+                    clue_id=clue_id,
+                    missing_prerequisites=missing,
+                )
 
         already = clue_id in self.discovered_clues
         with Span.open(
@@ -164,4 +195,26 @@ class ScenarioState(BaseModel):
         self.questioned_npcs.add(npc_name)
 
 
-__all__ = ["ScenarioRole", "ScenarioState"]
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class PrerequisiteNotSatisfiedError(Exception):
+    """Raised when :meth:`ScenarioState.discover_clue` is called for a clue
+    whose declared ``requires`` are not all in ``discovered_clues``.
+
+    Exposes the offending ``clue_id`` and the ordered list of
+    ``missing_prerequisites`` so dispatch handlers can route the failure
+    to OTEL/GM-panel surfaces.
+    """
+
+    def __init__(self, *, clue_id: str, missing_prerequisites: list[str]) -> None:
+        self.clue_id = clue_id
+        self.missing_prerequisites = list(missing_prerequisites)
+        super().__init__(
+            f"Cannot discover clue {clue_id!r}: missing prerequisites {self.missing_prerequisites}"
+        )
+
+
+__all__ = ["PrerequisiteNotSatisfiedError", "ScenarioRole", "ScenarioState"]
