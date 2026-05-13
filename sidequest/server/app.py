@@ -266,6 +266,24 @@ def create_app(
     rest_router = create_rest_router()
     app.include_router(rest_router)
 
+    # --- Dev-gated scene-harness route (ADR-092). ---
+    # Strictly ``DEV_SCENES=1`` enables. Any other value (``0``, ``""``,
+    # unset, ``"true"``) keeps the route absent — fail-closed so
+    # production builds carry zero scene-harness surface.
+    import os as _os
+
+    if _os.environ.get("DEV_SCENES") == "1":
+        from sidequest.server.scene_harness_router import create_scene_harness_router
+
+        fixtures_env = _os.environ.get("SIDEQUEST_FIXTURES_DIR")
+        fixtures_dir = Path(fixtures_env) if fixtures_env else Path("scenarios/fixtures")
+        app.state.fixtures_dir = fixtures_dir
+        app.include_router(create_scene_harness_router())
+        logger.info(
+            "scene_harness.route_registered fixtures_dir=%s",
+            fixtures_dir,
+        )
+
     # --- Chassis interior map (Ship tab) ---
     from sidequest.interior.dispatch import interior_router
 

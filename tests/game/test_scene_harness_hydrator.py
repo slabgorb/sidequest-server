@@ -122,7 +122,12 @@ def test_combat_test_fixture_populates_first_character() -> None:
 
     assert len(snapshot.characters) >= 1, "fixture defined a character block"
     pc = snapshot.characters[0]
-    assert pc.name == "Skar", f"expected Skar from combat_test.yaml, got {pc.name!r}"
+    # ``Character.name`` is a method (Combatant Protocol); the data lives at
+    # ``.core.name``. The fixture YAML's flat ``name:`` field un-flattens
+    # into ``Character.core.name`` per the post-port shape.
+    assert pc.core.name == "Skar", (
+        f"expected Skar from combat_test.yaml, got {pc.core.name!r}"
+    )
 
 
 def test_combat_test_fixture_populates_npc_list() -> None:
@@ -133,7 +138,8 @@ def test_combat_test_fixture_populates_npc_list() -> None:
     snapshot = hydrate_fixture(name="combat_test", fixtures_dir=CANONICAL_FIXTURES_DIR)
 
     # combat_test.yaml defines exactly one NPC: Rust Jaw (hostile, disposition -15).
-    rust_jaw = next((n for n in snapshot.npcs if n.name == "Rust Jaw"), None)
+    # Like Character, Npc nests CreatureCore under ``.core``.
+    rust_jaw = next((n for n in snapshot.npcs if n.core.name == "Rust Jaw"), None)
     assert rust_jaw is not None, "Rust Jaw must hydrate from combat_test.yaml"
 
 

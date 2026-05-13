@@ -271,7 +271,8 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
     assert len(snapshot.characters) >= 1, (
         "combat_test.yaml has a character block — snapshot.characters[0] must be populated"
     )
-    assert snapshot.characters[0].name == "Skar"
+    # Character nests CreatureCore under ``.core``; ``Character.name`` is a method.
+    assert snapshot.characters[0].core.name == "Skar"
 
 
 @pytest.mark.parametrize(
