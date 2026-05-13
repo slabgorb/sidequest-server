@@ -29,9 +29,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opentelemetry import trace as otel_trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
@@ -42,8 +39,6 @@ from sidequest.genre.models.tropes import (
     TropeDefinition,
     TropeEscalation,
 )
-from sidequest.telemetry.setup import init_tracer
-
 
 # ---------------------------------------------------------------------------
 # Helpers — small fixtures so tests do not depend on shipped content.
@@ -100,23 +95,6 @@ def _seed_snapshot(
         )
     snap.last_saved_at = last_saved_at
     return snap
-
-
-@pytest.fixture
-def otel_capture():
-    """Install an in-memory span exporter on the current TracerProvider."""
-
-    init_tracer()
-    provider = otel_trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider)
-    exporter = InMemorySpanExporter()
-    processor = SimpleSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    try:
-        yield exporter
-    finally:
-        processor.shutdown()
-        exporter.clear()
 
 
 def _spans_named(exporter: InMemorySpanExporter, name: str) -> list:
