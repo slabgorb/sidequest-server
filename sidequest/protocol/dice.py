@@ -164,12 +164,23 @@ class DiceThrowPayload(ProtocolBase):
     server applies the beat to the active encounter before resolving the
     dice, then runs the narrator in the same tick. This is the UI's primary
     path.
+
+    ``player_action`` — the freeform text the player typed into the InputBar
+    at the moment they clicked a beat tile. Beats are an alternate submit
+    verb for whatever the player typed (D2 confrontation panel, 2026-05-13):
+    "I swing from the chandelier" + click Attack carries the chandelier
+    swing as the player's stated action. When present, the dispatch
+    prepends it to ``replay_action_text`` so the narrator runs with both
+    the mechanical beat outcome AND the player's invention — Zork Problem
+    avoidance (SOUL.md). When absent/empty the synthetic ``[BEAT_RESOLVED]``
+    line is used alone, matching the pre-2026-05-13 wire shape.
     """
 
     request_id: str
     throw_params: ThrowParams
     face: list[int]
     beat_id: str | None = None
+    player_action: str | None = None
 
 
 class DiceResultPayload(ProtocolBase):
