@@ -354,7 +354,7 @@ def render_confirmation_summary(
         summary=summary,
         # Structured mirror of the joined ``summary`` for the React
         # client. Keys are the genre-resolved display labels (e.g.
-        # "Origin" instead of "Race" for the Victoria pack), values
+        # "Origin" instead of "Race" for the Tea & Murder pack), values
         # are the raw field strings. UI iterates this dict to render
         # the "Your Character" preview without parsing the summary
         # blob; the legacy ``summary`` is still emitted as a fallback

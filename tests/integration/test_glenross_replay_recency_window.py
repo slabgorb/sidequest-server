@@ -144,8 +144,8 @@ pytestmark = [
         ),
     ),
     pytest.mark.skipif(
-        not (CONTENT_GENRE_PACKS / "victoria").exists(),
-        reason="sidequest-content/genre_packs/victoria not checked out",
+        not (CONTENT_GENRE_PACKS / "tea_and_murder").exists(),
+        reason="sidequest-content/genre_packs/tea_and_murder not checked out",
     ),
     pytest.mark.asyncio,
 ]

@@ -233,7 +233,7 @@ class SessionRoom:
                 orbital_content = load_orbital_content(world_dir)
             except OrbitalContentMissingError:
                 # Orbital tier is optional — caverns_and_claudes,
-                # victoria, etc. have no orbits.yaml. Bind without
+                # tea_and_murder, etc. have no orbits.yaml. Bind without
                 # orbital content; chart UI will not be available.
                 orbital_content = None
                 _log.debug(

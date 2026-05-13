@@ -1,4 +1,4 @@
-"""Verify victoria callings resolve to inventory items.
+"""Verify tea_and_murder callings resolve to inventory items.
 
 Mirrors tests/genre/test_cc_class_kits.py but for the Brontë-gothic pack.
 Each calling in classes.yaml must point to a kit_table in
@@ -35,34 +35,34 @@ def _kit_item_ids(pack, kit_id: str) -> set[str]:
     return {item for _slot, items in kit.items() for item in items}
 
 
-def test_victoria_loads():
+def test_tea_and_murder_loads():
     loader = GenreLoader()
-    pack = loader.load("victoria")
-    assert pack.classes, "victoria must declare classes.yaml"
+    pack = loader.load("tea_and_murder")
+    assert pack.classes, "tea_and_murder must declare classes.yaml"
     assert pack.equipment_tables is not None
 
 
-def test_victoria_has_seven_class_kits():
+def test_tea_and_murder_has_seven_class_kits():
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
     assert set(pack.equipment_tables.class_tables.keys()) == set(_VICTORIA_KITS)
 
 
-def test_victoria_kit_items_exist_in_inventory():
+def test_tea_and_murder_kit_items_exist_in_inventory():
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
     catalog_ids = {item.id for item in pack.inventory.item_catalog}
     for kit_id in _VICTORIA_KITS:
         for item_id in _kit_item_ids(pack, kit_id):
             assert item_id in catalog_ids, f"{kit_id} references missing item: {item_id}"
 
 
-def test_victoria_classes_match_allowed_classes():
+def test_tea_and_murder_classes_match_allowed_classes():
     """Every calling in classes.yaml must appear in rules.allowed_classes,
     or the chargen UI's class-qualification panel will be inconsistent
     with what the engine can actually instantiate."""
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
     allowed = set(pack.rules.allowed_classes)
     declared = {c.display_name for c in pack.classes}
     assert declared <= allowed, (
@@ -70,13 +70,13 @@ def test_victoria_classes_match_allowed_classes():
     )
 
 
-def test_victoria_doctor_kit_guarantees_signature_items():
+def test_tea_and_murder_doctor_kit_guarantees_signature_items():
     """AC5: a Doctor chargen produces gladstone_bag, stethoscope,
     clinical_thermometer, bandages, and apothecary items every time.
     The kit guarantees them via singleton slots; this test pins the
     contract so a future refactor cannot quietly demote them."""
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
     doctor = pack.equipment_tables.class_tables["doctor_kit"]
     required = {
         "gladstone_bag",
@@ -101,17 +101,17 @@ def test_victoria_doctor_kit_guarantees_signature_items():
     assert pack.equipment_tables.rolls_per_slot.get("apothecary", 1) >= 2
 
 
-def test_victoria_doctor_chargen_produces_signature_items_end_to_end():
-    """AC5 wiring test — drive CharacterBuilder against the real Victoria
+def test_tea_and_murder_doctor_chargen_produces_signature_items_end_to_end():
+    """AC5 wiring test — drive CharacterBuilder against the real Tea & Murder
     pack with class_hint=Doctor and confirm the post-build inventory
     contains every AC5-required item. Mirrors the C&C class_kit
     integration test pattern but uses the loaded YAML, not fixtures.
 
     This is the integration check that pairs with the data-structure
     tests above: it proves the chargen pipeline actually picks up
-    Victoria's class_kit wiring end-to-end."""
+    Tea & Murder's class_kit wiring end-to-end."""
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
 
     scenes = [
         CharCreationScene(
@@ -163,13 +163,13 @@ def test_victoria_doctor_chargen_produces_signature_items_end_to_end():
     )
 
 
-def test_victoria_each_class_has_positive_starting_gold():
+def test_tea_and_murder_each_class_has_positive_starting_gold():
     """Every calling must ship with non-zero starting pounds so chargen
     arrives at the village with at least pocket-cash for low-level
     social gates (a coach fare, a card-game stake, a small bribe).
     Mirrors the C&C lesson from playtest 2026-05-06."""
     loader = GenreLoader()
-    pack = loader.load("victoria")
+    pack = loader.load("tea_and_murder")
     starting_gold = pack.inventory.starting_gold
     for c in pack.classes:
         assert c.display_name in starting_gold, (

@@ -19,7 +19,7 @@ class Prompts(BaseModel):
     ``session_opener_template``, ``scene_description``) are authored
     per-pack and accepted here as pass-through. Consumers should look
     them up by key when a genre context triggers the corresponding
-    scene. ``scene_description`` is the victoria pack's gothic
+    scene. ``scene_description`` is the tea_and_murder pack's gothic
     establishing-shot prompt ("Describe locations through... before
     anyone speaks") — added when its absence blocked the entire
     Brontë pack from loading (playtest 2026-04-26, Sonia's session).

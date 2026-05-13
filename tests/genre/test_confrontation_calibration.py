@@ -22,12 +22,12 @@ calibrated tie-band geometry must use the calibrated threshold.
    5 by accident (would over-shorten social scenes).
 
 Pack list covers the four packs calibrated by ADR-093 (caverns_and_claudes,
-elemental_harmony, mutant_wasteland, space_opera) plus victoria. Victoria is
-included because it is social-only by design (no opposed_check
+elemental_harmony, mutant_wasteland, space_opera) plus tea_and_murder.
+Tea & Murder is included because it is social-only by design (no opposed_check
 confrontations) — its parametrize rows pass trivially today, but inclusion
-ensures any future addition of an opposed_check confrontation to victoria
+ensures any future addition of an opposed_check confrontation to tea_and_murder
 gets caught automatically. The COMBAT_PACKS list (below) is the per-pack
-wiring guard's stricter set, excluding victoria.
+wiring guard's stricter set, excluding tea_and_murder.
 """
 
 from __future__ import annotations
@@ -48,10 +48,10 @@ SHIPPED_PACKS = [
     "elemental_harmony",
     "mutant_wasteland",
     "space_opera",
-    "victoria",
+    "tea_and_murder",
 ]
 
-# Packs that MUST expose at least one opposed_check confrontation. victoria is
+# Packs that MUST expose at least one opposed_check confrontation. tea_and_murder is
 # excluded because it is social-only by design (negotiation, trial, auction,
 # social_duel, scandal — all beat_selection mode). The per-pack wiring test
 # enforces that each combat pack still has at least one opposed_check
@@ -201,7 +201,7 @@ def test_combat_pack_exposes_at_least_one_opposed_check_confrontation(pack_name:
     pass test_opposed_check_thresholds_calibrated_to_7 vacuously (empty
     `offending` list because no opposed_check entries to check).
 
-    Excludes victoria deliberately — it is social-only by design and has
+    Excludes tea_and_murder deliberately — it is social-only by design and has
     no opposed_check confrontations. See COMBAT_PACKS comment.
     """
     rules = _load_rules_yaml(pack_name)

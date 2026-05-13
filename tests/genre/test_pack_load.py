@@ -339,7 +339,7 @@ def test_pack_load_accepts_all_classes_with_saving_throws_and_spell_catalog(
 def test_pack_load_skips_saving_throws_check_without_spell_catalog(tmp_path, minimal_pack_factory):
     """Packs without a spells/ directory do not require saving_throws on classes.
 
-    This guards heavy_metal, victoria, etc. which have no magic system yet.
+    This guards heavy_metal, tea_and_murder, etc. which have no magic system yet.
     """
     pack = minimal_pack_factory(tmp_path)
     # No create_spells_dir() call — no spells/ dir exists.
