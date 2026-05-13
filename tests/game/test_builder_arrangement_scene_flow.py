@@ -22,13 +22,19 @@ def _seeded():
         scenes=_make_scenes_with_arrange_visible(),
         rules=rules,
         rng=random.Random(42),
-    ).with_classes([
-        ClassDef(
-            id="fighter", display_name="Fighter", rpg_role="tank",
-            jungian_default="hero", prime_requisite="STR",
-            minimum_score=9, kit_table="fighter_kit",
-        ),
-    ])
+    ).with_classes(
+        [
+            ClassDef(
+                id="fighter",
+                display_name="Fighter",
+                rpg_role="tank",
+                jungian_default="hero",
+                prime_requisite="STR",
+                minimum_score=9,
+                kit_table="fighter_kit",
+            ),
+        ]
+    )
 
 
 def _advance_to_arrangement(builder: CharacterBuilder) -> None:

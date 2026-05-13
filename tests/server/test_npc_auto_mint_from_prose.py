@@ -95,9 +95,7 @@ def _core(name: str) -> CreatureCore:
     return CreatureCore(name=name, description="X.", personality="Y.")
 
 
-def _result(
-    narration: str, npcs_present: list[NpcMention] | None = None
-) -> NarrationTurnResult:
+def _result(narration: str, npcs_present: list[NpcMention] | None = None) -> NarrationTurnResult:
     return NarrationTurnResult(
         narration=narration,
         npcs_present=list(npcs_present or []),
@@ -322,8 +320,7 @@ def test_role_father_mints_emits_otel_span(otel_capture):
     )
     assert attrs.get("turn_number") == 5
     assert attrs.get("npc_name"), (
-        "npc_name attribute must not be empty — the GM panel renders this "
-        "as the row title."
+        "npc_name attribute must not be empty — the GM panel renders this as the row title."
     )
 
 
@@ -334,9 +331,7 @@ def test_role_mother_with_female_pronoun_mints_pool_member(otel_capture):
     snapshot = GameSnapshot()
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
-        narration_text=(
-            "The wee one's mother kneels at the hearth. She does not look up."
-        ),
+        narration_text=("The wee one's mother kneels at the hearth. She does not look up."),
         emitted_mentions=[],
         turn_num=6,
     )
@@ -363,9 +358,7 @@ def test_role_the_doctor_with_male_pronoun_mints(otel_capture):
         turn_num=3,
     )
     member = _pool_member(snapshot, role="doctor")
-    assert member is not None, (
-        "'the doctor' is the canonical example role from AC1 — must mint."
-    )
+    assert member is not None, "'the doctor' is the canonical example role from AC1 — must mint."
     assert member.pronouns == "he/him"
 
 
@@ -403,9 +396,7 @@ def test_honorific_mrs_with_name_mints_with_female_pronouns(otel_capture):
     snapshot = GameSnapshot()
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
-        narration_text=(
-            "Mrs. Gow tended the body. She washed him and laid him out."
-        ),
+        narration_text=("Mrs. Gow tended the body. She washed him and laid him out."),
         emitted_mentions=[],
         turn_num=5,
     )
@@ -529,9 +520,7 @@ def test_honorific_reverend_with_name_mints_without_period(otel_capture):
     assert matched[0].name == "Reverend Murchison"
     assert matched[0].pronouns == "he/him"
     # Consumed-span guard: bare ``Reverend`` must not also mint.
-    bare_reverend = [
-        m for m in snapshot.npc_pool if m.name.casefold() == "the reverend"
-    ]
+    bare_reverend = [m for m in snapshot.npc_pool if m.name.casefold() == "the reverend"]
     assert bare_reverend == [], (
         f"bare-role ``Reverend`` re-fired inside honorific span; pool: "
         f"{[(m.name, m.pronouns) for m in snapshot.npc_pool]}"
@@ -543,9 +532,7 @@ def test_honorific_reverend_with_name_mints_without_period(otel_capture):
 # ---------------------------------------------------------------------------
 
 
-def test_ambiguous_pronouns_no_pronoun_skips_mint_and_warns(
-    otel_capture, caplog
-):
+def test_ambiguous_pronouns_no_pronoun_skips_mint_and_warns(otel_capture, caplog):
     """AC2 — fail loud, do NOT guess. 'The doctor said something.' with no
     he/she/they anywhere in the prose: skip mint AND log a warning naming
     the role we couldn't resolve. The auto_minted span must NOT fire.
@@ -576,8 +563,7 @@ def test_ambiguous_pronouns_no_pronoun_skips_mint_and_warns(
     matched_warn = [
         r
         for r in caplog.records
-        if r.levelno >= logging.WARNING
-        and "doctor" in r.getMessage().casefold()
+        if r.levelno >= logging.WARNING and "doctor" in r.getMessage().casefold()
     ]
     assert matched_warn, (
         "AC2 'warn (log) + skip mint': a WARNING-level log must name the "
@@ -587,9 +573,7 @@ def test_ambiguous_pronouns_no_pronoun_skips_mint_and_warns(
     )
 
 
-def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(
-    otel_capture, caplog
-):
+def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(otel_capture, caplog):
     """AC2 — conflicting pronouns near the role are ambiguous too. 'The
     doctor said... she walked over... he opened the door.' Mixed he and
     she near 'doctor' must NOT resolve to either; skip mint AND log a
@@ -603,9 +587,7 @@ def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(
     with caplog.at_level(logging.WARNING):
         _auto_mint_prose_only_npcs(
             snapshot=snapshot,
-            narration_text=(
-                "The doctor enters. She moves to the window. He opens the door."
-            ),
+            narration_text=("The doctor enters. She moves to the window. He opens the door."),
             emitted_mentions=[],
             turn_num=4,
         )
@@ -617,8 +599,7 @@ def test_ambiguous_pronouns_conflicting_skips_mint_and_warns(
     matched_warn = [
         r
         for r in caplog.records
-        if r.levelno >= logging.WARNING
-        and "doctor" in r.getMessage().casefold()
+        if r.levelno >= logging.WARNING and "doctor" in r.getMessage().casefold()
     ]
     assert matched_warn, (
         "AC2 'warn (log) + skip mint': a WARNING-level log must name the "
@@ -671,8 +652,7 @@ def test_pronoun_window_is_local_not_full_text(otel_capture):
         f"Pool after apply: {[(m.name, m.role, m.pronouns) for m in snapshot.npc_pool]}"
     )
     assert _minted_spans(otel_capture, expected_role="constable") == [], (
-        "No constable auto_minted_from_prose span may fire — the "
-        "scanner correctly bit its tongue."
+        "No constable auto_minted_from_prose span may fire — the scanner correctly bit its tongue."
     )
 
 
@@ -849,9 +829,7 @@ def test_wiring_apply_narration_result_invokes_auto_minter(otel_capture):
     snapshot.character_locations["Hero"] = "Manse"
 
     result = _result(
-        narration=(
-            "Father lies pale against the linen. He cannot speak."
-        ),
+        narration=("Father lies pale against the linen. He cannot speak."),
         npcs_present=[],  # the bug: narrator forgot to emit Father
     )
 
@@ -931,8 +909,7 @@ def test_wiring_auto_minter_runs_after_recurring_presence_detector(otel_capture)
 
     result = _result(
         narration=(
-            "Boris pours another round. The doctor watches from the corner. "
-            "He says nothing."
+            "Boris pours another round. The doctor watches from the corner. He says nothing."
         ),
         npcs_present=[],  # narrator forgot BOTH
     )
@@ -952,9 +929,7 @@ def test_wiring_auto_minter_runs_after_recurring_presence_detector(otel_capture)
     )
     # Recurring-presence detector fired for Boris (sibling pattern).
     recurring_spans = [
-        s
-        for s in otel_capture.get_finished_spans()
-        if s.name == "npc.recurring_presence_missed"
+        s for s in otel_capture.get_finished_spans() if s.name == "npc.recurring_presence_missed"
     ]
     assert recurring_spans, (
         "Recurring-presence detector (45-53) must still fire for Boris — "
@@ -1011,8 +986,7 @@ def test_npc_auto_mint_skipped_span_is_routed():
         "them alongside auto_minted_from_prose."
     )
     assert route.component == "npc_registry", (
-        "Component must be 'npc_registry' to share the GM-panel column "
-        "with other NPC-state spans."
+        "Component must be 'npc_registry' to share the GM-panel column with other NPC-state spans."
     )
 
 
@@ -1076,9 +1050,7 @@ def test_skip_span_fires_on_ambiguous_pronouns_no_pronoun(otel_capture):
         emitted_mentions=[],
         turn_num=2,
     )
-    skip_spans = _skipped_spans(
-        otel_capture, expected_reason="ambiguous_pronouns_role"
-    )
+    skip_spans = _skipped_spans(otel_capture, expected_reason="ambiguous_pronouns_role")
     assert len(skip_spans) == 1, (
         "Exactly one skip span must fire when the auto-minter declines to "
         "mint due to no nearby subject pronoun. The GM panel needs this "
@@ -1102,18 +1074,13 @@ def test_skip_span_fires_on_ambiguous_pronouns_conflicting(otel_capture):
     snapshot = GameSnapshot()
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
-        narration_text=(
-            "The doctor enters. She moves to the window. He opens the door."
-        ),
+        narration_text=("The doctor enters. She moves to the window. He opens the door."),
         emitted_mentions=[],
         turn_num=4,
     )
-    skip_spans = _skipped_spans(
-        otel_capture, expected_reason="ambiguous_pronouns_role"
-    )
+    skip_spans = _skipped_spans(otel_capture, expected_reason="ambiguous_pronouns_role")
     assert len(skip_spans) == 1, (
-        "Conflicting pronouns must also fire a skip span with "
-        "reason='ambiguous_pronouns_role'."
+        "Conflicting pronouns must also fire a skip span with reason='ambiguous_pronouns_role'."
     )
 
 
@@ -1132,9 +1099,7 @@ def test_skip_span_fires_on_honorific_ambiguous_pronouns(otel_capture):
         emitted_mentions=[],
         turn_num=3,
     )
-    skip_spans = _skipped_spans(
-        otel_capture, expected_reason="ambiguous_pronouns_honorific"
-    )
+    skip_spans = _skipped_spans(otel_capture, expected_reason="ambiguous_pronouns_honorific")
     assert len(skip_spans) == 1, (
         "Honorific-path skip (Mrs. Hardin with no subject pronoun within "
         "the local window) must fire a skip span with reason="
@@ -1165,15 +1130,11 @@ def test_skip_span_fires_on_gender_paired_conflict(otel_capture):
     )
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
-        narration_text=(
-            "The wee one's mother kneels at the hearth. She does not look up."
-        ),
+        narration_text=("The wee one's mother kneels at the hearth. She does not look up."),
         emitted_mentions=[],
         turn_num=6,
     )
-    skip_spans = _skipped_spans(
-        otel_capture, expected_reason="gender_paired_conflict"
-    )
+    skip_spans = _skipped_spans(otel_capture, expected_reason="gender_paired_conflict")
     assert len(skip_spans) == 1, (
         "Gender-paired conflict skip must fire a skip span with "
         "reason='gender_paired_conflict' so the GM panel surfaces the "
@@ -1197,8 +1158,7 @@ def test_no_skip_span_on_successful_mint(otel_capture):
         turn_num=5,
     )
     assert _skipped_spans(otel_capture) == [], (
-        "Successful mint must NOT also fire a skip span — the two paths "
-        "are mutually exclusive."
+        "Successful mint must NOT also fire a skip span — the two paths are mutually exclusive."
     )
     # Sanity: the mint span DID fire.
     assert len(_minted_spans(otel_capture, expected_role="father")) == 1
@@ -1235,9 +1195,7 @@ def test_possessive_only_pronoun_does_not_mint(otel_capture, caplog):
         "Subject-only window is the documented design (forward window scans "
         "subjects, not possessives) — this test pins that contract."
     )
-    assert _minted_spans(otel_capture) == [], (
-        "No mint span on possessive-only prose."
-    )
+    assert _minted_spans(otel_capture) == [], "No mint span on possessive-only prose."
     # The skip span SHOULD fire (CLAUDE.md OTEL Observability Principle).
     assert len(_skipped_spans(otel_capture, expected_reason="ambiguous_pronouns_role")) == 1, (
         "Possessive-only skip must fire the skip span — the GM panel needs "
@@ -1246,8 +1204,7 @@ def test_possessive_only_pronoun_does_not_mint(otel_capture, caplog):
     matched_warn = [
         r
         for r in caplog.records
-        if r.levelno >= logging.WARNING
-        and "father" in r.getMessage().casefold()
+        if r.levelno >= logging.WARNING and "father" in r.getMessage().casefold()
     ]
     assert matched_warn, (
         "AC2 'warn (log) + skip mint': a WARNING-level log must name the "
@@ -1278,15 +1235,12 @@ def test_role_mentioned_twice_in_turn_mints_exactly_once(otel_capture):
     _auto_mint_prose_only_npcs(
         snapshot=snapshot,
         narration_text=(
-            "Father rose. He bowed deeply. Father returned to his seat. "
-            "He sat down without a word."
+            "Father rose. He bowed deeply. Father returned to his seat. He sat down without a word."
         ),
         emitted_mentions=[],
         turn_num=3,
     )
-    fathers = [
-        m for m in snapshot.npc_pool if (m.role or "").casefold() == "father"
-    ]
+    fathers = [m for m in snapshot.npc_pool if (m.role or "").casefold() == "father"]
     assert len(fathers) == 1, (
         "Father mentioned twice in one turn must produce exactly one "
         f"pool member. Got {len(fathers)}: "

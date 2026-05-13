@@ -137,9 +137,7 @@ class ClassAbilityDef(BaseModel):
     @classmethod
     def _non_blank(cls, v: str, info) -> str:
         if not v or not v.strip():
-            raise ValueError(
-                f"ClassAbilityDef field {info.field_name!r} must be non-blank"
-            )
+            raise ValueError(f"ClassAbilityDef field {info.field_name!r} must be non-blank")
         return v
 
 

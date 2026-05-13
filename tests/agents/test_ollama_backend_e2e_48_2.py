@@ -281,9 +281,7 @@ def test_ac1_factory_default_ollama_url_when_env_unset(
         [_chat_body("ok")],
         captured_requests=captured_requests,
     )
-    asyncio.run(
-        client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet")
-    )
+    asyncio.run(client.send_stateless(system_prompt="sys", user_message="hi", model="sonnet"))
 
     assert len(captured_requests) == 1
     full_url = captured_requests[0].full_url
@@ -509,9 +507,7 @@ def _load_latency_script() -> Any:
     importlib.util is the standard way to load a single .py file."""
     repo_root = Path(__file__).resolve().parents[3]
     script_path = repo_root / "sidequest-server" / "scripts" / "ollama_latency_check.py"
-    spec = importlib.util.spec_from_file_location(
-        "_test_ollama_latency_check", script_path
-    )
+    spec = importlib.util.spec_from_file_location("_test_ollama_latency_check", script_path)
     assert spec is not None and spec.loader is not None, (
         f"could not load script spec for {script_path}"
     )
@@ -578,8 +574,7 @@ def test_ac3_script_rejects_zero_or_negative_baseline_claude_s() -> None:
         module.main(["--baseline-claude-s", "-1.5"])
     # argparse.error() conventionally exits with code 2.
     assert exc_info.value.code != 0, (
-        f"argparse.error on negative baseline must exit non-zero; got "
-        f"{exc_info.value.code}"
+        f"argparse.error on negative baseline must exit non-zero; got {exc_info.value.code}"
     )
 
     # Same guard for zero.

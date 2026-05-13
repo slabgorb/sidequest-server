@@ -269,9 +269,7 @@ def test_apply_patch_creature_hp_zero_clamps_to_one() -> None:
     """A creature authored with ``hp: 0`` clamps to EdgePool max=1 (positive ceiling)."""
     s = _make_snapshot()
     s.apply_world_patch(
-        WorldStatePatch(
-            npcs_present=[NpcPatch(name="Faint Echo", creature_id="echo", hp=0)]
-        )
+        WorldStatePatch(npcs_present=[NpcPatch(name="Faint Echo", creature_id="echo", hp=0)])
     )
     echo = next(n for n in s.npcs if n.core.name == "Faint Echo")
     assert echo.core.edge.max == 1
@@ -391,9 +389,7 @@ def test_creature_edge_pool_from_hp_helper() -> None:
 def test_creature_threat_level_only_still_signals_creature_branch() -> None:
     """``threat_level`` alone (no hp, no creature_id) still triggers creature defaults."""
     s = _make_snapshot()
-    s.apply_world_patch(
-        WorldStatePatch(npcs_present=[NpcPatch(name="Lurker", threat_level=2)])
-    )
+    s.apply_world_patch(WorldStatePatch(npcs_present=[NpcPatch(name="Lurker", threat_level=2)]))
     lurker = next(n for n in s.npcs if n.core.name == "Lurker")
     assert int(lurker.disposition) == -20  # creature default hostile
     assert lurker.core.level == 2

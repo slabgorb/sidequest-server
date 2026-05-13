@@ -96,8 +96,7 @@ def test_enemy_strike_with_taunt_routes_to_taunter(taunt_test_encounter):
         f"edge {fighter_before} → {fighter_core.edge.current}"
     )
     assert cleric_core.edge.current == cleric_before, (
-        f"Cleric should be untouched while taunt is active; "
-        f"edge unchanged at {cleric_before}"
+        f"Cleric should be untouched while taunt is active; edge unchanged at {cleric_before}"
     )
 
 
@@ -218,13 +217,21 @@ def test_spread_damage_redirect_capped_at_one_per_round(taunt_test_encounter):
 
     # First spread fires — one redirect consumed.
     apply_beat(
-        enc, enc.find_actor("enemy-1"), helper.enemy_spread_beat,
-        RollOutcome.Success, turn=1, edge_resolver=helper.edge_resolver,
+        enc,
+        enc.find_actor("enemy-1"),
+        helper.enemy_spread_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
     )
     # Second spread same round — cap is reached; no redirect.
     apply_beat(
-        enc, enc.find_actor("enemy-2"), helper.enemy_spread_beat,
-        RollOutcome.Success, turn=1, edge_resolver=helper.edge_resolver,
+        enc,
+        enc.find_actor("enemy-2"),
+        helper.enemy_spread_beat,
+        RollOutcome.Success,
+        turn=1,
+        edge_resolver=helper.edge_resolver,
     )
 
     fighter_drop = fighter_before - fighter_core.edge.current
@@ -242,6 +249,5 @@ def test_spread_damage_redirect_capped_at_one_per_round(taunt_test_encounter):
         f"got {fighter_drop}"
     )
     assert cleric_drop == 3, (
-        f"Cleric: only beat2 hit (cap reached, no redirect) = 3; "
-        f"got {cleric_drop}"
+        f"Cleric: only beat2 hit (cap reached, no redirect) = 3; got {cleric_drop}"
     )

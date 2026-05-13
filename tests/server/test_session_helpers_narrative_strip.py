@@ -182,9 +182,7 @@ def test_recent_narrative_log_populated_on_turn_context_from_snapshot():
         "TurnContext.recent_narrative_log is empty — the snapshot's "
         "6 entries did not flow into the Recency-zone seam."
     )
-    assert len(recent) == 4, (
-        f"expected last K=4 entries (AC #2 default); got {len(recent)}"
-    )
+    assert len(recent) == 4, f"expected last K=4 entries (AC #2 default); got {len(recent)}"
 
     # And it MUST be the LAST four — not the first four. Chronological,
     # most-recent-window semantics.

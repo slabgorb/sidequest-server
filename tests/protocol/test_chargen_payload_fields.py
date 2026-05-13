@@ -71,7 +71,9 @@ def test_autogen_available_field_accepts_bool():
 
 
 def test_autogen_result_field_accepts_dict():
-    p = CharacterCreationPayload(autogen_result={"background": "Former ratcatcher.", "description": ""})
+    p = CharacterCreationPayload(
+        autogen_result={"background": "Former ratcatcher.", "description": ""}
+    )
     assert p.autogen_result["background"] == "Former ratcatcher."
 
 

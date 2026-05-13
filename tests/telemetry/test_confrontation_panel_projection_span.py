@@ -133,7 +133,9 @@ def test_panel_projection_emits_beat_filter_span_with_source_ui_panel_projection
         genre_slug="caverns_and_claudes",
         recipient_pc=(_fighter(), 0.0, None),
     )
-    spans = [s for s in otel_capture.get_finished_spans() if s.name == SPAN_CONFRONTATION_BEAT_FILTER]
+    spans = [
+        s for s in otel_capture.get_finished_spans() if s.name == SPAN_CONFRONTATION_BEAT_FILTER
+    ]
     panel_spans = [s for s in spans if s.attributes.get("source") == "ui_panel_projection"]
     assert len(panel_spans) >= 1, (
         f"build_confrontation_payload(recipient_pc=...) must emit a "
@@ -162,7 +164,9 @@ def test_panel_projection_span_carries_required_attributes_for_gm_dashboard(
         if s.name == SPAN_CONFRONTATION_BEAT_FILTER
         and s.attributes.get("source") == "ui_panel_projection"
     ]
-    assert panel_spans, "panel-projection span missing (covered by sibling test, but required here too)"
+    assert panel_spans, (
+        "panel-projection span missing (covered by sibling test, but required here too)"
+    )
     attrs = dict(panel_spans[0].attributes)
     assert attrs.get("class_name") == "Fighter", (
         f"missing/wrong class_name on panel-projection span; attrs={attrs!r}"
@@ -300,12 +304,8 @@ def test_narrator_prompt_source_literal_lives_near_existing_filter_emit() -> Non
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if (
-            (isinstance(func, ast.Name) and func.id == "confrontation_beat_filter_span")
-            or (
-                isinstance(func, ast.Attribute)
-                and func.attr == "confrontation_beat_filter_span"
-            )
+        if (isinstance(func, ast.Name) and func.id == "confrontation_beat_filter_span") or (
+            isinstance(func, ast.Attribute) and func.attr == "confrontation_beat_filter_span"
         ):
             target_call_line = node.lineno
             break

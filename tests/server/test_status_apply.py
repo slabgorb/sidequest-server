@@ -149,7 +149,8 @@ def test_status_change_appends_to_named_npc(snapshot_with_pack, character_named_
     _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     brecca = next(n for n in snap.npcs if n.core.name == "Brecca")
     assert any(
-        s.text == "Bruised Ribs" and s.severity is StatusSeverity.Wound for s in brecca.core.statuses
+        s.text == "Bruised Ribs" and s.severity is StatusSeverity.Wound
+        for s in brecca.core.statuses
     )
 
 
@@ -192,9 +193,7 @@ def test_status_change_promotes_pool_member_to_npc_and_applies(
         ],
     )
     with caplog.at_level("WARNING"):
-        _apply_narration_result_to_snapshot(
-            snap, result, "Sam", pack=pack, room=room_for(snap)
-        )
+        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
 
     # Promotion happened: a full Npc now exists with the same name.
     promoted = [n for n in snap.npcs if n.core.name == "Wounded Sünden delver"]
@@ -209,9 +208,9 @@ def test_status_change_promotes_pool_member_to_npc_and_applies(
     assert "Stab wound, lower back left — gambeson saturated" in texts
     assert "Broken left leg below the knee" in texts
     # No unknown_actor warning — the bug is closed.
-    assert not any(
-        "status_change.unknown_actor" in r.message for r in caplog.records
-    ), "Pool-resident NPC should not produce unknown_actor warning after promotion"
+    assert not any("status_change.unknown_actor" in r.message for r in caplog.records), (
+        "Pool-resident NPC should not produce unknown_actor warning after promotion"
+    )
 
 
 def test_status_change_truly_unknown_actor_still_warns(
@@ -224,14 +223,10 @@ def test_status_change_truly_unknown_actor_still_warns(
     snap.characters.append(character_named_sam)
     result = NarrationTurnResult(
         narration="...",
-        status_changes=[
-            {"actor": "PhantomNobody", "status": {"text": "x", "severity": "Scratch"}}
-        ],
+        status_changes=[{"actor": "PhantomNobody", "status": {"text": "x", "severity": "Scratch"}}],
     )
     with caplog.at_level("WARNING"):
-        _apply_narration_result_to_snapshot(
-            snap, result, "Sam", pack=pack, room=room_for(snap)
-        )
+        _apply_narration_result_to_snapshot(snap, result, "Sam", pack=pack, room=room_for(snap))
     assert any(
         "status_change.unknown_actor" in r.message and "PhantomNobody" in r.message
         for r in caplog.records

@@ -263,8 +263,7 @@ class TestLoreRagWiring:
                 # Combine system_prompt + user_message — the lore block
                 # is registered as a dynamic section so it lands in user.
                 return " ".join(
-                    str(call.kwargs.get(k, ""))
-                    for k in ("system_prompt", "user_message")
+                    str(call.kwargs.get(k, "")) for k in ("system_prompt", "user_message")
                 )
 
             all_prompts = [_prompt_of(c) for c in send_calls]

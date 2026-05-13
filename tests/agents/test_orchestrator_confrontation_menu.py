@@ -128,8 +128,7 @@ async def test_available_confrontations_suppressed_when_encounter_active() -> No
         in_encounter=True,
         available_confrontations=_SPACE_OPERA_MENU,
     )
-    _, registry = await orch.build_narrator_prompt(
-        "shoot the corvette", ctx    )
+    _, registry = await orch.build_narrator_prompt("shoot the corvette", ctx)
     section = _section(
         registry,
         _agent_name(orch),

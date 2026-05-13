@@ -94,7 +94,9 @@ async def _setup(monkeypatch: pytest.MonkeyPatch, label: str) -> list[dict]:
     return captured
 
 
-async def _wait_for_event(captured: list[dict], field_value: str, *, timeout_s: float = 1.0) -> dict:
+async def _wait_for_event(
+    captured: list[dict], field_value: str, *, timeout_s: float = 1.0
+) -> dict:
     """Poll ``captured`` for a ``state_transition`` whose ``fields.field``
     matches ``field_value``. Hub broadcast hops through
     ``run_coroutine_threadsafe`` so tests need to yield repeatedly until
@@ -108,7 +110,10 @@ async def _wait_for_event(captured: list[dict], field_value: str, *, timeout_s: 
             ):
                 return evt
         await asyncio.sleep(0.01)
-    summary = [(e.get("event_type"), e.get("fields", {}).get("field"), e.get("fields", {}).get("name")) for e in captured]
+    summary = [
+        (e.get("event_type"), e.get("fields", {}).get("field"), e.get("fields", {}).get("name"))
+        for e in captured
+    ]
     raise AssertionError(
         f"Expected state_transition with field={field_value!r} within {timeout_s}s; "
         f"captured {len(captured)} events: {summary}"

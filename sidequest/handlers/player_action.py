@@ -318,9 +318,7 @@ class PlayerActionHandler:
                         component="session",
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "session.turn_status_submitted_broadcast_failed error=%s", exc
-                    )
+                    logger.warning("session.turn_status_submitted_broadcast_failed error=%s", exc)
             if barrier_fired:
                 # Barrier just fired on this submission — emit before the
                 # dispatch CAS so a failed dispatch still leaves the

@@ -23,14 +23,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sidequest.game.trope_time_skip import TimeSkipBeatEvent
 
 from sidequest.game.session import GameSnapshot
+from sidequest.game.trope_time_skip import TimeSkipBeatEvent
 from sidequest.genre.loader import load_genre_pack
 
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 
 # ---------------------------------------------------------------------------
@@ -252,9 +250,7 @@ class TestBuildNarratorPromptWiring:
         ctx = _build_turn_context(sd, room=None)
 
         orch = Orchestrator()
-        prompt_text, _registry = await orch.build_narrator_prompt(
-            "Tester: action", ctx
-        )
+        prompt_text, _registry = await orch.build_narrator_prompt("Tester: action", ctx)
 
         assert "## TIME-SKIP CONTEXT" not in prompt_text
 
@@ -300,9 +296,7 @@ class TestEngineBoundaryThreadsDaysAdvanced:
         """
         from sidequest.server import websocket_session_handler
 
-        source = Path(websocket_session_handler.__file__).read_text(
-            encoding="utf-8"
-        )
+        source = Path(websocket_session_handler.__file__).read_text(encoding="utf-8")
         # The tick_tropes call is on a single multi-line call; search for
         # the days_advanced kwarg anywhere in the file (the call is unique).
         assert "tick_tropes(" in source, (

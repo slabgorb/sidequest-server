@@ -330,9 +330,7 @@ def test_apply_working_item_scope_cost_routes_to_item_bar(world_config):
     )
     state.apply_working(working)
 
-    components_key = BarKey(
-        scope="item", owner_id="sira_charm_001", bar_id="components"
-    )
+    components_key = BarKey(scope="item", owner_id="sira_charm_001", bar_id="components")
     # Down-direction: starts 1.0, -0.20 → 0.80
     assert state.get_bar(components_key).value == pytest.approx(0.80)
 

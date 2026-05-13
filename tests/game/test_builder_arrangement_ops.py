@@ -16,14 +16,22 @@ from tests.game.test_builder_arrange_visible import _make_scenes_with_arrange_vi
 def _classes_fighter_thief() -> list[ClassDef]:
     return [
         ClassDef(
-            id="fighter", display_name="Fighter", rpg_role="tank",
-            jungian_default="hero", prime_requisite="STR",
-            minimum_score=9, kit_table="fighter_kit",
+            id="fighter",
+            display_name="Fighter",
+            rpg_role="tank",
+            jungian_default="hero",
+            prime_requisite="STR",
+            minimum_score=9,
+            kit_table="fighter_kit",
         ),
         ClassDef(
-            id="thief", display_name="Thief", rpg_role="stealth",
-            jungian_default="outlaw", prime_requisite="DEX",
-            minimum_score=9, kit_table="thief_kit",
+            id="thief",
+            display_name="Thief",
+            rpg_role="stealth",
+            jungian_default="outlaw",
+            prime_requisite="DEX",
+            minimum_score=9,
+            kit_table="thief_kit",
         ),
     ]
 
@@ -109,7 +117,11 @@ def test_confirm_arrangement_materializes_rolled_stats_in_canonical_order():
     for stat, v in zip(["STR", "DEX", "CON", "INT", "WIS", "CHA"], sorted_pool, strict=True):
         builder.assign_stat(stat, v)
     builder.confirm_arrangement()
-    rolled = builder.rolled_stats() if callable(getattr(builder, "rolled_stats", None)) else builder._rolled_stats
+    rolled = (
+        builder.rolled_stats()
+        if callable(getattr(builder, "rolled_stats", None))
+        else builder._rolled_stats
+    )
     assert rolled is not None
     rolled_dict = dict(rolled)
     assert set(rolled_dict.keys()) == {"STR", "DEX", "CON", "INT", "WIS", "CHA"}

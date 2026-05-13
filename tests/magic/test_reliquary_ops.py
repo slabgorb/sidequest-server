@@ -105,9 +105,7 @@ def _catalog_with_alms_bowl() -> WorldItemsCatalog:
 def _new_state_with_cleric(favor: float = 0.8) -> MagicState:
     state = MagicState.from_config(_cleric_config())
     state.add_character("anselm", character_class="Cleric")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="anselm", bar_id="divine_favor"), favor
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="anselm", bar_id="divine_favor"), favor)
     return state
 
 
@@ -320,9 +318,7 @@ def test_different_actors_have_independent_free_uses() -> None:
     session, not the table's)."""
     state = _new_state_with_cleric(favor=0.95)
     state.add_character("hesh", character_class="Cleric")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="hesh", bar_id="divine_favor"), 0.85
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="hesh", bar_id="divine_favor"), 0.85)
     catalog = _catalog_with_alms_bowl()
 
     invoke_reliquary(

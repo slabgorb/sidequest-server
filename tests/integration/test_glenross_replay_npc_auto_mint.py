@@ -45,12 +45,8 @@ from sidequest.game.npc_pool import NpcPoolMember
 from sidequest.game.session import GameSnapshot
 from tests._helpers.session_room import room_for
 
-GLENROSS_SAVE = (
-    Path.home() / ".sidequest" / "saves" / "games" / "2026-05-11-glenross" / "save.db"
-)
-CONTENT_GENRE_PACKS = (
-    Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
-)
+GLENROSS_SAVE = Path.home() / ".sidequest" / "saves" / "games" / "2026-05-11-glenross" / "save.db"
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 # Distinct fragments from the 2026-05-11 Glenross narrator prose. Used to
 # build the turn-5 and turn-6 narration result fixtures the replay
@@ -64,8 +60,7 @@ TURN_5_NARRATION = (
     "the secateurs down on the blotter beside him."
 )
 TURN_6_NARRATION_BUGGY = (
-    "You bend to the wee one's mother. She is through here, behind "
-    "the screen, her breath shallow."
+    "You bend to the wee one's mother. She is through here, behind the screen, her breath shallow."
 )
 
 
@@ -77,9 +72,7 @@ TURN_6_NARRATION_BUGGY = (
 def _load_glenross_snapshot() -> GameSnapshot:
     conn = sqlite3.connect(str(GLENROSS_SAVE))
     try:
-        row = conn.execute(
-            "SELECT snapshot_json FROM game_state WHERE id = 1"
-        ).fetchone()
+        row = conn.execute("SELECT snapshot_json FROM game_state WHERE id = 1").fetchone()
     finally:
         conn.close()
     assert row is not None, "glenross save has no game_state row"
@@ -133,8 +126,7 @@ def test_glenross_turn5_replay_auto_mints_father():
     snapshot.npc_pool = [
         m
         for m in snapshot.npc_pool
-        if (m.role or "").casefold() != "father"
-        and m.name.casefold() != "father"
+        if (m.role or "").casefold() != "father" and m.name.casefold() != "father"
     ]
     # Belt + braces: also strip any stateful Npc named "Father".
     snapshot.npcs = [n for n in snapshot.npcs if n.core.name.casefold() != "father"]
@@ -220,8 +212,7 @@ def test_glenross_turn6_replay_with_father_in_pool_does_not_mint_mother():
     snapshot.npc_pool = [
         m
         for m in snapshot.npc_pool
-        if (m.role or "").casefold() != "father"
-        and m.name.casefold() != "father"
+        if (m.role or "").casefold() != "father" and m.name.casefold() != "father"
     ]
     snapshot.npc_pool.append(
         NpcPoolMember(

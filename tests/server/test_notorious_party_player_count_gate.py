@@ -220,9 +220,7 @@ def test_solo_session_npc_registry_unchanged_by_gate(sd_factory) -> None:
     # not None. Asserting structure preserved (gate didn't crash adjacent
     # state). Story 45-52 cleanup: ``npc_registry`` was dropped; canonical
     # cast-pool channel is ``npc_pool``.
-    assert ctx.npc_pool == [], (
-        "Gate damaged unrelated state: npc_pool not the snapshot value."
-    )
+    assert ctx.npc_pool == [], "Gate damaged unrelated state: npc_pool not the snapshot value."
     assert ctx.character_name == "Pumblestone Sweedlewit", (
         "Gate damaged acting-character resolution."
     )

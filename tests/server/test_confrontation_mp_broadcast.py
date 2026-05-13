@@ -474,7 +474,15 @@ async def test_seated_dispatcher_receives_class_filtered_not_unfiltered_canonica
         f"If 'backstab' is missing the per-PC overlay didn't reach Katia at "
         f"all — distinct failure mode from the canonical-clobber regression."
     )
-    forbidden = {"shield_bash", "cast_spell", "turn_undead", "pray_for_aid", "cleave", "parry", "taunt"}
+    forbidden = {
+        "shield_bash",
+        "cast_spell",
+        "turn_undead",
+        "pray_for_aid",
+        "cleave",
+        "parry",
+        "taunt",
+    }
     leaked = beat_ids & forbidden
     assert not leaked, (
         f"Thief-only Katia's CONFRONTATION leaked non-Thief beats: {sorted(leaked)}. "

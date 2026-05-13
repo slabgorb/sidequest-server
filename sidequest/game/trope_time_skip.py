@@ -10,6 +10,7 @@ narrator turn to render as a TIME-SKIP CONTEXT block.
 See ADR-018 (trope engine) and the design spec at
 docs/superpowers/specs/2026-05-13-50-4-trope-rate-per-day-design.md.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -100,9 +101,7 @@ def _pass_a2_time_skip(
         pack_tropes_by_id = pack_or_tropes_by_id
     else:
         pack_tropes_by_id = {
-            t.id: t
-            for t in getattr(pack_or_tropes_by_id, "tropes", [])
-            if t.id is not None
+            t.id: t for t in getattr(pack_or_tropes_by_id, "tropes", []) if t.id is not None
         }
 
     days_applied = max(0, min(days_advanced, DAY_TICK_CAP))
@@ -129,9 +128,7 @@ def _pass_a2_time_skip(
             # shouldn't crash the engine. Matches Pass A's behavior.
             continue
 
-        rate = (
-            tdef.passive_progression.rate_per_day if tdef.passive_progression else 0.0
-        )
+        rate = tdef.passive_progression.rate_per_day if tdef.passive_progression else 0.0
 
         if rate <= 0.0:
             tropes_skipped_zero_rate.append(tstate.id)
@@ -178,11 +175,7 @@ def _pass_a2_time_skip(
         # An empty escalation list cannot satisfy "every beat fired" — without
         # beats, the trope has no narrative resolution shape and stays
         # progressing until the genre pack supplies escalation.
-        if (
-            progress_after >= 1.0
-            and tdef.escalation
-            and tstate.beats_fired >= len(tdef.escalation)
-        ):
+        if progress_after >= 1.0 and tdef.escalation and tstate.beats_fired >= len(tdef.escalation):
             tstate.status = "resolved"
             resolved_during_skip.append(tstate.id)
 

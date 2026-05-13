@@ -204,9 +204,7 @@ def test_detector_warns_when_known_pool_member_named_in_prose_but_missing(
     from sidequest.server.session_helpers import _detect_missed_recurring_npcs
 
     snapshot = GameSnapshot(
-        npc_pool=[
-            NpcPoolMember(name="Marya", role="merchant", drawn_from="legacy_registry")
-        ]
+        npc_pool=[NpcPoolMember(name="Marya", role="merchant", drawn_from="legacy_registry")]
     )
 
     _detect_missed_recurring_npcs(
@@ -309,9 +307,7 @@ def test_detector_matches_on_word_boundary_not_substring(otel_capture):
     """
     from sidequest.server.session_helpers import _detect_missed_recurring_npcs
 
-    snapshot = GameSnapshot(
-        npc_pool=[NpcPoolMember(name="Marya", drawn_from="legacy_registry")]
-    )
+    snapshot = GameSnapshot(npc_pool=[NpcPoolMember(name="Marya", drawn_from="legacy_registry")])
 
     _detect_missed_recurring_npcs(
         snapshot=snapshot,
@@ -321,8 +317,7 @@ def test_detector_matches_on_word_boundary_not_substring(otel_capture):
     )
 
     assert _missed_spans(otel_capture) == [], (
-        "Substring match on 'Marya' inside 'Maryana' must NOT fire — "
-        "use word-boundary semantics."
+        "Substring match on 'Marya' inside 'Maryana' must NOT fire — use word-boundary semantics."
     )
 
 
@@ -434,7 +429,8 @@ def test_detector_logs_warning_with_descriptive_message(caplog):
         )
 
     matched = [
-        rec for rec in caplog.records
+        rec
+        for rec in caplog.records
         if rec.levelno == logging.WARNING and "Boris" in rec.getMessage()
     ]
     assert matched, (
@@ -603,9 +599,7 @@ def test_detector_matches_name_with_regex_metacharacters(otel_capture):
     from sidequest.server.session_helpers import _detect_missed_recurring_npcs
 
     snapshot = GameSnapshot(
-        npc_pool=[
-            NpcPoolMember(name="Dr. Smith", role="patron", drawn_from="legacy_registry")
-        ]
+        npc_pool=[NpcPoolMember(name="Dr. Smith", role="patron", drawn_from="legacy_registry")]
     )
 
     _detect_missed_recurring_npcs(

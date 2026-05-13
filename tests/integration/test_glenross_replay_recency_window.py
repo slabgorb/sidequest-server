@@ -47,9 +47,7 @@ from sidequest.genre.loader import load_genre_pack
 from sidequest.server.session_handler import _build_turn_context, _SessionData
 from tests._helpers.session_room import room_for
 
-GLENROSS_SAVE = (
-    Path.home() / ".sidequest" / "saves" / "games" / "2026-05-11-glenross" / "save.db"
-)
+GLENROSS_SAVE = Path.home() / ".sidequest" / "saves" / "games" / "2026-05-11-glenross" / "save.db"
 CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
 
 # The buggy turn-6 narrator prose. If this distinctive language appears

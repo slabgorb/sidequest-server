@@ -133,7 +133,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--role", help='Enemy role hint (e.g., "ambush predator").')
     p.add_argument("--class", dest="class_", help="Character class. Random if omitted.")
     p.add_argument("--culture", help="Culture name for name generation. Random if omitted.")
-    p.add_argument("--archetype", help='Archetype name (e.g., "Wasteland Trader"). Random if omitted.')
+    p.add_argument(
+        "--archetype", help='Archetype name (e.g., "Wasteland Trader"). Random if omitted.'
+    )
     p.add_argument(
         "--context",
         help='Context hint for the encounter (e.g., "guarding a bridge"). Flavors the visual prompt.',
@@ -279,7 +281,9 @@ def creature_to_enemy_block(creature: dict[str, Any], rng: random.Random) -> Ene
             abilities.append(f"{aname} — {adesc_short}")
 
     tags_raw = creature.get("tags") or []
-    tags: list[str] = [t for t in tags_raw if isinstance(t, str)] if isinstance(tags_raw, list) else []
+    tags: list[str] = (
+        [t for t in tags_raw if isinstance(t, str)] if isinstance(tags_raw, list) else []
+    )
 
     loot_raw = creature.get("loot") or []
     inventory: list[str] = []

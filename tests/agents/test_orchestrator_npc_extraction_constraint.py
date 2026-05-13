@@ -55,9 +55,7 @@ async def test_npc_extraction_constraint_section_is_registered(
     _, registry = await orch.build_narrator_prompt(
         "I lean over the wounded man.", simple_turn_context_turn_three
     )
-    section = _section_by_name(
-        registry, orch._narrator.name(), "npc_extraction_constraint"
-    )
+    section = _section_by_name(registry, orch._narrator.name(), "npc_extraction_constraint")
     assert section is not None, (
         "npc_extraction_constraint section was not registered. "
         "Existing Recency-zone neighbours: "
@@ -75,12 +73,8 @@ async def test_npc_extraction_constraint_is_in_recency_zone(
     miss in the first place (ADR-009).
     """
     orch = Orchestrator()
-    _, registry = await orch.build_narrator_prompt(
-        "act", simple_turn_context_turn_three
-    )
-    section = _section_by_name(
-        registry, orch._narrator.name(), "npc_extraction_constraint"
-    )
+    _, registry = await orch.build_narrator_prompt("act", simple_turn_context_turn_three)
+    section = _section_by_name(registry, orch._narrator.name(), "npc_extraction_constraint")
     assert section is not None
     assert section.zone == AttentionZone.Recency, (
         f"npc_extraction_constraint registered in {section.zone}, "
@@ -98,12 +92,8 @@ async def test_npc_extraction_constraint_category_is_guardrail(
     ``npc_intro_visual_constraint`` and ``confrontation_trigger_constraint``.
     """
     orch = Orchestrator()
-    _, registry = await orch.build_narrator_prompt(
-        "act", simple_turn_context_turn_three
-    )
-    section = _section_by_name(
-        registry, orch._narrator.name(), "npc_extraction_constraint"
-    )
+    _, registry = await orch.build_narrator_prompt("act", simple_turn_context_turn_three)
+    section = _section_by_name(registry, orch._narrator.name(), "npc_extraction_constraint")
     assert section is not None
     assert section.category == SectionCategory.Guardrail, (
         f"category must be Guardrail (got {section.category}) — rules "
@@ -126,9 +116,7 @@ async def test_npc_extraction_constraint_content_mentions_role_named(
     nouns the narrator's attention bounces off an abstract rule.
     """
     orch = Orchestrator()
-    prompt, _ = await orch.build_narrator_prompt(
-        "act", simple_turn_context_turn_three
-    )
+    prompt, _ = await orch.build_narrator_prompt("act", simple_turn_context_turn_three)
     # AC4 verbatim: 'Any person named or role-named in this turn's prose'
     assert "role-named" in prompt, (
         "AC4 requires the constraint to use the exact phrase 'role-named' "
@@ -154,9 +142,7 @@ async def test_npc_extraction_constraint_content_demands_npcs_present(
     the exact field name to constrain the structured-emission block.
     """
     orch = Orchestrator()
-    prompt, _ = await orch.build_narrator_prompt(
-        "act", simple_turn_context_turn_three
-    )
+    prompt, _ = await orch.build_narrator_prompt("act", simple_turn_context_turn_three)
     assert "npcs_present" in prompt, (
         "AC4 constraint must name 'npcs_present' explicitly so the "
         "narrator's JSON-block generator knows which field to populate."
@@ -179,9 +165,7 @@ async def test_npc_extraction_constraint_present_on_delta_tier(
     session turn — Delta presence is the load-bearing case.
     """
     orch = Orchestrator()
-    prompt, _ = await orch.build_narrator_prompt(
-        "act", simple_turn_context_turn_three
-    )
+    prompt, _ = await orch.build_narrator_prompt("act", simple_turn_context_turn_three)
     # The Recency-zone Guardrail must appear regardless of tier. Use the
     # rule-marker text as the existence check.
     assert "role-named" in prompt

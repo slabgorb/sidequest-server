@@ -176,8 +176,7 @@ async def test_pc_name_in_npcs_present_does_not_register_and_emits_skip_span(
 
     # Critical: pool must NOT have been mutated.
     assert snapshot.npc_pool == [], (
-        "PC-name auto-register filter failed — Laverne was promoted to NPC: "
-        f"{snapshot.npc_pool}"
+        f"PC-name auto-register filter failed — Laverne was promoted to NPC: {snapshot.npc_pool}"
     )
 
     # The skip span must reach the hub (GM panel visibility).

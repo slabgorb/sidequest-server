@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from sidequest.game.character import KnownFact
+from sidequest.game.scenario_state import PrerequisiteNotSatisfiedError
 from sidequest.game.session import GameSnapshot
 from sidequest.protocol.models import Footnote
 
@@ -37,7 +38,16 @@ def consume_clue_footnotes(
 ) -> None:
     """Discover any scenario clues referenced by ``footnotes`` and mint a
     ``KnownFact`` on the named active character for each first-time
-    discovery."""
+    discovery.
+
+    A footnote whose ``fact_id`` resolves to a clue whose DAG
+    prerequisites are not yet satisfied is rejected:
+    :meth:`ScenarioState.discover_clue` raises
+    :class:`PrerequisiteNotSatisfiedError` and emits the
+    ``SPAN_SCENARIO_CLUE_PREREQUISITE_VIOLATION`` span itself. This
+    handler catches the typed error and continues with remaining
+    footnotes — one orphan must not poison the batch.
+    """
     scenario = snapshot.scenario_state
     if scenario is None:
         return
@@ -52,7 +62,12 @@ def consume_clue_footnotes(
         if fn.fact_id is None or fn.fact_id not in clue_ids:
             continue
         is_new = fn.fact_id not in scenario.discovered_clues
-        scenario.discover_clue(fn.fact_id)
+        try:
+            scenario.discover_clue(fn.fact_id)
+        except PrerequisiteNotSatisfiedError:
+            # Violation span already emitted at the data layer; skip
+            # the KnownFact mint and move on to the next footnote.
+            continue
         if is_new and active is not None:
             active.known_facts.append(
                 KnownFact(

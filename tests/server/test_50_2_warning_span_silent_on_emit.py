@@ -41,9 +41,7 @@ from sidequest.genre.loader import load_genre_pack
 from sidequest.server.narration_apply import _apply_narration_result_to_snapshot
 from tests._helpers.session_room import room_for
 
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[1] / "fixtures" / "packs" / "test_genre"
 
 
 @pytest.fixture
@@ -76,8 +74,7 @@ _CANONICAL_FIXTURES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "negotiation",
-        "The merchant names a price for the salvaged datapad and waits "
-        "for your counter-offer.",
+        "The merchant names a price for the salvaged datapad and waits for your counter-offer.",
         "Merchant",
     ),
 )
@@ -113,9 +110,7 @@ def test_warning_span_silent_when_narrator_emits_confrontation_on_trigger_prose(
     captured: list[tuple[str, dict, dict]] = []
 
     def fake_publish(event_type, fields, *, component="", severity="info"):
-        captured.append(
-            (event_type, fields, {"component": component, "severity": severity})
-        )
+        captured.append((event_type, fields, {"component": component, "severity": severity}))
 
     import sidequest.server.narration_apply as _napply
 
@@ -151,8 +146,7 @@ def test_warning_span_silent_when_narrator_emits_confrontation_on_trigger_prose(
     skipped = [
         (fields, meta)
         for et, fields, meta in captured
-        if et == "state_transition"
-        and fields.get("op") == "skipped_with_trigger_keywords"
+        if et == "state_transition" and fields.get("op") == "skipped_with_trigger_keywords"
     ]
     assert not skipped, (
         f"confrontation.skipped_with_trigger_keywords fired on a turn where "
@@ -163,9 +157,7 @@ def test_warning_span_silent_when_narrator_emits_confrontation_on_trigger_prose(
     )
 
 
-def test_archive_chase_fixture_pre_fix_baseline_still_warns(
-    fixture_snap, monkeypatch
-) -> None:
+def test_archive_chase_fixture_pre_fix_baseline_still_warns(fixture_snap, monkeypatch) -> None:
     """Regression-detector half of the AC: the warning span continues
     to fire on the archive's canonical PRE-FIX prose pattern —
     ``confrontation=None`` with trigger keywords in prose. The fix
@@ -179,9 +171,7 @@ def test_archive_chase_fixture_pre_fix_baseline_still_warns(
     captured: list[tuple[str, dict, dict]] = []
 
     def fake_publish(event_type, fields, *, component="", severity="info"):
-        captured.append(
-            (event_type, fields, {"component": component, "severity": severity})
-        )
+        captured.append((event_type, fields, {"component": component, "severity": severity}))
 
     import sidequest.server.narration_apply as _napply
 
@@ -210,8 +200,7 @@ def test_archive_chase_fixture_pre_fix_baseline_still_warns(
     skipped = [
         fields
         for et, fields, _ in captured
-        if et == "state_transition"
-        and fields.get("op") == "skipped_with_trigger_keywords"
+        if et == "state_transition" and fields.get("op") == "skipped_with_trigger_keywords"
     ]
     assert skipped, (
         "Warning span must continue firing on PRE-FIX prose (confrontation=None "

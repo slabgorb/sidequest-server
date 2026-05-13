@@ -155,9 +155,7 @@ def test_two_disposition_instances_with_defaults_are_independent_objects() -> No
     # must not bleed into the other. Catches a future regression where
     # someone slots a class-level cached instance behind ``__new__``.
     a.value = 50
-    assert b.value == 0, (
-        f"mutating a.value leaked into b.value: a={a.value}, b={b.value}"
-    )
+    assert b.value == 0, f"mutating a.value leaked into b.value: a={a.value}, b={b.value}"
 
 
 def test_attitude_string_value_matches_otel_contract_exactly() -> None:

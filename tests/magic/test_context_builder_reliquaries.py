@@ -64,8 +64,7 @@ def _reliquary_catalog() -> WorldItemsCatalog:
                     "id": "confessional_alms_bowl",
                     "name": "Anselm Vail's Confessional Alms-Bowl",
                     "divine_favor_effect": (
-                        "At divine_favor >= 0.7 the Cleric may divert one "
-                        "approaching count-event."
+                        "At divine_favor >= 0.7 the Cleric may divert one approaching count-event."
                     ),
                 },
                 {
@@ -81,9 +80,7 @@ def _reliquary_catalog() -> WorldItemsCatalog:
 def _cleric_state(favor: float) -> MagicState:
     state = MagicState.from_config(_cleric_world_config())
     state.add_character("anselm", character_class="Cleric")
-    state.set_bar_value(
-        BarKey(scope="character", owner_id="anselm", bar_id="divine_favor"), favor
-    )
+    state.set_bar_value(BarKey(scope="character", owner_id="anselm", bar_id="divine_favor"), favor)
     return state
 
 
@@ -164,14 +161,10 @@ def test_reliquary_block_absent_when_no_reliquaries_passed() -> None:
     """A world without an items.yaml passes reliquaries=None; the
     builder must skip the section without iterating over anything."""
     state = _cleric_state(favor=0.95)
-    block = build_magic_context_block(
-        magic_state=state, actor_id="anselm", reliquaries=None
-    )
+    block = build_magic_context_block(magic_state=state, actor_id="anselm", reliquaries=None)
     assert "<available-reliquaries" not in block
 
-    block_empty = build_magic_context_block(
-        magic_state=state, actor_id="anselm", reliquaries=[]
-    )
+    block_empty = build_magic_context_block(magic_state=state, actor_id="anselm", reliquaries=[])
     assert "<available-reliquaries" not in block_empty
 
 

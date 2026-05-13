@@ -124,13 +124,9 @@ def tick_tropes(
                     "days_applied": time_skip_fields.days_applied,
                     "clamped": time_skip_fields.clamped,
                     "tropes_affected": tuple(time_skip_fields.tropes_affected),
-                    "tropes_skipped_zero_rate": tuple(
-                        time_skip_fields.tropes_skipped_zero_rate
-                    ),
+                    "tropes_skipped_zero_rate": tuple(time_skip_fields.tropes_skipped_zero_rate),
                     "beats_fired_count": time_skip_fields.beats_fired_count,
-                    "resolved_during_skip": tuple(
-                        time_skip_fields.resolved_during_skip
-                    ),
+                    "resolved_during_skip": tuple(time_skip_fields.resolved_during_skip),
                 },
             ):
                 pass

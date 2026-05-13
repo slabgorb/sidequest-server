@@ -40,9 +40,7 @@ def load_room_payload(
     data = yaml.safe_load(yaml_path.read_text())
     room_type = data.get("room_type")
     if room_type not in ("cavern", "settlement"):
-        raise ValueError(
-            f"{yaml_path}: invalid room_type {room_type!r}"
-        )
+        raise ValueError(f"{yaml_path}: invalid room_type {room_type!r}")
 
     if room_type == "settlement":
         return TacticalGridPayload(
@@ -73,14 +71,10 @@ def load_room_payload(
     derived = data.get("derived")
     if derived is None:
         raise ValueError(
-            f"{yaml_path}: cavern room missing 'derived:' block; "
-            f"run cavern_renderer to populate"
+            f"{yaml_path}: cavern room missing 'derived:' block; run cavern_renderer to populate"
         )
 
-    relative = (
-        f"genre_packs/{genre_slug}/worlds/{world_dir.name}/"
-        f"rooms/{room_id}.cavern.png"
-    )
+    relative = f"genre_packs/{genre_slug}/worlds/{world_dir.name}/rooms/{room_id}.cavern.png"
     image_url = resolve_asset_url(relative)
 
     with cavern_room_load_span(
@@ -109,9 +103,7 @@ def load_room_payload(
         ),
         derived=DerivedRoomData(
             floor_count=derived["floor_count"],
-            exits={
-                k: (tuple(v) if v else None) for k, v in derived["exits"].items()
-            },
+            exits={k: (tuple(v) if v else None) for k, v in derived["exits"].items()},
             pois=[tuple(p) for p in derived["pois"]],
         ),
         tokens=[],

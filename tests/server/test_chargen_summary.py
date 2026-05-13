@@ -648,10 +648,7 @@ class TestWireShape:
         "Two Delves Under His Belt." Detect prose by sentence punctuation
         and pass it through unchanged.
         """
-        prose = (
-            "Two delves under his belt. Came back from the second with "
-            "a tooth in a cloth bag."
-        )
+        prose = "Two delves under his belt. Came back from the second with a tooth in a cloth bag."
         scenes = [make_scene("origin", choices=[make_choice("Human", background=prose)])]
         b = CharacterBuilder(scenes=scenes, rules=simple_rules())
         b.apply_choice(0)

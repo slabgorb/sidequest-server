@@ -20,14 +20,17 @@ async def test_oversized_prompt_warns_but_completes(simple_turn_context, caplog)
     )
 
     orch = Orchestrator(client=client)
-    with patch("sidequest.agents.orchestrator.SOFT_PROMPT_BUDGET_BYTES", 10), caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
+    with (
+        patch("sidequest.agents.orchestrator.SOFT_PROMPT_BUDGET_BYTES", 10),
+        caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"),
+    ):
         result = await orch._run_narration_turn_synchronous("look", simple_turn_context)
 
     assert result.narration
 
-    assert any(
-        "narrator.prompt_oversized" in r.message for r in caplog.records
-    ), f"oversized canary did not fire; caplog: {[r.message for r in caplog.records]}"
+    assert any("narrator.prompt_oversized" in r.message for r in caplog.records), (
+        f"oversized canary did not fire; caplog: {[r.message for r in caplog.records]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -42,6 +45,4 @@ async def test_normal_prompt_no_canary(simple_turn_context, caplog):
     with caplog.at_level(logging.WARNING, logger="sidequest.agents.orchestrator"):
         await orch._run_narration_turn_synchronous("look", simple_turn_context)
 
-    assert not any(
-        "narrator.prompt_oversized" in r.message for r in caplog.records
-    )
+    assert not any("narrator.prompt_oversized" in r.message for r in caplog.records)
