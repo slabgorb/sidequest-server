@@ -150,7 +150,7 @@ async def test_narration_turn_discovers_matching_clue_and_mints_known_fact(
                     "marker": 1,
                     "fact_id": "library_key",
                     "summary": "The brass key opens the library door.",
-                    "category": "lore",
+                    "category": "Lore",
                     "is_new": True,
                 }
             ],
@@ -207,7 +207,7 @@ async def test_narration_turn_without_scenario_does_not_emit_or_mint(
                     "marker": 1,
                     "fact_id": "library_key",
                     "summary": "A brass key lies on the desk.",
-                    "category": "lore",
+                    "category": "Lore",
                     "is_new": True,
                 }
             ],
@@ -252,7 +252,7 @@ async def test_narration_turn_with_non_matching_fact_id_is_silent(
                     "marker": 1,
                     "fact_id": "weather_note",
                     "summary": "A storm is brewing.",
-                    "category": "lore",
+                    "category": "Lore",
                     "is_new": True,
                 }
             ],
@@ -270,9 +270,7 @@ async def test_narration_turn_with_non_matching_fact_id_is_silent(
     assert sd.snapshot.scenario_state is not None
     assert sd.snapshot.scenario_state.discovered_clues == set()
     new_scenario_facts = [
-        kf
-        for kf in active.known_facts
-        if kf not in pre_known_facts and kf.source == "ScenarioClue"
+        kf for kf in active.known_facts if kf not in pre_known_facts and kf.source == "ScenarioClue"
     ]
     assert new_scenario_facts == [], (
         "non-matching fact_id must not produce a ScenarioClue KnownFact"

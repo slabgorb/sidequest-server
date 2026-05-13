@@ -86,7 +86,7 @@ def _footnote(*, summary: str, fact_id: str | None, marker: int = 1) -> Footnote
         marker=marker,
         fact_id=fact_id,
         summary=summary,
-        category="lore",
+        category="Lore",
         is_new=True,
     )
 
@@ -296,6 +296,8 @@ class TestNegativePaths:
         that would mask a bug. Acceptable behaviors: skip the mint and log,
         or raise. This test asserts the mint does NOT land on a wrong character.
         """
+        import contextlib
+
         from sidequest.server.dispatch.scenario_clue_intake import (
             consume_clue_footnotes,
         )
@@ -303,11 +305,11 @@ class TestNegativePaths:
         snap = _snapshot_with_scenario(clue_ids=["library_key"])
         footnotes = [_footnote(summary="The key.", fact_id="library_key")]
 
-        try:
+        # Loud failure is acceptable per "no silent fallbacks" doctrine — the
+        # test only requires the KnownFact does not silently land on the wrong
+        # character. Implementations may raise or skip; both are valid.
+        with contextlib.suppress(KeyError, ValueError, LookupError):
             consume_clue_footnotes(snap, footnotes, active_character_name="Nobody")
-        except (KeyError, ValueError, LookupError):
-            # Loud failure is acceptable per "no silent fallbacks" doctrine.
-            pass
 
         # The single existing character must not receive the KnownFact.
         rux = snap.characters[0]
