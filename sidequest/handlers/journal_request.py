@@ -1,8 +1,9 @@
 """JournalRequestHandler — replies to JOURNAL_REQUEST with the player's journal.
 
-ADR-100 Seam C (story 50-14). Closes the server-side gap: the UI has been
-prepared to consume ``JOURNAL_RESPONSE`` since ADR-083, but no server
-handler emitted it. This module is that handler.
+ADR-100 Seam C (story 50-14). Closes the server-side gap: per ADR-100 the
+UI consumer (``sidequest-ui/src/hooks/useStateMirror.ts:130-155``) was
+ready, but no server handler emitted ``JOURNAL_RESPONSE``. This module is
+that handler.
 
 Player-to-character resolution goes through
 ``snapshot.player_seats[player_id]``. Per ADR-036 a player can only

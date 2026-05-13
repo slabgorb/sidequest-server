@@ -19,27 +19,24 @@ Player→character lookup goes through ``snapshot.player_seats[player_id]``
 per ADR-036 (the only character a player can introspect is their own
 seat). No cross-player lookups are supported.
 
-These tests will fail until:
+The suite exercises:
 
-1. ``JournalRequestPayload`` / ``JournalResponsePayload`` / ``JournalEntry``
-   payloads + ``JournalRequestMessage`` / ``JournalResponseMessage``
-   wrappers exist in ``sidequest.protocol.messages`` and are added to the
-   ``_Phase1Variant`` discriminated union.
-
-2. A ``JournalRequestHandler`` exists under
-   ``sidequest.handlers.journal_request`` exporting ``HANDLER`` and is
-   wired into ``WebSocketSessionHandler._message_handler_for`` for the
-   ``JOURNAL_REQUEST`` message type.
-
-3. ``KnownFact`` either gains ``fact_id`` and ``category`` fields, or the
-   handler derives them in a *non-silent* way (an explicit mapping, not a
-   fallback). The "no silent fallbacks" rule (CLAUDE.md) forbids invented
-   defaults.
-
-4. A ``SPAN_JOURNAL_REPLAY`` constant exists in
-   ``sidequest.telemetry.spans`` (suggested file:
-   ``sidequest/telemetry/spans/journal.py``) and the handler emits it
-   with ``character_name`` and ``entry_count`` attributes.
+* protocol shape — ``JournalRequestMessage`` / ``JournalResponseMessage``
+  wrappers participate in the ``_Phase1Variant`` discriminated union and
+  round-trip through ``GameMessage.model_validate``;
+* dispatch wiring — ``JournalRequestHandler`` is registered in
+  ``WebSocketSessionHandler._message_handler_for`` and reachable through
+  ``handle_message``;
+* response correctness — every ``KnownFact`` on the seated character
+  surfaces with its ``fact_id`` preserved (UI dedups by this) and every
+  field of the UI contract populated;
+* ADR-036 isolation — players see only their own seat's journal, and
+  every error branch returns an ``ErrorMessage`` with a stable, distinct
+  ``code`` (``session_unbound``, ``invalid_player_id``,
+  ``player_unseated``, ``seat_broken``) so the UI can branch reliably and
+  so a regression that swaps codes will fail a test;
+* OTEL — ``SPAN_JOURNAL_REPLAY`` fires with ``character_name`` and
+  ``entry_count`` attributes and is registered in the span catalog.
 """
 
 from __future__ import annotations
@@ -200,14 +197,14 @@ async def test_response_entry_count_matches_known_facts(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_response_entries_carry_full_ui_contract(tmp_path: Path) -> None:
-    """RED: each entry carries the six fields the UI consumes.
+    """Each entry carries the six fields the UI consumes and preserves identity.
 
     UI contract (sidequest-ui/src/types/payloads.ts JournalResponsePayload):
         fact_id, content, category, source, confidence, learned_turn.
 
-    KnownFact currently lacks ``fact_id`` and ``category`` — this test will
-    fail until either KnownFact gains those fields or the handler maps them
-    explicitly (non-silent). See Delivery Findings.
+    The fact_id assertion verifies pass-through identity (not just
+    truthiness) so a regression that swaps fact_ids between entries — which
+    would silently break ``useStateMirror`` dedup — fails this test.
     """
     handler = WebSocketSessionHandler(save_dir=tmp_path / "saves", genre_pack_search_paths=[])
     _attach(handler)
@@ -229,6 +226,11 @@ async def test_response_entries_carry_full_ui_contract(tmp_path: Path) -> None:
         assert entry is not None, (
             f"fact {fact.content!r} missing from response — handler must not drop facts"
         )
+        assert entry.fact_id == fact.fact_id, (
+            f"fact_id pass-through mismatch for {fact.content!r}: "
+            f"response={entry.fact_id!r} source={fact.fact_id!r} — "
+            "UI dedups by fact_id, so a swap would silently duplicate journal entries"
+        )
         assert entry.confidence == fact.confidence, (
             f"confidence mismatch: response={entry.confidence!r} fact={fact.confidence!r}"
         )
@@ -238,10 +240,9 @@ async def test_response_entries_carry_full_ui_contract(tmp_path: Path) -> None:
         assert entry.learned_turn == fact.learned_turn, (
             f"learned_turn mismatch: response={entry.learned_turn} fact={fact.learned_turn}"
         )
-        assert entry.fact_id, "fact_id must be non-empty (UI uses it for dedup)"
-        assert entry.category, (
-            "category must be non-empty (UI passes it through validateCategory) — "
-            "do NOT silently default to empty string"
+        assert entry.category == fact.category, (
+            f"category mismatch: response={entry.category!r} fact={fact.category!r} — "
+            "UI passes category through validateCategory; do NOT silently default"
         )
 
 
@@ -357,7 +358,10 @@ async def test_unseated_player_returns_error_not_empty_list(tmp_path: Path) -> N
         f"unseated player must get ErrorMessage, got {type(err).__name__} — "
         "silent empty list would mask the bug"
     )
-    assert err.payload.code, "error must carry a machine-readable code"
+    assert err.payload.code == "player_unseated", (
+        f"unseated-player branch must emit code='player_unseated' for UI branching, "
+        f"got {err.payload.code!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -437,6 +441,42 @@ async def test_seat_points_to_missing_character_returns_error(tmp_path: Path) ->
     assert isinstance(err, ErrorMessage), (
         "broken seat (no matching character) must raise an error, not return empty"
     )
+    assert err.payload.code == "seat_broken", (
+        f"broken-seat branch must emit code='seat_broken' so the GM panel can "
+        f"distinguish state-corruption from missing-seat, got {err.payload.code!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_filter_field_is_currently_ignored(tmp_path: Path) -> None:
+    """``JournalRequestPayload.filter`` is documented as a future-use placeholder.
+
+    Until a future story wires up filter dispatch, the handler must
+    return every known_fact regardless of the filter value. This test
+    pins that ignore-behavior so the day someone implements filtering
+    they will have a baseline regression signal (this test will fail
+    when filtering becomes selective).
+    """
+    handler = WebSocketSessionHandler(save_dir=tmp_path / "saves", genre_pack_search_paths=[])
+    _attach(handler)
+    facts = _three_facts()
+    _bind_seated_room(
+        handler,
+        tmp_path,
+        {"P1": _character_with_facts("Rux", facts)},
+    )
+
+    msg = JournalRequestMessage(
+        payload={"filter": "Lore"},  # type: ignore[arg-type]
+        player_id="P1",
+    )
+    outbound = await handler.handle_message(msg)
+    response = outbound[0]
+    assert isinstance(response, JournalResponseMessage)
+    assert len(response.payload.entries) == len(facts), (
+        "filter field is documented as future-use; the handler must currently "
+        "return all known_facts regardless of filter value"
+    )
 
 
 @pytest.mark.asyncio
@@ -463,6 +503,10 @@ async def test_empty_player_id_returns_error(tmp_path: Path) -> None:
     err = outbound[0]
     assert isinstance(err, ErrorMessage), (
         "empty player_id must produce an error, not fall through to a default seat"
+    )
+    assert err.payload.code == "invalid_player_id", (
+        f"empty-player_id branch must emit code='invalid_player_id', "
+        f"got {err.payload.code!r}"
     )
 
 
@@ -584,11 +628,15 @@ def test_journal_request_payload_in_phase1_variant() -> None:
     """
     from sidequest.protocol.messages import GameMessage
 
-    # Deserialize a wire-format JOURNAL_REQUEST.
+    # Deserialize a wire-format JOURNAL_REQUEST and confirm the discriminator
+    # routed it to the JournalRequestPayload shape (with default filter=None).
     msg = GameMessage.model_validate({"type": "JOURNAL_REQUEST", "payload": {}, "player_id": "P1"})
-    assert msg.type == MessageType.JOURNAL_REQUEST
+    assert msg.player_id == "P1"
+    assert msg.payload.filter is None
 
-    # Deserialize a wire-format JOURNAL_RESPONSE with one entry.
+    # Deserialize a wire-format JOURNAL_RESPONSE with one entry and confirm
+    # the discriminator routed it to the JournalResponsePayload shape with
+    # the entry's fields populated (not just that the type tag matched).
     response = GameMessage.model_validate(
         {
             "type": "JOURNAL_RESPONSE",
@@ -607,4 +655,8 @@ def test_journal_request_payload_in_phase1_variant() -> None:
             "player_id": "P1",
         }
     )
-    assert response.type == MessageType.JOURNAL_RESPONSE
+    assert response.player_id == "P1"
+    assert len(response.payload.entries) == 1
+    assert response.payload.entries[0].fact_id == "f-1"
+    assert response.payload.entries[0].content == "test"
+    assert response.payload.entries[0].learned_turn == 1

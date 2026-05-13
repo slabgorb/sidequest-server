@@ -11,9 +11,9 @@ Attributes:
     character_name: name of the seated character whose journal was returned
     entry_count: number of KnownFact entries serialized into the response
 
-Zero-duration; no child spans. Routed flat-only — the GM dashboard
-displays it on the Subsystems → Journal pane, alongside scenario clue
-discoveries.
+Short-duration: the span wraps two ``set_attribute`` calls and no awaited
+work. No child spans. Routed flat-only — the GM dashboard surfaces it on
+the Subsystems tab component grid alongside other subsystem events.
 """
 
 FLAT_ONLY_SPANS.update({SPAN_JOURNAL_REPLAY})
