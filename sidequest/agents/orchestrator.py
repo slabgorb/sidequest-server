@@ -1776,6 +1776,55 @@ class Orchestrator:
             ),
         )
 
+        # Story 49-3 — location-patch constraint (Recency zone Guardrail).
+        # Paired with the server-side drift-repair backstop in
+        # ``sidequest.server.narration_apply._apply_narration_result_to_snapshot``
+        # which auto-promotes a leading ``**Room Title**`` into
+        # ``character_locations`` and emits the
+        # ``narrator.location_drift_repaired`` span.
+        #
+        # 2026-05-11 Glenross: across five turns the narrator wrote
+        # ``**The Bee Garden** → **The Manse Garden** → **Front Parlour**
+        # → **Study** → **Sickroom Passage**`` as room headers while
+        # ``character_locations[Ziggy]='the_manse'`` lagged the prose
+        # because ``game_patch.location`` was empty on turns 2-5
+        # (has_location=False). SOUL.md "Illusionism": narrator and
+        # state on different tracks, GM panel blind to actual position.
+        # Same disease as the confrontation_trigger / npc_extraction
+        # guardrails above; same cure: a Recency-zone restatement so
+        # the rule lives in high-attention space every turn.
+        registry.register_section(
+            agent_name,
+            PromptSection.new(
+                "location_patch_constraint",
+                (
+                    "<location-patch>\n"
+                    "If your prose this turn opens a new scene with a "
+                    "bold room header (``**Title**`` or ``## **Title**``) "
+                    "OR your prose moves the party into a different named "
+                    "space, your ``game_patch.location`` MUST be set to "
+                    "the new room.\n"
+                    "State must not lag prose. A bold title with no "
+                    "matching ``location`` field leaves the GM panel "
+                    "and the canonical ``character_locations`` map "
+                    "pointing at the prior room while the players are "
+                    "reading the new one — the same Illusionism failure "
+                    "mode SOUL.md warns against.\n"
+                    "If the scene has NOT changed and you are continuing "
+                    "in the same room, omit ``location`` (or set it to "
+                    "the current value). The server runs a drift-repair "
+                    "backstop that auto-promotes leading bold titles "
+                    "into ``character_locations`` and emits a WARNING-"
+                    "level ``narrator.location_drift_repaired`` span — "
+                    "but the backstop is a safety net, not the source "
+                    "of truth. You are."
+                    "\n</location-patch>"
+                ),
+                AttentionZone.Recency,
+                SectionCategory.Guardrail,
+            ),
+        )
+
         # Recent-narrative window (Recency zone, Story 49-1).
         # ADR-098 dropped --resume; the narrator lost its conversational
         # history because narrative_log lived in the Valley-zone game_state

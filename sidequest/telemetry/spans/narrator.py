@@ -8,7 +8,7 @@ from typing import Any
 
 from opentelemetry import trace
 
-from ._core import FLAT_ONLY_SPANS
+from ._core import FLAT_ONLY_SPANS, SPAN_ROUTES, SpanRoute
 from .span import Span
 
 # ---------------------------------------------------------------------------
@@ -18,6 +18,13 @@ from .span import Span
 SPAN_NARRATOR_SEALED_ROUND = "narrator.sealed_round"
 SPAN_NARRATOR_SESSION_ROTATED = "narrator.session_rotated"
 SPAN_NARRATOR_UNRECOVERABLE = "narrator.unrecoverable"
+# Story 49-3: Glenross playtest 2026-05-11 — narrator wrote new ``**Room
+# Title**`` headers across five turns while character_locations stayed
+# stale on ``the_manse``. ``_apply_narration_result_to_snapshot`` now
+# auto-fills the structured patch field from the leading bold title and
+# emits this span so Sebastien's GM panel surfaces every repair as the
+# WARNING-level lie-detector signal the operator iterates the prompt on.
+SPAN_NARRATOR_LOCATION_DRIFT_REPAIRED = "narrator.location_drift_repaired"
 
 FLAT_ONLY_SPANS.update(
     {
@@ -25,6 +32,24 @@ FLAT_ONLY_SPANS.update(
         SPAN_NARRATOR_SESSION_ROTATED,
         SPAN_NARRATOR_UNRECOVERABLE,
     }
+)
+
+# Routed: the GM panel reads this as a typed ``state_transition`` row in
+# the character-locations lane. ``op="location_drift_repaired"`` parallels
+# the region-state op vocabulary so the dashboard can group the location-
+# drift family alongside ``entry_rejected`` / ``canonicalized_dedup``.
+SPAN_ROUTES[SPAN_NARRATOR_LOCATION_DRIFT_REPAIRED] = SpanRoute(
+    event_type="state_transition",
+    component="narrator",
+    extract=lambda span: {
+        "field": "character_locations",
+        "op": "location_drift_repaired",
+        "character": (span.attributes or {}).get("character", ""),
+        "player_name": (span.attributes or {}).get("player_name", ""),
+        "old_state": (span.attributes or {}).get("old_state", ""),
+        "new_from_title": (span.attributes or {}).get("new_from_title", ""),
+        "turn": (span.attributes or {}).get("turn", 0),
+    },
 )
 
 
@@ -80,3 +105,50 @@ def narrator_unrecoverable_span(
     with Span.open(SPAN_NARRATOR_UNRECOVERABLE, attrs, tracer_override=_tracer) as span:
         span.set_status(trace.Status(trace.StatusCode.ERROR, "narrator unrecoverable"))
         yield span
+
+
+@contextlib.contextmanager
+def location_drift_repaired_span(
+    *,
+    old_state: str,
+    new_from_title: str,
+    character: str,
+    player_name: str,
+    turn: int,
+    _tracer: trace.Tracer | None = None,
+    **extra: Any,
+) -> Iterator[trace.Span]:
+    """Story 49-3: emitted when ``_apply_narration_result_to_snapshot``
+    detected drift between the narrator's leading bold-title room header
+    and the canonical ``character_locations`` entry, and auto-filled the
+    structured patch field from the prose.
+
+    ``severity="warning"`` opts the route translator into the warning
+    grade so Sebastien's GM panel surfaces this above routine INFO
+    state transitions — drift is a prompt-quality signal the operator
+    iterates on, not a routine update.
+    """
+    attrs: dict[str, Any] = {
+        "old_state": old_state,
+        "new_from_title": new_from_title,
+        "character": character,
+        "player_name": player_name,
+        "turn": turn,
+        "severity": "warning",
+        **extra,
+    }
+    with Span.open(
+        SPAN_NARRATOR_LOCATION_DRIFT_REPAIRED, attrs, tracer_override=_tracer
+    ) as span:
+        yield span
+
+
+__all__ = [
+    "SPAN_NARRATOR_LOCATION_DRIFT_REPAIRED",
+    "SPAN_NARRATOR_SEALED_ROUND",
+    "SPAN_NARRATOR_SESSION_ROTATED",
+    "SPAN_NARRATOR_UNRECOVERABLE",
+    "location_drift_repaired_span",
+    "narrator_session_rotated_span",
+    "narrator_unrecoverable_span",
+]
