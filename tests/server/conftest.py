@@ -1156,3 +1156,65 @@ def otel_capture():
         yield exporter
     finally:
         processor.shutdown()
+
+
+@pytest.fixture
+def otel_exporter():
+    """Isolated in-memory OTEL exporter via ``_spans.tracer`` monkey-patch.
+
+    Companion to :func:`otel_capture`. Both yield an
+    ``InMemorySpanExporter`` for span-assertion tests, but the two patterns
+    differ in scope:
+
+    - ``otel_capture`` installs a processor on the *global* TracerProvider
+      (via :func:`sidequest.telemetry.setup.init_tracer`). Use it when you
+      want any span emitted anywhere during the test to land in the
+      exporter — including those emitted by lazily-cached module-level
+      tracers (``otel_trace.get_tracer(__name__)`` at import time).
+    - ``otel_exporter`` builds a *fresh* TracerProvider and patches
+      ``sidequest.telemetry.spans.tracer`` to return its tracer. Use it
+      when you want strict per-test isolation and only care about spans
+      emitted via :class:`~sidequest.telemetry.spans.span.Span.open`
+      (which resolves the tracer lazily via the patched callable). Spans
+      from modules that cache their tracer at import time will NOT be
+      captured by this fixture.
+
+    Use ``otel_capture`` by default; reach for ``otel_exporter`` when a
+    test needs guaranteed isolation from prior fixture state.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from sidequest.telemetry import spans as _spans
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    original = _spans.tracer
+    _spans.tracer = lambda: provider.get_tracer("test")
+    try:
+        yield exporter
+    finally:
+        _spans.tracer = original
+
+
+def span_attrs_by_name(
+    exporter,
+    span_name: str,
+) -> list[dict]:
+    """Return attribute dicts for every finished span with ``name == span_name``.
+
+    Helper for span-assertion tests — extracts the ``attributes`` dict
+    from each matching span in the exporter. Returns an empty list if no
+    spans match. Used by Story 50-5 scenario clue intake tests and
+    extensible to any future test that needs to assert span attribute
+    payloads.
+    """
+    return [
+        dict(span.attributes or {})
+        for span in exporter.get_finished_spans()
+        if span.name == span_name
+    ]
