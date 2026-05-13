@@ -317,6 +317,12 @@ class NarrationTurnResult:
     companions_added: list[dict[str, Any]] = field(default_factory=list)
     companions_dismissed: list[str] = field(default_factory=list)
 
+    # Story 50-4 — in-game day advancement signal from narrator.
+    # When > 0, narration_apply calls trope_tick with this value so
+    # Pass A2 advances every progressing trope by rate_per_day * clamp(N, 0, 14).
+    # Sub-day passage stays 0 (time_of_day handles intra-day cues).
+    days_advanced: int = 0
+
     # Raw game_patch dict (plot-a-course Bundle 5). Carries the full parsed
     # game_patch JSON so narration_apply can dispatch sidecar intents (e.g.
     # plot_course / cancel_course) that aren't individually extracted fields.
@@ -758,6 +764,13 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "magic_working": patch.get("magic_working"),
         "companions_added": [d for d in patch.get("companions_added", []) if isinstance(d, dict)],
         "companions_dismissed": [str(n) for n in patch.get("companions_dismissed", []) if n],
+        # Story 50-4: Coerce to non-negative int. Anything else (string, float,
+        # negative, missing) maps to 0 — same silent-drop pattern as items.
+        "days_advanced": (
+            raw_days
+            if isinstance(raw_days := patch.get("days_advanced", 0), int) and raw_days >= 0
+            else 0
+        ),
     }
 
 
@@ -2360,6 +2373,7 @@ class Orchestrator:
                 ),
                 companions_added=extraction.get("companions_added", []),
                 companions_dismissed=extraction.get("companions_dismissed", []),
+                days_advanced=extraction.get("days_advanced", 0),
                 game_patch_dict=_extract_game_patch_json(raw_response),
                 agent_name=agent_name,
                 agent_duration_ms=elapsed_ms,
@@ -2561,6 +2575,7 @@ class Orchestrator:
             ),
             companions_added=extraction.get("companions_added", []),
             companions_dismissed=extraction.get("companions_dismissed", []),
+            days_advanced=extraction.get("days_advanced", 0),
             game_patch_dict=_extract_game_patch_json(raw_response),
             agent_name=agent_name,
             agent_duration_ms=elapsed_ms,
