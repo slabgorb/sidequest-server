@@ -1,23 +1,29 @@
-"""Wiring tests — production code uses ``Disposition.attitude()`` not the helper — Story 50-10.
+"""Wiring tests — production code uses ``Disposition.attitude()`` — Story 50-10.
 
-This is the integration test required by CLAUDE.md ("Every Test Suite
-Needs a Wiring Test"). Unit tests prove ``Disposition.attitude()`` works
-in isolation. That is meaningless until the dispatch surface and the
-state mutator actually call ``.attitude()`` instead of the legacy
-``disposition_attitude()`` helper.
+Unit tests prove ``Disposition.attitude()`` works in isolation. That is
+meaningless until the dispatch surface and the state mutator actually
+call ``.attitude()`` along the live path. CLAUDE.md ("Every Test Suite
+Needs a Wiring Test") is satisfied by the behavioral test at the bottom
+of this file; the source-level checks above it are negative-existence
+guards intentionally fragile-by-design — they catch a regression that
+restores the legacy ``disposition_attitude`` import without exercising
+runtime behavior.
 
 Two enforcement paths:
 
-1. Source-level — assert no production module under ``sidequest/``
-   (excluding ``tests/``) calls ``disposition_attitude(`` anywhere.
-   The helper may still exist in the module for transition compatibility,
-   but production code paths must not use it.
+1. Source-level guards — assert that ``opening.py`` and ``session.py``
+   no longer import ``disposition_attitude``. These tests fail on the
+   pure presence of a legacy import even if behavior is correct; that
+   is deliberate. They are NOT a substitute for runtime coverage.
 
-2. Behavioral — apply a real ``WorldStatePatch`` with ``npc_attitudes``
-   and assert the SPAN_DISPOSITION_SHIFT span carries string attitudes
-   that match ``Disposition.attitude()`` (the new contract), not just
-   the string output of the legacy helper. The ``crossed`` field stays
-   wired to band identity (50-11's invariant).
+2. Behavioral wiring — apply a real ``WorldStatePatch`` with
+   ``npc_attitudes`` and assert the SPAN_DISPOSITION_SHIFT span carries
+   string attitudes derived through ``Disposition.attitude()``; assert
+   that ``npc.disposition`` remains a ``Disposition`` instance after the
+   mutator runs. This is the CLAUDE.md wiring test for the session.py
+   call path. ``opening.py``'s runtime path is covered by the existing
+   ``tests/server/test_opening_render_*.py`` suites which exercise the
+   same rendering code that builds attitude strings.
 """
 
 from __future__ import annotations
@@ -160,8 +166,9 @@ async def _setup(monkeypatch: pytest.MonkeyPatch, label: str) -> list[dict]:
 async def _wait_for_event(
     captured: list[dict], field_value: str, *, timeout_s: float = 1.0
 ) -> dict:
-    deadline = asyncio.get_event_loop().time() + timeout_s
-    while asyncio.get_event_loop().time() < deadline:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while loop.time() < deadline:
         for evt in captured:
             if (
                 evt.get("event_type") == "state_transition"

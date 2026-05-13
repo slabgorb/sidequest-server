@@ -123,22 +123,24 @@ def test_npc_disposition_round_trips_via_json_dump_and_validate() -> None:
     assert restored.disposition.attitude() == Attitude.HOSTILE
 
 
-def test_npc_disposition_json_payload_contains_numeric_value() -> None:
-    """Negative invariant: the JSON form must encode the numeric value
-    in a way the GM panel can read. Either bare int or a tagged dict —
-    but never ``"Disposition(15)"`` (repr leak). This locks the wire
-    shape: the field must round-trip through ``int(disposition.value)``
-    semantics, not Python ``repr()``."""
+def test_npc_disposition_json_payload_is_bare_integer() -> None:
+    """The JSON form of ``Npc.disposition`` must be a bare int — that's
+    the contract the GM panel and save-file reader expect. A wrapper
+    shape (``{"value": 15}``, ``"Disposition(15)"``, etc.) would corrupt
+    every save and break the panel's numeric read path.
+
+    Locks the exact wire shape via type+value equality, not substring
+    matching — a substring check on ``json.dumps()`` would pass on a
+    coincidental ``15`` somewhere else in the encoded sub-object."""
     npc = _make_npc("Bystander", Disposition(15))
-    blob = npc.model_dump_json()
-    payload = json.loads(blob)
-    # The disposition value (15) must appear somewhere in the payload
-    # in a JSON-native way (as int or as a numeric field inside a dict).
-    # A Disposition that dumps as the string "Disposition(15)" fails here.
-    flat = json.dumps(payload["disposition"])
-    assert "15" in flat, f"disposition payload missing numeric value: {payload['disposition']!r}"
-    assert "Disposition(" not in flat, (
-        f"disposition serialized as Python repr — JSON contract broken: {payload['disposition']!r}"
+    payload = json.loads(npc.model_dump_json())
+    assert payload["disposition"] == 15, (
+        f"disposition must serialize to bare int 15, got {payload['disposition']!r} "
+        f"(type {type(payload['disposition']).__name__})"
+    )
+    assert isinstance(payload["disposition"], int), (
+        f"disposition JSON shape must be int, got {type(payload['disposition']).__name__}: "
+        f"{payload['disposition']!r}"
     )
 
 

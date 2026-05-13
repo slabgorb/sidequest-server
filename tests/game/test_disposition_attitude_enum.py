@@ -1,15 +1,16 @@
 """Unit tests for ``Attitude`` enum + ``Disposition`` class — Story 50-10.
 
-Restores the qualitative attitude layer dropped during the 2026-04 Python
-port. ADR-020 defines the three-tier mapping (>10 friendly, <-10 hostile,
-otherwise neutral). The Rust-era ``Attitude`` + ``Disposition(i32)`` newtype
-pattern is being re-introduced as a Python ``Attitude`` enum +
-``Disposition`` class with a ``.attitude()`` derivation method.
+Story 50-10 restored the qualitative attitude layer dropped during the
+2026-04 Python port. ADR-020 defines the three-tier mapping (>10
+friendly, <-10 hostile, otherwise neutral). The Rust-era ``Attitude`` +
+``Disposition(i32)`` newtype pattern is re-introduced as a Python
+``Attitude`` enum + ``Disposition`` class with a ``.attitude()``
+derivation method.
 
 The string values ``"friendly"`` / ``"neutral"`` / ``"hostile"`` are the
 stable wire contract — OTEL spans, GM panel, and narrator NPC
-serialization all assume those literals. Story 50-10 must preserve them
-exactly so the threshold-crossing fields shipped in 50-11 keep working
+serialization all match on those literals. These tests lock the wire
+contract so the threshold-crossing fields shipped in 50-11 keep working
 without revisiting the SPAN_DISPOSITION_SHIFT route.
 """
 
@@ -149,9 +150,14 @@ def test_two_disposition_instances_with_defaults_are_independent_objects() -> No
     multiplayer NPCs would inherit each other's affinity shifts."""
     a = Disposition()
     b = Disposition()
-    # Same starting value, but separate objects so any future mutation
-    # path through ``.value`` or a setter cannot leak across NPCs.
     assert a is not b, "Disposition() must return distinct instances per call"
+    # Distinct objects must also have independent state — mutating one
+    # must not bleed into the other. Catches a future regression where
+    # someone slots a class-level cached instance behind ``__new__``.
+    a.value = 50
+    assert b.value == 0, (
+        f"mutating a.value leaked into b.value: a={a.value}, b={b.value}"
+    )
 
 
 def test_attitude_string_value_matches_otel_contract_exactly() -> None:

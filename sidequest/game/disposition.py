@@ -1,6 +1,6 @@
 """Disposition → attitude band mapping (ADR-020 three-tier).
 
-Story 50-10 restores the qualitative attitude layer that was dropped
+Story 50-10 restored the qualitative attitude layer that was dropped
 during the 2026-04 Python port. The Rust-era pattern lived as an
 ``Attitude`` enum + ``Disposition(i32)`` newtype with ``.attitude()``
 derivation; this module mirrors that shape in Python.
@@ -14,8 +14,8 @@ each agent see only what it needs.
 
 The string values ``"friendly"`` / ``"neutral"`` / ``"hostile"`` are the
 stable wire contract — OTEL spans (``SPAN_DISPOSITION_SHIFT``), the GM
-panel, the scrapbook, and the narrator's NPC serialization all assume
-those exact literals. Story 50-10 must not change them.
+panel, the scrapbook, and the narrator's NPC serialization all match on
+those exact literals.
 
 Boundaries (strict, per ADR-020):
 
@@ -34,6 +34,8 @@ from typing import Any
 
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
+
+__all__ = ["Attitude", "Disposition"]
 
 
 class Attitude(StrEnum):
@@ -93,19 +95,14 @@ class Disposition:
     ) -> CoreSchema:
         """Pydantic v2 schema hook.
 
-        Accepts a ``Disposition`` instance (pass-through), a raw int
-        (coerced via ``Disposition(int)`` with clamping), or a dict
-        ``{"value": <int>}`` (round-trip form from a prior ``model_dump``
-        that happened to produce a dict). Serializes back to a bare
-        ``int`` so save-file JSON stays human-readable and the GM panel
-        can read the numeric value without unpacking a wrapper.
+        Accepts a ``Disposition`` instance (pass-through) or a raw int
+        (coerced via ``Disposition(int)`` with clamping). Serializes back
+        to a bare ``int`` so save-file JSON stays human-readable and the
+        GM panel can read the numeric value without unpacking a wrapper.
         """
 
         def _from_int(v: int) -> Disposition:
             return cls(v)
-
-        def _from_dict(v: dict[str, int]) -> Disposition:
-            return cls(int(v.get("value", 0)))
 
         return core_schema.union_schema(
             [
@@ -114,32 +111,9 @@ class Disposition:
                     _from_int,
                     core_schema.int_schema(),
                 ),
-                core_schema.no_info_after_validator_function(
-                    _from_dict,
-                    core_schema.dict_schema(
-                        keys_schema=core_schema.str_schema(),
-                        values_schema=core_schema.int_schema(),
-                    ),
-                ),
             ],
             serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda d: d.value if isinstance(d, cls) else int(d),
+                lambda d: d.value,
                 return_schema=core_schema.int_schema(),
             ),
         )
-
-
-def disposition_attitude(disposition: int) -> str:
-    """Legacy helper, retained for compatibility with cutover tests.
-
-    Production code must use ``Disposition(value).attitude()`` instead;
-    the wiring tests in ``tests/game/test_disposition_call_site_migration.py``
-    enforce that no production module calls this function. It survives
-    in this module only so a few transition-era tests can still assert
-    the old vocabulary alongside the new ``Attitude`` enum.
-    """
-    if disposition > 10:
-        return Attitude.FRIENDLY.value
-    if disposition < -10:
-        return Attitude.HOSTILE.value
-    return Attitude.NEUTRAL.value
