@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import Orchestrator
@@ -24,6 +25,7 @@ from sidequest.game.projection.composed import ComposedFilter
 from sidequest.game.projection.envelope import MessageEnvelope
 from sidequest.game.scrapbook_coverage import detect_scrapbook_coverage_gaps
 from sidequest.game.session import GameSnapshot
+from sidequest.game.trope_advance import advance_tropes_between_sessions
 from sidequest.genre.loader import GenreLoader
 from sidequest.protocol.messages import (
     ChapterMarkerMessage,
@@ -343,6 +345,18 @@ class ConnectHandler:
                     snapshot=snapshot,
                     genre_pack=genre_pack,
                     world_slug=row.world_slug,
+                )
+                # Story 50-4 (ADR-018): passive trope progression between
+                # sessions. Each progressing trope advances by
+                # rate_per_day * elapsed_days using snapshot.last_saved_at
+                # as the anchor; crossed beats fire without narrator
+                # involvement (the opening turn frames the catch-up). The
+                # call is a no-op for never-saved snapshots — only
+                # already-played sessions accumulate offline drift.
+                advance_tropes_between_sessions(
+                    snapshot=snapshot,
+                    pack=genre_pack,
+                    now=datetime.now(tz=UTC),
                 )
                 # Per-player chargen gate (playtest 2026-04-25). MP: a new
                 # player_id joining a slug that already has a character must

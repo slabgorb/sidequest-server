@@ -26,12 +26,7 @@ from pathlib import Path
 
 import pytest
 
-CONNECT_MODULE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "sidequest"
-    / "handlers"
-    / "connect.py"
-)
+CONNECT_MODULE_PATH = Path(__file__).resolve().parents[2] / "sidequest" / "handlers" / "connect.py"
 
 
 def _connect_source() -> str:
@@ -119,11 +114,9 @@ class TestEngineWiredIntoConnectHandler:
                 continue
             func = node.func
             is_target = (
-                isinstance(func, ast.Name)
-                and func.id == "advance_tropes_between_sessions"
+                isinstance(func, ast.Name) and func.id == "advance_tropes_between_sessions"
             ) or (
-                isinstance(func, ast.Attribute)
-                and func.attr == "advance_tropes_between_sessions"
+                isinstance(func, ast.Attribute) and func.attr == "advance_tropes_between_sessions"
             )
             if not is_target:
                 continue
@@ -177,9 +170,7 @@ class TestEngineModuleHygiene:
 
         import sidequest.game.trope_advance as mod
 
-        assert inspect.getdoc(mod), (
-            "sidequest.game.trope_advance is missing its module docstring"
-        )
+        assert inspect.getdoc(mod), "sidequest.game.trope_advance is missing its module docstring"
 
     def test_public_function_has_docstring(self) -> None:
         from sidequest.game.trope_advance import advance_tropes_between_sessions

@@ -68,9 +68,7 @@ def _trope_def(
         category="tension",
         triggers=[],
         narrative_hints=[],
-        escalation=[
-            TropeEscalation(at=t, event=f"beat at {t}", stakes="") for t in thresholds
-        ],
+        escalation=[TropeEscalation(at=t, event=f"beat at {t}", stakes="") for t in thresholds],
         passive_progression=PassiveProgression(
             rate_per_turn=rate_per_turn, rate_per_day=rate_per_day
         ),
@@ -218,17 +216,14 @@ class TestAC1LoadTimeAdvancement:
             [("ticking_clock", "progressing", 0.10)],
             last_saved_at=last_saved,
         )
-        pack = _pack_with(
-            [_trope_def("ticking_clock", rate_per_day=0.10, thresholds=(0.99,))]
-        )
+        pack = _pack_with([_trope_def("ticking_clock", rate_per_day=0.10, thresholds=(0.99,))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
         # 0.10 + 3 * 0.10 = 0.40
         trope = snap.active_tropes[0]
         assert trope.progress == pytest.approx(0.40), (
-            f"expected progress=0.40 after 3 days @ 0.10/day from 0.10, "
-            f"got {trope.progress}"
+            f"expected progress=0.40 after 3 days @ 0.10/day from 0.10, got {trope.progress}"
         )
 
     def test_fractional_days_advance_fractionally(self) -> None:
@@ -242,9 +237,7 @@ class TestAC1LoadTimeAdvancement:
             [("simmering_tension", "progressing", 0.00)],
             last_saved_at=last_saved,
         )
-        pack = _pack_with(
-            [_trope_def("simmering_tension", rate_per_day=0.20, thresholds=(0.99,))]
-        )
+        pack = _pack_with([_trope_def("simmering_tension", rate_per_day=0.20, thresholds=(0.99,))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
@@ -261,9 +254,7 @@ class TestAC1LoadTimeAdvancement:
             [("inert_trope", "progressing", 0.42)],
             last_saved_at=last_saved,
         )
-        pack = _pack_with(
-            [_trope_def("inert_trope", rate_per_day=0.0, thresholds=(0.99,))]
-        )
+        pack = _pack_with([_trope_def("inert_trope", rate_per_day=0.0, thresholds=(0.99,))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
@@ -287,9 +278,7 @@ class TestAC1LoadTimeAdvancement:
             [("queued_trope", "dormant", 0.00)],
             last_saved_at=now - timedelta(days=10),
         )
-        pack = _pack_with(
-            [_trope_def("queued_trope", rate_per_day=0.50, thresholds=(0.25,))]
-        )
+        pack = _pack_with([_trope_def("queued_trope", rate_per_day=0.50, thresholds=(0.25,))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
@@ -309,9 +298,7 @@ class TestAC1LoadTimeAdvancement:
             [("finished_arc", "resolved", 1.00)],
             last_saved_at=now - timedelta(days=10),
         )
-        pack = _pack_with(
-            [_trope_def("finished_arc", rate_per_day=0.10, thresholds=(0.99,))]
-        )
+        pack = _pack_with([_trope_def("finished_arc", rate_per_day=0.10, thresholds=(0.99,))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
@@ -424,8 +411,7 @@ class TestAC2BeatFiringOnLoad:
 
         trope = snap.active_tropes[0]
         assert trope.beats_fired == 1, (
-            f"expected beats_fired=1 after crossing 0.25 threshold once, "
-            f"got {trope.beats_fired}"
+            f"expected beats_fired=1 after crossing 0.25 threshold once, got {trope.beats_fired}"
         )
 
     def test_multiple_beats_fire_from_large_elapsed_time(self) -> None:
@@ -457,8 +443,7 @@ class TestAC2BeatFiringOnLoad:
 
         trope = snap.active_tropes[0]
         assert trope.beats_fired == 2, (
-            f"expected beats_fired=2 after crossing 0.25 and 0.50, "
-            f"got {trope.beats_fired}"
+            f"expected beats_fired=2 after crossing 0.25 and 0.50, got {trope.beats_fired}"
         )
 
     def test_beat_not_fired_when_threshold_not_crossed(self) -> None:
@@ -532,9 +517,7 @@ class TestAC2BeatFiringOnLoad:
             [("quiet_fire", "progressing", 0.20)],
             last_saved_at=now - timedelta(days=1),
         )
-        pack = _pack_with(
-            [_trope_def("quiet_fire", rate_per_day=0.10, thresholds=(0.25,))]
-        )
+        pack = _pack_with([_trope_def("quiet_fire", rate_per_day=0.10, thresholds=(0.25,))])
         narrative_log_before = list(snap.narrative_log)
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
@@ -566,9 +549,7 @@ class TestAC3ProgressClamp:
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
         trope = snap.active_tropes[0]
-        assert trope.progress <= 1.0, (
-            f"progress must clamp at 1.0, got {trope.progress}"
-        )
+        assert trope.progress <= 1.0, f"progress must clamp at 1.0, got {trope.progress}"
         assert trope.progress == pytest.approx(1.0)
 
     def test_status_resolves_when_progress_clamps_to_one_and_all_beats_fired(
@@ -589,9 +570,7 @@ class TestAC3ProgressClamp:
         )
         # 0.10 + 10 * 1.0 = 10.10 → clamped to 1.0; thresholds at 0.5
         # and 1.0 both crossed.
-        pack = _pack_with(
-            [_trope_def("terminal", rate_per_day=1.0, thresholds=(0.50, 1.00))]
-        )
+        pack = _pack_with([_trope_def("terminal", rate_per_day=1.0, thresholds=(0.50, 1.00))])
 
         advance_tropes_between_sessions(snapshot=snap, pack=pack, now=now)
 
@@ -663,8 +642,7 @@ class TestAC4NoAdvanceOnFirstLoad:
 
         trope = snap.active_tropes[0]
         assert trope.progress == pytest.approx(0.10), (
-            "with last_saved_at=None the engine must not advance — "
-            "no anchor for elapsed-days"
+            "with last_saved_at=None the engine must not advance — no anchor for elapsed-days"
         )
         assert trope.beats_fired == 0
 
@@ -712,8 +690,7 @@ class TestAC5OtelEmission:
         from sidequest.telemetry.spans import trope as trope_spans
 
         assert hasattr(trope_spans, "SPAN_TROPE_BETWEEN_SESSION_ADVANCE"), (
-            "missing constant SPAN_TROPE_BETWEEN_SESSION_ADVANCE in "
-            "sidequest.telemetry.spans.trope"
+            "missing constant SPAN_TROPE_BETWEEN_SESSION_ADVANCE in sidequest.telemetry.spans.trope"
         )
         assert hasattr(span_pkg, "SPAN_TROPE_BETWEEN_SESSION_ADVANCE"), (
             "SPAN_TROPE_BETWEEN_SESSION_ADVANCE must be re-exported from "
@@ -743,9 +720,7 @@ class TestAC5OtelEmission:
             f"in_routes={in_routes} in_flat={in_flat}"
         )
 
-    def test_span_emitted_per_advancing_trope(
-        self, otel_capture: InMemorySpanExporter
-    ) -> None:
+    def test_span_emitted_per_advancing_trope(self, otel_capture: InMemorySpanExporter) -> None:
         """One span per trope that actually moved. Two tropes
         advance → two spans. A trope with rate_per_day=0 advancing
         zero must NOT emit (otherwise the panel sees noise).
@@ -778,9 +753,7 @@ class TestAC5OtelEmission:
             f"expected spans for the two advancing tropes only; got {trope_ids}"
         )
 
-    def test_span_attributes_match_ac5_contract(
-        self, otel_capture: InMemorySpanExporter
-    ) -> None:
+    def test_span_attributes_match_ac5_contract(self, otel_capture: InMemorySpanExporter) -> None:
         """AC5 names five required attributes on the span:
         ``trope_id``, ``days_elapsed``, ``progress_before``,
         ``progress_after``, ``beats_fired_count``, ``new_status``.

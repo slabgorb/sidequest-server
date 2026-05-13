@@ -33,6 +33,11 @@ SPAN_TROPE_CROSS_SESSION = "trope.cross_session"
 SPAN_TROPE_EVALUATE_TRIGGERS = "trope.evaluate_triggers"
 SPAN_TROPE_RESOLUTION_HANDSHAKE = "trope.resolution_handshake"
 
+# Story 50-4 — per-trope passive advancement at session load. Fires
+# once per trope that actually moved between save and reload; carries
+# elapsed-days and any beats the catch-up crossed.
+SPAN_TROPE_BETWEEN_SESSION_ADVANCE = "trope.between_session_advance"
+
 # Story 45-27 — diagnostic spans for activation refusals so the GM
 # panel can chart "engine refused to activate this" distinctly from
 # "engine never engaged".
@@ -129,6 +134,25 @@ SPAN_ROUTES[SPAN_TROPE_CAP_BLOCKED] = SpanRoute(
         "trope_id": (span.attributes or {}).get("trope_id", ""),
         "current_active_count": (span.attributes or {}).get("current_active_count", 0),
         "cap": (span.attributes or {}).get("cap", 0),
+    },
+)
+
+
+# Story 50-4 — between-session passive advancement. One event per trope
+# that moved at load. The panel renders elapsed_days + beats_fired_count
+# so the GM can see how much "offline catch-up" happened on this load
+# without cross-referencing a turn aggregate (between-session has no turn).
+SPAN_ROUTES[SPAN_TROPE_BETWEEN_SESSION_ADVANCE] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "trope_id": (span.attributes or {}).get("trope_id", ""),
+        "days_elapsed": (span.attributes or {}).get("days_elapsed", 0.0),
+        "progress_before": (span.attributes or {}).get("progress_before", 0.0),
+        "progress_after": (span.attributes or {}).get("progress_after", 0.0),
+        "beats_fired_count": (span.attributes or {}).get("beats_fired_count", 0),
+        "new_status": (span.attributes or {}).get("new_status", ""),
     },
 )
 
