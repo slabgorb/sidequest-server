@@ -26,14 +26,14 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+
+from sidequest.game.session import GameSnapshot, TropeState
 from sidequest.game.trope_time_skip import (
     DAY_TICK_CAP,
     TimeSkipBeatEvent,
     TropeTimeSkipFields,
     _pass_a2_time_skip,
 )
-
-from sidequest.game.session import GameSnapshot, TropeState
 from sidequest.genre.models.tropes import (
     PassiveProgression,
     TropeDefinition,
@@ -47,7 +47,7 @@ from sidequest.telemetry.setup import init_tracer
 
 
 def _trope_def(
-    trope_id: str = "test_trope",
+    trope_id: str = "t",
     *,
     rate_per_day: float = 0.04,
     rate_per_turn: float = 0.0,

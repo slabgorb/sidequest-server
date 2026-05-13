@@ -33,6 +33,12 @@ SPAN_TROPE_CROSS_SESSION = "trope.cross_session"
 SPAN_TROPE_EVALUATE_TRIGGERS = "trope.evaluate_triggers"
 SPAN_TROPE_RESOLUTION_HANDSHAKE = "trope.resolution_handshake"
 
+# Story 50-4 — distinct from SPAN_TROPE_TICK_PER (which is rate_per_turn).
+# Fires once per tick_tropes call where days_advanced > 0, regardless of
+# whether any beats fired. Sebastien-axis: GM panel can distinguish
+# in-session pacing drift from explicit time-skip drift.
+SPAN_TROPE_TIME_SKIP = "trope.time_skip"
+
 # Story 45-27 — diagnostic spans for activation refusals so the GM
 # panel can chart "engine refused to activate this" distinctly from
 # "engine never engaged".
@@ -142,6 +148,30 @@ SPAN_ROUTES[SPAN_TROPE_COOLDOWN_BLOCKED] = SpanRoute(
         "trope_id": (span.attributes or {}).get("trope_id", ""),
         "cooldown_until_turn": (span.attributes or {}).get("cooldown_until_turn", 0),
         "current_turn": (span.attributes or {}).get("current_turn", 0),
+    },
+)
+
+
+# Story 50-4 — time-skip drift. Fires once per tick where days_advanced > 0,
+# regardless of whether beats fired. The GM panel renders a +Nd badge and
+# the per-trope advancement list so Sebastien can confirm the drift cap
+# clamped correctly and which tropes (if any) skipped on a zero-rate def.
+SPAN_ROUTES[SPAN_TROPE_TIME_SKIP] = SpanRoute(
+    event_type="state_transition",
+    component="tropes",
+    extract=lambda span: {
+        "field": "active_tropes",
+        "days_requested": (span.attributes or {}).get("days_requested", 0),
+        "days_applied": (span.attributes or {}).get("days_applied", 0),
+        "clamped": (span.attributes or {}).get("clamped", False),
+        "tropes_affected": list((span.attributes or {}).get("tropes_affected", ()) or ()),
+        "tropes_skipped_zero_rate": list(
+            (span.attributes or {}).get("tropes_skipped_zero_rate", ()) or ()
+        ),
+        "beats_fired_count": (span.attributes or {}).get("beats_fired_count", 0),
+        "resolved_during_skip": list(
+            (span.attributes or {}).get("resolved_during_skip", ()) or ()
+        ),
     },
 )
 
