@@ -118,7 +118,7 @@ def _apply_shift(
         npcs=[_make_npc(npc_name, disposition=before)],
     )
     snapshot.apply_world_patch(WorldStatePatch(npc_attitudes={npc_name: delta}))
-    return snapshot, snapshot.npcs[0].disposition
+    return snapshot, int(snapshot.npcs[0].disposition)
 
 
 # ---------------------------------------------------------------------------

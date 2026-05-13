@@ -37,7 +37,6 @@ from sidequest.server.watcher import WatcherSpanProcessor
 from sidequest.telemetry import spans as spans_module
 from sidequest.telemetry.watcher_hub import watcher_hub
 
-
 # ---------------------------------------------------------------------------
 # Source-level wiring — no production calls to the legacy helper
 # ---------------------------------------------------------------------------

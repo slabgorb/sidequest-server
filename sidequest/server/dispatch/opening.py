@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import random
 
-from sidequest.game.disposition import disposition_attitude
+from sidequest.game.disposition import Disposition
 from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.chassis import BondTier
 from sidequest.genre.models.narrative import (
@@ -129,7 +129,7 @@ def _render_directive_chassis(
             "against the registry; you don't need to.):"
         )
         for npc in authored_crew:
-            attitude = disposition_attitude(npc.initial_disposition)
+            attitude = Disposition(npc.initial_disposition).attitude().value
             line = f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}"
             parts.append(line)
             if npc.history_seeds:
@@ -330,7 +330,7 @@ def _render_directive_location(
             "against the registry; you don't need to.):"
         )
         for npc in present_npcs:
-            attitude = disposition_attitude(npc.initial_disposition)
+            attitude = Disposition(npc.initial_disposition).attitude().value
             parts.append(f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}")
             if npc.history_seeds:
                 parts.append(f"  History: {npc.history_seeds[0]}")

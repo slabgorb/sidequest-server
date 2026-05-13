@@ -165,7 +165,7 @@ def test_apply_patch_npc_attitudes():
     s = _make_snapshot()
     s.npcs.append(npc)
     s.apply_world_patch(WorldStatePatch(npc_attitudes={"Grog": 10}))
-    assert s.npcs[0].disposition == 10
+    assert int(s.npcs[0].disposition) == 10
 
 
 def test_apply_patch_npc_upsert_new():
@@ -262,7 +262,7 @@ def test_apply_patch_creature_translates_hp_to_edge() -> None:
     # Level reflects threat_level
     assert moth.core.level == 1
     # Creatures default hostile (matches encountergen output)
-    assert moth.disposition == -20
+    assert int(moth.disposition) == -20
 
 
 def test_apply_patch_creature_hp_zero_clamps_to_one() -> None:
@@ -309,7 +309,7 @@ def test_apply_patch_human_npc_unchanged_by_creature_signal_absence() -> None:
     assert mira.abilities == []
     assert mira.morale is None
     # Human NPC default disposition is neutral
-    assert mira.disposition == 0
+    assert int(mira.disposition) == 0
     # Placeholder edge pool (not creature-seeded)
     assert mira.core.edge.max > 1  # PLACEHOLDER_EDGE_BASE_MAX is the constant
 
@@ -395,7 +395,7 @@ def test_creature_threat_level_only_still_signals_creature_branch() -> None:
         WorldStatePatch(npcs_present=[NpcPatch(name="Lurker", threat_level=2)])
     )
     lurker = next(n for n in s.npcs if n.core.name == "Lurker")
-    assert lurker.disposition == -20  # creature default hostile
+    assert int(lurker.disposition) == -20  # creature default hostile
     assert lurker.core.level == 2
 
 

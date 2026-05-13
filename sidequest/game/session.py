@@ -25,6 +25,7 @@ from sidequest.game.creature_core import (
     RecoveryTrigger,
     placeholder_edge_pool,
 )
+from sidequest.game.disposition import Disposition
 from sidequest.game.encounter import StructuredEncounter
 from sidequest.game.history_chapter import HistoryChapter
 from sidequest.game.lore_store import LoreStore
@@ -131,7 +132,12 @@ class Npc(BaseModel):
 
     # NPC-specific fields (P1-required: narrator uses name, personality, disposition)
     voice_id: int | None = None
-    disposition: int = 0
+    # ``disposition`` is a ``Disposition`` wrapper (Story 50-10) — exposes
+    # ``.value`` (clamped int) and ``.attitude()`` (Attitude enum). The
+    # Pydantic schema hook on Disposition coerces raw int construction
+    # (``Npc(disposition=15)``) for backward compatibility with existing
+    # fixtures and world-materialization callers.
+    disposition: Disposition = Field(default_factory=Disposition)
     location: str | None = None
     # Position on a chassis interior (narrator-tracked, optional).
     # Orthogonal to ``location`` (which is general-world); ``current_room``
@@ -1153,17 +1159,19 @@ class GameSnapshot(BaseModel):
             for name, delta in patch.hp_changes.items():
                 self._apply_hp_change(name, delta)
         if patch.npc_attitudes is not None:
-            from sidequest.game.disposition import disposition_attitude
             from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT, Span
 
             for name, delta in patch.npc_attitudes.items():
                 for npc in self.npcs:
                     if npc.core.name == name:
                         before = int(npc.disposition)
-                        npc.disposition = max(-100, min(100, npc.disposition + delta))
+                        # Disposition clamps to ±100 in its constructor.
+                        npc.disposition = Disposition(before + delta)
                         after = int(npc.disposition)
-                        before_attitude = disposition_attitude(before)
-                        after_attitude = disposition_attitude(after)
+                        # Emit plain str values into span attributes so the
+                        # OTEL wire form is a JSON string, not the enum repr.
+                        before_attitude = Disposition(before).attitude().value
+                        after_attitude = npc.disposition.attitude().value
                         # Real span (was Emitter.fire add_event — sprint 3 cold-subsystem
                         # audit). add_event decorates the parent span only;
                         # WatcherSpanProcessor sees span closes, so the GM panel never
@@ -1264,9 +1272,7 @@ class GameSnapshot(BaseModel):
         # as a Monster Manual patch (ADR-059). Translate B/X hp → EdgePool
         # per ADR-078 and default hostile disposition matching encountergen.
         is_creature = (
-            patch.creature_id is not None
-            or patch.threat_level is not None
-            or patch.hp is not None
+            patch.creature_id is not None or patch.threat_level is not None or patch.hp is not None
         )
         if patch.hp is not None:
             edge = _creature_edge_pool_from_hp(patch.hp)

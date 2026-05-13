@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from sidequest.game.disposition import Attitude, Disposition
 
-
 # ---------------------------------------------------------------------------
 # Attitude enum — shape and string values (AC1)
 # ---------------------------------------------------------------------------

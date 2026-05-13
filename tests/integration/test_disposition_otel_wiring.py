@@ -109,8 +109,10 @@ async def test_npc_disposition_shift_publishes_state_transition(
     snapshot.apply_world_patch(WorldStatePatch(npc_attitudes={"Bartender": 15}))
     await asyncio.sleep(0)
 
-    # NPC mutation actually happened.
-    assert snapshot.npcs[0].disposition == 25
+    # NPC mutation actually happened. ``npc.disposition`` is a
+    # ``Disposition`` after Story 50-10 — unwrap via ``int()`` to assert
+    # the numeric value without coupling to wrapper equality semantics.
+    assert int(snapshot.npcs[0].disposition) == 25
 
     evt = await _wait_for_event(captured, "disposition.shift")
     assert evt["component"] == "disposition"
@@ -138,7 +140,7 @@ async def test_disposition_clamps_at_bounds_and_emits_actual_after(
     snapshot.apply_world_patch(WorldStatePatch(npc_attitudes={"Friend": 50}))
     await asyncio.sleep(0)
 
-    assert snapshot.npcs[0].disposition == 100  # clamped
+    assert int(snapshot.npcs[0].disposition) == 100  # clamped
     evt = await _wait_for_event(captured, "disposition.shift")
     assert evt["fields"]["before"] == 95
     assert evt["fields"]["after"] == 100
