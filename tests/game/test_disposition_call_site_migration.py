@@ -53,9 +53,11 @@ _HELPER_CALL = re.compile(r"\bdisposition_attitude\s*\(")
 
 
 def _production_py_files() -> list[Path]:
-    """All .py files under sidequest/ excluding the helper's own module
-    (it may still define ``disposition_attitude`` for compat) and excluding
-    test directories."""
+    """All .py files under sidequest/ excluding the disposition module
+    itself (defining a regression-guard symbol there would be self-
+    referential) and excluding test directories. The legacy
+    ``disposition_attitude`` helper was removed in 50-10; this scan is
+    retained as a regression guard against a future re-introduction."""
     files: list[Path] = []
     for path in _SERVER_PKG.rglob("*.py"):
         # The helper's defining module is allowed to mention itself.
