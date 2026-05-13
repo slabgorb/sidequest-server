@@ -19,7 +19,7 @@ from sidequest.protocol.messages import (
     JournalResponseMessage,
     JournalResponsePayload,
 )
-from sidequest.protocol.models import FactCategory, JournalEntry
+from sidequest.protocol.models import JournalEntry
 from sidequest.server.session_helpers import _error_msg
 from sidequest.telemetry.spans import SPAN_JOURNAL_REPLAY, tracer
 
@@ -101,9 +101,7 @@ class JournalRequestHandler:
             JournalEntry(
                 fact_id=fact.fact_id,
                 content=fact.content,
-                category=fact.category
-                if isinstance(fact.category, FactCategory)
-                else FactCategory(fact.category),
+                category=fact.category,
                 source=fact.source,
                 confidence=fact.confidence,
                 learned_turn=fact.learned_turn,
