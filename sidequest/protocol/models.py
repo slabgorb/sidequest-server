@@ -104,6 +104,33 @@ class Footnote(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# JournalEntry — JOURNAL_RESPONSE row (ADR-100 Seam C, story 50-14)
+# ---------------------------------------------------------------------------
+
+
+class JournalEntry(ProtocolBase):
+    """A single character-journal entry for the JOURNAL_RESPONSE payload.
+
+    Mirrors the UI's journal-row contract (see
+    ``sidequest-ui/src/types/payloads.ts:248``). Derived 1:1 from a
+    :class:`~sidequest.game.character.KnownFact`.
+    """
+
+    fact_id: str
+    """Stable identifier — UI dedups by this across multiple responses."""
+    content: str
+    """Fact text."""
+    category: FactCategory
+    """Lore / Place / Person / Quest / Ability."""
+    source: str
+    """Provenance label (Observation, ScenarioClue, Gossip, GameEvent, ...)."""
+    confidence: str
+    """confirmed / suspected / rumored / Discovered / ..."""
+    learned_turn: int
+    """Interaction-turn index at the moment the fact was learned."""
+
+
+# ---------------------------------------------------------------------------
 # ItemGained — inventory addition during narration
 # ---------------------------------------------------------------------------
 

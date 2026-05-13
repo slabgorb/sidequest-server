@@ -77,6 +77,11 @@ def consume_clue_footnotes(
                     confidence="Discovered",
                     source="ScenarioClue",
                     learned_turn=snapshot.turn_manager.interaction,
+                    # 50-14: propagate the clue id so the journal UI can
+                    # dedup across JOURNAL_RESPONSE replays. fn.fact_id is
+                    # guaranteed non-None at this point per line 62 above.
+                    fact_id=fn.fact_id,
+                    category=fn.category,
                 )
             )
 

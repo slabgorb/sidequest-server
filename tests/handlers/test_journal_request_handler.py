@@ -56,21 +56,17 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 from sidequest.game.character import Character, KnownFact
-from sidequest.game.creature_core import CreatureCore
+from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.persistence import GameMode, SqliteStore
 from sidequest.game.session import GameSnapshot
 from sidequest.protocol.enums import MessageType
-from sidequest.protocol.messages import ErrorMessage
-from sidequest.server.session_handler import WebSocketSessionHandler
-from sidequest.server.session_room import RoomRegistry, SessionRoom
-
-# These imports will fail until the protocol payloads ship — that failure
-# IS the RED signal for AC1 / AC4 protocol-shape work.
-from sidequest.protocol.messages import (  # noqa: E402 — intentional RED import
+from sidequest.protocol.messages import (
+    ErrorMessage,
     JournalRequestMessage,
     JournalResponseMessage,
 )
-
+from sidequest.server.session_handler import WebSocketSessionHandler
+from sidequest.server.session_room import RoomRegistry, SessionRoom
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,7 +87,15 @@ def _character_with_facts(name: str, facts: list[KnownFact]) -> Character:
     Uses CreatureCore.name as the seat key (matches player_seats).
     """
     return Character(
-        core=CreatureCore(name=name),
+        core=CreatureCore(
+            name=name,
+            description=f"{name}, journal-test seat",
+            personality="curious",
+            inventory=Inventory(),
+        ),
+        char_class="Sleuth",
+        race="Human",
+        backstory=f"{name} carries a small notebook everywhere.",
         known_facts=facts,
     )
 
@@ -400,13 +404,9 @@ async def test_player_only_sees_own_journal_not_peers(tmp_path: Path) -> None:
     p2_contents = {e.content for e in p2_out[0].payload.entries}
 
     assert p1_fact.content in p1_contents
-    assert p2_fact.content not in p1_contents, (
-        "P1 request leaked P2's journal — ADR-036 violation"
-    )
+    assert p2_fact.content not in p1_contents, "P1 request leaked P2's journal — ADR-036 violation"
     assert p2_fact.content in p2_contents
-    assert p1_fact.content not in p2_contents, (
-        "P2 request leaked P1's journal — ADR-036 violation"
-    )
+    assert p1_fact.content not in p2_contents, "P2 request leaked P1's journal — ADR-036 violation"
 
 
 @pytest.mark.asyncio
@@ -585,9 +585,7 @@ def test_journal_request_payload_in_phase1_variant() -> None:
     from sidequest.protocol.messages import GameMessage
 
     # Deserialize a wire-format JOURNAL_REQUEST.
-    msg = GameMessage.model_validate(
-        {"type": "JOURNAL_REQUEST", "payload": {}, "player_id": "P1"}
-    )
+    msg = GameMessage.model_validate({"type": "JOURNAL_REQUEST", "payload": {}, "player_id": "P1"})
     assert msg.type == MessageType.JOURNAL_REQUEST
 
     # Deserialize a wire-format JOURNAL_RESPONSE with one entry.

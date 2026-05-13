@@ -10,10 +10,12 @@ subsystems are included (no elision) with comments marking their phase.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from pydantic import BaseModel, Field, field_validator
 
 from sidequest.game.creature_core import CreatureCore
-from sidequest.protocol.models import AbilityDefinition
+from sidequest.protocol.models import AbilityDefinition, FactCategory
 
 
 class KnownFact(BaseModel):
@@ -29,6 +31,11 @@ class KnownFact(BaseModel):
     # P5-deferred: source/learned_turn used by scenario system
     source: str = "GameEvent"
     learned_turn: int = 0
+    # 50-14: stable identifier for UI dedup (ADR-100 Seam C); auto-minted
+    # when not supplied so legacy fact creation sites keep working. Scenario
+    # clue intake passes the clue id through here.
+    fact_id: str = Field(default_factory=lambda: uuid4().hex)
+    category: FactCategory = FactCategory.Lore
 
 
 class AffinityState(BaseModel):
