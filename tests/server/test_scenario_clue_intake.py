@@ -22,13 +22,6 @@ same RED set.
 
 from __future__ import annotations
 
-import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
-
 from sidequest.game.character import Character
 from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.scenario_state import ScenarioState
@@ -36,6 +29,7 @@ from sidequest.game.session import GameSnapshot
 from sidequest.genre.models.scenario import ClueGraph, ClueNode
 from sidequest.protocol.models import Footnote
 from sidequest.telemetry.spans.scenario import SPAN_SCENARIO_ADVANCE
+from tests.server.conftest import span_attrs_by_name
 
 # ---------------------------------------------------------------------------
 # Fixture builders
@@ -91,29 +85,9 @@ def _footnote(*, summary: str, fact_id: str | None, marker: int = 1) -> Footnote
     )
 
 
-@pytest.fixture
-def otel_exporter():
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    # Install as the spans-module tracer so Span.open() picks it up.
-    from sidequest.telemetry import spans as _spans
-
-    original = _spans.tracer
-    _spans.tracer = lambda: provider.get_tracer("test")
-    try:
-        yield exporter
-    finally:
-        _spans.tracer = original
-
-
-def _scenario_advance_events(exporter: InMemorySpanExporter) -> list[dict]:
+def _scenario_advance_events(exporter) -> list[dict]:
     """Return attribute dicts for every SPAN_SCENARIO_ADVANCE span recorded."""
-    out: list[dict] = []
-    for span in exporter.get_finished_spans():
-        if span.name == SPAN_SCENARIO_ADVANCE:
-            out.append(dict(span.attributes or {}))
-    return out
+    return span_attrs_by_name(exporter, SPAN_SCENARIO_ADVANCE)
 
 
 # ---------------------------------------------------------------------------

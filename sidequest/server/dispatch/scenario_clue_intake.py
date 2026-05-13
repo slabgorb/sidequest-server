@@ -56,6 +56,8 @@ def consume_clue_footnotes(
         if is_new and active is not None:
             active.known_facts.append(
                 KnownFact(
+                    # NonBlankString is a Pydantic RootModel, not a str subclass —
+                    # str() unwraps the .root for KnownFact.content: str.
                     content=str(fn.summary),
                     confidence="Discovered",
                     source="ScenarioClue",

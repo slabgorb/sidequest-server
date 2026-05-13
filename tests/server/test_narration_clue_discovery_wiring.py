@@ -21,11 +21,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
 
 from sidequest.agents.orchestrator import NarrationTurnResult
 from sidequest.game.character import Character
@@ -33,7 +28,7 @@ from sidequest.game.creature_core import CreatureCore, Inventory
 from sidequest.game.scenario_state import ScenarioState
 from sidequest.genre.models.scenario import ClueGraph, ClueNode
 from sidequest.telemetry.spans.scenario import SPAN_SCENARIO_ADVANCE
-from tests.server.conftest import _build_turn_context_for_test
+from tests.server.conftest import _build_turn_context_for_test, span_attrs_by_name
 
 
 def _seat_character(snap, *, name: str) -> Character:
@@ -93,27 +88,8 @@ def _bind_scenario_to_snapshot(snap, *, clue_ids: list[str]) -> None:
     )
 
 
-@pytest.fixture
-def otel_exporter():
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    from sidequest.telemetry import spans as _spans
-
-    original = _spans.tracer
-    _spans.tracer = lambda: provider.get_tracer("test")
-    try:
-        yield exporter
-    finally:
-        _spans.tracer = original
-
-
-def _scenario_advance_attrs(exporter: InMemorySpanExporter) -> list[dict]:
-    return [
-        dict(span.attributes or {})
-        for span in exporter.get_finished_spans()
-        if span.name == SPAN_SCENARIO_ADVANCE
-    ]
+def _scenario_advance_attrs(exporter) -> list[dict]:
+    return span_attrs_by_name(exporter, SPAN_SCENARIO_ADVANCE)
 
 
 # ---------------------------------------------------------------------------
