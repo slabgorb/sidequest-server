@@ -32,7 +32,10 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sidequest.game.session import GameSnapshot
 
 from sidequest.agents.claude_client import (
     ClaudeClient,
@@ -616,10 +619,8 @@ class TurnContext:
     # Live snapshot reference (Story 50-4). Used by build_narrator_prompt to
     # consume + clear ``snapshot.pending_time_skip_summary`` as part of the
     # TIME-SKIP CONTEXT block (one-shot lifecycle — render then clear).
-    # Typed as Any to avoid importing GameSnapshot at this layer; runtime
-    # type is ``sidequest.game.session.GameSnapshot | None``. None on the
-    # legacy/fixture paths that never went through ``_build_turn_context``.
-    snapshot: Any = None
+    # None on legacy/fixture paths that never went through ``_build_turn_context``.
+    snapshot: GameSnapshot | None = None
 
 
 # ---------------------------------------------------------------------------
