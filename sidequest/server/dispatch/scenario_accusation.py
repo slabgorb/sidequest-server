@@ -29,6 +29,7 @@ from sidequest.game.accusation import (
     EvidenceSummary,
 )
 from sidequest.game.character import KnownFact
+from sidequest.game.scenario_state import ScenarioState
 from sidequest.game.session import GameSnapshot
 
 # Confidence values that surface in EvidenceItem. ``confirmed`` (the
@@ -94,7 +95,7 @@ def consume_accusation_request(
 def _build_evidence(
     known_facts: list[KnownFact],
     *,
-    scenario_state,
+    scenario_state: ScenarioState,
 ) -> list[EvidenceItem]:
     """Convert ScenarioClue-sourced known facts into evidence items.
 

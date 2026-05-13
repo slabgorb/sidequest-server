@@ -179,7 +179,11 @@ class AccusationEvaluator:
 
         score = 0.0
         for item in evidence:
-            score += _score_item(item, red_herring_ids=red_herring_ids)
+            if item.clue_id in red_herring_ids:
+                continue
+            raw = _CONFIDENCE_WEIGHTS[item.confidence]
+            signed = raw * _CONTRIBUTION_MULTIPLIERS[item.contribution]
+            score += signed * (_DECAY_PER_HOP ** len(item.chain_of_custody))
 
         verdict = self._verdict_for(score)
         rationale = self._rationale(score=score, verdict=verdict, evidence_count=len(evidence))
@@ -224,27 +228,6 @@ class AccusationEvaluator:
             f"score {score:.2f} against thresholds "
             f"strong={self.strong_threshold:.2f}, airtight={self.airtight_threshold:.2f}."
         )
-
-
-# ---------------------------------------------------------------------------
-# Internal scoring
-# ---------------------------------------------------------------------------
-
-
-def _score_item(item: EvidenceItem, *, red_herring_ids: set[str]) -> float:
-    """Compute the signed score contribution for a single evidence item.
-
-    Red-herring clues contribute zero. Otherwise:
-
-        raw = _CONFIDENCE_WEIGHTS[item.confidence]
-        signed = raw × _CONTRIBUTION_MULTIPLIERS[item.contribution]
-        decayed = signed × _DECAY_PER_HOP ** len(item.chain_of_custody)
-    """
-    if item.clue_id in red_herring_ids:
-        return 0.0
-    raw = _CONFIDENCE_WEIGHTS[item.confidence]
-    signed = raw * _CONTRIBUTION_MULTIPLIERS[item.contribution]
-    return signed * (_DECAY_PER_HOP ** len(item.chain_of_custody))
 
 
 __all__ = [
