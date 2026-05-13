@@ -360,6 +360,7 @@ function dispatch(ev) {
     const days = ev.fields.days_applied || 0;
     const affected = ev.fields.tropes_affected || [];
     affected.forEach(tropeId => {
+      if (!tropeId) return;
       const el = document.querySelector(`[data-trope-id="${CSS.escape(tropeId)}"]`);
       if (!el) return;
       const badge = document.createElement('span');

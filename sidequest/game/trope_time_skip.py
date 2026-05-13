@@ -174,8 +174,15 @@ def _pass_a2_time_skip(
             tstate.beats_fired = idx + 1
             tstate.last_fired_turn = now_turn
 
-        # Implicit resolution: progress maxed AND every beat fired.
-        if progress_after >= 1.0 and tstate.beats_fired >= len(tdef.escalation):
+        # Implicit resolution — full progress AND every defined beat fired.
+        # An empty escalation list cannot satisfy "every beat fired" — without
+        # beats, the trope has no narrative resolution shape and stays
+        # progressing until the genre pack supplies escalation.
+        if (
+            progress_after >= 1.0
+            and tdef.escalation
+            and tstate.beats_fired >= len(tdef.escalation)
+        ):
             tstate.status = "resolved"
             resolved_during_skip.append(tstate.id)
 

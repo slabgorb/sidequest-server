@@ -553,7 +553,9 @@ class TestTickTropesWireUp:
 
     def test_tick_tropes_accepts_days_advanced_kwarg(self) -> None:
         """The new ``days_advanced`` keyword defaults to 0 so existing
-        call sites continue to compile without change.
+        call sites continue to compile without change. days_advanced=0
+        must produce no Pass A2 work (no progress, no day-counter bump,
+        no summary).
         """
         from sidequest.game.trope_tick import tick_tropes
 
@@ -562,9 +564,15 @@ class TestTickTropesWireUp:
 
         # Default — no days_advanced kwarg, behaves like prior tick.
         tick_tropes(snap, pack, now_turn=11)
+        assert snap.days_elapsed == 0
+        assert snap.pending_time_skip_summary == []
+        assert snap.active_tropes[0].progress == 0.0
 
-        # Explicit — kwarg supported.
+        # Explicit zero — kwarg accepted, still no Pass A2 work.
         tick_tropes(snap, pack, now_turn=12, days_advanced=0)
+        assert snap.days_elapsed == 0
+        assert snap.pending_time_skip_summary == []
+        assert snap.active_tropes[0].progress == 0.0
 
     def test_tick_tropes_runs_pass_a2_when_days_positive(self) -> None:
         """A 7-day skip advances a progressing trope's progress AND fires

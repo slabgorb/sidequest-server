@@ -1454,19 +1454,22 @@ class Orchestrator:
                     ),
                 )
 
-        # Story 50-4: TIME-SKIP CONTEXT block from queued beat summary.
-        # One-shot lifecycle — render then clear ``pending_time_skip_summary``.
-        # Registered Early so the "has-already-happened" framing lands ahead
-        # of state-summary blocks the narrator might otherwise contradict.
-        snapshot = getattr(context, "snapshot", None)
-        if snapshot is not None and getattr(snapshot, "pending_time_skip_summary", None):
+        # Story 50-4 — TIME-SKIP CONTEXT block. When the prior narrator turn
+        # advanced multiple in-game days, Pass A2 has queued beat events on
+        # ``snapshot.pending_time_skip_summary``; render and consume them.
+        snapshot = context.snapshot
+        if snapshot is not None and snapshot.pending_time_skip_summary:
             from sidequest.agents.narrator import _render_time_skip_context  # noqa: PLC0415
 
             time_skip_block = _render_time_skip_context(
-                list(snapshot.pending_time_skip_summary),
-                getattr(snapshot, "days_elapsed", 0),
+                snapshot.pending_time_skip_summary,
+                snapshot.days_elapsed,
             )
             if time_skip_block:
+                # One-shot lifecycle — clear BEFORE registering so a register
+                # failure cannot cause double-delivery of beats
+                # to the narrator on the next turn.
+                snapshot.pending_time_skip_summary = []
                 registry.register_section(
                     agent_name,
                     PromptSection.new(
@@ -1476,7 +1479,6 @@ class Orchestrator:
                         SectionCategory.State,
                     ),
                 )
-                snapshot.pending_time_skip_summary = []
 
         # Active trope summary (Valley zone)
         if context.active_trope_summary:
