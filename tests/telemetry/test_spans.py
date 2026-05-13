@@ -208,6 +208,66 @@ def test_disposition_span_names() -> None:
     assert SPAN_DISPOSITION_SHIFT == "disposition.shift"
 
 
+class _FakeSpan:
+    """Minimal stand-in for ReadableSpan used by SpanRoute.extract."""
+
+    def __init__(self, attrs: dict[str, object]) -> None:
+        self.name = "disposition.shift"
+        self.attributes = attrs
+
+
+def test_disposition_shift_route_extracts_threshold_fields() -> None:
+    """Story 50-11: SPAN_ROUTES[disposition.shift].extract must propagate
+    ``before_attitude``, ``after_attitude``, and ``crossed`` from span
+    attributes into the watcher event's ``fields`` payload.
+
+    Without these in the extract lambda, the GM panel never sees them
+    even if the emission site sets them — the route is the choke point.
+    """
+    from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT
+    from sidequest.telemetry.spans._core import SPAN_ROUTES
+
+    route = SPAN_ROUTES[SPAN_DISPOSITION_SHIFT]
+    span = _FakeSpan(
+        {
+            "npc_name": "Bartender",
+            "delta": 5,
+            "before": 10,
+            "after": 15,
+            "before_attitude": "neutral",
+            "after_attitude": "friendly",
+            "crossed": True,
+        }
+    )
+    fields = route.extract(span)
+
+    assert fields["before_attitude"] == "neutral"
+    assert fields["after_attitude"] == "friendly"
+    assert fields["crossed"] is True
+    # Existing fields must remain in the contract
+    assert fields["npc_name"] == "Bartender"
+    assert fields["delta"] == 5
+    assert fields["before"] == 10
+    assert fields["after"] == 15
+
+
+def test_disposition_shift_route_defaults_threshold_fields_when_missing() -> None:
+    """Defensive: if the emitter ever fails to set the new attributes,
+    the route must produce stable defaults rather than raise — empty
+    strings for the attitude fields and False for crossed. This keeps
+    the watcher contract typed even during partial rollout."""
+    from sidequest.telemetry.spans import SPAN_DISPOSITION_SHIFT
+    from sidequest.telemetry.spans._core import SPAN_ROUTES
+
+    route = SPAN_ROUTES[SPAN_DISPOSITION_SHIFT]
+    span = _FakeSpan({"npc_name": "X", "delta": 1, "before": 0, "after": 1})
+    fields = route.extract(span)
+
+    assert fields["before_attitude"] == ""
+    assert fields["after_attitude"] == ""
+    assert fields["crossed"] is False
+
+
 def test_state_patch_span_names() -> None:
     from sidequest.telemetry.spans import (
         SPAN_APPLY_WORLD_PATCH,
