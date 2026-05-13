@@ -168,7 +168,7 @@ class ScenarioState(BaseModel):
                     SPAN_SCENARIO_CLUE_PREREQUISITE_VIOLATION,
                     {
                         "clue_id": clue_id,
-                        "missing_prerequisites": list(missing),
+                        "missing_prerequisites": missing,
                         "guilty_npc": self.guilty_npc,
                     },
                 ):
