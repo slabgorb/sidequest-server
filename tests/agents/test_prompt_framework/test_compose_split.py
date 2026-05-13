@@ -12,7 +12,9 @@ from sidequest.agents.prompt_framework.types import (
 AGENT = "narrator"
 
 
-def _section(name: str, content: str, *, zone: AttentionZone = AttentionZone.Valley) -> PromptSection:
+def _section(
+    name: str, content: str, *, zone: AttentionZone = AttentionZone.Valley
+) -> PromptSection:
     return PromptSection.new(
         name=name,
         content=content,

@@ -34,7 +34,9 @@ def _snapshot() -> GameSnapshot:
     )
 
 
-def _manual_with(npcs: list[ManualNpc] | None = None, encounters: list[ManualEncounter] | None = None) -> MonsterManual:
+def _manual_with(
+    npcs: list[ManualNpc] | None = None, encounters: list[ManualEncounter] | None = None
+) -> MonsterManual:
     return MonsterManual(
         genre="mutant_wasteland",
         world="flickering_reach",
@@ -43,9 +45,17 @@ def _manual_with(npcs: list[ManualNpc] | None = None, encounters: list[ManualEnc
     )
 
 
-def _human(name: str, *, state: EntryState = EntryState.AVAILABLE, activated_location: str | None = None) -> ManualNpc:
+def _human(
+    name: str, *, state: EntryState = EntryState.AVAILABLE, activated_location: str | None = None
+) -> ManualNpc:
     return ManualNpc(
-        data={"name": name, "role": "scavenger", "culture": "Scrapborn", "ocean_summary": "blunt and competitive", "dialogue_quirks": ["shouts prices"]},
+        data={
+            "name": name,
+            "role": "scavenger",
+            "culture": "Scrapborn",
+            "ocean_summary": "blunt and competitive",
+            "dialogue_quirks": ["shouts prices"],
+        },
         name=name,
         role="scavenger",
         culture="Scrapborn",
@@ -83,7 +93,13 @@ class _FakeSessionData:
     the helper grows new dependencies without us noticing.
     """
 
-    def __init__(self, *, genre_slug: str = "mutant_wasteland", world_slug: str = "flickering_reach", genre_pack: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        genre_slug: str = "mutant_wasteland",
+        world_slug: str = "flickering_reach",
+        genre_pack: object | None = None,
+    ) -> None:
         self.genre_slug = genre_slug
         self.world_slug = world_slug
         self.genre_pack = genre_pack
@@ -102,7 +118,10 @@ def test_ensure_loaded_returns_none_without_genre() -> None:
 
 
 def test_ensure_loaded_is_idempotent() -> None:
-    manual = _manual_with(npcs=[_human("Krag"), _human("Vex"), _human("Mab"), _human("Tess")], encounters=[_creature_encounter(enemy_name="Salt Burrower")])
+    manual = _manual_with(
+        npcs=[_human("Krag"), _human("Vex"), _human("Mab"), _human("Tess")],
+        encounters=[_creature_encounter(enemy_name="Salt Burrower")],
+    )
     sd = _FakeSessionData()
     sd.monster_manual = manual
     # No seeding (already populated) — second call returns the same instance.
@@ -115,14 +134,18 @@ def test_ensure_loaded_is_idempotent() -> None:
 def test_ensure_loaded_skips_seed_without_source_dir(tmp_path: Path) -> None:
     sd = _FakeSessionData(genre_slug="ghost_genre", world_slug="ghost_world", genre_pack=None)
     # Redirect manuals dir to tmp so the test doesn't touch ~/.sidequest.
-    with mock.patch("sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path):
+    with mock.patch(
+        "sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path
+    ):
         loaded = monster_manual_inject.ensure_loaded(sd)
     assert loaded is not None
     assert loaded.needs_seeding()  # would-have-seeded but no source_dir → empty pool
     assert sd.monster_manual is loaded
 
 
-def test_ensure_loaded_swallows_seed_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_loaded_swallows_seed_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _Pack:
         source_dir = tmp_path / "packs" / "mutant_wasteland"
 
@@ -135,7 +158,9 @@ def test_ensure_loaded_swallows_seed_errors(tmp_path: Path, monkeypatch: pytest.
         "sidequest.server.dispatch.pregen.seed_manual",
         _explode,
     )
-    with mock.patch("sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path):
+    with mock.patch(
+        "sidequest.game.monster_manual.MonsterManual._manuals_dir", return_value=tmp_path
+    ):
         loaded = monster_manual_inject.ensure_loaded(sd)
     # Seed crashed; helper continues with whatever was on disk (empty Manual).
     assert loaded is not None
@@ -172,7 +197,9 @@ def test_inject_filters_active_humans_by_location_substring() -> None:
     sd = _FakeSessionData()
     sd.monster_manual = _manual_with(
         npcs=[
-            _human("Anchored", state=EntryState.ACTIVE, activated_location="The Collapsed Transit Hub"),
+            _human(
+                "Anchored", state=EntryState.ACTIVE, activated_location="The Collapsed Transit Hub"
+            ),
             _human("Elsewhere", state=EntryState.ACTIVE, activated_location="Far Plateau"),
             _human("FloatAvail"),
         ],
@@ -309,9 +336,7 @@ def test_inject_stamps_current_location_on_encounter_creatures() -> None:
     )
     snap = _snapshot()
 
-    monster_manual_inject.inject(
-        sd, snap, current_location="Grimvault — Receiving", in_combat=True
-    )
+    monster_manual_inject.inject(sd, snap, current_location="Grimvault — Receiving", in_combat=True)
 
     creature = next(n for n in snap.npcs if n.core.name == "Chalk Moth")
     assert creature.location == "Grimvault — Receiving", (
@@ -434,11 +459,26 @@ def test_websocket_session_handler_wires_monster_manual_inject() -> None:
     inject + ensure_loaded calls survive any future refactor that
     silently severs the wiring.
     """
-    handler_src = Path(__file__).resolve().parents[3] / "sidequest" / "server" / "websocket_session_handler.py"
+    handler_src = (
+        Path(__file__).resolve().parents[3]
+        / "sidequest"
+        / "server"
+        / "websocket_session_handler.py"
+    )
     text = handler_src.read_text(encoding="utf-8")
-    assert "monster_manual_inject" in text, "websocket_session_handler.py no longer imports monster_manual_inject"
-    assert "monster_manual_inject.ensure_loaded" in text, "_execute_narration_turn no longer calls ensure_loaded"
+    assert "monster_manual_inject" in text, (
+        "websocket_session_handler.py no longer imports monster_manual_inject"
+    )
+    assert "monster_manual_inject.ensure_loaded" in text, (
+        "_execute_narration_turn no longer calls ensure_loaded"
+    )
     assert "monster_manual_inject.inject" in text, "_execute_narration_turn no longer calls inject"
-    assert "monster_manual_inject.mark_active_from_narration" in text, "post-narration mark_active_from_narration wire missing"
-    assert "monster_manual_inject.mark_all_dormant" in text, "location-change mark_all_dormant wire missing"
-    assert "sd.monster_manual.save()" in text, "Manual.save() is not called after each turn — lifecycle won't persist"
+    assert "monster_manual_inject.mark_active_from_narration" in text, (
+        "post-narration mark_active_from_narration wire missing"
+    )
+    assert "monster_manual_inject.mark_all_dormant" in text, (
+        "location-change mark_all_dormant wire missing"
+    )
+    assert "sd.monster_manual.save()" in text, (
+        "Manual.save() is not called after each turn — lifecycle won't persist"
+    )

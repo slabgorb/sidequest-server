@@ -17,9 +17,11 @@ def test_process_action_calls_send_stateless_never_send_with_session(simple_turn
     """Narrator path must never invoke send_with_session — only send_stateless."""
     client = AsyncMock()
     client.send_stateless = AsyncMock(return_value=_fake_response())
-    client.send_with_session = AsyncMock(side_effect=AssertionError(
-        "send_with_session must not be called from narrator path post-ADR-098"
-    ))
+    client.send_with_session = AsyncMock(
+        side_effect=AssertionError(
+            "send_with_session must not be called from narrator path post-ADR-098"
+        )
+    )
 
     orch = Orchestrator(client=client)
     asyncio.run(orch._run_narration_turn_synchronous("look around", simple_turn_context))

@@ -155,9 +155,7 @@ class TestDispatchViolationObservability:
         consume_clue_footnotes(snap, footnotes, active_character_name="Rux")
 
         events = _violation_events(otel_exporter)
-        assert len(events) == 1, (
-            f"expected one violation span, got {len(events)}: {events}"
-        )
+        assert len(events) == 1, f"expected one violation span, got {len(events)}: {events}"
         attrs = events[0]
         assert attrs["clue_id"] == "murder_weapon"
         missing = attrs["missing_prerequisites"]
@@ -221,9 +219,7 @@ class TestBatchContinuity:
         assert len(span_attrs_by_name(otel_exporter, SPAN_SCENARIO_ADVANCE)) == 1
         assert len(_violation_events(otel_exporter)) == 1
 
-    def test_orphan_in_middle_does_not_stop_trailing_valid(
-        self, otel_exporter
-    ) -> None:
+    def test_orphan_in_middle_does_not_stop_trailing_valid(self, otel_exporter) -> None:
         from sidequest.server.dispatch.scenario_clue_intake import (
             consume_clue_footnotes,
         )

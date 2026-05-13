@@ -9,6 +9,7 @@ Spec: docs/superpowers/specs/2026-05-10-class-mechanical-surface-design.md §8.
 Pydantic BaseModel (not dataclass) so it can be embedded as a field in
 ``StructuredEncounter`` which uses ``model_config = {"extra": "forbid"}``.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel

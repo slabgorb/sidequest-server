@@ -3,6 +3,7 @@
 Loader-level checks for the new `abilities` key on ClassDef and the
 `taunt` beat for Fighter.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

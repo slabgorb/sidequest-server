@@ -145,9 +145,7 @@ class TestStoryAutogen:
             sd = handler._session_data  # type: ignore[attr-defined]
             builder = sd.builder
 
-            out = await _send(
-                handler, CharacterCreationPayload(phase="story_autogen", seed=42)
-            )
+            out = await _send(handler, CharacterCreationPayload(phase="story_autogen", seed=42))
             assert len(out) == 1
             msg = out[0]
             assert isinstance(msg, CharacterCreationMessage), msg
@@ -168,9 +166,7 @@ class TestStoryAutogen:
 
 
 class TestStoryConfirm:
-    def test_confirm_with_pronouns_advances_to_kit(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_confirm_with_pronouns_advances_to_kit(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             await _walk_to_story(handler)

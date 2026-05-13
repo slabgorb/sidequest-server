@@ -402,19 +402,13 @@ class MagicState(BaseModel):
             # be skipped, and YELLOW is non-blocking).
             return None, "no_ledger_bar_spec"
         if spec.scope == "character":
-            return BarKey(
-                scope="character", owner_id=working.actor, bar_id=cost_type
-            ), None
+            return BarKey(scope="character", owner_id=working.actor, bar_id=cost_type), None
         if spec.scope == "world":
-            return BarKey(
-                scope="world", owner_id=self.config.world_slug, bar_id=cost_type
-            ), None
+            return BarKey(scope="world", owner_id=self.config.world_slug, bar_id=cost_type), None
         if spec.scope == "item":
             if not working.item_id:
                 return None, "item_scope_missing_item_id"
-            return BarKey(
-                scope="item", owner_id=working.item_id, bar_id=cost_type
-            ), None
+            return BarKey(scope="item", owner_id=working.item_id, bar_id=cost_type), None
         # faction / location / bond_pair — declared in the type union
         # but no engine wiring yet. Loud failure beats silent skip.
         return None, "scope_not_yet_wired"

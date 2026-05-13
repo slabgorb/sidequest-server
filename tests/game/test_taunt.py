@@ -3,6 +3,7 @@
 Activation, decay, OTEL emission. Targeting + redirect tested in
 test_taunt_targeting.py.
 """
+
 from __future__ import annotations
 
 from sidequest.game.taunt import TauntState
@@ -117,9 +118,7 @@ def test_taunt_expires_at_end_of_round_emits_otel(taunt_test_encounter, otel_cap
     assert enc.taunt.active_actor is None
 
     # Exactly one expiry span must have fired.
-    events = [
-        s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"
-    ]
+    events = [s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"]
     assert len(events) == 1, (
         f"Expected 1 expired event, got {len(events)}: "
         f"{[s.name for s in otel_capture.get_finished_spans()]}"
@@ -137,7 +136,5 @@ def test_taunt_no_expiry_event_when_inactive(taunt_test_encounter, otel_capture)
 
     tick_taunt_round_advance(enc, prior_round=1)
 
-    events = [
-        s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"
-    ]
+    events = [s for s in otel_capture.get_finished_spans() if s.name == "encounter.taunt.expired"]
     assert len(events) == 0

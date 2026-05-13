@@ -813,8 +813,7 @@ def _emit_auto_mint_skip(
     """
     if reason == _SKIP_REASON_GENDER_PAIRED:
         explanation = (
-            "gender-paired role conflict; narrator may have slipped between "
-            "turns; not canonizing"
+            "gender-paired role conflict; narrator may have slipped between turns; not canonizing"
         )
     else:
         explanation = (
@@ -853,9 +852,7 @@ def _pc_name_skip_set(snapshot: GameSnapshot) -> set[str]:
     }
 
 
-def _infer_pronouns_from_role_context(
-    narration_text: str, role_end: int
-) -> str | None:
+def _infer_pronouns_from_role_context(narration_text: str, role_end: int) -> str | None:
     """Return the pronoun group inferred from the local prose window after
     a role mention, or ``None`` if pronouns are ambiguous.
 
@@ -1128,9 +1125,7 @@ def _apply_npc_observation_gate(
 
         cf_name = member.name.casefold() if member.name else ""
         cf_role = (member.role or "").casefold()
-        matched = (cf_name and cf_name in mention_names) or (
-            cf_role and cf_role in mention_roles
-        )
+        matched = (cf_name and cf_name in mention_names) or (cf_role and cf_role in mention_roles)
 
         if matched:
             member.observation_pending = False

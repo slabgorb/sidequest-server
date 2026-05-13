@@ -541,9 +541,7 @@ def test_tactical_grid_cavern_payload_basic() -> None:
         mask="##.\n.##\n###",
         cavern_image_url="/genre/caverns_and_claudes/worlds/caverns_sunden/rooms/mouth.cavern.png",
         cell_size=28,
-        cellular=CellularParams(
-            size=(18, 18), seed=1042, density=0.55, cutoff=5, passes=4
-        ),
+        cellular=CellularParams(size=(18, 18), seed=1042, density=0.55, cutoff=5, passes=4),
         derived=DerivedRoomData(
             floor_count=142,
             exits={"north": (9, 0), "east": (17, 9), "south": None, "west": None},

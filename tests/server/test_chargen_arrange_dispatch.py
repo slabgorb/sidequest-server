@@ -121,22 +121,16 @@ class TestArrangeAssign:
 
         run(body())
 
-    def test_assign_missing_fields_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_assign_missing_fields_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             await _walk_to_arrangement(handler)
-            out = await _send(
-                handler, CharacterCreationPayload(phase="arrange_assign", stat="STR")
-            )
+            out = await _send(handler, CharacterCreationPayload(phase="arrange_assign", stat="STR"))
             assert isinstance(out[0], ErrorMessage)
 
         run(body())
 
-    def test_assign_value_not_in_pool_returns_error(
-        self, handler: WebSocketSessionHandler
-    ) -> None:
+    def test_assign_value_not_in_pool_returns_error(self, handler: WebSocketSessionHandler) -> None:
         async def body() -> None:
             await _connect(handler)
             await _walk_to_arrangement(handler)
@@ -167,9 +161,7 @@ class TestArrangeClear:
                 handler,
                 CharacterCreationPayload(phase="arrange_assign", stat="STR", value=value),
             )
-            out = await _send(
-                handler, CharacterCreationPayload(phase="arrange_clear", stat="STR")
-            )
+            out = await _send(handler, CharacterCreationPayload(phase="arrange_clear", stat="STR"))
             msg = out[0]
             assert isinstance(msg, CharacterCreationMessage)
             assert msg.payload.assignment["STR"] is None
@@ -215,7 +207,6 @@ class TestArrangeReject:
             assert all(v is None for v in msg.payload.assignment.values())
             # Pool has 6 fresh values
             assert len(msg.payload.pool) == 6
-
 
         run(body())
 

@@ -124,13 +124,13 @@ class TauntTestEncounter:
 
         beat_def = _BEAT_REGISTRY.get(beat_id)
         if beat_def is None:
-            raise ValueError(f"beat {beat_id!r} not in test registry; add it to conftest._BEAT_REGISTRY")
+            raise ValueError(
+                f"beat {beat_id!r} not in test registry; add it to conftest._BEAT_REGISTRY"
+            )
 
         roll_outcome = _OUTCOME_MAP.get(outcome)
         if roll_outcome is None:
-            raise ValueError(
-                f"outcome {outcome!r} not in map; use one of {list(_OUTCOME_MAP)}"
-            )
+            raise ValueError(f"outcome {outcome!r} not in map; use one of {list(_OUTCOME_MAP)}")
 
         apply_beat(self.enc, actor, beat_def, roll_outcome)
 

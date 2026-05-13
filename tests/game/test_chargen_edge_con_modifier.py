@@ -81,9 +81,7 @@ def _rules_for_class(class_name: str) -> RulesConfig:
     )
 
 
-def _builder_with_class_and_con(
-    class_name: str, con_score: int
-) -> CharacterBuilder:
+def _builder_with_class_and_con(class_name: str, con_score: int) -> CharacterBuilder:
     """Build a one-class-scene builder, force CON to `con_score`."""
     rules = _rules_for_class(class_name)
     scenes = [
@@ -120,29 +118,29 @@ class TestEdgePoolFromConfigConModifier:
         ("class_name", "con_score", "expected_max"),
         [
             # Fighter base 4
-            ("Fighter", 3, 1),   # mod -4 -> floor 1
-            ("Fighter", 9, 3),   # mod -1
+            ("Fighter", 3, 1),  # mod -4 -> floor 1
+            ("Fighter", 9, 3),  # mod -1
             ("Fighter", 10, 4),  # mod 0
             ("Fighter", 14, 6),  # mod +2
             ("Fighter", 17, 7),  # mod +3
             # Cleric base 3
-            ("Cleric", 3, 1),    # mod -4 -> floor 1
-            ("Cleric", 9, 2),    # mod -1
-            ("Cleric", 10, 3),   # mod 0
-            ("Cleric", 14, 5),   # mod +2
-            ("Cleric", 17, 6),   # mod +3
+            ("Cleric", 3, 1),  # mod -4 -> floor 1
+            ("Cleric", 9, 2),  # mod -1
+            ("Cleric", 10, 3),  # mod 0
+            ("Cleric", 14, 5),  # mod +2
+            ("Cleric", 17, 6),  # mod +3
             # Mage base 2
-            ("Mage", 3, 1),      # mod -4 -> floor 1
-            ("Mage", 9, 1),      # mod -1 -> base 1, still valid; if Dev wants strict floor it's still 1
-            ("Mage", 10, 2),     # mod 0
-            ("Mage", 14, 4),     # mod +2
-            ("Mage", 17, 5),     # mod +3
+            ("Mage", 3, 1),  # mod -4 -> floor 1
+            ("Mage", 9, 1),  # mod -1 -> base 1, still valid; if Dev wants strict floor it's still 1
+            ("Mage", 10, 2),  # mod 0
+            ("Mage", 14, 4),  # mod +2
+            ("Mage", 17, 5),  # mod +3
             # Thief base 2
-            ("Thief", 3, 1),     # mod -4 -> floor 1
-            ("Thief", 9, 1),     # mod -1
-            ("Thief", 10, 2),    # mod 0
-            ("Thief", 14, 4),    # mod +2
-            ("Thief", 17, 5),    # mod +3
+            ("Thief", 3, 1),  # mod -4 -> floor 1
+            ("Thief", 9, 1),  # mod -1
+            ("Thief", 10, 2),  # mod 0
+            ("Thief", 14, 4),  # mod +2
+            ("Thief", 17, 5),  # mod +3
         ],
     )
     def test_edge_pool_applies_con_modifier(
@@ -345,9 +343,7 @@ class TestChargenAccumulatorFlowsConIntoEdge:
         kwargs = captured.get("kwargs") or {}
         args = captured.get("args") or ()
         con_observed = (
-            kwargs.get("con_score")
-            if "con_score" in kwargs
-            else (args[0] if args else None)
+            kwargs.get("con_score") if "con_score" in kwargs else (args[0] if args else None)
         )
         assert con_observed == 14, (
             f"edge_pool_from_config was called but con_score was not 14; "

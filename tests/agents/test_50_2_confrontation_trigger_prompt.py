@@ -144,9 +144,7 @@ async def test_confrontation_trigger_constraint_lists_victoria_social_types(
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Miss Halloway")
-    prompt, _ = await orch.build_narrator_prompt(
-        "open the morning post", context
-    )
+    prompt, _ = await orch.build_narrator_prompt("open the morning post", context)
     assert "<confrontation-trigger>" in prompt, (
         "confrontation_trigger_constraint section must be registered on every "
         "turn (Recency Guardrail, ADR-082 prompt framework)."
@@ -183,9 +181,7 @@ async def test_confrontation_trigger_constraint_carries_social_prose_patterns() 
     client = make_canned_client("narration")
     orch = Orchestrator(client=client)
     context = TurnContext(character_name="Miss Halloway")
-    prompt, _ = await orch.build_narrator_prompt(
-        "open the morning post", context
-    )
+    prompt, _ = await orch.build_narrator_prompt("open the morning post", context)
     lowered = prompt.lower()
 
     # Each Victoria type needs at least one concrete prose-shape phrase

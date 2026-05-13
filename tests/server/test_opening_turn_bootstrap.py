@@ -813,8 +813,7 @@ class TestMPJoinerHostLocationAnchor:
             # Combine system_prompt + user_message — the host-location
             # anchor may live in either bucket depending on registration.
             opening_prompt = " ".join(
-                str(calls[0].kwargs.get(k, ""))
-                for k in ("system_prompt", "user_message")
+                str(calls[0].kwargs.get(k, "")) for k in ("system_prompt", "user_message")
             )
             assert "The Kestrel — Galley, Mid-Coast" in opening_prompt, (
                 "Joiner-orientation prompt must name the host's "

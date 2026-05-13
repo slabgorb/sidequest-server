@@ -170,9 +170,7 @@ def test_call_site_passes_recipient_pc_or_iterates_recipients(
             )
             if wired:
                 continue
-        failures.append(
-            f"  line {call.lineno}: {_iter_unparse(call)}"
-        )
+        failures.append(f"  line {call.lineno}: {_iter_unparse(call)}")
 
     assert not failures, (
         f"{rel_path} ({description}) has build_confrontation_payload call(s) "
@@ -195,7 +193,10 @@ def test_clear_payload_remains_single_broadcast_in_websocket_handler() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and (
-            (isinstance(node.func, ast.Name) and node.func.id == "build_clear_confrontation_payload")
+            (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "build_clear_confrontation_payload"
+            )
             or (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr == "build_clear_confrontation_payload"
@@ -221,9 +222,7 @@ def test_audit_list_covers_every_build_confrontation_payload_call_site() -> None
     a call site.
     """
     server_root = _REPO_ROOT / "sidequest"
-    definition_file = (
-        _REPO_ROOT / "sidequest/server/dispatch/confrontation.py"
-    ).resolve()
+    definition_file = (_REPO_ROOT / "sidequest/server/dispatch/confrontation.py").resolve()
     found: list[str] = []
     for path in server_root.rglob("*.py"):
         if path.resolve() == definition_file:

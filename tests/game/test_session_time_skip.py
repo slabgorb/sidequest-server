@@ -19,10 +19,9 @@ AC-10 (existing saves load cleanly).
 
 from __future__ import annotations
 
-from sidequest.game.trope_time_skip import TimeSkipBeatEvent
-
 from sidequest.game.delta import compute_delta, snapshot
 from sidequest.game.session import GameSnapshot
+from sidequest.game.trope_time_skip import TimeSkipBeatEvent
 
 # ---------------------------------------------------------------------------
 # Helpers

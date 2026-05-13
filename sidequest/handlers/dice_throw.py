@@ -82,7 +82,9 @@ class DiceThrowHandler:
         # everyone, and the secondary "opposed_check: no stat 'WIS' for
         # opponent 'Carl'" error surfaced when Donut clicked Turn Undead
         # against the moth. Playtest 2026-05-12 17:55–18:00 caverns_sunden.
-        rolling_pc_name = snapshot.player_seats.get(rolling_player_id) if snapshot.player_seats else None
+        rolling_pc_name = (
+            snapshot.player_seats.get(rolling_player_id) if snapshot.player_seats else None
+        )
         if rolling_pc_name is not None:
             character = next(
                 (c for c in snapshot.characters if c.core.name == rolling_pc_name),

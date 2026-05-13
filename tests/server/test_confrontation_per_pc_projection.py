@@ -338,9 +338,7 @@ def test_recipient_pc_only_alters_beats_field() -> None:
     cdef = _cdef_playtest_union()
     enc = _encounter()
     fighter = _class("Fighter", FIGHTER_CHOICES)
-    full = build_confrontation_payload(
-        encounter=enc, cdef=cdef, genre_slug="caverns_and_claudes"
-    )
+    full = build_confrontation_payload(encounter=enc, cdef=cdef, genre_slug="caverns_and_claudes")
     filtered = build_confrontation_payload(
         encounter=enc,
         cdef=cdef,

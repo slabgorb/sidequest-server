@@ -198,9 +198,7 @@ class TestPrerequisiteViolationSpan:
             state.discover_clue("murder_weapon")
 
         events = _violation_events(otel_exporter)
-        assert len(events) == 1, (
-            f"expected exactly one violation span, got {len(events)}"
-        )
+        assert len(events) == 1, f"expected exactly one violation span, got {len(events)}"
         attrs = events[0]
         assert attrs["clue_id"] == "murder_weapon"
         # missing_prerequisites is serialised as JSON-list-ish (OTEL attrs
@@ -226,9 +224,7 @@ class TestPrerequisiteViolationSpan:
 
         assert span_attrs_by_name(otel_exporter, SPAN_SCENARIO_ADVANCE) == []
 
-    def test_successful_discovery_emits_advance_not_violation(
-        self, otel_exporter
-    ) -> None:
+    def test_successful_discovery_emits_advance_not_violation(self, otel_exporter) -> None:
         state = _state(_node("root"))
         state.discover_clue("root")
 

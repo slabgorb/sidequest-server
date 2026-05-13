@@ -1,4 +1,5 @@
 """Story 2026-05-10 — _seed_class_abilities populates Class-source abilities."""
+
 from __future__ import annotations
 
 from sidequest.game.ability import AbilitySource

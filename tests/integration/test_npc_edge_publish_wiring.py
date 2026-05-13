@@ -147,9 +147,7 @@ async def test_npc_edge_published_reaches_hub_via_span_route(
         turn_manager=TurnManager(interaction=4),
     )
     snap.character_locations["Orin"] = "Mawdeep Caverns"
-    snap.npcs.append(
-        _make_npc("Crawling Scavenger", location="Mawdeep Caverns", turn=3)
-    )
+    snap.npcs.append(_make_npc("Crawling Scavenger", location="Mawdeep Caverns", turn=3))
 
     result = NarrationTurnResult(
         narration="The Crawling Scavenger lunges.",
@@ -168,8 +166,7 @@ async def test_npc_edge_published_reaches_hub_via_span_route(
     edge_events = [
         e
         for e in captured
-        if e["event_type"] == "state_transition"
-        and e["fields"].get("op") == "edge_published"
+        if e["event_type"] == "state_transition" and e["fields"].get("op") == "edge_published"
     ]
     assert len(edge_events) >= 1, (
         "no edge_published state_transition reached the hub — production "
@@ -225,8 +222,7 @@ def test_no_opponent_span_carries_location_available_false(otel_capture):
         )
 
     no_opp_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "encounter.no_opponent_available"
+        s for s in otel_capture.get_finished_spans() if s.name == "encounter.no_opponent_available"
     ]
     assert len(no_opp_spans) == 1, (
         "guard didn't fire encounter.no_opponent_available; "
@@ -277,8 +273,7 @@ def test_no_opponent_span_carries_location_available_true(otel_capture):
         )
 
     no_opp_spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "encounter.no_opponent_available"
+        s for s in otel_capture.get_finished_spans() if s.name == "encounter.no_opponent_available"
     ]
     assert len(no_opp_spans) == 1
     attrs = dict(no_opp_spans[0].attributes or {})
@@ -315,10 +310,7 @@ def test_migration_silent_skip_counters_reach_canonicalize_span(otel_capture):
     assert len(out["npc_pool"]) == 1
     assert out["npc_pool"][0]["name"] == "Valid"
 
-    spans = [
-        s for s in otel_capture.get_finished_spans()
-        if s.name == "snapshot.canonicalize"
-    ]
+    spans = [s for s in otel_capture.get_finished_spans() if s.name == "snapshot.canonicalize"]
     assert len(spans) == 1
     attrs = dict(spans[0].attributes or {})
     assert attrs.get("s2_malformed_npcs_skipped") == 2
