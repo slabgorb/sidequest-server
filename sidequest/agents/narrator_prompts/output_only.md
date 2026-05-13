@@ -43,13 +43,19 @@ category: Lore (world history/mythology), Place (locations), Person (NPCs/factio
 is_new: true if this is the first time this fact appears, false if referencing prior knowledge.
 Include footnotes generously — they feed the player's knowledge journal.
 
-confrontation: When ANY structured encounter BEGINS this turn, include confrontation to signal the server to create the encounter. The value must match one of the types listed in AVAILABLE ENCOUNTER TYPES in game_state.
-TRIGGER CRITERIA — you MUST emit confrontation when the player's action involves ANY of these:
-- Physical violence, threats, or intimidation → the combat/brawl type
-- Bargaining, trading, persuasion, or social manipulation → the negotiation type
-- Fleeing, pursuing, or being chased → the chase type
+confrontation: When ANY structured encounter BEGINS this turn, include confrontation to signal the server to create the encounter. The value must match one of the types listed in AVAILABLE ENCOUNTER TYPES in game_state — spelled exactly as the pack declares it (lowercase, snake_case where compound: `ship_combat`, `social_duel`, never `Scandal` or `Social Duel`).
+TRIGGER CRITERIA — you MUST emit confrontation on the SAME turn your prose introduces ANY of these. There is no retroactive crediting; if you describe the trigger this turn and emit nothing, the encounter is lost.
+- Physical violence, threats, intimidation, or a hostile draw → the `combat` / `brawl` type
+- Vessel-scale weapons fire, reactor spin-up, hostile chassis on an intercept vector → the `ship_combat` type (when the genre offers it)
+- A single-pilot pursuit or strafe between fighters → the `dogfight` type (when the genre offers it)
+- Bargaining, trading, persuasion, contract terms, or social manipulation → the `negotiation` type
+- Fleeing, pursuing, intercept orders, or being chased → the `chase` type
+- A formal proceeding before a magistrate or court — summons served, docket called, witness sworn → the `trial` type (when the genre offers it)
+- A bidding war — auctioneer calling the lot, paddles raised, "going once" — → the `auction` type (when the genre offers it)
+- A formal honor confrontation — a card declined, the cut direct, seconds appointed, a challenge issued → the `social_duel` type (when the genre offers it)
+- Reputational exposure — a rumour reaching print, a scandal breaking in the society pages, blackmail letter delivered → the `scandal` type (when the genre offers it)
 - Any tense standoff where outcomes should be mechanically resolved
-Do NOT resolve these narratively without confrontation. The mechanical system tracks resource pools, beats, and resolution — without it, the game is just prose with no crunch. If the player takes an action that fits a confrontation type, START the encounter. Err on the side of triggering — the system handles de-escalation gracefully.
+Do NOT resolve these narratively without confrontation. The mechanical system tracks resource pools, beats, and resolution — without it, the game is just prose with no crunch. If the player takes an action that fits a confrontation type, START the encounter. Pick the MOST SPECIFIC type the genre offers — never default to generic `combat` when `ship_combat`, `dogfight`, `social_duel`, or another specialized type applies. Err on the side of triggering — the system handles de-escalation gracefully.
 Only include on the turn the encounter STARTS, not on subsequent rounds. Once the encounter is active, use beat_selections instead.
 
 CRITICAL ADVERSARY RULE — MANDATORY when you emit confrontation: every adversary, enemy, creature, or antagonist NPC referenced in this turn's prose MUST also appear in npcs_met for the same turn with both name AND role populated. The server constructs the combatant list from npcs_met — if it is empty, the confrontation panel renders with only the player and the encounter is mechanically broken from the start.
