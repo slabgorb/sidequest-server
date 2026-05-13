@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import random
 
+from sidequest.game.disposition import disposition_attitude
 from sidequest.genre.models.authored_npc import AuthoredNpc
 from sidequest.genre.models.chassis import BondTier
 from sidequest.genre.models.narrative import (
@@ -44,15 +45,6 @@ def _resolve_name_form(
         .replace("{last_name}", last_name)
         .replace("{nickname}", nickname or first_name)
     )
-
-
-def _disposition_attitude(disposition: int) -> str:
-    """Mirrors Npc.attitude() — three-tier ADR-020 mapping."""
-    if disposition > 10:
-        return "friendly"
-    if disposition < -10:
-        return "hostile"
-    return "neutral"
 
 
 def _render_directive_chassis(
@@ -137,7 +129,7 @@ def _render_directive_chassis(
             "against the registry; you don't need to.):"
         )
         for npc in authored_crew:
-            attitude = _disposition_attitude(npc.initial_disposition)
+            attitude = disposition_attitude(npc.initial_disposition)
             line = f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}"
             parts.append(line)
             if npc.history_seeds:
@@ -338,7 +330,7 @@ def _render_directive_location(
             "against the registry; you don't need to.):"
         )
         for npc in present_npcs:
-            attitude = _disposition_attitude(npc.initial_disposition)
+            attitude = disposition_attitude(npc.initial_disposition)
             parts.append(f"- {npc.name} ({npc.role}): {npc.appearance}, disposition: {attitude}")
             if npc.history_seeds:
                 parts.append(f"  History: {npc.history_seeds[0]}")
