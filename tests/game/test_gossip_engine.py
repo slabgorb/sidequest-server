@@ -10,12 +10,7 @@ at import time until Dev brings the engine online.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 import pytest
-from opentelemetry import trace as otel_trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
@@ -37,27 +32,10 @@ from sidequest.game.gossip_engine import (  # noqa: E402
 )
 
 # ---------------------------------------------------------------------------
-# OTEL harness — mirrors tests/magic/test_innate_v1_cast_resolution.py
+# OTEL harness — uses the shared ``otel_capture`` fixture from
+# ``tests/game/conftest.py`` (carries the Story 45-36 processor-clearing fix
+# that prevents span bleed-through between tests).
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def otel_capture() -> Iterator[InMemorySpanExporter]:
-    """In-memory OTEL exporter installed on the live tracer provider."""
-    from sidequest.telemetry.setup import init_tracer
-
-    init_tracer()
-    provider = otel_trace.get_tracer_provider()
-    assert isinstance(provider, TracerProvider), (
-        "Default tracer provider must be TracerProvider for span capture"
-    )
-    exporter = InMemorySpanExporter()
-    processor = SimpleSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    try:
-        yield exporter
-    finally:
-        processor.shutdown()
 
 
 def _events_named(exporter: InMemorySpanExporter, name: str) -> list:

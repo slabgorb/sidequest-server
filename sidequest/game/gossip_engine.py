@@ -30,6 +30,7 @@ catalog; the GM panel reads them directly.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -240,10 +241,14 @@ class GossipEngine:
 # ---------------------------------------------------------------------------
 
 
-class _Snapshot(BaseModel):
-    """Phase-1 record for a single transmission. Internal."""
+@dataclass(frozen=True, slots=True)
+class _Snapshot:
+    """Phase-1 record for a single transmission. Internal.
 
-    model_config = {"extra": "forbid", "arbitrary_types_allowed": True}
+    Frozen dataclass over pydantic — values are computed deterministically
+    from validated inputs (no further validation needed), and the
+    snapshot is consumed immediately within :meth:`GossipEngine.propagate`.
+    """
 
     transmission: GossipTransmission
     credibility_before: float
