@@ -102,9 +102,7 @@ class EdgeConfigMissingClassError(KeyError):
         super().__init__(f"edge_config.base_max_by_class missing entry for class '{class_name}'")
 
 
-def edge_pool_from_config(
-    edge_config: object, class_name: str, *, con_score: int
-) -> EdgePool:
+def edge_pool_from_config(edge_config: object, class_name: str, *, con_score: int) -> EdgePool:
     """Build a genre-authored EdgePool from an EdgeConfig and a class name.
 
     Resolves base_max from edge_config.base_max_by_class[class] (raises

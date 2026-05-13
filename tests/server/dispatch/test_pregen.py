@@ -31,9 +31,7 @@ from sidequest.server.dispatch.pregen import (
     seed_manual,
 )
 
-CONTENT_ROOT = (
-    Path(__file__).resolve().parents[3].parent / "sidequest-content" / "genre_packs"
-)
+CONTENT_ROOT = Path(__file__).resolve().parents[3].parent / "sidequest-content" / "genre_packs"
 
 
 def _real_content_available() -> bool:
@@ -263,7 +261,7 @@ def test_seed_manual_no_cultures_falls_back(
         return 0
 
     monkeypatch.setattr(pregen, "namegen_main", fake_namegen)
-    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: (print("{}") or 0))  # type: ignore[func-returns-value]
+    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: print("{}") or 0)  # type: ignore[func-returns-value]
 
     with mock.patch.object(Path, "home", return_value=tmp_path):
         manual = MonsterManual(genre="g", world="w")
@@ -298,7 +296,7 @@ def test_seed_manual_pack_load_failure_falls_back(
         return 0
 
     monkeypatch.setattr(pregen, "namegen_main", fake_namegen)
-    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: (print("{}") or 0))  # type: ignore[func-returns-value]
+    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: print("{}") or 0)  # type: ignore[func-returns-value]
 
     with mock.patch.object(Path, "home", return_value=tmp_path), caplog.at_level(logging.WARNING):
         manual = MonsterManual(genre="g", world="w")
@@ -328,7 +326,7 @@ def test_seed_manual_dedup_keeps_unique_names(
         return 0
 
     monkeypatch.setattr(pregen, "namegen_main", fake_namegen)
-    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: (print("{}") or 0))  # type: ignore[func-returns-value]
+    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: print("{}") or 0)  # type: ignore[func-returns-value]
 
     with mock.patch.object(Path, "home", return_value=tmp_path):
         manual = MonsterManual(genre="g", world="w")
@@ -361,7 +359,7 @@ def test_seed_manual_partial_failure_skips_npc(
         return 0
 
     monkeypatch.setattr(pregen, "namegen_main", fake_namegen)
-    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: (print("{}") or 0))  # type: ignore[func-returns-value]
+    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: print("{}") or 0)  # type: ignore[func-returns-value]
 
     with mock.patch.object(Path, "home", return_value=tmp_path):
         manual = MonsterManual(genre="g", world="w")
@@ -377,17 +375,15 @@ def test_seed_manual_partial_failure_skips_npc(
     assert len(manual.npcs) == 5
 
 
-def test_seed_manual_writes_save_to_disk(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_seed_manual_writes_save_to_disk(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``manual.save()`` is called at the end — file lands under tmp_path."""
     monkeypatch.setattr(pregen, "load_genre_pack", lambda _dir: _stub_pack([]))
     monkeypatch.setattr(
         pregen,
         "namegen_main",
-        lambda _argv: (print(json.dumps({"name": "X", "role": "r", "culture": "c"})) or 0),  # type: ignore[func-returns-value]
+        lambda _argv: print(json.dumps({"name": "X", "role": "r", "culture": "c"})) or 0,  # type: ignore[func-returns-value]
     )
-    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: (print("{}") or 0))  # type: ignore[func-returns-value]
+    monkeypatch.setattr(pregen, "encountergen_main", lambda _argv: print("{}") or 0)  # type: ignore[func-returns-value]
 
     with mock.patch.object(Path, "home", return_value=tmp_path):
         manual = MonsterManual(genre="testgenre", world="testworld")

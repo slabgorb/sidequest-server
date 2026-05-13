@@ -81,35 +81,28 @@ def test_classes_yaml_loads_entries(tmp_path: Path) -> None:
         "  prime_requisite: STR\n"
         "  minimum_score: 9\n"
         "  kit_table: fighter_kit\n"
-        "  encounter_beat_choices: [attack, defend, flee]\n"
-        + saves_block
-        + "- id: thief\n"
+        "  encounter_beat_choices: [attack, defend, flee]\n" + saves_block + "- id: thief\n"
         "  display_name: Thief\n"
         "  rpg_role: stealth\n"
         "  jungian_default: outlaw\n"
         "  prime_requisite: DEX\n"
         "  minimum_score: 9\n"
         "  kit_table: thief_kit\n"
-        "  encounter_beat_choices: [attack, defend, flee]\n"
-        + saves_block
-        + "- id: mage\n"
+        "  encounter_beat_choices: [attack, defend, flee]\n" + saves_block + "- id: mage\n"
         "  display_name: Mage\n"
         "  rpg_role: control\n"
         "  jungian_default: magician\n"
         "  prime_requisite: INT\n"
         "  minimum_score: 9\n"
         "  kit_table: mage_kit\n"
-        "  encounter_beat_choices: [attack, defend, flee]\n"
-        + saves_block
-        + "- id: cleric\n"
+        "  encounter_beat_choices: [attack, defend, flee]\n" + saves_block + "- id: cleric\n"
         "  display_name: Cleric\n"
         "  rpg_role: healer\n"
         "  jungian_default: caregiver\n"
         "  prime_requisite: WIS\n"
         "  minimum_score: 9\n"
         "  kit_table: cleric_kit\n"
-        "  encounter_beat_choices: [attack, defend, flee]\n"
-        + saves_block,
+        "  encounter_beat_choices: [attack, defend, flee]\n" + saves_block,
         encoding="utf-8",
     )
     pack = load_genre_pack(pack_dir)

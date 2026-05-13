@@ -78,9 +78,7 @@ class InvokeReliquaryResult:
     effect_text: str
 
 
-def _find_reliquary(
-    items_catalog: WorldItemsCatalog, reliquary_id: str
-) -> WorldItem | None:
+def _find_reliquary(items_catalog: WorldItemsCatalog, reliquary_id: str) -> WorldItem | None:
     """Linear scan of the reliquaries section. World catalogs cap at
     ~dozens of reliquaries; an index isn't worth the lifecycle cost."""
     for entry in items_catalog.reliquaries:
@@ -116,8 +114,7 @@ def invoke_reliquary(
         raise ReliquaryInvokeError(
             reason="no_divine_favor_bar",
             message=(
-                f"actor {actor!r} has no divine_favor bar; only Clerics may "
-                "invoke reliquaries"
+                f"actor {actor!r} has no divine_favor bar; only Clerics may invoke reliquaries"
             ),
         ) from e
 
@@ -162,10 +159,7 @@ def invoke_reliquary(
     if actor in state.reliquary_free_use_spent:
         raise ReliquaryInvokeError(
             reason="free_use_already_spent",
-            message=(
-                f"actor {actor!r} has already spent the session's free "
-                "reliquary invocation"
-            ),
+            message=(f"actor {actor!r} has already spent the session's free reliquary invocation"),
         )
 
     # Spend the token and emit the watcher span. Order: spend first so

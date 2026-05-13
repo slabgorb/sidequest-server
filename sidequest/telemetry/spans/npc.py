@@ -99,9 +99,7 @@ SPAN_ROUTES[SPAN_NPC_RECURRING_PRESENCE_MISSED] = SpanRoute(
         # pool-only misses surface as ``npc_pool`` (parallel to npc.referenced).
         # The GM panel filters on ``field``; mis-routing would put npcs-sourced
         # misses in the wrong column.
-        "field": "npc_registry"
-        if (span.attributes or {}).get("source") == "npcs"
-        else "npc_pool",
+        "field": "npc_registry" if (span.attributes or {}).get("source") == "npcs" else "npc_pool",
         "op": "recurring_presence_missed",
         "name": (span.attributes or {}).get("npc_name", ""),
         "source": (span.attributes or {}).get("source", ""),

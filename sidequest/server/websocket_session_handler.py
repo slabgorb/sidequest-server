@@ -353,9 +353,7 @@ def _populate_opening_directive_on_chargen_complete(
     _bootstrap_character_locations_from_opening(snapshot, opening)
 
 
-def _bootstrap_character_locations_from_opening(
-    snapshot: GameSnapshot, opening: object
-) -> None:
+def _bootstrap_character_locations_from_opening(snapshot: GameSnapshot, opening: object) -> None:
     """Write the opening's ``setting.location_label`` to every seated PC
     without a ``character_locations`` entry.
 
@@ -488,9 +486,7 @@ def _maybe_emit_tactical_grid(
         room_id = room_id_override
     else:
         # Read the post-apply location for this actor.
-        room_id = (
-            snapshot.character_locations.get(actor or "") if actor else None
-        )
+        room_id = snapshot.character_locations.get(actor or "") if actor else None
     if not room_id:
         return
 
@@ -1890,6 +1886,7 @@ class WebSocketSessionHandler:
                         entrance_id,
                         len(sd.snapshot.discovered_rooms),
                     )
+
                     # ADR-096 Task 20b: emit TACTICAL_GRID for the entrance room so
                     # the UI Automapper has grid data from session start, not only on
                     # the first narrator-driven location change.
@@ -2656,10 +2653,7 @@ class WebSocketSessionHandler:
                         # duration is enforced mechanically, not left to
                         # narrator improvisation. Only fires when an encounter
                         # is active and unresolved — no-op outside combat.
-                        if (
-                            snapshot.encounter is not None
-                            and not snapshot.encounter.resolved
-                        ):
+                        if snapshot.encounter is not None and not snapshot.encounter.resolved:
                             from sidequest.game.taunt_tick import (  # noqa: PLC0415
                                 tick_taunt_round_advance,
                             )
@@ -2925,6 +2919,21 @@ class WebSocketSessionHandler:
                         "summaries": [fn.summary for fn in forwarded_footnotes][:10],
                     },
                     component="footnotes",
+                )
+                # Story 50-5 / ADR-100 seams A + B: feed extracted footnotes
+                # to the scenario clue graph. Footnotes whose fact_id matches
+                # a ClueNode advance the scenario (SPAN_SCENARIO_ADVANCE) and
+                # mint a Discovered KnownFact on the acting player's
+                # character. No-op when no scenario is bound or when no
+                # fact_id matches.
+                from sidequest.server.dispatch.scenario_clue_intake import (  # noqa: PLC0415
+                    consume_clue_footnotes,
+                )
+
+                consume_clue_footnotes(
+                    snapshot,
+                    forwarded_footnotes,
+                    active_character_name=snapshot.player_seats.get(sd.player_id, sd.player_name),
                 )
                 narration_payload = NarrationPayload(
                     text=narration_nbs,
@@ -3419,10 +3428,7 @@ class WebSocketSessionHandler:
                             # resolution / clear branch / stub-room test
                             # fixture without socket helpers), the canonical
                             # remains the dispatcher's sole delivery path.
-                            if (
-                                dispatcher_queue is not None
-                                and not _dispatcher_overlay_delivered
-                            ):
+                            if dispatcher_queue is not None and not _dispatcher_overlay_delivered:
                                 dispatcher_queue.put_nowait(confrontation_msg)
                             # OTEL lie-detector: per-recipient confrontation
                             # delivery for the GM panel. Mirrors the

@@ -983,9 +983,7 @@ async def test_run_narration_turn_emits_leak_audit_span_with_zero_leaks(
     )
     ctx = TurnContext(
         dispatch_package=pkg,
-        npc_pool=[
-            NpcPoolMember(name="Rickard", role="guard", drawn_from="world_authored")
-        ],
+        npc_pool=[NpcPoolMember(name="Rickard", role="guard", drawn_from="world_authored")],
     )
 
     await orch.run_narration_turn("sneak and strike", ctx)

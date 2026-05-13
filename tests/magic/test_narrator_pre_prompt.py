@@ -98,9 +98,7 @@ async def test_narrator_pre_prompt_contains_magic_context_when_state_present():
         character_name="sira_mendes",
         magic_state=state,
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "reach out with your mind", context
-    )
+    prompt, _ = await orch.build_narrator_prompt("reach out with your mind", context)
     assert "ACTIVE MAGIC CONTEXT" in prompt
     assert "allowed_sources" in prompt
 
@@ -112,9 +110,7 @@ async def test_narrator_pre_prompt_omits_magic_context_when_state_absent():
         character_name="kael",
         magic_state=None,
     )
-    prompt, _ = await orch.build_narrator_prompt(
-        "look around", context
-    )
+    prompt, _ = await orch.build_narrator_prompt("look around", context)
     assert "ACTIVE MAGIC CONTEXT" not in prompt
 
 

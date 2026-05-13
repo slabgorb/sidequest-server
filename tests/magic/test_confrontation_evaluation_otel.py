@@ -24,7 +24,9 @@ from sidequest.magic.models import HardLimit, WorldMagicConfig
 from sidequest.magic.state import MagicState
 
 
-def _confrontation(*, id: str, trigger: str | None = "sanity <= 0.40", auto_fire: bool = True) -> ConfrontationDefinition:
+def _confrontation(
+    *, id: str, trigger: str | None = "sanity <= 0.40", auto_fire: bool = True
+) -> ConfrontationDefinition:
     return ConfrontationDefinition(
         id=id,
         label=id.replace("_", " ").title(),
@@ -68,7 +70,12 @@ def captured_watcher_events(monkeypatch) -> Iterator[list[dict[str, Any]]]:
 
     def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
         captured.append(
-            {"event_type": event_type, "fields": fields, "component": component, "severity": severity}
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
         )
 
     from sidequest.server import narration_apply

@@ -1,4 +1,5 @@
 """Story 2026-05-10 — protocol contract for full AbilityDefinition + class_moves."""
+
 from __future__ import annotations
 
 from sidequest.game.ability import AbilitySource

@@ -443,11 +443,7 @@ class TensionTracker:
                 "field": "tension",
                 "op": "round_observed",
                 "classification": classification.kind,
-                "event": (
-                    classification.event.value
-                    if classification.event is not None
-                    else ""
-                ),
+                "event": (classification.event.value if classification.event is not None else ""),
                 "action_tension": self._action_tension,
                 "stakes_tension": self._stakes_tension,
                 "drama_weight": self.drama_weight(),

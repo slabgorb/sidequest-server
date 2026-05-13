@@ -469,9 +469,7 @@ async def test_orchestrator_omits_innate_worked_example_when_innate_not_active()
     canned = "**Cave**\n\nNothing.\n\n```game_patch\n{}\n```"
     orch = Orchestrator(client=_make_canned_client(canned))
     context = TurnContext(character_name="kael", magic_state=state)
-    prompt, _ = await orch.build_narrator_prompt(
-        "you take a step into the darkness", context
-    )
+    prompt, _ = await orch.build_narrator_prompt("you take a step into the darkness", context)
 
     assert CONTEXT_BUILDER_INNATE_EXAMPLE_SENTINEL not in prompt, (
         f"Schema-purity violation: innate worked-example sentinel "

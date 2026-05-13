@@ -1685,7 +1685,7 @@ class Orchestrator:
                     "a summons served, the docket called, a witness "
                     "sworn before the magistrate (``trial``); an "
                     "auctioneer calling the lot, paddles raised, "
-                    "\"going once\" (``auction``); a card declined, the "
+                    '"going once" (``auction``); a card declined, the '
                     "cut direct, seconds appointed, a formal challenge "
                     "issued (``social_duel``); a rumour reaching print, "
                     "exposure in the society pages, a blackmail letter "

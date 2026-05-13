@@ -226,9 +226,7 @@ def _npc_patches_for_encounters(
     return patches
 
 
-def _creature_patch_from_enemy(
-    enemy: Any, *, tier: int, location: str | None
-) -> NpcPatch | None:
+def _creature_patch_from_enemy(enemy: Any, *, tier: int, location: str | None) -> NpcPatch | None:
     """Translate one encountergen ``enemies[i]`` row into a creature patch.
 
     Required: ``name``.  The threat_level falls back to the encounter

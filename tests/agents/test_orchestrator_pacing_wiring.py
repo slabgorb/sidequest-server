@@ -154,8 +154,7 @@ async def test_pacing_hint_section_content_includes_directive():
     )
     expected_directive = hint.narrator_directive()
     ctx = TurnContext(character_name="Kael", pacing_hint=hint)
-    prompt, registry = await orch.build_narrator_prompt(
-        "look around", ctx    )
+    prompt, registry = await orch.build_narrator_prompt("look around", ctx)
     section = _section(registry, _agent_name(orch), "pacing")
     assert section is not None
     assert "## Pacing Guidance" in section.content, "header must be present"
@@ -213,9 +212,7 @@ async def test_pacing_hint_registers_on_delta_tier():
         escalation_beat=None,
     )
     ctx = TurnContext(character_name="Kael", pacing_hint=hint, genre="caverns_and_claudes")
-    _, registry = await orch.build_narrator_prompt(
-        "look around", ctx
-    )
+    _, registry = await orch.build_narrator_prompt("look around", ctx)
     section = _section(registry, _agent_name(orch), "pacing")
     assert section is not None, "pacing must register on Delta tier (per-turn dynamic)"
     assert section.zone == AttentionZone.Late

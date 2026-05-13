@@ -169,9 +169,7 @@ SPAN_ROUTES[SPAN_TROPE_TIME_SKIP] = SpanRoute(
             (span.attributes or {}).get("tropes_skipped_zero_rate", ()) or ()
         ),
         "beats_fired_count": (span.attributes or {}).get("beats_fired_count", 0),
-        "resolved_during_skip": list(
-            (span.attributes or {}).get("resolved_during_skip", ()) or ()
-        ),
+        "resolved_during_skip": list((span.attributes or {}).get("resolved_during_skip", ()) or ()),
     },
 )
 

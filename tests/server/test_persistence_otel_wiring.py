@@ -32,7 +32,12 @@ def captured_watcher_events(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[di
 
     def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
         captured.append(
-            {"event_type": event_type, "fields": fields, "component": component, "severity": severity}
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
         )
 
     from sidequest.game import persistence

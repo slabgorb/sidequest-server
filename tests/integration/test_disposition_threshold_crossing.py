@@ -109,9 +109,7 @@ async def _wait_for_event(
     )
 
 
-def _apply_shift(
-    npc_name: str, *, before: int, delta: int
-) -> tuple[GameSnapshot, int]:
+def _apply_shift(npc_name: str, *, before: int, delta: int) -> tuple[GameSnapshot, int]:
     snapshot = GameSnapshot(
         genre_slug="caverns_and_claudes",
         world_slug="caverns_sunden",
@@ -373,8 +371,7 @@ async def test_single_shift_emits_exactly_one_state_transition(
         and e.get("fields", {}).get("field") == "disposition.shift"
     ]
     assert len(shift_events) == 1, (
-        f"expected exactly 1 disposition.shift event, got {len(shift_events)}: "
-        f"{shift_events!r}"
+        f"expected exactly 1 disposition.shift event, got {len(shift_events)}: {shift_events!r}"
     )
 
 

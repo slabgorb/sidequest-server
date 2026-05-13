@@ -50,17 +50,13 @@ def caverns_sunden_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
     return content / "genre_packs" / "caverns_and_claudes" / "worlds" / "caverns_sunden"
 
 
-def test_cavern_image_url_serves_png_bytes(
-    caverns_sunden_dir: Path, tmp_path: Path
-) -> None:
+def test_cavern_image_url_serves_png_bytes(caverns_sunden_dir: Path, tmp_path: Path) -> None:
     # Drop a hermetic PNG at the expected on-disk location. R2 is canonical
     # for real deployments; the wiring test only needs SOME PNG so the
     # static mount can serve it. Restored after the test via tmp_path
     # ownership of the parent isn't possible (real content dir), so we
     # write+cleanup explicitly.
-    png_path = (
-        caverns_sunden_dir / "rooms" / "mouth.cavern.png"
-    )
+    png_path = caverns_sunden_dir / "rooms" / "mouth.cavern.png"
     created = not png_path.exists()
     if created:
         png_path.write_bytes(_make_min_png())

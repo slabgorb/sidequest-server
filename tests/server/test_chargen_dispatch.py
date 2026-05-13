@@ -259,11 +259,11 @@ async def _walk_to_confirmation(
     handler: WebSocketSessionHandler, freeform_name: str = "Rux"
 ) -> None:
     """Helper: walk the active builder to Confirmation. Handles:
-      - choice scenes: pick first choice
-      - freeform scenes: send ``freeform_name``
-      - display-only scenes: send phase=continue
-      - the_arrangement: assign sorted-desc into stat order, then arrange_confirm
-      - the_story (identity_capture): send story_confirm with stub identity
+    - choice scenes: pick first choice
+    - freeform scenes: send ``freeform_name``
+    - display-only scenes: send phase=continue
+    - the_arrangement: assign sorted-desc into stat order, then arrange_confirm
+    - the_story (identity_capture): send story_confirm with stub identity
     """
     sd = handler._session_data  # type: ignore[attr-defined]
     builder = sd.builder
@@ -283,18 +283,13 @@ async def _walk_to_confirmation(
             for stat, value in zip(stat_order, sorted_pool, strict=True):
                 out = await _send_chargen(
                     handler,
-                    CharacterCreationPayload(
-                        phase="arrange_assign", stat=stat, value=value
-                    ),
+                    CharacterCreationPayload(phase="arrange_assign", stat=stat, value=value),
                 )
                 if isinstance(out[0], ErrorMessage):
                     raise AssertionError(
-                        f"arrange_assign failed for {stat}={value}: "
-                        f"{out[0].payload.message}"
+                        f"arrange_assign failed for {stat}={value}: {out[0].payload.message}"
                     )
-            out = await _send_chargen(
-                handler, CharacterCreationPayload(phase="arrange_confirm")
-            )
+            out = await _send_chargen(handler, CharacterCreationPayload(phase="arrange_confirm"))
         elif eff is not None and eff.identity_capture is not None:
             # the_story — send story_confirm with stub pronouns + text.
             out = await _send_chargen(

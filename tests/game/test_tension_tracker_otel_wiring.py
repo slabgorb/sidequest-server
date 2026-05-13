@@ -35,7 +35,12 @@ def captured_watcher_events(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[di
 
     def _capture(event_type, fields, *, component="sidequest-server", severity="info"):
         captured.append(
-            {"event_type": event_type, "fields": fields, "component": component, "severity": severity}
+            {
+                "event_type": event_type,
+                "fields": fields,
+                "component": component,
+                "severity": severity,
+            }
         )
 
     from sidequest.telemetry import watcher_hub as hub_mod
@@ -58,9 +63,7 @@ def _round(damage_total: int = 0) -> RoundResult:
     if damage_total == 0:
         damage_events: list[DamageEvent] = []
     else:
-        damage_events = [
-            DamageEvent(attacker="atk", target="tgt", damage=damage_total, round=1)
-        ]
+        damage_events = [DamageEvent(attacker="atk", target="tgt", damage=damage_total, round=1)]
     return RoundResult(
         round=1,
         damage_events=damage_events,

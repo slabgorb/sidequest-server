@@ -68,16 +68,10 @@ def qualifying_classes_arrangement(
     values (an arrangement still being filled). Unfilled slots are treated
     as 0 — they cannot satisfy any minimum.
     """
-    return [
-        c
-        for c in classes
-        if (arrangement.get(c.prime_requisite) or 0) >= c.minimum_score
-    ]
+    return [c for c in classes if (arrangement.get(c.prime_requisite) or 0) >= c.minimum_score]
 
 
-def _seed_class_abilities(
-    abilities: list[AbilityDefinition], class_def: ClassDef
-) -> None:
+def _seed_class_abilities(abilities: list[AbilityDefinition], class_def: ClassDef) -> None:
     """Append Class-source signature abilities from class_def.abilities.
 
     Loader stamps source=AbilitySource.Class on each entry; authors do not
@@ -98,9 +92,7 @@ def _seed_class_abilities(
         )
 
 
-def _seed_item_abilities(
-    abilities: list[AbilityDefinition], kit_def: object
-) -> None:
+def _seed_item_abilities(abilities: list[AbilityDefinition], kit_def: object) -> None:
     """Populate Item-source abilities from the starting kit.
 
     DOCUMENTED STUB — empty body retained as the architectural seam for
@@ -879,9 +871,7 @@ class CharacterBuilder:
         if self._arrangement_pool is None or self._arrangement_assignment is None:
             raise RuntimeError("not in arrangement mode")
         if value not in self._arrangement_pool:
-            raise PoolValueNotPresentError(
-                f"value {value} not in pool {self._arrangement_pool}"
-            )
+            raise PoolValueNotPresentError(f"value {value} not in pool {self._arrangement_pool}")
         existing = self._arrangement_assignment.get(stat_name)
         if existing is not None:
             self._arrangement_pool.append(existing)
@@ -912,15 +902,15 @@ class CharacterBuilder:
         if not self._classes:
             raise RuntimeError("no classes attached; call with_classes() before confirm")
         qualifying = qualifying_classes_arrangement(
-            self._arrangement_assignment, self._classes,
+            self._arrangement_assignment,
+            self._classes,
         )
         if not qualifying:
             raise NoQualifyingClassesError(
                 f"arrangement {self._arrangement_assignment} qualifies for no class"
             )
         self._rolled_stats = [
-            (name, self._arrangement_assignment[name])
-            for name in self._ability_score_names
+            (name, self._arrangement_assignment[name]) for name in self._ability_score_names
         ]
         self._arrangement_pool = None
         self._arrangement_assignment = None
@@ -1318,9 +1308,7 @@ class CharacterBuilder:
         """Render the_story scene payload with pronouns/background/description fields."""
         eff = scene.mechanical_effects
         ic = eff.identity_capture if eff is not None else None
-        autogen_available = bool(
-            eff is not None and eff.background_autogen_source is not None
-        )
+        autogen_available = bool(eff is not None and eff.background_autogen_source is not None)
         payload = CharacterCreationPayload(
             phase="scene",
             scene_index=scene_index,
@@ -1594,9 +1582,7 @@ class CharacterBuilder:
         scene = self._scenes[scene_index]
         eff = scene.mechanical_effects
         if not (eff is not None and eff.assignment_required):
-            raise RuntimeError(
-                f"scene {scene.id!r} is not an arrangement scene"
-            )
+            raise RuntimeError(f"scene {scene.id!r} is not an arrangement scene")
         # confirm_arrangement may raise UnfilledArrangementError /
         # NoQualifyingClassesError — let them propagate.
         self.confirm_arrangement()
@@ -1620,9 +1606,7 @@ class CharacterBuilder:
         scene = self._scenes[scene_index]
         eff = scene.mechanical_effects
         if not (eff is not None and eff.assignment_required):
-            raise RuntimeError(
-                f"scene {scene.id!r} is not an arrangement scene"
-            )
+            raise RuntimeError(f"scene {scene.id!r} is not an arrangement scene")
         self.reject_arrangement()
 
     def _apply_story(self, response: StoryInput) -> None:
@@ -2006,9 +1990,7 @@ class CharacterBuilder:
         # or when the class name isn't found (silently skips rather than
         # raising — a missing class will already have been flagged by the
         # class_kit_unresolved event above or by a future gate).
-        _resolved_class_def = next(
-            (c for c in self._classes if c.display_name == class_str), None
-        )
+        _resolved_class_def = next((c for c in self._classes if c.display_name == class_str), None)
         if _resolved_class_def is not None:
             _class_seed_start = len(abilities)
             _seed_class_abilities(abilities, _resolved_class_def)
@@ -2020,9 +2002,7 @@ class CharacterBuilder:
                 {
                     "class_id": _resolved_class_def.id,
                     "ability_count": _class_seed_count,
-                    "ability_names": ", ".join(
-                        a.name for a in abilities[_class_seed_start:]
-                    ),
+                    "ability_names": ", ".join(a.name for a in abilities[_class_seed_start:]),
                 },
             )
 
@@ -2039,9 +2019,7 @@ class CharacterBuilder:
             con_score = int(stats.get("CON", 10))
             con_modifier = (con_score - 10) // 2
             try:
-                edge = edge_pool_from_config(
-                    self._edge_config, class_str, con_score=con_score
-                )
+                edge = edge_pool_from_config(self._edge_config, class_str, con_score=con_score)
             except _CoreEdgeConfigMissingClassError as e:
                 raise EdgeConfigMissingClassError(class_name=e.class_name) from None
             span.add_event(
@@ -2150,9 +2128,7 @@ class CharacterBuilder:
             self._rng.randint(1, 6) + self._rng.randint(1, 6) + self._rng.randint(1, 6)
             for _ in range(6)
         ]
-        self._arrangement_assignment = {
-            name: None for name in self._ability_score_names
-        }
+        self._arrangement_assignment = {name: None for name in self._ability_score_names}
         # rolled_stats stays None until confirm_arrangement materializes it.
 
     def _roll_3d6_strict(self) -> None:

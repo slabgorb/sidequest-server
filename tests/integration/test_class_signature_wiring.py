@@ -156,7 +156,9 @@ def test_cleric_chargen_yields_turn_undead_in_state_mirror(cc_pack):
     """
     sheet = _build_sheet(cc_pack, target_class="Cleric")
 
-    assert sheet.abilities, "Expected at least one ability for Cleric — _seed_class_abilities may not be wired"
+    assert sheet.abilities, (
+        "Expected at least one ability for Cleric — _seed_class_abilities may not be wired"
+    )
 
     turn_undead_entries = [a for a in sheet.abilities if a.name == "Turn Undead"]
     assert len(turn_undead_entries) == 1, (

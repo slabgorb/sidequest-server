@@ -451,7 +451,5 @@ def test_e2e_npc_registry_populated_after_action(tmp_path):
     # channel is ``npc_pool`` (with promoted entries also appearing in
     # ``npcs``). Union both stores so a future promotion seam can't make
     # this assertion fail silently.
-    names = {m.name for m in saved.snapshot.npc_pool} | {
-        n.core.name for n in saved.snapshot.npcs
-    }
+    names = {m.name for m in saved.snapshot.npc_pool} | {n.core.name for n in saved.snapshot.npcs}
     assert "The Keeper" in names, f"Expected 'The Keeper' in NPC stores, got: {sorted(names)}"

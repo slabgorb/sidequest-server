@@ -6,6 +6,7 @@ that round-trips through extract_structured_from_response extraction.
 The extraction function takes a raw narrator response string (with an embedded
 ```game_patch { ... }``` fence) and returns a dict of structured fields.
 """
+
 import json
 
 from sidequest.agents.orchestrator import extract_structured_from_response

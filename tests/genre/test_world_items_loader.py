@@ -136,9 +136,7 @@ consumable_items:
 def test_world_item_requires_id_and_name() -> None:
     """Tolerant shape: id + name are the only required fields. Section-
     specific bag is accepted as extra and stays addressable on the model."""
-    item = WorldItem.model_validate(
-        {"id": "x", "name": "X", "divine_favor_effect": "fires at 0.7"}
-    )
+    item = WorldItem.model_validate({"id": "x", "name": "X", "divine_favor_effect": "fires at 0.7"})
     assert item.id == "x"
     assert item.name == "X"
     dumped = item.model_dump()
@@ -165,9 +163,7 @@ def test_world_items_catalog_empty_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_items_yaml_returns_none(
-    tmp_path: Path, captured_events: list[dict]
-) -> None:
+def test_missing_items_yaml_returns_none(tmp_path: Path, captured_events: list[dict]) -> None:
     """No file → None, no event. Distinguishes "world has no items"
     from "world has an empty items.yaml"."""
     result = _load_world_items(tmp_path / "items.yaml", world_slug="ghost_world")
@@ -258,9 +254,7 @@ def test_item_missing_required_field_fails_loud(tmp_path: Path) -> None:
     """No silent acceptance of items missing id — they couldn't be
     addressed afterward."""
     items_path = tmp_path / "items.yaml"
-    items_path.write_text(
-        "named_items:\n  - name: Nameless One\n", encoding="utf-8"
-    )
+    items_path.write_text("named_items:\n  - name: Nameless One\n", encoding="utf-8")
     with pytest.raises(GenreLoadError):
         _load_world_items(items_path, world_slug="bad_world")
 

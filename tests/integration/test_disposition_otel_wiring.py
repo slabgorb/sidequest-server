@@ -74,7 +74,9 @@ async def _setup(monkeypatch: pytest.MonkeyPatch, label: str) -> list[dict]:
     return captured
 
 
-async def _wait_for_event(captured: list[dict], field_value: str, *, timeout_s: float = 1.0) -> dict:
+async def _wait_for_event(
+    captured: list[dict], field_value: str, *, timeout_s: float = 1.0
+) -> dict:
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
         for evt in captured:

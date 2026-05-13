@@ -308,7 +308,9 @@ def _minimal_pack_for_visual_prompt(positive_suffix: str = "suffix") -> Any:
 
 
 def _real_content_available() -> bool:
-    return (CONTENT_ROOT / "caverns_and_claudes" / "worlds" / "caverns_sunden" / "creatures.yaml").exists()
+    return (
+        CONTENT_ROOT / "caverns_and_claudes" / "worlds" / "caverns_sunden" / "creatures.yaml"
+    ).exists()
 
 
 @pytest.mark.skipif(not _real_content_available(), reason="sidequest-content not checked out")

@@ -160,9 +160,7 @@ def _make_app_with_cover_poi(
 ) -> TestClient:
     packs_dir = tmp_path / "genre_packs"
     packs_dir.mkdir()
-    _create_mock_genre_pack(
-        packs_dir, "spaghetti_western", "dust_and_lead", cover_poi=cover_poi
-    )
+    _create_mock_genre_pack(packs_dir, "spaghetti_western", "dust_and_lead", cover_poi=cover_poi)
     saves_dir = tmp_path / "saves"
     saves_dir.mkdir()
     app = create_app(genre_pack_search_paths=[packs_dir], save_dir=saves_dir)

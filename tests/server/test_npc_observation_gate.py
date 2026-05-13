@@ -120,9 +120,7 @@ def _mention(name: str = "", role: str = "") -> NpcMention:
     return NpcMention(name=name, role=role)
 
 
-def _spans_named(
-    otel_capture: InMemorySpanExporter, span_name: str
-) -> list:
+def _spans_named(otel_capture: InMemorySpanExporter, span_name: str) -> list:
     """Filter captured spans by name.
 
     Return type is bare ``list`` because the OTEL exporter yields
@@ -376,8 +374,7 @@ def test_auto_mint_flags_new_member_observation_pending_true(otel_capture):
     )
     minted = next((m for m in pool_after if (m.role or "").casefold() == "father"), None)
     assert minted is not None, (
-        f"Father not found in pool — fixture broken. Pool: "
-        f"{[(m.name, m.role) for m in pool_after]}"
+        f"Father not found in pool — fixture broken. Pool: {[(m.name, m.role) for m in pool_after]}"
     )
     assert minted.observation_pending is True, (
         f"Auto-mint must flag new members observation_pending=True so "
@@ -578,9 +575,7 @@ def test_gate_purge_emits_observation_gate_purged_span(otel_capture):
     )
 
     spans = _spans_named(otel_capture, PURGED_SPAN_NAME)
-    assert len(spans) == 1, (
-        f"Exactly one purge span expected for one purge; got {len(spans)}."
-    )
+    assert len(spans) == 1, f"Exactly one purge span expected for one purge; got {len(spans)}."
     span = spans[0]
     assert _attr(span, "npc_name") == "Mother"
     assert _attr(span, "role") == "mother"
@@ -803,8 +798,7 @@ def test_glenross_two_turn_mother_dropped_is_purged(otel_capture):
     )
 
     assert not any(m.name == "Mother" for m in snapshot.npc_pool), (
-        "Mother must be purged; pool remaining: "
-        f"{[m.name for m in snapshot.npc_pool]}"
+        f"Mother must be purged; pool remaining: {[m.name for m in snapshot.npc_pool]}"
     )
     purges = _spans_named(otel_capture, PURGED_SPAN_NAME)
     assert len(purges) == 1
@@ -879,8 +873,7 @@ def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture)
     )
     father_final = next(m for m in snapshot.npc_pool if m.name == "Father")
     assert father_final.observation_pending is False, (
-        "Father must remain ratified — gate does not re-evaluate "
-        "already-ratified members."
+        "Father must remain ratified — gate does not re-evaluate already-ratified members."
     )
     assert not any(m.name == "the constable" for m in snapshot.npc_pool), (
         "the constable must be purged."
@@ -888,14 +881,14 @@ def test_glenross_four_turn_sequence_father_survives_mother_purged(otel_capture)
 
     promotes = _spans_named(otel_capture, PROMOTED_SPAN_NAME)
     purges = _spans_named(otel_capture, PURGED_SPAN_NAME)
-    assert len(promotes) == 1, (
-        f"Exactly one promote (Father, turn 6); got {len(promotes)}."
-    )
+    assert len(promotes) == 1, f"Exactly one promote (Father, turn 6); got {len(promotes)}."
     assert _attr(promotes[0], "npc_name") == "Father"
     assert _attr(promotes[0], "turn_number") == 6
     assert len(purges) == 1, f"Exactly one purge (the constable, turn 8); got {len(purges)}."
     assert _attr(purges[0], "npc_name") == "the constable"
     assert _attr(purges[0], "turn_number") == 8
+
+
 def test_apply_narration_result_invokes_observation_gate(otel_capture):
     """Wiring assertion (CLAUDE.md "Every Test Suite Needs a Wiring
     Test"): ``_apply_narration_result_to_snapshot`` must call the gate
@@ -913,9 +906,7 @@ def test_apply_narration_result_invokes_observation_gate(otel_capture):
     )
 
     snapshot = GameSnapshot()
-    snapshot.npc_pool.append(
-        _pending_member(name="Mother", role="mother", pronouns="she/her")
-    )
+    snapshot.npc_pool.append(_pending_member(name="Mother", role="mother", pronouns="she/her"))
 
     result = NarrationTurnResult(
         narration="Reverend Murchison waits in the parlour.",
@@ -972,9 +963,7 @@ def test_apply_narration_result_runs_gate_before_auto_mint(otel_capture):
     )
 
     snapshot = GameSnapshot()
-    snapshot.npc_pool.append(
-        _pending_member(name="Father", role="father", pronouns="he/him")
-    )
+    snapshot.npc_pool.append(_pending_member(name="Father", role="father", pronouns="he/him"))
 
     result = NarrationTurnResult(
         narration=(

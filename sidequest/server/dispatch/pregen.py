@@ -71,7 +71,9 @@ def _select_diverse_pairings(
     def sample(pool: list[list[str]], n: int) -> list[tuple[str, str]]:
         if not pool:
             return []
-        return [(pool[rng.randrange(len(pool))][0], pool[rng.randrange(len(pool))][1]) for _ in range(n)]
+        return [
+            (pool[rng.randrange(len(pool))][0], pool[rng.randrange(len(pool))][1]) for _ in range(n)
+        ]
 
     pairs: list[tuple[str, str]] = []
     pairs.extend(sample(constraints.valid_pairings.common, common_count))

@@ -350,9 +350,7 @@ class TestPassA2BeatFiring:
         0.10/0.30/0.50/0.80 → first 3 cross, 4th doesn't.
         """
         snap = _seed_snapshot([("t", "progressing", 0.0)])
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50, 0.80))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50, 0.80))])
 
         fields = _pass_a2_time_skip(snap, pack, days_advanced=14, now_turn=11)
 
@@ -367,9 +365,7 @@ class TestPassA2BeatFiring:
         """AC-6: pending_time_skip_summary stored in chronological order
         so the narrator prompt presents the day-by-day sequence right.
         """
-        snap = _seed_snapshot(
-            [("alpha", "progressing", 0.0), ("bravo", "progressing", 0.0)]
-        )
+        snap = _seed_snapshot([("alpha", "progressing", 0.0), ("bravo", "progressing", 0.0)])
         pack = _pack_with(
             [
                 _trope_def("alpha", rate_per_day=0.05, thresholds=(0.30,)),
@@ -380,9 +376,7 @@ class TestPassA2BeatFiring:
         _pass_a2_time_skip(snap, pack, days_advanced=10, now_turn=11)
 
         summary = snap.pending_time_skip_summary
-        assert summary == sorted(
-            summary, key=lambda b: (b.days_into_skip, b.trope_id)
-        )
+        assert summary == sorted(summary, key=lambda b: (b.days_into_skip, b.trope_id))
 
     def test_does_not_refire_already_fired_beats(self) -> None:
         """A trope that already fired beat-0 in a prior tick does NOT
@@ -391,9 +385,7 @@ class TestPassA2BeatFiring:
         """
         snap = _seed_snapshot([("t", "progressing", 0.50)])
         snap.active_tropes[0].beats_fired = 1  # beat-0 already fired
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.05, thresholds=(0.25, 0.70))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.05, thresholds=(0.25, 0.70))])
         # 5 days * 0.05 = +0.25 -> 0.75, crosses 0.70 only.
         fields = _pass_a2_time_skip(snap, pack, days_advanced=5, now_turn=11)
 
@@ -431,9 +423,7 @@ class TestPassA2BeatFiring:
         fired AFTER the skip ended, which is incoherent.
         """
         snap = _seed_snapshot([("t", "progressing", 0.0)])
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50))])
 
         fields = _pass_a2_time_skip(snap, pack, days_advanced=14, now_turn=11)
 
@@ -455,9 +445,7 @@ class TestPassA2ImplicitResolution:
     def test_implicit_resolution_when_all_beats_fire_and_progress_maxes(self) -> None:
         """rate 0.1 × 14 days = +1.4 (capped at 1.0), all 3 beats cross."""
         snap = _seed_snapshot([("t", "progressing", 0.0)])
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.1, thresholds=(0.25, 0.50, 1.0))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.1, thresholds=(0.25, 0.50, 1.0))])
 
         fields = _pass_a2_time_skip(snap, pack, days_advanced=14, now_turn=11)
 
@@ -477,9 +465,7 @@ class TestPassA2ImplicitResolution:
         """
         snap = _seed_snapshot([("t", "progressing", 0.49)])
         snap.active_tropes[0].beats_fired = 0
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.5, thresholds=(0.50, 0.51, 1.0))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.5, thresholds=(0.50, 0.51, 1.0))])
 
         fields = _pass_a2_time_skip(snap, pack, days_advanced=1, now_turn=11)
 
@@ -502,9 +488,7 @@ class TestPassA2OtelFields:
     """
 
     def test_fields_carry_full_payload_on_active_skip(self) -> None:
-        snap = _seed_snapshot(
-            [("alpha", "progressing", 0.0), ("zero", "progressing", 0.0)]
-        )
+        snap = _seed_snapshot([("alpha", "progressing", 0.0), ("zero", "progressing", 0.0)])
         pack = _pack_with(
             [
                 _trope_def("alpha", rate_per_day=0.04, thresholds=(0.10,)),
@@ -529,9 +513,7 @@ class TestPassA2OtelFields:
         with the per-beat detail it lists.
         """
         snap = _seed_snapshot([("t", "progressing", 0.0)])
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50, 0.80))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30, 0.50, 0.80))])
 
         fields = _pass_a2_time_skip(snap, pack, days_advanced=14, now_turn=11)
 
@@ -608,9 +590,7 @@ class TestTickTropesWireUp:
         from sidequest.telemetry.spans import SPAN_TROPE_TIME_SKIP
 
         snap = _seed_snapshot([("t", "progressing", 0.0)])
-        pack = _pack_with(
-            [_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30))]
-        )
+        pack = _pack_with([_trope_def(rate_per_day=0.04, thresholds=(0.10, 0.30))])
 
         tick_tropes(snap, pack, now_turn=11, days_advanced=7)
 
@@ -626,9 +606,7 @@ class TestTickTropesWireUp:
         affected = attrs.get("tropes_affected") or ()
         assert "t" in tuple(affected)
 
-    def test_tick_tropes_no_time_skip_span_when_days_zero(
-        self, otel_capture
-    ) -> None:
+    def test_tick_tropes_no_time_skip_span_when_days_zero(self, otel_capture) -> None:
         """Zero days = no span — the GM panel relies on span PRESENCE
         as the "a skip happened" signal.
         """

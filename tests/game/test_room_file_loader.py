@@ -16,7 +16,14 @@ def caverns_sunden_dir() -> Path:
     """Real path to the authored caverns_sunden world."""
     here = Path(__file__).resolve()
     repo = here.parents[3]  # oq-1
-    return repo / "sidequest-content" / "genre_packs" / "caverns_and_claudes" / "worlds" / "caverns_sunden"
+    return (
+        repo
+        / "sidequest-content"
+        / "genre_packs"
+        / "caverns_and_claudes"
+        / "worlds"
+        / "caverns_sunden"
+    )
 
 
 def test_load_cavern_room_returns_payload_with_image_and_mask(caverns_sunden_dir):

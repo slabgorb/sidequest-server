@@ -163,9 +163,7 @@ def build_magic_context_block(
         except KeyError:
             favor_bar = None
         free_use_spent = actor_id in magic_state.reliquary_free_use_spent
-        eligible = [
-            r for r in reliquaries if r.model_dump().get("divine_favor_effect")
-        ]
+        eligible = [r for r in reliquaries if r.model_dump().get("divine_favor_effect")]
         if (
             favor_bar is not None
             and favor_bar.value >= DEFAULT_DIVINE_FAVOR_THRESHOLD
@@ -174,8 +172,7 @@ def build_magic_context_block(
         ):
             lines.append("")
             lines.append(
-                f'<available-reliquaries actor="{actor_id}" '
-                f'divine_favor="{favor_bar.value:.2f}">'
+                f'<available-reliquaries actor="{actor_id}" divine_favor="{favor_bar.value:.2f}">'
             )
             lines.append(
                 f"  The Cleric holds reliquaries that, at "

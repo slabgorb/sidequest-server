@@ -19,7 +19,9 @@ from sidequest.agents.prompt_framework.bucket import (
 async def test_all_registered_sections_have_deterministic_bucket(simple_turn_context):
     """For a representative turn, every registered section is bucketed without surprise."""
     client = AsyncMock()
-    client.send_stateless = AsyncMock(return_value=ClaudeResponse(text='{"narration":"ok"}', session_id=None))
+    client.send_stateless = AsyncMock(
+        return_value=ClaudeResponse(text='{"narration":"ok"}', session_id=None)
+    )
     orch = Orchestrator(client=client)
 
     _, registry = await orch.build_narrator_prompt("look around", simple_turn_context)
@@ -40,7 +42,9 @@ async def test_all_registered_sections_have_deterministic_bucket(simple_turn_con
 async def test_known_dynamic_sections_default_to_user(simple_turn_context):
     """Spot-check: player_action, game_state, npc_roster must NOT be in system bucket."""
     client = AsyncMock()
-    client.send_stateless = AsyncMock(return_value=ClaudeResponse(text='{"narration":"ok"}', session_id=None))
+    client.send_stateless = AsyncMock(
+        return_value=ClaudeResponse(text='{"narration":"ok"}', session_id=None)
+    )
     orch = Orchestrator(client=client)
 
     captured: dict[str, str] = {}
