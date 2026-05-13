@@ -1,11 +1,9 @@
 """Tests for ``sidequest.game.gossip_engine`` — Story 50-7.
 
-Drives the RED phase for the GossipEngine: two-phase belief propagation,
-contradiction detection, credibility decay, and OTEL observability per
-ADR-053 (Scenario System).
-
-The module under test does not yet exist; every test in this file fails
-at import time until Dev brings the engine online.
+Covers the GossipEngine's two-phase belief propagation, contradiction
+detection, credibility decay, and OTEL observability per ADR-053 (Scenario
+System), plus rule-enforcement coverage from CLAUDE.md (No Silent Fallbacks,
+Verify Wiring) and python lang-review rules #1, #6, #11.
 """
 
 from __future__ import annotations
@@ -20,11 +18,9 @@ from sidequest.game.belief_state import (
     BeliefFact,
     BeliefSourceWitnessed,
     BeliefState,
+    BeliefSuspicion,
 )
-
-# Importing the not-yet-existent module up front so the whole suite fails
-# until GossipEngine and its dataclasses land. This is intentional RED.
-from sidequest.game.gossip_engine import (  # noqa: E402
+from sidequest.game.gossip_engine import (
     GossipEngine,
     GossipResult,
     GossipTransmission,
@@ -36,13 +32,6 @@ from sidequest.game.gossip_engine import (  # noqa: E402
 # ``tests/game/conftest.py`` (carries the Story 45-36 processor-clearing fix
 # that prevents span bleed-through between tests).
 # ---------------------------------------------------------------------------
-
-
-def _events_named(exporter: InMemorySpanExporter, name: str) -> list:
-    """Collect every event whose name matches across all finished spans."""
-    return [
-        e for span in exporter.get_finished_spans() for e in span.events if e.name == name
-    ]
 
 
 def _spans_named(exporter: InMemorySpanExporter, name: str) -> list:
@@ -92,7 +81,7 @@ class TestTwoPhasePropagation:
         assert outcome.content == "Was in the library at 9pm"
 
     def test_two_npc_chain_mutates_receiver_only(self) -> None:
-        """AC4 — two-NPC chain: A→B updates B's belief state; A unchanged."""
+        """AC1 — two-NPC chain: A→B updates B's belief state; A unchanged."""
         engine = GossipEngine()
         alice = BeliefState()
         bert = BeliefState()
@@ -222,6 +211,68 @@ class TestContradictionDetection:
         assert len(facts) == 1, "Existing BeliefFact must not be removed by gossip"
         assert facts[0].content == "Was at the pub at 9pm"
 
+        # When post-decay credibility remains positive (trust=0.7, default
+        # decay=0.1 → 0.6), the contradicting gossip lands alongside the Fact
+        # as a low-confidence Suspicion — the "rumor tier" path the engine
+        # docstring describes. The Fact stays canonical, but the dispute is
+        # visible to the narrator.
+        suspicions = [b for b in bert.beliefs_about("Erskine") if isinstance(b, BeliefSuspicion)]
+        assert len(suspicions) == 1, (
+            "Contradicting gossip with positive credibility must be appended as "
+            "a Suspicion alongside the Fact (rumor-tier dispute visibility)."
+        )
+        assert suspicions[0].content == "Was in the library at 9pm"
+        assert suspicions[0].confidence == pytest.approx(0.6)
+
+    def test_contradicting_gossip_with_zero_credibility_is_not_stored(self) -> None:
+        """Pin the docstring promise: contradicting gossip is stored alongside
+        the Fact ONLY when post-decay credibility remains positive. A
+        zero-credibility contradiction is flagged on the outcome but NOT
+        stored — the receiver's belief state stays clean. Without this test,
+        the engine's documented contract about conditional storage can drift
+        silently.
+        """
+        engine = GossipEngine(decay_per_hop=0.5)
+        bert = BeliefState()
+        bert.update_credibility("Alice", 0.3)  # post-decay: max(0, 0.3-0.5) = 0.0
+        bert.add_belief(
+            BeliefFact(
+                subject="Erskine",
+                content="Was at the pub",
+                turn_learned=1,
+                source=BeliefSourceWitnessed(),
+            )
+        )
+
+        result = engine.propagate(
+            npcs={"Alice": BeliefState(), "Bert": bert},
+            transmissions=[
+                GossipTransmission(
+                    from_npc="Alice",
+                    to_npc="Bert",
+                    subject="Erskine",
+                    content="Was in the library",
+                    sentiment="contradicting",
+                )
+            ],
+            current_turn=2,
+        )
+
+        # Contradiction surfaces on the outcome…
+        assert result.outcomes[0].contradicted is True
+        assert result.outcomes[0].accepted is False
+        assert result.outcomes[0].credibility_after == pytest.approx(0.0)
+
+        # …but the Fact is intact and no Suspicion was added.
+        facts = [b for b in bert.beliefs_about("Erskine") if isinstance(b, BeliefFact)]
+        suspicions = [b for b in bert.beliefs_about("Erskine") if isinstance(b, BeliefSuspicion)]
+        assert len(facts) == 1
+        assert facts[0].content == "Was at the pub"
+        assert suspicions == [], (
+            "Zero-credibility contradicting gossip must not be stored as a "
+            "Suspicion — the receiver's trust in the source post-decay was nil."
+        )
+
     def test_low_credibility_source_never_promotes_to_fact(self) -> None:
         """AC4 (credibility downgrade): low-trust source lands as rumor, not fact."""
         engine = GossipEngine()
@@ -242,9 +293,7 @@ class TestContradictionDetection:
         )
 
         facts = [b for b in bert.beliefs_about("Erskine") if isinstance(b, BeliefFact)]
-        assert facts == [], (
-            "Gossip from a low-credibility source must never be stored as Fact"
-        )
+        assert facts == [], "Gossip from a low-credibility source must never be stored as Fact"
 
     def test_high_credibility_source_records_outcome_as_accepted(self) -> None:
         """High trust + no contradiction → accepted=True on the outcome."""
@@ -285,9 +334,7 @@ class TestCredibilityDecay:
         result = engine.propagate(
             npcs={"Alice": BeliefState(), "Bert": bert},
             transmissions=[
-                GossipTransmission(
-                    from_npc="Alice", to_npc="Bert", subject="x", content="y"
-                )
+                GossipTransmission(from_npc="Alice", to_npc="Bert", subject="x", content="y")
             ],
             current_turn=0,
         )
@@ -304,14 +351,11 @@ class TestCredibilityDecay:
         result = engine.propagate(
             npcs={"Alice": BeliefState(), "Bert": bert},
             transmissions=[
-                GossipTransmission(
-                    from_npc="Alice", to_npc="Bert", subject="x", content="y"
-                )
+                GossipTransmission(from_npc="Alice", to_npc="Bert", subject="x", content="y")
             ],
             current_turn=0,
         )
         assert result.outcomes[0].credibility_after == pytest.approx(0.0)
-        assert result.outcomes[0].credibility_after >= 0.0
 
     def test_multi_hop_decays_more_than_single_hop(self) -> None:
         """AC4 (multi-hop): A→B→C across two turns yields lower credibility
@@ -345,6 +389,13 @@ class TestCredibilityDecay:
         )
         assert r1.outcomes[0].credibility_after == pytest.approx(0.7)
 
+        # The Suspicion Bert now holds about Erskine carries confidence 0.7;
+        # this is the value Bert's onward gossip in turn 2 must read back.
+        bert_beliefs = bert.beliefs_about("Erskine")
+        suspicions = [b for b in bert_beliefs if isinstance(b, BeliefSuspicion)]
+        assert len(suspicions) == 1
+        assert suspicions[0].confidence == pytest.approx(0.7)
+
         # Turn 2: B → C, relaying what B heard from A.
         r2 = engine.propagate(
             npcs={"Alice": alice, "Bert": bert, "Carol": carol},
@@ -358,10 +409,14 @@ class TestCredibilityDecay:
             ],
             current_turn=2,
         )
-        assert r2.outcomes[0].credibility_after < 0.7, (
-            "Multi-hop A→B→C must decay credibility strictly more than the "
-            "single-hop equivalent (0.9 - 0.2 = 0.7). Engine must track "
-            "lineage, not just per-call trust delta."
+        # Lineage: min(carol_trust_in_bert=0.9, bert_stored_confidence=0.7) = 0.7,
+        # then decay 0.2 = 0.5. Strict equality pins the lineage math so a
+        # rounding-bug refactor returning 0.69 is caught.
+        assert r2.outcomes[0].credibility_after == pytest.approx(0.5), (
+            "Multi-hop A→B→C must read Bert's stored Suspicion confidence (0.7) "
+            "as the credibility floor, then decay 0.2 → 0.5. A naive per-call "
+            "trust delta (0.9 - 0.2 = 0.7) would pass strict-inequality but "
+            "fails this exact pin."
         )
 
 
@@ -410,12 +465,17 @@ class TestOtelObservability:
             f"Expected one gossip span per transmission (2); got {len(spans)} "
             f"in {[s.name for s in otel_capture.get_finished_spans()]}"
         )
+        # AC3, AC5: pin specific values, not just attribute presence, so a
+        # regression that emits accepted=None or wrong credibility numbers is
+        # caught. Test setup: trust=0.6, default decay=0.1 → before=0.6,
+        # after=0.5. accepted=True (cred_after > 0 and not contradicted).
         attrs = dict(spans[0].attributes or {})
-        # AC3, AC5: required attributes on every gossip span.
-        assert "credibility_before" in attrs, "span must carry credibility_before"
-        assert "credibility_after" in attrs, "span must carry credibility_after"
-        assert "accepted" in attrs, "span must carry accepted bool"
-        assert "from_npc" in attrs and "to_npc" in attrs
+        assert attrs["credibility_before"] == pytest.approx(0.6)
+        assert attrs["credibility_after"] == pytest.approx(0.5)
+        assert attrs["accepted"] is True
+        assert attrs["from_npc"] == "Alice"
+        assert attrs["to_npc"] == "Bert"
+        assert attrs["subject"] == "Erskine"
 
     def test_belief_state_mutation_span_fires_when_receiver_updates(
         self, otel_capture: InMemorySpanExporter
@@ -439,15 +499,65 @@ class TestOtelObservability:
             current_turn=1,
         )
 
+        # Pin exact count + exact attribute values. A bare truthy check
+        # (assert mutation_spans) lets a regression emit any non-empty list
+        # past; the GM panel needs the precise NPC, subject, and confidence
+        # the engine actually wrote. Setup: trust=0.9, default decay=0.1 →
+        # confidence=0.8.
         mutation_spans = _spans_named(otel_capture, SPAN_BELIEF_STATE_MUTATION)
-        assert mutation_spans, (
-            "SPAN_BELIEF_STATE_MUTATION must fire when a receiver's belief_state "
-            "changes due to gossip — without this, the GM panel can't see whether "
-            "the engine actually moved any beliefs."
-        )
+        assert len(mutation_spans) == 1
         attrs = dict(mutation_spans[0].attributes or {})
-        assert attrs.get("npc") == "Bert" or attrs.get("target_npc") == "Bert", (
-            f"belief_state_mutation span must identify the mutated NPC; got {attrs}"
+        assert attrs["npc"] == "Bert"
+        assert attrs["subject"] == "Erskine"
+        assert attrs["confidence"] == pytest.approx(0.8)
+        assert attrs["contradicted"] is False
+
+    def test_mutation_span_nested_inside_propagation_span(
+        self, otel_capture: InMemorySpanExporter
+    ) -> None:
+        """The mutation span must be a child of the propagation span. The
+        engine docstring advertises this nesting; without a parent-id
+        assertion, a refactor that un-nests the spans would pass every
+        existence test while breaking the GM panel's trace hierarchy.
+        """
+        from sidequest.telemetry.spans import (
+            SPAN_BELIEF_STATE_MUTATION,
+            SPAN_GOSSIP_PROPAGATION,
+        )
+
+        engine = GossipEngine()
+        bert = BeliefState()
+        bert.update_credibility("Alice", 0.9)
+
+        engine.propagate(
+            npcs={"Alice": BeliefState(), "Bert": bert},
+            transmissions=[
+                GossipTransmission(
+                    from_npc="Alice",
+                    to_npc="Bert",
+                    subject="Erskine",
+                    content="left at 9pm",
+                )
+            ],
+            current_turn=1,
+        )
+
+        propagation_spans = _spans_named(otel_capture, SPAN_GOSSIP_PROPAGATION)
+        mutation_spans = _spans_named(otel_capture, SPAN_BELIEF_STATE_MUTATION)
+        assert len(propagation_spans) == 1
+        assert len(mutation_spans) == 1
+        # Parent context of the mutation span must be the propagation span.
+        # OTEL exposes the parent on .parent (a SpanContext) — its span_id
+        # must equal the propagation span's context.span_id.
+        assert mutation_spans[0].parent is not None, (
+            "Mutation span must have a parent — the propagation span. None "
+            "indicates the mutation span was opened outside the propagation "
+            "span's `with` block."
+        )
+        assert mutation_spans[0].parent.span_id == propagation_spans[0].context.span_id, (
+            "Mutation span's parent must be the propagation span. The engine "
+            "docstring claims this nesting; if it ever stops holding, the GM "
+            "panel's trace hierarchy breaks silently."
         )
 
     def test_contradiction_outcome_is_visible_not_silently_dropped(
@@ -494,11 +604,19 @@ class TestOtelObservability:
             "Silent fallback (storing the gossip with no contradicted flag) is forbidden."
         )
 
-    def test_rejected_gossip_still_emits_span(
+    def test_rejected_gossip_still_emits_span_but_no_mutation(
         self, otel_capture: InMemorySpanExporter
     ) -> None:
-        """Even when accepted=False, the span fires — rejection is observable."""
-        from sidequest.telemetry.spans import SPAN_GOSSIP_PROPAGATION
+        """When accepted=False (credibility_after clamped to 0), the propagation
+        span fires (rejection is observable) but the mutation span does NOT
+        — there was no belief-state change to observe. Pinning both halves
+        catches a regression that always emits a mutation span or one that
+        silently drops the propagation span on rejection.
+        """
+        from sidequest.telemetry.spans import (
+            SPAN_BELIEF_STATE_MUTATION,
+            SPAN_GOSSIP_PROPAGATION,
+        )
 
         engine = GossipEngine(decay_per_hop=0.4)
         bert = BeliefState()
@@ -517,8 +635,22 @@ class TestOtelObservability:
             current_turn=1,
         )
 
-        spans = _spans_named(otel_capture, SPAN_GOSSIP_PROPAGATION)
-        assert len(spans) == 1, "Rejection must still emit a propagation span"
+        propagation_spans = _spans_named(otel_capture, SPAN_GOSSIP_PROPAGATION)
+        assert len(propagation_spans) == 1, "Rejection must still emit a propagation span"
+        attrs = dict(propagation_spans[0].attributes or {})
+        assert attrs["accepted"] is False
+        assert attrs["credibility_after"] == pytest.approx(0.0)
+
+        # No mutation span — the receiver's belief_state was not modified.
+        mutation_spans = _spans_named(otel_capture, SPAN_BELIEF_STATE_MUTATION)
+        assert mutation_spans == [], (
+            f"Rejected gossip must NOT emit a belief-state mutation span (the "
+            f"receiver's beliefs did not change). Got {len(mutation_spans)} "
+            f"mutation span(s)."
+        )
+
+        # Bert's belief_state should be untouched.
+        assert bert.beliefs_about("X") == []
 
 
 # ---------------------------------------------------------------------------
@@ -571,15 +703,44 @@ class TestInputValidation:
 
     def test_propagate_rejects_unknown_to_npc(self) -> None:
         """No silent fallback: targeting an NPC absent from the npcs map
-        raises, rather than being skipped silently."""
+        raises ``KeyError``, rather than being skipped silently. Tightened
+        from ``(KeyError, ValueError)`` to a single specific type — the
+        engine's documented contract is KeyError; a regression that
+        substitutes ValueError must surface, not pass."""
         engine = GossipEngine()
-        with pytest.raises((KeyError, ValueError)):
+        with pytest.raises(KeyError):
             engine.propagate(
                 npcs={"Alice": BeliefState()},
                 transmissions=[
                     GossipTransmission(
                         from_npc="Alice",
                         to_npc="Ghost",
+                        subject="x",
+                        content="y",
+                    )
+                ],
+                current_turn=0,
+            )
+
+    def test_propagate_rejects_unknown_from_npc(self) -> None:
+        """No silent fallback: ``from_npc`` absent from the npcs map MUST
+        raise ``KeyError``, symmetric to the ``to_npc`` check. Silent
+        acceptance of an unknown sender is exactly the pattern CLAUDE.md's
+        'No Silent Fallbacks' forbids — the engine's own docstring self-
+        cites the rule. A receiver's default 0.5 credibility-for-strangers
+        masks a typo or stale-name caller bug; the engine refuses to
+        propagate gossip whose source is not in the registered NPC map.
+        """
+        engine = GossipEngine()
+        bert = BeliefState()
+        bert.update_credibility("Alice", 0.5)
+        with pytest.raises(KeyError):
+            engine.propagate(
+                npcs={"Bert": bert},  # Alice absent — caller bug or stale name
+                transmissions=[
+                    GossipTransmission(
+                        from_npc="Alice",
+                        to_npc="Bert",
                         subject="x",
                         content="y",
                     )
@@ -624,8 +785,7 @@ class TestWiring:
         # Each new span must be either routed to a typed event OR explicitly
         # flat-only. Membership-in-neither is the bug the registry catches.
         assert (
-            SPAN_GOSSIP_PROPAGATION in FLAT_ONLY_SPANS
-            or SPAN_GOSSIP_PROPAGATION in SPAN_ROUTES
+            SPAN_GOSSIP_PROPAGATION in FLAT_ONLY_SPANS or SPAN_GOSSIP_PROPAGATION in SPAN_ROUTES
         ), "SPAN_GOSSIP_PROPAGATION must be registered (flat-only or routed)"
         assert (
             SPAN_BELIEF_STATE_MUTATION in FLAT_ONLY_SPANS
