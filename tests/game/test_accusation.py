@@ -649,8 +649,8 @@ class TestWiring:
         will trip and the GM panel will see unrouted span names."""
         from sidequest.telemetry.spans import (
             FLAT_ONLY_SPANS,
-            SPAN_SCENARIO_ACCUSATION,
             SPAN_ROUTES,
+            SPAN_SCENARIO_ACCUSATION,
         )
 
         assert (

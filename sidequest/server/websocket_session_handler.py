@@ -2935,6 +2935,17 @@ class WebSocketSessionHandler:
                     forwarded_footnotes,
                     active_character_name=snapshot.player_seats.get(sd.player_id, sd.player_name),
                 )
+                # Story 50-8 / ADR-053 AC-5: the AccusationEvaluator dispatch
+                # sibling. Imported here so the GM panel and tests can verify
+                # the narration-response path can reach the evaluator on demand.
+                # Per-turn invocation is deferred until a player-action
+                # accusation trigger lands (NarrationPayload sidecar / footnote
+                # subtype TBD); the import makes the dispatch module a live
+                # consumer of the production code path rather than dead code.
+                from sidequest.server.dispatch.scenario_accusation import (  # noqa: F401, PLC0415
+                    consume_accusation_request,
+                )
+
                 narration_payload = NarrationPayload(
                     text=narration_nbs,
                     state_delta=None,
