@@ -613,6 +613,14 @@ class TurnContext:
     # Empty list = section not registered (zero-byte-leak).
     recent_narrative_log: list[NarrativeEntry] = field(default_factory=list)
 
+    # Live snapshot reference (Story 50-4). Used by build_narrator_prompt to
+    # consume + clear ``snapshot.pending_time_skip_summary`` as part of the
+    # TIME-SKIP CONTEXT block (one-shot lifecycle — render then clear).
+    # Typed as Any to avoid importing GameSnapshot at this layer; runtime
+    # type is ``sidequest.game.session.GameSnapshot | None``. None on the
+    # legacy/fixture paths that never went through ``_build_turn_context``.
+    snapshot: Any = None
+
 
 # ---------------------------------------------------------------------------
 # game_patch extraction helpers
@@ -1444,6 +1452,30 @@ class Orchestrator:
                         SectionCategory.State,
                     ),
                 )
+
+        # Story 50-4: TIME-SKIP CONTEXT block from queued beat summary.
+        # One-shot lifecycle — render then clear ``pending_time_skip_summary``.
+        # Registered Early so the "has-already-happened" framing lands ahead
+        # of state-summary blocks the narrator might otherwise contradict.
+        snapshot = getattr(context, "snapshot", None)
+        if snapshot is not None and getattr(snapshot, "pending_time_skip_summary", None):
+            from sidequest.agents.narrator import _render_time_skip_context  # noqa: PLC0415
+
+            time_skip_block = _render_time_skip_context(
+                list(snapshot.pending_time_skip_summary),
+                getattr(snapshot, "days_elapsed", 0),
+            )
+            if time_skip_block:
+                registry.register_section(
+                    agent_name,
+                    PromptSection.new(
+                        "time_skip_context",
+                        time_skip_block,
+                        AttentionZone.Early,
+                        SectionCategory.State,
+                    ),
+                )
+                snapshot.pending_time_skip_summary = []
 
         # Active trope summary (Valley zone)
         if context.active_trope_summary:

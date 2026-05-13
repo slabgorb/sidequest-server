@@ -466,6 +466,9 @@ def _build_turn_context(
         pending_trope_context=pending_trope_context,
         active_trope_summary=active_trope_summary,
         recent_narrative_log=list(snapshot.narrative_log[-RECENT_NARRATIVE_WINDOW_K:]),
+        # Story 50-4: thread the live snapshot so build_narrator_prompt can
+        # render + clear pending_time_skip_summary (one-shot lifecycle).
+        snapshot=snapshot,
     )
 
 
