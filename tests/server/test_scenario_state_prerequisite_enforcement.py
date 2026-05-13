@@ -26,7 +26,6 @@ from sidequest.genre.models.scenario import ClueGraph, ClueNode
 from sidequest.telemetry.spans.scenario import SPAN_SCENARIO_ADVANCE
 from tests.server.conftest import span_attrs_by_name
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
