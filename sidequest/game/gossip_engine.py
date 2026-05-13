@@ -11,9 +11,12 @@ Storage convention: gossip-arrived beliefs land in the receiver's
 with ``confidence`` equal to the gossip's post-decay credibility. Gossip
 never promotes to :class:`BeliefFact`; certainty is reserved for direct
 witnessing. Existing facts in the receiver's belief state are never
-overwritten — contradicting gossip is flagged on the outcome and stored
-alongside the fact as low-confidence rumor (the "downgrade to rumor
-tier" path described in ADR-053).
+overwritten — contradicting gossip is flagged on the outcome and, when
+post-decay credibility remains positive, stored alongside the fact as a
+low-confidence :class:`BeliefSuspicion` (the "downgrade to rumor tier"
+path described in ADR-053). Zero-credibility contradictions are flagged
+on the outcome but not stored — the receiver's trust in the source has
+fully decayed, so no rumor lands.
 
 Multi-hop lineage: when a sender forwards gossip about a subject it
 already holds a belief about, the engine reads the sender's stored
@@ -146,7 +149,9 @@ class GossipEngine:
 
         Raises:
             KeyError: if any transmission targets a ``to_npc`` not in
-                ``npcs`` — no silent fallback for unknown receivers.
+                ``npcs``, or names a ``from_npc`` not in ``npcs`` — no
+                silent fallback for unknown participants on either side
+                of the transmission.
         """
         snapshots: list[_Snapshot] = []
         for t in transmissions:
@@ -155,15 +160,19 @@ class GossipEngine:
                     f"GossipTransmission targets unknown to_npc {t.to_npc!r} "
                     f"(not in npcs map: {sorted(npcs)})"
                 )
+            if t.from_npc not in npcs:
+                raise KeyError(
+                    f"GossipTransmission names unknown from_npc {t.from_npc!r} "
+                    f"(not in npcs map: {sorted(npcs)})"
+                )
             receiver = npcs[t.to_npc]
-            sender = npcs.get(t.from_npc)
+            sender = npcs[t.from_npc]
 
             trust = receiver.credibility_of(t.from_npc).score
             cred_before = trust
-            if sender is not None:
-                source_confidence = _sender_confidence(sender, t.subject)
-                if source_confidence is not None:
-                    cred_before = min(trust, source_confidence)
+            source_confidence = _sender_confidence(sender, t.subject)
+            if source_confidence is not None:
+                cred_before = min(trust, source_confidence)
 
             cred_after = max(0.0, cred_before - self.decay_per_hop)
             contradicted = _has_contradicting_fact(receiver, t)
