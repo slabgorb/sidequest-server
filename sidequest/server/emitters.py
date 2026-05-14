@@ -15,8 +15,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from sidequest.agents.perception_rewriter import rewrite_for_recipient
+from sidequest.agents.pov_swap import swap_to_second_person
 
 if TYPE_CHECKING:
+    from sidequest.game.projection.view import SessionGameStateView
+    from sidequest.game.session import GameSnapshot
     from sidequest.protocol.messages import ScrapbookEntryPayload
     from sidequest.server.session_handler import WebSocketSessionHandler, _SessionData
 
@@ -114,6 +117,57 @@ def update_scrapbook_image_url(
         return False
 
 
+def _pronouns_for_pc(snapshot: GameSnapshot, pc_name: str) -> str:
+    """Return the pronouns string for a PC by name, or empty if not found.
+
+    Story 49-8: drives 2nd-person POV swap for the anchor recipient.
+    """
+    for c in snapshot.characters:
+        if c.core.name == pc_name:
+            return c.pronouns or ""
+    return ""
+
+
+def _apply_pov_swap(
+    payload_dict: dict,
+    *,
+    recipient_player_id: str,
+    view: SessionGameStateView,
+    snapshot: GameSnapshot,
+) -> dict:
+    """If ``recipient_player_id`` corresponds to the POV anchor in the
+    payload's ``_visibility`` sidecar, return a copy of the payload with
+    the ``text`` field rewritten in 2nd-person. Otherwise return the
+    payload unchanged.
+
+    Story 49-8 — applies only to payloads carrying a pc-anchored
+    visibility sidecar. NPCs and atmospheric narration leave prose alone.
+    """
+    viz = payload_dict.get("_visibility") or {}
+    anchor_pc = viz.get("anchor_pc")
+    pov_strategy = viz.get("pov_strategy")
+    if not anchor_pc or pov_strategy != "pc_anchored":
+        return payload_dict
+    recipient_pc_name = view.character_of(recipient_player_id)
+    if recipient_pc_name is None or recipient_pc_name != anchor_pc:
+        return payload_dict
+    pronouns = _pronouns_for_pc(snapshot, recipient_pc_name)
+    if not pronouns:
+        # Cannot safely swap without pronouns — return canonical prose.
+        # Genre-side chargen should always populate pronouns; this is a
+        # defensive guard against a malformed save.
+        return payload_dict
+    text = payload_dict.get("text", "")
+    if not isinstance(text, str) or not text:
+        return payload_dict
+    swapped, _ = swap_to_second_person(
+        text,
+        target_name=anchor_pc,
+        pronouns=pronouns,
+    )
+    return {**payload_dict, "text": swapped}
+
+
 def emit_event(
     handler: WebSocketSessionHandler,
     kind: str,
@@ -209,6 +263,13 @@ def emit_event(
                     view=view,
                     on_decision=_cache_decision,
                 )
+                # Story 49-8: per-recipient POV swap snapshot for the
+                # emitter path below. Captured here so the emitter and
+                # peer paths share one view/snapshot binding.
+                _snapshot_for_swap = (
+                    handler._session_data.snapshot if handler._session_data else None
+                )
+
                 for other_pid, decision in decisions:
                     filtered_data: dict = {}
                     if decision.include:
@@ -224,13 +285,65 @@ def emit_event(
                             viewer_player_id=other_pid,
                             status_effects=status_effects,
                         )
+                        # Story 49-8: 2nd-person POV swap. Fires only
+                        # when the recipient's PC matches the sidecar's
+                        # anchor_pc and pov_strategy=="pc_anchored".
+                        # No-op for atmospheric / non-anchor recipients.
+                        if _snapshot_for_swap is not None:
+                            filtered_data = _apply_pov_swap(
+                                filtered_data,
+                                recipient_player_id=other_pid,
+                                view=view,
+                                snapshot=_snapshot_for_swap,
+                            )
                     fanout.append((other_pid, decision, filtered_data))
 
         # Build emitter's message with raw, unfiltered payload + seq
-        # (Invariant 3). model_copy with scalar update is safe here —
-        # only `seq` is being added, no existing field is being replaced
-        # with a filtered value.
-        if isinstance(payload_model, BaseModel):
+        # (Invariant 3 — visibility filter is bypassed for the emitter).
+        #
+        # Story 49-8 amendment: when the emitter is the POV anchor of
+        # their own narration card, the emitter's frame is rewritten to
+        # 2nd-person so their tab reads "You plant a boot..." instead
+        # of "Carl plants a boot...". Other field-level filtering
+        # remains bypassed (Invariant 3 still holds for non-POV fields);
+        # only the prose surface is rewritten to match perspective.
+        emitter_payload: object
+        swap_eligible = (
+            room is not None
+            and projection_filter is not None
+            and emitter_player_id is not None
+            and _snapshot_for_swap is not None
+        )
+        if swap_eligible and isinstance(payload_model, BaseModel):
+            raw_dict = json.loads(payload_model.model_dump_json(exclude={"seq"}))
+            swapped_dict = _apply_pov_swap(
+                raw_dict,
+                recipient_player_id=emitter_player_id,
+                view=view,
+                snapshot=_snapshot_for_swap,
+            )
+            if swapped_dict is raw_dict:
+                # No swap applied — preserve the existing model_copy
+                # path so non-narration payloads (which carry richer
+                # Pydantic-only state) round-trip without serialization.
+                emitter_payload = payload_model.model_copy(update={"seq": seq})
+            else:
+                payload_cls_emitter = type(payload_model)
+                emitter_payload = payload_cls_emitter.model_validate(
+                    {**swapped_dict, "seq": seq}
+                )
+        elif swap_eligible and isinstance(payload_model, dict):
+            # Dict payload (test fixtures + legacy raw-dict callers). The
+            # swap operates on dicts directly, so just apply and return
+            # the message constructed from the swapped dict.
+            swapped_dict = _apply_pov_swap(
+                payload_model,
+                recipient_player_id=emitter_player_id,
+                view=view,
+                snapshot=_snapshot_for_swap,
+            )
+            emitter_payload = swapped_dict
+        elif isinstance(payload_model, BaseModel):
             emitter_payload = payload_model.model_copy(update={"seq": seq})
         else:
             emitter_payload = payload_model  # type: ignore[assignment]

@@ -83,11 +83,32 @@ class NarrationPayload(ProtocolBase):
     """Event-log sequence number assigned when this narration was persisted (MP-03 Task 3).
     Clients use this value as last_seen_seq on reconnect to catch up on missed events."""
     visibility_sidecar: dict | None = Field(default=None, alias="_visibility")
-    """Aggregated VisibilityTag sidecar (Group G Task 4). Shape:
-    ``{"visible_to": ["player:Alice"] | "all", "fidelity": {entity_id: fidelity_level}}``.
-    Filled in from DispatchPackage by :func:`sidequest.server.session_handler.aggregate_visibility`.
-    Wire name is ``_visibility`` to signal "sidecar / out-of-band" to downstream consumers;
-    full ``alias`` (not just ``serialization_alias``) so that event-log replay — which
+    """Aggregated VisibilityTag sidecar.
+
+    v1 shape (Group G Task 4):
+        ``{"visible_to": ["player:Alice"] | "all", "fidelity": {entity_id: fidelity_level}}``
+
+    v2 shape (Story 49-8 — purely additive):
+        ``{"visible_to": ..., "fidelity": ..., "anchor_pc": "Carl" | None,
+          "pov_strategy": "pc_anchored" | "atmospheric" | "private"}``
+
+    Producers:
+      - :func:`sidequest.server.session_helpers.aggregate_visibility` (v1
+        — DispatchPackage path).
+      - :func:`sidequest.server.visibility_classifier.classify_narration_visibility`
+        (v2 — post-narration emit path).
+
+    Consumers:
+      - :class:`sidequest.game.projection.rules.VisibilityTagRule` reads
+        ``visible_to`` and ``fidelity`` (ignores v2 keys it does not know
+        about — additivity is load-bearing).
+      - :func:`sidequest.server.emitters._apply_pov_swap` reads
+        ``anchor_pc`` + ``pov_strategy`` to rewrite the prose into
+        2nd-person for the recipient whose PC matches the anchor.
+
+    Wire name is ``_visibility`` to signal "sidecar / out-of-band" to
+    downstream consumers; full ``alias`` (not just
+    ``serialization_alias``) so that event-log replay — which
     deserializes the wire-format payload — round-trips correctly."""
 
 

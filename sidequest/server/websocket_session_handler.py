@@ -2948,15 +2948,56 @@ class WebSocketSessionHandler:
                     consume_accusation_request,
                 )
 
+                # Story 49-8: visibility classifier produces the v2
+                # sidecar that drives per-recipient routing AND 2nd-person
+                # POV swap downstream in emitters.emit_event. Pure
+                # post-narration work — no narrator subprocess calls.
+                #
+                # The classifier prefers result.action_rewrite.named when
+                # the narrator emitted it (ADR-039), falling back to a
+                # first-sentence scan of the prose. Returns atmospheric
+                # (anchor_pc=None, pov_strategy="atmospheric") when no PC
+                # name surfaces — that path broadcasts the canonical
+                # prose unchanged.
+                from sidequest.server.visibility_classifier import (  # noqa: PLC0415
+                    classify_narration_visibility,
+                )
+
+                _connected_player_ids = (
+                    self._room.connected_player_ids()
+                    if self._room is not None
+                    and callable(getattr(self._room, "connected_player_ids", None))
+                    else []
+                )
+                _player_id_to_character: dict[str, str] = {}
+                if self._room is not None:
+                    _slot_lookup = getattr(self._room, "slot_to_player_id", None)
+                    if callable(_slot_lookup):
+                        try:
+                            _player_id_to_character = {
+                                pid: slot for slot, pid in _slot_lookup().items()
+                            }
+                        except Exception:  # noqa: BLE001 — classifier must never crash a turn
+                            _player_id_to_character = {}
+                try:
+                    _visibility_sidecar = classify_narration_visibility(
+                        result=result,
+                        snapshot=snapshot,
+                        connected_player_ids=_connected_player_ids,
+                        player_id_to_character=_player_id_to_character,
+                    )
+                except ValueError:
+                    # Empty narration — the classifier fails loud; we
+                    # mirror the older behavior of emitting the canonical
+                    # prose unchanged so a degraded turn still surfaces
+                    # to the UI rather than crashing the hot path.
+                    _visibility_sidecar = None
+
                 narration_payload = NarrationPayload(
                     text=narration_nbs,
                     state_delta=None,
                     footnotes=forwarded_footnotes,
-                    # visibility_sidecar stays None on the live turn — the dispatch
-                    # package that fed aggregate_visibility(...) is dormant. MP wiring
-                    # will reintroduce a visibility classifier; until then, peers see
-                    # the same canonical narration.
-                    visibility_sidecar=None,
+                    visibility_sidecar=_visibility_sidecar,
                 )
                 # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
                 with timings.phase("broadcast"):
