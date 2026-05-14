@@ -36,6 +36,7 @@ from sidequest.protocol.models import (
     CreationChoice,
     Footnote,
     InitialState,
+    JournalEntry,
     PartyMember,
     RolledStat,
     StateDelta,
@@ -960,6 +961,44 @@ class TacticalGridMessage(ProtocolBase):
     player_id: str = ""
 
 
+# ---------------------------------------------------------------------------
+# JOURNAL_REQUEST / JOURNAL_RESPONSE — ADR-100 Seam C (story 50-14)
+# ---------------------------------------------------------------------------
+
+
+class JournalRequestPayload(ProtocolBase):
+    """Client asks the server for the active player's character journal.
+
+    Empty/optional filter — the server resolves the target character via
+    ``snapshot.player_seats[message.player_id]``. A player can only
+    introspect their own seat (ADR-036).
+    """
+
+    filter: str | None = None
+
+
+class JournalResponsePayload(ProtocolBase):
+    """Server reply carrying the requesting character's known_facts."""
+
+    entries: list[JournalEntry] = Field(default_factory=list)
+
+
+class JournalRequestMessage(ProtocolBase):
+    """GameMessage::JournalRequest — UI requests the player's journal replay."""
+
+    type: Literal[MessageType.JOURNAL_REQUEST] = MessageType.JOURNAL_REQUEST
+    payload: JournalRequestPayload = Field(default_factory=JournalRequestPayload)
+    player_id: str = ""
+
+
+class JournalResponseMessage(ProtocolBase):
+    """GameMessage::JournalResponse — canonical journal replay (ADR-100 Seam C)."""
+
+    type: Literal[MessageType.JOURNAL_RESPONSE] = MessageType.JOURNAL_RESPONSE
+    payload: JournalResponsePayload
+    player_id: str = ""
+
+
 # Discriminated union type alias for all Phase 1 variants.
 _Phase1Variant = Annotated[
     PlayerActionMessage
@@ -992,6 +1031,8 @@ _Phase1Variant = Annotated[
     | OrbitalIntentMessage
     | OrbitalChartMessage
     | TacticalGridMessage
+    | JournalRequestMessage
+    | JournalResponseMessage
     | YieldMessage,
     Field(discriminator="type"),
 ]
