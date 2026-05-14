@@ -296,7 +296,7 @@ class TestDispatchBehavior:
             known_facts=[
                 KnownFact(
                     content="Erskine prefers Earl Grey",
-                    confidence="confirmed",
+                    confidence="Certain",
                     source="GameEvent",  # not a scenario clue
                     learned_turn=3,
                 ),

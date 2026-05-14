@@ -248,6 +248,34 @@ def test_character_with_known_facts():
     assert back.known_facts[0].content == "The Warden is in the mines"
 
 
+def test_known_fact_confidence_default():
+    """ADR-100 J-4: KnownFact.confidence defaults to 'Suspected'."""
+    fact = KnownFact(content="A default fact")
+    assert fact.confidence == "Suspected"
+
+
+def test_known_fact_confidence_all_literals():
+    """ADR-100 J-4: KnownFact.confidence accepts all four confidence tiers."""
+    tiers = ["Certain", "Suspected", "Rumored", "Discovered"]
+    for tier in tiers:
+        fact = KnownFact(content=f"A {tier} fact", confidence=tier)
+        assert fact.confidence == tier
+
+
+def test_known_fact_confidence_invalid_rejected():
+    """ADR-100 J-4: KnownFact rejects invalid confidence values."""
+    with pytest.raises(ValidationError):
+        KnownFact(content="Invalid fact", confidence="Unknown")
+
+
+def test_known_fact_confidence_roundtrip():
+    """ADR-100 J-4: confidence survives JSON serialization/deserialization."""
+    original = KnownFact(content="A discovered clue", confidence="Discovered")
+    json_str = original.model_dump_json()
+    restored = KnownFact.model_validate_json(json_str)
+    assert restored.confidence == "Discovered"
+
+
 def test_character_with_abilities():
     c = make_test_character()
     c.abilities.append(

@@ -119,23 +119,26 @@ def _bind_seated_room(
 
 
 def _three_facts() -> list[KnownFact]:
-    """Three facts with mixed sources/confidences/turns — exercises full payload."""
+    """Three facts with mixed sources/confidences/turns — exercises full payload.
+
+    Confidence values per ADR-100 J-4 (story 50-17): Certain, Suspected, Rumored, Discovered.
+    """
     return [
         KnownFact(
             content="The bell tower chimes at midnight.",
-            confidence="confirmed",
+            confidence="Certain",
             source="Observation",
             learned_turn=2,
         ),
         KnownFact(
             content="Lady Ashworth was seen near the conservatory.",
-            confidence="suspected",
+            confidence="Suspected",
             source="Gossip",
             learned_turn=5,
         ),
         KnownFact(
             content="The vicar keeps a second journal.",
-            confidence="rumored",
+            confidence="Rumored",
             source="ScenarioClue",
             learned_turn=7,
         ),
@@ -376,13 +379,13 @@ async def test_player_only_sees_own_journal_not_peers(tmp_path: Path) -> None:
 
     p1_fact = KnownFact(
         content="P1-ONLY: gold cufflink in the study",
-        confidence="confirmed",
+        confidence="Certain",
         source="Observation",
         learned_turn=1,
     )
     p2_fact = KnownFact(
         content="P2-ONLY: cipher under the rug",
-        confidence="confirmed",
+        confidence="Certain",
         source="Observation",
         learned_turn=1,
     )

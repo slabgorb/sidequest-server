@@ -10,6 +10,7 @@ subsystems are included (no elision) with comments marking their phase.
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -22,12 +23,18 @@ class KnownFact(BaseModel):
     """A fact the character has learned — accumulates monotonically.
 
     P1-required: narrator uses known_facts for context.
+
+    Confidence tiers per ADR-100 J-4 (story 50-17):
+    - Certain: direct, witnessed knowledge (weight 2.0)
+    - Suspected: uncertain, evidence-supported (weight 1.0)
+    - Rumored: gossip, untrusted source (weight 0.5)
+    - Discovered: server-minted from a ScenarioClue footnote (weight 1.5)
     """
 
     model_config = {"extra": "forbid"}
 
     content: str
-    confidence: str = "confirmed"
+    confidence: Literal["Certain", "Suspected", "Rumored", "Discovered"] = "Suspected"
     # P5-deferred: source/learned_turn used by scenario system
     source: str = "GameEvent"
     learned_turn: int = 0
