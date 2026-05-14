@@ -101,6 +101,66 @@ async def test_connect_by_slug_loads_existing_game(seeded_game: Path):
 
 
 @pytest.mark.asyncio
+async def test_slug_connect_emits_theme_css(seeded_game: Path):
+    """ADR-079: slug-connect emits SESSION_EVENT{theme_css} with the genre's
+    client_theme.css content so the UI's useGenreTheme hook can apply it.
+
+    Without this event the UI silently falls back to the dark-mode shadcn
+    defaults — a mishmash of stock vars that doesn't match any genre. The
+    server-side wiring (loader reads the file, connect handler emits it)
+    is the missing piece this test guards against regression.
+    """
+    handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
+    msg = SessionEventMessage(
+        type="SESSION_EVENT",
+        player_id="alice",
+        payload=SessionEventPayload(
+            event="connect",
+            game_slug=_SLUG,
+        ),
+    )
+    outbound = await handler.handle_message(msg)
+
+    theme_msgs = [
+        m
+        for m in outbound
+        if getattr(m, "type", None) == "SESSION_EVENT"
+        and getattr(getattr(m, "payload", None), "event", None) == "theme_css"
+    ]
+    assert theme_msgs, (
+        "Expected SESSION_EVENT{theme_css} in outbound — UI cannot apply "
+        f"genre theme without it. Got events: "
+        f"{[getattr(getattr(m, 'payload', None), 'event', None) for m in outbound]}"
+    )
+    payload = theme_msgs[0].payload
+    assert payload.genre == _GENRE
+    assert payload.world == _WORLD
+    assert payload.css, "theme_css payload missing CSS content"
+    # Sanity check: caverns_and_claudes ships :root[data-genre] selector
+    # per ADR-079 (post-unification). If this assertion fails the genre
+    # pack drifted out of compliance.
+    assert ":root[data-genre]" in payload.css, (
+        "Genre CSS must use :root[data-genre] selector (ADR-079) — "
+        "specificity bump is what beats stock .dark defaults."
+    )
+    # Theme must arrive BEFORE the chargen scene / ready event so the UI
+    # paints the right colors on first render, not after a flash.
+    types_and_events = [
+        (getattr(m, "type", None), getattr(getattr(m, "payload", None), "event", None))
+        for m in outbound
+    ]
+    theme_idx = next(
+        i for i, (t, e) in enumerate(types_and_events) if t == "SESSION_EVENT" and e == "theme_css"
+    )
+    connected_idx = next(
+        i for i, (t, e) in enumerate(types_and_events) if t == "SESSION_EVENT" and e == "connected"
+    )
+    assert connected_idx < theme_idx, (
+        f"theme_css must follow connected (got connected@{connected_idx}, theme@{theme_idx})"
+    )
+
+
+@pytest.mark.asyncio
 async def test_connect_by_unknown_slug_errors(seeded_game: Path):
     handler = _make_handler(seeded_game, [_CONTENT_SEARCH_PATH])
     msg = SessionEventMessage(
