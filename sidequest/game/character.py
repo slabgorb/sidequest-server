@@ -10,6 +10,7 @@ subsystems are included (no elision) with comments marking their phase.
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -27,7 +28,7 @@ class KnownFact(BaseModel):
     model_config = {"extra": "forbid"}
 
     content: str
-    confidence: str = "confirmed"
+    confidence: Literal["Certain", "Suspected", "Rumored", "Discovered"] = "Certain"
     # P5-deferred: source/learned_turn used by scenario system
     source: str = "GameEvent"
     learned_turn: int = 0
