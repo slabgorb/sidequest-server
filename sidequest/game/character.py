@@ -23,6 +23,16 @@ class KnownFact(BaseModel):
     """A fact the character has learned — accumulates monotonically.
 
     P1-required: narrator uses known_facts for context.
+
+    ``confidence`` is a closed ``Literal`` — one of ``"Certain"``,
+    ``"Suspected"``, ``"Rumored"``, ``"Discovered"`` (default ``"Certain"``).
+    The pre-50-17 legacy value ``"confirmed"`` is rejected. The literal
+    mirrors the canonical set in
+    :data:`sidequest.server.dispatch.scenario_accusation._SUPPORTED_CONFIDENCES`
+    and the type on :class:`sidequest.game.accusation.AccusationItem`.
+    ``ScenarioClueIntake`` mints ``"Discovered"``; narrator-emitted facts
+    via ``WorldStatePatch.discovered_facts`` use the default unless they
+    override. Unknown keys on the model are rejected (``extra="forbid"``).
     """
 
     model_config = {"extra": "forbid"}

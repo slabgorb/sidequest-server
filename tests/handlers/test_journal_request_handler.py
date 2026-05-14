@@ -647,7 +647,7 @@ def test_journal_request_payload_in_phase1_variant() -> None:
                         "content": "test",
                         "category": "Lore",
                         "source": "Observation",
-                        "confidence": "confirmed",
+                        "confidence": "Certain",
                         "learned_turn": 1,
                     }
                 ]

@@ -104,7 +104,8 @@ def _build_evidence(
     the node count, surplus facts reuse the last node id. The clue id
     is load-bearing for red-herring detection, but ``KnownFact`` does
     not currently carry an originating clue id (see module docstring) —
-    parallel iteration is the deterministic fallback until 50-17 lands.
+    parallel iteration is the deterministic fallback until ``KnownFact``
+    gains an explicit originating-clue-id field (ADR-053 restoration).
     """
     nodes = scenario_state.clue_graph.nodes
     if not nodes:

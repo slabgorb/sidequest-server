@@ -146,18 +146,16 @@ def test_known_fact_confidence_json_roundtrip(value: str) -> None:
 def test_known_fact_default_confidence_is_canonical() -> None:
     """Constructing without ``confidence=`` yields a canonical value.
 
-    Does not pin which one — Dev picks the migration target during GREEN.
-    The cardinal rule: it must not be ``"confirmed"`` and must validate
-    under the new Literal.
+    The Literal default is ``"Certain"`` (the closest semantic match for the
+    legacy ``"confirmed"`` high-confidence default; chosen during the 50-17
+    GREEN phase). This test pins two invariants together:
+
+    1. The default is one of the four canonical values (closed-set check).
+    2. The default is **not** the legacy ``"confirmed"`` string — regression
+       guard against reverting the migration.
     """
     kf = KnownFact(content="x")
     assert kf.confidence in CANONICAL_CONFIDENCES
-    assert kf.confidence != "confirmed"
-
-
-def test_known_fact_default_confidence_is_not_legacy_confirmed() -> None:
-    """Regression guard: ensure the legacy default did not survive the change."""
-    kf = KnownFact(content="x")
     assert kf.confidence != "confirmed"
 
 
