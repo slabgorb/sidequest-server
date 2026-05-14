@@ -141,6 +141,14 @@ class World(BaseModel):
     chassis_instances: list[ChassisInstanceConfig] = Field(default_factory=list)
     magic_register: str = ""
     items: WorldItemsCatalog | None = None
+    client_theme_css: str | None = None
+    """Raw contents of ``worlds/<slug>/client_theme.css`` if present.
+
+    World-level override of the genre's client theme. When set, the server
+    sends this to the client on SESSION_EVENT{connect} via SESSION_EVENT
+    {theme_css} (ADR-079). When absent, the genre-level
+    ``GenrePack.client_theme_css`` is used. World wins on resolution.
+    """
 
 
 class GenrePack(BaseModel):
@@ -185,6 +193,17 @@ class GenrePack(BaseModel):
     visibility_baseline: VisibilityBaseline | None = None
     lethality_policy: LethalityPolicy | None = None
     source_dir: Path | None = None
+    client_theme_css: str | None = None
+    """Raw contents of the genre's top-level ``client_theme.css`` if present.
+
+    ADR-079 (Genre Theme System Unification): genre CSS is the single source
+    of truth for all theme tokens (genre identity vars + Tailwind vars).
+    The server emits this via SESSION_EVENT{theme_css} on connect, so the
+    UI's ``useGenreTheme`` hook can inject it as a ``<style>`` tag and set
+    ``data-genre`` on ``<html>``. If a world ships its own
+    ``worlds/<slug>/client_theme.css``, the world value wins; otherwise this
+    genre-level value is sent.
+    """
 
     # Convenience accessor for pack name
     @property

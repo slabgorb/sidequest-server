@@ -753,6 +753,47 @@ class ConnectHandler:
                 player_id=player_id,
             )
 
+            # ADR-079 (Genre Theme System Unification): emit the genre/world
+            # client_theme.css so the UI's useGenreTheme hook can inject it
+            # as a <style> tag and set :root[data-genre]. World value wins;
+            # genre-level CSS is the fallback. When neither is present we
+            # do NOT emit — the UI keeps its pre-genre dark-mode defaults.
+            #
+            # OTEL: every connect emits a `genre.theme.applied` state-transition
+            # event so the GM panel can prove theme wiring engaged vs. the
+            # silent-fallback mishmash that shipped before this fix.
+            theme_msg: SessionEventMessage | None = None
+            world_obj = genre_pack.worlds.get(row.world_slug) if genre_pack else None
+            world_css = world_obj.client_theme_css if world_obj is not None else None
+            genre_css = genre_pack.client_theme_css if genre_pack else None
+            theme_css_payload = world_css if world_css else genre_css
+            theme_source = "world" if world_css else ("genre" if genre_css else "none")
+            if theme_css_payload:
+                theme_msg = SessionEventMessage(
+                    type="SESSION_EVENT",  # type: ignore[arg-type]
+                    payload=SessionEventPayload(
+                        event="theme_css",
+                        genre=row.genre_slug,
+                        world=row.world_slug,
+                        css=theme_css_payload,
+                    ),
+                    player_id=player_id,
+                )
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "genre_theme",
+                    "op": "applied" if theme_msg is not None else "absent",
+                    "genre_slug": row.genre_slug,
+                    "world_slug": row.world_slug,
+                    "source": theme_source,
+                    "bytes": len(theme_css_payload) if theme_css_payload else 0,
+                    "player_id": player_id,
+                    "slug": slug,
+                },
+                component="genre",
+            )
+
             # Task 19: lazy-fill projection_cache for this player if they're
             # joining a session that has events already. Subsequent reconnects
             # read from cache (Task 18) — no re-filter.
@@ -1207,7 +1248,14 @@ class ConnectHandler:
                     component="session",
                 )
 
-            return [connected_msg, *bootstrap_msgs, *seat_backfill, *replay_msgs]
+            theme_prefix: list[object] = [theme_msg] if theme_msg is not None else []
+            return [
+                connected_msg,
+                *theme_prefix,
+                *bootstrap_msgs,
+                *seat_backfill,
+                *replay_msgs,
+            ]
 
         # Story 45-26: legacy (genre, world, player_name) connect path
         # was deleted alongside the legacy /api/saves/* REST routes.

@@ -141,6 +141,21 @@ def _load_yaml_raw_optional(path: Path) -> Any | None:
     return _load_yaml_raw(path)
 
 
+def _load_text_optional(path: Path) -> str | None:
+    """Read a text file (UTF-8) if it exists.
+
+    Used for non-YAML pack assets like ``client_theme.css`` (ADR-079).
+    Returns ``None`` if the file doesn't exist. Failure to read an existing
+    file is loud — same no-silent-fallback rule as the YAML loaders.
+    """
+    if not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise GenreLoadError(path=path, detail=str(e)) from e
+
+
 # ---------------------------------------------------------------------------
 # Rules config loader (with _from: pointer resolution)
 # ---------------------------------------------------------------------------
@@ -840,6 +855,10 @@ def _load_single_world(
     # docs/research/items-as-confrontation-modifiers.md.
     items = _load_world_items(world_path / "items.yaml", world_slug=world_path.name)
 
+    # ADR-079: optional world-level theme override (worlds/<slug>/client_theme.css).
+    # When present, this CSS replaces the genre-level theme at connect time.
+    client_theme_css = _load_text_optional(world_path / "client_theme.css")
+
     return World(
         config=config,
         lore=lore,
@@ -859,6 +878,7 @@ def _load_single_world(
         chassis_instances=chassis_instances,
         magic_register=magic_register,
         items=items,
+        client_theme_css=client_theme_css,
     )
 
 
@@ -1108,6 +1128,11 @@ def load_genre_pack(path: Path | str) -> GenrePack:
     except Exception as e:
         raise GenreLoadError(path=path / "lethality_policy.yaml", detail=str(e)) from e
 
+    # ADR-079: genre-level theme CSS (client_theme.css at pack root).
+    # Optional — packs in workshop without a theme yet simply omit it. When
+    # absent, the UI keeps its pre-genre fallback (dark-mode shadcn defaults).
+    client_theme_css = _load_text_optional(path / "client_theme.css")
+
     pack = GenrePack(
         meta=meta,
         rules=rules,
@@ -1142,6 +1167,7 @@ def load_genre_pack(path: Path | str) -> GenrePack:
         visibility_baseline=visibility_baseline,
         lethality_policy=lethality_policy,
         source_dir=path,
+        client_theme_css=client_theme_css,
     )
 
     # Sprint 3 cold-subsystem audit: pack load was invisible to the GM
