@@ -374,7 +374,6 @@ class TestDispatchDiceThrow:
         legacy synthetic line unchanged — empty player text is not a cue
         the narrator should see."""
         pack = _pack_with_combat()
-        enc = _make_encounter()
         for blank in (None, "", "   ", "\n\t"):
             payload_base = _throw(face=13)
             payload = DiceThrowPayload(
