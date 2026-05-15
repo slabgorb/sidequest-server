@@ -108,9 +108,7 @@ class FakeAnthropicSdkClient:
                 )
 
             if tool_dispatch is None:
-                raise RuntimeError(
-                    "Scripted tool_use response requires tool_dispatch callback"
-                )
+                raise RuntimeError("Scripted tool_use response requires tool_dispatch callback")
             results: list[ToolResultBlock] = []
             for tu in response.tool_uses:
                 all_tool_calls.append(tu)

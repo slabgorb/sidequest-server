@@ -29,10 +29,7 @@ def test_scratch_defaults_to_haiku() -> None:
 
 def test_per_pack_override_takes_precedence() -> None:
     pack_overrides = {CallType.NARRATION: "claude-opus-4-7"}
-    assert (
-        resolve_model(CallType.NARRATION, pack_overrides=pack_overrides)
-        == "claude-opus-4-7"
-    )
+    assert resolve_model(CallType.NARRATION, pack_overrides=pack_overrides) == "claude-opus-4-7"
 
 
 def test_partial_override_falls_back_to_default() -> None:

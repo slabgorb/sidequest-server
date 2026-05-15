@@ -232,14 +232,11 @@ async def test_complete_with_tools_respects_max_iterations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
     # Infinite tool-use loop (would be a bug in the model in real life).
     def loop_response() -> _SdkResponse:
         return _SdkResponse(
-            content=[
-                _SdkContentToolUseBlock(
-                    type="tool_use", id="x", name="roll_dice", input={}
-                )
-            ],
+            content=[_SdkContentToolUseBlock(type="tool_use", id="x", name="roll_dice", input={})],
             stop_reason="tool_use",
             usage=_Usage(input_tokens=10, output_tokens=1),
             model="claude-sonnet-4-6",
@@ -256,9 +253,7 @@ async def test_complete_with_tools_respects_max_iterations(
             system_blocks=[CacheableBlock(text="r")],
             messages=[Message(role="user", content="hi")],
             tools=[
-                ToolDefinition(
-                    name="roll_dice", description="r", input_schema={"type": "object"}
-                )
+                ToolDefinition(name="roll_dice", description="r", input_schema={"type": "object"})
             ],
             tool_dispatch=dispatch,
             model="claude-sonnet-4-6",

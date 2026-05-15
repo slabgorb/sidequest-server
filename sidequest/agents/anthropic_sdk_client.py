@@ -197,9 +197,7 @@ class AnthropicSdkClient:
     # helpers
     # ------------------------------------------------------------------
 
-    def _build_system_array(
-        self, system_blocks: list[CacheableBlock]
-    ) -> list[dict[str, Any]]:
+    def _build_system_array(self, system_blocks: list[CacheableBlock]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for block in system_blocks:
             entry: dict[str, Any] = {"type": "text", "text": block.text}
@@ -211,9 +209,7 @@ class AnthropicSdkClient:
             out.append(entry)
         return out
 
-    def _build_tools_array(
-        self, tools: list[ToolDefinition]
-    ) -> list[dict[str, Any]]:
+    def _build_tools_array(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         return [
             {
                 "name": t.name,
