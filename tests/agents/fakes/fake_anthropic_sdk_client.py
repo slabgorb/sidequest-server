@@ -63,7 +63,7 @@ class FakeAnthropicSdkClient:
         system_blocks: list[CacheableBlock],
         messages: list[Message],
         tools: list[ToolDefinition],
-        tool_dispatch: Callable[[ToolUseBlock], Awaitable[ToolResultBlock]] | Callable[[ToolUseBlock], ToolResultBlock] | None = None,
+        tool_dispatch: Callable[[ToolUseBlock], Awaitable[ToolResultBlock] | ToolResultBlock] | None = None,
         *,
         model: str,
         max_iterations: int = 8,
