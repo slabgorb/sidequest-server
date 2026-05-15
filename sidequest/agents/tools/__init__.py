@@ -18,6 +18,7 @@ from sidequest.agents.tools import (
     query_known_facts,  # noqa: F401
     query_lore,  # noqa: F401
     query_npc,  # noqa: F401
+    query_scene_state,  # noqa: F401
     roll_dice,  # noqa: F401
     update_npc_disposition,  # noqa: F401
     update_resource_pool,  # noqa: F401
