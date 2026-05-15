@@ -313,6 +313,83 @@ def test_tool_calls_field_defaults_empty_on_non_sdk_construction() -> None:
     assert ntr.tool_calls == []
 
 
+@pytest.mark.asyncio
+async def test_sdk_tool_calls_ledger_emitted_to_narration_turn_span(
+    monkeypatch: pytest.MonkeyPatch, otel_capture: InMemorySpanExporter
+) -> None:
+    """ADR-103 / CLAUDE.md OTEL principle wiring test: the ledger must be
+    EMITTED, not just stored. The GM panel lie-detector reads per-turn
+    ``{id,name,arguments}`` off the ``narration.turn`` span — the existing
+    ``tool_call_count`` attribute does not carry that detail. OTEL drops
+    list/dict attributes, so the project convention (spans/magic.py) is a
+    JSON-string attribute: ``narration.turn.tool_calls_json``.
+    """
+    await _run_sdk_turn(monkeypatch, "The Warden lifts its head.")
+
+    narration_spans = [s for s in otel_capture.get_finished_spans() if s.name == "narration.turn"]
+    assert len(narration_spans) == 1
+    attrs = dict(narration_spans[0].attributes or {})
+
+    # Sanity: the count attribute still exists (unchanged contract).
+    assert attrs["narration.turn.tool_call_count"] == 1
+
+    # The new ledger attribute carries the full per-call detail as JSON.
+    assert "narration.turn.tool_calls_json" in attrs
+    ledger = json.loads(attrs["narration.turn.tool_calls_json"])
+    assert ledger == [
+        {
+            "id": "toolu_status_1",
+            "name": "apply_status",
+            "arguments": {
+                "actor": "Kael",
+                "text": "Bleeding gash",
+                "severity": "Wound",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sdk_tool_calls_ledger_json_is_empty_list_when_no_tools(
+    monkeypatch: pytest.MonkeyPatch, otel_capture: InMemorySpanExporter
+) -> None:
+    """No tool calls this turn → the ledger attribute is present and is an
+    empty JSON list (not absent, not null) so the GM panel can always parse
+    it without a missing-key special case.
+    """
+    monkeypatch.delenv("SIDEQUEST_NARRATOR_STREAMING", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    sdk = _Sdk(
+        responses=[
+            _Resp(
+                content=[_TextBlock(type="text", text=_sidecar_text("Silence."))],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=120, output_tokens=20),
+                model="claude-sonnet-4-6",
+            ),
+        ]
+    )
+    client = AnthropicSdkClient(sdk=sdk)
+    orch = Orchestrator(client=client)
+
+    async def _fake_build_prompt(
+        self: Orchestrator, action: str, context: TurnContext
+    ) -> tuple[str, _FakeRegistry]:
+        return ("prompt-text", _FakeRegistry())
+
+    monkeypatch.setattr(Orchestrator, "build_narrator_prompt", _fake_build_prompt)
+
+    ctx = TurnContext(character_name="Kael", turn_number=1)
+    await orch.run_narration_turn("wait", ctx)
+
+    narration_spans = [s for s in otel_capture.get_finished_spans() if s.name == "narration.turn"]
+    assert len(narration_spans) == 1
+    attrs = dict(narration_spans[0].attributes or {})
+    assert attrs["narration.turn.tool_call_count"] == 0
+    assert json.loads(attrs["narration.turn.tool_calls_json"]) == []
+
+
 # ---------------------------------------------------------------------------
 # 4. ClaudeClient (sync) path UNTOUCHED — regression guard.
 # ---------------------------------------------------------------------------

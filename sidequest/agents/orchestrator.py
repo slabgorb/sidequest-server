@@ -872,6 +872,14 @@ _SDK_TOOL_OWNED_FIELDS: dict[str, str] = {
     "game_patch_dict": "patches_other / patches_disposition",
 }
 
+# Named sentinel for the SDK-path fail-loud invariant: the dataclass
+# defaults for every field, computed ONCE at import (the check ran in a
+# per-turn hot path before). Compared field-by-field against the assembled
+# SDK result so a tool-owned key that drifted off its default crashes
+# loudly instead of silently double-applying (CLAUDE.md no silent
+# fallbacks). Read-only — never mutate this instance.
+_NTR_DEFAULTS = NarrationTurnResult(narration="")
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers (ContextBuilder equivalent — inlined per spec)
@@ -2697,7 +2705,6 @@ class Orchestrator:
         Mechanical lift from the pre-refactor _run_narration_turn_synchronous body.
         The session-id storage block is intentionally NOT lifted — sessions are gone (ADR-098).
         """
-        agent_name = self._narrator.name()
         raw_response = response.text
         logger.info(
             "Claude CLI returned narration len=%d duration_ms=%d",
@@ -2708,18 +2715,19 @@ class Orchestrator:
         with context.phase_timings.phase("narrator_extraction"):
             extraction = extract_structured_from_response(raw_response)
 
-        prose = extraction["prose"]
+        shared = self._presentation_and_untooled_fields(
+            extraction=extraction,
+            raw_response=raw_response,
+            context=context,
+            elapsed_ms=elapsed_ms,
+            prompt_text=prompt_text,
+            token_count_in=response.input_tokens,
+            token_count_out=response.output_tokens,
+        )
 
-        if context.dispatch_package is not None:
-            audit_canonical_prose(
-                prose=prose,
-                package=context.dispatch_package,
-                entity_tokens_by_id=self._entity_tokens_for_registry(context),
-            )
-
-        if extraction["action_rewrite"] is None:
-            logger.warning("action_rewrite absent from extraction — using default (empty rewrite)")
-
+        # Non-SDK-only observability — these log lines belong to the
+        # sync/streaming sidecar path (the SDK path's mechanics are
+        # tool-driven, so the tools' own spans carry the equivalent).
         if extraction["confrontation"]:
             logger.info(
                 "encounter.confrontation_initiated confrontation_type=%s",
@@ -2735,10 +2743,74 @@ class Orchestrator:
                     bs_dict.get("target"),
                 )
 
-        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
         beat_selections = [
             BeatSelection.from_dict(d) for d in extraction["beat_selections"] if isinstance(d, dict)
         ]
+
+        # The non-SDK path is the SINGLE applier (no tool ran during its
+        # dispatch), so it carries the tool-owned categories from the
+        # sidecar in addition to the shared presentation/untooled fields.
+        return NarrationTurnResult(
+            **shared,
+            location=extraction["location"],
+            confrontation=extraction["confrontation"],
+            beat_selections=beat_selections,
+            affinity_progress=extraction["affinity_progress"],
+            status_changes=extraction["status_changes"]
+            if isinstance(extraction["status_changes"], list)
+            else [],
+            magic_working=(
+                extraction["magic_working"]
+                if isinstance(extraction.get("magic_working"), dict)
+                else None
+            ),
+            days_advanced=extraction.get("days_advanced", 0),
+            game_patch_dict=_extract_game_patch_json(raw_response),
+        )
+
+    def _presentation_and_untooled_fields(
+        self,
+        *,
+        extraction: dict[str, Any],
+        raw_response: str,
+        context: TurnContext,
+        elapsed_ms: int,
+        prompt_text: str,
+        token_count_in: int | None,
+        token_count_out: int | None,
+    ) -> dict[str, Any]:
+        """Build the NarrationTurnResult kwargs shared by BOTH assemblers.
+
+        Covers the fields that are sidecar-sourced on every path:
+        presentation/signal fields with no successor tool (scene_mood,
+        visual_scene, npcs_present, footnotes, sfx_triggers, action_rewrite),
+        the no-successor-tool state lanes (items_*, quest_updates,
+        gold_change, lore_established, companions_*), and the
+        agent/token/prompt/raw/secret telemetry tail. Also performs the two
+        shared side effects: the canonical-prose leak audit and the
+        action_rewrite-absent warning.
+
+        It deliberately does NOT include any key in
+        :data:`_SDK_TOOL_OWNED_FIELDS` — that omission is structural (a
+        shared helper provably cannot emit a tool-owned key), which is what
+        makes the SDK-path fail-loud invariant a backstop rather than the
+        only guard. ``_assemble_turn_result`` adds the tool-owned keys back
+        (it is the single applier on the sync/streaming path);
+        ``_assemble_turn_result_sdk`` adds only ``tool_calls``.
+        """
+        prose = extraction["prose"]
+
+        if context.dispatch_package is not None:
+            audit_canonical_prose(
+                prose=prose,
+                package=context.dispatch_package,
+                entity_tokens_by_id=self._entity_tokens_for_registry(context),
+            )
+
+        if extraction["action_rewrite"] is None:
+            logger.warning("action_rewrite absent from extraction — using default (empty rewrite)")
+
+        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
 
         visual_scene: VisualScene | None = None
         if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
@@ -2748,53 +2820,60 @@ class Orchestrator:
         if isinstance(extraction["action_rewrite"], dict):
             action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
 
-        return NarrationTurnResult(
-            narration=prose,
-            is_degraded=False,
-            location=extraction["location"],
-            scene_mood=extraction["scene_mood"],
-            visual_scene=visual_scene,
-            confrontation=extraction["confrontation"],
-            beat_selections=beat_selections,
-            npcs_present=npc_mentions,
-            items_gained=extraction["items_gained"]
-            if isinstance(extraction["items_gained"], list)
+        return {
+            "narration": prose,
+            "is_degraded": False,
+            # ---- presentation / signal (no successor tool) ----
+            "scene_mood": extraction["scene_mood"],
+            "visual_scene": visual_scene,
+            "npcs_present": npc_mentions,
+            "footnotes": extraction["footnotes"]
+            if isinstance(extraction["footnotes"], list)
             else [],
-            items_lost=extraction.get("items_lost", []),
-            items_discarded=extraction.get("items_discarded", []),
-            items_consumed=extraction.get("items_consumed", []),
-            footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
-            quest_updates=extraction["quest_updates"]
-            if isinstance(extraction["quest_updates"], dict)
-            else {},
-            sfx_triggers=extraction["sfx_triggers"]
+            "sfx_triggers": extraction["sfx_triggers"]
             if isinstance(extraction["sfx_triggers"], list)
             else [],
-            action_rewrite=action_rewrite,
-            affinity_progress=extraction["affinity_progress"],
-            gold_change=extraction["gold_change"],
-            lore_established=extraction["lore_established"],
-            status_changes=extraction["status_changes"]
-            if isinstance(extraction["status_changes"], list)
+            "action_rewrite": action_rewrite,
+            # ---- state with NO successor tool: narration_apply stays the
+            #      single applier on BOTH paths ----
+            "items_gained": extraction["items_gained"]
+            if isinstance(extraction["items_gained"], list)
             else [],
-            magic_working=(
-                extraction["magic_working"]
-                if isinstance(extraction.get("magic_working"), dict)
-                else None
-            ),
-            companions_added=extraction.get("companions_added", []),
-            companions_dismissed=extraction.get("companions_dismissed", []),
-            days_advanced=extraction.get("days_advanced", 0),
-            game_patch_dict=_extract_game_patch_json(raw_response),
-            agent_name=agent_name,
-            agent_duration_ms=elapsed_ms,
-            token_count_in=response.input_tokens,
-            token_count_out=response.output_tokens,
-            prompt_tier="",  # vestigial field; tier system removed per ADR-098
-            prompt_text=prompt_text,
-            raw_response_text=raw_response,
-            secret_routes=list(self._last_secret_routes),
-        )
+            "items_lost": extraction.get("items_lost", []),
+            "items_discarded": extraction.get("items_discarded", []),
+            "items_consumed": extraction.get("items_consumed", []),
+            "quest_updates": extraction["quest_updates"]
+            if isinstance(extraction["quest_updates"], dict)
+            else {},
+            "gold_change": extraction["gold_change"],
+            "lore_established": extraction["lore_established"],
+            "companions_added": extraction.get("companions_added", []),
+            "companions_dismissed": extraction.get("companions_dismissed", []),
+            # ---- OTEL / telemetry tail ----
+            "agent_name": self._narrator.name(),
+            "agent_duration_ms": elapsed_ms,
+            "token_count_in": token_count_in,
+            "token_count_out": token_count_out,
+            "prompt_tier": "",  # vestigial field; tier system removed per ADR-098
+            "prompt_text": prompt_text,
+            "raw_response_text": raw_response,
+            "secret_routes": list(self._last_secret_routes),
+        }
+
+    @staticmethod
+    def _build_tool_calls_ledger(result: ToolingResult) -> list[dict[str, Any]]:
+        """ADR-103 GM-panel lie-detector ledger from the SDK tool loop.
+
+        One ``{"id", "name", "arguments"}`` entry per accumulated
+        ``ToolUseBlock``. Built in ``_run_narration_turn_sdk`` (where the
+        ``narration.turn`` span is still open) so the ledger can be BOTH
+        emitted onto the span as a JSON-string attribute AND carried on the
+        result — the panel correlates the per-turn tool detail the
+        ``tool_call_count`` attribute alone cannot express.
+        """
+        return [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in result.tool_calls
+        ]
 
     def _assemble_turn_result_sdk(
         self,
@@ -2803,7 +2882,7 @@ class Orchestrator:
         prompt_text: str,
         context: TurnContext,
         elapsed_ms: int,
-        action: str,
+        tool_calls_ledger: list[dict[str, Any]],
     ) -> NarrationTurnResult:
         """SDK-path NarrationTurnResult assembly — the hybrid split (Task E1.5-B).
 
@@ -2815,124 +2894,61 @@ class Orchestrator:
 
         The split:
 
-        * **Presentation/signal fields** — ``scene_mood``, ``visual_scene``,
-          ``npcs_present``, ``footnotes``, ``sfx_triggers``,
-          ``action_rewrite`` — have NO successor tool, so they are still
-          parsed off the sidecar (``extract_structured_from_response``).
-          Images/audio/footnotes/perception depend on these.
-        * **No-successor-tool state** — ``items_*``, ``gold_change``,
-          ``quest_updates``, ``lore_established``, ``companions_*`` — also
-          stay sidecar-sourced: no registered tool owns inventory / gold /
-          quest log / lore / companion roster (see ``_SDK_TOOL_OWNED_FIELDS``
-          docstring), so narration_apply remains their single applier.
+        * **Presentation / no-successor-tool fields** — built by the shared
+          :meth:`_presentation_and_untooled_fields` helper (scene_mood,
+          visual_scene, npcs_present, footnotes, sfx_triggers,
+          action_rewrite, items_*, quest_updates, gold_change,
+          lore_established, companions_*, telemetry tail). That helper
+          STRUCTURALLY cannot emit a tool-owned key, so the SDK result
+          carries only sidecar-sourced presentation/untooled state.
         * **Tool-owned state** — every field in
           :data:`_SDK_TOOL_OWNED_FIELDS` — is left at its dataclass default
-          (zeroed). The tool's dispatch-time write is the single authority;
+          (zeroed) by simply not being added to the shared kwargs. The
+          tool's dispatch-time write is the single authority;
           ``narration_apply`` (and the session-handler trope/affinity/clue
           seams) become no-ops for those categories.
-        * ``tool_calls`` is the ADR-103 GM-panel lie-detector ledger,
-          populated from the SDK's accumulated ``ToolUseBlock``s.
+        * ``tool_calls`` — the ADR-103 ledger (built once by
+          :meth:`_build_tool_calls_ledger`, also emitted on the
+          ``narration.turn`` span by the caller).
 
-        The constructed result NEVER sets the
-        :data:`_SDK_TOOL_OWNED_FIELDS` keys — that invariant is asserted
-        post-construction (fail loud per CLAUDE.md: a future field added to
-        both the partition and the constructor must not silently re-introduce
-        the double-apply).
+        The post-construction fail-loud invariant is a backstop: the
+        structural guarantee (shared helper omits tool-owned keys) is the
+        primary guard; the assertion catches a future edit that adds a
+        tool-owned key here directly.
         """
-        agent_name = self._narrator.name()
         raw_response = result.text
         logger.info(
             "SDK narrator returned narration len=%d duration_ms=%d tool_calls=%d",
             len(raw_response),
             elapsed_ms,
-            len(result.tool_calls),
+            len(tool_calls_ledger),
         )
 
         with context.phase_timings.phase("narrator_extraction"):
             extraction = extract_structured_from_response(raw_response)
 
-        prose = extraction["prose"]
-
-        if context.dispatch_package is not None:
-            audit_canonical_prose(
-                prose=prose,
-                package=context.dispatch_package,
-                entity_tokens_by_id=self._entity_tokens_for_registry(context),
-            )
-
-        if extraction["action_rewrite"] is None:
-            logger.warning(
-                "action_rewrite absent from extraction (sdk) — using default (empty rewrite)"
-            )
-
-        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
-
-        visual_scene: VisualScene | None = None
-        if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
-            visual_scene = VisualScene.from_dict(extraction["visual_scene"])
-
-        action_rewrite: ActionRewrite | None = None
-        if isinstance(extraction["action_rewrite"], dict):
-            action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
-
-        # ADR-103 ledger — mirror each accumulated ToolUseBlock.
-        tool_calls = [
-            {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in result.tool_calls
-        ]
-
-        # NOTE: every field in _SDK_TOOL_OWNED_FIELDS is intentionally
-        # ABSENT from this constructor call — the tools own + persisted
-        # them during dispatch. Presentation + no-successor-tool fields are
-        # the only sidecar-sourced state.
-        assembled = NarrationTurnResult(
-            narration=prose,
-            is_degraded=False,
-            # ---- presentation / signal (no successor tool) ----
-            scene_mood=extraction["scene_mood"],
-            visual_scene=visual_scene,
-            npcs_present=npc_mentions,
-            footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
-            sfx_triggers=extraction["sfx_triggers"]
-            if isinstance(extraction["sfx_triggers"], list)
-            else [],
-            action_rewrite=action_rewrite,
-            # ---- state with NO successor tool: narration_apply stays the
-            #      single applier on the SDK path too ----
-            items_gained=extraction["items_gained"]
-            if isinstance(extraction["items_gained"], list)
-            else [],
-            items_lost=extraction.get("items_lost", []),
-            items_discarded=extraction.get("items_discarded", []),
-            items_consumed=extraction.get("items_consumed", []),
-            quest_updates=extraction["quest_updates"]
-            if isinstance(extraction["quest_updates"], dict)
-            else {},
-            gold_change=extraction["gold_change"],
-            lore_established=extraction["lore_established"],
-            companions_added=extraction.get("companions_added", []),
-            companions_dismissed=extraction.get("companions_dismissed", []),
-            # ---- OTEL / telemetry ----
-            agent_name=agent_name,
-            agent_duration_ms=elapsed_ms,
+        shared = self._presentation_and_untooled_fields(
+            extraction=extraction,
+            raw_response=raw_response,
+            context=context,
+            elapsed_ms=elapsed_ms,
+            prompt_text=prompt_text,
             token_count_in=result.input_tokens,
             token_count_out=result.output_tokens,
-            prompt_tier="",  # vestigial field; tier system removed per ADR-098
-            prompt_text=prompt_text,
-            raw_response_text=raw_response,
-            secret_routes=list(self._last_secret_routes),
-            tool_calls=tool_calls,
         )
 
-        # Fail-loud invariant (CLAUDE.md no silent fallbacks): the
-        # tool-owned partition must remain at dataclass defaults so
-        # narration_apply does not double-apply what the WRITE tools
-        # already persisted. If a future edit wires one of these back in,
-        # crash here rather than ship a silent double-apply.
-        _defaults = NarrationTurnResult(narration="")
+        # No key in _SDK_TOOL_OWNED_FIELDS is added — the shared helper
+        # cannot emit one (structural guarantee). The tools own + persisted
+        # those categories during dispatch; only the ledger is SDK-specific.
+        assembled = NarrationTurnResult(**shared, tool_calls=tool_calls_ledger)
+
+        # Fail-loud backstop (CLAUDE.md no silent fallbacks): the tool-owned
+        # partition must remain at dataclass defaults so narration_apply
+        # does not double-apply what the WRITE tools already persisted.
         _violations = [
             name
             for name in _SDK_TOOL_OWNED_FIELDS
-            if getattr(assembled, name) != getattr(_defaults, name)
+            if getattr(assembled, name) != getattr(_NTR_DEFAULTS, name)
         ]
         if _violations:
             raise AssertionError(
@@ -3002,7 +3018,10 @@ class Orchestrator:
         token totals, tool-call count, and model choice for the turn.
 
         Sidecar parsing (ADR-039) still runs against the resulting prose via
-        ``_assemble_turn_result``; Phase D Task 4 retires the sidecar.
+        ``_assemble_turn_result_sdk`` — but the hybrid split (Task E1.5-B)
+        means only presentation / no-successor-tool fields are sourced from
+        it; tool-owned state was already applied + persisted by the WRITE
+        tools during dispatch. Phase D Task 4 retires the sidecar entirely.
         """
         # Function-local imports are organizational only — these modules
         # do not back-import orchestrator. They live here so the SDK path's
@@ -3090,6 +3109,18 @@ class Orchestrator:
                 )
                 span.set_attribute("narration.turn.tool_call_count", len(result.tool_calls))
 
+                # ADR-103 / CLAUDE.md OTEL principle: emit the per-call
+                # ledger, not just the count. The GM-panel lie-detector
+                # correlates each tool's ``{id,name,arguments}`` against the
+                # prose — ``tool_call_count`` alone cannot express that.
+                # OTEL silently drops list/dict attribute values, so the
+                # project convention (see telemetry/spans/magic.py
+                # ``*_json`` attributes) is a JSON-string. Built here, while
+                # the span is still open, and carried onto the result by the
+                # assembler below so both consumers see the same ledger.
+                tool_calls_ledger = self._build_tool_calls_ledger(result)
+                span.set_attribute("narration.turn.tool_calls_json", json.dumps(tool_calls_ledger))
+
             elapsed_ms = int((time.monotonic() - call_start) * 1000)
 
             # Task E1.5-B — hybrid split. The WRITE tools already mutated +
@@ -3107,5 +3138,5 @@ class Orchestrator:
                 prompt_text=prompt_text,
                 context=context,
                 elapsed_ms=elapsed_ms,
-                action=action,
+                tool_calls_ledger=tool_calls_ledger,
             )
