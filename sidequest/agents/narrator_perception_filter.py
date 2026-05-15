@@ -40,3 +40,67 @@ class NarratorPerceptionFilter:
             return result
         new_payload = rule(result.payload, perspective_pc)
         return ToolResult.ok(new_payload)
+
+
+# ---------------------------------------------------------------------------
+# Per-tool rules
+# ---------------------------------------------------------------------------
+
+
+# query_character — Phase C Task 6.
+#
+# Self / no-perspective: exact payload, untouched.
+# Other party member: identity + visible status kept; sensitive sections
+# (stats / inventory / backstory) dropped; exact edge numbers replaced
+# with an edge_band per ADR-078.
+
+_QC_KEEP_ALWAYS = frozenset(
+    {
+        "character_id",
+        "name",
+        "race",
+        "char_class",
+        "pronouns",
+        "is_friendly",
+        "status",
+    }
+)
+
+
+def _edge_band(fraction: float) -> str:
+    """Map an edge fraction to its ADR-078 severity band.
+
+    Boundaries match the boundaries in the per-tool spec for Task 6:
+    ``unwounded`` >0.75 · ``wounded`` >0.5 · ``bloodied`` >0.25 ·
+    ``staggering`` >0 · ``down`` ==0. Negative edge (over-broken)
+    collapses to ``down``.
+    """
+    if fraction <= 0.0:
+        return "down"
+    if fraction > 0.75:
+        return "unwounded"
+    if fraction > 0.5:
+        return "wounded"
+    if fraction > 0.25:
+        return "bloodied"
+    return "staggering"
+
+
+def _coarsen_query_character(payload: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {k: v for k, v in payload.items() if k in _QC_KEEP_ALWAYS}
+    fraction = payload.get("edge_fraction")
+    if isinstance(fraction, int | float):
+        out["edge_band"] = _edge_band(float(fraction))
+    return out
+
+
+def _rule_query_character(payload: Any, perspective_pc: str | None) -> Any:
+    if not isinstance(payload, dict):
+        return payload  # defensive — handler always returns dict
+    target_id = payload.get("character_id")
+    if perspective_pc is None or target_id == perspective_pc:
+        return payload
+    return _coarsen_query_character(payload)
+
+
+register_rule("query_character", _rule_query_character)
