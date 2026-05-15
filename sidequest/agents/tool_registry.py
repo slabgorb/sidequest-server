@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         PerceptionFilter,
     )
     from sidequest.game.lore_store import LoreStore
+    from sidequest.game.monster_manual import MonsterManual
 
 
 class ToolCategory(StrEnum):
@@ -99,6 +100,14 @@ class ToolContext:
     # wires this at the production call site; Phase C tools tolerate ``None``
     # (query_lore returns an empty result with an OTEL marker).
     lore_store: LoreStore | None = None
+    # Phase C Task 14 amendment: MonsterManual reference for the
+    # lookup_monster tool. The MonsterManual is per-genre/world and lives on
+    # SessionHandler (loaded via ``MonsterManual.load(genre, world)``), not on
+    # the SqliteStore save layer — same shape as the lore_store amendment
+    # above. Phase E wires this at the production call site; Phase C tools
+    # tolerate ``None`` (lookup_monster returns ``found=False`` with an OTEL
+    # marker).
+    monster_manual: MonsterManual | None = None
 
 
 _ArgsT = TypeVar("_ArgsT", bound=BaseModel)

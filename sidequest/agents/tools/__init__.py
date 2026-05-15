@@ -12,6 +12,7 @@ from sidequest.agents.tools import (
     apply_status,  # noqa: F401
     commit_known_fact,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
+    lookup_monster,  # noqa: F401
     query_character,  # noqa: F401
     query_gossip,  # noqa: F401
     query_known_facts,  # noqa: F401
