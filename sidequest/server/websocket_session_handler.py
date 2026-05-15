@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import random
 import time
@@ -2895,17 +2896,64 @@ class WebSocketSessionHandler:
                 # from the extraction into typed Footnote models, skipping any
                 # that fail validation rather than crashing the turn.
                 forwarded_footnotes: list[Footnote] = []
+                fact_ids_minted_this_turn = 0
                 for fn in result.footnotes or []:
                     if not isinstance(fn, dict):
                         continue
                     try:
-                        forwarded_footnotes.append(Footnote(**fn))
+                        footnote = Footnote(**fn)
                     except Exception as exc:  # noqa: BLE001 — drop-and-log is safer than a mid-turn crash
                         logger.warning(
                             "state.footnote_coerce_failed error=%s payload=%r",
                             exc,
                             fn,
                         )
+                        continue
+                    # ADR-100 Seam C: every Footnote that reaches the UI MUST
+                    # carry a stable fact_id. The narrator prompt asks for one,
+                    # but narrators don't always comply (especially for new
+                    # facts where the prompt is permissive). Without this
+                    # defensive mint, the UI's strict drop policy
+                    # (useStateMirror.ts:198, "footnote missing fact_id;
+                    # skipping") silently swallows load-bearing world facts —
+                    # the exact consistency leak ADR-100 exists to close
+                    # (sq-playtest 2026-05-15: 6 dropped facts in one turn).
+                    #
+                    # Mint a deterministic hash-based id so a re-narration of
+                    # the same fact in a later turn collides on the client's
+                    # seenFactIds dedupe rather than re-entering the journal
+                    # with a fresh UUID. Narrator-supplied fact_ids are
+                    # preserved untouched — scenario clue_intake matches them
+                    # against ClueNode.id (genre-authored), so replacing them
+                    # would break Seam A.
+                    if footnote.fact_id is None:
+                        cat_str = (
+                            footnote.category.value
+                            if hasattr(footnote.category, "value")
+                            else str(footnote.category)
+                        )
+                        digest_input = f"{footnote.summary}|{cat_str}|{footnote.is_new}"
+                        digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+                        footnote = footnote.model_copy(update={"fact_id": f"fn-{digest[:16]}"})
+                        fact_ids_minted_this_turn += 1
+                    forwarded_footnotes.append(footnote)
+                if fact_ids_minted_this_turn > 0:
+                    _watcher_publish(
+                        "state.footnote_fact_id_minted",
+                        {
+                            "count": fact_ids_minted_this_turn,
+                            "player_id": sd.player_id,
+                            "turn_number": snapshot.turn_manager.interaction,
+                            "reason": "narrator_omitted_fact_id",
+                        },
+                        component="footnotes",
+                    )
+                    logger.info(
+                        "state.footnote_fact_id_minted count=%d player=%s turn=%d",
+                        fact_ids_minted_this_turn,
+                        sd.player_name,
+                        snapshot.turn_manager.interaction,
+                    )
                 logger.info(
                     "state.footnotes_forwarded count=%d player=%s",
                     len(forwarded_footnotes),

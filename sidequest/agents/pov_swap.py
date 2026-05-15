@@ -350,6 +350,42 @@ def _rewrite_sentence(
 
         text = re.sub(r"\band\s+(\w+)", _and_verb_sub, text)
 
+    # ------------------------------------------------------------------
+    # Pass 9: ", <verb>" comma-coordinated continuation. Same logic as
+    # Pass 8 but for verb-coordination through commas instead of "and".
+    # English narration commonly chains actions across commas without
+    # repeating the subject: "Willes thumbs the flap, sets the fitting,
+    # and works the curl onto parchment." Pass 2 catches "thumbs"; Pass
+    # 8 catches "works"; without this pass "sets" stays in 3rd-person
+    # form and the rewritten prose reads "you thumb..., sets..., and
+    # work..." — mixed conjugation in a single sentence
+    # (sq-playtest 2026-05-15).
+    #
+    # Gated by ``had_subject_swap`` so we don't conjugate commas that
+    # AREN'T verb-coordination (appositives, parentheticals, relative-
+    # clause boundaries). Further gated by ``_looks_like_verb`` so plural
+    # nouns or commas-before-articles ("..., the bronze fitting") pass
+    # through unchanged.
+    # ------------------------------------------------------------------
+    if had_subject_swap:
+
+        def _comma_verb_sub(m: re.Match) -> str:
+            nonlocal count
+            verb = m.group(1)
+            if not _looks_like_verb(verb):
+                return m.group(0)
+            # Don't conjugate "and" itself if the regex happens to catch
+            # ", and " — Pass 8 owns the "and <verb>" surface.
+            if verb.lower() == "and":
+                return m.group(0)
+            conjugated = _conjugate(verb)
+            if conjugated == verb:
+                return m.group(0)
+            count += 1
+            return f", {conjugated}"
+
+        text = re.sub(r",\s+(\w+)", _comma_verb_sub, text)
+
     return text, count
 
 

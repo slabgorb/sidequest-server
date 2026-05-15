@@ -465,7 +465,18 @@ def _build_turn_context(
         quest_anchors=quest_anchors,
         pending_trope_context=pending_trope_context,
         active_trope_summary=active_trope_summary,
-        recent_narrative_log=list(snapshot.narrative_log[-RECENT_NARRATIVE_WINDOW_K:]),
+        # Source the recency window from the durable narrative_log (SQLite)
+        # rather than the in-memory snapshot mirror. sd.store.append_narrative
+        # only writes to SQLite — the in-memory snapshot.narrative_log is
+        # populated *only* by world_materialization (one-shot at startup) and
+        # lore_seeding (chargen), never by the per-turn narrator append site
+        # at websocket_session_handler.py:2832/2840. Reading from snapshot
+        # made the recency injection emit turn_count=0/total_tokens=0 forever
+        # (sq-playtest 2026-05-15 — story 49-1's safety-net was dormant).
+        # SQLite is the same ground-truth source Story 45-11's round
+        # invariant lie-detector relies on; aligning here closes the same
+        # snapshot/SQLite divergence class.
+        recent_narrative_log=sd.store.recent_narrative(RECENT_NARRATIVE_WINDOW_K),
         # Story 50-4: thread the live snapshot so build_narrator_prompt can
         # render + clear pending_time_skip_summary (one-shot lifecycle).
         snapshot=snapshot,

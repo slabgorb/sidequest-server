@@ -356,11 +356,15 @@ For each marker, emit a footnote in your structured output with:
 - summary: one-sentence description of the fact
 - category: one of Lore, Place, Person, Quest, Ability
 - is_new: true if this is a new revelation, false if referencing prior knowledge
+- fact_id: a short stable slug derived from the content (e.g. "grove-corruption",
+  "courier-reads-lips", "marrow-name-on-wall"). Required for both new facts and
+  callbacks — use the SAME slug when re-mentioning a previously-revealed fact
+  so the journal de-dupes correctly. Lowercase, hyphen-separated, no spaces.
 
 Example prose: "As you enter the grove, Reva feels a deep wrongness [1]."
-Example footnote: { "marker": 1, "summary": "Corruption detected in the grove", "category": "Place", "is_new": true }
+Example footnote: { "marker": 1, "summary": "Corruption detected in the grove", "category": "Place", "is_new": true, "fact_id": "grove-corruption" }
 
-If you reference something the party already knows, set is_new to false and include the fact_id.
+If you reference something the party already knows, set is_new to false and reuse the same fact_id.
 If nothing new is revealed and nothing prior is referenced, omit the footnotes array entirely."""
 
         self.register_section(
