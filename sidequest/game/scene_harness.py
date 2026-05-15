@@ -142,8 +142,8 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
     if isinstance(location, str) and location:
         snapshot_kwargs["current_region"] = location
 
-    # Optional turn counter — combat_test sets turn=3 so the dispatcher
-    # doesn't think it's turn 1.
+    # Optional turn counter — combat_brawl_wasteland sets turn=3 so the
+    # dispatcher doesn't think it's turn 1.
     turn = data.get("turn")
     if isinstance(turn, int) and turn > 0:
         from sidequest.game.session import TurnManager
@@ -327,9 +327,10 @@ def _hydrate_npc(data: dict[str, Any]) -> Npc:
     """
     # ``name`` is required and pydantic catches missing/blank. ``description``
     # and ``personality`` defaults are LOAD-BEARING: canonical fixtures
-    # (combat_test, dogfight) define NPCs with only name/role/disposition
-    # and rely on the narrator to fill in flavor; without seeded values
-    # CreatureCore's non-blank validators would reject every fixture NPC.
+    # (combat_brawl_wasteland, combat_dogfight_space) define NPCs with only
+    # name/role/disposition and rely on the narrator to fill in flavor;
+    # without seeded values CreatureCore's non-blank validators would reject
+    # every fixture NPC.
     role = data.get("role") or "fixture NPC"
     core = CreatureCore(
         name=data.get("name") or "",

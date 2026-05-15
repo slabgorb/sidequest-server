@@ -21,7 +21,7 @@ canonical fixtures in ``scenarios/fixtures/``):
         hydrate_fixture,
     )
 
-    snapshot = hydrate_fixture(name="combat_test", fixtures_dir=Path(...))
+    snapshot = hydrate_fixture(name="combat_brawl_wasteland", fixtures_dir=Path(...))
 
 * Returns a ``GameSnapshot`` with ``model_config = {"extra": "ignore"}``.
 * Raises ``FixtureNotFoundError`` when ``{fixtures_dir}/{name}.yaml`` is missing.
