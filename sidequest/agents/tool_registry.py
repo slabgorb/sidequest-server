@@ -61,11 +61,7 @@ class ToolResult:
 
     @classmethod
     def error(cls, message: str, *, recoverable: bool = True) -> ToolResult:
-        status = (
-            ToolResultStatus.ERROR_RECOVERABLE
-            if recoverable
-            else ToolResultStatus.ERROR_FATAL
-        )
+        status = ToolResultStatus.ERROR_RECOVERABLE if recoverable else ToolResultStatus.ERROR_FATAL
         return cls(status=status, message=message)
 
     def to_anthropic_payload(self) -> tuple[str, bool]:
@@ -197,9 +193,7 @@ class Registry:
                 body, is_err = err.to_anthropic_payload()
                 span.set_attribute("tool.result_status", err.status.value)
                 span.set_attribute("tool.result_size_bytes", len(body))
-                return ToolResultBlock(
-                    tool_use_id=block.id, content=body, is_error=is_err
-                )
+                return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
 
             try:
                 if registered.category is ToolCategory.WRITE:
@@ -220,9 +214,7 @@ class Registry:
                 body, is_err = err.to_anthropic_payload()
                 span.set_attribute("tool.result_status", err.status.value)
                 span.set_attribute("tool.result_size_bytes", len(body))
-                return ToolResultBlock(
-                    tool_use_id=block.id, content=body, is_error=is_err
-                )
+                return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
 
             filtered = ctx.perception_filter.filter_result(
                 tool_name=registered.name,
@@ -234,9 +226,7 @@ class Registry:
             body, is_err = filtered.to_anthropic_payload()
             span.set_attribute("tool.result_status", filtered.status.value)
             span.set_attribute("tool.result_size_bytes", len(body))
-            return ToolResultBlock(
-                tool_use_id=block.id, content=body, is_error=is_err
-            )
+            return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
 
 
 # ---------------------------------------------------------------------------
@@ -269,9 +259,7 @@ def tool(
         sig = inspect.signature(fn)
         params = list(sig.parameters.values())
         if not params:
-            raise TypeError(
-                f"@tool {name!r} handler must take (args_model, ctx) — got no params"
-            )
+            raise TypeError(f"@tool {name!r} handler must take (args_model, ctx) — got no params")
         # Resolve annotations to real types: needed because `from __future__ import
         # annotations` makes all annotations strings. inspect.Parameter.annotation
         # would return a str, not a type, so isinstance(ann, type) would always fail.

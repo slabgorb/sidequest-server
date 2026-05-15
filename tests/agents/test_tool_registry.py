@@ -273,6 +273,7 @@ async def test_registry_dispatch_parallelises_reads() -> None:
         reg.dispatch(ToolUseBlock(id="1", name="read_a", arguments={}), ctx),
         asyncio.sleep(0.01),
     )
+
     # Confirm parallel-ability via direct overlap check.
     async def fire_pair() -> None:
         await asyncio.gather(
