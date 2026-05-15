@@ -12,6 +12,7 @@ from sidequest.agents.tools import (
     advance_encounter_beat,  # noqa: F401
     advance_scene_clue,  # noqa: F401
     apply_damage,  # noqa: F401
+    apply_spell_effect,  # noqa: F401
     apply_status,  # noqa: F401
     commit_known_fact,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
