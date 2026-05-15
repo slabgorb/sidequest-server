@@ -51,6 +51,7 @@ from sidequest.agents.orchestrator import (
     VisualScene,
     extract_structured_from_response,
 )
+from sidequest.agents.perception_filter import NoopPerceptionFilter, PerceptionFilter
 from sidequest.agents.prompt_framework import (
     AttentionZone,
     PromptComposer,
@@ -61,6 +62,15 @@ from sidequest.agents.prompt_framework import (
     SoulData,
     SoulPrinciple,
     parse_soul_md,
+)
+from sidequest.agents.tool_registry import (
+    Registry,
+    ToolCategory,
+    ToolContext,
+    ToolResult,
+    ToolResultStatus,
+    default_registry,
+    tool,
 )
 from sidequest.agents.tooling_protocol import (
     CacheableBlock,
@@ -135,4 +145,15 @@ __all__ += [
     "ToolingResult",
     "ToolResultBlock",
     "ToolUseBlock",
+    # perception_filter (Phase B)
+    "NoopPerceptionFilter",
+    "PerceptionFilter",
+    # tool_registry (Phase B)
+    "Registry",
+    "ToolCategory",
+    "ToolContext",
+    "ToolResult",
+    "ToolResultStatus",
+    "default_registry",
+    "tool",
 ]

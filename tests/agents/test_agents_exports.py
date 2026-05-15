@@ -62,3 +62,27 @@ def test_call_type_and_resolver_exported() -> None:
     from sidequest.agents import CallType, resolve_model
 
     assert resolve_model(CallType.NARRATION) == "claude-sonnet-4-6"
+
+
+def test_phase_b_registry_exports() -> None:
+    from sidequest.agents import (
+        NoopPerceptionFilter,
+        PerceptionFilter,
+        Registry,
+        ToolCategory,
+        ToolContext,
+        ToolResult,
+        ToolResultStatus,
+        default_registry,
+        tool,
+    )
+
+    assert Registry is not None
+    assert tool is not None
+    assert default_registry is not None
+    assert PerceptionFilter is not None
+    assert NoopPerceptionFilter is not None
+    assert ToolCategory is not None
+    assert ToolContext is not None
+    assert ToolResult is not None
+    assert ToolResultStatus is not None
