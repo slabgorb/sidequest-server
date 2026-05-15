@@ -8,6 +8,7 @@ adapter so the registry is loaded by importing this package.
 #   from sidequest.agents.tools import lookup_monster  # noqa: F401
 # one per adapter, here.
 from sidequest.agents.tools import (
+    advance_encounter_beat,  # noqa: F401
     advance_scene_clue,  # noqa: F401
     apply_damage,  # noqa: F401
     apply_status,  # noqa: F401
