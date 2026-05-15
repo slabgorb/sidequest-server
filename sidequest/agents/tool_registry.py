@@ -7,10 +7,22 @@ sidequest.agents.tools.<name>.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
+import typing
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pydantic import BaseModel, ValidationError
+
+from sidequest.agents.tooling_protocol import (
+    ToolDefinition,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -84,3 +96,176 @@ class ToolContext:
     store: Any  # SqliteStore — kept Any to avoid Phase B coupling
     otel_span: Span
     perception_filter: PerceptionFilter
+
+
+_ArgsT = TypeVar("_ArgsT", bound=BaseModel)
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisteredTool:
+    name: str
+    description: str
+    category: ToolCategory
+    args_model: type[BaseModel]
+    handler: Callable[..., Awaitable[ToolResult]]
+
+
+class Registry:
+    """Holds the @tool-decorated handlers and dispatches tool_use blocks."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, _RegisteredTool] = {}
+        self._write_locks: dict[str, asyncio.Lock] = {}
+
+    def register(
+        self,
+        *,
+        name: str,
+        description: str,
+        category: ToolCategory,
+        args_model: type[BaseModel],
+        handler: Callable[..., Awaitable[ToolResult]],
+    ) -> None:
+        if name in self._tools:
+            raise ValueError(f"Tool {name!r} already registered")
+        self._tools[name] = _RegisteredTool(
+            name=name,
+            description=description,
+            category=category,
+            args_model=args_model,
+            handler=handler,
+        )
+
+    def list_names(self) -> list[str]:
+        return sorted(self._tools)
+
+    def tool_definitions(self) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=t.name,
+                description=t.description,
+                input_schema=t.args_model.model_json_schema(),
+            )
+            for t in self._tools.values()
+        ]
+
+    async def dispatch(
+        self,
+        block: ToolUseBlock,
+        ctx: ToolContext,
+    ) -> ToolResultBlock:
+        # Lazy import breaks the tool_registry → tool_dispatch → tool_registry
+        # circular dependency. tool_dispatch.py imports ToolCategory from this
+        # module at its top level; if we imported it here at module level,
+        # ToolCategory would not yet be bound when tool_dispatch.py executed.
+        # By deferring to method-call time, tool_registry is fully initialised.
+        from sidequest.telemetry.spans.tool_dispatch import tool_dispatch_span
+
+        registered = self._tools.get(block.name)
+        if registered is None:
+            err = ToolResult.error(
+                f"unknown tool {block.name!r}",
+                recoverable=True,
+            )
+            body, is_err = err.to_anthropic_payload()
+            return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
+
+        with tool_dispatch_span(
+            name=registered.name,
+            category=registered.category,
+            perspective_pc=ctx.perspective_pc,
+        ) as span:
+            try:
+                args = registered.args_model.model_validate(block.arguments)
+            except ValidationError as exc:
+                err = ToolResult.error(
+                    f"argument validation failed: {exc.errors()}",
+                    recoverable=True,
+                )
+                body, is_err = err.to_anthropic_payload()
+                span.set_attribute("tool.result_status", err.status.value)
+                span.set_attribute("tool.result_size_bytes", len(body))
+                return ToolResultBlock(
+                    tool_use_id=block.id, content=body, is_error=is_err
+                )
+
+            if registered.category is ToolCategory.WRITE:
+                lock = self._write_locks.setdefault(ctx.session_id, asyncio.Lock())
+                async with lock:
+                    result = await registered.handler(args, ctx)
+            else:
+                result = await registered.handler(args, ctx)
+
+            filtered = ctx.perception_filter.filter_result(
+                tool_name=registered.name,
+                category=registered.category,
+                result=result,
+                perspective_pc=ctx.perspective_pc,
+            )
+
+            body, is_err = filtered.to_anthropic_payload()
+            span.set_attribute("tool.result_status", filtered.status.value)
+            span.set_attribute("tool.result_size_bytes", len(body))
+            return ToolResultBlock(
+                tool_use_id=block.id, content=body, is_error=is_err
+            )
+
+
+# ---------------------------------------------------------------------------
+# Module-level default registry + decorator
+# ---------------------------------------------------------------------------
+
+default_registry = Registry()
+
+
+def tool(
+    *,
+    name: str,
+    description: str,
+    category: ToolCategory,
+    registry: Registry | None = None,
+) -> Callable[[Callable[..., Awaitable[ToolResult]]], Callable[..., Awaitable[ToolResult]]]:
+    """Decorator: register an async handler with a Pydantic-args model.
+
+    Deviation from plan: ``from __future__ import annotations`` turns all
+    annotations into strings at definition time. The plan's ``params[0].annotation``
+    check would always see a string, never a type. We use ``typing.get_type_hints(fn)``
+    to resolve the forward references back to real types before validating the
+    args-model annotation.
+    """
+    chosen = registry if registry is not None else default_registry
+
+    def decorate(
+        fn: Callable[..., Awaitable[ToolResult]],
+    ) -> Callable[..., Awaitable[ToolResult]]:
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.values())
+        if not params:
+            raise TypeError(
+                f"@tool {name!r} handler must take (args_model, ctx) — got no params"
+            )
+        # Resolve annotations to real types: needed because `from __future__ import
+        # annotations` makes all annotations strings. inspect.Parameter.annotation
+        # would return a str, not a type, so isinstance(ann, type) would always fail.
+        hints = typing.get_type_hints(fn)
+        first_param_name = params[0].name
+        args_annotation = hints.get(first_param_name)
+        if (
+            args_annotation is None
+            or not isinstance(args_annotation, type)
+            or not issubclass(args_annotation, BaseModel)
+        ):
+            raise TypeError(
+                f"@tool {name!r}: first parameter must be annotated with a "
+                f"pydantic.BaseModel subclass (got {args_annotation!r})"
+            )
+        chosen.register(
+            name=name,
+            description=description,
+            category=category,
+            args_model=args_annotation,
+            handler=fn,
+        )
+        return fn
+
+    return decorate
