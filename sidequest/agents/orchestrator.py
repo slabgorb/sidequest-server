@@ -60,6 +60,7 @@ from sidequest.agents.tooling_protocol import (
     CacheableBlock,
     Message,
     ToolingLlmClient,
+    ToolingResult,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -360,6 +361,18 @@ class NarrationTurnResult:
     # the decomposer did not run, or no entries were flagged with
     # ``redact_from_narrator_canonical``.
     secret_routes: list[Any] = field(default_factory=list)
+
+    # Task E1.5-B — SDK-path tool-invocation ledger for the GM-panel
+    # lie-detector (ADR-103). On the SDK narration path the 26 WRITE tools
+    # apply + persist game state during the tool-dispatch loop; this ledger
+    # records every tool the model actually called this turn so Sebastien's
+    # GM panel can correlate mechanical mutations against the prose (the
+    # narrator can no longer "wing it" — a state change with no ledger entry
+    # is a lie). Each entry is ``{"id", "name", "arguments"}`` mirroring the
+    # ``ToolUseBlock`` the SDK emitted. EMPTY on every non-SDK path
+    # (ClaudeClient sync/streaming) — no tool loop runs there, so there is
+    # nothing to ledger.
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -792,6 +805,72 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
             else 0
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Task E1.5-B — SDK-path tool-owned / presentation partition.
+#
+# On the SDK narration path the 26 WRITE tools mutate AND persist
+# (``ctx.store.save``) game state during the tool-dispatch loop. The
+# narrator ALSO emits a sidecar ``game_patch`` block (the prompt still
+# injects ``narrator_output_only``). Feeding that sidecar through the
+# normal assembler would make ``narration_apply`` re-apply every
+# tool-owned mutation a SECOND time (double-apply bug). So on the SDK
+# path the tool-owned fields are ZEROED — the tools are the single
+# authority for those categories — while presentation/signal fields with
+# NO successor tool stay sidecar-sourced.
+#
+# Each entry below maps a ``NarrationTurnResult`` field to the
+# ``COVERAGE_MAP`` row(s) (see tests/agents/test_sidecar_coverage_map.py)
+# whose successor tool now owns + persists that state during dispatch.
+# When zeroed on the SDK-path result, the corresponding
+# ``narration_apply._apply_narration_result_to_snapshot`` branch (and the
+# websocket_session_handler trope/affinity/clue seams) becomes a no-op,
+# so the tool's dispatch-time write is the only write.
+#
+# game_patch_dict is zeroed too: it carries the escape-hatch sidecar
+# intents (plot_course / morale_event / raw world-patch) that
+# ``apply_world_patch`` (patches_other) and ``update_npc_disposition``
+# (patches_disposition) now own.
+#
+# items_* / gold_change / quest_updates / lore_established / companions_*
+# are deliberately NOT in this partition: NO registered tool in
+# sidequest/agents/tools/ mutates inventory, gold, the quest log, lore, or
+# the companion roster (verified — query_character/query_encounter only
+# READ inventory), and none has a COVERAGE_MAP row. They stay
+# sidecar-sourced so narration_apply remains their single applier on BOTH
+# paths.
+#
+# KNOWN GAP (out of scope, follow-up): zeroing ``location`` means
+# narration_apply's region canonicalization / room-graph promotion
+# (narration_apply.py ~1763-1817) no longer runs for SDK turns —
+# apply_world_patch only sets the raw string. Tracked, not fixed here.
+_SDK_TOOL_OWNED_FIELDS: dict[str, str] = {
+    # patches_status (apply_status) + patches_hp (apply_damage) both land
+    # as Status entries via narration_apply's status_changes branch.
+    "status_changes": "patches_status / patches_hp",
+    # patches_other (apply_world_patch /location escape hatch).
+    "location": "patches_other",
+    # magic_effects (apply_spell_effect) + patches_resource_pool
+    # (update_resource_pool) — narration_apply.apply_magic_working.
+    "magic_working": "magic_effects / patches_resource_pool",
+    # confrontation_advances (advance_confrontation) +
+    # encounter_advances (advance_encounter_beat) — encounter trigger.
+    "confrontation": "confrontation_advances / encounter_advances",
+    # encounter_advances (advance_encounter_beat) +
+    # confrontation_advances (advance_confrontation) — beat apply loop.
+    "beat_selections": "encounter_advances / confrontation_advances",
+    # trope_tick (tick_tropes) — session handler tick_tropes(days_advanced=).
+    "days_advanced": "trope_tick",
+    # patches_resource_pool (update_resource_pool) — session handler
+    # apply_resource_patches(affinity_progress=).
+    "affinity_progress": "patches_resource_pool",
+    # patches_other (apply_world_patch) + patches_disposition
+    # (update_npc_disposition) — the escape-hatch sidecar intents
+    # (plot_course / morale_event / raw world patch) dispatched off
+    # game_patch_dict by _apply_course_sidecar / _apply_morale_sidecar.
+    "game_patch_dict": "patches_other / patches_disposition",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2199,8 +2278,7 @@ class Orchestrator:
         # against LlmClient — Protocol runtime-checks reject AsyncMock and
         # other structural test doubles that nevertheless work at runtime.
         assert not isinstance(self._client, ToolingLlmClient), (
-            f"streaming path must not see a ToolingLlmClient, got "
-            f"{type(self._client).__name__}"
+            f"streaming path must not see a ToolingLlmClient, got {type(self._client).__name__}"
         )
         client: LlmClient = self._client  # type: ignore[assignment]
 
@@ -2525,8 +2603,7 @@ class Orchestrator:
         # See the streaming-path comment for why we assert "not Tooling"
         # instead of "is LlmClient" (AsyncMock / test doubles).
         assert not isinstance(self._client, ToolingLlmClient), (
-            f"synchronous path must not see a ToolingLlmClient, got "
-            f"{type(self._client).__name__}"
+            f"synchronous path must not see a ToolingLlmClient, got {type(self._client).__name__}"
         )
         client: LlmClient = self._client  # type: ignore[assignment]
         with turn_agent_llm_inference_span(
@@ -2719,6 +2796,152 @@ class Orchestrator:
             secret_routes=list(self._last_secret_routes),
         )
 
+    def _assemble_turn_result_sdk(
+        self,
+        *,
+        result: ToolingResult,
+        prompt_text: str,
+        context: TurnContext,
+        elapsed_ms: int,
+        action: str,
+    ) -> NarrationTurnResult:
+        """SDK-path NarrationTurnResult assembly — the hybrid split (Task E1.5-B).
+
+        Distinct from :meth:`_assemble_turn_result` (the ClaudeClient
+        sync/streaming assembler, which stays byte-for-byte unchanged for
+        its callers). On the SDK path the 26 WRITE tools already mutated AND
+        persisted (``ctx.store.save``) game state during the tool-dispatch
+        loop, so re-applying the narrator's sidecar would double-apply.
+
+        The split:
+
+        * **Presentation/signal fields** — ``scene_mood``, ``visual_scene``,
+          ``npcs_present``, ``footnotes``, ``sfx_triggers``,
+          ``action_rewrite`` — have NO successor tool, so they are still
+          parsed off the sidecar (``extract_structured_from_response``).
+          Images/audio/footnotes/perception depend on these.
+        * **No-successor-tool state** — ``items_*``, ``gold_change``,
+          ``quest_updates``, ``lore_established``, ``companions_*`` — also
+          stay sidecar-sourced: no registered tool owns inventory / gold /
+          quest log / lore / companion roster (see ``_SDK_TOOL_OWNED_FIELDS``
+          docstring), so narration_apply remains their single applier.
+        * **Tool-owned state** — every field in
+          :data:`_SDK_TOOL_OWNED_FIELDS` — is left at its dataclass default
+          (zeroed). The tool's dispatch-time write is the single authority;
+          ``narration_apply`` (and the session-handler trope/affinity/clue
+          seams) become no-ops for those categories.
+        * ``tool_calls`` is the ADR-103 GM-panel lie-detector ledger,
+          populated from the SDK's accumulated ``ToolUseBlock``s.
+
+        The constructed result NEVER sets the
+        :data:`_SDK_TOOL_OWNED_FIELDS` keys — that invariant is asserted
+        post-construction (fail loud per CLAUDE.md: a future field added to
+        both the partition and the constructor must not silently re-introduce
+        the double-apply).
+        """
+        agent_name = self._narrator.name()
+        raw_response = result.text
+        logger.info(
+            "SDK narrator returned narration len=%d duration_ms=%d tool_calls=%d",
+            len(raw_response),
+            elapsed_ms,
+            len(result.tool_calls),
+        )
+
+        with context.phase_timings.phase("narrator_extraction"):
+            extraction = extract_structured_from_response(raw_response)
+
+        prose = extraction["prose"]
+
+        if context.dispatch_package is not None:
+            audit_canonical_prose(
+                prose=prose,
+                package=context.dispatch_package,
+                entity_tokens_by_id=self._entity_tokens_for_registry(context),
+            )
+
+        if extraction["action_rewrite"] is None:
+            logger.warning(
+                "action_rewrite absent from extraction (sdk) — using default (empty rewrite)"
+            )
+
+        npc_mentions = [NpcMention.from_value(v) for v in extraction["npcs_present"]]
+
+        visual_scene: VisualScene | None = None
+        if extraction["visual_scene"] and isinstance(extraction["visual_scene"], dict):
+            visual_scene = VisualScene.from_dict(extraction["visual_scene"])
+
+        action_rewrite: ActionRewrite | None = None
+        if isinstance(extraction["action_rewrite"], dict):
+            action_rewrite = ActionRewrite.from_dict(extraction["action_rewrite"])
+
+        # ADR-103 ledger — mirror each accumulated ToolUseBlock.
+        tool_calls = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in result.tool_calls
+        ]
+
+        # NOTE: every field in _SDK_TOOL_OWNED_FIELDS is intentionally
+        # ABSENT from this constructor call — the tools own + persisted
+        # them during dispatch. Presentation + no-successor-tool fields are
+        # the only sidecar-sourced state.
+        assembled = NarrationTurnResult(
+            narration=prose,
+            is_degraded=False,
+            # ---- presentation / signal (no successor tool) ----
+            scene_mood=extraction["scene_mood"],
+            visual_scene=visual_scene,
+            npcs_present=npc_mentions,
+            footnotes=extraction["footnotes"] if isinstance(extraction["footnotes"], list) else [],
+            sfx_triggers=extraction["sfx_triggers"]
+            if isinstance(extraction["sfx_triggers"], list)
+            else [],
+            action_rewrite=action_rewrite,
+            # ---- state with NO successor tool: narration_apply stays the
+            #      single applier on the SDK path too ----
+            items_gained=extraction["items_gained"]
+            if isinstance(extraction["items_gained"], list)
+            else [],
+            items_lost=extraction.get("items_lost", []),
+            items_discarded=extraction.get("items_discarded", []),
+            items_consumed=extraction.get("items_consumed", []),
+            quest_updates=extraction["quest_updates"]
+            if isinstance(extraction["quest_updates"], dict)
+            else {},
+            gold_change=extraction["gold_change"],
+            lore_established=extraction["lore_established"],
+            companions_added=extraction.get("companions_added", []),
+            companions_dismissed=extraction.get("companions_dismissed", []),
+            # ---- OTEL / telemetry ----
+            agent_name=agent_name,
+            agent_duration_ms=elapsed_ms,
+            token_count_in=result.input_tokens,
+            token_count_out=result.output_tokens,
+            prompt_tier="",  # vestigial field; tier system removed per ADR-098
+            prompt_text=prompt_text,
+            raw_response_text=raw_response,
+            secret_routes=list(self._last_secret_routes),
+            tool_calls=tool_calls,
+        )
+
+        # Fail-loud invariant (CLAUDE.md no silent fallbacks): the
+        # tool-owned partition must remain at dataclass defaults so
+        # narration_apply does not double-apply what the WRITE tools
+        # already persisted. If a future edit wires one of these back in,
+        # crash here rather than ship a silent double-apply.
+        _defaults = NarrationTurnResult(narration="")
+        _violations = [
+            name
+            for name in _SDK_TOOL_OWNED_FIELDS
+            if getattr(assembled, name) != getattr(_defaults, name)
+        ]
+        if _violations:
+            raise AssertionError(
+                "SDK-path NarrationTurnResult must zero tool-owned fields "
+                f"(tools applied+saved them during dispatch); non-default: {_violations!r}"
+            )
+
+        return assembled
+
     async def _run_narration_turn_synchronous(
         self,
         action: str,
@@ -2869,19 +3092,18 @@ class Orchestrator:
 
             elapsed_ms = int((time.monotonic() - call_start) * 1000)
 
-            # Feed the SDK text back into the existing sidecar parser so
-            # downstream consumers (NarrationTurnResult shape, dispatch
-            # handlers) keep working unchanged. Phase D Task 4 retires the
-            # sidecar; until then this is the lowest-blast-radius wire.
-            response = ClaudeResponse(
-                text=result.text,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                session_id=None,
-                backend="anthropic-sdk",
-            )
-            return self._assemble_turn_result(
-                response=response,
+            # Task E1.5-B — hybrid split. The WRITE tools already mutated +
+            # persisted (``ctx.store.save``) every tool-owned state category
+            # during the dispatch loop above. ``_assemble_turn_result_sdk``
+            # builds the NarrationTurnResult so the tool-owned fields are
+            # ZEROED (narration_apply must not re-apply them) while
+            # presentation / no-successor-tool fields stay sidecar-sourced.
+            # The non-SDK ``_assemble_turn_result`` is intentionally NOT
+            # called here — that path re-applies the full sidecar because no
+            # tool runs during its dispatch, and double-applying on the SDK
+            # path is exactly the bug this task fixes.
+            return self._assemble_turn_result_sdk(
+                result=result,
                 prompt_text=prompt_text,
                 context=context,
                 elapsed_ms=elapsed_ms,
