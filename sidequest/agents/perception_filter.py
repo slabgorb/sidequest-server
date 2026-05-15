@@ -5,6 +5,10 @@ before handing it back to the model. The Noop default passes everything
 through unchanged; Phase C wires per-tool filter rules (see spec §Perception
 filtering at the tool layer for the per-tool rule table).
 
+Successor to ADR-028's post-pass rewriter approach. The legacy
+PerceptionRewriter remains live until Phase D wires per-tool filter rules
+into production and retires it.
+
 Write tools' results are intentionally not redacted: mutation status must
 be objectively reported. The filter inspects category to decide whether
 redaction is in scope.

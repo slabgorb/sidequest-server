@@ -18,6 +18,7 @@ def test_noop_perception_filter_passes_payload_through() -> None:
         result=result,
         perspective_pc="alex",
     )
+    assert filtered is result  # noop returns the same object, not a copy
     assert filtered.payload == {"hp": 17}
 
 
@@ -61,3 +62,8 @@ def test_noop_perception_filter_passes_through_write_results() -> None:
 def test_noop_satisfies_protocol() -> None:
     f = NoopPerceptionFilter()
     assert isinstance(f, PerceptionFilter)
+
+
+def test_non_conforming_object_fails_protocol_check() -> None:
+    """runtime_checkable protocol must reject objects without filter_result."""
+    assert not isinstance(object(), PerceptionFilter)
