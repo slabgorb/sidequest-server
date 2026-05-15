@@ -435,8 +435,7 @@ def swap_to_second_person(
         raise ValueError("target_name must be non-empty")
     if pronouns not in _PRONOUN_FORMS:
         raise ValueError(
-            f"unsupported pronouns: {pronouns!r}; supported: "
-            f"{sorted(_PRONOUN_FORMS.keys())}"
+            f"unsupported pronouns: {pronouns!r}; supported: {sorted(_PRONOUN_FORMS.keys())}"
         )
 
     forms = _PRONOUN_FORMS[pronouns]
