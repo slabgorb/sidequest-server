@@ -11,7 +11,7 @@ import pytest
 # Each entry: sidecar_field -> successor tool name (or None if not yet migrated).
 COVERAGE_MAP: dict[str, str | None] = {
     "dice_roll": "roll_dice",
-    "patches_hp": None,
+    "patches_hp": "apply_damage",
     "patches_status": None,
     "patches_resource_pool": None,
     "patches_disposition": None,
