@@ -778,6 +778,13 @@ def _write_multi_pc_fixture(
     )
 
 
+# Every PC entry below carries ``backstory`` + ``char_class`` because
+# ``Character`` enforces non-blank validators on both (character.py:128-139).
+# Omitting them would surface as a FixtureValidationError during fixture
+# setup, masking whether the test is actually exercising the
+# multi-PC-list code path or just hitting per-field validation.
+
+
 def test_characters_list_with_single_entry_hydrates_into_position_zero(
     tmp_path: Path,
 ) -> None:
@@ -791,7 +798,9 @@ def test_characters_list_with_single_entry_hydrates_into_position_zero(
         "single_in_list",
         "  - name: Wren\n"
         "    description: scout\n"
-        "    personality: cautious\n",
+        "    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n"
+        "    char_class: thief\n",
     )
 
     from sidequest.game.scene_harness import hydrate_fixture
@@ -815,9 +824,13 @@ def test_characters_list_multi_pc_preserves_declared_order(tmp_path: Path) -> No
         tmp_path,
         "party_of_four",
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
         "  - name: Caia\n    description: cleric\n    personality: stoic\n"
-        "  - name: Dax\n    description: rogue\n    personality: sly\n",
+        "    backstory: temple novitiate\n    char_class: cleric\n    race: human\n"
+        "  - name: Dax\n    description: rogue\n    personality: sly\n"
+        "    backstory: street thief\n    char_class: thief\n    race: halfling\n",
     )
 
     from sidequest.game.scene_harness import hydrate_fixture
@@ -842,8 +855,10 @@ def test_characters_list_each_pc_has_distinct_stats(tmp_path: Path) -> None:
         tmp_path,
         "distinct_stats",
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "    level: 3\n    stats: {DEX: 16, STR: 10}\n"
         "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
         "    level: 5\n    stats: {DEX: 10, STR: 18}\n",
     )
 
@@ -872,10 +887,12 @@ def test_characters_list_each_pc_has_distinct_known_facts(tmp_path: Path) -> Non
         tmp_path,
         "distinct_facts",
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "    known_facts:\n"
         '      - content: "Wren saw the goblin king"\n'
         '        confidence: "Certain"\n'
         "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
         "    known_facts:\n"
         '      - content: "Borin smelled smoke"\n'
         '        confidence: "Suspected"\n',
@@ -909,7 +926,9 @@ def test_characters_list_shares_one_npc_roster_with_party(tmp_path: Path) -> Non
         "world: default\n"
         "characters:\n"
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
         "npcs:\n"
         "  - name: Rust Jaw\n    role: bandit\n    disposition: -15\n"
         "  - name: Iron Eye\n    role: bandit-lieutenant\n    disposition: -20\n",
@@ -941,7 +960,10 @@ def test_singular_character_block_still_maps_to_position_zero(tmp_path: Path) ->
         "character:\n"
         "  name: Wren\n"
         "  description: scout\n"
-        "  personality: cautious\n",
+        "  personality: cautious\n"
+        "  backstory: scouted these tunnels before\n"
+        "  char_class: thief\n"
+        "  race: human\n",
         encoding="utf-8",
     )
 
@@ -964,18 +986,29 @@ def test_both_character_and_characters_blocks_raises_FixtureValidationError(
     ``characters:``. Both present means the fixture is in an undefined
     state and the right answer is 422, not "pick one and hope."
     """
+    # Both blocks are INDIVIDUALLY valid (each entry carries all non-blank
+    # required fields). The only thing that can fail validation is the
+    # conflict check itself — otherwise this test would pass on a hydrator
+    # that has no conflict check at all but happens to raise during
+    # per-entry pydantic validation.
     fixture = tmp_path / "both_blocks.yaml"
     fixture.write_text(
         "genre: caverns_and_claudes\n"
         "world: default\n"
         "character:\n"
         "  name: Solo\n"
-        "  description: solo\n"
-        "  personality: solo\n"
+        "  description: solo PC\n"
+        "  personality: stoic\n"
+        "  backstory: lone wanderer\n"
+        "  char_class: ranger\n"
+        "  race: elf\n"
         "characters:\n"
         "  - name: Party\n"
-        "    description: party\n"
-        "    personality: party\n",
+        "    description: a party member\n"
+        "    personality: gregarious\n"
+        "    backstory: tavern regular\n"
+        "    char_class: bard\n"
+        "    race: half-elf\n",
         encoding="utf-8",
     )
 
@@ -1050,12 +1083,19 @@ def test_malformed_character_entry_in_list_raises_FixtureValidationError(
     Sibling pattern from 50-19 (known_facts wrong shape) made the same
     choice: save-bearing data fails loud. The HTTP layer maps this to 422.
     """
+    # First entry is FULLY VALID. Only the second entry is malformed
+    # (missing required ``name``). This separates "the hydrator rejects
+    # the bad entry" from "the hydrator chokes on the first entry too" —
+    # so the test cannot pass by accident on a hydrator that simply
+    # blows up on the first valid entry.
     _write_multi_pc_fixture(
         tmp_path,
         "bad_entry",
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "  - description: malformed entry has no name\n"
-        "    personality: also broken\n",
+        "    personality: also broken\n"
+        "    backstory: nobody\n    char_class: missing\n    race: orc\n",
     )
 
     from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
@@ -1079,7 +1119,9 @@ def test_malformed_character_entry_does_not_silently_skip(tmp_path: Path) -> Non
         tmp_path,
         "silent_skip_guard",
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
-        "  - name: ''\n    description: blank name\n    personality: blank\n",
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
+        "  - name: ''\n    description: blank name\n    personality: blank\n"
+        "    backstory: nobody\n    char_class: missing\n    race: orc\n",
     )
 
     from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture

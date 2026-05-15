@@ -488,9 +488,13 @@ def test_dev_scene_route_persists_four_pc_party_snapshot(
         "world: default\n"
         "characters:\n"
         "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
         "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
         "  - name: Caia\n    description: cleric\n    personality: stoic\n"
-        "  - name: Dax\n    description: rogue\n    personality: sly\n",
+        "    backstory: temple novitiate\n    char_class: cleric\n    race: human\n"
+        "  - name: Dax\n    description: rogue\n    personality: sly\n"
+        "    backstory: street thief\n    char_class: thief\n    race: halfling\n",
         encoding="utf-8",
     )
 
@@ -544,9 +548,12 @@ def test_dev_scene_route_hydrate_ok_span_reports_full_character_count(
         "genre: caverns_and_claudes\n"
         "world: default\n"
         "characters:\n"
-        "  - name: Alpha\n    description: a\n    personality: a\n"
-        "  - name: Beta\n    description: b\n    personality: b\n"
-        "  - name: Gamma\n    description: c\n    personality: c\n",
+        "  - name: Alpha\n    description: alpha PC\n    personality: brave\n"
+        "    backstory: first of three\n    char_class: fighter\n    race: human\n"
+        "  - name: Beta\n    description: beta PC\n    personality: clever\n"
+        "    backstory: second of three\n    char_class: thief\n    race: human\n"
+        "  - name: Gamma\n    description: gamma PC\n    personality: wise\n"
+        "    backstory: third of three\n    char_class: cleric\n    race: human\n",
         encoding="utf-8",
     )
 
@@ -589,13 +596,19 @@ def test_dev_scene_route_rejects_both_character_and_characters_with_422(
     """
     fixtures_dir = tmp_path / "fixtures"
     fixtures_dir.mkdir()
+    # Both blocks INDIVIDUALLY valid — the only thing that can fail
+    # validation is the conflict check itself. See the sibling unit
+    # test ``test_both_character_and_characters_blocks_raises_*`` for
+    # the same discipline at the hydrator layer.
     (fixtures_dir / "both_blocks_route.yaml").write_text(
         "genre: caverns_and_claudes\n"
         "world: default\n"
         "character:\n"
-        "  name: Solo\n  description: solo\n  personality: solo\n"
+        "  name: Solo\n  description: solo PC\n  personality: stoic\n"
+        "  backstory: lone wanderer\n  char_class: ranger\n  race: elf\n"
         "characters:\n"
-        "  - name: Party\n    description: party\n    personality: party\n",
+        "  - name: Party\n    description: a party member\n    personality: gregarious\n"
+        "    backstory: tavern regular\n    char_class: bard\n    race: half-elf\n",
         encoding="utf-8",
     )
 
