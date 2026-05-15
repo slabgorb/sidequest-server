@@ -72,8 +72,16 @@ LEGACY_SENTINEL = "emit a fenced JSON block labeled game_patch containing mechan
 
 # Distinct successor tool name(s) the SDK prose MUST reference for each
 # tool-owned field in the E1.5-B partition. Keys MUST stay in lockstep
-# with _SDK_TOOL_OWNED_FIELDS — the contract test asserts the key sets
+# with _SDK_TOOL_OWNED_FIELDS — the contract test asserts the key SETS
 # match so a new partition row without a prose mapping fails loudly.
+#
+# SCOPE: this map guards prose↔partition KEY-SET drift only — does the SDK
+# prose mention a routing tool for every tool-owned category. It does NOT
+# verify the tool actually OWNS that category at dispatch time; that
+# map↔dispatch tool-ownership contract is the complementary guard in
+# tests/agents/test_sidecar_coverage_map.py (COVERAGE_MAP). The tool tuples
+# here are documentation of the routing the prose advertises, not an
+# assertion that dispatch honors them.
 _FIELD_TO_TOOLS: dict[str, tuple[str, ...]] = {
     "status_changes": ("apply_status", "apply_damage"),
     "location": ("apply_world_patch",),
@@ -197,10 +205,15 @@ async def test_build_narrator_prompt_uses_legacy_prose_when_non_tooling_client()
 # tests/agents/test_sidecar_coverage_map.py.
 # ---------------------------------------------------------------------------
 def test_field_to_tools_keys_match_sdk_tool_owned_partition() -> None:
-    """The prose↔tool map must cover exactly _SDK_TOOL_OWNED_FIELDS.
+    """The prose↔tool map keys must equal _SDK_TOOL_OWNED_FIELDS keys.
 
-    If E1.5-B adds/removes a tool-owned field, this fails until the SDK
-    prose mapping is updated — the anti-drift tripwire.
+    This is a KEY-SET tripwire only: if E1.5-B adds or removes a
+    tool-owned field, this fails until the SDK prose mapping is updated,
+    so the prose can't silently miss (or stale-list) a tool-owned
+    category. It does NOT verify which tool actually owns a category at
+    dispatch time — that map↔dispatch tool-ownership contract lives in
+    tests/agents/test_sidecar_coverage_map.py (COVERAGE_MAP). A future
+    maintainer changing tool ownership must look there, not here.
     """
     assert set(_FIELD_TO_TOOLS) == set(_SDK_TOOL_OWNED_FIELDS), (
         "SDK prose tool-map drifted from _SDK_TOOL_OWNED_FIELDS: "
@@ -220,10 +233,21 @@ def test_sdk_prose_routes_every_tool_owned_category_to_its_tool() -> None:
 
 def test_sdk_prose_keeps_presentation_fields_in_sidecar() -> None:
     """The slimmed sidecar must still carry every no-tool presentation
-    field E1.5-B keeps sidecar-sourced."""
+    field E1.5-B keeps sidecar-sourced.
+
+    Anchored on the ``<field>:`` instruction label rather than a bare
+    substring. Short tokens like ``mood`` are substrings of unrelated
+    prose (scene-mood, the visual_scene JSON's quoted ``"mood":`` key,
+    melancholic-adjacent tag text), so ``"mood" in prose`` would pass
+    vacuously even if the standalone ``mood:`` field instruction were
+    deleted. Requiring ``"mood:"`` (the line-label form the prose uses
+    for every kept field) tests the actual field instruction while
+    staying robust to benign rewording of the description text.
+    """
     for field in _KEPT_SIDECAR_FIELDS:
-        assert field in NARRATOR_OUTPUT_ONLY_SDK, (
-            f"SDK prose must still instruct the sidecar to carry {field!r}"
+        assert f"{field}:" in NARRATOR_OUTPUT_ONLY_SDK, (
+            f"SDK prose must still instruct the sidecar to carry {field!r} "
+            f"via a '{field}:' field instruction"
         )
 
 
