@@ -7,3 +7,4 @@ adapter so the registry is loaded by importing this package.
 # Phase C will add lines like:
 #   from sidequest.agents.tools import lookup_monster  # noqa: F401
 # one per adapter, here.
+from sidequest.agents.tools import roll_dice  # noqa: F401

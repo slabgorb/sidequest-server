@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from sidequest.agents.narrator_perception_filter import NarratorPerceptionFilter
+from sidequest.agents.perception_filter import PerceptionFilter
 from sidequest.agents.tool_registry import ToolCategory, ToolResult
+
+
+def test_filter_conforms_to_protocol() -> None:
+    assert isinstance(NarratorPerceptionFilter(), PerceptionFilter)
 
 
 def test_filter_passes_through_unknown_tool() -> None:
