@@ -1157,8 +1157,16 @@ class Orchestrator:
                         ),
                     )
 
-        # === OUTPUT FORMAT (every tier — narrator must always know game_patch schema) ===
-        self._narrator.build_output_format(registry)
+        # === OUTPUT FORMAT (narrator must always know the game_patch schema) ===
+        # Backend-gated (Task E1.5-A). The claude -p path gets the legacy
+        # full-sidecar prose; the SDK tool-use path gets the slimmed-sidecar
+        # + tool-routing prose so the model is not double-instructed to emit
+        # the 8 tool-owned categories E1.5-B deliberately zeros. ToolingLlmClient
+        # is imported unconditionally at module top — no silent fallback.
+        self._narrator.build_output_format(
+            registry,
+            tool_backend=isinstance(self._client, ToolingLlmClient),
+        )
 
         # === GENRE IDENTITY (every tier — narrator MUST always know the genre) ===
         # Fix: playtest-2026-04-05 — narrator broke fourth wall asking "What genre is Ashgate Square in?"
