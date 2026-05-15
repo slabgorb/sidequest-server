@@ -152,3 +152,93 @@ def test_query_character_rule_other_pc_coarsens() -> None:
     # Status kept; band derived
     assert coarsened["status"] == [{"text": "bleeding", "severity": "Wound"}]
     assert coarsened["edge_band"] == "bloodied"
+
+
+# ---------------------------------------------------------------------------
+# query_npc rule (Phase C Task 7) — second per-tool perception rule
+# ---------------------------------------------------------------------------
+
+
+def _qn_payload(
+    *,
+    npc_id: str = "Murchison",
+    name: str = "Murchison",
+    disposition_value: int | None = 25,
+    attitude: str | None = "friendly",
+    backstory: str | None = None,
+) -> dict:
+    p: dict = {
+        "npc_id": npc_id,
+        "name": name,
+        "description": "A pinched man.",
+        "personality": "evasive",
+        "pronouns": "he/him",
+        "appearance": "ink-stained cuffs",
+        "age": "60s",
+        "build": "lean",
+        "height": "average",
+        "distinguishing_features": ["limp"],
+        "location": "Tavern",
+        "last_seen_location": "Tavern",
+        "last_seen_turn": 2,
+        "creature_id": None,
+        "threat_level": None,
+        "abilities": [],
+        "morale": None,
+    }
+    if disposition_value is not None:
+        p["disposition_value"] = disposition_value
+    if attitude is not None:
+        p["attitude"] = attitude
+    if backstory is not None:
+        p["backstory"] = backstory
+    return p
+
+
+def test_query_npc_rule_none_perspective_returns_exact() -> None:
+    from sidequest.agents.tools import query_npc as _qn  # noqa: F401
+
+    f = NarratorPerceptionFilter()
+    payload = _qn_payload(disposition_value=25, attitude="friendly")
+    out = f.filter_result(
+        tool_name="query_npc",
+        category=ToolCategory.READ,
+        result=ToolResult.ok(payload),
+        perspective_pc=None,
+    )
+    assert out.payload == payload  # untouched, raw value preserved
+
+
+def test_query_npc_rule_with_perspective_strips_disposition_value() -> None:
+    from sidequest.agents.tools import query_npc as _qn  # noqa: F401
+
+    f = NarratorPerceptionFilter()
+    payload = _qn_payload(disposition_value=-25, attitude="hostile")
+    out = f.filter_result(
+        tool_name="query_npc",
+        category=ToolCategory.READ,
+        result=ToolResult.ok(payload),
+        perspective_pc="Alice",
+    )
+    coarsened = out.payload
+    assert isinstance(coarsened, dict)
+    # Identity + attitude band kept
+    assert coarsened["name"] == "Murchison"
+    assert coarsened["attitude"] == "hostile"
+    # Raw integer score stripped
+    assert "disposition_value" not in coarsened
+
+
+def test_query_npc_rule_no_disposition_section_is_noop() -> None:
+    """include_disposition=False at handler → no disposition_value to strip."""
+    from sidequest.agents.tools import query_npc as _qn  # noqa: F401
+
+    f = NarratorPerceptionFilter()
+    payload = _qn_payload(disposition_value=None, attitude=None)
+    out = f.filter_result(
+        tool_name="query_npc",
+        category=ToolCategory.READ,
+        result=ToolResult.ok(payload),
+        perspective_pc="Alice",
+    )
+    assert out.payload == payload  # rule has nothing to do

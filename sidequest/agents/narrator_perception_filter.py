@@ -104,3 +104,26 @@ def _rule_query_character(payload: Any, perspective_pc: str | None) -> Any:
 
 
 register_rule("query_character", _rule_query_character)
+
+
+# query_npc — Phase C Task 7.
+#
+# v1: when ``perspective_pc`` is set, drop the raw ``disposition_value``
+# (integer score in -100..+100) but keep the qualitative ``attitude``
+# band. Omniscient views (``perspective_pc is None``) get the raw value
+# untouched. Per-PC disposition tracks are forward-looking — the rule
+# does the coarsening with the single global Disposition until ADR-020
+# grows real per-PC observed views.
+
+
+def _rule_query_npc(payload: Any, perspective_pc: str | None) -> Any:
+    if not isinstance(payload, dict):
+        return payload  # defensive — handler always returns dict
+    if perspective_pc is None:
+        return payload  # omniscient (test / debug)
+    if "disposition_value" not in payload:
+        return payload  # narrator did not request the disposition section
+    return {k: v for k, v in payload.items() if k != "disposition_value"}
+
+
+register_rule("query_npc", _rule_query_npc)
