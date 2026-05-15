@@ -108,6 +108,15 @@ class ToolContext:
     # tolerate ``None`` (lookup_monster returns ``found=False`` with an OTEL
     # marker).
     monster_manual: MonsterManual | None = None
+    # Phase C Task 20 amendment: GenrePack reference for the tick_tropes
+    # tool. The trope engine (``sidequest.game.trope_tick.tick_tropes``)
+    # duck-types on ``pack.tropes`` — a list of ``TropeDefinition`` — so
+    # this slot is typed ``Any`` to avoid pulling the entire
+    # ``sidequest.genre`` machinery into the Phase B foundation. The
+    # production wire site holds the loaded ``GenrePack`` on the session
+    # handler; Phase E plumbs it through. Phase C tools tolerate ``None``
+    # (tick_tropes records an OTEL marker and no-ops).
+    genre_pack: Any | None = None
 
 
 _ArgsT = TypeVar("_ArgsT", bound=BaseModel)

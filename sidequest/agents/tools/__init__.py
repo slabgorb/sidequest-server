@@ -24,6 +24,7 @@ from sidequest.agents.tools import (
     query_scenario_clues,  # noqa: F401
     query_scene_state,  # noqa: F401
     roll_dice,  # noqa: F401
+    tick_tropes,  # noqa: F401
     update_npc_disposition,  # noqa: F401
     update_resource_pool,  # noqa: F401
 )

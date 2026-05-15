@@ -20,7 +20,7 @@ COVERAGE_MAP: dict[str, str | None] = {
     "scenario_advances": "advance_scene_clue",
     "encounter_advances": "advance_encounter_beat",
     "magic_effects": None,
-    "trope_tick": None,
+    "trope_tick": "tick_tropes",
     "confrontation_advances": None,
 }
 
