@@ -57,7 +57,10 @@ class ToolResult:
         return cls(status=status, message=message)
 
     def to_anthropic_payload(self) -> tuple[str, bool]:
-        """Render as (content_str, is_error) for the SDK tool_result message."""
+        """Render as (content_str, is_error) for the SDK tool_result message.
+
+        Non-JSON-serializable payload values are coerced to str via json.dumps(default=str).
+        """
         if self.status is ToolResultStatus.OK:
             return (json.dumps(self.payload, default=str), False)
         if self.status is ToolResultStatus.NOT_FOUND:

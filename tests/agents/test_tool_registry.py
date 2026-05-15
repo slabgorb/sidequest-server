@@ -1,4 +1,4 @@
-"""Tests for tool_registry primitives — ToolContext, ToolResult, Registry."""
+"""Tests for tool_registry primitives — ToolCategory, ToolContext, ToolResult."""
 
 from __future__ import annotations
 
@@ -87,3 +87,29 @@ def test_tool_context_perspective_pc_optional() -> None:
         perception_filter=MagicMock(),
     )
     assert ctx.perspective_pc is None
+
+
+def test_tool_result_with_unhashable_payload_raises_on_hash() -> None:
+    """ToolResult is frozen but payloads may be unhashable (dict/list).
+
+    Hashing fails loudly via TypeError. ToolResult is a value carrier, not
+    a dict key — this test documents the contract."""
+    r = ToolResult.ok({"hp": 12})
+    with pytest.raises(TypeError):
+        hash(r)
+
+
+def test_tool_result_to_anthropic_payload_not_found() -> None:
+    r = ToolResult.not_found("no such item")
+    body, is_error = r.to_anthropic_payload()
+    assert is_error is False  # NOT_FOUND is not an error
+    assert "no such item" in body
+    assert body.startswith("NOT_FOUND:")
+
+
+def test_tool_result_to_anthropic_payload_error_fatal() -> None:
+    r = ToolResult.error("db corrupt", recoverable=False)
+    body, is_error = r.to_anthropic_payload()
+    assert is_error is True
+    assert "db corrupt" in body
+    assert body.startswith("ERROR:")
