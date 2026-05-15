@@ -84,7 +84,7 @@ def test_module_exports_error_types() -> None:
 
 @pytest.mark.parametrize(
     "fixture_name",
-    ["combat_test", "dogfight", "negotiation", "poker"],
+    ["combat_brawl_wasteland", "combat_dogfight_space", "social_negotiation_tea", "social_poker_wasteland"],
 )
 def test_canonical_fixture_hydrates_without_error(fixture_name: str) -> None:
     """Every canonical fixture in scenarios/fixtures/ must hydrate cleanly.
@@ -103,8 +103,8 @@ def test_canonical_fixture_hydrates_without_error(fixture_name: str) -> None:
     )
 
 
-def test_combat_test_fixture_populates_genre_and_world() -> None:
-    """combat_test.yaml carries genre=mutant_wasteland, world=flickering_reach.
+def test_combat_brawl_wasteland_fixture_populates_genre_and_world() -> None:
+    """combat_brawl_wasteland.yaml carries genre=mutant_wasteland, world=flickering_reach.
 
     The hydrator must preserve top-level identity fields verbatim — the
     slug-keyed connect flow keys on ``genre_slug`` + ``world_slug``, so any
@@ -112,18 +112,18 @@ def test_combat_test_fixture_populates_genre_and_world() -> None:
     """
     from sidequest.game.scene_harness import hydrate_fixture
 
-    snapshot = hydrate_fixture(name="combat_test", fixtures_dir=CANONICAL_FIXTURES_DIR)
+    snapshot = hydrate_fixture(name="combat_brawl_wasteland", fixtures_dir=CANONICAL_FIXTURES_DIR)
 
     assert snapshot.genre_slug == "mutant_wasteland"
     assert snapshot.world_slug == "flickering_reach"
 
 
-def test_combat_test_fixture_populates_first_character() -> None:
+def test_combat_brawl_wasteland_fixture_populates_first_character() -> None:
     """``character:`` block hydrates into ``snapshot.characters[0]`` per
     ADR-069 §Hydration rule 2 (inherited unchanged by ADR-092)."""
     from sidequest.game.scene_harness import hydrate_fixture
 
-    snapshot = hydrate_fixture(name="combat_test", fixtures_dir=CANONICAL_FIXTURES_DIR)
+    snapshot = hydrate_fixture(name="combat_brawl_wasteland", fixtures_dir=CANONICAL_FIXTURES_DIR)
 
     assert len(snapshot.characters) >= 1, "fixture defined a character block"
     pc = snapshot.characters[0]
@@ -131,21 +131,21 @@ def test_combat_test_fixture_populates_first_character() -> None:
     # ``.core.name``. The fixture YAML's flat ``name:`` field un-flattens
     # into ``Character.core.name`` per the post-port shape.
     assert pc.core.name == "Skar", (
-        f"expected Skar from combat_test.yaml, got {pc.core.name!r}"
+        f"expected Skar from combat_brawl_wasteland.yaml, got {pc.core.name!r}"
     )
 
 
-def test_combat_test_fixture_populates_npc_list() -> None:
+def test_combat_brawl_wasteland_fixture_populates_npc_list() -> None:
     """``npcs:`` block hydrates into ``snapshot.npcs`` per ADR-069 rule 4 —
     name, role, disposition each preserved."""
     from sidequest.game.scene_harness import hydrate_fixture
 
-    snapshot = hydrate_fixture(name="combat_test", fixtures_dir=CANONICAL_FIXTURES_DIR)
+    snapshot = hydrate_fixture(name="combat_brawl_wasteland", fixtures_dir=CANONICAL_FIXTURES_DIR)
 
-    # combat_test.yaml defines exactly one NPC: Rust Jaw (hostile, disposition -15).
+    # combat_brawl_wasteland.yaml defines exactly one NPC: Rust Jaw (hostile, disposition -15).
     # Like Character, Npc nests CreatureCore under ``.core``.
     rust_jaw = next((n for n in snapshot.npcs if n.core.name == "Rust Jaw"), None)
-    assert rust_jaw is not None, "Rust Jaw must hydrate from combat_test.yaml"
+    assert rust_jaw is not None, "Rust Jaw must hydrate from combat_brawl_wasteland.yaml"
 
 
 def test_minimal_fixture_with_only_genre_and_world(tmp_path: Path) -> None:
@@ -800,7 +800,8 @@ def test_characters_list_with_single_entry_hydrates_into_position_zero(
         "    description: scout\n"
         "    personality: cautious\n"
         "    backstory: scouted these tunnels before\n"
-        "    char_class: thief\n",
+        "    char_class: thief\n"
+        "    race: human\n",
     )
 
     from sidequest.game.scene_harness import hydrate_fixture

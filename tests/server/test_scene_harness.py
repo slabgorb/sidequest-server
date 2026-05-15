@@ -118,9 +118,9 @@ def test_scene_route_absent_when_dev_scenes_env_unset(
     )
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 404, (
-        f"DEV_SCENES unset — POST /dev/scene/combat_test must 404, got {r.status_code}"
+        f"DEV_SCENES unset — POST /dev/scene/combat_brawl_wasteland must 404, got {r.status_code}"
     )
 
 
@@ -138,7 +138,7 @@ def test_scene_route_absent_when_dev_scenes_env_set_to_zero(
     app = create_app(save_dir=tmp_path, genre_pack_search_paths=[])
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 404, (
         f"DEV_SCENES=0 must keep the route absent, got {r.status_code}"
     )
@@ -162,9 +162,9 @@ def test_scene_route_registered_when_dev_scenes_env_set(
     )
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200, (
-        f"POST /dev/scene/combat_test (DEV_SCENES=1) must succeed; "
+        f"POST /dev/scene/combat_brawl_wasteland (DEV_SCENES=1) must succeed; "
         f"got {r.status_code}, body: {r.text}"
     )
 
@@ -180,7 +180,7 @@ def test_scene_post_response_body_has_slug_field(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, dict)
@@ -202,7 +202,7 @@ def test_scene_post_persists_save_file_at_slug_path(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     slug = r.json()["slug"]
 
@@ -223,12 +223,12 @@ def test_scene_post_persisted_snapshot_carries_fixture_genre_and_world(
 
     Loading the saved game_state and parsing it back into GameSnapshot
     yields ``genre_slug=mutant_wasteland`` and ``world_slug=flickering_reach``
-    (from combat_test.yaml). If these are blank or wrong, every
+    (from combat_brawl_wasteland.yaml). If these are blank or wrong, every
     downstream genre-pack lookup will silently fall through."""
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     slug = r.json()["slug"]
 
@@ -257,7 +257,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     slug = r.json()["slug"]
 
     from sidequest.game.persistence import SqliteStore, db_path_for_slug
@@ -269,7 +269,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
     snapshot = saved.snapshot
 
     assert len(snapshot.characters) >= 1, (
-        "combat_test.yaml has a character block — snapshot.characters[0] must be populated"
+        "combat_brawl_wasteland.yaml has a character block — snapshot.characters[0] must be populated"
     )
     # Character nests CreatureCore under ``.core``; ``Character.name`` is a method.
     assert snapshot.characters[0].core.name == "Skar"
@@ -277,7 +277,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
 
 @pytest.mark.parametrize(
     "fixture_name",
-    ["combat_test", "dogfight", "negotiation", "poker"],
+    ["combat_brawl_wasteland", "combat_dogfight_space", "social_negotiation_tea", "social_poker_wasteland"],
 )
 def test_every_canonical_fixture_can_be_loaded_via_endpoint(
     monkeypatch: pytest.MonkeyPatch,
@@ -363,7 +363,7 @@ def test_scene_harness_emits_load_intent_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     intent_events = [e for e in captured if "scene_harness" in e[0] and "load" in e[0]]
@@ -374,8 +374,8 @@ def test_scene_harness_emits_load_intent_span(
     # The intent span must carry the fixture name so the GM panel groups
     # events by fixture (Keith iterates many fixtures per playtest session).
     fields = intent_events[0][1]
-    assert fields.get("fixture_name") == "combat_test", (
-        f"load-intent span must carry fixture_name='combat_test'; got fields={fields!r}"
+    assert fields.get("fixture_name") == "combat_brawl_wasteland", (
+        f"load-intent span must carry fixture_name='combat_brawl_wasteland'; got fields={fields!r}"
     )
 
 
@@ -390,7 +390,7 @@ def test_scene_harness_emits_hydrate_ok_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     ok_events = [e for e in captured if "scene_harness" in e[0] and "hydrate" in e[0] and "ok" in e[0]]
@@ -410,7 +410,7 @@ def test_scene_harness_emits_persist_ok_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     persist_events = [e for e in captured if "scene_harness" in e[0] and "persist" in e[0]]

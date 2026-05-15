@@ -150,15 +150,61 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
 
         snapshot_kwargs["turn_manager"] = TurnManager(interaction=turn)
 
-    # Hydrate PC (singular — ADR-069 §Hydration rule 2 puts it at characters[0]).
-    character_data = data.get("character")
-    if isinstance(character_data, dict):
+    # Hydrate PCs (story 50-23, ADR-092 follow-on).
+    #
+    # Two mutually-exclusive shapes are supported:
+    #   character:        — legacy singular form (ADR-069 §Hydration rule 2),
+    #                       lands at ``characters[0]``.
+    #   characters: [...] — multi-PC list, each entry the same shape as the
+    #                       legacy singular block; projects to
+    #                       ``characters[N]`` in fixture-declared order.
+    #
+    # Both blocks present is a fixture authoring bug — fail loudly per
+    # CLAUDE.md "No Silent Fallbacks" rather than silently pick one.
+    singular_character = data.get("character")
+    characters_list = data.get("characters")
+
+    if singular_character is not None and characters_list is not None:
+        raise FixtureValidationError(
+            f"fixture {name!r}: cannot declare both 'character' and 'characters' "
+            "blocks — pick one (legacy singular form or multi-PC list)"
+        )
+
+    if isinstance(singular_character, dict):
         try:
-            snapshot_kwargs["characters"] = [_hydrate_character(character_data)]
+            snapshot_kwargs["characters"] = [_hydrate_character(singular_character)]
         except ValidationError as exc:
             raise FixtureValidationError(
                 f"fixture {name!r}: character field validation failed — {exc}"
             ) from exc
+    elif characters_list is not None:
+        if not isinstance(characters_list, list):
+            raise FixtureValidationError(
+                f"fixture {name!r}: 'characters' must be a YAML list, "
+                f"got {type(characters_list).__name__}"
+            )
+        hydrated: list[Character] = []
+        for index, entry in enumerate(characters_list):
+            if not isinstance(entry, dict):
+                raise FixtureValidationError(
+                    f"fixture {name!r}: characters[{index}] must be a YAML mapping, "
+                    f"got {type(entry).__name__}"
+                )
+            try:
+                hydrated.append(_hydrate_character(entry))
+            except ValidationError as exc:
+                raise FixtureValidationError(
+                    f"fixture {name!r}: characters[{index}] validation failed — {exc}"
+                ) from exc
+            except FixtureValidationError as exc:
+                # ``_hydrate_character()`` raises FixtureValidationError for
+                # malformed ``known_facts`` shape (story 50-19). Re-raise
+                # with the entry index so the fixture author knows which
+                # PC to fix.
+                raise FixtureValidationError(
+                    f"fixture {name!r}: characters[{index}] — {exc}"
+                ) from exc
+        snapshot_kwargs["characters"] = hydrated
 
     # Hydrate NPC roster.
     npcs_data = data.get("npcs")
