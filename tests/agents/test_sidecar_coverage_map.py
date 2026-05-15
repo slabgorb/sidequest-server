@@ -21,7 +21,7 @@ COVERAGE_MAP: dict[str, str | None] = {
     "encounter_advances": "advance_encounter_beat",
     "magic_effects": None,
     "trope_tick": "tick_tropes",
-    "confrontation_advances": None,
+    "confrontation_advances": "advance_confrontation",
 }
 
 
