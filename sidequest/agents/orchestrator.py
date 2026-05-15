@@ -37,6 +37,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sidequest.game.session import GameSnapshot
 
+# Importing this package wires the 26 tool adapters onto default_registry at
+# module import time. Required for the SDK path; the streaming/sync ClaudeClient
+# paths do not depend on the registry.
+import sidequest.agents.tools  # noqa: F401  (registration side effect)
 from sidequest.agents.claude_client import (
     ClaudeClient,
     ClaudeResponse,
@@ -51,6 +55,13 @@ from sidequest.agents.prompt_framework.types import (
     AttentionZone,
     PromptSection,
     SectionCategory,
+)
+from sidequest.agents.tooling_protocol import (
+    CacheableBlock,
+    Message,
+    ToolingLlmClient,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import CreatureCore
@@ -913,18 +924,23 @@ class Orchestrator:
 
     def __init__(
         self,
-        client: LlmClient | None = None,
+        client: LlmClient | ToolingLlmClient | None = None,
         soul_data: object | None = None,
     ) -> None:
         """Create an orchestrator.
 
         Args:
-            client: LlmClient client for LLM invocations.
-                    If None, creates a default ClaudeClient.
+            client: LlmClient or ToolingLlmClient for LLM invocations.
+                    If None, creates a default ClaudeClient. When the client
+                    is a ToolingLlmClient (AnthropicSdkClient) and streaming
+                    is disabled, ``run_narration_turn`` routes through
+                    ``complete_with_tools`` with the registered tool catalog.
             soul_data: Optional SoulData for SOUL.md principle injection.
                        If None, SOUL.md is loaded from CWD (if present).
         """
-        self._client: LlmClient = client if client is not None else ClaudeClient()
+        self._client: LlmClient | ToolingLlmClient = (
+            client if client is not None else ClaudeClient()
+        )
         self._narrator = NarratorAgent()
 
         # SOUL.md principles (optional)
@@ -2125,6 +2141,12 @@ class Orchestrator:
             room: Optional SessionRoom for streaming delta fan-out. Only
                   consumed by the streaming path; the sync path ignores it.
         """
+        # Phase D Task 1: when the configured client is a tooling-capable
+        # LLM (AnthropicSdkClient), route through complete_with_tools so the
+        # 26-tool registry is exposed to the model. Streaming wins when both
+        # are available — Phase D Task 7 will add SDK streaming.
+        if not is_streaming_enabled() and isinstance(self._client, ToolingLlmClient):
+            return await self._run_narration_turn_sdk(action, context)
         if is_streaming_enabled():
             return await self._run_narration_turn_streaming(action, context, room=room)
         return await self._run_narration_turn_synchronous(action, context)
@@ -2167,10 +2189,25 @@ class Orchestrator:
             narrator_stream_start_span,
         )
 
+        # Narrow self._client back to LlmClient for the streaming path —
+        # run_narration_turn gates the SDK path on isinstance(...,
+        # ToolingLlmClient), so by the time we reach the streaming path the
+        # client is guaranteed NOT to be a ToolingLlmClient. The assert
+        # pins that invariant for pyright (the union widening landed in
+        # Phase D Task 1) and fails loudly if a future caller bypasses
+        # run_narration_turn. We deliberately do NOT assert isinstance
+        # against LlmClient — Protocol runtime-checks reject AsyncMock and
+        # other structural test doubles that nevertheless work at runtime.
+        assert not isinstance(self._client, ToolingLlmClient), (
+            f"streaming path must not see a ToolingLlmClient, got "
+            f"{type(self._client).__name__}"
+        )
+        client: LlmClient = self._client  # type: ignore[assignment]
+
         # Degrade to synchronous if the client doesn't support send_stream
         # (e.g. Ollama or legacy test doubles). No silent fallback — we log
         # loudly so the discrepancy is visible in the GM panel.
-        if not hasattr(self._client, "send_stream"):
+        if not hasattr(client, "send_stream"):
             logger.warning(
                 "orchestrator.streaming_unsupported — client=%r lacks send_stream; "
                 "falling back to synchronous path",
@@ -2235,7 +2272,7 @@ class Orchestrator:
                             prompt_len=len(send_prompt),
                         ),
                     ):
-                        async for event in self._client.send_stream(
+                        async for event in client.send_stream(
                             prompt=send_prompt,
                             model=NARRATOR_MODEL,
                             session_id=current_session_id,
@@ -2481,6 +2518,17 @@ class Orchestrator:
         Returns (response, elapsed_ms). On unrecoverable failure returns
         (None, elapsed_ms) — caller renders the degraded in-fiction stall.
         """
+        # Same narrowing rationale as _run_narration_turn_streaming —
+        # _invoke_with_retry_once is only reached on the synchronous
+        # LlmClient path, never the SDK path. The assert pins that
+        # invariant for pyright and fails loudly if it's ever violated.
+        # See the streaming-path comment for why we assert "not Tooling"
+        # instead of "is LlmClient" (AsyncMock / test doubles).
+        assert not isinstance(self._client, ToolingLlmClient), (
+            f"synchronous path must not see a ToolingLlmClient, got "
+            f"{type(self._client).__name__}"
+        )
+        client: LlmClient = self._client  # type: ignore[assignment]
         with turn_agent_llm_inference_span(
             model=NARRATOR_MODEL,
             prompt_len=len(system_prompt) + len(user_message),
@@ -2489,7 +2537,7 @@ class Orchestrator:
                 call_start = time.monotonic()
                 try:
                     with phase_timings.phase("narrator_subprocess"):
-                        response = await self._client.send_stateless(
+                        response = await client.send_stateless(
                             system_prompt=system_prompt,
                             user_message=user_message,
                             model=NARRATOR_MODEL,
@@ -2709,6 +2757,129 @@ class Orchestrator:
             if response is None:
                 return self._degraded_result(action=action, context=context)
 
+            return self._assemble_turn_result(
+                response=response,
+                prompt_text=prompt_text,
+                context=context,
+                elapsed_ms=elapsed_ms,
+                action=action,
+            )
+
+    async def _run_narration_turn_sdk(
+        self,
+        action: str,
+        context: TurnContext,
+    ) -> NarrationTurnResult:
+        """SDK-backed narration path (Phase D Task 1).
+
+        When ``self._client`` is a ``ToolingLlmClient`` (in production,
+        ``AnthropicSdkClient``), the narrator turn runs through
+        ``complete_with_tools`` with the full 26-tool registry. The call is
+        wrapped in a ``narration.turn`` cost-rollup span so the GM panel sees
+        token totals, tool-call count, and model choice for the turn.
+
+        Sidecar parsing (ADR-039) still runs against the resulting prose via
+        ``_assemble_turn_result``; Phase D Task 4 retires the sidecar.
+        """
+        # Function-local imports are organizational only — these modules
+        # do not back-import orchestrator. They live here so the SDK path's
+        # dependencies stay co-located with the method that uses them,
+        # which makes Phase D Tasks 4 (sidecar retirement) and 6 (three-zone
+        # cache split) easier to refactor without disturbing module-level
+        # imports used by the streaming/sync paths.
+        from sidequest.agents.model_routing import CallType, resolve_model
+        from sidequest.agents.narrator_perception_filter import NarratorPerceptionFilter
+        from sidequest.agents.tool_registry import ToolContext, default_registry
+        from sidequest.telemetry.spans.cost import narration_turn_cost_span
+
+        # Refuse to enter the SDK path if the wired client doesn't satisfy
+        # the tooling protocol — no silent fallbacks (CLAUDE.md).
+        if not isinstance(self._client, ToolingLlmClient):
+            raise TypeError(
+                f"_run_narration_turn_sdk called with non-tooling client "
+                f"{type(self._client).__name__!r}"
+            )
+
+        with orchestrator_process_action_span(action_len=len(action)):
+            agent_name = self._narrator.name()
+
+            prompt_text, registry = await self.build_narrator_prompt(action, context)
+            system_prompt, user_message = registry.compose_split(agent_name)
+
+            # Single cache-marked block for Phase D Task 1. Phase D Task 6 will
+            # split the system prompt into the three-zone cacheable layout.
+            system_blocks = [CacheableBlock(text=system_prompt, cache=True)]
+            messages = [Message(role="user", content=user_message)]
+
+            model = resolve_model(CallType.NARRATION)
+
+            # TurnContext doesn't yet carry world_id / session_id (Phase E
+            # plumbs those through from the session handler). Use safe
+            # defaults and warn once so this is visible in the dashboard.
+            world_id = getattr(context, "world_id", None) or "unknown"
+            session_id = getattr(context, "session_id", None) or "adhoc"
+            if world_id == "unknown" or session_id == "adhoc":
+                logger.warning(
+                    "narrator.sdk_path.context_missing_ids — world_id=%s session_id=%s; "
+                    "Phase E will plumb these via TurnContext.",
+                    world_id,
+                    session_id,
+                )
+
+            perception_filter = NarratorPerceptionFilter()
+            call_start = time.monotonic()
+            with narration_turn_cost_span(
+                world_id=world_id,
+                session_id=session_id,
+                turn_number=context.turn_number,
+                acting_pc=context.character_name,
+            ) as span:
+                tool_ctx = ToolContext(
+                    world_id=world_id,
+                    session_id=session_id,
+                    perspective_pc=context.character_name,
+                    turn_number=context.turn_number,
+                    store=getattr(context, "store", None),
+                    otel_span=span,
+                    perception_filter=perception_filter,
+                )
+
+                async def dispatch(block: ToolUseBlock) -> ToolResultBlock:
+                    return await default_registry.dispatch(block, tool_ctx)
+
+                result = await self._client.complete_with_tools(
+                    system_blocks=system_blocks,
+                    messages=messages,
+                    tools=default_registry.tool_definitions(),
+                    tool_dispatch=dispatch,
+                    model=model,
+                )
+
+                # Cost-rollup attributes — names per cost.py docstring.
+                span.set_attribute("narration.turn.model_chosen", result.model)
+                span.set_attribute("narration.turn.total_input_tokens", result.input_tokens)
+                span.set_attribute("narration.turn.total_output_tokens", result.output_tokens)
+                span.set_attribute(
+                    "narration.turn.cache_read_tokens", result.cached_input_read_tokens
+                )
+                span.set_attribute(
+                    "narration.turn.cache_write_tokens", result.cached_input_write_tokens
+                )
+                span.set_attribute("narration.turn.tool_call_count", len(result.tool_calls))
+
+            elapsed_ms = int((time.monotonic() - call_start) * 1000)
+
+            # Feed the SDK text back into the existing sidecar parser so
+            # downstream consumers (NarrationTurnResult shape, dispatch
+            # handlers) keep working unchanged. Phase D Task 4 retires the
+            # sidecar; until then this is the lowest-blast-radius wire.
+            response = ClaudeResponse(
+                text=result.text,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                session_id=None,
+                backend="anthropic-sdk",
+            )
             return self._assemble_turn_result(
                 response=response,
                 prompt_text=prompt_text,
