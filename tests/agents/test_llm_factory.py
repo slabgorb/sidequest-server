@@ -9,17 +9,22 @@ from sidequest.agents.llm_factory import UnknownBackend, build_llm_client
 from sidequest.agents.ollama_client import OllamaClient
 
 
-def test_default_is_claude(monkeypatch):
+def test_default_is_anthropic_sdk(monkeypatch):
+    """Phase D: default backend flipped from claude to anthropic_sdk."""
+    from sidequest.agents.anthropic_sdk_client import AnthropicSdkClient
+
     monkeypatch.delenv("SIDEQUEST_LLM_BACKEND", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     client = build_llm_client()
-    assert isinstance(client, ClaudeClient)
-    assert isinstance(client, LlmClient)
+    assert isinstance(client, AnthropicSdkClient)
 
 
-def test_explicit_claude(monkeypatch):
+def test_explicit_claude_backend_still_resolves(monkeypatch):
+    """Non-narrator paths can still opt into ClaudeClient explicitly."""
     monkeypatch.setenv("SIDEQUEST_LLM_BACKEND", "claude")
     client = build_llm_client()
     assert isinstance(client, ClaudeClient)
+    assert isinstance(client, LlmClient)
 
 
 def test_ollama_backend_picks_url_from_env(monkeypatch):
@@ -55,10 +60,3 @@ def test_anthropic_sdk_backend_key_routes_to_sdk_client(
     assert isinstance(client, AnthropicSdkClient)
 
 
-def test_default_is_still_claude(monkeypatch: pytest.MonkeyPatch) -> None:
-    from sidequest.agents.claude_client import ClaudeClient
-    from sidequest.agents.llm_factory import build_llm_client
-
-    monkeypatch.delenv("SIDEQUEST_LLM_BACKEND", raising=False)
-    client = build_llm_client()
-    assert isinstance(client, ClaudeClient)

@@ -20,7 +20,7 @@ class UnknownBackend(LlmClientError):
 
 
 def build_llm_client() -> LlmClient | ToolingLlmClient:
-    """Return the configured LlmClient. Default: ClaudeClient.
+    """Return the configured LlmClient. Default: AnthropicSdkClient (Phase D).
 
     Returns LlmClient for 'claude'/'ollama' backends and ToolingLlmClient for
     'anthropic_sdk'. ToolingLlmClient is a richer protocol (tool-use loop,
@@ -30,7 +30,7 @@ def build_llm_client() -> LlmClient | ToolingLlmClient:
 
     Fails loudly for unknown backend values — no silent fallback (CLAUDE.md).
     """
-    raw = os.environ.get(ENV_BACKEND, "claude")
+    raw = os.environ.get(ENV_BACKEND, "anthropic_sdk")
     key = raw.strip().lower()
     if key not in _VALID_BACKENDS:
         raise UnknownBackend(
