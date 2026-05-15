@@ -12,7 +12,7 @@ import pytest
 COVERAGE_MAP: dict[str, str | None] = {
     "dice_roll": "roll_dice",
     "patches_hp": "apply_damage",
-    "patches_status": None,
+    "patches_status": "apply_status",
     "patches_resource_pool": None,
     "patches_disposition": None,
     "patches_other": None,
@@ -34,6 +34,5 @@ def test_phase_c_complete() -> None:
     """Phase D gate — must pass before deleting the sidecar parser."""
     unmigrated = [k for k, v in COVERAGE_MAP.items() if v is None]
     assert not unmigrated, (
-        f"Sidecar fields without tool successors: {unmigrated!r}. "
-        "Phase D cannot proceed."
+        f"Sidecar fields without tool successors: {unmigrated!r}. Phase D cannot proceed."
     )
