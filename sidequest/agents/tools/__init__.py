@@ -11,4 +11,5 @@ from sidequest.agents.tools import (
     apply_damage,  # noqa: F401
     apply_status,  # noqa: F401
     roll_dice,  # noqa: F401
+    update_resource_pool,  # noqa: F401
 )

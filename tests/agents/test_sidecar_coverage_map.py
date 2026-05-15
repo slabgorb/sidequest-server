@@ -13,7 +13,7 @@ COVERAGE_MAP: dict[str, str | None] = {
     "dice_roll": "roll_dice",
     "patches_hp": "apply_damage",
     "patches_status": "apply_status",
-    "patches_resource_pool": None,
+    "patches_resource_pool": "update_resource_pool",
     "patches_disposition": None,
     "patches_other": None,
     "journal_entries": None,
