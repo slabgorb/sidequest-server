@@ -12,6 +12,7 @@ from sidequest.agents.tools import (
     apply_status,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
     query_character,  # noqa: F401
+    query_known_facts,  # noqa: F401
     query_npc,  # noqa: F401
     roll_dice,  # noqa: F401
     update_npc_disposition,  # noqa: F401
