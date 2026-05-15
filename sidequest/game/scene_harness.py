@@ -30,7 +30,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from sidequest.game.character import Character
+from sidequest.game.character import Character, KnownFact
 from sidequest.game.creature_core import CreatureCore
 from sidequest.game.session import GameSnapshot, Npc
 
@@ -222,6 +222,36 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
 
     core = CreatureCore(**core_kwargs)
 
+    # Hydrate known_facts (story 50-19, ADR-092 follow-on).
+    #
+    # Unlike inventory/statuses, known_facts is save-bearing — a malformed
+    # shape must fail loudly (FixtureValidationError → HTTP 422) rather
+    # than silently skip the block. KnownFact's pydantic constructor owns
+    # confidence-tier validation post-50-17 (the legacy "confirmed" value
+    # is rejected by the Literal); we let ValidationError propagate up to
+    # the caller's wrap-as-FixtureValidationError block.
+    known_facts: list[KnownFact] = []
+    raw_facts = data.get("known_facts")
+    if raw_facts is not None:
+        if not isinstance(raw_facts, list):
+            raise FixtureValidationError(
+                f"character.known_facts must be a YAML list, "
+                f"got {type(raw_facts).__name__}"
+            )
+        for index, entry in enumerate(raw_facts):
+            if not isinstance(entry, dict):
+                raise FixtureValidationError(
+                    f"character.known_facts[{index}] must be a YAML mapping, "
+                    f"got {type(entry).__name__}"
+                )
+            # fact_id is the UI dedup key (JournalResponsePayload.fact_id);
+            # a fixture-supplied id matching a real ScenarioClue.id would
+            # silently suppress the legitimate discovery from the journal
+            # UI. Always mint fresh — fixture authors do not need to control
+            # this identifier, and we don't want them to.
+            scrubbed = {k: v for k, v in entry.items() if k != "fact_id"}
+            known_facts.append(KnownFact(**scrubbed))
+
     return Character(
         core=core,
         backstory=data.get("backstory") or "",
@@ -231,6 +261,7 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
         race=data.get("race") or "",
         pronouns=data.get("pronouns", ""),
         stats=dict(data.get("stats") or {}),
+        known_facts=known_facts,
     )
 
 
