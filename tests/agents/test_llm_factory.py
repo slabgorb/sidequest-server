@@ -41,3 +41,24 @@ def test_whitespace_and_case_insensitivity(monkeypatch):
     assert isinstance(build_llm_client(), ClaudeClient)
     monkeypatch.setenv("SIDEQUEST_LLM_BACKEND", "Ollama")
     assert isinstance(build_llm_client(), OllamaClient)
+
+
+def test_anthropic_sdk_backend_key_routes_to_sdk_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sidequest.agents.anthropic_sdk_client import AnthropicSdkClient
+    from sidequest.agents.llm_factory import build_llm_client
+
+    monkeypatch.setenv("SIDEQUEST_LLM_BACKEND", "anthropic_sdk")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    client = build_llm_client()
+    assert isinstance(client, AnthropicSdkClient)
+
+
+def test_default_is_still_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sidequest.agents.claude_client import ClaudeClient
+    from sidequest.agents.llm_factory import build_llm_client
+
+    monkeypatch.delenv("SIDEQUEST_LLM_BACKEND", raising=False)
+    client = build_llm_client()
+    assert isinstance(client, ClaudeClient)
