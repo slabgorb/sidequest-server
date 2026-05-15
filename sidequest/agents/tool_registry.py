@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from sidequest.agents.perception_filter import (  # type: ignore[import-not-found]
         PerceptionFilter,
     )
+    from sidequest.game.lore_store import LoreStore
 
 
 class ToolCategory(StrEnum):
@@ -92,6 +93,12 @@ class ToolContext:
     store: Any  # SqliteStore — kept Any to avoid Phase B coupling
     otel_span: Span
     perception_filter: PerceptionFilter
+    # Phase C Task 13 amendment: narrator-private LoreStore reference for
+    # the query_lore tool. LoreStore lives on SessionHandler, not on the
+    # SqliteStore save layer, so it cannot be reached via ``store``. Phase E
+    # wires this at the production call site; Phase C tools tolerate ``None``
+    # (query_lore returns an empty result with an OTEL marker).
+    lore_store: LoreStore | None = None
 
 
 _ArgsT = TypeVar("_ArgsT", bound=BaseModel)

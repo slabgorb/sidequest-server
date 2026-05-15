@@ -203,3 +203,40 @@ async def test_dispatch_injects_span_into_handler_context(otel_capture) -> None:
     assert attrs.get("tool.test.marker") == "yes", (
         f"handler attribute did not land on dispatch span; attrs={attrs}"
     )
+
+
+def test_tool_context_lore_store_defaults_to_none() -> None:
+    """Phase C Task 13 amendment: ``lore_store`` is optional, defaults to None.
+
+    Existing test constructors that omit the field must continue to work.
+    Production wiring (Phase E) will set this to the session-handler's
+    LoreStore at the ctx construction site.
+    """
+    ctx = ToolContext(
+        world_id="w",
+        session_id="s",
+        perspective_pc="alex",
+        turn_number=1,
+        store=MagicMock(),
+        otel_span=MagicMock(),
+        perception_filter=NoopPerceptionFilter(),
+    )
+    assert ctx.lore_store is None
+
+
+def test_tool_context_accepts_lore_store_kwarg() -> None:
+    """Phase E call site will pass a LoreStore — verify the dataclass slot."""
+    from sidequest.game.lore_store import LoreStore
+
+    store = LoreStore()
+    ctx = ToolContext(
+        world_id="w",
+        session_id="s",
+        perspective_pc="alex",
+        turn_number=1,
+        store=MagicMock(),
+        otel_span=MagicMock(),
+        perception_filter=NoopPerceptionFilter(),
+        lore_store=store,
+    )
+    assert ctx.lore_store is store
