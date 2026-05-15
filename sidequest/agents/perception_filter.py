@@ -5,9 +5,14 @@ before handing it back to the model. The Noop default passes everything
 through unchanged; Phase C wires per-tool filter rules (see spec §Perception
 filtering at the tool layer for the per-tool rule table).
 
-Successor to ADR-028's post-pass rewriter approach. The legacy
-PerceptionRewriter remains live until Phase D wires per-tool filter rules
-into production and retires it.
+This is the narrator-path successor to ADR-028's *envisioned* post-pass
+LLM rewriter — which never actually got built on the narrator side.
+``sidequest/agents/perception_rewriter.py`` is a separate, deterministic
+span-strip pass that runs in the MP fan-out emitter
+(``sidequest/server/emitters.py``) for status-effect-based fidelity
+override (blinded/deafened/invisible) on broadcast messages. That module
+is independent of the narrator path and survives Phase D — see ADR-104
+for the doctrine split.
 
 Write tools' results are intentionally not redacted: mutation status must
 be objectively reported. The filter inspects category to decide whether
