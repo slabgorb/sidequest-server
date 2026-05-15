@@ -1,4 +1,4 @@
-"""Typed surface for tooling-capable LLM backends (ADR-099 successor of ADR-001).
+"""Typed surface for tooling-capable LLM backends (ADR-101 successor of ADR-001).
 
 The narrator orchestrator targets ToolingLlmClient.complete_with_tools.
 Narrow LlmClient (ClaudeClient, OllamaClient) handles auxiliary text-only paths.
