@@ -232,7 +232,7 @@ class AnthropicSdkClient:
         for block in content:
             block_type = getattr(block, "type", None)
             if block_type == "text":
-                text_chunks.append(getattr(block, "text", ""))
+                text_chunks.append(block.text)
             elif block_type == "tool_use":
                 tool_uses.append(
                     ToolUseBlock(
