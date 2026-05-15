@@ -14,5 +14,6 @@ from sidequest.agents.tools import (
     query_character,  # noqa: F401
     query_npc,  # noqa: F401
     roll_dice,  # noqa: F401
+    update_npc_disposition,  # noqa: F401
     update_resource_pool,  # noqa: F401
 )
