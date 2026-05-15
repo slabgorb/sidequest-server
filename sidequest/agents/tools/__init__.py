@@ -21,6 +21,7 @@ from sidequest.agents.tools import (
     query_gossip,  # noqa: F401
     query_known_facts,  # noqa: F401
     query_lore,  # noqa: F401
+    query_magic_state,  # noqa: F401
     query_npc,  # noqa: F401
     query_scenario_clues,  # noqa: F401
     query_scene_state,  # noqa: F401
