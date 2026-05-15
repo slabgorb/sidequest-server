@@ -163,11 +163,23 @@ class Registry:
 
         registered = self._tools.get(block.name)
         if registered is None:
+            from sidequest.telemetry.spans.span import Span as _SpanHelper
+
             err = ToolResult.error(
                 f"unknown tool {block.name!r}",
                 recoverable=True,
             )
             body, is_err = err.to_anthropic_payload()
+            with _SpanHelper.open(
+                f"tool.unknown.{block.name}",
+                {
+                    "tool.name": block.name,
+                    "tool.category": "unknown",
+                    "tool.result_status": err.status.value,
+                    "tool.result_size_bytes": len(body),
+                },
+            ):
+                pass
             return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
 
         with tool_dispatch_span(
@@ -179,7 +191,7 @@ class Registry:
                 args = registered.args_model.model_validate(block.arguments)
             except ValidationError as exc:
                 err = ToolResult.error(
-                    f"argument validation failed: {exc.errors()}",
+                    f"argument validation failed: {json.dumps(exc.errors(), default=str)}",
                     recoverable=True,
                 )
                 body, is_err = err.to_anthropic_payload()
@@ -189,12 +201,28 @@ class Registry:
                     tool_use_id=block.id, content=body, is_error=is_err
                 )
 
-            if registered.category is ToolCategory.WRITE:
-                lock = self._write_locks.setdefault(ctx.session_id, asyncio.Lock())
-                async with lock:
+            try:
+                if registered.category is ToolCategory.WRITE:
+                    lock = self._write_locks.setdefault(ctx.session_id, asyncio.Lock())
+                    async with lock:
+                        result = await registered.handler(args, ctx)
+                else:
                     result = await registered.handler(args, ctx)
-            else:
-                result = await registered.handler(args, ctx)
+            except Exception as exc:
+                # Handler raised — record on the span (tool_dispatch_span's except clause
+                # also records at the outer level when we re-raise via this path,
+                # so we explicitly do it here without re-raising).
+                span.record_exception(exc)
+                err = ToolResult.error(
+                    f"handler raised {type(exc).__name__}: {exc}",
+                    recoverable=False,
+                )
+                body, is_err = err.to_anthropic_payload()
+                span.set_attribute("tool.result_status", err.status.value)
+                span.set_attribute("tool.result_size_bytes", len(body))
+                return ToolResultBlock(
+                    tool_use_id=block.id, content=body, is_error=is_err
+                )
 
             filtered = ctx.perception_filter.filter_result(
                 tool_name=registered.name,

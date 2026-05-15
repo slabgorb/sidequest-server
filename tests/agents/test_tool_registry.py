@@ -331,3 +331,39 @@ async def test_registry_register_rejects_duplicates() -> None:
         @tool(name="dup", description="x", category=ToolCategory.READ, registry=reg)
         async def b(args: _NoArgs, ctx: ToolContext) -> ToolResult:
             return ToolResult.ok({})
+
+
+async def test_registry_dispatch_converts_handler_exception_to_error_fatal() -> None:
+    """Handler exceptions are caught and rendered as ERROR_FATAL ToolResults.
+
+    Loud (recorded in OTEL + tool_result), but not terminal — the SDK loop
+    continues so a single buggy tool doesn't abort the whole conversation."""
+    reg = Registry()
+
+    @tool(name="boom", description="x", category=ToolCategory.READ, registry=reg)
+    async def boom(args: _NoArgs, ctx: ToolContext) -> ToolResult:
+        raise RuntimeError("kaboom")
+
+    from sidequest.agents.tooling_protocol import ToolUseBlock
+
+    out = await reg.dispatch(
+        ToolUseBlock(id="t1", name="boom", arguments={}),
+        _make_ctx(),
+    )
+    assert out.is_error is True
+    assert "kaboom" in out.content
+    assert "RuntimeError" in out.content
+
+
+async def test_registry_dispatch_unknown_tool_emits_span(otel_capture) -> None:
+    """Unknown tool calls emit a tool.unknown.{name} span for GM visibility."""
+    reg = Registry()
+    from sidequest.agents.tooling_protocol import ToolUseBlock
+
+    out = await reg.dispatch(
+        ToolUseBlock(id="t1", name="phantom_tool", arguments={}),
+        _make_ctx(),
+    )
+    assert out.is_error is True
+    span_names = [s.name for s in otel_capture.get_finished_spans()]
+    assert "tool.unknown.phantom_tool" in span_names
