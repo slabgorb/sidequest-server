@@ -25,3 +25,40 @@ def test_preprocessor_exports_are_gone():
         "OutputTooLong",
     ]:
         assert dead not in __all__, f"{dead} still exported from sidequest.agents"
+
+
+def test_anthropic_sdk_client_exported() -> None:
+    from sidequest.agents import AnthropicSdkClient
+
+    assert AnthropicSdkClient is not None
+
+
+def test_tooling_protocol_exports() -> None:
+    from sidequest.agents import (
+        CacheableBlock,
+        Message,
+        ToolDefinition,
+        ToolingLlmClient,
+        ToolingResult,
+        ToolResultBlock,
+        ToolUseBlock,
+    )
+
+    assert all(
+        x is not None
+        for x in (
+            CacheableBlock,
+            Message,
+            ToolDefinition,
+            ToolingLlmClient,
+            ToolingResult,
+            ToolResultBlock,
+            ToolUseBlock,
+        )
+    )
+
+
+def test_call_type_and_resolver_exported() -> None:
+    from sidequest.agents import CallType, resolve_model
+
+    assert resolve_model(CallType.NARRATION) == "claude-sonnet-4-6"
