@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from sidequest.agents.anthropic_sdk_client import (
     AnthropicSdkClient,
+    AnthropicSdkClientError,
     AnthropicSdkConfigError,
 )
-from sidequest.agents.tooling_protocol import ToolingLlmClient
+from sidequest.agents.tooling_protocol import (
+    CacheableBlock,
+    Message,
+    ToolDefinition,
+    ToolingLlmClient,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 
 def test_construction_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,3 +67,233 @@ def test_invalid_cache_ttl_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", "banana")
     with pytest.raises(AnthropicSdkConfigError):
         AnthropicSdkClient()
+
+
+# --- SDK-shape fake for complete_with_tools loop tests ----------------------
+
+
+@dataclass(frozen=True)
+class _Usage:
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class _SdkContentTextBlock:
+    type: str
+    text: str
+
+
+@dataclass(frozen=True)
+class _SdkContentToolUseBlock:
+    type: str
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _SdkResponse:
+    content: list[Any]
+    stop_reason: str
+    usage: _Usage
+    model: str
+
+
+class _FakeSdkMessages:
+    def __init__(self, responses: list[_SdkResponse]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> _SdkResponse:
+        self.calls.append(kwargs)
+        if not self._responses:
+            raise RuntimeError("FakeSdkMessages: out of scripted responses")
+        return self._responses.pop(0)
+
+
+class _FakeAsyncSdk:
+    def __init__(self, responses: list[_SdkResponse]) -> None:
+        self.messages = _FakeSdkMessages(responses)
+
+
+async def test_complete_with_tools_simple_end_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sdk_response = _SdkResponse(
+        content=[_SdkContentTextBlock(type="text", text="The lantern gutters.")],
+        stop_reason="end_turn",
+        usage=_Usage(
+            input_tokens=100,
+            output_tokens=8,
+            cache_read_input_tokens=80,
+            cache_creation_input_tokens=0,
+        ),
+        model="claude-sonnet-4-6",
+    )
+    fake = _FakeAsyncSdk(responses=[sdk_response])
+    client = AnthropicSdkClient(sdk=fake)
+    result = await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="rules", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    assert result.text == "The lantern gutters."
+    assert result.stop_reason == "end_turn"
+    assert result.input_tokens == 100
+    assert result.cached_input_read_tokens == 80
+    assert len(fake.messages.calls) == 1
+
+
+async def test_complete_with_tools_cache_control_on_last_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sdk_response = _SdkResponse(
+        content=[_SdkContentTextBlock(type="text", text="ok")],
+        stop_reason="end_turn",
+        usage=_Usage(input_tokens=10, output_tokens=2),
+        model="claude-sonnet-4-6",
+    )
+    fake = _FakeAsyncSdk(responses=[sdk_response])
+    client = AnthropicSdkClient(sdk=fake)
+    await client.complete_with_tools(
+        system_blocks=[
+            CacheableBlock(text="zone 1", cache=True),
+            CacheableBlock(text="zone 2", cache=True),
+            CacheableBlock(text="zone 3", cache=False),
+        ],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    call = fake.messages.calls[0]
+    system = call["system"]
+    # Two cache-marked blocks get cache_control markers.
+    assert system[0]["cache_control"]["type"] == "ephemeral"
+    assert system[1]["cache_control"]["type"] == "ephemeral"
+    assert "cache_control" not in system[2]
+
+
+async def test_complete_with_tools_runs_tool_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    first = _SdkResponse(
+        content=[
+            _SdkContentToolUseBlock(
+                type="tool_use",
+                id="toolu_1",
+                name="roll_dice",
+                input={"sides": 20},
+            )
+        ],
+        stop_reason="tool_use",
+        usage=_Usage(input_tokens=200, output_tokens=15),
+        model="claude-sonnet-4-6",
+    )
+    second = _SdkResponse(
+        content=[_SdkContentTextBlock(type="text", text="The roll landed.")],
+        stop_reason="end_turn",
+        usage=_Usage(input_tokens=220, output_tokens=10),
+        model="claude-sonnet-4-6",
+    )
+    fake = _FakeAsyncSdk(responses=[first, second])
+    client = AnthropicSdkClient(sdk=fake)
+
+    def dispatch(block: ToolUseBlock) -> ToolResultBlock:
+        return ToolResultBlock(tool_use_id=block.id, content="17", is_error=False)
+
+    result = await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="rules", cache=True)],
+        messages=[Message(role="user", content="roll for it")],
+        tools=[
+            ToolDefinition(
+                name="roll_dice",
+                description="Roll",
+                input_schema={"type": "object"},
+            )
+        ],
+        tool_dispatch=dispatch,
+        model="claude-sonnet-4-6",
+    )
+    assert result.text == "The roll landed."
+    assert result.stop_reason == "end_turn"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "roll_dice"
+    assert len(fake.messages.calls) == 2
+
+
+async def test_complete_with_tools_respects_max_iterations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Infinite tool-use loop (would be a bug in the model in real life).
+    def loop_response() -> _SdkResponse:
+        return _SdkResponse(
+            content=[
+                _SdkContentToolUseBlock(
+                    type="tool_use", id="x", name="roll_dice", input={}
+                )
+            ],
+            stop_reason="tool_use",
+            usage=_Usage(input_tokens=10, output_tokens=1),
+            model="claude-sonnet-4-6",
+        )
+
+    fake = _FakeAsyncSdk(responses=[loop_response() for _ in range(20)])
+    client = AnthropicSdkClient(sdk=fake)
+
+    def dispatch(block: ToolUseBlock) -> ToolResultBlock:
+        return ToolResultBlock(tool_use_id=block.id, content="ok")
+
+    with pytest.raises(AnthropicSdkClientError):
+        await client.complete_with_tools(
+            system_blocks=[CacheableBlock(text="r")],
+            messages=[Message(role="user", content="hi")],
+            tools=[
+                ToolDefinition(
+                    name="roll_dice", description="r", input_schema={"type": "object"}
+                )
+            ],
+            tool_dispatch=dispatch,
+            model="claude-sonnet-4-6",
+            max_iterations=3,
+        )
+
+
+async def test_complete_with_tools_records_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cost arithmetic happens via compute_cost_usd; client surfaces buckets."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sdk_response = _SdkResponse(
+        content=[_SdkContentTextBlock(type="text", text="x")],
+        stop_reason="end_turn",
+        usage=_Usage(
+            input_tokens=200,
+            output_tokens=100,
+            cache_read_input_tokens=800,
+            cache_creation_input_tokens=50,
+        ),
+        model="claude-sonnet-4-6",
+    )
+    fake = _FakeAsyncSdk(responses=[sdk_response])
+    client = AnthropicSdkClient(sdk=fake)
+    result = await client.complete_with_tools(
+        system_blocks=[CacheableBlock(text="r", cache=True)],
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        model="claude-sonnet-4-6",
+    )
+    assert result.cached_input_read_tokens == 800
+    assert result.cached_input_write_tokens == 50
+
+
+async def test_complete_with_tools_imports_anthropic_sdk_error_types() -> None:
+    """Ensure AnthropicSdkClientError exists and is wired."""
+    assert issubclass(AnthropicSdkClientError, Exception)
