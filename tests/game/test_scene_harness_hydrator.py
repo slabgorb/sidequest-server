@@ -736,3 +736,380 @@ def test_known_facts_extra_field_rejected_by_pydantic(tmp_path: Path) -> None:
 
     with pytest.raises(FixtureValidationError):
         hydrate_fixture(name="extra_field", fixtures_dir=tmp_path)
+
+
+# ── Story 50-23: multi-PC ``characters:`` list hydration ────────────────────
+#
+# RED tests for the multi-PC extension of ``hydrate_fixture()``. The hydrator
+# must accept a top-level ``characters:`` list (each entry the same shape as
+# the legacy singular ``character:`` block) and project to
+# ``GameSnapshot.characters`` in order. The legacy singular form continues
+# to work as ``characters[0]``; declaring both raises FixtureValidationError.
+#
+# Unblocks Wave 2 party fixtures (party_combat_caverns 4-PC, party_social_tea
+# 3-PC). Multiplayer smoke tests are bottlenecked on this hydrator path.
+#
+# Hot spot: ``_hydrate_character()`` already exists for the singular path —
+# the list path can reuse it per-entry. The conflict-validation case belongs
+# in the fixture-level validator (top of ``hydrate_fixture``), not the
+# per-entry helper.
+
+
+def _write_multi_pc_fixture(
+    tmp_path: Path,
+    name: str,
+    characters_yaml: str,
+    *,
+    extra: str = "",
+) -> None:
+    """Helper: write a minimal multi-PC fixture with a ``characters:`` block.
+
+    ``characters_yaml`` is the list body indented appropriately under
+    ``characters:``. ``extra`` is appended at top-level for cases that also
+    need an NPC roster, location, or the legacy singular block.
+    """
+    fixture = tmp_path / f"{name}.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        f"characters:\n{characters_yaml}"
+        f"{extra}",
+        encoding="utf-8",
+    )
+
+
+def test_characters_list_with_single_entry_hydrates_into_position_zero(
+    tmp_path: Path,
+) -> None:
+    """AC#1, AC#2, AC#8 (single-entry case): a one-entry ``characters:`` list
+    populates ``snapshot.characters[0]`` exactly like the legacy singular
+    ``character:`` block. This is the bridge case — a fixture author can
+    write the new shape without owning a full multi-PC party yet.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "single_in_list",
+        "  - name: Wren\n"
+        "    description: scout\n"
+        "    personality: cautious\n",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="single_in_list", fixtures_dir=tmp_path)
+    assert len(snapshot.characters) == 1, (
+        f"single-entry list must produce one character, got {len(snapshot.characters)}"
+    )
+    assert snapshot.characters[0].core.name == "Wren"
+
+
+def test_characters_list_multi_pc_preserves_declared_order(tmp_path: Path) -> None:
+    """AC#2, AC#7, AC#8 (multi-entry): a 4-PC fixture lands in
+    ``snapshot.characters`` in fixture-declared order.
+
+    List order is load-bearing because the multiplayer slug-connect handler
+    binds player N → ``snapshot.characters[N]`` by position; a set/dict
+    coercion would silently swap which player controls which PC.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "party_of_four",
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "  - name: Caia\n    description: cleric\n    personality: stoic\n"
+        "  - name: Dax\n    description: rogue\n    personality: sly\n",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="party_of_four", fixtures_dir=tmp_path)
+    names = [pc.core.name for pc in snapshot.characters]
+    assert names == ["Wren", "Borin", "Caia", "Dax"], (
+        f"YAML list order must survive hydration; got {names!r}"
+    )
+
+
+def test_characters_list_each_pc_has_distinct_stats(tmp_path: Path) -> None:
+    """AC#7: each PC in the list carries its own ``level`` / ``stats`` —
+    fields don't bleed across siblings.
+
+    Bug class guarded: looped construction that accidentally mutates a
+    shared dict default (lang-review rule #2). A correct hydrator builds a
+    fresh ``Character`` per entry; a wrong one shares a dict and you see
+    Borin's stats appear on Wren.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "distinct_stats",
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    level: 3\n    stats: {DEX: 16, STR: 10}\n"
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    level: 5\n    stats: {DEX: 10, STR: 18}\n",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="distinct_stats", fixtures_dir=tmp_path)
+    wren, borin = snapshot.characters[0], snapshot.characters[1]
+    assert wren.core.name == "Wren"
+    assert borin.core.name == "Borin"
+    assert wren.core.level == 3
+    assert borin.core.level == 5
+    assert wren.stats == {"DEX": 16, "STR": 10}
+    assert borin.stats == {"DEX": 10, "STR": 18}
+
+
+def test_characters_list_each_pc_has_distinct_known_facts(tmp_path: Path) -> None:
+    """AC#7: known_facts per-PC do not bleed across siblings.
+
+    The mutable-default-arg trap (lang-review rule #2) would manifest here —
+    a hydrator that appends to a shared default list across iterations
+    would smear facts across every PC. The assertion checks each PC's
+    fact list independently rather than the sum, so a shared-list bug
+    cannot pass by accident.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "distinct_facts",
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    known_facts:\n"
+        '      - content: "Wren saw the goblin king"\n'
+        '        confidence: "Certain"\n'
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    known_facts:\n"
+        '      - content: "Borin smelled smoke"\n'
+        '        confidence: "Suspected"\n',
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="distinct_facts", fixtures_dir=tmp_path)
+    wren_facts = snapshot.characters[0].known_facts
+    borin_facts = snapshot.characters[1].known_facts
+    assert len(wren_facts) == 1, (
+        f"Wren must have exactly 1 fact (not shared), got {len(wren_facts)}"
+    )
+    assert len(borin_facts) == 1, (
+        f"Borin must have exactly 1 fact (not shared), got {len(borin_facts)}"
+    )
+    assert wren_facts[0].content == "Wren saw the goblin king"
+    assert wren_facts[0].confidence == "Certain"
+    assert borin_facts[0].content == "Borin smelled smoke"
+    assert borin_facts[0].confidence == "Suspected"
+
+
+def test_characters_list_shares_one_npc_roster_with_party(tmp_path: Path) -> None:
+    """AC#7: the ``npcs:`` roster is a single shared list — every party
+    member sees the same NPCs (one encounter, multiple PCs). The hydrator
+    must not duplicate or per-PC-scope the npc list.
+    """
+    fixture = tmp_path / "shared_npcs.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "npcs:\n"
+        "  - name: Rust Jaw\n    role: bandit\n    disposition: -15\n"
+        "  - name: Iron Eye\n    role: bandit-lieutenant\n    disposition: -20\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="shared_npcs", fixtures_dir=tmp_path)
+    assert len(snapshot.characters) == 2
+    npc_names = {n.core.name for n in snapshot.npcs}
+    assert npc_names == {"Rust Jaw", "Iron Eye"}, (
+        f"shared npc roster must hydrate intact; got {npc_names!r}"
+    )
+
+
+def test_singular_character_block_still_maps_to_position_zero(tmp_path: Path) -> None:
+    """AC#3, AC#9: the legacy singular ``character:`` block remains supported
+    and lands at ``snapshot.characters[0]``.
+
+    Existing canonical fixtures (combat_brawl_wasteland, social_negotiation_tea,
+    etc.) use the singular form; breaking backwards-compat here breaks every
+    Wave 1 regression test in this file and the router test file.
+    """
+    fixture = tmp_path / "legacy_singular.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "character:\n"
+        "  name: Wren\n"
+        "  description: scout\n"
+        "  personality: cautious\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="legacy_singular", fixtures_dir=tmp_path)
+    assert len(snapshot.characters) == 1
+    assert snapshot.characters[0].core.name == "Wren"
+
+
+def test_both_character_and_characters_blocks_raises_FixtureValidationError(
+    tmp_path: Path,
+) -> None:
+    """AC#4, AC#10: declaring BOTH ``character:`` and ``characters:`` is a
+    fixture authoring bug — the hydrator MUST reject it loudly rather than
+    silently pick one.
+
+    "No Silent Fallbacks" (CLAUDE.md). If the author meant the legacy form,
+    they wrote ``character:``; if they meant the new form, they wrote
+    ``characters:``. Both present means the fixture is in an undefined
+    state and the right answer is 422, not "pick one and hope."
+    """
+    fixture = tmp_path / "both_blocks.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "character:\n"
+        "  name: Solo\n"
+        "  description: solo\n"
+        "  personality: solo\n"
+        "characters:\n"
+        "  - name: Party\n"
+        "    description: party\n"
+        "    personality: party\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="both_blocks", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value).lower()
+    assert "character" in msg, (
+        f"FixtureValidationError must name the conflicting field "
+        f"so the fixture author knows what to remove; got: {msg!r}"
+    )
+
+
+def test_missing_both_character_blocks_yields_empty_characters_list(
+    tmp_path: Path,
+) -> None:
+    """AC#5: when NEITHER ``character:`` nor ``characters:`` is present,
+    the hydrator continues — ``snapshot.characters`` is ``[]``.
+
+    Behaviour preservation: legacy fixtures with NPCs only (seed worlds,
+    cutscene-style fixtures) must continue to load. Do not regress to
+    "characters block required."
+    """
+    fixture = tmp_path / "no_pcs.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "npcs:\n"
+        "  - name: Solo NPC\n    role: bystander\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="no_pcs", fixtures_dir=tmp_path)
+    assert snapshot.characters == [], (
+        f"missing character blocks must yield empty list, got {snapshot.characters!r}"
+    )
+    # NPC roster still loads — proves the hydrator didn't bail early.
+    assert any(n.core.name == "Solo NPC" for n in snapshot.npcs)
+
+
+def test_explicit_empty_characters_list_yields_empty_list(tmp_path: Path) -> None:
+    """AC#8 (empty-list case): a fixture with ``characters: []`` is
+    semantically different from a missing block — the author explicitly
+    declared "no PCs in this scene." Hydrator treats both identically:
+    empty list, no error.
+    """
+    fixture = tmp_path / "empty_list.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters: []\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="empty_list", fixtures_dir=tmp_path)
+    assert snapshot.characters == []
+
+
+def test_malformed_character_entry_in_list_raises_FixtureValidationError(
+    tmp_path: Path,
+) -> None:
+    """AC#6: a malformed entry in the ``characters:`` list (e.g. missing
+    required ``name``) MUST raise FixtureValidationError — never silently
+    skip.
+
+    Sibling pattern from 50-19 (known_facts wrong shape) made the same
+    choice: save-bearing data fails loud. The HTTP layer maps this to 422.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "bad_entry",
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "  - description: malformed entry has no name\n"
+        "    personality: also broken\n",
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="bad_entry", fixtures_dir=tmp_path)
+
+
+def test_malformed_character_entry_does_not_silently_skip(tmp_path: Path) -> None:
+    """AC#6 + lang-review rule #1 (silent exception swallowing): a future
+    refactor must NOT replace strict validation with
+    ``[hydrate(e) for e in entries if valid(e)]`` — that would silently
+    drop bad entries and produce ``len(snapshot.characters) == 1`` instead
+    of raising.
+
+    Assert the loud failure mode by raising, not by counting survivors:
+    a test that asserted ``len == 1`` would PASS on a silent-skip
+    implementation, which is exactly the bug class this test guards.
+    """
+    _write_multi_pc_fixture(
+        tmp_path,
+        "silent_skip_guard",
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "  - name: ''\n    description: blank name\n    personality: blank\n",
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="silent_skip_guard", fixtures_dir=tmp_path)
+
+
+def test_characters_list_not_a_list_raises_FixtureValidationError(
+    tmp_path: Path,
+) -> None:
+    """ADR-092 §"Failure is loud" + lang-review rule #1: if a fixture sets
+    ``characters:`` to a mapping or scalar instead of a list, the hydrator
+    MUST surface a structured error.
+
+    Same discipline 50-19 added for ``known_facts``. The base hydrator's
+    sibling pattern (``inventory`` / ``statuses``) silently ignores wrong
+    shapes, which would mask a fixture typo — but ``characters`` is
+    save-bearing and the silent-skip cost is higher than the loud-fail cost.
+    """
+    fixture = tmp_path / "bad_characters_shape.yaml"
+    fixture.write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  not_a_list: true\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="bad_characters_shape", fixtures_dir=tmp_path)

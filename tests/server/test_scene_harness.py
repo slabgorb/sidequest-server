@@ -452,3 +452,162 @@ def test_scene_harness_emits_hydrate_error_span_on_invalid_fixture(
         f"scene-harness must emit a hydrate.error span on 422; "
         f"captured event types: {sorted({e[0] for e in captured})!r}"
     )
+
+
+# ── Story 50-23 wiring: POST /dev/scene/{name} with multi-PC fixtures ───────
+#
+# AC#11 from the story session: load a multi-PC fixture end-to-end through
+# the production route — POST returns slug, snapshot persists, and the
+# saved snapshot carries every PC the fixture declared. Uses a tmp_path
+# fixture (not a Wave 2 canonical file on disk) so the test's red/green
+# status reflects ONLY the multi-PC hydrator change.
+
+
+def test_dev_scene_route_persists_four_pc_party_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#11 wiring: a 4-PC fixture loaded via POST /dev/scene/{name}
+    persists a snapshot whose ``characters`` list carries every PC the
+    fixture declared, in declared order.
+
+    Production-path wiring (CLAUDE.md "Every Test Suite Needs a Wiring
+    Test"): the hydrator change is reachable from real code paths —
+    route registered by ``create_app()``, route calls ``hydrate_fixture``,
+    result persisted via ``SqliteStore``, ``slug-connect`` can subsequently
+    find N characters in the save.
+
+    A unit-only suite would not catch a hydrator that returns the right
+    object but a router that flattens the list back to ``characters[0]``
+    before persisting; this test does.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "party_test.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "  - name: Caia\n    description: cleric\n    personality: stoic\n"
+        "  - name: Dax\n    description: rogue\n    personality: sly\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+
+    client = TestClient(app)
+    r = client.post("/dev/scene/party_test")
+    assert r.status_code == 200, (
+        f"multi-PC fixture must hydrate via POST /dev/scene; "
+        f"got {r.status_code} body={r.text}"
+    )
+    slug = r.json()["slug"]
+
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+
+    store = SqliteStore(db_path_for_slug(save_dir, slug))
+    store.initialize()
+    saved = store.load()
+    assert saved is not None, (
+        "save file exists but SqliteStore.load returned None — "
+        "the route either didn't persist or wrote to the wrong path"
+    )
+
+    names = [pc.core.name for pc in saved.snapshot.characters]
+    assert names == ["Wren", "Borin", "Caia", "Dax"], (
+        f"multi-PC list must round-trip through the harness in fixture-declared order; "
+        f"got {names!r}"
+    )
+
+
+def test_dev_scene_route_hydrate_ok_span_reports_full_character_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """OTEL wiring (CLAUDE.md OTEL Observability Principle): the
+    ``scene_harness.hydrate.ok`` span fired by the router reports the
+    party size, not 1.
+
+    Without this, the GM panel can't tell whether a multi-PC fixture
+    actually hydrated all four PCs or whether the hydrator silently
+    collapsed to one — which is the same lie-detector concern that
+    drives every other span in this file.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "party_three.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  - name: Alpha\n    description: a\n    personality: a\n"
+        "  - name: Beta\n    description: b\n    personality: b\n"
+        "  - name: Gamma\n    description: c\n    personality: c\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    captured = _capture_events(monkeypatch)
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/party_three")
+    assert r.status_code == 200
+
+    ok_events = [e for e in captured if e[0] == "scene_harness.hydrate.ok"]
+    assert ok_events, (
+        f"missing scene_harness.hydrate.ok span; "
+        f"got types: {sorted({e[0] for e in captured})!r}"
+    )
+    fields = ok_events[0][1]
+    assert fields.get("character_count") == 3, (
+        f"hydrate.ok must report the full party size; "
+        f"got character_count={fields.get('character_count')!r} "
+        f"(fields: {fields!r})"
+    )
+
+
+def test_dev_scene_route_rejects_both_character_and_characters_with_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#4 + AC#10 through the HTTP boundary: a fixture with BOTH
+    ``character:`` and ``characters:`` surfaces as HTTP 422 (not 500, not
+    silently-pick-one-and-200).
+
+    The FixtureValidationError → 422 mapping is the existing pattern in
+    ``scene_harness_router``; this test extends it to the new conflict
+    case so a future hydrator regression that swallows the conflict is
+    visible at the wire.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "both_blocks_route.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "character:\n"
+        "  name: Solo\n  description: solo\n  personality: solo\n"
+        "characters:\n"
+        "  - name: Party\n    description: party\n    personality: party\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/both_blocks_route")
+    assert r.status_code == 422, (
+        f"conflicting character+characters fixture must 422 at the wire; "
+        f"got {r.status_code} body={r.text}"
+    )
