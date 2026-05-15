@@ -75,3 +75,11 @@ def test_records_exception(exporter: InMemorySpanExporter) -> None:
         raise RuntimeError("boom")
     span = exporter.get_finished_spans()[0]
     assert span.status.status_code.name == "ERROR"
+
+
+def test_no_perspective_pc_attr_when_none(exporter: InMemorySpanExporter) -> None:
+    """When perspective_pc is None (e.g. pre-PC-selection), the attr is omitted."""
+    with tool_dispatch_span(name="query_npc", category=ToolCategory.READ):
+        pass
+    attrs = dict(exporter.get_finished_spans()[0].attributes or {})
+    assert "tool.perspective_pc" not in attrs

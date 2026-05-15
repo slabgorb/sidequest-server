@@ -6,7 +6,8 @@ Standard attributes (set by dispatcher):
     tool.perspective_pc    str | None
     tool.result_status     "ok" | "not_found" | "error_recoverable" | "error_fatal"
     tool.result_size_bytes int
-    tool.duration_ms       float (recorded by span itself via start/end times)
+    (duration computed by the OTEL collector from span start/end timestamps;
+     not a span attribute)
 
 Per-tool typed attributes use `tool.<short_name>.*` namespace (e.g.
 `tool.npc.name`, `tool.damage.hp_delta`). Phase C tools set their own.
@@ -17,10 +18,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
 from sidequest.agents.tool_registry import ToolCategory
+from sidequest.telemetry.spans.span import Span as SpanHelper
 
 _CATEGORY_PREFIX: dict[ToolCategory, str] = {
     ToolCategory.READ: "tool.read",
@@ -36,12 +37,15 @@ def tool_dispatch_span(
     category: ToolCategory,
     perspective_pc: str | None = None,
 ) -> Iterator[Span]:
+    """Open a tool.{cat}.{name} span seeded with standard tool attributes."""
     span_name = f"{_CATEGORY_PREFIX[category]}.{name}"
-    with trace.get_tracer(__name__).start_as_current_span(span_name) as span:
-        span.set_attribute("tool.name", name)
-        span.set_attribute("tool.category", category.value)
-        if perspective_pc is not None:
-            span.set_attribute("tool.perspective_pc", perspective_pc)
+    seed_attrs: dict[str, str] = {
+        "tool.name": name,
+        "tool.category": category.value,
+    }
+    if perspective_pc is not None:
+        seed_attrs["tool.perspective_pc"] = perspective_pc
+    with SpanHelper.open(span_name, seed_attrs) as span:
         try:
             yield span
         except Exception as exc:
