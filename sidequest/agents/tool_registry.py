@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     )
     from sidequest.game.lore_store import LoreStore
     from sidequest.game.monster_manual import MonsterManual
+    from sidequest.genre.names.generator import NameGenerator
 
 
 class ToolCategory(StrEnum):
@@ -117,6 +118,16 @@ class ToolContext:
     # handler; Phase E plumbs it through. Phase C tools tolerate ``None``
     # (tick_tropes records an OTEL marker and no-ops).
     genre_pack: Any | None = None
+    # Phase C Task 24 amendment: per-culture NameGenerator dict for the
+    # generate_name tool. ADR-091 culture corpora are loaded at session
+    # bootstrap (the corpus directory lives in sidequest-content, outside
+    # the server repo) via
+    # ``sidequest.genre.names.generator.build_from_culture`` — keyed by
+    # ``Culture.name``. Holding the pre-built generators here avoids
+    # per-tool disk I/O and corpus-dir guessing. Phase E wires this at the
+    # production call site; Phase C tools tolerate ``None`` (generate_name
+    # returns an empty list with ``name_generators_wired=False``).
+    name_generators: dict[str, NameGenerator] | None = None
 
 
 _ArgsT = TypeVar("_ArgsT", bound=BaseModel)

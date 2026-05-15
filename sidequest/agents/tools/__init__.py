@@ -15,6 +15,7 @@ from sidequest.agents.tools import (
     apply_spell_effect,  # noqa: F401
     apply_status,  # noqa: F401
     commit_known_fact,  # noqa: F401
+    generate_name,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
     lookup_monster,  # noqa: F401
     query_character,  # noqa: F401
