@@ -244,7 +244,13 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
                     f"character.known_facts[{index}] must be a YAML mapping, "
                     f"got {type(entry).__name__}"
                 )
-            known_facts.append(KnownFact(**entry))
+            # fact_id is the UI dedup key (JournalResponsePayload.fact_id);
+            # a fixture-supplied id matching a real ScenarioClue.id would
+            # silently suppress the legitimate discovery from the journal
+            # UI. Always mint fresh — fixture authors do not need to control
+            # this identifier, and we don't want them to.
+            scrubbed = {k: v for k, v in entry.items() if k != "fact_id"}
+            known_facts.append(KnownFact(**scrubbed))
 
     return Character(
         core=core,

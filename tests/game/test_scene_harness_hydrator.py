@@ -688,6 +688,36 @@ def test_known_facts_not_a_list_raises_FixtureValidationError(tmp_path: Path) ->
         hydrate_fixture(name="bad_facts_shape", fixtures_dir=tmp_path)
 
 
+def test_fixture_supplied_fact_id_is_stripped_and_re_minted(tmp_path: Path) -> None:
+    """Security: a fixture-supplied ``fact_id`` must NOT override the auto-mint.
+
+    Threat: ``fact_id`` is the UI dedup key in JournalResponsePayload — a
+    fixture that pre-loads a real ``ScenarioClue.id`` would silently
+    suppress the legitimate journal entry when the scenario discovers
+    that clue in play. The hydrator strips ``fact_id`` from each entry
+    before constructing ``KnownFact`` so this footgun is unreachable
+    from fixture YAML.
+    """
+    forged_id = "deadbeef" * 4  # 32 hex chars — a plausible-looking uuid4().hex
+    _write_character_fixture(
+        tmp_path,
+        "forged_fact_id",
+        f'    - content: "fact with forged id"\n'
+        f'      confidence: "Certain"\n'
+        f'      fact_id: "{forged_id}"\n',
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="forged_fact_id", fixtures_dir=tmp_path)
+    fact = snapshot.characters[0].known_facts[0]
+    assert fact.content == "fact with forged id"
+    assert fact.fact_id != forged_id, (
+        "fixture-supplied fact_id must be stripped; hydrator must mint fresh"
+    )
+    assert fact.fact_id and len(fact.fact_id) >= 8
+
+
 def test_known_facts_extra_field_rejected_by_pydantic(tmp_path: Path) -> None:
     """KnownFact has ``model_config = {"extra": "forbid"}`` — a typo'd key
     in the fixture (e.g., ``confidance: Certain``) must surface as a
