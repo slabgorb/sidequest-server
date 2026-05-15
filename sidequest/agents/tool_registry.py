@@ -12,7 +12,7 @@ import inspect
 import json
 import typing
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -183,6 +183,11 @@ class Registry:
             category=registered.category,
             perspective_pc=ctx.perspective_pc,
         ) as span:
+            # Swap in the dispatch span so handlers' per-tool attribute writes
+            # (ctx.otel_span.set_attribute("tool.<short>.*", ...)) land on the
+            # span the GM panel actually watches via tool.{read,write,gen}.{name}.
+            # ToolContext is frozen+slots, so dataclasses.replace is canonical.
+            handler_ctx = replace(ctx, otel_span=span)
             try:
                 args = registered.args_model.model_validate(block.arguments)
             except ValidationError as exc:
@@ -197,11 +202,11 @@ class Registry:
 
             try:
                 if registered.category is ToolCategory.WRITE:
-                    lock = self._write_locks.setdefault(ctx.session_id, asyncio.Lock())
+                    lock = self._write_locks.setdefault(handler_ctx.session_id, asyncio.Lock())
                     async with lock:
-                        result = await registered.handler(args, ctx)
+                        result = await registered.handler(args, handler_ctx)
                 else:
-                    result = await registered.handler(args, ctx)
+                    result = await registered.handler(args, handler_ctx)
             except Exception as exc:
                 # Handler raised — record on the span (tool_dispatch_span's except clause
                 # also records at the outer level when we re-raise via this path,
@@ -216,11 +221,11 @@ class Registry:
                 span.set_attribute("tool.result_size_bytes", len(body))
                 return ToolResultBlock(tool_use_id=block.id, content=body, is_error=is_err)
 
-            filtered = ctx.perception_filter.filter_result(
+            filtered = handler_ctx.perception_filter.filter_result(
                 tool_name=registered.name,
                 category=registered.category,
                 result=result,
-                perspective_pc=ctx.perspective_pc,
+                perspective_pc=handler_ctx.perspective_pc,
             )
 
             body, is_err = filtered.to_anthropic_payload()

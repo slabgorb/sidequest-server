@@ -109,36 +109,35 @@ async def test_payload_shape() -> None:
 
 
 async def test_otel_span_carries_notation_and_value(otel_capture) -> None:
-    """Handler sets tool.dice.* attributes on ctx.otel_span.
+    """Dispatching through Registry.dispatch lands per-tool attrs on the dispatch span.
 
-    The dispatcher seeds standard attrs on its dispatch span; the handler
-    enriches with per-tool attrs via the span supplied in ToolContext.
-    Here we drive a real OTEL span as ctx.otel_span and assert the handler
-    populated it correctly.
+    The dispatcher seeds standard attrs (tool.name, tool.category, ...) on the
+    tool.gen.roll_dice span and injects that span into ctx.otel_span before
+    invoking the handler — so the handler's tool.dice.* enrichments land on
+    the same span the GM panel watches.
     """
-    from sidequest.telemetry.spans.span import Span as SpanHelper
-
-    registered = default_registry._tools["roll_dice"]
-    args = registered.args_model.model_validate({"notation": "d20", "seed": 99})
-    with SpanHelper.open("tool.gen.roll_dice", {"tool.name": "roll_dice"}) as span:
-        ctx = ToolContext(
-            world_id="w",
-            session_id="s",
-            perspective_pc="alex",
-            turn_number=1,
-            store=MagicMock(),
-            otel_span=span,
-            perception_filter=NarratorPerceptionFilter(),
-        )
-        result = await registered.handler(args, ctx)
-    assert result.status is ToolResultStatus.OK
+    out = await default_registry.dispatch(
+        ToolUseBlock(
+            id="t-otel",
+            name="roll_dice",
+            arguments={"notation": "d20", "seed": 99},
+        ),
+        _make_ctx(),
+    )
+    assert out.is_error is False
+    payload = json.loads(out.content)
 
     spans = otel_capture.get_finished_spans()
     dice_spans = [s for s in spans if s.name == "tool.gen.roll_dice"]
     assert dice_spans, f"no tool.gen.roll_dice span; got: {[s.name for s in spans]}"
     attrs = dict(dice_spans[-1].attributes or {})
+    # Dispatcher-seeded standard attrs
+    assert attrs.get("tool.name") == "roll_dice"
+    assert attrs.get("tool.category") == "generate"
+    assert attrs.get("tool.result_status") == "ok"
+    # Handler-set per-tool attrs — must land on the dispatch span
     assert attrs.get("tool.dice.notation") == "d20"
-    assert attrs.get("tool.dice.value") == _payload(result)["value"]
+    assert attrs.get("tool.dice.value") == payload["value"]
     assert attrs.get("tool.dice.seed") == 99
 
 

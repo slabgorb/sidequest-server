@@ -137,3 +137,69 @@ async def test_registry_round_trip_via_sdk_client(
     assert result.text == "A natural 20."
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].name == "roll_dice"
+
+
+class _MarkerArgs(BaseModel):
+    """Args for the marker tool used by the dispatch-span wiring test."""
+
+
+async def test_dispatch_injects_span_into_handler_context(otel_capture) -> None:
+    """Handlers' ctx.otel_span MUST be the dispatch span, not the caller's span.
+
+    Without dispatch-span injection, per-tool attrs set by handlers via
+    ctx.otel_span.set_attribute land on the caller-supplied span (typically
+    a MagicMock or a logically unrelated span) and the GM panel — which
+    watches tool.{read,write,gen}.{name} — sees no per-tool detail.
+    """
+    reg = Registry()
+
+    @tool(
+        name="marker",
+        description="Stamp a marker attribute via ctx.otel_span.",
+        category=ToolCategory.READ,
+        registry=reg,
+    )
+    async def _marker(args: _MarkerArgs, ctx: ToolContext) -> ToolResult:
+        ctx.otel_span.set_attribute("tool.test.marker", "yes")
+        return ToolResult.ok({"ok": True})
+
+    caller_span = MagicMock()
+    ctx = ToolContext(
+        world_id="w",
+        session_id="s",
+        perspective_pc="alex",
+        turn_number=1,
+        store=MagicMock(),
+        otel_span=caller_span,
+        perception_filter=NoopPerceptionFilter(),
+    )
+
+    out = await reg.dispatch(
+        ToolUseBlock(id="t-marker", name="marker", arguments={}),
+        ctx,
+    )
+    assert out.is_error is False
+
+    # The caller-supplied span must NOT have received tool.test.marker —
+    # handlers must write through the dispatch span injected by Registry.
+    marker_calls = [
+        c
+        for c in caller_span.set_attribute.call_args_list
+        if c.args and c.args[0] == "tool.test.marker"
+    ]
+    assert not marker_calls, (
+        "ctx.otel_span was not replaced with the dispatch span — "
+        f"caller span received tool.test.marker: {marker_calls}"
+    )
+
+    spans = otel_capture.get_finished_spans()
+    marker_spans = [s for s in spans if s.name == "tool.read.marker"]
+    assert marker_spans, (
+        f"no tool.read.marker dispatch span exported; got: {[s.name for s in spans]}"
+    )
+    attrs = dict(marker_spans[-1].attributes or {})
+    assert attrs.get("tool.name") == "marker"
+    assert attrs.get("tool.category") == "read"
+    assert attrs.get("tool.test.marker") == "yes", (
+        f"handler attribute did not land on dispatch span; attrs={attrs}"
+    )
