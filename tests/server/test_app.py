@@ -16,13 +16,20 @@ from sidequest.server.app import create_app
 
 
 def test_create_app_uses_build_llm_client_by_default(monkeypatch):
+    """Phase D: default backend flipped from claude to anthropic_sdk.
+
+    The factory still resolves via build_llm_client; only the default
+    backend identity changes. ClaudeClient remains reachable via
+    SIDEQUEST_LLM_BACKEND=claude (covered by
+    test_explicit_claude_backend_still_resolves in test_llm_factory.py).
+    """
     monkeypatch.delenv("SIDEQUEST_LLM_BACKEND", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     app = create_app()
-    # The stored factory should return a ClaudeClient instance by default.
-    from sidequest.agents.claude_client import ClaudeClient
+    from sidequest.agents.anthropic_sdk_client import AnthropicSdkClient
 
     client = app.state.claude_client_factory()
-    assert isinstance(client, ClaudeClient)
+    assert isinstance(client, AnthropicSdkClient)
 
 
 def test_create_app_honours_ollama_env(monkeypatch):
