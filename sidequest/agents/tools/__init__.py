@@ -15,6 +15,7 @@ from sidequest.agents.tools import (
     list_npcs_in_scene,  # noqa: F401
     lookup_monster,  # noqa: F401
     query_character,  # noqa: F401
+    query_encounter,  # noqa: F401
     query_gossip,  # noqa: F401
     query_known_facts,  # noqa: F401
     query_lore,  # noqa: F401
