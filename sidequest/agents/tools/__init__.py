@@ -13,6 +13,7 @@ from sidequest.agents.tools import (
     commit_known_fact,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
     query_character,  # noqa: F401
+    query_gossip,  # noqa: F401
     query_known_facts,  # noqa: F401
     query_npc,  # noqa: F401
     roll_dice,  # noqa: F401
