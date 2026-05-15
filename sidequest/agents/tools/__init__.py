@@ -10,6 +10,7 @@ adapter so the registry is loaded by importing this package.
 from sidequest.agents.tools import (
     apply_damage,  # noqa: F401
     apply_status,  # noqa: F401
+    commit_known_fact,  # noqa: F401
     list_npcs_in_scene,  # noqa: F401
     query_character,  # noqa: F401
     query_known_facts,  # noqa: F401

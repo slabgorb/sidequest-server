@@ -16,7 +16,7 @@ COVERAGE_MAP: dict[str, str | None] = {
     "patches_resource_pool": "update_resource_pool",
     "patches_disposition": "update_npc_disposition",
     "patches_other": None,
-    "journal_entries": None,
+    "journal_entries": "commit_known_fact",
     "scenario_advances": None,
     "encounter_advances": None,
     "magic_effects": None,
