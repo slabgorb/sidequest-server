@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from sidequest.agents.anthropic_cost import compute_cost_usd
@@ -82,7 +83,7 @@ class AnthropicSdkClient:
         system_blocks: list[CacheableBlock],
         messages: list[Message],
         tools: list[ToolDefinition],
-        tool_dispatch: Callable[[ToolUseBlock], ToolResultBlock] | None = None,
+        tool_dispatch: Callable[[ToolUseBlock], Awaitable[ToolResultBlock]] | Callable[[ToolUseBlock], ToolResultBlock] | None = None,
         *,
         model: str,
         max_iterations: int = 8,
@@ -175,7 +176,11 @@ class AnthropicSdkClient:
                         "input": tu.arguments,
                     }
                 )
-                result = tool_dispatch(tu)
+                maybe = tool_dispatch(tu)
+                if inspect.isawaitable(maybe):
+                    result = await maybe
+                else:
+                    result = maybe
                 user_results.append(
                     {
                         "type": "tool_result",

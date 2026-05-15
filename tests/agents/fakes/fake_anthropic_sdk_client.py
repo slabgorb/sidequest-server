@@ -6,7 +6,8 @@ the test scenario requires; the fake never reaches the network.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -62,7 +63,7 @@ class FakeAnthropicSdkClient:
         system_blocks: list[CacheableBlock],
         messages: list[Message],
         tools: list[ToolDefinition],
-        tool_dispatch: Callable[[ToolUseBlock], ToolResultBlock] | None = None,
+        tool_dispatch: Callable[[ToolUseBlock], Awaitable[ToolResultBlock]] | Callable[[ToolUseBlock], ToolResultBlock] | None = None,
         *,
         model: str,
         max_iterations: int = 8,
@@ -112,7 +113,11 @@ class FakeAnthropicSdkClient:
             results: list[ToolResultBlock] = []
             for tu in response.tool_uses:
                 all_tool_calls.append(tu)
-                results.append(tool_dispatch(tu))
+                maybe = tool_dispatch(tu)
+                if inspect.isawaitable(maybe):
+                    results.append(await maybe)
+                else:
+                    results.append(maybe)
             current_messages = current_messages + [
                 Message(
                     role="assistant",
