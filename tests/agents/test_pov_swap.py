@@ -130,6 +130,67 @@ def test_reflexive_themself_or_themselves_swaps_to_yourself():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Comma-coordinated verb continuation (sq-playtest 2026-05-15)
+# ---------------------------------------------------------------------------
+
+
+def test_comma_coordinated_verb_continuation_conjugates():
+    """The original playtest repro: a single sentence chains three actions
+    through commas + and. Pass 2 caught "thumbs", Pass 8 caught "works",
+    but the middle "sets" stayed in 3rd-person form. Result on the actor's
+    own tab read: "you thumb..., sets..., and work..." — mixed conjugation.
+
+    After the fix, all three verbs are second-person.
+    """
+    text = (
+        "Willes thumbs open the component pouch's outer flap for the chalk-stub, "
+        "sets the bronze fitting in your eye-line at three paces, and works the "
+        "curl of it onto a corner of waxed parchment."
+    )
+    out, _ = swap_to_second_person(text, target_name="Willes", pronouns="he/him")
+    # All three verbs should be in 2nd-person form. "You" is sentence-start
+    # here (the sentence begins "Willes thumbs..." → "You thumb...").
+    assert out.startswith("You thumb open"), out
+    assert ", set the bronze fitting" in out, out
+    assert "and work the curl" in out, out
+    # And no 3rd-person residue.
+    assert "thumbs" not in out
+    assert "sets" not in out
+    assert "works the" not in out
+
+
+def test_comma_coordinated_continuation_skips_non_verbs():
+    """Conservative gating: a comma followed by a non-verb (article,
+    preposition, plural noun) must NOT be conjugated. Otherwise an
+    appositive or parenthetical commas would get mangled.
+    """
+    text = "Carl plants a boot on the moth's thorax, the polearm braced against his shoulder."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    # "the" doesn't end in -s; pass-through.
+    assert ", the polearm" in out, out
+    # And the substantive swap still works.
+    assert out.startswith("You plant a boot"), out
+
+
+def test_comma_coordinated_continuation_only_when_subject_was_swapped():
+    """The pass is gated by ``had_subject_swap`` so a sentence that didn't
+    mention the target at all is left entirely alone. Defensive: we never
+    conjugate commas in sentences belonging to other actors.
+    """
+    text = "Alice waves, gestures at the door, and beckons Bob inside."
+    out, _ = swap_to_second_person(text, target_name="Carl", pronouns="he/him")
+    # No mention of Carl → no swap, no conjugation, no mutation.
+    assert out == text
+
+
+def test_comma_continuation_with_she_her():
+    """Pronoun-set parity check: the comma fix must work for she/her too."""
+    text = "Katia draws the knife, twists the blade, and steps back."
+    out, _ = swap_to_second_person(text, target_name="Katia", pronouns="she/her")
+    assert out == "You draw the knife, twist the blade, and step back."
+
+
 def test_he_him_pronoun_in_predicate_swaps():
     """After the subject is rewritten to 'you', subsequent pronoun
     references to the target also need swapping: 'Carl plants a boot...

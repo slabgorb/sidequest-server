@@ -13,7 +13,16 @@ This story:
   2. Removes the duplicate from the ``<game_state>`` JSON dump so the same
      data does not ride twice — once high-attention, once decayed. (AC #3
      — covered here.)
-  3. Populates ``TurnContext.recent_narrative_log`` from the snapshot.
+  3. Populates ``TurnContext.recent_narrative_log`` from the durable
+     SQLite narrative_log via ``sd.store.recent_narrative(K)``.
+
+  *(Originally this AC sourced from ``snapshot.narrative_log``. Per
+  sq-playtest 2026-05-15: that mirror is only ever populated by
+  world_materialization + lore_seeding, never by per-turn appends, so
+  the recency injection was stuck at ``turn_count=0/total_tokens=0``
+  forever in live play. The SQLite store is the canonical source —
+  same alignment that Story 45-11's round-invariant lie-detector
+  uses.)*
 
 The integration uses live ``_build_turn_context`` to prove the wiring is
 end-to-end — not just that the field exists.
@@ -164,23 +173,34 @@ def test_state_summary_prose_content_not_duplicated():
 # ---------------------------------------------------------------------------
 
 
-def test_recent_narrative_log_populated_on_turn_context_from_snapshot():
+def test_recent_narrative_log_populated_on_turn_context_from_store():
     """``_build_turn_context`` MUST populate
     ``TurnContext.recent_narrative_log`` with the last K=4 entries from
-    the snapshot. Without this the orchestrator's new Recency-zone
-    section has no input and the fix is a no-op end-to-end (wiring test
-    per CLAUDE.md)."""
+    the durable SQLite store. Without this the orchestrator's
+    Recency-zone section has no input and the fix is a no-op end-to-end
+    (wiring test per CLAUDE.md).
+
+    sq-playtest 2026-05-15: was previously sourced from
+    ``snapshot.narrative_log``, but that mirror is only populated by
+    world_materialization + lore_seeding (never by per-turn appends),
+    so live recency injection stayed at 0/0 forever. The store is the
+    canonical source.
+    """
     log = _glenross_log()
     snap = _make_snapshot_with_log(log)
     sd = _build_sd(snap)
     sd._room = room_for(snap, slug="mawdeep")
+    # Live store API: ``recent_narrative(limit)`` returns the most recent
+    # ``limit`` entries oldest-first. Mirror the slice the SQLite query
+    # would have produced over the durable log.
+    sd.store.recent_narrative.return_value = list(log[-4:])
 
     ctx = _build_turn_context(sd, room=sd._room)
 
     recent = list(ctx.recent_narrative_log)
     assert recent, (
-        "TurnContext.recent_narrative_log is empty — the snapshot's "
-        "6 entries did not flow into the Recency-zone seam."
+        "TurnContext.recent_narrative_log is empty — the store's 6 "
+        "entries did not flow into the Recency-zone seam."
     )
     assert len(recent) == 4, f"expected last K=4 entries (AC #2 default); got {len(recent)}"
 
@@ -192,15 +212,22 @@ def test_recent_narrative_log_populated_on_turn_context_from_snapshot():
         f"recent_narrative_log holds wrong slice — "
         f"expected last-4 {expected_contents}, got {actual_contents}"
     )
+    # Wiring assertion: _build_turn_context actually called the store, not
+    # the snapshot mirror. Defends against a future refactor silently
+    # reverting to ``snapshot.narrative_log[-K:]`` (which would pass the
+    # content assertion above when the store happens to be empty — the
+    # original 2026-05-15 bug repro).
+    sd.store.recent_narrative.assert_called_once_with(4)
 
 
 def test_recent_narrative_log_empty_on_fresh_session():
-    """Symmetric guard: a snapshot with no narrative_log must produce an
+    """Symmetric guard: a store with no narrative_log must produce an
     empty list (not a None, not a synthetic placeholder). Zero-byte-leak
     discipline."""
     snap = _make_snapshot_with_log([])
     sd = _build_sd(snap)
     sd._room = room_for(snap, slug="mawdeep")
+    sd.store.recent_narrative.return_value = []
 
     ctx = _build_turn_context(sd, room=sd._room)
     assert list(ctx.recent_narrative_log) == []

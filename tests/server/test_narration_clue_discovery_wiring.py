@@ -251,3 +251,122 @@ async def test_narration_turn_with_non_matching_fact_id_is_silent(
     assert new_scenario_facts == [], (
         "non-matching fact_id must not produce a ScenarioClue KnownFact"
     )
+
+
+@pytest.mark.asyncio
+async def test_narration_turn_mints_fact_id_when_narrator_omits(
+    session_fixture, otel_exporter, monkeypatch
+) -> None:
+    """sq-playtest 2026-05-15 [BUG-LOW] dropped KnownFacts wiring test.
+
+    When the narrator emits a footnote *without* a fact_id (per the legacy
+    prompt that only required fact_id for callbacks), the server MUST mint
+    a stable hash-based id before forwarding the Footnote downstream. The
+    UI's strict drop policy (useStateMirror.ts:198) would otherwise silently
+    swallow load-bearing world facts. Asserts both the defensive mint and
+    the OTEL watcher span that lets the GM panel see the rate.
+    """
+    from sidequest.server import websocket_session_handler as wsh
+
+    sd, handler = session_fixture
+    _seat_character(sd.snapshot, name=sd.player_name)
+
+    captured: list[tuple[str, dict]] = []
+
+    def _capture(event: str, payload: dict, *args, **kwargs) -> None:
+        captured.append((event, payload))
+
+    monkeypatch.setattr(wsh, "_watcher_publish", _capture)
+
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=NarrationTurnResult(
+            narration=(
+                "Brother Hesh studies the bond [1]. The courier [2] never speaks."
+            ),
+            is_degraded=False,
+            agent_duration_ms=1,
+            footnotes=[
+                {
+                    "marker": 1,
+                    # No fact_id — the bug case.
+                    "summary": "Brother Hesh signs the bonds at Ashgate.",
+                    "category": "Person",
+                    "is_new": True,
+                },
+                {
+                    "marker": 2,
+                    # No fact_id — second omitted, both must be minted.
+                    "summary": "The Downriver Courier reads lips.",
+                    "category": "Person",
+                    "is_new": True,
+                },
+            ],
+        )
+    )
+    sd.local_dm = _fake_local_dm("t-mint-1")
+
+    turn_context = _build_turn_context_for_test(sd)
+    await handler._execute_narration_turn(sd, "I greet him.", turn_context)
+
+    mint_events = [p for (e, p) in captured if e == "state.footnote_fact_id_minted"]
+    assert len(mint_events) == 1, (
+        f"expected one aggregated mint event per turn, got {len(mint_events)}: {captured}"
+    )
+    assert mint_events[0]["count"] == 2, (
+        f"expected count=2 (both footnotes minted), got {mint_events[0]['count']}"
+    )
+    assert mint_events[0]["reason"] == "narrator_omitted_fact_id"
+
+    # And the forwarded Footnotes (carried inside the broadcast NarrationPayload)
+    # must each have a non-None fact_id with the "fn-" prefix.
+    forwarded_events = [p for (e, p) in captured if e == "state_transition" and p.get("field") == "footnotes"]
+    assert forwarded_events, "footnotes_forwarded watcher event missing"
+    assert forwarded_events[0]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_narration_turn_preserves_narrator_supplied_fact_id(
+    session_fixture, otel_exporter, monkeypatch
+) -> None:
+    """Narrator-supplied fact_ids must NOT be replaced — scenario clue_intake
+    matches them against ClueNode.id (genre-authored), and Seam A would break
+    if we overwrote them with our defensive hash."""
+    from sidequest.server import websocket_session_handler as wsh
+
+    sd, handler = session_fixture
+    _seat_character(sd.snapshot, name=sd.player_name)
+    _bind_scenario_to_snapshot(sd.snapshot, clue_ids=["library_key"])
+
+    captured: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        wsh,
+        "_watcher_publish",
+        lambda event, payload, *a, **kw: captured.append((event, payload)),
+    )
+
+    sd.orchestrator.run_narration_turn = AsyncMock(
+        return_value=NarrationTurnResult(
+            narration="You find the brass library key on the desk.",
+            is_degraded=False,
+            agent_duration_ms=1,
+            footnotes=[
+                {
+                    "marker": 1,
+                    "fact_id": "library_key",
+                    "summary": "The brass key opens the library door.",
+                    "category": "Lore",
+                    "is_new": True,
+                }
+            ],
+        )
+    )
+    sd.local_dm = _fake_local_dm("t-preserve-1")
+
+    turn_context = _build_turn_context_for_test(sd)
+    await handler._execute_narration_turn(sd, "I check the desk.", turn_context)
+
+    # No mint event — narrator supplied the id.
+    mint_events = [p for (e, p) in captured if e == "state.footnote_fact_id_minted"]
+    assert mint_events == [], (
+        f"narrator-supplied fact_id must not trigger a mint, got {mint_events}"
+    )
