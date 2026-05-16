@@ -439,6 +439,23 @@ def _build_turn_context(
         narrator_vocabulary="literary",
         genre=sd.genre_slug,
         genre_prompts=sd.genre_pack.prompts,
+        # Phase E wiring (completes the deferral the ToolContext docstring
+        # flags as "Phase E wires this at the production call site"). Before
+        # this, TurnContext carried none of these and the SDK narrator path
+        # degraded to world_id=unknown / session_id=adhoc / turn_number=0
+        # with lore_store=None — query_lore returned hit_count=0 every turn
+        # (~103×/session) and the narrator confabulated canon. world_id ←
+        # world_slug; session_id ← the slug-based game_slug; turn_number ←
+        # snapshot.turn_manager.interaction (the per-turn interaction count
+        # Jaeger showed stuck at 0); store/lore_store/monster_manual are the
+        # live session-handler references the query_lore / lookup_monster
+        # tools read through ToolContext.
+        world_id=sd.world_slug,
+        session_id=sd.game_slug,
+        store=sd.store,
+        lore_store=sd.lore_store,
+        monster_manual=sd.monster_manual,
+        turn_number=snapshot.turn_manager.interaction,
         character_name=char_name,
         current_location=(
             _resolve_location_display(

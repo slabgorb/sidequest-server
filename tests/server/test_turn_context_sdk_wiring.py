@@ -1,0 +1,358 @@
+"""Interrupt fix — plumb world_id/session_id/store/lore_store into the SDK
+TurnContext so the narrator's ``query_lore`` / ``lookup_monster`` tools
+actually see world lore + the monster manual.
+
+Diagnosed bug (Jaeger + ``narrator.sdk_path.context_missing_ids`` ~103×/
+session): ``TurnContext`` carried no ``world_id``/``session_id``/``store``/
+``lore_store`` fields, so ``_run_narration_turn_sdk`` degraded every turn to
+``world_id=unknown session_id=adhoc turn_number=0`` and built a
+``ToolContext`` with ``lore_store=None`` — ``query_lore`` returned
+``hit_count=0`` and the narrator confabulated canon.
+
+The code itself documented this as deferred: ``ToolContext.lore_store``'s
+docstring says *"Phase E wires this at the production call site"*. This test
+proves Phase E is now wired:
+
+  * unit — ``_build_turn_context`` populates the four ids + ``turn_number``
+    from ``_SessionData``;
+  * wiring — the production ``_run_narration_turn_sdk`` path constructs a
+    ``ToolContext`` with the real ids AND a non-None ``lore_store`` (and the
+    ``monster_manual``), i.e. the change is reachable from
+    ``run_narration_turn``, not just present on the dataclass;
+  * regression — the ``context_missing_ids`` warning does NOT fire when ids
+    are present.
+
+The fake-SDK shape mirrors ``test_narrator_sdk_hybrid_split.py`` exactly.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+# Importing the tools package wires the 26 adapters onto default_registry.
+import sidequest.agents.tools  # noqa: F401
+from sidequest.agents.anthropic_sdk_client import AnthropicSdkClient
+from sidequest.agents.orchestrator import Orchestrator, TurnContext
+from sidequest.agents.tool_registry import ToolContext, default_registry
+from sidequest.agents.tooling_protocol import ToolResultBlock, ToolUseBlock
+from sidequest.game.lore_store import LoreFragment, LoreStore
+from sidequest.game.session import GameSnapshot
+from sidequest.game.turn import TurnManager
+from sidequest.genre.loader import load_genre_pack
+from sidequest.server.session_handler import _build_turn_context, _SessionData
+from tests._helpers.session_room import room_for
+
+CONTENT_GENRE_PACKS = Path(__file__).resolve().parents[3] / "sidequest-content" / "genre_packs"
+
+
+# ---------------------------------------------------------------------------
+# _SessionData fixture (mirrors test_session_helpers_narrative_strip.py)
+# ---------------------------------------------------------------------------
+
+
+def _seeded_lore_store() -> LoreStore:
+    store = LoreStore()
+    store.add(
+        LoreFragment.new(
+            id="lore-1",
+            category="setting",
+            content="The Mawdeep is a flooded ossuary beneath the city.",
+            source="seed",
+        )
+    )
+    store.add(
+        LoreFragment.new(
+            id="lore-2",
+            category="faction",
+            content="The Drowned Wardens guard the lower vaults.",
+            source="seed",
+        )
+    )
+    return store
+
+
+def _make_snapshot() -> GameSnapshot:
+    snap = GameSnapshot(
+        genre_slug="caverns_and_claudes",
+        world_slug="mawdeep",
+        turn_manager=TurnManager(interaction=7),
+    )
+    return snap
+
+
+def _build_sd(*, with_monster_manual: bool = True) -> _SessionData:
+    snap = _make_snapshot()
+    pack = load_genre_pack(CONTENT_GENRE_PACKS / snap.genre_slug)
+    sd = _SessionData(
+        genre_slug=snap.genre_slug,
+        world_slug=snap.world_slug,
+        player_name="Alice",
+        player_id="player:alice",
+        snapshot=snap,
+        store=MagicMock(),
+        genre_pack=pack,
+        orchestrator=MagicMock(),
+    )
+    sd.store.recent_narrative.return_value = []
+    sd.game_slug = "2026-05-14-caverns_mawdeep-28"
+    sd.lore_store = _seeded_lore_store()
+    if with_monster_manual:
+        sd.monster_manual = MagicMock(name="MonsterManual")
+    sd._room = room_for(snap, slug="mawdeep")
+    return sd
+
+
+# ---------------------------------------------------------------------------
+# 1. Unit — _build_turn_context populates the ids + turn_number + stores
+# ---------------------------------------------------------------------------
+
+
+def test_build_turn_context_populates_world_session_store_lore() -> None:
+    """``_build_turn_context`` MUST copy ``world_slug``/``game_slug``/
+    ``store``/``lore_store`` (and the per-turn ``interaction`` count) off
+    ``_SessionData`` onto the TurnContext. Without this the SDK path
+    degrades to unknown/adhoc/None/0 (the diagnosed bug)."""
+    sd = _build_sd()
+
+    ctx = _build_turn_context(sd, room=sd._room)
+
+    assert ctx.world_id == "mawdeep", (
+        f"world_id not plumbed from sd.world_slug; got {ctx.world_id!r}"
+    )
+    assert ctx.session_id == "2026-05-14-caverns_mawdeep-28", (
+        f"session_id not plumbed from sd.game_slug; got {ctx.session_id!r}"
+    )
+    assert ctx.store is sd.store, "store reference not plumbed from sd.store"
+    assert ctx.lore_store is sd.lore_store, (
+        "lore_store reference not plumbed from sd.lore_store — query_lore "
+        "would see no world lore (hit_count=0) and the narrator confabulates"
+    )
+    assert len(ctx.lore_store) == 2
+    # turn_number must track snapshot.turn_manager.interaction (Jaeger
+    # currently shows this stuck at 0).
+    assert ctx.turn_number == 7, (
+        f"turn_number not sourced from snapshot.turn_manager.interaction; "
+        f"got {ctx.turn_number!r} (Jaeger bug: stuck at 0)"
+    )
+    # MonsterManual rides the same Phase-E seam as lore_store.
+    assert ctx.monster_manual is sd.monster_manual
+
+
+def test_build_turn_context_monster_manual_none_when_unbound() -> None:
+    """A session whose genre never loaded a manual leaves
+    ``monster_manual=None`` — no synthetic placeholder (No Stubbing)."""
+    sd = _build_sd(with_monster_manual=False)
+    ctx = _build_turn_context(sd, room=sd._room)
+    assert ctx.monster_manual is None
+
+
+# ---------------------------------------------------------------------------
+# Fake SDK — mirrors test_narrator_sdk_hybrid_split.py
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Usage:
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+
+@dataclass
+class _TextBlock:
+    type: str
+    text: str
+
+
+@dataclass
+class _Resp:
+    content: list[Any]
+    stop_reason: str
+    usage: _Usage
+    model: str
+
+
+class _Msgs:
+    def __init__(self, responses: list[_Resp]) -> None:
+        self._responses = responses
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> _Resp:
+        self.calls.append(kwargs)
+        return self._responses.pop(0)
+
+
+class _Sdk:
+    def __init__(self, responses: list[_Resp]) -> None:
+        self.messages = _Msgs(responses)
+
+
+class _FakeRegistry:
+    def compose_split(self, agent_name: str) -> tuple[str, str]:
+        return ("system text", "user text")
+
+
+def _single_turn_sdk(prose: str) -> _Sdk:
+    return _Sdk(
+        responses=[
+            _Resp(
+                content=[_TextBlock(type="text", text=prose)],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=120, output_tokens=20),
+                model="claude-sonnet-4-6",
+            ),
+        ]
+    )
+
+
+async def _run_sdk_and_capture_ctx(
+    monkeypatch: pytest.MonkeyPatch,
+    context: TurnContext,
+) -> ToolContext:
+    """Drive ``run_narration_turn`` through the SDK path with a no-tool
+    response and return the ``ToolContext`` the production code built."""
+    monkeypatch.delenv("SIDEQUEST_NARRATOR_STREAMING", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    captured: dict[str, ToolContext] = {}
+
+    async def _spy_dispatch(block: ToolUseBlock, ctx: ToolContext) -> ToolResultBlock:
+        captured["ctx"] = ctx
+        return ToolResultBlock(tool_use_id=block.id, content="ok", is_error=False)
+
+    # complete_with_tools always invokes tool_dispatch via the registry
+    # surface; a one-tool round lets us capture the ctx the production code
+    # constructed. Use a tool_use round so dispatch fires.
+    sdk = _Sdk(
+        responses=[
+            _Resp(
+                content=[
+                    type(
+                        "TU",
+                        (),
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "query_lore",
+                            "input": {"query": "the wardens"},
+                        },
+                    )()
+                ],
+                stop_reason="tool_use",
+                usage=_Usage(input_tokens=120, output_tokens=10),
+                model="claude-sonnet-4-6",
+            ),
+            _Resp(
+                content=[_TextBlock(type="text", text="The water rises.")],
+                stop_reason="end_turn",
+                usage=_Usage(input_tokens=130, output_tokens=14),
+                model="claude-sonnet-4-6",
+            ),
+        ]
+    )
+    client = AnthropicSdkClient(sdk=sdk)
+    orch = Orchestrator(client=client)
+
+    monkeypatch.setattr(default_registry, "dispatch", _spy_dispatch)
+
+    async def _fake_build_prompt(
+        self: Orchestrator, action: str, ctx: TurnContext
+    ) -> tuple[str, _FakeRegistry]:
+        return ("prompt-text", _FakeRegistry())
+
+    monkeypatch.setattr(Orchestrator, "build_narrator_prompt", _fake_build_prompt)
+
+    await orch.run_narration_turn("look around", context)
+    assert "ctx" in captured, "tool_dispatch never fired — cannot assert ToolContext wiring"
+    return captured["ctx"]
+
+
+# ---------------------------------------------------------------------------
+# 2. Wiring — the production SDK path builds a real, lore-bearing ToolContext
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sdk_path_builds_toolcontext_with_real_ids_and_lore_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The "every test suite needs a wiring test" gate: prove
+    ``_run_narration_turn_sdk`` passes the real ``world_id``/``session_id``/
+    ``turn_number``/``store``/``lore_store``/``monster_manual`` through to
+    the ``ToolContext`` the registry dispatches with. ``lore_store`` being
+    non-None is THE fix for ``query_lore`` hit_count=0."""
+    lore = _seeded_lore_store()
+    manual = MagicMock(name="MonsterManual")
+    store = MagicMock(name="SqliteStore")
+    ctx = TurnContext(
+        character_name="Alice",
+        genre="caverns_and_claudes",
+        world_id="mawdeep",
+        session_id="2026-05-14-caverns_mawdeep-28",
+        turn_number=7,
+        store=store,
+        lore_store=lore,
+        monster_manual=manual,
+    )
+
+    tool_ctx = await _run_sdk_and_capture_ctx(monkeypatch, ctx)
+
+    assert tool_ctx.world_id == "mawdeep"
+    assert tool_ctx.session_id == "2026-05-14-caverns_mawdeep-28"
+    assert tool_ctx.turn_number == 7
+    assert tool_ctx.store is store
+    assert tool_ctx.lore_store is lore, (
+        "ToolContext.lore_store is not the wired LoreStore — query_lore "
+        "would return hit_count=0 and the narrator confabulates canon"
+    )
+    assert len(tool_ctx.lore_store) == 2
+    assert tool_ctx.monster_manual is manual
+
+
+@pytest.mark.asyncio
+async def test_sdk_path_no_context_missing_ids_warning_when_ids_present(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression: with ids present, the fail-loud
+    ``narrator.sdk_path.context_missing_ids`` warning MUST NOT fire (it was
+    firing ~103×/session pre-fix)."""
+    ctx = TurnContext(
+        character_name="Alice",
+        world_id="mawdeep",
+        session_id="2026-05-14-caverns_mawdeep-28",
+        turn_number=7,
+        store=MagicMock(),
+        lore_store=_seeded_lore_store(),
+    )
+    with caplog.at_level(logging.WARNING):
+        await _run_sdk_and_capture_ctx(monkeypatch, ctx)
+
+    assert not any(
+        "context_missing_ids" in rec.message for rec in caplog.records
+    ), "context_missing_ids warning fired even though world_id/session_id were present"
+
+
+@pytest.mark.asyncio
+async def test_sdk_path_context_missing_ids_still_fires_when_unwired(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fail-loud guard preserved (No Silent Fallbacks): a genuinely
+    unwired TurnContext (no ids) MUST still emit the anomaly warning so a
+    regression in ``_build_turn_context`` is visible in the GM panel."""
+    ctx = TurnContext(character_name="Alice", turn_number=0)
+    with caplog.at_level(logging.WARNING):
+        await _run_sdk_and_capture_ctx(monkeypatch, ctx)
+
+    assert any("context_missing_ids" in rec.message for rec in caplog.records), (
+        "context_missing_ids warning did NOT fire for a genuinely unwired "
+        "TurnContext — the fail-loud guard was lost"
+    )

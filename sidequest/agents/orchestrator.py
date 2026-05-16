@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from sidequest.game.lore_store import LoreStore
+    from sidequest.game.monster_manual import MonsterManual
     from sidequest.game.session import GameSnapshot
 
 # Importing this package wires the 26 tool adapters onto default_registry at
@@ -418,6 +420,33 @@ class TurnContext:
     # · 11k tokens"). Pre-fix the field was unset and the dropdown read
     # "T? · ? · 0 tokens" (playtest 2026-04-30 #1A).
     turn_number: int = 0
+
+    # Production-call-site identity + state references for the SDK narrator
+    # path (Phase E wiring — completes the deferral the ``ToolContext``
+    # docstring flags as *"Phase E wires this at the production call
+    # site"*). ``_build_turn_context`` (session_helpers.py) copies these off
+    # ``_SessionData`` so ``_run_narration_turn_sdk`` can build a
+    # ``ToolContext`` with real ids + a live ``lore_store``/``monster_manual``
+    # instead of degrading to ``world_id=unknown session_id=adhoc`` and a
+    # ``lore_store=None`` (which made ``query_lore`` return hit_count=0 and
+    # the narrator confabulate canon). Defaulted to None so existing
+    # constructors/tests (which build a Phase-1 TurnContext) keep working.
+    # ``world_id`` ← ``sd.world_slug``; ``session_id`` ← ``sd.game_slug``
+    # (the slug-based session id, e.g. "2026-05-14-caverns_sunden-28").
+    world_id: str | None = None
+    session_id: str | None = None
+    # SqliteStore — kept ``Any`` to avoid a circular import (mirrors
+    # ``ToolContext.store``'s "kept Any to avoid coupling" rationale).
+    store: Any = None
+    # Narrator-private LoreStore (lives on the session handler, not on the
+    # save layer) — query_lore reads this. Quoted/TYPE_CHECKING import:
+    # ``from __future__ import annotations`` keeps this annotation a string,
+    # so the runtime import is deferred (no circular import via
+    # sidequest.game.lore_store).
+    lore_store: LoreStore | None = None
+    # Per-genre/world MonsterManual (also session-handler-resident) — the
+    # lookup_monster tool reads this. Same Phase-E seam as ``lore_store``.
+    monster_manual: MonsterManual | None = None
 
     # Multiplayer merged-turn payload. When the per-room barrier fires and
     # multiple PCs' actions are dispatched as a single narration turn, the
@@ -3063,15 +3092,21 @@ class Orchestrator:
 
             model = resolve_model(CallType.NARRATION)
 
-            # TurnContext doesn't yet carry world_id / session_id (Phase E
-            # plumbs those through from the session handler). Use safe
-            # defaults and warn once so this is visible in the dashboard.
-            world_id = getattr(context, "world_id", None) or "unknown"
-            session_id = getattr(context, "session_id", None) or "adhoc"
+            # Phase E now plumbs world_id/session_id/store/lore_store/
+            # monster_manual onto TurnContext via _build_turn_context (off
+            # _SessionData). Read them directly. The "unknown"/"adhoc"
+            # coalescing stays ONLY as a fail-loud guard (No Silent
+            # Fallbacks): if a TurnContext reaches this path genuinely
+            # unwired (a regression in _build_turn_context, or a legacy
+            # caller), we still emit a real anomaly warning so the GM panel
+            # sees it — post-wiring this should essentially never fire.
+            world_id = context.world_id or "unknown"
+            session_id = context.session_id or "adhoc"
             if world_id == "unknown" or session_id == "adhoc":
                 logger.warning(
-                    "narrator.sdk_path.context_missing_ids — world_id=%s session_id=%s; "
-                    "Phase E will plumb these via TurnContext.",
+                    "narrator.sdk_path.context_missing_ids — world_id=%s "
+                    "session_id=%s unexpectedly missing post-wiring; check "
+                    "_build_turn_context (should never fire in production).",
                     world_id,
                     session_id,
                 )
@@ -3089,9 +3124,35 @@ class Orchestrator:
                     session_id=session_id,
                     perspective_pc=context.character_name,
                     turn_number=context.turn_number,
-                    store=getattr(context, "store", None),
+                    store=context.store,
                     otel_span=span,
                     perception_filter=perception_filter,
+                    # Phase E wiring — THE fix for query_lore hit_count=0.
+                    # Without this, ToolContext.lore_store defaulted None and
+                    # the narrator got no world lore, then confabulated canon.
+                    lore_store=context.lore_store,
+                    # Same Phase-E seam: lookup_monster reads this.
+                    monster_manual=context.monster_manual,
+                )
+
+                # Positive wiring confirmation (CLAUDE.md OTEL principle —
+                # replaces the silent context gap so the GM panel can verify
+                # the fix engaged). The narration.turn span already carries
+                # world_id/session_id/turn_number and tool.read.query_lore
+                # already emits tool.lore.hit_count — this line is the
+                # one-shot proof the lore_store reference reached the tool
+                # context at all (lore_fragments>0 means query_lore CAN hit).
+                lore_fragments = len(context.lore_store) if context.lore_store else 0
+                span.set_attribute("narration.turn.lore_fragments", lore_fragments)
+                logger.info(
+                    "narrator.sdk_path.context_wired — world_id=%s "
+                    "session_id=%s turn=%s lore_fragments=%d "
+                    "monster_manual=%s",
+                    world_id,
+                    session_id,
+                    context.turn_number,
+                    lore_fragments,
+                    context.monster_manual is not None,
                 )
 
                 async def dispatch(block: ToolUseBlock) -> ToolResultBlock:
