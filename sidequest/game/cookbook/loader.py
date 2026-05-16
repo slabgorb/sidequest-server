@@ -25,6 +25,15 @@ from sidequest.game.cookbook.models import (
     WorldRegister,
 )
 
+# oq-1-owned set. Authoritative source: the maze-maker family port at
+# sidequest-server/sidequest/dungeon/interiors/ ("shared interior
+# generators") — cellular (gen_cave), depthfirst, prim, and the braid
+# post-process. (NOT the ADR-096 cavern_renderer tool, which is a
+# cellular-only PNG author-time renderer — a different concern.) We
+# validate the REFERENCE exists; oq-1 owns the semantics (spec §7).
+# Coordinate any addition (e.g. roomcorridor) with oq-1 — plan Task 24.
+KNOWN_GENERATOR_BINDINGS: frozenset[str] = frozenset({"cellular", "depthfirst", "prim", "braid"})
+
 
 @dataclass(frozen=True)
 class CookbookBundle:
@@ -145,6 +154,16 @@ def validate_bundle(bundle: CookbookBundle) -> None:
             raise CookbookValidationError(
                 f"LOOK '{look}' has no affinity RACE that resolves at "
                 f"'{shallow_id}' — every region under it would fail."
+            )
+
+    # generator_binding must reference a known oq-1 binding (spec §7
+    # seam check — we validate the reference exists; oq-1 owns meaning).
+    for look in bundle.looks:
+        if look.generator_binding not in KNOWN_GENERATOR_BINDINGS:
+            raise CookbookValidationError(
+                f"LOOK '{look.id}' generator_binding "
+                f"'{look.generator_binding}' is not a known oq-1 binding "
+                f"{sorted(KNOWN_GENERATOR_BINDINGS)} — spec §7 seam check"
             )
 
     # reskin keys must resolve in the raw corpus (spec §7).
