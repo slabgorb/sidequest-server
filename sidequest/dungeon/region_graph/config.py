@@ -59,3 +59,10 @@ class JaquaysConfig:
                 ">= min_stitch_edges (need that many distinct new regions "
                 "to form independent entries)"
             )
+        if lo < self.min_stitch_edges + self.min_shortcut_edges:
+            raise ValueError(
+                "new_regions_per_expansion lower bound must be "
+                ">= min_stitch_edges + min_shortcut_edges (need distinct new "
+                "regions for >=2 independent entries AND distinct shortcut "
+                "targets)"
+            )

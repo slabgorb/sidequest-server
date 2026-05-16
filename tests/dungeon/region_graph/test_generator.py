@@ -222,6 +222,25 @@ def test_generate_expansion_is_deterministic():
     assert [(e.a, e.b, e.kind) for e in e1.new_edges] == [(e.a, e.b, e.kind) for e in e2.new_edges]
 
 
+def test_multiple_distinct_shortcuts_are_honored():
+    g = _explored()
+    cfg = JaquaysConfig(min_shortcut_edges=2, new_regions_per_expansion=(5, 8))
+    exp, rep = generate_expansion(
+        graph=g,
+        campaign_seed=11,
+        expansion_id=2,
+        attach_region_ids=["e1", "e2", "e3"],
+        theme_pool=THEMES,
+        config=cfg,
+    )
+    sc = [e for e in exp.new_edges if e.shortcut]
+    assert len(sc) >= 2
+    assert len({(e.a, e.b) for e in sc}) == len(sc)  # all distinct, no parallels
+    assert rep.all_passed()
+    assert check_invariants(g, exp, cfg).invariants_passed["shortcut_collapses_distance"] is True
+    assert rep.shortcut_edges >= 2
+
+
 def test_impossible_config_fails_loudly_with_failing_invariants():
     g = _explored()
     cfg = JaquaysConfig(min_shortcut_gain=999, max_reroll_attempts=4)

@@ -88,11 +88,13 @@ def _build_candidate(
         parent = new_ids[rng.randrange(i)]
         edges.append(RegionEdge(a=parent, b=new_ids[i], kind="corridor"))
 
-    # 1b. tree-deepest new node: the shortcut's far endpoint must be a
+    # 1b. tree-deepest new nodes: each shortcut's far endpoint must be a
     #     region whose only non-shortcut route is the long internal path,
-    #     so removing the shortcut genuinely changes distance. Compute it
-    #     from the section-1 internal tree edges ONLY (no stitch/hidden
-    #     edges exist yet), then exclude it from stitch + hidden targets.
+    #     so removing that shortcut genuinely changes distance. Rank by
+    #     depth over the section-1 internal tree edges ONLY (no stitch/
+    #     hidden edges exist yet); take the min_shortcut_edges deepest
+    #     DISTINCT nodes, then exclude all of them from stitch + hidden
+    #     targets.
     tree_adj: dict[str, list[str]] = {nid: [] for nid in new_ids}
     for e in edges:  # only the section-1 tree edges exist so far
         tree_adj[e.a].append(e.b)
@@ -105,8 +107,10 @@ def _build_candidate(
             if nxt not in seen:
                 seen[nxt] = seen[cur] + 1
                 dq.append(nxt)
-    deep_new = max(new_ids, key=lambda nid: seen.get(nid, 0))
-    stitchable = [nid for nid in new_ids if nid != deep_new] or list(new_ids)
+    ranked = sorted(new_ids, key=lambda nid: seen.get(nid, 0), reverse=True)
+    shortcut_targets = ranked[: config.min_shortcut_edges]
+    _sc_set = set(shortcut_targets)
+    stitchable = [nid for nid in new_ids if nid not in _sc_set] or list(new_ids)
 
     # 2. stitch edges: floor + burst jitter, well above the minimum.
     stitch_count = config.min_stitch_edges + rng.randint(0, config.connection_burst)
@@ -127,15 +131,18 @@ def _build_candidate(
         edges.append(RegionEdge(a=explored_sources[j], b=new_targets[j], kind=kind))
 
     # 3. hidden (non-obvious) edges: >= min_hidden_edges, kind 'secret'.
-    #    Never land the hidden edge on deep_new (keep its only non-shortcut
-    #    route the long internal path).
+    #    Never land the hidden edge on any shortcut target (keep each
+    #    target's only short route its own shortcut).
     for _ in range(config.min_hidden_edges):
         a = rng.choice(attach if not is_seed else [explored.entrance_id])
         b = rng.choice(stitchable)
         edges.append(RegionEdge(a=a, b=b, kind="secret", hidden=True))
 
-    # 4. shortcut: tree-deepest new region -> the explored region closest
-    #    to the entrance, via a vertical-ish kind, marked shortcut.
+    # 4. shortcut: emit ONE shortcut per DISTINCT tree-deepest new region
+    #    -> the explored region closest to the entrance, via a vertical-ish
+    #    kind, marked shortcut. Distinct targets (never parallel twins) so
+    #    each shortcut's removal independently lengthens only its own
+    #    target's route -> the checker can credit min_shortcut_edges.
     dist_from_entrance = explored.bfs_dist(explored.entrance_id)
     nearest = min(
         (explored.entrance_id, *attach),
@@ -145,11 +152,11 @@ def _build_candidate(
         [k for k in ("shaft", "chute", "stairs", "secret") if k in config.edge_kinds]
         or list(config.edge_kinds)
     )
-    for _ in range(config.min_shortcut_edges):
+    for t in shortcut_targets:
         edges.append(
             RegionEdge(
                 a=nearest,
-                b=deep_new,
+                b=t,
                 kind=shortcut_kind,
                 hidden=(shortcut_kind == "secret"),
                 shortcut=True,

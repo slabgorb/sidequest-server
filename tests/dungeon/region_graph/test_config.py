@@ -66,6 +66,15 @@ def test_validate_rejects_too_few_regions_for_stitch_floor():
         JaquaysConfig(min_stitch_edges=4, new_regions_per_expansion=(2, 5)).validate()
 
 
+def test_validate_rejects_regions_below_stitch_plus_shortcut():
+    with pytest.raises(ValueError, match="min_stitch_edges \\+ min_shortcut_edges"):
+        JaquaysConfig(min_shortcut_edges=2, new_regions_per_expansion=(3, 6)).validate()
+
+
+def test_validate_passes_when_regions_cover_stitch_plus_shortcut():
+    JaquaysConfig(min_shortcut_edges=2, new_regions_per_expansion=(4, 8)).validate()
+
+
 def test_validate_rejects_nonpositive_attempts():
     with pytest.raises(ValueError, match="max_reroll_attempts must be >= 1"):
         JaquaysConfig(max_reroll_attempts=0).validate()

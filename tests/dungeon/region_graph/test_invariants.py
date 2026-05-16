@@ -37,8 +37,8 @@ def _good_expansion() -> Expansion:
 
 
 def test_good_expansion_passes_all_invariants():
-    # minimal fixture's shortcut collapses distance by 1; spec default
-    # min_shortcut_gain=3 targets real deep expansions, not unit fixtures
+    # default min_shortcut_gain=1 (spec specifies no number); this
+    # fixture's shortcut collapses distance by exactly 1
     rep = check_invariants(_explored(), _good_expansion(), JaquaysConfig(min_shortcut_gain=1))
     assert rep.all_passed(), rep.invariants_passed
     assert rep.stitch_edges >= 2
