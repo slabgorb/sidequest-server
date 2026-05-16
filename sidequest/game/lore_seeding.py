@@ -18,6 +18,7 @@ reconnect that re-seeds won't hard-fail.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -180,6 +181,63 @@ def seed_lore_from_world(store: LoreStore, world_lore: WorldLore, world_slug: st
             count += 1
 
     return count
+
+
+def seed_world_lore(
+    store: LoreStore,
+    pack: GenrePack,
+    world_slug: str | None,
+    *,
+    emit: Callable[..., None] | None = None,
+) -> tuple[int, int]:
+    """Seed ``store`` with the deterministic genre + world lore pair.
+
+    Single source of truth for the genre/world seeding the chargen
+    confirmation flow used to do inline (two ``seed_lore_from_*`` calls
+    plus a ``lore_store_loaded`` emission). Extracted so the slug-resume
+    connect path can re-seed an empty in-memory ``LoreStore`` with the
+    same fragments — pre-fix only the fresh chargen flow seeded it, so
+    every *resumed* save had an empty store, ``query_lore`` returned
+    ``hit_count=0``, and the SDK narrator confabulated world canon
+    instead of recalling it.
+
+    Returns ``(genre_fragments_added, world_fragments_added)``.
+
+    Idempotency: both underlying seeders use stable fragment ids and
+    swallow :class:`DuplicateLoreId`, so re-running this against a store
+    that already holds the genre/world fragments adds zero and never
+    grows the store unboundedly — safe to call on every connect (fresh
+    or any reconnect).
+
+    ``emit`` (optional) is invoked exactly once after seeding with the
+    ``lore_store_loaded`` watcher payload kwargs so the GM panel / Jaeger
+    can prove lore loaded — on the resume path as well as the fresh one.
+    It is a callback (rather than a direct watcher import) because
+    ``sidequest.game`` must not depend on ``sidequest.server`` /
+    ``sidequest.telemetry`` at module load — same import-cycle reasoning
+    as :func:`seed_lore_from_arc_promotion`'s local span import.
+    """
+    genre_added = seed_lore_from_genre_pack(store, pack)
+    world_added = 0
+    if world_slug:
+        # Inside ``if world_slug:`` pyright narrows ``world_slug`` from
+        # ``str | None`` to ``str`` so the ``seed_lore_from_world``
+        # (``world_slug: str``) call type-checks. Behaviour identical to
+        # the prior ``... if world_slug else None`` guard: falsy
+        # world_slug or unresolved world_obj still yields world_added=0.
+        world_obj = pack.worlds.get(world_slug)
+        if world_obj is not None:
+            world_added = seed_lore_from_world(store, world_obj.lore, world_slug)
+
+    if emit is not None:
+        emit(
+            genre_fragments_added=genre_added,
+            world_fragments_added=world_added,
+            total_fragments=len(store),
+            total_tokens=store.total_tokens(),
+        )
+
+    return genre_added, world_added
 
 
 def seed_lore_from_char_creation(store: LoreStore, scenes: list[CharCreationScene]) -> int:
@@ -388,4 +446,5 @@ __all__ = [
     "seed_lore_from_char_creation",
     "seed_lore_from_genre_pack",
     "seed_lore_from_world",
+    "seed_world_lore",
 ]

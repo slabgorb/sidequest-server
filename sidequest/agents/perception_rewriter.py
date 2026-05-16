@@ -1,10 +1,18 @@
 """PerceptionRewriter — deterministic fidelity+status-effect prose filter.
 
-MP-ship version. LLM re-voicing is deferred to post-MP (G10). This module
-runs AFTER the projection filter produces a per-recipient FilterDecision.
-Input: the canonical payload (already visibility-filtered). Output: a
-payload with spans further stripped/annotated per the recipient's status
-effects.
+Scope clarification (Phase D / ADR-104): this module is the MP **fan-out**
+span-strip pass that runs in ``sidequest/server/emitters.py`` per WS
+recipient. It is **not** the narrator-path perception filter — narrator-side
+perception filtering lives at the tool layer in
+``sidequest/agents/narrator_perception_filter.py`` (Phase C). Both layers
+coexist: the tool-layer filter shapes what the model SEES; this module
+shapes what each recipient SEES on broadcast.
+
+MP-ship version. LLM re-voicing on broadcast is deferred to post-MP (G10).
+This module runs AFTER the projection filter produces a per-recipient
+FilterDecision. Input: the canonical payload (already visibility-filtered).
+Output: a payload with spans further stripped/annotated per the recipient's
+status effects.
 
 Composition order:
     canonical  ->  VisibilityTagFilter._apply_fidelity  ->  [FilterDecision]

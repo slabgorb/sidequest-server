@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from sidequest.agents.claude_client import LlmClient
 from sidequest.agents.llm_factory import build_llm_client
+from sidequest.agents.tooling_protocol import ToolingLlmClient
 from sidequest.genre.loader import DEFAULT_GENRE_PACK_SEARCH_PATHS
 from sidequest.server.dashboard import dashboard_router
 from sidequest.server.rest import create_rest_router
@@ -72,7 +73,7 @@ def _install_uvicorn_log_bridge() -> None:
 
 
 def create_app(
-    claude_client_factory: Callable[[], LlmClient] | None = None,
+    claude_client_factory: Callable[[], LlmClient | ToolingLlmClient] | None = None,
     genre_pack_search_paths: list[Path] | None = None,
     save_dir: Path | None = None,
     ui_dist: Path | None = None,
@@ -98,7 +99,7 @@ def create_app(
         if genre_pack_search_paths is not None
         else DEFAULT_GENRE_PACK_SEARCH_PATHS
     )
-    resolved_client_factory: Callable[[], LlmClient] = (
+    resolved_client_factory: Callable[[], LlmClient | ToolingLlmClient] = (
         claude_client_factory if claude_client_factory is not None else build_llm_client
     )
 

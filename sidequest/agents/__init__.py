@@ -18,6 +18,12 @@ Phase 1 exports:
 from __future__ import annotations
 
 from sidequest.agents.agent import Agent, AgentResponse, BaseAgent, make_agent
+from sidequest.agents.anthropic_sdk_client import (
+    AnthropicSdkClient,
+    AnthropicSdkClientError,
+    AnthropicSdkConfigError,
+    AnthropicSdkLoopExceeded,
+)
 from sidequest.agents.claude_client import (
     ClaudeClient,
     ClaudeClientBuilder,
@@ -32,6 +38,7 @@ from sidequest.agents.claude_client import (
 from sidequest.agents.claude_client import TimeoutError as ClaudeTimeoutError
 from sidequest.agents.llm_factory import UnknownBackend, build_llm_client
 from sidequest.agents.local_dm import LocalDM
+from sidequest.agents.model_routing import CallType, resolve_model
 from sidequest.agents.narrator import NarratorAgent, narrator_output_format_text
 from sidequest.agents.ollama_client import OllamaClient, OllamaClientError
 from sidequest.agents.orchestrator import (
@@ -44,6 +51,7 @@ from sidequest.agents.orchestrator import (
     VisualScene,
     extract_structured_from_response,
 )
+from sidequest.agents.perception_filter import NoopPerceptionFilter, PerceptionFilter
 from sidequest.agents.prompt_framework import (
     AttentionZone,
     PromptComposer,
@@ -54,6 +62,24 @@ from sidequest.agents.prompt_framework import (
     SoulData,
     SoulPrinciple,
     parse_soul_md,
+)
+from sidequest.agents.tool_registry import (
+    Registry,
+    ToolCategory,
+    ToolContext,
+    ToolResult,
+    ToolResultStatus,
+    default_registry,
+    tool,
+)
+from sidequest.agents.tooling_protocol import (
+    CacheableBlock,
+    Message,
+    ToolDefinition,
+    ToolingLlmClient,
+    ToolingResult,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 
 __all__ = [
@@ -103,4 +129,31 @@ __all__ += [
     "OllamaClientError",
     "UnknownBackend",
     "build_llm_client",
+    # anthropic_sdk_client
+    "AnthropicSdkClient",
+    "AnthropicSdkClientError",
+    "AnthropicSdkConfigError",
+    "AnthropicSdkLoopExceeded",
+    # model_routing
+    "CallType",
+    "resolve_model",
+    # tooling_protocol
+    "CacheableBlock",
+    "Message",
+    "ToolDefinition",
+    "ToolingLlmClient",
+    "ToolingResult",
+    "ToolResultBlock",
+    "ToolUseBlock",
+    # perception_filter (Phase B)
+    "NoopPerceptionFilter",
+    "PerceptionFilter",
+    # tool_registry (Phase B)
+    "Registry",
+    "ToolCategory",
+    "ToolContext",
+    "ToolResult",
+    "ToolResultStatus",
+    "default_registry",
+    "tool",
 ]

@@ -54,8 +54,7 @@ from sidequest.game.chassis import (
 from sidequest.game.event_log import EventLog
 from sidequest.game.lore_seeding import (
     seed_lore_from_char_creation,
-    seed_lore_from_genre_pack,
-    seed_lore_from_world,
+    seed_world_lore,
 )
 from sidequest.game.projection.cache import ProjectionCache
 from sidequest.game.projection_filter import ProjectionFilter
@@ -2007,44 +2006,52 @@ class WebSocketSessionHandler:
         # top with ``Character`` category so they're scoped distinctly
         # in the LoreStore index. Idempotent: re-seeding on a reconnect
         # silently skips duplicate ids (``DuplicateLoreId`` guard).
-        genre_lore_added = seed_lore_from_genre_pack(sd.lore_store, sd.genre_pack)
-        world_lore_added = 0
-        world_obj = sd.genre_pack.worlds.get(sd.world_slug) if sd.world_slug else None
-        if world_obj is not None:
-            world_lore_added = seed_lore_from_world(
-                sd.lore_store,
-                world_obj.lore,
-                sd.world_slug,
-            )
-
         # OTEL lie-detector: per the user's pingpong note request, expose
         # ``lore.store_loaded count=N world=X`` so the GM panel can
         # distinguish "lore is empty by design for this scenario" from
         # "lore was supposed to load and didn't" — both pre-fix manifest
         # as ``outcome=empty_query_or_store`` at retrieve time. Sebastien's
-        # State / Subsystems tabs read this watcher event.
-        logger.info(
-            "lore.store_loaded genre=%s world=%s genre_fragments=%d "
-            "world_fragments=%d total=%d total_tokens=%d",
-            sd.genre_slug,
+        # State / Subsystems tabs read this watcher event. Shared with the
+        # slug-resume connect path via ``seed_world_lore`` so a resumed
+        # save's lore_store is re-seeded with the SAME deterministic
+        # genre+world fragments and emits the SAME ``lore_store_loaded``
+        # event (the resume gap commit 72750db exposed).
+        def _emit_lore_store_loaded(
+            *,
+            genre_fragments_added: int,
+            world_fragments_added: int,
+            total_fragments: int,
+            total_tokens: int,
+        ) -> None:
+            logger.info(
+                "lore.store_loaded genre=%s world=%s genre_fragments=%d "
+                "world_fragments=%d total=%d total_tokens=%d",
+                sd.genre_slug,
+                sd.world_slug,
+                genre_fragments_added,
+                world_fragments_added,
+                total_fragments,
+                total_tokens,
+            )
+            _watcher_publish(
+                "lore_store_loaded",
+                {
+                    "genre_slug": sd.genre_slug,
+                    "world_slug": sd.world_slug,
+                    "genre_fragments_added": genre_fragments_added,
+                    "world_fragments_added": world_fragments_added,
+                    "total_fragments": total_fragments,
+                    "total_tokens": total_tokens,
+                    "player_id": player_id,
+                },
+                component="rag",
+            )
+
+        genre_lore_added, world_lore_added = seed_world_lore(
+            sd.lore_store,
+            sd.genre_pack,
             sd.world_slug,
-            genre_lore_added,
-            world_lore_added,
-            len(sd.lore_store),
-            sd.lore_store.total_tokens(),
-        )
-        _watcher_publish(
-            "lore_store_loaded",
-            {
-                "genre_slug": sd.genre_slug,
-                "world_slug": sd.world_slug,
-                "genre_fragments_added": genre_lore_added,
-                "world_fragments_added": world_lore_added,
-                "total_fragments": len(sd.lore_store),
-                "total_tokens": sd.lore_store.total_tokens(),
-                "player_id": player_id,
-            },
-            component="rag",
+            emit=_emit_lore_store_loaded,
         )
 
         # Lore seeding (Slice F / connect.rs:2196). Must run BEFORE

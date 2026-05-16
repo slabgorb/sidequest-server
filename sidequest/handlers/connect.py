@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from sidequest.agents.orchestrator import Orchestrator
 from sidequest.game.builder import CharacterBuilder
 from sidequest.game.event_log import EventLog
+from sidequest.game.lore_seeding import seed_world_lore
 from sidequest.game.persistence import (
     SaveSchemaIncompatibleError,
     SqliteStore,
@@ -55,6 +56,10 @@ from sidequest.server.session_helpers import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sidequest.game.lore_store import LoreStore
+    from sidequest.genre.models.pack import GenrePack
     from sidequest.protocol.messages import SessionEventPayload
     from sidequest.server.websocket_session_handler import WebSocketSessionHandler
 
@@ -128,6 +133,43 @@ def _backfill_magic_state_on_resume(
                 world_slug,
                 character_id,
             )
+
+
+def _seed_world_lore_on_resume(
+    *,
+    lore_store: LoreStore,
+    genre_pack: GenrePack,
+    world_slug: str | None,
+    emit: Callable[..., None],
+) -> tuple[int, int]:
+    """Re-seed the per-session in-memory ``LoreStore`` with the
+    deterministic genre + world lore on the slug-resume connect path.
+
+    Root cause (exposed by commit 72750db once ToolContext id/store
+    plumbing was fixed): ``_SessionData.lore_store`` is an in-memory
+    ``field(default_factory=LoreStore)`` and is NOT persisted to the
+    SQLite save. Only the fresh character-creation flow
+    (``_chargen_confirmation``) seeded it. On a slug-resume connect a
+    brand-new ``_SessionData`` is constructed with an *empty* lore_store
+    and ``_chargen_confirmation`` is never reached — so ``query_lore``
+    returned ``hit_count=0`` and the SDK narrator confabulated world
+    canon instead of recalling it. Every resumed save was affected.
+
+    Delegates to the shared :func:`seed_world_lore` so the resume path
+    and the fresh path share one implementation (DRY / "wire up what
+    exists"). Idempotent: stable fragment ids + the ``DuplicateLoreId``
+    guard mean a reconnect-of-a-reconnect adds zero and never grows the
+    store unboundedly.
+
+    Scope: genre + world lore only. Char-creation lore is deliberately
+    NOT re-seeded here — the chargen ``builder.scenes()`` is not
+    reliably available on a pure resume; that is a separate concern.
+
+    ``emit`` is the ``lore_store_loaded`` watcher callback so the GM
+    panel / Jaeger can prove lore loaded on resume (CLAUDE.md OTEL
+    lie-detector mandate) — the SAME event the fresh path emits.
+    """
+    return seed_world_lore(lore_store, genre_pack, world_slug, emit=emit)
 
 
 class ConnectHandler:
@@ -639,6 +681,53 @@ class ConnectHandler:
                     else ImagePacingThrottle.for_solo()
                 ),
             )
+
+            # Slug-resume LoreStore re-seed (exposed by commit 72750db).
+            # ``_SessionData.lore_store`` is an in-memory
+            # ``default_factory=LoreStore`` — NOT persisted to the SQLite
+            # save. Only the fresh chargen flow (``_chargen_confirmation``)
+            # seeded it; a returning player (``has_character=True`` —
+            # i.e. the ``session.slug_resumed`` branch above) constructs a
+            # brand-new empty lore_store here and never reaches
+            # ``_chargen_confirmation``. Result: ``query_lore`` returned
+            # ``hit_count=0`` on every resumed save and the SDK narrator
+            # confabulated world canon instead of recalling it. Re-seed
+            # the deterministic genre + world lore so RAG retrieval is
+            # grounded on resume. Idempotent (stable ids + DuplicateLoreId
+            # guard) — safe even though new chargen also seeds later. The
+            # ``lore_store_loaded`` watcher event is the SAME one the
+            # fresh path emits so the GM panel / Jaeger can prove lore
+            # loaded on resume (CLAUDE.md OTEL lie-detector mandate).
+            if has_character:
+                _resume_sd = session._session_data
+                genre_lore_added, world_lore_added = _seed_world_lore_on_resume(
+                    lore_store=_resume_sd.lore_store,
+                    genre_pack=genre_pack,
+                    world_slug=row.world_slug,
+                    emit=lambda **kw: _watcher_publish(
+                        "lore_store_loaded",
+                        {
+                            "genre_slug": row.genre_slug,
+                            "world_slug": row.world_slug,
+                            "player_id": player_id,
+                            "slug": slug,
+                            "reason": "slug_resume_reseed",
+                            **kw,
+                        },
+                        component="rag",
+                    ),
+                )
+                logger.info(
+                    "lore.store_loaded_on_resume genre=%s world=%s slug=%s "
+                    "genre_fragments=%d world_fragments=%d total=%d",
+                    row.genre_slug,
+                    row.world_slug,
+                    slug,
+                    genre_lore_added,
+                    world_lore_added,
+                    len(_resume_sd.lore_store),
+                )
+
             # MP-03 Task 3 + Task-17 + Task-22 ProjectionFilter Rules integration.
             session._event_log = EventLog(store)
             session._projection_cache = ProjectionCache(store)

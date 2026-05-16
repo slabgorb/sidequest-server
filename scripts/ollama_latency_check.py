@@ -53,6 +53,7 @@ import time
 # fails AT SCRIPT LOAD rather than silently passing --help and only
 # surfacing ModuleNotFoundError when the operator actually runs a
 # measurement (CLAUDE.md: No Silent Fallbacks).
+from sidequest.agents.claude_client import LlmClient
 from sidequest.agents.llm_factory import UnknownBackend, build_llm_client
 from sidequest.agents.ollama_client import OllamaClientError, UnknownModel
 
@@ -129,6 +130,16 @@ async def _measure_one_call(model: str, system_prompt: str, user_prompt: str) ->
     os.environ["SIDEQUEST_LLM_BACKEND"] = "ollama"
 
     client = build_llm_client()
+    # This script calls send_stateless, which is an LlmClient-only method.
+    # build_llm_client() returns LlmClient | ToolingLlmClient; the ollama
+    # backend always produces an LlmClient (OllamaClient), so this guard
+    # is a runtime safety net — not a conditional branch in practice.
+    if not isinstance(client, LlmClient):
+        raise RuntimeError(
+            "ollama backend did not return an LlmClient — "
+            "send_stateless is unavailable on ToolingLlmClient. "
+            "anthropic_sdk backend is not supported for this script."
+        )
     start = time.perf_counter()
     await client.send_stateless(
         system_prompt=system_prompt,

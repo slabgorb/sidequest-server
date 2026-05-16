@@ -12,6 +12,7 @@ dependencies = [
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-grpc>=1.24",
     "websockets>=12.0",
+    "anthropic>=0.40",
     "svgwrite>=1.4",
 ]
 

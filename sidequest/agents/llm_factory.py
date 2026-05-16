@@ -4,25 +4,33 @@ from __future__ import annotations
 
 import os
 
+from sidequest.agents.anthropic_sdk_client import AnthropicSdkClient
 from sidequest.agents.claude_client import ClaudeClient, LlmClient, LlmClientError
 from sidequest.agents.ollama_client import DEFAULT_OLLAMA_URL, OllamaClient
+from sidequest.agents.tooling_protocol import ToolingLlmClient
 
 ENV_BACKEND = "SIDEQUEST_LLM_BACKEND"
 ENV_OLLAMA_URL = "SIDEQUEST_OLLAMA_URL"
 
-_VALID_BACKENDS = frozenset({"claude", "ollama"})
+_VALID_BACKENDS = frozenset({"claude", "ollama", "anthropic_sdk"})
 
 
 class UnknownBackend(LlmClientError):
     """SIDEQUEST_LLM_BACKEND value was not one of the supported backends."""
 
 
-def build_llm_client() -> LlmClient:
-    """Return the configured LlmClient. Default: ClaudeClient.
+def build_llm_client() -> LlmClient | ToolingLlmClient:
+    """Return the configured LlmClient. Default: AnthropicSdkClient (Phase D).
+
+    Returns LlmClient for 'claude'/'ollama' backends and ToolingLlmClient for
+    'anthropic_sdk'. ToolingLlmClient is a richer protocol (tool-use loop,
+    prompt caching) and intentionally does not inherit from LlmClient — the
+    two protocols serve different call sites. Callers that need tool-use must
+    isinstance-check or accept the union type.
 
     Fails loudly for unknown backend values — no silent fallback (CLAUDE.md).
     """
-    raw = os.environ.get(ENV_BACKEND, "claude")
+    raw = os.environ.get(ENV_BACKEND, "anthropic_sdk")
     key = raw.strip().lower()
     if key not in _VALID_BACKENDS:
         raise UnknownBackend(
@@ -33,5 +41,7 @@ def build_llm_client() -> LlmClient:
     if key == "ollama":
         base_url = os.environ.get(ENV_OLLAMA_URL, DEFAULT_OLLAMA_URL)
         return OllamaClient(base_url=base_url)
+    if key == "anthropic_sdk":
+        return AnthropicSdkClient()
     # Unreachable — the set check above covers all known backends.
     raise UnknownBackend(f"backend {key!r} recognised but not wired")
