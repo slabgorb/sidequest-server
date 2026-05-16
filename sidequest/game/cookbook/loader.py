@@ -75,11 +75,16 @@ def validate_bundle(bundle: CookbookBundle) -> None:
     """Spec §7 gates, corrected per "Data-Forced Design Item".
 
     A RACE must resolve ≥1 curated row in (a) the SHALLOW band (entry
-    guarantee) and (b) every band ≥ each of its big_bads' min_band (a
-    declared capstone must be reachable). Bands a RACE simply cannot
-    fill are NOT a build error — the assembler re-rolls observably
-    (cookbook.race.reroll). Raises CookbookValidationError naming the
-    offender. No silent fallback.
+    guarantee) and (b) the declared min_band of each of its big_bads (a
+    declared capstone tier must be non-empty where it is declared to
+    begin). Bands a RACE cannot fill — including bands ABOVE a big_bad's
+    min_band, e.g. ooze (CR ceiling 4) cannot fill `deep` — are NOT a
+    build error: the assembler re-rolls observably (cookbook.race.reroll,
+    Task 14/18). The plan's framing line said "every band ≥ min_band",
+    which contradicts the Data-Forced decision and the must-pass
+    real-bundle test; the min_band-only check is the authoritative
+    resolution (recorded in the Task 23 spec-status note). Raises
+    CookbookValidationError naming the offender. No silent fallback.
     """
     curated = apply_world_register(bundle.monsters, bundle.register)
     band_order = bundle.affinities.band_order()
