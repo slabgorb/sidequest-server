@@ -386,3 +386,43 @@ def test_commit_and_ledger_emit_spans() -> None:
     assert "dungeon.persist.commit" in captured
     assert "ledger.add" in captured
     assert "ledger.resolve" in captured
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("campaign_seed", [1, 2, 7, 13, 24301, 99991])
+def test_serde_exact_inverse_over_seed_sweep(campaign_seed: int) -> None:
+    """Generate → attach → depth-score a real 3-expansion chain, persist,
+    reload, and assert the rebuilt graph is identical (spec §11)."""
+    g = _seed_graph()
+    exp1 = _generate_and_attach(
+        g, campaign_seed=campaign_seed, expansion_id=1, attach_ids=["entrance"]
+    )
+    deep_ids = [n.id for n in exp1.new_nodes][:2] or ["entrance"]
+    exp2 = _generate_and_attach(
+        g, campaign_seed=campaign_seed, expansion_id=2,
+        attach_ids=(deep_ids + ["entrance"])[:2],
+    )
+    deeper = [n.id for n in exp2.new_nodes][:2] or deep_ids
+    exp3 = _generate_and_attach(
+        g, campaign_seed=campaign_seed, expansion_id=3,
+        attach_ids=(deeper + deep_ids)[:2],
+    )
+
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    _commit_seed(store, g)
+    for exp in (exp1, exp2, exp3):
+        store.commit_expansion(exp, g)
+    conn.commit()
+
+    reloaded = store.load_map(entrance_id="entrance")
+    assert reloaded.nodes == g.nodes
+    assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
+    # every node carries its frozen depth_score through the round-trip
+    assert all(
+        reloaded.nodes[rid].depth_score == g.nodes[rid].depth_score
+        for rid in g.nodes
+    )
