@@ -11,8 +11,10 @@ deliberately NOT wired into the generic load_genre_pack — a `themes/` dir
 is dungeon-specific to beneath_sunden; an optional generic loader would
 silently no-op for the other 5 packs. The runtime consumer (Plan 7's
 materializer building a depth-filtered theme_pool + Plan 6's set-piece
-roll) is an honest deferral, identical to Plan 2/3's stance — proven by
-tests/dungeon/test_themes_wiring.py loading the REAL shipped scaffold.
+roll) is an honest deferral, identical to Plan 2/3's stance. Task 7 will
+add tests/dungeon/test_themes_wiring.py to prove this loader against the
+REAL shipped caverns_and_claudes scaffold and the real interiors.ALGORITHMS
+registry (not yet present at this commit — authored in Task 7).
 """
 
 from __future__ import annotations
