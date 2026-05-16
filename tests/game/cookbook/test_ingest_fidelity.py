@@ -16,7 +16,7 @@ from sidequest.cli.cookbook_ingest.ingest import (
 )
 
 WORLD = (
-    Path(__file__).parents[3]
+    Path(__file__).parents[4]
     / "sidequest-content/genre_packs/caverns_and_claudes/worlds/beneath_sunden"
 )
 SRC = WORLD / "corpus/_source"
