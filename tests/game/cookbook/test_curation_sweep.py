@@ -12,7 +12,7 @@ def test_no_denied_row_in_any_manifest(bundle) -> None:
     deny_tags = set(bundle.register.deny.tags)
     marquee = set(bundle.register.marquee)
     by_name = {m.name: m for m in bundle.monsters}
-    looks = [l.id for l in bundle.looks]
+    looks = [lk.id for lk in bundle.looks]
     for i in range(1500):
         look = looks[i % len(looks)]
         man = assemble_region(
