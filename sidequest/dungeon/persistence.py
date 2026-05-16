@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 from sidequest.dungeon.region_graph.model import (
@@ -30,6 +31,7 @@ from sidequest.game.persistence import (
 
 __all__ = [
     "DungeonStore",
+    "FrontierEdge",
     "PersistError",
     "NotFoundError",
     "DatabaseError",
@@ -40,6 +42,35 @@ __all__ = [
 # stamps it per region at commit; frozen regions are never rewritten
 # (spec §7). The freeze test bumps this constant to prove immutability.
 GENERATOR_VERSION = "plan5.v1"
+
+
+@dataclass(frozen=True)
+class FrontierEdge:
+    """An unexpanded frontier edge — where, and at what depth, an
+    expansion would spawn. Plan 7's materializer is the producer."""
+
+    frontier_edge_id: str
+    from_region_id: str
+    heading: str
+    spawn_depth_score: float
+
+    def to_dict(self) -> dict:
+        return {
+            "frontier_edge_id": self.frontier_edge_id,
+            "from_region_id": self.from_region_id,
+            "heading": self.heading,
+            "spawn_depth_score": self.spawn_depth_score,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> FrontierEdge:
+        return cls(
+            frontier_edge_id=d["frontier_edge_id"],
+            from_region_id=d["from_region_id"],
+            heading=d["heading"],
+            spawn_depth_score=d["spawn_depth_score"],
+        )
+
 
 DUNGEON_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS dungeon_map (
@@ -215,3 +246,31 @@ class DungeonStore:
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise SerializationError(f"corrupt dungeon payload: {exc}") from exc
         return g
+
+    def put_frontier(self, fe: FrontierEdge) -> None:
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO dungeon_frontier "
+                "(frontier_edge_id, from_region_id, heading, spawn_depth_score, payload) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    fe.frontier_edge_id,
+                    fe.from_region_id,
+                    fe.heading,
+                    fe.spawn_depth_score,
+                    json.dumps(fe.to_dict()),
+                ),
+            )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"put_frontier failed: {exc}") from exc
+
+    def load_frontier(self) -> list[FrontierEdge]:
+        try:
+            rows = self._conn.execute(
+                "SELECT payload FROM dungeon_frontier ORDER BY frontier_edge_id"
+            ).fetchall()
+            return [FrontierEdge.from_dict(json.loads(r["payload"])) for r in rows]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"load_frontier failed: {exc}") from exc
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise SerializationError(f"corrupt frontier payload: {exc}") from exc

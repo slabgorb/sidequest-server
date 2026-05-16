@@ -201,3 +201,25 @@ def test_commit_then_load_map_roundtrips_over_wal_file() -> None:
 
     assert reloaded.nodes == g.nodes
     assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
+
+
+from sidequest.dungeon.persistence import FrontierEdge  # noqa: E402
+
+
+def test_frontier_roundtrip() -> None:
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+
+    fe = FrontierEdge(
+        frontier_edge_id="f1",
+        from_region_id="exp001.r0",
+        heading="down-and-east",
+        spawn_depth_score=30.0,
+    )
+    store.put_frontier(fe)
+    conn.commit()
+
+    loaded = store.load_frontier()
+    assert loaded == [fe]
+    assert FrontierEdge.from_dict(fe.to_dict()) == fe
