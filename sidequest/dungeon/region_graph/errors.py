@@ -9,7 +9,7 @@ class ExpansionGenerationError(RuntimeError):
     def __init__(self, *, expansion_id: int, attempts: int, failing: list[str]) -> None:
         self.expansion_id = expansion_id
         self.attempts = attempts
-        self.failing = failing
+        self.failing = list(failing)
         super().__init__(
             f"could not generate a Jaquays-valid expansion {expansion_id} "
             f"after {attempts} attempts; "
