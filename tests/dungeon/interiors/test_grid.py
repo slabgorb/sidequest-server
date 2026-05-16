@@ -1,10 +1,10 @@
 from sidequest.dungeon.interiors.grid import (
     FLOOR,
     WALL,
-    new_grid,
-    in_bounds,
-    wall_neighbors,
     carve_between,
+    in_bounds,
+    new_grid,
+    wall_neighbors,
 )
 
 
