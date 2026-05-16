@@ -91,7 +91,7 @@ def test_setpiece_minimal_valid():
     assert [s.name for s in sp.slots] == ["layout", "loot"]
 
 
-@pytest.mark.parametrize("field", ["telegraph", "outcome", "name"])
+@pytest.mark.parametrize("field", ["id", "telegraph", "outcome", "name"])
 def test_setpiece_rejects_blank_mandatory_text(field):
     with pytest.raises(ValidationError):
         _minimal_setpiece(**{field: "   "})
