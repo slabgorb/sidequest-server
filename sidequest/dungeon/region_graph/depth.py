@@ -21,6 +21,7 @@ region_graph: see __init__.py docstring "later plans (3/4/5/7)").
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from sidequest.dungeon.region_graph.model import RegionGraph
@@ -72,3 +73,23 @@ def ordinary_route_dist(graph: RegionGraph) -> dict[str, int]:
             f"cannot assign a depth_score"
         )
     return dist
+
+
+def depth_jitter(*, campaign_seed: int, region_id: str, jitter_max: float) -> float:
+    """Deterministic per-region jitter in [-jitter_max, +jitter_max].
+
+    Sub-seeds with blake2b, NOT XOR — mirrors generator._subseed and
+    refuses to reproduce the `seed ^ 0x5EED` fixed-point-at-24301 class
+    of bug at this layer (Beneath Sünden carry-forward gotcha).
+    """
+    if jitter_max == 0.0:
+        return 0.0
+    digest = hashlib.blake2b(
+        f"{campaign_seed}|depth|{region_id}".encode(),
+        digest_size=8,
+    ).digest()
+    # map the 64-bit digest to a float in [0.0, 1.0], then to
+    # [-jitter_max, +jitter_max].  (Not strictly [0,1): 2**64-1 rounds
+    # to 2**64 in IEEE 754 double, so both extremes are reachable.)
+    frac = int.from_bytes(digest, "big") / float(1 << 64)
+    return (frac * 2.0 - 1.0) * jitter_max

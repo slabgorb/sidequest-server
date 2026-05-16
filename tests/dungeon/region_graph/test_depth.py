@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from sidequest.dungeon.region_graph.depth import DepthConfig, ordinary_route_dist
+from sidequest.dungeon.region_graph.depth import DepthConfig, depth_jitter, ordinary_route_dist
 from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
 
 
@@ -94,3 +94,38 @@ def test_ordinary_route_single_node():
     g = RegionGraph(entrance_id="e")
     g.add_node(RegionNode(id="e", expansion_id=0, theme="t"))
     assert ordinary_route_dist(g) == {"e": 0}  # seed graph: entrance only, no raise
+
+
+def test_depth_jitter_deterministic():
+    a = depth_jitter(campaign_seed=12345, region_id="exp001.r3", jitter_max=3.0)
+    b = depth_jitter(campaign_seed=12345, region_id="exp001.r3", jitter_max=3.0)
+    assert a == b
+
+
+def test_depth_jitter_within_bounds():
+    for rid in (f"exp{e:03d}.r{r}" for e in range(20) for r in range(6)):
+        j = depth_jitter(campaign_seed=999, region_id=rid, jitter_max=3.0)
+        assert -3.0 <= j <= 3.0
+
+
+def test_depth_jitter_varies_by_region():
+    seed = 7
+    vals = {
+        depth_jitter(campaign_seed=seed, region_id=f"exp000.r{i}", jitter_max=3.0)
+        for i in range(40)
+    }
+    assert len(vals) > 1  # not a constant
+
+
+def test_depth_jitter_zero_max_is_exactly_zero():
+    assert depth_jitter(campaign_seed=1, region_id="exp000.r0", jitter_max=0.0) == 0.0
+
+
+def test_depth_jitter_seed_24301_is_not_degenerate():
+    # The seed ^ 0x5EED fixed point (24301) must NOT collapse jitter to a
+    # constant here — we use blake2b, never XOR (carry-forward gotcha).
+    vals = {
+        depth_jitter(campaign_seed=24301, region_id=f"exp000.r{i}", jitter_max=3.0)
+        for i in range(40)
+    }
+    assert len(vals) > 1
