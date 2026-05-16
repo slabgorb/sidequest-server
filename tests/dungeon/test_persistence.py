@@ -52,3 +52,44 @@ def test_region_graph_dict_roundtrip_exact_inverse() -> None:
     assert restored.entrance_id == g.entrance_id
     assert restored.nodes == g.nodes
     assert restored.edges == g.edges
+
+
+import sqlite3  # noqa: E402
+
+from sidequest.dungeon.persistence import DungeonStore  # noqa: E402
+
+_EXPECTED_TABLES = {
+    "dungeon_map",
+    "dungeon_edge",
+    "dungeon_frontier",
+    "dungeon_mutation_overlay",
+    "dungeon_complication_ledger",
+}
+
+
+def _mem_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def test_ensure_schema_creates_all_five_tables() -> None:
+    conn = _mem_conn()
+    DungeonStore(conn).ensure_schema()
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()
+    names = {r["name"] for r in rows}
+    assert _EXPECTED_TABLES.issubset(names)
+
+
+def test_ensure_schema_is_idempotent() -> None:
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    store.ensure_schema()  # second call must not raise
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()
+    assert _EXPECTED_TABLES.issubset({r["name"] for r in rows})
