@@ -118,9 +118,9 @@ def test_scene_route_absent_when_dev_scenes_env_unset(
     )
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 404, (
-        f"DEV_SCENES unset — POST /dev/scene/combat_test must 404, got {r.status_code}"
+        f"DEV_SCENES unset — POST /dev/scene/combat_brawl_wasteland must 404, got {r.status_code}"
     )
 
 
@@ -138,7 +138,7 @@ def test_scene_route_absent_when_dev_scenes_env_set_to_zero(
     app = create_app(save_dir=tmp_path, genre_pack_search_paths=[])
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 404, (
         f"DEV_SCENES=0 must keep the route absent, got {r.status_code}"
     )
@@ -162,9 +162,9 @@ def test_scene_route_registered_when_dev_scenes_env_set(
     )
 
     client = TestClient(app)
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200, (
-        f"POST /dev/scene/combat_test (DEV_SCENES=1) must succeed; "
+        f"POST /dev/scene/combat_brawl_wasteland (DEV_SCENES=1) must succeed; "
         f"got {r.status_code}, body: {r.text}"
     )
 
@@ -180,7 +180,7 @@ def test_scene_post_response_body_has_slug_field(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, dict)
@@ -202,7 +202,7 @@ def test_scene_post_persists_save_file_at_slug_path(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     slug = r.json()["slug"]
 
@@ -223,12 +223,12 @@ def test_scene_post_persisted_snapshot_carries_fixture_genre_and_world(
 
     Loading the saved game_state and parsing it back into GameSnapshot
     yields ``genre_slug=mutant_wasteland`` and ``world_slug=flickering_reach``
-    (from combat_test.yaml). If these are blank or wrong, every
+    (from combat_brawl_wasteland.yaml). If these are blank or wrong, every
     downstream genre-pack lookup will silently fall through."""
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
     slug = r.json()["slug"]
 
@@ -257,7 +257,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     slug = r.json()["slug"]
 
     from sidequest.game.persistence import SqliteStore, db_path_for_slug
@@ -269,7 +269,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
     snapshot = saved.snapshot
 
     assert len(snapshot.characters) >= 1, (
-        "combat_test.yaml has a character block — snapshot.characters[0] must be populated"
+        "combat_brawl_wasteland.yaml has a character block — snapshot.characters[0] must be populated"
     )
     # Character nests CreatureCore under ``.core``; ``Character.name`` is a method.
     assert snapshot.characters[0].core.name == "Skar"
@@ -277,7 +277,7 @@ def test_scene_post_persisted_snapshot_carries_fixture_character(
 
 @pytest.mark.parametrize(
     "fixture_name",
-    ["combat_test", "dogfight", "negotiation", "poker"],
+    ["combat_brawl_wasteland", "combat_dogfight_space", "social_negotiation_tea", "social_poker_wasteland"],
 )
 def test_every_canonical_fixture_can_be_loaded_via_endpoint(
     monkeypatch: pytest.MonkeyPatch,
@@ -363,7 +363,7 @@ def test_scene_harness_emits_load_intent_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     intent_events = [e for e in captured if "scene_harness" in e[0] and "load" in e[0]]
@@ -374,8 +374,8 @@ def test_scene_harness_emits_load_intent_span(
     # The intent span must carry the fixture name so the GM panel groups
     # events by fixture (Keith iterates many fixtures per playtest session).
     fields = intent_events[0][1]
-    assert fields.get("fixture_name") == "combat_test", (
-        f"load-intent span must carry fixture_name='combat_test'; got fields={fields!r}"
+    assert fields.get("fixture_name") == "combat_brawl_wasteland", (
+        f"load-intent span must carry fixture_name='combat_brawl_wasteland'; got fields={fields!r}"
     )
 
 
@@ -390,7 +390,7 @@ def test_scene_harness_emits_hydrate_ok_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     ok_events = [e for e in captured if "scene_harness" in e[0] and "hydrate" in e[0] and "ok" in e[0]]
@@ -410,7 +410,7 @@ def test_scene_harness_emits_persist_ok_span(
     app = _build_dev_scenes_app(monkeypatch, save_dir=tmp_path)
     client = TestClient(app)
 
-    r = client.post("/dev/scene/combat_test")
+    r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
     persist_events = [e for e in captured if "scene_harness" in e[0] and "persist" in e[0]]
@@ -451,4 +451,176 @@ def test_scene_harness_emits_hydrate_error_span_on_invalid_fixture(
     assert err_events, (
         f"scene-harness must emit a hydrate.error span on 422; "
         f"captured event types: {sorted({e[0] for e in captured})!r}"
+    )
+
+
+# ── Story 50-23 wiring: POST /dev/scene/{name} with multi-PC fixtures ───────
+#
+# AC#11 from the story session: load a multi-PC fixture end-to-end through
+# the production route — POST returns slug, snapshot persists, and the
+# saved snapshot carries every PC the fixture declared. Uses a tmp_path
+# fixture (not a Wave 2 canonical file on disk) so the test's red/green
+# status reflects ONLY the multi-PC hydrator change.
+
+
+def test_dev_scene_route_persists_four_pc_party_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#11 wiring: a 4-PC fixture loaded via POST /dev/scene/{name}
+    persists a snapshot whose ``characters`` list carries every PC the
+    fixture declared, in declared order.
+
+    Production-path wiring (CLAUDE.md "Every Test Suite Needs a Wiring
+    Test"): the hydrator change is reachable from real code paths —
+    route registered by ``create_app()``, route calls ``hydrate_fixture``,
+    result persisted via ``SqliteStore``, ``slug-connect`` can subsequently
+    find N characters in the save.
+
+    A unit-only suite would not catch a hydrator that returns the right
+    object but a router that flattens the list back to ``characters[0]``
+    before persisting; this test does.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "party_test.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  - name: Wren\n    description: scout\n    personality: cautious\n"
+        "    backstory: scouted these tunnels before\n    char_class: thief\n    race: human\n"
+        "  - name: Borin\n    description: warrior\n    personality: hot-tempered\n"
+        "    backstory: clan war veteran\n    char_class: fighter\n    race: dwarf\n"
+        "  - name: Caia\n    description: cleric\n    personality: stoic\n"
+        "    backstory: temple novitiate\n    char_class: cleric\n    race: human\n"
+        "  - name: Dax\n    description: rogue\n    personality: sly\n"
+        "    backstory: street thief\n    char_class: thief\n    race: halfling\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+
+    client = TestClient(app)
+    r = client.post("/dev/scene/party_test")
+    assert r.status_code == 200, (
+        f"multi-PC fixture must hydrate via POST /dev/scene; "
+        f"got {r.status_code} body={r.text}"
+    )
+    slug = r.json()["slug"]
+
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+
+    store = SqliteStore(db_path_for_slug(save_dir, slug))
+    store.initialize()
+    saved = store.load()
+    assert saved is not None, (
+        "save file exists but SqliteStore.load returned None — "
+        "the route either didn't persist or wrote to the wrong path"
+    )
+
+    names = [pc.core.name for pc in saved.snapshot.characters]
+    assert names == ["Wren", "Borin", "Caia", "Dax"], (
+        f"multi-PC list must round-trip through the harness in fixture-declared order; "
+        f"got {names!r}"
+    )
+
+
+def test_dev_scene_route_hydrate_ok_span_reports_full_character_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """OTEL wiring (CLAUDE.md OTEL Observability Principle): the
+    ``scene_harness.hydrate.ok`` span fired by the router reports the
+    party size, not 1.
+
+    Without this, the GM panel can't tell whether a multi-PC fixture
+    actually hydrated all four PCs or whether the hydrator silently
+    collapsed to one — which is the same lie-detector concern that
+    drives every other span in this file.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "party_three.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "characters:\n"
+        "  - name: Alpha\n    description: alpha PC\n    personality: brave\n"
+        "    backstory: first of three\n    char_class: fighter\n    race: human\n"
+        "  - name: Beta\n    description: beta PC\n    personality: clever\n"
+        "    backstory: second of three\n    char_class: thief\n    race: human\n"
+        "  - name: Gamma\n    description: gamma PC\n    personality: wise\n"
+        "    backstory: third of three\n    char_class: cleric\n    race: human\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    captured = _capture_events(monkeypatch)
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/party_three")
+    assert r.status_code == 200
+
+    ok_events = [e for e in captured if e[0] == "scene_harness.hydrate.ok"]
+    assert ok_events, (
+        f"missing scene_harness.hydrate.ok span; "
+        f"got types: {sorted({e[0] for e in captured})!r}"
+    )
+    fields = ok_events[0][1]
+    assert fields.get("character_count") == 3, (
+        f"hydrate.ok must report the full party size; "
+        f"got character_count={fields.get('character_count')!r} "
+        f"(fields: {fields!r})"
+    )
+
+
+def test_dev_scene_route_rejects_both_character_and_characters_with_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#4 + AC#10 through the HTTP boundary: a fixture with BOTH
+    ``character:`` and ``characters:`` surfaces as HTTP 422 (not 500, not
+    silently-pick-one-and-200).
+
+    The FixtureValidationError → 422 mapping is the existing pattern in
+    ``scene_harness_router``; this test extends it to the new conflict
+    case so a future hydrator regression that swallows the conflict is
+    visible at the wire.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    # Both blocks INDIVIDUALLY valid — the only thing that can fail
+    # validation is the conflict check itself. See the sibling unit
+    # test ``test_both_character_and_characters_blocks_raises_*`` for
+    # the same discipline at the hydrator layer.
+    (fixtures_dir / "both_blocks_route.yaml").write_text(
+        "genre: caverns_and_claudes\n"
+        "world: default\n"
+        "character:\n"
+        "  name: Solo\n  description: solo PC\n  personality: stoic\n"
+        "  backstory: lone wanderer\n  char_class: ranger\n  race: elf\n"
+        "characters:\n"
+        "  - name: Party\n    description: a party member\n    personality: gregarious\n"
+        "    backstory: tavern regular\n    char_class: bard\n    race: half-elf\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(
+        monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir
+    )
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/both_blocks_route")
+    assert r.status_code == 422, (
+        f"conflicting character+characters fixture must 422 at the wire; "
+        f"got {r.status_code} body={r.text}"
     )
