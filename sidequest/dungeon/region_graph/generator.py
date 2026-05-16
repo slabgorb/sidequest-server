@@ -13,6 +13,11 @@ import random
 from collections import deque
 
 from sidequest.dungeon.region_graph.config import JaquaysConfig
+from sidequest.dungeon.region_graph.errors import ExpansionGenerationError
+from sidequest.dungeon.region_graph.invariants import (
+    GenerationReport,
+    check_invariants,
+)
 from sidequest.dungeon.region_graph.model import (
     Expansion,
     RegionEdge,
@@ -169,3 +174,41 @@ def _build_candidate(
         )
 
     return Expansion(expansion_id=expansion_id, new_nodes=nodes, new_edges=edges)
+
+
+def generate_expansion(
+    *,
+    graph: RegionGraph,
+    campaign_seed: int,
+    expansion_id: int,
+    attach_region_ids: list[str],
+    theme_pool: list[str],
+    config: JaquaysConfig | None = None,
+) -> tuple[Expansion, GenerationReport]:
+    """Generate one Jaquays-valid expansion. Deterministic for identical
+    inputs (pre-curation). Raises ExpansionGenerationError loudly if no
+    attempt within config.max_reroll_attempts satisfies the invariants
+    (CLAUDE.md: No Silent Fallbacks)."""
+    cfg = config or JaquaysConfig()
+    cfg.validate()
+    last: GenerationReport | None = None
+    for attempt in range(cfg.max_reroll_attempts):
+        rng = random.Random(_subseed(campaign_seed, expansion_id, attempt))
+        candidate = _build_candidate(
+            graph,
+            expansion_id=expansion_id,
+            attach_region_ids=attach_region_ids,
+            theme_pool=theme_pool,
+            config=cfg,
+            rng=rng,
+        )
+        report = check_invariants(graph, candidate, cfg)
+        report.attempts = attempt + 1
+        if report.all_passed():
+            return candidate, report
+        last = report
+    raise ExpansionGenerationError(
+        expansion_id=expansion_id,
+        attempts=cfg.max_reroll_attempts,
+        failing=last.failing() if last else list(),
+    )

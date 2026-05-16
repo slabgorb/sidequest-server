@@ -3,7 +3,9 @@ import random
 import pytest
 
 from sidequest.dungeon.region_graph.config import JaquaysConfig
-from sidequest.dungeon.region_graph.generator import _build_candidate, _subseed
+from sidequest.dungeon.region_graph.errors import ExpansionGenerationError
+from sidequest.dungeon.region_graph.generator import _build_candidate, _subseed, generate_expansion
+from sidequest.dungeon.region_graph.invariants import check_invariants
 from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
 
 THEMES = ["crypt", "vault", "flooded", "catacomb"]
@@ -174,3 +176,73 @@ def test_empty_theme_pool_raises_loudly():
             config=JaquaysConfig(),
             rng=random.Random(1),
         )
+
+
+def test_generate_expansion_returns_valid_expansion_and_report():
+    g = _explored()
+    exp, rep = generate_expansion(
+        graph=g,
+        campaign_seed=42,
+        expansion_id=2,
+        attach_region_ids=["e2", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    assert rep.all_passed()
+    assert rep.attempts >= 1
+    recheck = check_invariants(g, exp, JaquaysConfig())
+    assert recheck.all_passed()
+
+
+def test_generate_expansion_is_deterministic():
+    g = _explored()
+    e1, r1 = generate_expansion(
+        graph=g,
+        campaign_seed=99,
+        expansion_id=5,
+        attach_region_ids=["e1", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    e2, r2 = generate_expansion(
+        graph=g,
+        campaign_seed=99,
+        expansion_id=5,
+        attach_region_ids=["e1", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    assert [n.id for n in e1.new_nodes] == [n.id for n in e2.new_nodes]
+    assert r1.attempts == r2.attempts
+    assert [(e.a, e.b, e.kind) for e in e1.new_edges] == [(e.a, e.b, e.kind) for e in e2.new_edges]
+
+
+def test_impossible_config_fails_loudly_with_failing_invariants():
+    g = _explored()
+    cfg = JaquaysConfig(min_shortcut_gain=999, max_reroll_attempts=4)
+    with pytest.raises(ExpansionGenerationError) as ei:
+        generate_expansion(
+            graph=g,
+            campaign_seed=1,
+            expansion_id=2,
+            attach_region_ids=["e2", "e3"],
+            theme_pool=THEMES,
+            config=cfg,
+        )
+    assert ei.value.expansion_id == 2
+    assert ei.value.attempts == 4
+    assert "shortcut_collapses_distance" in ei.value.failing
+
+
+@pytest.mark.parametrize("campaign_seed", [0x5EED, 24301, 0, 1, 7, 999999])
+def test_known_tricky_seeds_still_generate(campaign_seed):
+    g = _explored()
+    exp, rep = generate_expansion(
+        graph=g,
+        campaign_seed=campaign_seed,
+        expansion_id=3,
+        attach_region_ids=["e1", "e2", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    assert rep.all_passed()
