@@ -16,9 +16,7 @@ import pytest
 
 from sidequest.genre.loader import load_genre_pack
 
-PACK = Path(__file__).resolve().parents[3] / (
-    "sidequest-content/genre_packs/caverns_and_claudes"
-)
+PACK = Path(__file__).resolve().parents[3] / ("sidequest-content/genre_packs/caverns_and_claudes")
 
 # Identity tokens that belong to caverns_sunden's three-sins hub. The
 # beneath_sunden anchor is ONE tragic deep-delve (Moria-as-tragedy) and
@@ -99,8 +97,7 @@ def test_beneath_sunden_cartography_has_descent_and_settlement(pack):
     )
     # Identity guard on cartography prose.
     carto_blob = " ".join(
-        f"{r.name} {r.summary} {r.description}".lower()
-        for r in carto.regions.values()
+        f"{r.name} {r.summary} {r.description}".lower() for r in carto.regions.values()
     )
     for token in _CAVERNS_SUNDEN_TOKENS:
         assert token not in carto_blob, (
