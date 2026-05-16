@@ -1,3 +1,5 @@
+import pytest
+
 from sidequest.dungeon.interiors.depthfirst import gen_depthfirst
 from sidequest.dungeon.interiors.grid import FLOOR, WALL
 
@@ -44,3 +46,8 @@ def test_all_floor_is_connected():
                 seen.add((nx, ny))
                 stack.append((nx, ny))
     assert len(seen) == sum(1 for r in g for c in r if c == FLOOR)
+
+
+def test_rejects_too_small():
+    with pytest.raises(ValueError, match="width>=3 and height>=3"):
+        gen_depthfirst(width=1, height=1, seed=0)
