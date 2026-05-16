@@ -335,3 +335,54 @@ def test_frozen_region_untouched_after_generator_version_bump() -> None:
     after_snap = [(r["region_id"], r["payload"], r["generator_version"]) for r in after]
 
     assert after_snap == before_snap  # bytes + version unchanged (frozen)
+
+
+def test_dungeon_persist_spans_registered_and_routed() -> None:
+    from sidequest.telemetry.spans import FLAT_ONLY_SPANS, SPAN_ROUTES
+    from sidequest.telemetry.spans.dungeon_persist import (
+        SPAN_DUNGEON_PERSIST_COMMIT,
+        SPAN_LEDGER_ADD,
+        SPAN_LEDGER_RESOLVE,
+    )
+
+    for name in (SPAN_DUNGEON_PERSIST_COMMIT, SPAN_LEDGER_ADD, SPAN_LEDGER_RESOLVE):
+        assert name in SPAN_ROUTES or name in FLAT_ONLY_SPANS, (
+            f"{name} has no routing decision — routing-completeness gate "
+            f"will fail"
+        )
+
+
+def test_commit_and_ledger_emit_spans() -> None:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        ConsoleSpanExporter,
+        SimpleSpanProcessor,
+    )
+
+    captured: list[str] = []
+
+    class _Capture(ConsoleSpanExporter):
+        def export(self, spans):  # type: ignore[override]
+            captured.extend(s.name for s in spans)
+            return super().export(spans)
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_Capture()))
+    trace.set_tracer_provider(provider)
+
+    g = _seed_graph()
+    exp = _generate_and_attach(g, campaign_seed=5, expansion_id=1, attach_ids=["entrance"])
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    store.commit_expansion(exp, g)
+    store.open_thread(ComplicationThread(
+        thread_id="t1", origin_region_id="exp001.r0", kind="trope",
+        status="open", started_at_depth_score=10.0, payload={},
+    ))
+    store.resolve_thread("t1")
+
+    assert "dungeon.persist.commit" in captured
+    assert "ledger.add" in captured
+    assert "ledger.resolve" in captured

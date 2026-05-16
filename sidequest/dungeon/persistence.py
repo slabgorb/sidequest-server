@@ -28,6 +28,11 @@ from sidequest.game.persistence import (
     PersistError,
     SerializationError,
 )
+from sidequest.telemetry.spans.dungeon_persist import (
+    dungeon_persist_commit_span,
+    ledger_add_span,
+    ledger_resolve_span,
+)
 
 __all__ = [
     "ComplicationThread",
@@ -234,50 +239,56 @@ class DungeonStore:
         spec §7.5). Regions are read from `graph` (depth-scored); edge
         ownership is taken from `expansion`.
         """
-        try:
-            for node in expansion.new_nodes:
-                live = graph.nodes.get(node.id)
-                if live is None:
-                    raise NotFoundError(
-                        f"expansion region {node.id!r} is not in the graph "
-                        f"(commit must run after attach_expansion)"
+        with dungeon_persist_commit_span(
+            expansion_id=expansion.expansion_id,
+            regions=len(expansion.new_nodes),
+            edges=len(expansion.new_edges),
+            generator_version=generator_version,
+        ):
+            try:
+                for node in expansion.new_nodes:
+                    live = graph.nodes.get(node.id)
+                    if live is None:
+                        raise NotFoundError(
+                            f"expansion region {node.id!r} is not in the graph "
+                            f"(commit must run after attach_expansion)"
+                        )
+                    self._conn.execute(
+                        "INSERT INTO dungeon_map "
+                        "(region_id, expansion_id, depth_score, generator_version, payload) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            live.id,
+                            live.expansion_id,
+                            live.depth_score,
+                            generator_version,
+                            json.dumps(live.to_dict()),
+                        ),
                     )
-                self._conn.execute(
-                    "INSERT INTO dungeon_map "
-                    "(region_id, expansion_id, depth_score, generator_version, payload) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (
-                        live.id,
-                        live.expansion_id,
-                        live.depth_score,
-                        generator_version,
-                        json.dumps(live.to_dict()),
-                    ),
-                )
-            for edge in expansion.new_edges:
-                self._conn.execute(
-                    "INSERT INTO dungeon_edge "
-                    "(expansion_id, a, b, kind, hidden, shortcut, payload) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        expansion.expansion_id,
-                        edge.a,
-                        edge.b,
-                        edge.kind,
-                        int(edge.hidden),
-                        int(edge.shortcut),
-                        json.dumps(edge.to_dict()),
-                    ),
-                )
-        except sqlite3.IntegrityError as exc:
-            # A region_id already committed = a re-commit of a frozen
-            # expansion. Fail loud (spec §7: frozen regions never rewritten).
-            raise PersistError(
-                f"dungeon expansion {expansion.expansion_id} re-commit "
-                f"violates the freeze contract: {exc}"
-            ) from exc
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"commit_expansion failed: {exc}") from exc
+                for edge in expansion.new_edges:
+                    self._conn.execute(
+                        "INSERT INTO dungeon_edge "
+                        "(expansion_id, a, b, kind, hidden, shortcut, payload) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            expansion.expansion_id,
+                            edge.a,
+                            edge.b,
+                            edge.kind,
+                            int(edge.hidden),
+                            int(edge.shortcut),
+                            json.dumps(edge.to_dict()),
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                # A region_id already committed = a re-commit of a frozen
+                # expansion. Fail loud (spec §7: frozen regions never rewritten).
+                raise PersistError(
+                    f"dungeon expansion {expansion.expansion_id} re-commit "
+                    f"violates the freeze contract: {exc}"
+                ) from exc
+            except sqlite3.Error as exc:
+                raise DatabaseError(f"commit_expansion failed: {exc}") from exc
 
     def load_map(self, *, entrance_id: str) -> RegionGraph:
         """Rebuild the full RegionGraph from dungeon_map + dungeon_edge.
@@ -360,26 +371,31 @@ class DungeonStore:
             raise SerializationError(f"corrupt mutation payload: {exc}") from exc
 
     def open_thread(self, thread: ComplicationThread) -> None:
-        try:
-            self._conn.execute(
-                "INSERT INTO dungeon_complication_ledger "
-                "(thread_id, origin_region_id, kind, status, "
-                " started_at_depth_score, payload) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    thread.thread_id,
-                    thread.origin_region_id,
-                    thread.kind,
-                    thread.status,
-                    thread.started_at_depth_score,
-                    json.dumps(thread.payload),
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise PersistError(
-                f"thread {thread.thread_id!r} already open: {exc}"
-            ) from exc
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"open_thread failed: {exc}") from exc
+        with ledger_add_span(
+            thread_id=thread.thread_id,
+            kind=thread.kind,
+            origin_region_id=thread.origin_region_id,
+        ):
+            try:
+                self._conn.execute(
+                    "INSERT INTO dungeon_complication_ledger "
+                    "(thread_id, origin_region_id, kind, status, "
+                    " started_at_depth_score, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        thread.thread_id,
+                        thread.origin_region_id,
+                        thread.kind,
+                        thread.status,
+                        thread.started_at_depth_score,
+                        json.dumps(thread.payload),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PersistError(
+                    f"thread {thread.thread_id!r} already open: {exc}"
+                ) from exc
+            except sqlite3.Error as exc:
+                raise DatabaseError(f"open_thread failed: {exc}") from exc
 
     def get_thread(self, thread_id: str) -> ComplicationThread:
         row = self._conn.execute(
@@ -400,16 +416,17 @@ class DungeonStore:
         )
 
     def resolve_thread(self, thread_id: str) -> None:
-        cur = self._conn.execute(
-            "UPDATE dungeon_complication_ledger "
-            "SET status = 'resolved', resolved_at = datetime('now') "
-            "WHERE thread_id = ?",
-            (thread_id,),
-        )
-        if cur.rowcount == 0:
-            raise NotFoundError(
-                f"cannot resolve unknown complication thread {thread_id!r}"
+        with ledger_resolve_span(thread_id=thread_id):
+            cur = self._conn.execute(
+                "UPDATE dungeon_complication_ledger "
+                "SET status = 'resolved', resolved_at = datetime('now') "
+                "WHERE thread_id = ?",
+                (thread_id,),
             )
+            if cur.rowcount == 0:
+                raise NotFoundError(
+                    f"cannot resolve unknown complication thread {thread_id!r}"
+                )
 
     def open_threads(self) -> list[ComplicationThread]:
         rows = self._conn.execute(
