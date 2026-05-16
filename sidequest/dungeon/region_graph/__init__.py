@@ -11,6 +11,13 @@ themes loader, no depth_score, no OTEL here — those land in later plans
 """
 
 from sidequest.dungeon.region_graph.config import JaquaysConfig
+from sidequest.dungeon.region_graph.depth import (
+    DepthConfig,
+    DepthReport,
+    assign_depth_scores,
+    level_bucket,
+    level_phrase,
+)
 from sidequest.dungeon.region_graph.errors import ExpansionGenerationError
 from sidequest.dungeon.region_graph.generator import (
     attach_expansion,
@@ -29,6 +36,11 @@ from sidequest.dungeon.region_graph.model import (
 
 __all__ = [
     "JaquaysConfig",
+    "DepthConfig",
+    "DepthReport",
+    "assign_depth_scores",
+    "level_bucket",
+    "level_phrase",
     "ExpansionGenerationError",
     "GenerationReport",
     "Expansion",
