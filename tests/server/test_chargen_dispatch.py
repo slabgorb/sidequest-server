@@ -69,16 +69,25 @@ async def _connect(
     )
     msg = SessionEventMessage(payload=payload, player_id="")
     out = await handler.handle_message(msg)
-    # When entering Creating state, the handler emits two messages:
-    # the connected SessionEvent and the initial chargen scene kickoff
-    # (CharacterCreationMessage). Returning players skip chargen and
-    # receive only the connected event.
-    assert len(out) in (1, 2)
+    # Connect emits, in order (connect.py): the ``connected`` SessionEvent,
+    # then an OPTIONAL ``theme_css`` SessionEvent (ADR-079 / #285, present
+    # only when the genre/world declares client_theme_css), then — for a new
+    # player entering Creating state — the chargen kickoff
+    # (CharacterCreationMessage). Returning players get no kickoff. Assert by
+    # message identity, not exact count: the theme_css event is genre/world
+    # dependent and must not couple every chargen test to it.
+    assert out, "connect must emit at least the connected event"
     connected = out[0]
     assert isinstance(connected, SessionEventMessage)
     assert connected.payload.event == "connected"
-    if len(out) == 2:
-        assert isinstance(out[1], CharacterCreationMessage)
+    rest = out[1:]
+    if (
+        rest
+        and isinstance(rest[0], SessionEventMessage)
+        and rest[0].payload.event == "theme_css"
+    ):
+        rest = rest[1:]
+    assert rest == [] or isinstance(rest[0], CharacterCreationMessage)
     return connected
 
 
