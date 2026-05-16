@@ -98,8 +98,7 @@ def test_canonical_fixture_hydrates_without_error(fixture_name: str) -> None:
     snapshot = hydrate_fixture(name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR)
 
     assert isinstance(snapshot, GameSnapshot), (
-        f"hydrate_fixture({fixture_name!r}) must return GameSnapshot, "
-        f"got {type(snapshot).__name__}"
+        f"hydrate_fixture({fixture_name!r}) must return GameSnapshot, got {type(snapshot).__name__}"
     )
 
 
@@ -157,8 +156,7 @@ def test_minimal_fixture_with_only_genre_and_world(tmp_path: Path) -> None:
     """
     fixture = tmp_path / "minimal.yaml"
     fixture.write_text(
-        "genre: caverns_and_claudes\n"
-        "world: default\n",
+        "genre: caverns_and_claudes\nworld: default\n",
         encoding="utf-8",
     )
 
@@ -257,8 +255,7 @@ def test_empty_genre_string_raises_FixtureValidationError(tmp_path: Path) -> Non
     """
     fixture = tmp_path / "empty_genre.yaml"
     fixture.write_text(
-        'genre: ""\n'
-        "world: default\n",
+        'genre: ""\nworld: default\n',
         encoding="utf-8",
     )
 
@@ -303,8 +300,7 @@ def test_hydrator_uses_yaml_safe_load_not_yaml_load(tmp_path: Path) -> None:
     # ``!!python/name:os.system`` is the simplest payload that yaml.safe_load
     # rejects and yaml.load happily instantiates as a callable.
     fixture.write_text(
-        "genre: !!python/name:os.system\n"
-        "world: default\n",
+        "genre: !!python/name:os.system\nworld: default\n",
         encoding="utf-8",
     )
 
@@ -384,8 +380,7 @@ def test_character_known_facts_block_hydrates(tmp_path: Path) -> None:
     _write_character_fixture(
         tmp_path,
         "single_fact",
-        '    - content: "The goblin speaks broken common"\n'
-        '      confidence: "Certain"\n',
+        '    - content: "The goblin speaks broken common"\n      confidence: "Certain"\n',
     )
 
     from sidequest.game.scene_harness import hydrate_fixture
@@ -394,8 +389,7 @@ def test_character_known_facts_block_hydrates(tmp_path: Path) -> None:
 
     pc = snapshot.characters[0]
     assert len(pc.known_facts) == 1, (
-        f"expected one KnownFact hydrated from known_facts: block, "
-        f"got {len(pc.known_facts)}"
+        f"expected one KnownFact hydrated from known_facts: block, got {len(pc.known_facts)}"
     )
     fact = pc.known_facts[0]
     assert fact.content == "The goblin speaks broken common"
@@ -406,9 +400,7 @@ def test_character_known_facts_block_hydrates(tmp_path: Path) -> None:
     "confidence",
     ["Certain", "Suspected", "Rumored", "Discovered"],
 )
-def test_known_facts_all_four_confidence_tiers(
-    tmp_path: Path, confidence: str
-) -> None:
+def test_known_facts_all_four_confidence_tiers(tmp_path: Path, confidence: str) -> None:
     """AC#5, AC#6: every confidence tier in the Literal hydrates verbatim.
 
     Parametrized so a regression on one tier doesn't masquerade as a
@@ -417,8 +409,7 @@ def test_known_facts_all_four_confidence_tiers(
     _write_character_fixture(
         tmp_path,
         f"tier_{confidence.lower()}",
-        f'    - content: "fact about {confidence.lower()}"\n'
-        f'      confidence: "{confidence}"\n',
+        f'    - content: "fact about {confidence.lower()}"\n      confidence: "{confidence}"\n',
     )
 
     from sidequest.game.scene_harness import hydrate_fixture
@@ -475,8 +466,7 @@ def test_invalid_confidence_raises_FixtureValidationError(tmp_path: Path) -> Non
     _write_character_fixture(
         tmp_path,
         "bad_confidence",
-        '    - content: "this fact has a typo"\n'
-        '      confidence: "Bogus"\n',
+        '    - content: "this fact has a typo"\n      confidence: "Bogus"\n',
     )
 
     from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
@@ -488,8 +478,7 @@ def test_invalid_confidence_raises_FixtureValidationError(tmp_path: Path) -> Non
     # knows what to fix without re-running the hydrator in a debugger.
     msg = str(exc_info.value).lower()
     assert "confidence" in msg or "bogus" in msg or "known_facts" in msg, (
-        f"FixtureValidationError must name confidence/known_facts in its message; "
-        f"got: {msg!r}"
+        f"FixtureValidationError must name confidence/known_facts in its message; got: {msg!r}"
     )
 
 
@@ -507,8 +496,7 @@ def test_legacy_confirmed_confidence_is_rejected(tmp_path: Path) -> None:
     _write_character_fixture(
         tmp_path,
         "legacy_confirmed",
-        '    - content: "ancient fact written under old schema"\n'
-        '      confidence: "confirmed"\n',
+        '    - content: "ancient fact written under old schema"\n      confidence: "confirmed"\n',
     )
 
     from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
@@ -608,9 +596,7 @@ def test_canonical_fixtures_still_hydrate_with_known_facts_implementation() -> N
         "social_poker_wasteland",
     )
     for fixture_name in real_fixtures:
-        snapshot = hydrate_fixture(
-            name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR
-        )
+        snapshot = hydrate_fixture(name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR)
         # Each canonical PC either has no known_facts block or it's a
         # well-formed empty list. Either way: not None, no exceptions.
         for pc in snapshot.characters:
@@ -634,8 +620,7 @@ def test_known_facts_entry_uses_KnownFact_defaults_when_fields_omitted(
     _write_character_fixture(
         tmp_path,
         "minimal_fact",
-        '    - content: "minimal entry"\n'
-        '      confidence: "Suspected"\n',
+        '    - content: "minimal entry"\n      confidence: "Suspected"\n',
     )
 
     from sidequest.game.character import KnownFact
@@ -1156,3 +1141,616 @@ def test_characters_list_not_a_list_raises_FixtureValidationError(
 
     with pytest.raises(FixtureValidationError):
         hydrate_fixture(name="bad_characters_shape", fixtures_dir=tmp_path)
+
+
+# ── Story 50-20: scenario_state hydration (ADR-092 follow-on) ───────────────
+#
+# RED tests for the top-level ``scenario_state:`` block. Hydration projects
+# the block into ``GameSnapshot.scenario_state`` (a ``ScenarioState``), which
+# holds:
+#
+#     * clue_graph (ClueGraph — list of ClueNode)
+#     * discovered_clues (set[str] of clue ids)
+#     * npc_roles (dict[NPC name -> "guilty" | "witness" | "innocent"])
+#     * guilty_npc (string — accepted as name or id; persists as the canonical id)
+#     * tension (float, clamped to [0.0, 1.0])
+#
+# Validation rules (ACs 3-9):
+#   * ClueGraph nodes must satisfy ``ClueNode`` pydantic shape — missing
+#     required fields raise FixtureValidationError (HTTP 422).
+#   * ``discovered_clues`` must obey the DAG: a discovered clue with a
+#     ``requires`` entry not also in the final ``discovered_clues`` set is
+#     invalid. The hydrator validates set-membership against the final
+#     declared set — YAML order is irrelevant per the AC2 ``set[str]``
+#     typing (Reviewer [HIGH-1] rework, 50-20).
+#   * ``npc_roles`` values must be one of ("guilty", "witness", "innocent").
+#   * ``guilty_npc`` must resolve to an entry in the fixture's ``npcs``
+#     roster (name match OR id match — fixture-author convenience).
+#   * ``tension`` is clamped silently to [0.0, 1.0]; out-of-range is NOT a
+#     422 (matches ``ScenarioState.set_tension()`` semantics).
+#   * Missing ``scenario_state:`` block: ``snapshot.scenario_state`` is
+#     None (backwards-compat with the four canonical pre-50-20 fixtures).
+#   * Malformed ``scenario_state:`` (e.g. a list at the top, or a typo'd
+#     child key) raises FixtureValidationError — no silent skip.
+
+
+def _write_scenario_state_fixture(
+    tmp_path: Path,
+    name: str,
+    *,
+    npcs_yaml: str = "",
+    scenario_state_yaml: str | None = None,
+) -> None:
+    """Helper: write a minimal mystery fixture with an optional
+    scenario_state block.
+
+    Keeps test bodies focused on the scenario_state assertion under test
+    rather than YAML scaffolding.
+    """
+    body = (
+        "genre: tea_and_murder\n"
+        "world: victoria\n"
+        "character:\n"
+        "  name: Investigator\n"
+        "  description: A keen-eyed sleuth\n"
+        "  personality: observant\n"
+        "  backstory: tea, biscuits, and bodies\n"
+        "  char_class: detective\n"
+        "  race: human\n"
+    )
+    if npcs_yaml:
+        body += "npcs:\n" + npcs_yaml
+    if scenario_state_yaml is not None:
+        body += scenario_state_yaml
+    (tmp_path / f"{name}.yaml").write_text(body, encoding="utf-8")
+
+
+# A canonical clue graph used across multiple tests — three nodes in a chain:
+# ``clue_a`` → ``clue_b`` → ``clue_c``. ``clue_b`` requires ``clue_a``;
+# ``clue_c`` requires ``clue_b``.
+_CLUE_GRAPH_CHAIN_YAML = (
+    "scenario_state:\n"
+    "  clue_graph:\n"
+    "    nodes:\n"
+    "      - id: clue_a\n"
+    "        type: physical_evidence\n"
+    "        description: The teacup is cracked along the rim\n"
+    "        discovery_method: observation\n"
+    "        visibility: public\n"
+    "        requires: []\n"
+    "      - id: clue_b\n"
+    "        type: testimony\n"
+    "        description: The butler heard raised voices\n"
+    "        discovery_method: interrogation\n"
+    "        visibility: public\n"
+    "        requires: [clue_a]\n"
+    "      - id: clue_c\n"
+    "        type: motive\n"
+    "        description: Insurance policy named the victim\n"
+    "        discovery_method: research\n"
+    "        visibility: secret\n"
+    "        requires: [clue_b]\n"
+)
+
+
+_NPCS_THREE_SUSPECTS = (
+    "  - name: Lady Ashworth\n    role: hostess\n    disposition: 0\n"
+    "  - name: Mr. Pike\n    role: butler\n    disposition: 0\n"
+    "  - name: Dr. Hartmoor\n    role: physician\n    disposition: 0\n"
+)
+
+
+def test_scenario_state_block_hydrates_all_five_fields(tmp_path: Path) -> None:
+    """AC#1, #2, #11: a complete scenario_state block projects to all 5
+    ScenarioState fields with the values declared in YAML.
+
+    This is the happy path — if the snapshot is missing even one field
+    after hydration, Wave 2 mystery fixtures cannot stage the scenario
+    state they need.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "complete_block",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML
+            + "  discovered_clues: [clue_a, clue_b]\n"
+            + "  npc_roles:\n"
+            + "    Lady Ashworth: guilty\n"
+            + "    Mr. Pike: witness\n"
+            + "    Dr. Hartmoor: innocent\n"
+            + "  guilty_npc: Lady Ashworth\n"
+            + "  tension: 0.65\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="complete_block", fixtures_dir=tmp_path)
+
+    assert snapshot.scenario_state is not None, (
+        "scenario_state block was provided — snapshot.scenario_state must not be None"
+    )
+    state = snapshot.scenario_state
+
+    # clue_graph: three nodes, in YAML order
+    assert [n.id for n in state.clue_graph.nodes] == ["clue_a", "clue_b", "clue_c"], (
+        f"clue_graph node ids drifted from YAML order; got "
+        f"{[n.id for n in state.clue_graph.nodes]!r}"
+    )
+
+    # discovered_clues: set semantics (membership, not order)
+    assert state.discovered_clues == {"clue_a", "clue_b"}, (
+        f"discovered_clues mismatch; got {state.discovered_clues!r}"
+    )
+
+    # npc_roles: each NPC mapped to its role string
+    assert state.npc_roles == {
+        "Lady Ashworth": "guilty",
+        "Mr. Pike": "witness",
+        "Dr. Hartmoor": "innocent",
+    }, f"npc_roles mismatch; got {state.npc_roles!r}"
+
+    # guilty_npc: name resolved against roster (acceptable persistence shape)
+    assert state.guilty_npc == "Lady Ashworth", (
+        f"guilty_npc must persist as the resolved roster entry; got {state.guilty_npc!r}"
+    )
+
+    # tension: exact YAML float (no clamping needed at 0.65)
+    assert state.tension == pytest.approx(0.65), f"tension mismatch; got {state.tension!r}"
+
+
+def test_partial_scenario_state_block_uses_defaults(tmp_path: Path) -> None:
+    """AC#2, #12: a partial block (only clue_graph) hydrates with empty
+    defaults for every omitted field — no silent fabrication.
+
+    Guards against an implementation that requires the full block and
+    rejects partials, or one that invents npc_roles from the npcs list.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "partial_block",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=_CLUE_GRAPH_CHAIN_YAML,
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="partial_block", fixtures_dir=tmp_path)
+
+    state = snapshot.scenario_state
+    assert state is not None, "partial block must still hydrate scenario_state"
+    assert len(state.clue_graph.nodes) == 3, (
+        "clue_graph from YAML must survive — only omitted fields default"
+    )
+    # All omitted fields take their pydantic defaults — no invented values.
+    assert state.discovered_clues == set()
+    assert state.npc_roles == {}
+    assert state.guilty_npc == ""
+    assert state.tension == 0.0
+
+
+def test_missing_scenario_state_block_leaves_snapshot_none(tmp_path: Path) -> None:
+    """AC#8, #10: a fixture WITHOUT a scenario_state block hydrates normally
+    and ``snapshot.scenario_state`` remains None.
+
+    Without this guard, 50-20 would break the four pre-existing canonical
+    fixtures (none of which carry scenario_state) by requiring the new
+    block.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "no_scenario_block",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=None,
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="no_scenario_block", fixtures_dir=tmp_path)
+
+    assert snapshot.scenario_state is None, (
+        f"omitting scenario_state: must leave snapshot.scenario_state at the "
+        f"GameSnapshot pydantic default (None); got {snapshot.scenario_state!r}"
+    )
+
+
+def test_clue_node_type_alias_populates_clue_type(tmp_path: Path) -> None:
+    """AC#3: ClueNode uses ``type:`` as the YAML key (alias for ``clue_type``).
+
+    ClueNode declares ``clue_type: str = Field(alias="type",
+    populate_by_name=True)``. The fixture author writes ``type:``; the
+    hydrated model exposes the value as ``clue_type``. A regression that
+    drops the alias would force fixture authors to write ``clue_type:``
+    or fail mysteriously — neither is acceptable.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "type_alias",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=_CLUE_GRAPH_CHAIN_YAML,
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="type_alias", fixtures_dir=tmp_path)
+    state = snapshot.scenario_state
+    assert state is not None
+
+    types = [node.clue_type for node in state.clue_graph.nodes]
+    assert types == ["physical_evidence", "testimony", "motive"], (
+        f"ClueNode.type → clue_type alias broken; got {types!r}"
+    )
+
+
+def test_discovered_clue_with_unmet_prerequisite_raises(tmp_path: Path) -> None:
+    """AC#4, #13: pre-discovering ``clue_b`` without ``clue_a`` violates
+    the DAG and must raise FixtureValidationError.
+
+    The hydrator validates each declared clue's ``requires`` against the
+    final declared set (no replay through ``ScenarioState.discover_clue``,
+    post-rework). A FixtureValidationError must surface at the HTTP
+    boundary as 422 with field-level detail — never a leaked 500 from
+    an internal exception type.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "bad_dag",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML + "  discovered_clues: [clue_b]\n"  # missing clue_a prerequisite
+        ),
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="bad_dag", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value).lower()
+    # The error must name the offending clue id and its missing prereq so
+    # the fixture author knows what to fix without re-running a debugger.
+    assert "clue_b" in msg, f"DAG violation error must name the offending clue id; got {msg!r}"
+    assert "clue_a" in msg, f"DAG violation error must name the missing prerequisite; got {msg!r}"
+
+
+def test_invalid_npc_role_value_raises(tmp_path: Path) -> None:
+    """AC#5, #15: an npc_roles value outside ("guilty", "witness", "innocent")
+    must raise FixtureValidationError.
+
+    Without this guard, a fixture typo like ``role: kiler`` would silently
+    populate ``npc_roles["X"] = "kiler"`` and any downstream
+    "if role == 'witness'" branch would silently false-out.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "bad_role",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML
+            + "  npc_roles:\n"
+            + "    Lady Ashworth: murderer\n"  # not in allowed set
+        ),
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="bad_role", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value).lower()
+    assert "murderer" in msg or "role" in msg, (
+        f"role validation error must name the bad value or 'role'; got {msg!r}"
+    )
+
+
+def test_guilty_npc_missing_from_roster_raises(tmp_path: Path) -> None:
+    """AC#6, #14: a guilty_npc not present in the npcs roster must raise
+    FixtureValidationError.
+
+    The error should expose the available roster so the fixture author
+    can spot the typo without grepping the genre pack.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "missing_guilty",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML + "  guilty_npc: Professor Plum\n"  # not in roster
+        ),
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="missing_guilty", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value)
+    # The error must name the missing NPC. The roster hint is desirable
+    # but not strictly mandated by the AC text — assert the minimum.
+    assert "Professor Plum" in msg or "guilty" in msg.lower(), (
+        f"guilty_npc validation error must name the missing NPC; got {msg!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_tension,expected",
+    [
+        (1.5, 1.0),
+        (2.0, 1.0),
+        (-0.2, 0.0),
+        (-1.0, 0.0),
+        (0.5, 0.5),
+        (0.0, 0.0),
+        (1.0, 1.0),
+    ],
+)
+def test_tension_clamps_silently_to_unit_interval(
+    tmp_path: Path, raw_tension: float, expected: float
+) -> None:
+    """AC#7: tension outside [0.0, 1.0] is clamped, NOT rejected with 422.
+
+    This matches the ``ScenarioState.set_tension()`` semantic for runtime
+    mutation — fixtures get the same forgiving contract. Boundary values
+    (0.0, 1.0) and an in-range value (0.5) are included to guard against
+    an implementation that clamps to (0,1) exclusive or off-by-one.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        f"tension_{str(raw_tension).replace('.', '_').replace('-', 'neg')}",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(_CLUE_GRAPH_CHAIN_YAML + f"  tension: {raw_tension}\n"),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(
+        name=f"tension_{str(raw_tension).replace('.', '_').replace('-', 'neg')}",
+        fixtures_dir=tmp_path,
+    )
+    state = snapshot.scenario_state
+    assert state is not None
+    assert state.tension == pytest.approx(expected), (
+        f"tension={raw_tension} must clamp to {expected}; got {state.tension!r}"
+    )
+
+
+def test_malformed_scenario_state_block_raises(tmp_path: Path) -> None:
+    """AC#9 + ADR-092 "Failure is loud": a scenario_state declared as a
+    list (or scalar) instead of a mapping must raise FixtureValidationError.
+
+    Lang-review rule #1 (no silent exception swallowing) — a future
+    refactor must NOT replace the explicit shape check with
+    ``data.get("scenario_state", {})`` and silently coerce the wrong
+    shape away. Assert by raising, not by counting an empty
+    scenario_state survivor.
+    """
+    fixture = tmp_path / "bad_scenario_shape.yaml"
+    fixture.write_text(
+        "genre: tea_and_murder\n"
+        "world: victoria\n"
+        "character:\n"
+        "  name: Investigator\n"
+        "  description: A keen-eyed sleuth\n"
+        "  personality: observant\n"
+        "  backstory: tea, biscuits, and bodies\n"
+        "  char_class: detective\n"
+        "  race: human\n"
+        "scenario_state:\n"
+        "  - just_a_list_item\n",
+        encoding="utf-8",
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="bad_scenario_shape", fixtures_dir=tmp_path)
+
+
+def test_clue_node_missing_required_field_raises(tmp_path: Path) -> None:
+    """AC#3 + ClueNode ``extra='forbid'``: a clue node missing
+    ``discovery_method`` (required field) must raise FixtureValidationError.
+
+    Pydantic catches the missing field; the hydrator's job is to wrap
+    ``ValidationError`` as ``FixtureValidationError`` so the HTTP layer
+    returns 422 rather than leaking ``pydantic.ValidationError`` as 500.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "bad_clue_shape",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            "scenario_state:\n"
+            "  clue_graph:\n"
+            "    nodes:\n"
+            "      - id: orphan_clue\n"
+            "        type: physical_evidence\n"
+            "        description: missing discovery_method below\n"
+            # discovery_method intentionally omitted
+            "        visibility: public\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError):
+        hydrate_fixture(name="bad_clue_shape", fixtures_dir=tmp_path)
+
+
+def test_guilty_npc_resolves_by_name_or_id(tmp_path: Path) -> None:
+    """AC#6 + SM Assessment guidance: the fixture may identify the guilty
+    NPC by ``name`` (matches ``npc_roles`` keys, fixture-author ergonomic)
+    OR by ``id`` if the NPC has one.
+
+    The npcs block in canonical fixtures doesn't carry ``id`` — NPCs are
+    identified by name. So name-match must work; id-match is a forward
+    compatibility hedge. Both forms hydrate without error.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "guilty_by_name",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML + "  guilty_npc: Mr. Pike\n"  # match by name
+        ),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="guilty_by_name", fixtures_dir=tmp_path)
+    state = snapshot.scenario_state
+    assert state is not None
+    # Whether the implementation stores name or resolved id, it must be
+    # non-empty and refer to the named suspect — NOT the empty default.
+    assert state.guilty_npc, "guilty_npc resolved by name must not be empty after hydration"
+    assert "Pike" in state.guilty_npc, (
+        f"guilty_npc must refer to the named suspect; got {state.guilty_npc!r}"
+    )
+
+
+def test_canonical_fixtures_still_hydrate_with_scenario_state_implementation() -> None:
+    """AC#10 (backwards-compat): the four canonical pre-50-20 fixtures must
+    continue to hydrate cleanly after the scenario_state branch is added.
+
+    Wiring-test (CLAUDE.md "Every Test Suite Needs a Wiring Test"): proves
+    the 50-20 hydrator change doesn't accidentally require the new block.
+    """
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    real_fixtures = (
+        "combat_brawl_wasteland",
+        "combat_dogfight_space",
+        "social_negotiation_tea",
+        "social_poker_wasteland",
+    )
+    for fixture_name in real_fixtures:
+        snapshot = hydrate_fixture(name=fixture_name, fixtures_dir=CANONICAL_FIXTURES_DIR)
+        # No scenario_state block means snapshot.scenario_state stays None.
+        # A future canonical fixture that opts INTO scenario_state would
+        # have a non-None value; until then, this assertion is the
+        # regression guard.
+        assert snapshot.scenario_state is None, (
+            f"{fixture_name}: pre-50-20 fixture must keep "
+            f"snapshot.scenario_state=None; got {snapshot.scenario_state!r}"
+        )
+
+
+# ── Story 50-20 (rework, Reviewer [HIGH-1]): DAG-order independence ─────────
+#
+# `discovered_clues` is documented in AC#2 as ``set[str]`` — unordered by
+# definition. AC#4's "unmet requires" must be checked against the FINAL
+# declared set, not the per-clue replay state. The initial 50-20 impl built
+# a ScenarioState with empty discovered_clues and replayed each declared id
+# through ``ScenarioState.discover_clue()`` in YAML order, which raises if
+# any clue's requires aren't yet in the (intermediate) discovered set.
+#
+# This rejects valid fixtures where the final set IS DAG-valid but the YAML
+# listing isn't topologically sorted. The Reviewer found that
+# ``discovered_clues: [clue_b, clue_a]`` (both clues present, clue_b
+# requires clue_a) raised with the misleading message
+# "missing prerequisites ['clue_a']" — even though clue_a is in the YAML
+# immediately below clue_b.
+#
+# Fix discipline: validate against the final declared set, not the replay
+# state. The hydrator should accept any YAML ordering whose final set
+# satisfies the DAG, and reject only when a clue's requires are genuinely
+# absent from the declared set.
+
+
+def test_discovered_clues_in_reverse_yaml_order_still_hydrate(tmp_path: Path) -> None:
+    """Reviewer [HIGH-1] regression: a DAG-valid fixture in reverse YAML
+    order must hydrate cleanly.
+
+    ``discovered_clues: [clue_b, clue_a]`` — both clues are in the YAML;
+    the final set ``{clue_a, clue_b}`` satisfies ``clue_b.requires == [clue_a]``.
+    AC#2 documents ``discovered_clues`` as a set, so YAML order must be
+    irrelevant to the validation verdict.
+
+    Pre-fix behavior: raises ``FixtureValidationError`` claiming clue_a
+    is missing — which is misleading since clue_a is literally on the
+    next line of YAML.
+    Post-fix behavior: hydrates successfully with the final set populated.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "reverse_order",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(_CLUE_GRAPH_CHAIN_YAML + "  discovered_clues: [clue_b, clue_a]\n"),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    # Must not raise — the final set is DAG-valid.
+    snapshot = hydrate_fixture(name="reverse_order", fixtures_dir=tmp_path)
+    state = snapshot.scenario_state
+    assert state is not None, "reverse-order DAG-valid fixture must hydrate"
+    assert state.discovered_clues == {"clue_a", "clue_b"}, (
+        f"final discovered_clues set must contain both ids regardless of YAML "
+        f"order; got {state.discovered_clues!r}"
+    )
+
+
+def test_discovered_clues_full_chain_in_reverse_order_still_hydrates(tmp_path: Path) -> None:
+    """Stress the reverse-order case with the full three-clue chain.
+
+    ``discovered_clues: [clue_c, clue_b, clue_a]`` — every clue present,
+    but listed in fully reverse topological order. Final set
+    ``{clue_a, clue_b, clue_c}`` satisfies all `requires` edges.
+
+    This guards against an implementation that accepts simple-pair reverse
+    order (the previous test) but breaks on longer chains by, say, only
+    sorting one level deep.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "full_chain_reverse",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(
+            _CLUE_GRAPH_CHAIN_YAML + "  discovered_clues: [clue_c, clue_b, clue_a]\n"
+        ),
+    )
+
+    from sidequest.game.scene_harness import hydrate_fixture
+
+    snapshot = hydrate_fixture(name="full_chain_reverse", fixtures_dir=tmp_path)
+    state = snapshot.scenario_state
+    assert state is not None
+    assert state.discovered_clues == {"clue_a", "clue_b", "clue_c"}, (
+        f"full reverse-chain fixture must produce the complete set; got {state.discovered_clues!r}"
+    )
+
+
+def test_discovered_clue_skipping_middle_of_chain_still_raises(tmp_path: Path) -> None:
+    """Negative regression: after the [HIGH-1] fix, a fixture that skips a
+    chain step must still raise — the rejection logic must check the final
+    set, not just "any subset of the YAML list works."
+
+    ``discovered_clues: [clue_a, clue_c]`` — clue_b is GENUINELY absent
+    from the declared set. clue_c requires clue_b which is missing. The
+    final-set check must catch this.
+
+    Pre-fix behavior: raises (replay sees clue_c with missing clue_b).
+    Post-fix behavior: must still raise — the final set is NOT DAG-valid.
+    """
+    _write_scenario_state_fixture(
+        tmp_path,
+        "skip_middle",
+        npcs_yaml=_NPCS_THREE_SUSPECTS,
+        scenario_state_yaml=(_CLUE_GRAPH_CHAIN_YAML + "  discovered_clues: [clue_a, clue_c]\n"),
+    )
+
+    from sidequest.game.scene_harness import FixtureValidationError, hydrate_fixture
+
+    with pytest.raises(FixtureValidationError) as exc_info:
+        hydrate_fixture(name="skip_middle", fixtures_dir=tmp_path)
+
+    msg = str(exc_info.value).lower()
+    # The error must name clue_c (the unsatisfied clue) and clue_b (the
+    # missing prerequisite) — same field-detail discipline as the
+    # original test_discovered_clue_with_unmet_prerequisite_raises.
+    assert "clue_c" in msg, (
+        f"DAG violation error must name the offending clue id (clue_c); got {msg!r}"
+    )
+    assert "clue_b" in msg, (
+        f"DAG violation error must name the missing prerequisite (clue_b); got {msg!r}"
+    )

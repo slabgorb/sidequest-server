@@ -56,9 +56,7 @@ def _capture_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict, di
         component: str = "",
         severity: str = "info",
     ) -> None:
-        captured.append(
-            (event_type, dict(fields), {"component": component, "severity": severity})
-        )
+        captured.append((event_type, dict(fields), {"component": component, "severity": severity}))
 
     import sidequest.telemetry.watcher_hub as _hub
 
@@ -344,9 +342,7 @@ def test_malformed_fixture_yaml_returns_422_with_field_detail(
         f"malformed fixture (missing genre) must surface 422, got {r.status_code}: {r.text}"
     )
     body_text = repr(r.json()).lower()
-    assert "genre" in body_text, (
-        f"422 body must surface the failing field name; got {r.json()!r}"
-    )
+    assert "genre" in body_text, f"422 body must surface the failing field name; got {r.json()!r}"
 
 
 # ── OTEL: watcher events on every subsystem decision (CLAUDE.md principle) ──
@@ -393,7 +389,9 @@ def test_scene_harness_emits_hydrate_ok_span(
     r = client.post("/dev/scene/combat_brawl_wasteland")
     assert r.status_code == 200
 
-    ok_events = [e for e in captured if "scene_harness" in e[0] and "hydrate" in e[0] and "ok" in e[0]]
+    ok_events = [
+        e for e in captured if "scene_harness" in e[0] and "hydrate" in e[0] and "ok" in e[0]
+    ]
     assert ok_events, (
         f"scene-harness must emit hydrate.ok on success; "
         f"captured event types: {sorted({e[0] for e in captured})!r}"
@@ -623,4 +621,165 @@ def test_dev_scene_route_rejects_both_character_and_characters_with_422(
     assert r.status_code == 422, (
         f"conflicting character+characters fixture must 422 at the wire; "
         f"got {r.status_code} body={r.text}"
+    )
+
+
+# ── Story 50-20: scenario_state hydration through the wire ──────────────────
+
+
+def test_dev_scene_route_persists_scenario_state_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#16: POST /dev/scene/{name} with a mystery fixture → snapshot
+    persists with scenario_state populated → SqliteStore round-trip
+    preserves clue_graph, discovered_clues, npc_roles, guilty_npc, tension.
+
+    The integration probe that proves Wave 2 mystery fixtures will work:
+    without this, an in-memory hydrator test could pass while the wire
+    drops the scenario_state field on the floor.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "mystery_mid_tea_red.yaml").write_text(
+        "genre: tea_and_murder\n"
+        "world: victoria\n"
+        "character:\n"
+        "  name: Investigator\n  description: A keen-eyed sleuth\n"
+        "  personality: observant\n  backstory: tea, biscuits, and bodies\n"
+        "  char_class: detective\n  race: human\n"
+        "npcs:\n"
+        "  - name: Lady Ashworth\n    role: hostess\n    disposition: 0\n"
+        "  - name: Mr. Pike\n    role: butler\n    disposition: 0\n"
+        "  - name: Dr. Hartmoor\n    role: physician\n    disposition: 0\n"
+        "scenario_state:\n"
+        "  clue_graph:\n"
+        "    nodes:\n"
+        "      - id: cracked_teacup\n"
+        "        type: physical_evidence\n"
+        "        description: The teacup is cracked along the rim\n"
+        "        discovery_method: observation\n"
+        "        visibility: public\n"
+        "        requires: []\n"
+        "      - id: raised_voices\n"
+        "        type: testimony\n"
+        "        description: The butler heard raised voices\n"
+        "        discovery_method: interrogation\n"
+        "        visibility: public\n"
+        "        requires: [cracked_teacup]\n"
+        "      - id: insurance_motive\n"
+        "        type: motive\n"
+        "        description: Insurance policy named the victim\n"
+        "        discovery_method: research\n"
+        "        visibility: secret\n"
+        "        requires: [raised_voices]\n"
+        "  discovered_clues: [cracked_teacup]\n"
+        "  npc_roles:\n"
+        "    Lady Ashworth: guilty\n"
+        "    Mr. Pike: witness\n"
+        "    Dr. Hartmoor: innocent\n"
+        "  guilty_npc: Lady Ashworth\n"
+        "  tension: 0.5\n",
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/mystery_mid_tea_red")
+    assert r.status_code == 200, (
+        f"mystery fixture with scenario_state must 200 at the wire; "
+        f"got {r.status_code} body={r.text}"
+    )
+    slug = r.json()["slug"]
+
+    from sidequest.game.persistence import SqliteStore, db_path_for_slug
+
+    store = SqliteStore(db_path_for_slug(save_dir, slug))
+    store.initialize()
+    saved = store.load()
+    assert saved is not None, (
+        "save file exists but SqliteStore.load returned None — persistence failed after hydration"
+    )
+    snapshot = saved.snapshot
+
+    state = snapshot.scenario_state
+    assert state is not None, (
+        "scenario_state must round-trip through SqliteStore for slug-connect "
+        "to inherit the pre-populated state"
+    )
+    assert [n.id for n in state.clue_graph.nodes] == [
+        "cracked_teacup",
+        "raised_voices",
+        "insurance_motive",
+    ], (
+        f"clue_graph node ids drifted across persistence; got {[n.id for n in state.clue_graph.nodes]!r}"
+    )
+    assert state.discovered_clues == {"cracked_teacup"}, (
+        f"discovered_clues drifted across persistence; got {state.discovered_clues!r}"
+    )
+    assert state.npc_roles == {
+        "Lady Ashworth": "guilty",
+        "Mr. Pike": "witness",
+        "Dr. Hartmoor": "innocent",
+    }, f"npc_roles drifted across persistence; got {state.npc_roles!r}"
+    assert "Lady Ashworth" in state.guilty_npc, (
+        f"guilty_npc identity drifted; got {state.guilty_npc!r}"
+    )
+    assert state.tension == pytest.approx(0.5)
+
+
+def test_dev_scene_route_rejects_scenario_state_dag_violation_with_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC#4 + AC#16 through the HTTP boundary: a fixture pre-discovering a
+    clue with unmet prerequisites surfaces as HTTP 422 (not 500, not silent
+    discard of discovered_clues).
+
+    The PrerequisiteNotSatisfiedError → FixtureValidationError → HTTP 422
+    mapping is the existing FixtureValidationError pattern; this test
+    extends it to the new DAG-validation case so a future regression that
+    swallows the violation is visible at the wire.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "bad_dag_at_wire.yaml").write_text(
+        "genre: tea_and_murder\n"
+        "world: victoria\n"
+        "character:\n"
+        "  name: Investigator\n  description: A keen-eyed sleuth\n"
+        "  personality: observant\n  backstory: tea, biscuits, and bodies\n"
+        "  char_class: detective\n  race: human\n"
+        "npcs:\n"
+        "  - name: Lady Ashworth\n    role: hostess\n    disposition: 0\n"
+        "scenario_state:\n"
+        "  clue_graph:\n"
+        "    nodes:\n"
+        "      - id: clue_a\n"
+        "        type: physical_evidence\n"
+        "        description: First clue\n"
+        "        discovery_method: observation\n"
+        "        visibility: public\n"
+        "        requires: []\n"
+        "      - id: clue_b\n"
+        "        type: testimony\n"
+        "        description: Second clue\n"
+        "        discovery_method: interrogation\n"
+        "        visibility: public\n"
+        "        requires: [clue_a]\n"
+        "  discovered_clues: [clue_b]\n",  # missing clue_a
+        encoding="utf-8",
+    )
+
+    save_dir = tmp_path / "saves"
+    save_dir.mkdir()
+    app = _build_dev_scenes_app(monkeypatch, save_dir=save_dir, fixtures_dir=fixtures_dir)
+    client = TestClient(app)
+
+    r = client.post("/dev/scene/bad_dag_at_wire")
+    assert r.status_code == 422, (
+        f"scenario_state DAG violation must 422 at the wire; got {r.status_code} body={r.text}"
     )
