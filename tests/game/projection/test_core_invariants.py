@@ -34,20 +34,104 @@ def test_non_gm_passes_through_gm_invariant() -> None:
     assert outcome.decision is None
 
 
-def test_secret_note_routes_only_to_recipient() -> None:
+def test_secret_note_visibility_gated_routes_only_to_recipient() -> None:
+    """ADR-105 B1: SECRET_NOTE recipient set lives in
+    ``_visibility.visible_to`` (NOT a top-level ``to`` field —
+    ``SecretNotePayload`` never carries one; that was the dead-channel
+    bug). The exclusion decision is a structural CoreInvariant.
+    """
     stage = CoreInvariantStage()
-    payload = json.dumps({"to": "alice", "text": "psst"})
+    # Realistic SecretNotePayload wire shape (see build_secret_note_events).
+    payload = json.dumps(
+        {
+            "turn_id": "g:w:p:1",
+            "idempotency_key": "k1",
+            "subsystem": "arcane_probe",
+            "params": {},
+            "_visibility": {"visible_to": ["alice"], "fidelity": {}},
+        }
+    )
     env = MessageEnvelope(kind="SECRET_NOTE", payload_json=payload, origin_seq=3)
 
     out_alice = stage.evaluate(envelope=env, view=_view(), player_id="alice")
     assert out_alice.terminal is True
     assert out_alice.decision is not None
     assert out_alice.decision.include is True
+    assert out_alice.source == "invariant:visibility_gated"
 
     out_bob = stage.evaluate(envelope=env, view=_view(), player_id="bob")
     assert out_bob.terminal is True
     assert out_bob.decision is not None
     assert out_bob.decision.include is False
+    assert out_bob.decision.payload_json == ""
+    assert out_bob.source == "invariant:visibility_gated"
+
+
+def test_secret_note_gm_short_circuits_before_visibility_gate() -> None:
+    """Branch ordering: GM sees canonical even for a SECRET_NOTE it is
+    not listed in (GM is the lie-detector — must see everything).
+    """
+    stage = CoreInvariantStage()
+    payload = json.dumps(
+        {"subsystem": "x", "_visibility": {"visible_to": ["alice"]}}
+    )
+    env = MessageEnvelope(kind="SECRET_NOTE", payload_json=payload, origin_seq=3)
+    out_gm = stage.evaluate(envelope=env, view=_view(), player_id="gm")
+    assert out_gm.terminal is True
+    assert out_gm.decision.include is True
+    assert out_gm.decision.payload_json == payload
+    assert out_gm.source == "invariant:gm_sees_all"
+
+
+def test_visibility_gated_all_sentinel_includes_everyone() -> None:
+    stage = CoreInvariantStage()
+    payload = json.dumps({"subsystem": "x", "_visibility": {"visible_to": "all"}})
+    env = MessageEnvelope(kind="SECRET_NOTE", payload_json=payload, origin_seq=3)
+    out = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert out.terminal is True
+    assert out.decision.include is True
+    assert out.source == "invariant:visibility_gated"
+
+
+def test_visibility_gated_malformed_fails_closed() -> None:
+    """A secret kind with no usable ``_visibility.visible_to`` FAILS
+    CLOSED for non-GM (leaking is catastrophic; dropping recoverable).
+    """
+    stage = CoreInvariantStage()
+    # No _visibility at all.
+    env = MessageEnvelope(
+        kind="SECRET_NOTE", payload_json='{"subsystem": "x"}', origin_seq=3
+    )
+    out = stage.evaluate(envelope=env, view=_view(), player_id="alice")
+    assert out.terminal is True
+    assert out.decision.include is False
+    assert out.source == "invariant:visibility_gated"
+
+    # _visibility present but visible_to missing.
+    env2 = MessageEnvelope(
+        kind="SECRET_NOTE", payload_json='{"_visibility": {}}', origin_seq=3
+    )
+    out2 = stage.evaluate(envelope=env2, view=_view(), player_id="alice")
+    assert out2.terminal is True
+    assert out2.decision.include is False
+
+
+def test_narration_segment_shares_visibility_gate() -> None:
+    """ADR-105 B3's per-PC private-prose channel rides the same
+    structural gate as SECRET_NOTE.
+    """
+    stage = CoreInvariantStage()
+    payload = json.dumps(
+        {"text": "you alone hear it", "_visibility": {"visible_to": ["alice"]}}
+    )
+    env = MessageEnvelope(kind="NARRATION_SEGMENT", payload_json=payload, origin_seq=9)
+    assert (
+        stage.evaluate(envelope=env, view=_view(), player_id="alice").decision.include
+        is True
+    )
+    bob = stage.evaluate(envelope=env, view=_view(), player_id="bob")
+    assert bob.decision.include is False
+    assert bob.source == "invariant:visibility_gated"
 
 
 def test_dice_request_to_field_with_list() -> None:
