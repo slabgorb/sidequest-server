@@ -12,8 +12,15 @@ import random
 
 from sidequest.game.cookbook.corpus import resolve_race
 from sidequest.game.cookbook.curation import apply_world_register
-from sidequest.game.cookbook.loader import CookbookBundle
-from sidequest.game.cookbook.models import Affinities, CrBand, RaceDef, SizeBudget
+from sidequest.game.cookbook.loader import CookbookBundle, CookbookValidationError
+from sidequest.game.cookbook.models import (
+    Affinities,
+    CrBand,
+    RaceDef,
+    RegionContentManifest,
+    SizeBudget,
+)
+from sidequest.telemetry.spans import cookbook_race_reroll_span
 
 
 def region_rng(campaign_seed: str, expansion_id: str) -> random.Random:
@@ -200,3 +207,88 @@ def pick_specials(
         }
         for s in eligible[:budget]
     ]
+
+
+def _floor_budget_for_capstone(bundle: CookbookBundle):
+    """big_bad_forces_size: a capstone is a lair complex (spec §4.2)."""
+    target = bundle.affinities.big_bad_forces_size
+    # Map the named tier to the largest size_by_burst row (v1: 'large'
+    # == the top burst row). If a future affinities.yaml introduces
+    # named tiers, resolve here — fail loud on an unknown name.
+    if target != "large":
+        raise ValueError(
+            f"cookbook: unsupported big_bad_forces_size '{target}' "
+            f"(v1 supports 'large' only — spec §11 open tuning item)"
+        )
+    return bundle.affinities.size_by_burst[-1]
+
+
+def assemble_region(
+    bundle: CookbookBundle,
+    *,
+    campaign_seed: str,
+    expansion_id: str,
+    depth_score: float,
+    burst_magnitude: int,
+    look: str,
+    is_first_band_entry: bool,
+) -> RegionContentManifest:
+    """The deterministic content-manifest contract (spec §4.3).
+
+    Pure function of named inputs. depth_score / burst_magnitude / look /
+    is_first_band_entry are oq-1-owned signals passed in (never produced
+    here). NO CR→Edge translation — that is oq-1's materializer seam
+    (ADR-014/078); the manifest carries cr_band + raw corpus rows.
+    """
+    rng = region_rng(campaign_seed, expansion_id)
+    band = band_for_depth(bundle.affinities, depth_score)
+    race = roll_race(bundle, look, rng)
+    wandering = build_wandering_table(bundle, race, band)
+    # Data-Forced Design Item: a low-ceiling RACE (ooze/goblinoid) may
+    # not fill this depth. Yield OBSERVABLY to another affinity RACE —
+    # never emit a silent empty table (spec §7). Bounded, deterministic.
+    if not wandering:
+        excluded: list[str] = [race.id]
+        from_race = race.id
+        while True:
+            nxt = roll_race(bundle, look, rng, exclude=excluded)
+            if nxt is None:
+                raise CookbookValidationError(
+                    f"every affinity RACE for LOOK '{look}' is empty at "
+                    f"band '{band.id}' — content bug (validate_bundle "
+                    f"should have caught this)"
+                )
+            cand = build_wandering_table(bundle, nxt, band)
+            if cand:
+                with cookbook_race_reroll_span(
+                    look=look,
+                    band=band.id,
+                    from_race=from_race,
+                    to_race=nxt.id,
+                    excluded=excluded,
+                ):
+                    pass
+                race, wandering = nxt, cand
+                break
+            excluded.append(nxt.id)
+    big_bad = roll_big_bad(bundle, race, band, is_first_band_entry=is_first_band_entry, rng=rng)
+    budget = (
+        _floor_budget_for_capstone(bundle)
+        if big_bad is not None
+        else budget_for_burst(bundle.affinities, burst_magnitude)
+    )
+    loot = build_loot_table(bundle, race, band, rolls=budget.loot_rolls, rng=rng)
+    specials = pick_specials(bundle, band, budget=budget.special_rooms, rng=rng)
+    return RegionContentManifest(
+        race=race.id,
+        cr_band=band.id,
+        size_budget={
+            "wandering_rolls": budget.wandering_rolls,
+            "special_rooms": budget.special_rooms,
+            "loot_rolls": budget.loot_rolls,
+        },
+        wandering_table=wandering,
+        loot_table=loot,
+        special_rooms=specials,
+        big_bad=big_bad,
+    )
