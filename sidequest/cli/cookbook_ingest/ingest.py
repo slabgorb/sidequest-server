@@ -164,7 +164,11 @@ def walk_items(item_doc: Any) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "item_type": item_type.title(),
-                "rarity": rarity.title(),
+                # Sentence-case, NOT title-case: the authored
+                # affinities.yaml rarity_by_band keys are sentence-case
+                # ("Very rare"); .title() would emit "Very Rare" and
+                # silently drop the entire very-rare tier from loot.
+                "rarity": rarity.capitalize(),
                 "attunement": attune,
                 "notes": "",
                 "source": "SRD 5.1",

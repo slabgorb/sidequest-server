@@ -13,6 +13,7 @@ from sidequest.cli.cookbook_ingest.ingest import (
     parse_cr,
     parse_item_desc,
     parse_statline,
+    walk_items,
     walk_monsters,
 )
 
@@ -77,6 +78,22 @@ def test_item_desc_very_rare_beats_rare() -> None:
 
 def test_item_desc_no_rarity_returns_none() -> None:
     assert parse_item_desc("Some flavor line with no grade") is None
+
+
+def test_walk_items_rarity_is_sentence_case_not_title_case() -> None:
+    # Regression: rarity must be sentence-case to match the authored
+    # affinities.yaml rarity_by_band keys ("Very rare"). .title() emits
+    # "Very Rare" and silently drops the entire very-rare loot tier.
+    doc = {
+        "Magic Items": {
+            "Robe of Stars": {"content": ["*Wondrous item, very rare (requires attunement)*"]},
+            "Adamantine Armor": {"content": ["*Armor (medium or heavy, but not hide), uncommon*"]},
+        }
+    }
+    rows = {r["name"]: r for r in walk_items(doc)}
+    assert rows["Robe of Stars"]["rarity"] == "Very rare"
+    assert rows["Adamantine Armor"]["rarity"] == "Uncommon"
+    assert rows["Adamantine Armor"]["item_type"] == "Armor"
 
 
 @pytest.mark.skipif(not (SRC / "monsters.json").exists(), reason="Prereq 0 not vendored")
