@@ -207,8 +207,10 @@ def generate_expansion(
         if report.all_passed():
             return candidate, report
         last = report
+    # last is always set here: validate() guarantees max_reroll_attempts >= 1;
+    # the `else []` is a defensive guard, not a reachable fallback.
     raise ExpansionGenerationError(
         expansion_id=expansion_id,
         attempts=cfg.max_reroll_attempts,
-        failing=last.failing() if last else list(),
+        failing=last.failing() if last else [],
     )

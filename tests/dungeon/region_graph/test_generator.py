@@ -246,3 +246,35 @@ def test_known_tricky_seeds_still_generate(campaign_seed):
         config=JaquaysConfig(),
     )
     assert rep.all_passed()
+
+
+def test_generate_expansion_rerolls_until_valid(monkeypatch):
+    """Deterministically force attempt 0 to fail and attempt 1 to pass,
+    proving the loop advances `attempt`, re-seeds, and reports attempts==2."""
+    import sidequest.dungeon.region_graph.generator as gen
+
+    real = gen.check_invariants
+    calls = {"n": 0}
+
+    def flaky(explored, exp, config):
+        rep = real(explored, exp, config)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            rep.invariants_passed["loops_into_explored"] = False  # force fail attempt 0
+        else:
+            rep.invariants_passed = {k: True for k in rep.invariants_passed}  # force pass
+        return rep
+
+    monkeypatch.setattr(gen, "check_invariants", flaky)
+    g = _explored()
+    exp, rep = generate_expansion(
+        graph=g,
+        campaign_seed=42,
+        expansion_id=2,
+        attach_region_ids=["e2", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    assert calls["n"] == 2
+    assert rep.attempts == 2
+    assert rep.all_passed()
