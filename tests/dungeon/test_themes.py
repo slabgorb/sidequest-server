@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from sidequest.dungeon.interiors import ALGORITHMS
+from sidequest.dungeon.region_graph import DepthConfig
 from sidequest.dungeon.themes import (
     Adjacency,
     CreatureEntry,
@@ -18,6 +19,7 @@ from sidequest.dungeon.themes import (
     ThemePalette,
     ThemePaletteMissingError,
     load_theme_palette,
+    theme_eligible_at_depth,
 )
 
 
@@ -264,3 +266,49 @@ def test_load_palette_schema_violation_is_loud(tmp_path: Path):
     _write(td, "drowned_cavern.yaml", broken)
     with pytest.raises(ValueError, match="drowned_cavern.yaml"):
         load_theme_palette(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# CONTRACT-LOCK: depth_score eligibility cross-plan contract (Plan 4 Task 6)
+# Proves bands are interpreted in RAW Plan-3 depth_score units, NOT level
+# buckets.  Spec §5: depth_score is the authoritative gradient; "level" is
+# never an authoritative key.
+# ---------------------------------------------------------------------------
+
+
+def test_eligibility_uses_raw_depth_score_not_level_buckets():
+    shallow = _theme(id="s", depth_band={"min": 0.0, "max": 50.0})
+    deep = _theme(id="d", depth_band={"min": 90.0, "max": None})
+    # Plan 3: depth_per_hop=10 -> 3 hops == depth_score 30 (NOT "level 1")
+    assert theme_eligible_at_depth(shallow, 0.0) is True
+    assert theme_eligible_at_depth(shallow, 50.0) is True       # inclusive max
+    assert theme_eligible_at_depth(shallow, 50.01) is False
+    assert theme_eligible_at_depth(deep, 89.9) is False
+    assert theme_eligible_at_depth(deep, 90.0) is True           # inclusive min
+    assert theme_eligible_at_depth(deep, 100000.0) is True       # max=None
+
+
+def test_themes_for_depth_is_sorted_and_filters(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    _write(td, "a.yaml", _GOOD_A)  # drowned_cavern  band 0..50
+    _write(
+        td,
+        "b.yaml",
+        _GOOD_B.replace("avoids: [drowned_cavern]", "avoids: []"),
+    )  # bone_crypt band 30..120
+    pal = load_theme_palette(tmp_path)
+    at0 = [t.id for t in pal.themes_for_depth(0.0)]
+    at40 = [t.id for t in pal.themes_for_depth(40.0)]
+    at200 = [t.id for t in pal.themes_for_depth(200.0)]
+    assert at0 == ["drowned_cavern"]
+    assert at40 == ["bone_crypt", "drowned_cavern"]   # sorted by id
+    assert at200 == []                                # nothing eligible that deep
+
+
+def test_depthconfig_scale_sanity_for_authoring():
+    # Documents the authoring contract: bands are RAW depth_score units.
+    # 9 ordinary hops at the Plan-3 default == depth_score 90.
+    cfg = DepthConfig()
+    assert cfg.depth_per_hop == 10.0
+    assert 9 * cfg.depth_per_hop == 90.0
