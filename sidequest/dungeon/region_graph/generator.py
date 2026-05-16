@@ -214,3 +214,34 @@ def generate_expansion(
         attempts=cfg.max_reroll_attempts,
         failing=last.failing() if last else [],
     )
+
+
+def attach_expansion(graph: RegionGraph, exp: Expansion) -> RegionGraph:
+    """Apply an expansion to the contiguous map, then re-verify the
+    global invariants (connected + loopful). Raises loudly on violation
+    (CLAUDE.md: No Silent Fallbacks). Returns the same (mutated) graph."""
+    pre_cyclomatic = graph.cyclomatic_number()
+    pre_node_count = len(graph.nodes)
+
+    for node in exp.new_nodes:
+        graph.add_node(node)
+    for edge in exp.new_edges:
+        graph.add_edge(edge)  # raises on unknown / self-loop endpoints
+
+    if not graph.is_connected():
+        raise ValueError(
+            f"attach left the map disconnected after expansion "
+            f"{exp.expansion_id}: "
+            f"{len(graph.reachable_from_entrance())}/{len(graph.nodes)} "
+            f"regions reachable from {graph.entrance_id!r}"
+        )
+    cyc = graph.cyclomatic_number()
+    is_first = pre_node_count <= 1
+    floor = 1 if (not is_first or exp.new_nodes) else 0
+    if cyc < max(floor, pre_cyclomatic):
+        raise ValueError(
+            f"attach made the map less loopful after expansion "
+            f"{exp.expansion_id}: cyclomatic {pre_cyclomatic} -> {cyc} "
+            f"(must be a loopful contiguous graph, never a global tree)"
+        )
+    return graph

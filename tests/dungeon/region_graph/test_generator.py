@@ -4,9 +4,14 @@ import pytest
 
 from sidequest.dungeon.region_graph.config import JaquaysConfig
 from sidequest.dungeon.region_graph.errors import ExpansionGenerationError
-from sidequest.dungeon.region_graph.generator import _build_candidate, _subseed, generate_expansion
+from sidequest.dungeon.region_graph.generator import (
+    _build_candidate,
+    _subseed,
+    attach_expansion,
+    generate_expansion,
+)
 from sidequest.dungeon.region_graph.invariants import check_invariants
-from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
+from sidequest.dungeon.region_graph.model import Expansion, RegionEdge, RegionGraph, RegionNode
 
 THEMES = ["crypt", "vault", "flooded", "catacomb"]
 
@@ -278,3 +283,45 @@ def test_generate_expansion_rerolls_until_valid(monkeypatch):
     assert calls["n"] == 2
     assert rep.attempts == 2
     assert rep.all_passed()
+
+
+def test_attach_mutates_graph_keeps_connected_and_loopful():
+    g = _explored()
+    pre_cyc = g.cyclomatic_number()
+    exp, _ = generate_expansion(
+        graph=g,
+        campaign_seed=3,
+        expansion_id=2,
+        attach_region_ids=["e2", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    attach_expansion(g, exp)
+    assert exp.new_region_ids() <= set(g.nodes)
+    assert g.is_connected()
+    assert g.cyclomatic_number() >= max(1, pre_cyc)
+
+
+def test_attach_rejects_disconnecting_expansion_loudly():
+    g = _explored()
+    floating = Expansion(
+        expansion_id=9,
+        new_nodes=[
+            RegionNode(id="f0", expansion_id=9, theme="vault"),
+            RegionNode(id="f1", expansion_id=9, theme="vault"),
+        ],
+        new_edges=[RegionEdge(a="f0", b="f1", kind="corridor")],  # no stitch
+    )
+    with pytest.raises(ValueError, match="attach left the map disconnected"):
+        attach_expansion(g, floating)
+
+
+def test_attach_rejects_unknown_stitch_endpoint_loudly():
+    g = _explored()
+    bad = Expansion(
+        expansion_id=9,
+        new_nodes=[RegionNode(id="b0", expansion_id=9, theme="vault")],
+        new_edges=[RegionEdge(a="ghost", b="b0", kind="corridor")],
+    )
+    with pytest.raises(ValueError, match="not a known region"):
+        attach_expansion(g, bad)
