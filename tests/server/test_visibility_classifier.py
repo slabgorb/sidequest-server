@@ -329,3 +329,159 @@ def test_empty_narration_raises():
             connected_player_ids=["p1"],
             player_id_to_character={"p1": "Carl"},
         )
+
+
+# ---------------------------------------------------------------------------
+# ADR-105 B2 — derive the real private-route map from result.secret_routes
+# ---------------------------------------------------------------------------
+
+from sidequest.protocol.dispatch import (  # noqa: E402
+    NarratorDirective,
+    SubsystemDispatch,
+    VisibilityTag,
+)
+from tests.server.conftest import span_attrs_by_name  # noqa: E402
+
+
+def _redacted_dispatch(
+    key: str, visible_to: list[str] | str, *, subsystem: str = "arcane_probe"
+) -> SubsystemDispatch:
+    return SubsystemDispatch(
+        subsystem=subsystem,
+        params={"reading": "no ward-heat"},
+        idempotency_key=key,
+        visibility=VisibilityTag(
+            visible_to=visible_to,
+            perception_fidelity={},
+            secrets_for=visible_to if isinstance(visible_to, list) else [],
+            redact_from_narrator_canonical=True,
+        ),
+    )
+
+
+def test_secret_routes_derive_private_segments():
+    """ADR-105 B2: each redacted SubsystemDispatch becomes a
+    private-segment entry carrying its own recipient set; the SHARED
+    text stays public ("all")."""
+    snap = _snapshot([_pc("Willes"), _pc("Narder")])
+    result = NarrationTurnResult(
+        narration="Willes closes both eyes and pushes attention through the bars.",
+        action_rewrite=ActionRewrite(
+            you="You push your senses", named="Willes pushes", intent="probe"
+        ),
+        secret_routes=[
+            _redacted_dispatch("k1", ["p1"]),
+            _redacted_dispatch("k2", ["p2", "p1"], subsystem="trap_sense"),
+        ],
+    )
+    out = classify_narration_visibility(
+        result=result,
+        snapshot=snap,
+        connected_player_ids=["p1", "p2"],
+        player_id_to_character={"p1": "Willes", "p2": "Narder"},
+    )
+    # Shared blob remains public — the partition is the segment.
+    assert out["visible_to"] == "all"
+    segs = out["private_segments"]
+    assert len(segs) == 2
+    assert segs[0]["visible_to"] == ["p1"]
+    assert segs[0]["subsystem"] == "arcane_probe"
+    assert segs[0]["idempotency_key"] == "k1"
+    # union_visible_to normalizes (sorted, de-duped).
+    assert segs[1]["visible_to"] == ["p1", "p2"]
+
+
+def test_private_segment_all_stopword_collapse():
+    """A redacted route whose visible_to is the 'all' sentinel collapses
+    to 'all' via the shared union_visible_to stop-word rule (the same
+    rule aggregate_visibility uses — no drift)."""
+    snap = _snapshot([_pc("Willes")])
+    result = NarrationTurnResult(
+        narration="Willes listens.",
+        action_rewrite=None,
+        secret_routes=[_redacted_dispatch("k1", "all")],
+    )
+    out = classify_narration_visibility(
+        result=result,
+        snapshot=snap,
+        connected_player_ids=["p1"],
+        player_id_to_character={"p1": "Willes"},
+    )
+    assert out["private_segments"][0]["visible_to"] == "all"
+
+
+def test_no_secret_routes_byte_unchanged():
+    """ADR-105 regression obligation: a turn with no redacted routes
+    carries the EXACT v2 sidecar shape — no ``private_segments`` key at
+    all (solo/atmospheric byte-unchanged)."""
+    snap = _snapshot([_pc("Carl"), _pc("Donut")])
+    result = NarrationTurnResult(
+        narration="Carl plants a boot.",
+        action_rewrite=ActionRewrite(
+            you="You plant", named="Carl plants", intent="plant"
+        ),
+    )
+    out = classify_narration_visibility(
+        result=result,
+        snapshot=snap,
+        connected_player_ids=["p1", "p2"],
+        player_id_to_character={"p1": "Carl", "p2": "Donut"},
+    )
+    assert set(out.keys()) == {"visible_to", "fidelity", "anchor_pc", "pov_strategy"}
+    assert "private_segments" not in out
+
+
+def test_non_subsystemdispatch_routes_skipped():
+    """Mirror build_secret_note_events: only SubsystemDispatch entries
+    route — a NarratorDirective in secret_routes is skipped, not
+    crashed."""
+    snap = _snapshot([_pc("Willes")])
+    directive = NarratorDirective(
+        kind="must_not_narrate",
+        payload="hidden",
+        visibility=VisibilityTag(
+            visible_to=["p1"],
+            perception_fidelity={},
+            secrets_for=["p1"],
+            redact_from_narrator_canonical=True,
+        ),
+    )
+    result = NarrationTurnResult(
+        narration="Willes waits.",
+        action_rewrite=None,
+        secret_routes=[directive, _redacted_dispatch("k1", ["p1"])],
+    )
+    out = classify_narration_visibility(
+        result=result,
+        snapshot=snap,
+        connected_player_ids=["p1"],
+        player_id_to_character={"p1": "Willes"},
+    )
+    # Only the SubsystemDispatch produced a segment.
+    assert len(out["private_segments"]) == 1
+    assert out["private_segments"][0]["idempotency_key"] == "k1"
+
+
+def test_span_emits_private_segment_count(otel_capture):
+    """The narration.visibility_classified span carries the derived
+    private partition — the GM-panel lie-detector for the firewall."""
+    snap = _snapshot([_pc("Willes"), _pc("Narder")])
+    result = NarrationTurnResult(
+        narration="Willes probes the bars.",
+        action_rewrite=ActionRewrite(
+            you="You probe", named="Willes probes", intent="probe"
+        ),
+        secret_routes=[_redacted_dispatch("k1", ["p1"])],
+    )
+    classify_narration_visibility(
+        result=result,
+        snapshot=snap,
+        connected_player_ids=["p1", "p2"],
+        player_id_to_character={"p1": "Willes", "p2": "Narder"},
+    )
+    attrs = span_attrs_by_name(otel_capture, "narration.visibility_classified")
+    assert len(attrs) == 1
+    assert attrs[0]["private_segment_count"] == 1
+    assert attrs[0]["private_visible_to"] == "p1"
+    assert attrs[0]["visible_to"] == "all"
+

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from sidequest.agents.orchestrator import (
@@ -110,26 +111,43 @@ def emit_secret_notes(
         event_log.append(kind=envelope.kind, payload_json=envelope.payload_json)
 
 
+def union_visible_to(values: Iterable[list[str] | str]) -> list[str] | str:
+    """Union of ``visible_to`` lists; ``"all"`` is a stop-word.
+
+    Asymmetric-visibility doctrine (ADR-028/104): a single ``"all"`` tag
+    means everyone sees it regardless of narrower sibling tags. Result is
+    the literal string ``"all"`` or a sorted, de-duplicated player-id
+    list. Single source of the stop-word rule — consumed by
+    :func:`aggregate_visibility` (DispatchPackage path) and
+    :func:`sidequest.server.visibility_classifier.classify_narration_visibility`
+    (ADR-105 B2 private-route derivation) so the two cannot drift.
+    """
+    any_all = False
+    union: set[str] = set()
+    for v in values:
+        if v == "all":
+            any_all = True
+        else:
+            union.update(v)
+    return "all" if any_all else sorted(union)
+
+
 def aggregate_visibility(pkg: DispatchPackage) -> dict:
     """Build the _visibility sidecar for the canonical narration payload.
 
     visible_to = union of non-redacted tags' visible_to lists; "all" is
     a stop-word that collapses the union. fidelity maps merge.
     """
-    any_all = False
-    union: set[str] = set()
+    visibilities: list[list[str] | str] = []
     fidelity: dict[str, str] = {}
     for pd in pkg.per_player:
         for d in pd.dispatch:
             if d.visibility.redact_from_narrator_canonical:
                 continue
-            if d.visibility.visible_to == "all":
-                any_all = True
-            else:
-                union.update(d.visibility.visible_to)
+            visibilities.append(d.visibility.visible_to)
             fidelity.update(d.visibility.perception_fidelity)
     return {
-        "visible_to": "all" if any_all else sorted(union),
+        "visible_to": union_visible_to(visibilities),
         "fidelity": fidelity,
     }
 
