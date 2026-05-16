@@ -30,6 +30,7 @@ from sidequest.game.persistence import (
 )
 
 __all__ = [
+    "ComplicationThread",
     "DungeonMutation",
     "DungeonStore",
     "FrontierEdge",
@@ -89,6 +90,41 @@ class DungeonMutation:
     @classmethod
     def from_dict(cls, d: dict) -> DungeonMutation:
         return cls(region_id=d["region_id"], kind=d["kind"], payload=d["payload"])
+
+
+@dataclass(frozen=True)
+class ComplicationThread:
+    """A started-but-unresolved trope/quest thread (spec §7.1 — the
+    spine). Starts at attach (Plan 6/7 produce it), persists until
+    player-resolved. Plan 5 owns storage + status transitions only."""
+
+    thread_id: str
+    origin_region_id: str
+    kind: str
+    status: str
+    started_at_depth_score: float
+    payload: dict
+
+    def to_dict(self) -> dict:
+        return {
+            "thread_id": self.thread_id,
+            "origin_region_id": self.origin_region_id,
+            "kind": self.kind,
+            "status": self.status,
+            "started_at_depth_score": self.started_at_depth_score,
+            "payload": self.payload,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ComplicationThread:
+        return cls(
+            thread_id=d["thread_id"],
+            origin_region_id=d["origin_region_id"],
+            kind=d["kind"],
+            status=d["status"],
+            started_at_depth_score=d["started_at_depth_score"],
+            payload=d["payload"],
+        )
 
 
 DUNGEON_SCHEMA_SQL = """
@@ -322,3 +358,73 @@ class DungeonStore:
             raise DatabaseError(f"load_mutations failed: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise SerializationError(f"corrupt mutation payload: {exc}") from exc
+
+    def open_thread(self, thread: ComplicationThread) -> None:
+        try:
+            self._conn.execute(
+                "INSERT INTO dungeon_complication_ledger "
+                "(thread_id, origin_region_id, kind, status, "
+                " started_at_depth_score, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    thread.thread_id,
+                    thread.origin_region_id,
+                    thread.kind,
+                    thread.status,
+                    thread.started_at_depth_score,
+                    json.dumps(thread.payload),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistError(
+                f"thread {thread.thread_id!r} already open: {exc}"
+            ) from exc
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"open_thread failed: {exc}") from exc
+
+    def get_thread(self, thread_id: str) -> ComplicationThread:
+        row = self._conn.execute(
+            "SELECT thread_id, origin_region_id, kind, status, "
+            "started_at_depth_score, payload FROM dungeon_complication_ledger "
+            "WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"complication thread {thread_id!r} not found")
+        return ComplicationThread(
+            thread_id=row["thread_id"],
+            origin_region_id=row["origin_region_id"],
+            kind=row["kind"],
+            status=row["status"],
+            started_at_depth_score=row["started_at_depth_score"],
+            payload=json.loads(row["payload"]),
+        )
+
+    def resolve_thread(self, thread_id: str) -> None:
+        cur = self._conn.execute(
+            "UPDATE dungeon_complication_ledger "
+            "SET status = 'resolved', resolved_at = datetime('now') "
+            "WHERE thread_id = ?",
+            (thread_id,),
+        )
+        if cur.rowcount == 0:
+            raise NotFoundError(
+                f"cannot resolve unknown complication thread {thread_id!r}"
+            )
+
+    def open_threads(self) -> list[ComplicationThread]:
+        rows = self._conn.execute(
+            "SELECT thread_id, origin_region_id, kind, status, "
+            "started_at_depth_score, payload FROM dungeon_complication_ledger "
+            "WHERE status = 'open' ORDER BY thread_id"
+        ).fetchall()
+        return [
+            ComplicationThread(
+                thread_id=r["thread_id"],
+                origin_region_id=r["origin_region_id"],
+                kind=r["kind"],
+                status=r["status"],
+                started_at_depth_score=r["started_at_depth_score"],
+                payload=json.loads(r["payload"]),
+            )
+            for r in rows
+        ]

@@ -249,3 +249,51 @@ def test_mutation_overlay_append_only_ordered_and_survives_reload() -> None:
     assert muts[0].region_id == "exp001.r0"
     assert muts[0].payload == {"trap": "scything_blade"}
     assert DungeonMutation.from_dict(muts[1].to_dict()) == muts[1]
+
+
+from sidequest.dungeon.persistence import ComplicationThread, NotFoundError  # noqa: E402
+
+
+def test_complication_ledger_open_resolve_and_accumulation() -> None:
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+
+    # expansion 1 lights two threads
+    store.open_thread(ComplicationThread(
+        thread_id="t1", origin_region_id="exp001.r0", kind="trope",
+        status="open", started_at_depth_score=10.0, payload={"trope": "sacrifice_priest"},
+    ))
+    store.open_thread(ComplicationThread(
+        thread_id="t2", origin_region_id="exp001.r1", kind="quest",
+        status="open", started_at_depth_score=12.0, payload={"quest": "drowned_bell"},
+    ))
+    conn.commit()
+    assert {t.thread_id for t in store.open_threads()} == {"t1", "t2"}
+
+    # expansion 2 lights a third — accumulation observable (spec §7.1)
+    store.open_thread(ComplicationThread(
+        thread_id="t3", origin_region_id="exp002.r0", kind="trope",
+        status="open", started_at_depth_score=30.0, payload={},
+    ))
+    conn.commit()
+    assert len(store.open_threads()) == 3  # nothing cleared by pushing deeper
+
+    # resolution is the ONLY thing that shrinks the ledger
+    store.resolve_thread("t1")
+    conn.commit()
+    open_ids = {t.thread_id for t in store.open_threads()}
+    assert open_ids == {"t2", "t3"}
+    assert ComplicationThread.from_dict(
+        store.get_thread("t1").to_dict()
+    ).status == "resolved"
+
+
+def test_resolve_unknown_thread_fails_loud() -> None:
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    import pytest
+
+    with pytest.raises(NotFoundError):
+        store.resolve_thread("does-not-exist")
