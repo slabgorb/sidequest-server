@@ -43,6 +43,8 @@ def test_deep_chain_holds_every_invariant(campaign_seed):
     g = _seed_graph()
     frontier = ["surface"]
     for eid in range(15):
+        # Inlined (not _grow): this test needs per-step pre_cyc capture and
+        # an independent check_invariants re-check that _grow does not expose.
         attach_ids = ["surface"] if set(g.nodes) == {"surface"} else sorted(frontier)[-3:]
         pre_cyc = g.cyclomatic_number()
         exp, rep = generate_expansion(
@@ -59,7 +61,8 @@ def test_deep_chain_holds_every_invariant(campaign_seed):
         assert g.cyclomatic_number() >= max(1, pre_cyc)  # loopful, monotone
         frontier = sorted(exp.new_region_ids())
     assert all("floor" not in nid for nid in g.nodes)
-    assert len(g.nodes) > 15
+    # exact lower bound: 1 entrance + 15 expansions * lo new regions each
+    assert len(g.nodes) >= 1 + 15 * cfg.new_regions_per_expansion[0]
 
 
 def test_chain_is_deterministic_pre_curation():
