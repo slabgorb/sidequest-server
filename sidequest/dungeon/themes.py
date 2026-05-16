@@ -100,7 +100,7 @@ class NarratorFlavor(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    register: str
+    register: str  # spec §6 name; shadows ABCMeta.register via metaclass — known, non-breaking, do not rename without spec sign-off
     flavor: str
     motifs: list[str] = Field(default_factory=list)
 
@@ -108,6 +108,14 @@ class NarratorFlavor(BaseModel):
     @classmethod
     def _v_text(cls, v: str) -> str:
         return _nonblank(v)
+
+    @field_validator("motifs")
+    @classmethod
+    def _v_motifs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            if not item.strip():
+                raise ValueError("a motif cannot be blank")
+        return v
 
 
 class Adjacency(BaseModel):
@@ -126,7 +134,8 @@ class Adjacency(BaseModel):
     @classmethod
     def _v_prefers(cls, v: list[str]) -> list[str]:
         for item in v:
-            _nonblank(item)
+            if not item.strip():
+                raise ValueError("a prefers entry cannot be a blank id")
         return v
 
     @field_validator("avoids")

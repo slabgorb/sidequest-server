@@ -112,13 +112,18 @@ def test_adjacency_same_id_in_prefers_and_avoids_rejected():
         Adjacency(prefers=["x"], avoids=["x"])
 
 
-def test_adjacency_self_in_avoids_rejected_self_in_prefers_ok():
+def test_adjacency_blank_avoids_entry_rejected():
     # "flooded clusters" (spec §6) -> a theme may prefer adjacency to itself
     Adjacency(prefers=["drowned_cavern"], avoids=[])  # validated at palette level
     with pytest.raises(ValidationError, match="cannot avoid itself"):
         # self-avoidance is only detectable with the owning id; the model
         # rejects the trivially-nonsensical empty-string form here
         Adjacency(prefers=[], avoids=[" "])
+
+
+def test_narrator_flavor_rejects_blank_motif():
+    with pytest.raises(ValidationError, match="motif cannot be blank"):
+        NarratorFlavor(register="grave", flavor="x", motifs=["ok", "  "])
 
 
 def test_narrator_flavor_requires_nonblank_register_and_flavor():
