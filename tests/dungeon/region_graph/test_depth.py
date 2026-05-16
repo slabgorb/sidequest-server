@@ -4,8 +4,8 @@ import dataclasses
 
 import pytest
 
-from sidequest.dungeon.region_graph.depth import DepthConfig
-from sidequest.dungeon.region_graph.model import RegionNode
+from sidequest.dungeon.region_graph.depth import DepthConfig, ordinary_route_dist
+from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
 
 
 def test_depth_config_defaults():
@@ -50,3 +50,47 @@ def test_region_node_depth_score_set_via_replace():
     assert scored.depth_score == 42.0
     assert scored.id == "r0" and scored.theme == "crypt"
     assert n.depth_score is None  # original frozen instance untouched
+
+
+def _chain_graph() -> RegionGraph:
+    # entrance -corridor- a -corridor- b ; plus a SHORTCUT entrance->b
+    g = RegionGraph(entrance_id="e")
+    for rid in ("e", "a", "b"):
+        g.add_node(RegionNode(id=rid, expansion_id=0, theme="t"))
+    g.add_edge(RegionEdge(a="e", b="a", kind="corridor"))
+    g.add_edge(RegionEdge(a="a", b="b", kind="corridor"))
+    g.add_edge(RegionEdge(a="e", b="b", kind="shaft", shortcut=True))
+    return g
+
+
+def test_ordinary_route_ignores_shortcut():
+    g = _chain_graph()
+    d = ordinary_route_dist(g)
+    # shortcut e->b is excluded: b is 2 hops via a, not 1 via the shortcut
+    assert d == {"e": 0, "a": 1, "b": 2}
+
+
+def test_ordinary_route_ignores_hidden():
+    g = RegionGraph(entrance_id="e")
+    for rid in ("e", "a", "b"):
+        g.add_node(RegionNode(id=rid, expansion_id=0, theme="t"))
+    g.add_edge(RegionEdge(a="e", b="a", kind="corridor"))
+    g.add_edge(RegionEdge(a="a", b="b", kind="corridor"))
+    g.add_edge(RegionEdge(a="e", b="b", kind="secret", hidden=True))
+    assert ordinary_route_dist(g) == {"e": 0, "a": 1, "b": 2}
+
+
+def test_ordinary_route_raises_when_region_unreachable_on_ordinary_graph():
+    # b reachable ONLY via a hidden edge -> No Silent Fallbacks: fail loud
+    g = RegionGraph(entrance_id="e")
+    for rid in ("e", "b"):
+        g.add_node(RegionNode(id=rid, expansion_id=0, theme="t"))
+    g.add_edge(RegionEdge(a="e", b="b", kind="secret", hidden=True))
+    with pytest.raises(ValueError, match="not reachable on the ordinary route"):
+        ordinary_route_dist(g)
+
+
+def test_ordinary_route_single_node():
+    g = RegionGraph(entrance_id="e")
+    g.add_node(RegionNode(id="e", expansion_id=0, theme="t"))
+    assert ordinary_route_dist(g) == {"e": 0}  # seed graph: entrance only, no raise

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sidequest.dungeon.region_graph.model import RegionGraph
+
 
 @dataclass(frozen=True)
 class DepthConfig:
@@ -46,3 +48,27 @@ class DepthConfig:
                 "'level' must be coarser than a single hop, else it is a "
                 "floor index — the explicitly-rejected concept)"
             )
+
+
+def ordinary_route_dist(graph: RegionGraph) -> dict[str, int]:
+    """BFS hop distance from the entrance over ORDINARY edges only —
+    hidden (secret) and shortcut edges are excluded (a secret passage is
+    not the ordinary route; a shortcut is a discovered bypass — same
+    exclusion rationale as invariants.py's `stitch`).
+
+    Raises loudly (CLAUDE.md: No Silent Fallbacks) if any region is not
+    reachable from the entrance on the ordinary-route graph — depth must
+    never silently default to 0 for an unreachable region.
+    """
+    skip = {
+        i for i, e in enumerate(graph.edges) if e.hidden or e.shortcut
+    }
+    dist = graph.bfs_dist(graph.entrance_id, skip_edges=skip)
+    missing = sorted(set(graph.nodes) - set(dist))
+    if missing:
+        raise ValueError(
+            f"regions {missing} not reachable on the ordinary route "
+            f"from {graph.entrance_id!r} (hidden/shortcut edges excluded); "
+            f"cannot assign a depth_score"
+        )
+    return dist
