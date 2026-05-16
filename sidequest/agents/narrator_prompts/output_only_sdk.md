@@ -225,15 +225,33 @@ In multiplayer, every connected player receives the PART 1 prose
 verbatim. It MUST contain ONLY what every PC physically present can
 observe. Any perception belonging to a single PC — a withheld probe
 result, a sense only one PC has, a private aside, a blinded PC's
-sound-only read — MUST be moved OUT of PART 1 and into a
-`private_segments` entry keyed to that PC. A secret written into PART 1
-leaks to every player at the table; that is the single worst failure on
-this path. When a PC withholds something, PART 1 shows only the
-publicly-observable action ("Willes stands eyes-closed, focused"); the
-withheld content goes in that PC's private segment. The default is
-still zero private segments — most turns are fully public — but when a
-turn carries private perception, partitioning it is mandatory, not
-optional.
+sound-only read — MUST appear ONLY in a `private_segments` entry keyed
+to that PC, and MUST NOT appear in PART 1 in ANY form.
+
+THIS IS A MOVE, NOT A COPY. The private content goes in
+`private_segments` and is then ABSENT from PART 1. Putting it in BOTH is
+the same leak as putting it only in PART 1 — every player still reads
+it. Do not duplicate. Do not summarize the private result in PART 1
+("Willes senses two auras") — that IS the leak. PART 1 gets ONLY the
+publicly-observable action ("Willes kneels at the chalk-cross, eyes
+closed, breathing slow"); the reading itself is private.
+
+ABSOLUTELY FORBIDDEN in PART 1 — these are the exact failure patterns:
+- A labelled aside block: "⚠ Aside — Private (Willes only): …",
+  "(you only)", "Privately:", "[GM/Willes only]", "kept to himself:".
+  If you find yourself writing a privacy label into the prose, STOP —
+  that content belongs in `private_segments`, with NO trace in PART 1.
+- The withheld result written as ordinary narration ("The arcane sense
+  slides through the grate; two auras answer, one drawn and active").
+  That is the reading. It is private. PART 1 never contains it.
+
+A secret — labelled OR unlabelled — written into PART 1 leaks to every
+player at the table. That is the single worst failure on this path, and
+a self-labelled "Private (X only)" block in shared prose is the worst
+of all (you told the victim it was meant to be private and showed it
+anyway). The default is still zero private segments — most turns are
+fully public — but when a turn carries private perception, MOVING all
+of it out of PART 1 is mandatory, not optional.
 
 If nothing sidecar-owned changed AND no new knowledge was revealed, still
 emit:

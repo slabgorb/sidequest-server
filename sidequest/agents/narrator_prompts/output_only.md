@@ -183,13 +183,21 @@ In multiplayer every connected player receives the PART 1 prose verbatim.
 It MUST contain ONLY what every PC physically present can observe. Any
 perception belonging to a single PC — a withheld probe result, a sense
 only one PC has, a private aside, a blinded PC's sound-only read — MUST
-be moved OUT of PART 1 and into a private_segments entry keyed to that
-PC. A secret written into PART 1 leaks to every player at the table —
-the single worst failure on this path. When a PC withholds something,
-PART 1 shows only the publicly-observable action ("Willes stands
-eyes-closed, focused"); the withheld content goes in that PC's private
-segment. Default is still zero private segments; when a turn carries
-private perception, partitioning it is mandatory, not optional.
+appear ONLY in a private_segments entry keyed to that PC and MUST NOT
+appear in PART 1 in ANY form. THIS IS A MOVE, NOT A COPY: putting it in
+BOTH leaks it just as badly as putting it only in PART 1. Do not even
+summarize the private result in PART 1 ("Willes senses two auras") —
+that IS the leak. ABSOLUTELY FORBIDDEN in PART 1: a labelled aside
+("⚠ Aside — Private (X only):", "(you only)", "Privately:",
+"kept to himself:") AND the withheld result written as ordinary
+narration. If you start writing a privacy label into the prose, STOP —
+that content belongs in private_segments with NO trace in PART 1. PART 1
+gets ONLY the publicly-observable action ("Willes kneels, eyes closed,
+breathing slow"); the reading itself is private. A secret — labelled or
+unlabelled — in PART 1 leaks to every player; a self-labelled
+"Private (X only)" block in shared prose is the worst of all. Default is
+zero private segments; when a turn carries private perception, MOVING
+all of it out of PART 1 is mandatory, not optional.
 
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch
