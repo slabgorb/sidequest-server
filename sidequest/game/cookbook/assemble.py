@@ -10,7 +10,8 @@ from __future__ import annotations
 import hashlib
 import random
 
-from sidequest.game.cookbook.models import Affinities, CrBand, SizeBudget
+from sidequest.game.cookbook.loader import CookbookBundle
+from sidequest.game.cookbook.models import Affinities, CrBand, RaceDef, SizeBudget
 
 
 def region_rng(campaign_seed: str, expansion_id: str) -> random.Random:
@@ -40,3 +41,36 @@ def budget_for_burst(aff: Affinities, burst_magnitude: int) -> SizeBudget:
         if burst_magnitude <= row.burst_lte:
             return row
     return aff.size_by_burst[-1]
+
+
+def roll_race(
+    bundle: CookbookBundle,
+    look: str,
+    rng: random.Random,
+    *,
+    exclude: list[str] | None = None,
+) -> RaceDef | None:
+    """Affinity-weighted RACE roll (spec §4.2: bias, never lock).
+
+    Any RACE with weight > 0 under this LOOK can be selected. `exclude`
+    drops RACE ids from the pool (used by the assembler's observable
+    low-ceiling re-roll); returns None when the pool is exhausted. A
+    LOOK absent from look_race_affinity is a content bug — fail loud
+    (§7).
+    """
+    weights = bundle.affinities.look_race_affinity.get(look)
+    if not weights:
+        raise KeyError(
+            f"cookbook: LOOK '{look}' absent from look_race_affinity (spec §7 — no silent fallback)"
+        )
+    by_id = {r.id: r for r in bundle.races}
+    missing = [rid for rid in weights if rid not in by_id]
+    if missing:
+        raise KeyError(f"cookbook: affinity references unknown RACE(s) {missing} for LOOK '{look}'")
+    drop = set(exclude or ())
+    candidates = [(by_id[rid], w) for rid, w in weights.items() if w > 0 and rid not in drop]
+    if not candidates:
+        return None
+    population = [r for r, _ in candidates]
+    weight_vals = [w for _, w in candidates]
+    return rng.choices(population, weights=weight_vals, k=1)[0]
