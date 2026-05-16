@@ -44,6 +44,12 @@ class DepthConfig:
             raise ValueError("depth_per_hop must be > 0")
         if self.jitter_max < 0.0:
             raise ValueError("jitter_max must be >= 0")
+        if self.jitter_max >= self.depth_per_hop:
+            raise ValueError(
+                "jitter_max must be < depth_per_hop (else a dist-1 region "
+                "can jitter below 0 and level_bucket floors it to the "
+                "surface — a silent depth collapse)"
+            )
         if self.bucket_size < self.depth_per_hop:
             raise ValueError(
                 "bucket_size must be >= depth_per_hop (a player-facing "

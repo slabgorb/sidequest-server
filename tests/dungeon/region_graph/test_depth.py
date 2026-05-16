@@ -30,8 +30,9 @@ def test_depth_config_defaults():
         ({"depth_per_hop": -1.0}, "depth_per_hop must be > 0"),
         ({"jitter_max": -0.1}, "jitter_max must be >= 0"),
         ({"bucket_size": 9.9}, "bucket_size must be >= depth_per_hop"),
+        ({"jitter_max": 10.0, "depth_per_hop": 10.0}, "jitter_max must be < depth_per_hop"),
     ],
-    ids=["hop-zero", "hop-negative", "jitter-negative", "bucket-below-hop"],
+    ids=["hop-zero", "hop-negative", "jitter-negative", "bucket-below-hop", "jitter-ge-hop"],
 )
 def test_depth_config_validate_rejects(kwargs, msg):
     with pytest.raises(ValueError, match=msg):
@@ -155,9 +156,12 @@ def test_assign_scores_all_regions_and_entrance_is_zero():
 
 def test_assign_score_is_base_plus_bounded_jitter():
     g, cfg, _ = _scored_chain()
+    score_a = g.nodes["a"].depth_score
+    score_b = g.nodes["b"].depth_score
+    assert score_a is not None and score_b is not None
     # b is 2 ordinary hops deep (shortcut excluded) -> base 20.0 +/- 3.0
-    assert abs(g.nodes["b"].depth_score - 20.0) <= cfg.jitter_max
-    assert abs(g.nodes["a"].depth_score - 10.0) <= cfg.jitter_max
+    assert abs(score_b - 20.0) <= cfg.jitter_max
+    assert abs(score_a - 10.0) <= cfg.jitter_max
 
 
 def test_assign_is_frozen_second_call_is_noop_on_scored_regions():
