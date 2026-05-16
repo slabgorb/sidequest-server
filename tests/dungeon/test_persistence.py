@@ -93,3 +93,25 @@ def test_ensure_schema_is_idempotent() -> None:
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
     assert _EXPECTED_TABLES.issubset({r["name"] for r in rows})
+
+
+import re  # noqa: E402
+
+
+def test_no_floor_indexed_keys_anywhere() -> None:
+    """Spec §5/§11: nothing in the dungeon schema may be keyed by or
+    named for a 'floor'. Introspect every table/column/index name."""
+    conn = _mem_conn()
+    DungeonStore(conn).ensure_schema()
+    floor = re.compile(r"floor", re.IGNORECASE)
+
+    objects = conn.execute(
+        "SELECT name, sql FROM sqlite_master "
+        "WHERE name LIKE 'dungeon_%' "
+        "   OR name LIKE 'idx_dungeon_%' "
+        "   OR name LIKE 'sqlite_autoindex_dungeon_%'"
+    ).fetchall()
+    assert objects, "schema introspection returned nothing — schema not created"
+    for row in objects:
+        assert not floor.search(row["name"]), f"floor in object name: {row['name']}"
+        assert not floor.search(row["sql"] or ""), f"floor in DDL: {row['sql']}"
