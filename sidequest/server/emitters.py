@@ -172,13 +172,29 @@ def emit_event(
     handler: WebSocketSessionHandler,
     kind: str,
     payload_model: object,
+    *,
+    author_player_id: str | None = None,
 ) -> object:
     """Persist an event to the EventLog and fan-out to all connected players.
 
     Invariants (per Plan 03):
     1. EventLog.append fires BEFORE any socket send.
     2. Fan-out consults ProjectionFilter per recipient.
-    3. The emitter (handler) receives the raw, unfiltered event.
+    3. (solo only) The emitter receives the raw, unfiltered event.
+
+    ``author_player_id`` (ADR-105 Track A): in merged-MP dispatch the
+    driving handler is whichever player submitted *last* — NOT the sole
+    author of a shared narration covering every seated PC. Invariant 3's
+    raw-bypass is a solo assumption; applied to the merged-MP driver it
+    makes that one player the only recipient with ZERO
+    ``projection.filter.decide`` spans and the unfiltered shared blob
+    (the confirmed ADR-105 firewall breach). When ``author_player_id`` is
+    set, the emitter is projected/perception-rewritten/POV-swapped like
+    any other recipient — one decide+rewrite+swap per DISTINCT connected
+    player. When ``None`` (solo / legacy callers) Invariant 3 is
+    preserved byte-identical (raw bypass; reconnect lazy_fill compensates
+    — see test_projection_end_to_end_wiring). Content redaction of the
+    shared blob is ADR-105 Track B, not this change.
 
     Returns the outbound message object for the calling player (the emitter).
     Falls back to a plain message without seq when EventLog is unavailable
@@ -211,7 +227,42 @@ def emit_event(
 
     if event_log is not None:
         room = handler._room
-        emitter_player_id = handler._session_data.player_id if handler._session_data else None
+        _rotated_session_player_id = (
+            handler._session_data.player_id if handler._session_data else None
+        )
+        # ADR-105 Track A: an explicit author_player_id means a shared
+        # merged-MP turn — the driver is not the sole author and must be
+        # projected, not raw-bypassed. None = solo/legacy (raw bypass).
+        emitter_player_id = (
+            author_player_id if author_player_id is not None else _rotated_session_player_id
+        )
+        project_emitter = author_player_id is not None
+        # The driver frame, once projected (Track A). None ⇒ solo/legacy
+        # raw-bypass path runs unchanged. Bound here so it is always
+        # defined regardless of the room/projection_filter guard below.
+        emitter_projected_dict: dict | None = None
+
+        # OTEL lie-detector (CLAUDE.md): the emitter-authorship line was
+        # silently wrong for 5 merged-MP turns because nothing surfaced
+        # author≠rotated divergence. Emit it explicitly so the GM panel
+        # can catch any regression of this exact binding. Never crash a
+        # turn on telemetry.
+        try:
+            from sidequest.server.session_handler import _watcher_publish
+
+            _watcher_publish(
+                "state_transition",
+                {
+                    "field": "emit.author_resolved",
+                    "kind": kind,
+                    "emitter_player_id": emitter_player_id or "",
+                    "rotated_session_player_id": _rotated_session_player_id or "",
+                    "project_emitter": project_emitter,
+                },
+                component="projection",
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never crash a turn
+            logger.warning("emit.author_resolved watcher publish failed kind=%s", kind)
 
         # C2: event append + all cache writes share a single transaction.
         # Projections are computed inside the block so the cache row's
@@ -298,8 +349,47 @@ def emit_event(
                             )
                     fanout.append((other_pid, decision, filtered_data))
 
-        # Build emitter's message with raw, unfiltered payload + seq
-        # (Invariant 3 — visibility filter is bypassed for the emitter).
+                # ADR-105 Track A: project the merged-MP driver too.
+                # Invariant 3's raw bypass is a solo assumption — in a
+                # shared merged turn the driving (last-submitter) handler
+                # is not the sole author, so the driver gets their own
+                # per-recipient projected + perception-rewritten + POV-
+                # swapped frame, plus a projection.filter.decide span and
+                # a cache row in THIS same transaction (so reconnect
+                # replays from cache consistently with peers rather than
+                # depending on lazy_fill). visible_to:"all" today means
+                # include=True for everyone — content redaction of the
+                # shared blob is ADR-105 Track B, not this change.
+                if project_emitter and emitter_player_id is not None:
+                    _e_decision = projection_filter.project(
+                        envelope=envelope, view=view, player_id=emitter_player_id
+                    )
+                    _cache_decision(emitter_player_id, _e_decision)
+                    if _e_decision.include:
+                        _e_data = json.loads(_e_decision.payload_json)
+                        _e_data = rewrite_for_recipient(
+                            canonical_payload=_e_data,
+                            viewer_player_id=emitter_player_id,
+                            status_effects=status_effects,
+                        )
+                        if _snapshot_for_swap is not None:
+                            _e_data = _apply_pov_swap(
+                                _e_data,
+                                recipient_player_id=emitter_player_id,
+                                view=view,
+                                snapshot=_snapshot_for_swap,
+                            )
+                        emitter_projected_dict = _e_data
+                    # include=False under project_emitter (a participant
+                    # excluded from their own shared narration) is a
+                    # Track B concern; leaving emitter_projected_dict None
+                    # falls through to the existing path so a frame is
+                    # still returned rather than silently emitting empty.
+
+        # Build emitter's message. Solo/legacy: raw, unfiltered payload +
+        # seq (Invariant 3 — visibility filter bypassed for the emitter).
+        # Merged-MP (ADR-105 Track A): the projected driver frame built
+        # above is used instead of the raw bypass.
         #
         # Story 49-8 amendment: when the emitter is the POV anchor of
         # their own narration card, the emitter's frame is rewritten to
@@ -314,7 +404,20 @@ def emit_event(
             and emitter_player_id is not None
             and _snapshot_for_swap is not None
         )
-        if swap_eligible and isinstance(payload_model, BaseModel):
+        if emitter_projected_dict is not None:
+            # ADR-105 Track A — merged-MP driver receives the projected
+            # frame (projection + perception_rewrite + POV swap), NOT the
+            # solo Invariant-3 raw bypass. C3 rule applies: rebuild from
+            # the filtered dict alone (+ seq) so no canonical field a
+            # future (Track B) rule drops can leak back via model merge.
+            if isinstance(payload_model, BaseModel):
+                payload_cls_emitter = type(payload_model)
+                emitter_payload = payload_cls_emitter.model_validate(
+                    {**emitter_projected_dict, "seq": seq}
+                )
+            else:
+                emitter_payload = {**emitter_projected_dict, "seq": seq}
+        elif swap_eligible and isinstance(payload_model, BaseModel):
             raw_dict = json.loads(payload_model.model_dump_json(exclude={"seq"}))
             swapped_dict = _apply_pov_swap(
                 raw_dict,

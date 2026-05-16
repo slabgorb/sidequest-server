@@ -677,15 +677,29 @@ class WebSocketSessionHandler:
     # EventLog fan-out helper (MP-03 Task 3)
     # ------------------------------------------------------------------
 
-    def _emit_event(self, kind: str, payload_model: object) -> object:
+    def _emit_event(
+        self, kind: str, payload_model: object, *, author_player_id: str | None = None
+    ) -> object:
         """Persist + fan-out an event. Delegates to ``emitters.emit_event``.
 
         Phase 1 of session_handler decomposition (see
         docs/superpowers/specs/2026-04-27-session-handler-decomposition-design.md).
+
+        ``author_player_id`` (ADR-105 Track A): when set, the emit is a
+        shared merged-MP turn whose driving handler is the last-submitter,
+        NOT the sole author. The emitter is then projected like any
+        recipient instead of receiving the solo Invariant-3 raw bypass.
+        ``None`` (solo / legacy) preserves the byte-identical raw-bypass
+        delegate call — keeps the documented emitter-skip + lazy_fill
+        invariant intact.
         """
         from sidequest.server import emitters
 
-        return emitters.emit_event(self, kind, payload_model)
+        if author_player_id is None:
+            return emitters.emit_event(self, kind, payload_model)
+        return emitters.emit_event(
+            self, kind, payload_model, author_player_id=author_player_id
+        )
 
     def _dispatch_pending_magic_frames(self, snapshot: GameSnapshot) -> None:
         """Phase 5 (Story 47-3): drain pending magic-confrontation queues.
@@ -3055,8 +3069,27 @@ class WebSocketSessionHandler:
                     visibility_sidecar=_visibility_sidecar,
                 )
                 # MP-03 Task 3: route through EventLog + ProjectionFilter before send.
+                #
+                # ADR-105 Track A: a shared merged-MP narration (>1
+                # connected player) has no sole author — the driving
+                # handler is merely the last submitter. Thread its stable
+                # _session_data.player_id as author_player_id so the
+                # driver is projected/POV-swapped like every recipient
+                # (one projection.filter.decide + perception_rewrite +
+                # second_person_swap per DISTINCT player) rather than
+                # receiving the solo Invariant-3 raw bypass — the
+                # confirmed firewall+POV breach. Solo (<=1 connected)
+                # passes None and keeps the raw-bypass + lazy_fill
+                # invariant byte-identical.
+                _mp_author = (
+                    self._session_data.player_id
+                    if self._session_data is not None and len(_connected_player_ids) > 1
+                    else None
+                )
                 with timings.phase("broadcast"):
-                    narration_msg = self._emit_event("NARRATION", narration_payload)
+                    narration_msg = self._emit_event(
+                        "NARRATION", narration_payload, author_player_id=_mp_author
+                    )
 
                 # Pingpong 2026-04-26 [S3-REGRESSION]: emit a SCRAPBOOK_ENTRY for
                 # every narration turn so the UI gallery has metadata to merge with
