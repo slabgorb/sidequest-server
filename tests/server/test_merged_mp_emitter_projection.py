@@ -345,3 +345,126 @@ async def test_production_merged_turn_threads_author_player_id(
         f"(last-submitter) player 'p2'; got {narration_authors!r}. The "
         "ADR-105 Track A call-site wiring is not live."
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR-105 B3 production-reachability: when the narrator partitions private
+# prose, _execute_narration_turn MUST emit a NARRATION_SEGMENT routed to
+# the owning PC (author == owner, _visibility.visible_to == [owner],
+# anchor_pc + pc_anchored for the B4 swap). Without this the segment
+# field could exist + be unit-tested yet never be emitted by production.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_production_emits_narration_segment_routed_to_owner(
+    session_handler_factory,
+) -> None:
+    from unittest.mock import patch
+
+    from sidequest.agents.orchestrator import NarrationTurnResult
+    from sidequest.protocol.messages import PlayerActionMessage, PlayerActionPayload
+    from sidequest.protocol.types import NonBlankString
+
+    handler1, sd1, room = session_handler_factory(
+        slug="test-mp-adr105-b3-wiring",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Willes"), ("p2", "Narder")],
+        active_player=("p1", "Willes"),
+    )
+    handler2, sd2, _ = session_handler_factory(
+        slug="test-mp-adr105-b3-wiring",
+        mode=GameMode.MULTIPLAYER,
+        seat_players=[("p1", "Willes"), ("p2", "Narder")],
+        active_player=("p2", "Narder"),
+        existing_room=room,
+    )
+
+    # Public prose is observable by all; the withheld arcane-probe result
+    # is partitioned by the narrator into a private segment owned by
+    # Willes (the 2026-05-16 leak scenario, now firewalled).
+    fake_result = NarrationTurnResult(
+        narration="Willes stands eyes-closed, focused. Narder sets his back to the wall.",
+        is_degraded=False,
+        agent_duration_ms=5,
+        private_prose_segments=[
+            {
+                "text": (
+                    "The stone gives nothing back — no ward-heat, no "
+                    "binding-pressure. Whatever breathes beyond is not magical."
+                ),
+                "anchor_pc": "Willes",
+            }
+        ],
+    )
+    sd1.orchestrator.run_narration_turn = AsyncMock(return_value=fake_result)
+    sd2.orchestrator.run_narration_turn = AsyncMock(return_value=fake_result)
+
+    captured: list[tuple[str, object, str | None]] = []
+
+    def _spy_emit(self, kind, payload_model, *, author_player_id=None):
+        captured.append((kind, payload_model, author_player_id))
+
+        class _M:
+            def __init__(self, p):
+                self.payload = p
+
+        return _M(payload_model)
+
+    with (
+        patch.object(WebSocketSessionHandler, "_emit_event", _spy_emit),
+        patch.object(WebSocketSessionHandler, "_emit_scrapbook_entry", lambda *a, **k: None),
+    ):
+        await handler1._handle_player_action(
+            PlayerActionMessage(
+                payload=PlayerActionPayload(
+                    action=NonBlankString.model_validate("I probe the bars.")
+                ),
+                player_id="p1",
+            )
+        )
+        await handler2._handle_player_action(
+            PlayerActionMessage(
+                payload=PlayerActionPayload(
+                    action=NonBlankString.model_validate("I watch the dark.")
+                ),
+                player_id="p2",
+            )
+        )
+
+    segments = [
+        (payload, author)
+        for kind, payload, author in captured
+        if kind == "NARRATION_SEGMENT"
+    ]
+    assert len(segments) == 1, (
+        "production merged turn must emit exactly one NARRATION_SEGMENT for "
+        f"the single private route; got {len(segments)} "
+        f"(all kinds: {[k for k, _, _ in captured]!r})"
+    )
+    seg_payload, seg_author = segments[0]
+    # Owner = Willes = p1 (resolved via snapshot.player_seats).
+    assert seg_author == "p1", (
+        f"NARRATION_SEGMENT must be authored by the owning PC's player_id "
+        f"'p1'; got {seg_author!r}"
+    )
+    viz = seg_payload.visibility_sidecar
+    assert viz["visible_to"] == ["p1"], (
+        f"segment must route ONLY to the owner; got visible_to={viz!r}"
+    )
+    assert viz["anchor_pc"] == "Willes"
+    assert viz["pov_strategy"] == "pc_anchored"
+    assert "ward-heat" in str(seg_payload.text), (
+        "the withheld arcane-probe prose must travel the private segment"
+    )
+
+    # The public NARRATION must NOT carry the withheld content (the
+    # narrator partitioned it; the firewall depends on the public blob
+    # being public-safe).
+    narration_payloads = [
+        payload for kind, payload, _ in captured if kind == "NARRATION"
+    ]
+    assert narration_payloads, "production must still emit the public NARRATION"
+    assert all(
+        "ward-heat" not in str(getattr(p, "text", "")) for p in narration_payloads
+    ), "public NARRATION leaked the withheld arcane-probe result"

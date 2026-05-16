@@ -102,6 +102,7 @@ from sidequest.protocol.messages import (
     NarrationEndPayload,
     NarrationMessage,
     NarrationPayload,
+    NarrationSegmentPayload,
     RenderQueuedMessage,
     RenderQueuedPayload,
     ScrapbookEntryPayload,
@@ -3090,6 +3091,148 @@ class WebSocketSessionHandler:
                     narration_msg = self._emit_event(
                         "NARRATION", narration_payload, author_player_id=_mp_author
                     )
+
+                    # ADR-105 B3: emit each narrator-partitioned private
+                    # prose segment as its own NARRATION_SEGMENT, routed
+                    # by _visibility.visible_to to the single owning PC
+                    # (GM implicit via the GM CoreInvariant). The shared
+                    # NARRATION text above is public-safe by the amended
+                    # output contract; these carry the withheld
+                    # perception. The visibility-gated CoreInvariant (B1)
+                    # structurally firewalls non-recipients;
+                    # author_player_id (Track A) gives the owning PC a
+                    # real per-recipient projection pass. Default is zero
+                    # segments — fully-public turns add nothing here.
+                    _private_segments = (
+                        getattr(result, "private_prose_segments", []) or []
+                    )
+                    if _private_segments:
+                        _seat_to_player = {
+                            name: pid
+                            for pid, name in snapshot.player_seats.items()
+                            if name
+                        }
+                        _seg_turn_id = (
+                            f"{sd.genre_slug}:{sd.world_slug}:"
+                            f"{sd.player_id}:{snapshot.turn_manager.interaction}"
+                        )
+                        for _seg in _private_segments:
+                            _seg_text = (_seg.get("text") or "").strip()
+                            if not _seg_text:
+                                continue
+                            _seg_anchor = (
+                                _seg.get("anchor_pc") or ""
+                            ).strip() or None
+                            _owner_pid = (
+                                _seat_to_player.get(_seg_anchor)
+                                if _seg_anchor
+                                else None
+                            )
+                            if _owner_pid is None:
+                                # Fail loud, never leak: an unresolvable
+                                # owner means we cannot safely route this
+                                # private prose. Dropping loses the prose
+                                # but routing-to-all would be the exact
+                                # breach ADR-105 closes. Surface it for
+                                # the GM panel rather than swallow it.
+                                logger.warning(
+                                    "narration.segment_unroutable "
+                                    "anchor_pc=%r seated=%r — DROPPED (no leak)",
+                                    _seg_anchor,
+                                    list(_seat_to_player),
+                                )
+                                _watcher_publish(
+                                    "state_transition",
+                                    {
+                                        "field": "narration.segment_routed",
+                                        "anchor_pc": _seg_anchor or "",
+                                        "visible_to": "",
+                                        "recipient_count": 0,
+                                        "withheld_from_count": len(
+                                            _connected_player_ids
+                                        ),
+                                        "routed": False,
+                                    },
+                                    component="projection",
+                                    severity="warning",
+                                )
+                                continue
+                            # author_player_id=_owner_pid makes the owner
+                            # the emitter: every OTHER connected player is
+                            # a peer recipient and the visibility-gated
+                            # CoreInvariant (B1) excludes them at fan-out
+                            # (no queue frame); the owner's frame is
+                            # projected + perception-rewritten + (B4)
+                            # POV-swapped and RETURNED. emit_event's peer
+                            # fan-out never delivers to the emitter, so the
+                            # owner's own segment must be pushed to the
+                            # owner's CURRENT socket explicitly (the
+                            # owner is not necessarily the turn driver —
+                            # the segment's owner is whichever PC the
+                            # narrator anchored the private prose to).
+                            _seg_msg = self._emit_event(
+                                "NARRATION_SEGMENT",
+                                NarrationSegmentPayload(
+                                    text=_seg_text,
+                                    anchor_pc=_seg_anchor,
+                                    turn_id=_seg_turn_id,
+                                    # ADR-105 B4: per-segment POV. Each
+                                    # segment is single-PC by construction,
+                                    # so carrying anchor_pc + pc_anchored
+                                    # in _visibility lets the existing
+                                    # _apply_pov_swap (Track A having fixed
+                                    # per-recipient binding) rewrite it to
+                                    # 2nd-person for the owner. No
+                                    # multi-antecedent blob: the swap
+                                    # operates on one PC's private prose.
+                                    visibility_sidecar={
+                                        "visible_to": [_owner_pid],
+                                        "fidelity": {},
+                                        "anchor_pc": _seg_anchor,
+                                        "pov_strategy": "pc_anchored",
+                                    },
+                                ),
+                                author_player_id=_owner_pid,
+                            )
+                            # Deliver the owner's projected+swapped frame
+                            # to the owner's live socket. Lookup at
+                            # delivery time so a reconnected owner's NEW
+                            # socket queue gets it (mirrors the
+                            # CONFRONTATION dispatcher-socket fix). On the
+                            # EventLog regardless (replay / GM lie-detector
+                            # / reconnect lazy_fill) — a missing live
+                            # socket is not a leak, just a deferred read.
+                            _seg_room = self._room
+                            if _seg_msg is not None and _seg_room is not None:
+                                _seg_sock_fn = getattr(
+                                    _seg_room, "socket_for_player", None
+                                )
+                                _seg_q_fn = getattr(
+                                    _seg_room, "queue_for_socket", None
+                                )
+                                if callable(_seg_sock_fn) and callable(_seg_q_fn):
+                                    _seg_sock = _seg_sock_fn(_owner_pid)
+                                    _seg_q = (
+                                        _seg_q_fn(_seg_sock)
+                                        if _seg_sock is not None
+                                        else None
+                                    )
+                                    if _seg_q is not None:
+                                        _seg_q.put_nowait(_seg_msg)
+                            _watcher_publish(
+                                "state_transition",
+                                {
+                                    "field": "narration.segment_routed",
+                                    "anchor_pc": _seg_anchor,
+                                    "visible_to": _owner_pid,
+                                    "recipient_count": 1,
+                                    "withheld_from_count": max(
+                                        len(_connected_player_ids) - 1, 0
+                                    ),
+                                    "routed": True,
+                                },
+                                component="projection",
+                            )
 
                 # Pingpong 2026-04-26 [S3-REGRESSION]: emit a SCRAPBOOK_ENTRY for
                 # every narration turn so the UI gallery has metadata to merge with

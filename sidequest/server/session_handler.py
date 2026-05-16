@@ -58,6 +58,8 @@ from sidequest.protocol.messages import (
     ConfrontationPayload,
     NarrationDelta,
     NarrationMessage,
+    NarrationSegmentMessage,
+    NarrationSegmentPayload,
     ScrapbookEntryMessage,
     ScrapbookEntryPayload,
     SecretNoteMessage,
@@ -137,6 +139,7 @@ _AUDIO_INTERPRETER = AudioInterpreter()
 
 _KIND_TO_MESSAGE_CLS: dict[str, type] = {
     "NARRATION": NarrationMessage,
+    "NARRATION_SEGMENT": NarrationSegmentMessage,
     "CONFRONTATION": ConfrontationMessage,
     "SECRET_NOTE": SecretNoteMessage,
     "SCRAPBOOK_ENTRY": ScrapbookEntryMessage,
@@ -300,6 +303,9 @@ def _build_message_for_kind(*, kind: str, payload_json: str, seq: int) -> object
         from sidequest.protocol.messages import NarrationPayload as _NarrationPayload
 
         return message_cls(payload=_NarrationPayload(**data))
+
+    if kind == "NARRATION_SEGMENT":
+        return message_cls(payload=NarrationSegmentPayload(**data))
 
     if kind == "CONFRONTATION":
         return message_cls(payload=ConfrontationPayload(**data))

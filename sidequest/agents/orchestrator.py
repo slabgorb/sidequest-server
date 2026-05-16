@@ -314,6 +314,17 @@ class NarrationTurnResult:
     quest_updates: dict[str, str] = field(default_factory=dict)
     sfx_triggers: list[str] = field(default_factory=list)
     action_rewrite: ActionRewrite | None = None
+    # ADR-105 B3 — per-PC private narration prose the narrator
+    # partitioned OUT of the public ``narration`` blob at generation
+    # time. Each entry: ``{"text": <private prose>, "anchor_pc": <PC
+    # name>}``. The public ``narration`` field is public-safe by the
+    # amended SDK-narrator output contract; these segments are emitted
+    # as NARRATION_SEGMENT events routed by _visibility.visible_to and
+    # firewalled by the visibility-gated CoreInvariant (B1). Presentation
+    # field with NO successor tool — sidecar-sourced on BOTH backends
+    # (NOT in _SDK_TOOL_OWNED_FIELDS). Empty on the overwhelming common
+    # case (fully-public turn) — solo/atmospheric byte-unchanged.
+    private_prose_segments: list[dict[str, Any]] = field(default_factory=list)
     affinity_progress: list[tuple[str, int]] = field(default_factory=list)
     gold_change: int | None = None
     lore_established: list[str] | None = None
@@ -807,6 +818,23 @@ def extract_structured_from_response(raw: str) -> dict[str, Any]:
         "scene_mood": patch.get("scene_mood", patch.get("mood")),
         "sfx_triggers": patch.get("sfx_triggers", []),
         "action_rewrite": patch.get("action_rewrite"),
+        # ADR-105 B3: private per-PC prose the narrator partitioned out
+        # of the public blob. Keep only well-formed entries (a non-empty
+        # ``text`` string); a malformed entry is dropped here rather than
+        # risking an un-routable segment downstream. anchor_pc is
+        # optional (the per-segment POV swap no-ops without it).
+        "private_segments": [
+            {
+                "text": str(seg["text"]).strip(),
+                "anchor_pc": (str(seg["anchor_pc"]).strip() or None)
+                if seg.get("anchor_pc")
+                else None,
+            }
+            for seg in patch.get("private_segments", [])
+            if isinstance(seg, dict)
+            and isinstance(seg.get("text"), str)
+            and seg["text"].strip()
+        ],
         "beat_selections": patch.get("beat_selections", []),
         "confrontation": patch.get("confrontation"),
         "location": patch.get("location"),
@@ -2604,6 +2632,12 @@ class Orchestrator:
                 if isinstance(extraction["sfx_triggers"], list)
                 else [],
                 action_rewrite=action_rewrite,
+                # ADR-105 B3 — firewall must hold on the streaming
+                # backend too (this assembler builds the result by hand;
+                # the shared helper is not used here).
+                private_prose_segments=extraction["private_segments"]
+                if isinstance(extraction["private_segments"], list)
+                else [],
                 affinity_progress=extraction["affinity_progress"],
                 gold_change=extraction["gold_change"],
                 lore_established=extraction["lore_established"],
@@ -2871,6 +2905,13 @@ class Orchestrator:
             if isinstance(extraction["sfx_triggers"], list)
             else [],
             "action_rewrite": action_rewrite,
+            # ADR-105 B3 — private per-PC prose, partitioned by the
+            # narrator at generation time. Presentation field, NO
+            # successor tool → sidecar-sourced on BOTH backends (the
+            # firewall must hold on claude -p AND the SDK path).
+            "private_prose_segments": extraction["private_segments"]
+            if isinstance(extraction["private_segments"], list)
+            else [],
             # ---- state with NO successor tool: narration_apply stays the
             #      single applier on BOTH paths ----
             "items_gained": extraction["items_gained"]

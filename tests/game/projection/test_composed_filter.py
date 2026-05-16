@@ -64,12 +64,20 @@ def test_genre_rule_applies_when_no_invariant_fires() -> None:
     assert json.loads(dec.payload_json) == {"text": "**"}
 
 
-def test_secret_note_targeted_invariant_routes_to_recipient_only() -> None:
+def test_secret_note_visibility_gated_invariant_routes_to_recipient_only() -> None:
+    """ADR-105 B1: end-to-end through ComposedFilter, the structural
+    visibility gate excludes a non-recipient even with no genre rules
+    configured (the firewall does not depend on projection.yaml).
+    """
     filt = ComposedFilter(rules=load_rules_from_yaml_str("rules: []"))
     env = MessageEnvelope(
         kind="SECRET_NOTE",
-        payload_json=json.dumps({"to": "alice", "text": "psst"}),
+        payload_json=json.dumps(
+            {"subsystem": "probe", "_visibility": {"visible_to": ["alice"]}}
+        ),
         origin_seq=4,
     )
     assert filt.project(envelope=env, view=_view(), player_id="alice").include is True
-    assert filt.project(envelope=env, view=_view(), player_id="bob").include is False
+    bob = filt.project(envelope=env, view=_view(), player_id="bob")
+    assert bob.include is False
+    assert bob.payload_json == ""

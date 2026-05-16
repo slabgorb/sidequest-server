@@ -15,13 +15,22 @@ person. This module fills the gap with the v2 sidecar shape:
         "fidelity":   {entity_id: fidelity_level},
         "anchor_pc":  "Carl" | None,
         "pov_strategy": "pc_anchored" | "atmospheric" | "private",
+        # ADR-105 B2 — present ONLY when the turn carried redacted
+        # routes; absent for solo/atmospheric (byte-unchanged):
+        "private_segments": [
+            {"visible_to": [player_id, ...] | "all",
+             "fidelity": {...}, "subsystem": str, "idempotency_key": str},
+            ...
+        ],
     }
 
-The v2 keys (``anchor_pc``, ``pov_strategy``) are purely additive to
-the v1 shape; existing consumers
-(:class:`sidequest.game.projection.rules.VisibilityTagRule`,
-:func:`sidequest.server.session_helpers.aggregate_visibility`) ignore
-keys they do not know about.
+The v2 keys (``anchor_pc``, ``pov_strategy``) and the ADR-105 B2
+``private_segments`` key are purely additive to the v1 shape; existing
+consumers (:class:`sidequest.game.projection.rules.VisibilityTagRule`,
+:func:`sidequest.server.session_helpers.aggregate_visibility`,
+:func:`sidequest.server.emitters._apply_pov_swap`) ignore keys they do
+not know about. ``private_segments`` is the structured private-route
+map B3 partitions prose into and B4 POV-swaps per recipient.
 
 Anchor inference order:
   1. ``result.action_rewrite.named`` — the structured field the
@@ -132,16 +141,56 @@ def classify_narration_visibility(
 
     pov_strategy = "pc_anchored" if anchor is not None else "atmospheric"
 
+    # ------------------------------------------------------------------
+    # ADR-105 B2: derive the real per-recipient private-route map from
+    # the narrator's structured private-routing signal
+    # (``result.secret_routes`` — the redacted SubsystemDispatches). The
+    # hardcoded ``"all"`` + its never-done ADR-028 deferral comment (D1,
+    # the welded-open valve) is removed here.
+    #
+    # The SHARED narration ``text`` stays ``visible_to: "all"`` *by
+    # contract*, NOT by hardcode: ADR-105 B3 makes the shared blob
+    # public-safe, so every connected PC may see it. The partition is
+    # the per-PC SEGMENT, not the public blob — gating the blob by
+    # visible_to would drop the public scene for someone. Each redacted
+    # route becomes a private-segment entry carrying its own recipient
+    # set (normalized through the shared ``union_visible_to`` stop-word
+    # rule so this path and ``aggregate_visibility`` cannot drift).
+    # ------------------------------------------------------------------
+    from sidequest.protocol.dispatch import SubsystemDispatch
+    from sidequest.server.session_helpers import union_visible_to
+
+    private_segments: list[dict[str, Any]] = []
+    for entry in result.secret_routes or []:
+        # Mirror build_secret_note_events' skip rule exactly: only
+        # SubsystemDispatch entries carry a routable recipient set.
+        if not isinstance(entry, SubsystemDispatch):
+            continue
+        vis = entry.visibility
+        private_segments.append(
+            {
+                "visible_to": union_visible_to([vis.visible_to]),
+                "fidelity": dict(vis.perception_fidelity),
+                "subsystem": entry.subsystem,
+                "idempotency_key": entry.idempotency_key,
+            }
+        )
+
     sidecar: dict[str, Any] = {
-        # No per-recipient filtering for this story — ADR-028 (Perception
-        # Rewriter) follow-up will tighten visible_to for private cards.
+        # Shared public-safe prose — visible to every connected PC by the
+        # ADR-105 B3 output contract (NOT a never-tightened deferral).
         "visible_to": "all",
         # Fidelity untouched — perception_rewriter already consumes this
-        # shape and the new POV swap layer is orthogonal to fidelity.
+        # shape and the POV swap layer is orthogonal to fidelity.
         "fidelity": {},
         "anchor_pc": anchor,
         "pov_strategy": pov_strategy,
     }
+    # Additive + conditional: only present when there are real private
+    # routes. Solo / atmospheric / no-secret turns carry the exact v2
+    # sidecar shape byte-for-byte (ADR-105 regression obligation).
+    if private_segments:
+        sidecar["private_segments"] = private_segments
 
     # OTEL lie-detector — the GM panel needs to see what anchor the
     # classifier resolved on every turn so a "narrator said Carl but
@@ -158,5 +207,21 @@ def classify_narration_visibility(
             span.set_attribute("visible_to", ",".join(visible_to_val))
         else:
             span.set_attribute("visible_to", str(visible_to_val))
+        # ADR-105 B2 lie-detector: the GM panel must see the DERIVED
+        # private-route partition, not just the welded-open constant.
+        # ``private_segment_count`` > 0 with a convincing public blob is
+        # exactly the signal that a turn carried withheld perception —
+        # without it the firewall is unobservable (the original leak
+        # survived 5 turns of fluent prose).
+        span.set_attribute("private_segment_count", len(private_segments))
+        private_union = union_visible_to(
+            [seg["visible_to"] for seg in private_segments]
+        )
+        span.set_attribute(
+            "private_visible_to",
+            ",".join(private_union)
+            if isinstance(private_union, list)
+            else str(private_union),
+        )
 
     return sidecar

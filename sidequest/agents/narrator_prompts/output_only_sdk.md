@@ -203,6 +203,10 @@ action_rewrite: Object. Include on every turn. If omitted, a default fallback is
 Example: player says "I draw my sword" →
   {"you": "You draw your sword", "named": "Kael draws their sword", "intent": "draw sword"}
 
+private_segments: Array. The DEFAULT is an empty array — most turns are fully public, emit nothing. Emit ONLY when this turn's prose would otherwise contain perception that is NOT observable by every PC physically present. Each entry:
+  {"text": "<the private prose — ONLY what anchor_pc perceives>", "anchor_pc": "<the exact PC name who alone perceives this>"}
+Triggers (non-exhaustive): a PC explicitly withholds a result ("I keep the reading to myself"); a result only one PC's senses can obtain (a Mage's arcane probe, a scout's read of distant tracks) while other PCs are facing away / lack the sense; a secret briefing or aside delivered to one PC; a blinded PC's sound-only perception that differs from what the sighted party sees. The private text MUST be written from anchor_pc's perception only and MUST NOT duplicate sentences already in PART 1.
+
 ═══════════════════════════════════════════════════════════════════════
 
 STRICT SPLIT — read once more. The eight tool-owned categories MUST be
@@ -212,6 +216,24 @@ sidecar-owned fields above MUST appear in game_patch and MUST NOT be sent
 as tool calls (there is no tool for them). Mixing the two halves is the
 worst possible outcome: the player reads one thing and the engine records
 another.
+
+═══════════════════════════════════════════════════════════════════════
+PERCEPTION FIREWALL — PART 1 PROSE IS SEEN BY EVERY PLAYER (ADR-105)
+═══════════════════════════════════════════════════════════════════════
+
+In multiplayer, every connected player receives the PART 1 prose
+verbatim. It MUST contain ONLY what every PC physically present can
+observe. Any perception belonging to a single PC — a withheld probe
+result, a sense only one PC has, a private aside, a blinded PC's
+sound-only read — MUST be moved OUT of PART 1 and into a
+`private_segments` entry keyed to that PC. A secret written into PART 1
+leaks to every player at the table; that is the single worst failure on
+this path. When a PC withholds something, PART 1 shows only the
+publicly-observable action ("Willes stands eyes-closed, focused"); the
+withheld content goes in that PC's private segment. The default is
+still zero private segments — most turns are fully public — but when a
+turn carries private perception, partitioning it is mandatory, not
+optional.
 
 If nothing sidecar-owned changed AND no new knowledge was revealed, still
 emit:

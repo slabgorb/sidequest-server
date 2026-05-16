@@ -113,6 +113,49 @@ class NarrationPayload(ProtocolBase):
 
 
 # ---------------------------------------------------------------------------
+# NarrationSegmentPayload (ADR-105 B3)
+# ---------------------------------------------------------------------------
+
+
+class NarrationSegmentPayload(ProtocolBase):
+    """A single PC's private narration prose (ADR-105 B3).
+
+    The shared :class:`NarrationPayload` ``text`` is public-safe by the
+    amended SDK-narrator output contract — only prose every present PC
+    can observe. Any genuinely PC-private perception (a withheld arcane
+    probe result, a traitor's secret briefing, a blinded PC's
+    sound-only read) is partitioned by the narrator at generation time
+    into one of these segments and emitted as its own ``NARRATION_SEGMENT``
+    event.
+
+    Routing: ``_visibility.visible_to`` carries the single owning PC's
+    player_id (GM is an implicit recipient via the GM CoreInvariant).
+    There is intentionally **no** ``to`` field — the structural
+    visibility-gated CoreInvariant (ADR-105 B1) reads
+    ``_visibility.visible_to`` and a pack cannot weaken it. ``anchor_pc``
+    is the owning PC's name so the per-segment POV swap (ADR-105 B4)
+    can rewrite it to 2nd-person for that recipient.
+    """
+
+    text: NonBlankString
+    """The private prose — that PC's perception only. Non-blank: an
+    empty private segment is meaningless and must fail loud upstream."""
+    anchor_pc: str | None = None
+    """The PC name who alone perceives this segment. Drives the
+    per-segment 2nd-person POV swap (ADR-105 B4)."""
+    turn_id: str = ""
+    """Originating turn id — lets the UI thread the segment under its
+    public NARRATION card."""
+    visibility_sidecar: dict | None = Field(default=None, alias="_visibility")
+    """Wire name ``_visibility``; same shape as
+    :attr:`NarrationPayload.visibility_sidecar`. ``visible_to`` is the
+    single owning PC's player_id list. Full ``alias`` (not
+    ``serialization_alias``) so event-log replay round-trips cleanly."""
+    seq: int = 0
+    """Event-log sequence number assigned when the segment is persisted."""
+
+
+# ---------------------------------------------------------------------------
 # SecretNotePayload (Group G Task 6)
 # ---------------------------------------------------------------------------
 
@@ -723,6 +766,14 @@ class NarrationMessage(ProtocolBase):
     player_id: str = ""
 
 
+class NarrationSegmentMessage(ProtocolBase):
+    """GameMessage::NarrationSegment wire representation (ADR-105 B3)."""
+
+    type: Literal[MessageType.NARRATION_SEGMENT] = MessageType.NARRATION_SEGMENT
+    payload: NarrationSegmentPayload
+    player_id: str = ""
+
+
 class NarrationEndMessage(ProtocolBase):
     """GameMessage::NarrationEnd wire representation."""
 
@@ -1024,6 +1075,7 @@ class JournalResponseMessage(ProtocolBase):
 _Phase1Variant = Annotated[
     PlayerActionMessage
     | NarrationMessage
+    | NarrationSegmentMessage
     | NarrationEndMessage
     | SecretNoteMessage
     | ScrapbookEntryMessage
