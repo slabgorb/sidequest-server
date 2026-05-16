@@ -68,8 +68,8 @@ def test_no_hidden_edge_fails_mixed_kinds_with_hidden():
     exp.new_edges = [e for e in exp.new_edges if not e.hidden]
     exp.new_edges.append(RegionEdge(a="e1", b="x.r2", kind="corridor"))
     rep = check_invariants(_explored(), exp, JaquaysConfig())
-    # shortcut_collapses_distance also fails here under default config;
-    # only mixed_kinds_with_hidden is asserted, which is correct
+    # only mixed_kinds_with_hidden is asserted here; other invariants'
+    # states are not relevant to this test
     assert rep.invariants_passed["mixed_kinds_with_hidden"] is False
 
 

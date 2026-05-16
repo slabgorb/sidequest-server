@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections import deque
 
 from sidequest.dungeon.region_graph.config import JaquaysConfig
 from sidequest.dungeon.region_graph.model import (
@@ -82,12 +83,31 @@ def _build_candidate(
         parent = new_ids[rng.randrange(i)]
         edges.append(RegionEdge(a=parent, b=new_ids[i], kind="corridor"))
 
+    # 1b. tree-deepest new node: the shortcut's far endpoint must be a
+    #     region whose only non-shortcut route is the long internal path,
+    #     so removing the shortcut genuinely changes distance. Compute it
+    #     from the section-1 internal tree edges ONLY (no stitch/hidden
+    #     edges exist yet), then exclude it from stitch + hidden targets.
+    tree_adj: dict[str, list[str]] = {nid: [] for nid in new_ids}
+    for e in edges:  # only the section-1 tree edges exist so far
+        tree_adj[e.a].append(e.b)
+        tree_adj[e.b].append(e.a)
+    seen = {new_ids[0]: 0}
+    dq = deque([new_ids[0]])
+    while dq:
+        cur = dq.popleft()
+        for nxt in tree_adj[cur]:
+            if nxt not in seen:
+                seen[nxt] = seen[cur] + 1
+                dq.append(nxt)
+    deep_new = max(new_ids, key=lambda nid: seen.get(nid, 0))
+    stitchable = [nid for nid in new_ids if nid != deep_new] or list(new_ids)
+
     # 2. stitch edges: floor + burst jitter, well above the minimum.
     stitch_count = config.min_stitch_edges + rng.randint(0, config.connection_burst)
-    stitch_count = max(stitch_count, config.min_stitch_edges)
-    new_targets = _pick_distinct(rng, list(new_ids), min(len(new_ids), stitch_count))
+    new_targets = _pick_distinct(rng, list(stitchable), min(len(stitchable), stitch_count))
     while len(new_targets) < stitch_count:
-        new_targets.append(new_ids[rng.randrange(len(new_ids))])
+        new_targets.append(stitchable[rng.randrange(len(stitchable))])
     if is_seed:
         explored_sources = [explored.entrance_id] * stitch_count
     else:
@@ -95,26 +115,27 @@ def _build_candidate(
         while len(base) < stitch_count:
             base.append(attach[rng.randrange(len(attach))])
         explored_sources = base
-        if len(set(explored_sources[:stitch_count])) < 2 and len(attach) >= 2:
+        if stitch_count >= 2 and len(set(explored_sources[:stitch_count])) < 2 and len(attach) >= 2:
             explored_sources[1] = next(a for a in attach if a != explored_sources[0])
     for j in range(stitch_count):
         kind = "corridor" if j == 0 else rng.choice(config.edge_kinds)
         edges.append(RegionEdge(a=explored_sources[j], b=new_targets[j], kind=kind))
 
     # 3. hidden (non-obvious) edges: >= min_hidden_edges, kind 'secret'.
+    #    Never land the hidden edge on deep_new (keep its only non-shortcut
+    #    route the long internal path).
     for _ in range(config.min_hidden_edges):
         a = rng.choice(attach if not is_seed else [explored.entrance_id])
-        b = rng.choice(new_ids)
+        b = rng.choice(stitchable)
         edges.append(RegionEdge(a=a, b=b, kind="secret", hidden=True))
 
-    # 4. shortcut: deepest new region -> the explored region closest to
-    #    the entrance, via a vertical-ish kind, marked shortcut.
+    # 4. shortcut: tree-deepest new region -> the explored region closest
+    #    to the entrance, via a vertical-ish kind, marked shortcut.
     dist_from_entrance = explored.bfs_dist(explored.entrance_id)
     nearest = min(
         (explored.entrance_id, *attach),
-        key=lambda r: dist_from_entrance.get(r, 0),
+        key=lambda r: dist_from_entrance[r],
     )
-    deep_new = new_ids[-1]
     shortcut_kind = rng.choice(
         [k for k in ("shaft", "chute", "stairs", "secret") if k in config.edge_kinds]
         or list(config.edge_kinds)

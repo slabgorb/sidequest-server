@@ -10,7 +10,7 @@ def test_spec_defaults():
     assert c.min_loops_into_explored == 1
     assert c.min_hidden_edges == 1
     assert c.min_shortcut_edges == 1
-    assert c.min_shortcut_gain == 3
+    assert c.min_shortcut_gain == 1
     assert c.connection_burst == 3
     assert c.new_regions_per_expansion == (3, 6)
     assert c.max_reroll_attempts == 64

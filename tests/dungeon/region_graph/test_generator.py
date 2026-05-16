@@ -86,11 +86,33 @@ def test_build_candidate_shapes_within_config_bounds():
     assert any(e.shortcut for e in exp.new_edges)
 
 
-@pytest.mark.parametrize("burst", [0, 3, 8])
-def test_higher_burst_yields_more_stitch_on_average(burst):
+def test_higher_burst_yields_more_stitch_on_average():
     g = _explored()
-    cfg = JaquaysConfig(connection_burst=burst)
-    total = 0
+
+    def total_stitch(burst: int) -> int:
+        cfg = JaquaysConfig(connection_burst=burst)
+        t = 0
+        for seed in range(40):
+            exp = _build_candidate(
+                g,
+                expansion_id=2,
+                attach_region_ids=["e1", "e2", "e3"],
+                theme_pool=THEMES,
+                config=cfg,
+                rng=random.Random(_subseed(seed, 2, 0)),
+            )
+            t += sum(
+                1 for e in exp.new_edges if len({e.a, e.b} & {n.id for n in exp.new_nodes}) == 1
+            )
+        return t
+
+    s0, s3, s8 = total_stitch(0), total_stitch(3), total_stitch(8)
+    assert s0 < s3 < s8
+
+
+def test_shortcut_target_is_not_a_stitch_target():
+    g = _explored()
+    cfg = JaquaysConfig()
     for seed in range(40):
         exp = _build_candidate(
             g,
@@ -100,16 +122,19 @@ def test_higher_burst_yields_more_stitch_on_average(burst):
             config=cfg,
             rng=random.Random(_subseed(seed, 2, 0)),
         )
-        total += sum(
-            1 for e in exp.new_edges if len({e.a, e.b} & {n.id for n in exp.new_nodes}) == 1
+        new = {n.id for n in exp.new_nodes}
+        shortcut_targets = {(e.b if e.a not in new else e.a) for e in exp.new_edges if e.shortcut}
+        normal_stitch_new = {
+            (e.a if e.a in new else e.b)
+            for e in exp.new_edges
+            if not e.hidden and not e.shortcut and len({e.a, e.b} & new) == 1
+        }
+        # the shortcut's deep target must NOT also be a normal stitch entry
+        assert shortcut_targets.isdisjoint(normal_stitch_new), (
+            seed,
+            shortcut_targets,
+            normal_stitch_new,
         )
-    test_higher_burst_yields_more_stitch_on_average.samples = getattr(
-        test_higher_burst_yields_more_stitch_on_average, "samples", {}
-    )
-    test_higher_burst_yields_more_stitch_on_average.samples[burst] = total
-    s = test_higher_burst_yields_more_stitch_on_average.samples
-    if {0, 3, 8} <= set(s):
-        assert s[0] < s[3] < s[8]
 
 
 def test_attach_region_ids_must_be_explored_for_non_seed():

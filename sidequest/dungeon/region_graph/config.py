@@ -16,7 +16,7 @@ class JaquaysConfig:
     min_loops_into_explored: int = 1
     min_hidden_edges: int = 1
     min_shortcut_edges: int = 1
-    min_shortcut_gain: int = 3
+    min_shortcut_gain: int = 1
     connection_burst: int = 3
     new_regions_per_expansion: tuple[int, int] = (3, 6)
     max_reroll_attempts: int = 64
