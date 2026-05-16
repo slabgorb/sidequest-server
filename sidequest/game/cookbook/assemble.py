@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import random
 
+from sidequest.game.cookbook.corpus import resolve_race
+from sidequest.game.cookbook.curation import apply_world_register
 from sidequest.game.cookbook.loader import CookbookBundle
 from sidequest.game.cookbook.models import Affinities, CrBand, RaceDef, SizeBudget
 
@@ -74,3 +76,63 @@ def roll_race(
     population = [r for r, _ in candidates]
     weight_vals = [w for _, w in candidates]
     return rng.choices(population, weights=weight_vals, k=1)[0]
+
+
+def _telegraph(race: RaceDef, band_id: str) -> str:
+    return race.telegraph.get(band_id, "")
+
+
+def build_wandering_table(bundle: CookbookBundle, race: RaceDef, band: CrBand) -> list[dict]:
+    """curated ∩ race.filter ∩ cr_band, weighted, per-row telegraph.
+
+    Re-keys the shipped encounter_tables.yaml row shape (weight, count,
+    description→telegraph) from regions→levels to race × cr_band, with
+    the keeper-awareness scaffolding stripped (spec §6). count uses the
+    same dice-string convention as the source pattern; oq-1's
+    materializer rolls it (and does CR→Edge there).
+    """
+    curated = apply_world_register(bundle.monsters, bundle.register)
+    rows = resolve_race(curated, race, cr_min=band.cr_min, cr_max=band.cr_max)
+    out: list[dict] = []
+    for mon in rows:
+        # Rarer = scarcer: weight falls off with CR within the band.
+        weight = max(1, int(round((band.cr_max - mon.cr) + 1)))
+        out.append(
+            {
+                "name": mon.name,
+                "cr": mon.cr,
+                "xp": mon.xp,
+                "type": mon.type,
+                "weight": weight,
+                "count": "1" if mon.cr >= 5 else "1d4",
+                "telegraph": _telegraph(race, band.id),
+            }
+        )
+    return out
+
+
+def build_loot_table(
+    bundle: CookbookBundle,
+    race: RaceDef,
+    band: CrBand,
+    *,
+    rolls: int,
+    rng: random.Random,
+) -> list[dict]:
+    """items ∩ rarity_by_band[band], race.loot_bias applied (multipliers).
+
+    Mirrors the wiring-tested equipment_tables roll-on-list pattern: a
+    slot of candidate ids, ids must resolve (they are corpus rows by
+    construction here). loot_bias nudges category weight (spec §4.2).
+    """
+    rarity_weights = bundle.affinities.rarity_by_band.get(band.id, {})
+    pool = [it for it in bundle.items if it.rarity in rarity_weights]
+    if not pool:
+        raise RuntimeError(
+            f"cookbook: loot pool empty for band '{band.id}' "
+            f"(rarities {list(rarity_weights)}) — spec §7 loud failure"
+        )
+    cat_bias = race.loot_bias.category_weight
+    weights = [rarity_weights[it.rarity] * cat_bias.get(it.item_type, 1.0) for it in pool]
+    picks = rng.choices(pool, weights=weights, k=rolls)
+    return [{"name": p.name, "item_type": p.item_type, "rarity": p.rarity} for p in picks]
