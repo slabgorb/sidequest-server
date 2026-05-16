@@ -12,6 +12,16 @@ and through >= 1 new region. Hence:
 
 is exact and needs no DFS. All other invariants are degree / distinct
 counts / BFS-distance deltas — also exact.
+
+Hidden (secret) and shortcut cross-edges are EXCLUDED from `stitch`:
+a secret passage is not a reliable independent entry, and a shortcut
+is a discovered bypass — each already satisfies its own separate
+§5.1 invariant and must not be double-counted toward the
+"≥2 independent entries" floor. Consequence: with hidden/shortcut
+cross-edges present, `loops_into_explored = max(0, len(stitch)-1)`
+is a conservative LOWER BOUND, not strict equality (those edges add
+real, uncounted loops). This is safe for a re-roll post-condition —
+it can only cause an extra re-roll, never a false pass.
 """
 
 from __future__ import annotations
@@ -145,7 +155,7 @@ def check_invariants(
             continue
         alt = post.bfs_dist(post.entrance_id, skip_edges={i})
         gain = max((alt.get(r, big) - base.get(r, big)) for r in post.nodes)
-        if gain > 0:
+        if gain >= config.min_shortcut_gain:
             shortcut_hits += 1
     rep.shortcut_edges = shortcut_hits
     rep.invariants_passed["shortcut_collapses_distance"] = (

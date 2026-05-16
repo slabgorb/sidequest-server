@@ -37,7 +37,9 @@ def _good_expansion() -> Expansion:
 
 
 def test_good_expansion_passes_all_invariants():
-    rep = check_invariants(_explored(), _good_expansion(), JaquaysConfig())
+    # minimal fixture's shortcut collapses distance by 1; spec default
+    # min_shortcut_gain=3 targets real deep expansions, not unit fixtures
+    rep = check_invariants(_explored(), _good_expansion(), JaquaysConfig(min_shortcut_gain=1))
     assert rep.all_passed(), rep.invariants_passed
     assert rep.stitch_edges >= 2
     assert rep.loops_into_explored >= 1
@@ -114,7 +116,7 @@ def test_seed_expansion_waives_distinct_explored_rule():
         RegionEdge(a="surface", b="s.r2", kind="shaft", shortcut=True),
     ]
     exp = Expansion(expansion_id=1, new_nodes=nodes, new_edges=edges)
-    rep = check_invariants(g, exp, JaquaysConfig())
+    rep = check_invariants(g, exp, JaquaysConfig(min_shortcut_gain=1))
     assert rep.all_passed(), rep.invariants_passed
 
 
