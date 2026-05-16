@@ -56,6 +56,10 @@ from sidequest.server.session_helpers import (
 from sidequest.telemetry.watcher_hub import publish_event as _watcher_publish
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sidequest.game.lore_store import LoreStore
+    from sidequest.genre.models.pack import GenrePack
     from sidequest.protocol.messages import SessionEventPayload
     from sidequest.server.websocket_session_handler import WebSocketSessionHandler
 
@@ -133,10 +137,10 @@ def _backfill_magic_state_on_resume(
 
 def _seed_world_lore_on_resume(
     *,
-    lore_store,
-    genre_pack,
+    lore_store: LoreStore,
+    genre_pack: GenrePack,
     world_slug: str | None,
-    emit,
+    emit: Callable[..., None],
 ) -> tuple[int, int]:
     """Re-seed the per-session in-memory ``LoreStore`` with the
     deterministic genre + world lore on the slug-resume connect path.

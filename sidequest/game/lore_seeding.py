@@ -219,9 +219,15 @@ def seed_world_lore(
     """
     genre_added = seed_lore_from_genre_pack(store, pack)
     world_added = 0
-    world_obj = pack.worlds.get(world_slug) if world_slug else None
-    if world_obj is not None:
-        world_added = seed_lore_from_world(store, world_obj.lore, world_slug)
+    if world_slug:
+        # Inside ``if world_slug:`` pyright narrows ``world_slug`` from
+        # ``str | None`` to ``str`` so the ``seed_lore_from_world``
+        # (``world_slug: str``) call type-checks. Behaviour identical to
+        # the prior ``... if world_slug else None`` guard: falsy
+        # world_slug or unresolved world_obj still yields world_added=0.
+        world_obj = pack.worlds.get(world_slug)
+        if world_obj is not None:
+            world_added = seed_lore_from_world(store, world_obj.lore, world_slug)
 
     if emit is not None:
         emit(

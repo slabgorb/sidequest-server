@@ -146,6 +146,32 @@ def test_connect_module_imports_resume_seeder() -> None:
     )
 
 
+def test_resume_seeder_is_called_from_production_connect_handler() -> None:
+    """Wiring guard — existence is NOT enough (CLAUDE.md "Verify Wiring,
+    Not Just Existence" / "imported, **called**, and reachable").
+
+    ``_seed_world_lore_on_resume`` could stay defined while its call
+    site in the production ``ConnectHandler.handle`` slug-resume
+    (``has_character``) branch is deleted — re-introducing the exact
+    defined-but-not-wired bug class this whole fix exists to repair.
+    Assert the call appears in the production handler body via
+    ``inspect.getsource`` (same technique as
+    ``tests/game/test_lore_seeding.py`` for the seed_world_lore fan-out).
+    This test MUST fail if the connect.py call site is removed.
+    """
+    import inspect
+
+    from sidequest.handlers.connect import ConnectHandler
+
+    handler_src = inspect.getsource(ConnectHandler.handle)
+    assert "_seed_world_lore_on_resume(" in handler_src, (
+        "ConnectHandler.handle must CALL _seed_world_lore_on_resume in "
+        "its has_character slug-resume branch — defining the helper but "
+        "not calling it leaves every resumed save with an empty "
+        "lore_store and query_lore hit_count=0 (the bug this fix repairs)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Idempotency — re-seeding genre/world lore on every connect (fresh or
 # resume, including a reconnect-of-a-reconnect) must not unboundedly
