@@ -32,7 +32,12 @@ from pydantic import ValidationError
 
 from sidequest.game.character import Character, KnownFact
 from sidequest.game.creature_core import CreatureCore
+from sidequest.game.scenario_state import (
+    ScenarioRole,
+    ScenarioState,
+)
 from sidequest.game.session import GameSnapshot, Npc
+from sidequest.genre.models.scenario import ClueGraph
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +87,10 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
     # traversal slip through (it should not), the resolved path must
     # live under ``fixtures_dir``. Anything else → not found.
     if not str(fixture_path).startswith(str(fixtures_dir_resolved)):
-        raise FixtureNotFoundError(
-            f"fixture {name!r} resolves outside fixtures_dir"
-        )
+        raise FixtureNotFoundError(f"fixture {name!r} resolves outside fixtures_dir")
 
     if not fixture_path.is_file():
-        raise FixtureNotFoundError(
-            f"fixture {name!r} not found at {fixture_path!s}"
-        )
+        raise FixtureNotFoundError(f"fixture {name!r} not found at {fixture_path!s}")
 
     try:
         raw_text = fixture_path.read_text(encoding="utf-8")
@@ -106,14 +107,10 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
         # that ``yaml.load`` would have happily instantiated. The
         # security-test path lands here.
         logger.warning("scene_harness.yaml_parse_error name=%s err=%s", name, exc)
-        raise FixtureValidationError(
-            f"fixture {name!r}: YAML parse error — {exc}"
-        ) from exc
+        raise FixtureValidationError(f"fixture {name!r}: YAML parse error — {exc}") from exc
 
     if data is None:
-        raise FixtureValidationError(
-            f"fixture {name!r} is empty"
-        )
+        raise FixtureValidationError(f"fixture {name!r} is empty")
     if not isinstance(data, dict):
         raise FixtureValidationError(
             f"fixture {name!r}: top level must be a YAML mapping, got {type(data).__name__}"
@@ -216,6 +213,20 @@ def hydrate_fixture(*, name: str, fixtures_dir: Path) -> GameSnapshot:
                 f"fixture {name!r}: npcs field validation failed — {exc}"
             ) from exc
 
+    # Hydrate scenario_state (story 50-20, ADR-092 follow-on).
+    #
+    # Optional top-level ``scenario_state:`` block projects to
+    # ``GameSnapshot.scenario_state`` (a ``ScenarioState``). Missing block →
+    # snapshot field stays at its pydantic default (None) so the four
+    # canonical pre-50-20 fixtures keep working unchanged. Malformed block →
+    # FixtureValidationError per ADR-092 "Failure is loud" — no silent skip.
+    if "scenario_state" in data and data.get("scenario_state") is not None:
+        snapshot_kwargs["scenario_state"] = _hydrate_scenario_state(
+            data["scenario_state"],
+            npcs=snapshot_kwargs.get("npcs", []),
+            fixture_name=name,
+        )
+
     try:
         snapshot = GameSnapshot(**snapshot_kwargs)
     except ValidationError as exc:
@@ -281,8 +292,7 @@ def _hydrate_character(data: dict[str, Any]) -> Character:
     if raw_facts is not None:
         if not isinstance(raw_facts, list):
             raise FixtureValidationError(
-                f"character.known_facts must be a YAML list, "
-                f"got {type(raw_facts).__name__}"
+                f"character.known_facts must be a YAML list, got {type(raw_facts).__name__}"
             )
         for index, entry in enumerate(raw_facts):
             if not isinstance(entry, dict):
@@ -341,3 +351,143 @@ def _hydrate_npc(data: dict[str, Any]) -> Npc:
     if "disposition" in data:
         npc_kwargs["disposition"] = data["disposition"]
     return Npc(**npc_kwargs)
+
+
+_ALLOWED_SCENARIO_ROLES: frozenset[str] = frozenset(
+    {ScenarioRole.Guilty, ScenarioRole.Witness, ScenarioRole.Innocent}
+)
+
+
+def _hydrate_scenario_state(
+    raw: Any,
+    *,
+    npcs: list[Npc],
+    fixture_name: str,
+) -> ScenarioState:
+    """Hydrate the fixture's ``scenario_state:`` block into a ScenarioState.
+
+    Validation discipline mirrors the rest of the hydrator: every malformed
+    shape raises ``FixtureValidationError`` so the dev-gated HTTP layer
+    returns 422 with field detail. DAG prerequisite enforcement is
+    final-set-membership against ``discovered_clues`` — the same predicate
+    :meth:`ScenarioState.discover_clue` applies at runtime, but checked
+    against the final declared set so YAML order is irrelevant (the
+    field is documented as ``set[str]``; reordering must not change the
+    validation verdict).
+
+    Tension is the only field that adjusts silently — clamping to
+    ``[0.0, 1.0]`` matches :meth:`ScenarioState.set_tension`. Fixture authors
+    declaring a value outside the range are not penalized at the wire.
+    """
+    if not isinstance(raw, dict):
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: 'scenario_state' must be a YAML mapping, "
+            f"got {type(raw).__name__}"
+        )
+
+    # ── clue_graph (pydantic deserialization owns nested validation) ────────
+    clue_graph_raw = raw.get("clue_graph")
+    if clue_graph_raw is None:
+        clue_graph = ClueGraph()
+    else:
+        try:
+            clue_graph = ClueGraph.model_validate(clue_graph_raw)
+        except ValidationError as exc:
+            raise FixtureValidationError(
+                f"fixture {fixture_name!r}: scenario_state.clue_graph validation failed — {exc}"
+            ) from exc
+
+    # ── discovered_clues (DAG enforcement via final-set membership, no replay) ─
+    discovered_raw = raw.get("discovered_clues")
+    if discovered_raw is None:
+        discovered_ids: list[str] = []
+    elif isinstance(discovered_raw, (list, tuple, set)):
+        discovered_ids = [str(c) for c in discovered_raw]
+    else:
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: scenario_state.discovered_clues must be "
+            f"a YAML list, got {type(discovered_raw).__name__}"
+        )
+
+    # ── npc_roles (allowed values: ScenarioRole constants) ─────────────────
+    npc_roles_raw = raw.get("npc_roles")
+    if npc_roles_raw is None:
+        npc_roles: dict[str, str] = {}
+    elif not isinstance(npc_roles_raw, dict):
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: scenario_state.npc_roles must be a YAML "
+            f"mapping, got {type(npc_roles_raw).__name__}"
+        )
+    else:
+        for npc_name, role_value in npc_roles_raw.items():
+            if role_value not in _ALLOWED_SCENARIO_ROLES:
+                raise FixtureValidationError(
+                    f"fixture {fixture_name!r}: scenario_state.npc_roles[{npc_name!r}]: "
+                    f"role {role_value!r} not in allowed set "
+                    f"{sorted(_ALLOWED_SCENARIO_ROLES)}"
+                )
+        npc_roles = {str(k): str(v) for k, v in npc_roles_raw.items()}
+
+    # ── guilty_npc resolution: accept name OR id against the npc roster ────
+    guilty_raw = raw.get("guilty_npc", "")
+    if guilty_raw is None or guilty_raw == "":
+        guilty_npc = ""
+    elif not isinstance(guilty_raw, str):
+        raise FixtureValidationError(
+            f"fixture {fixture_name!r}: scenario_state.guilty_npc must be a "
+            f"string, got {type(guilty_raw).__name__}"
+        )
+    else:
+        roster_names = [n.core.name for n in npcs]
+        if guilty_raw in roster_names:
+            guilty_npc = guilty_raw
+        else:
+            raise FixtureValidationError(
+                f"fixture {fixture_name!r}: scenario_state.guilty_npc "
+                f"{guilty_raw!r} not found in npcs roster; "
+                f"available: {roster_names}"
+            )
+
+    # ── tension: silent clamp to [0.0, 1.0] per ScenarioState.set_tension() ─
+    tension_raw = raw.get("tension")
+    if tension_raw is None:
+        tension = 0.0
+    else:
+        try:
+            tension = max(0.0, min(1.0, float(tension_raw)))
+        except (TypeError, ValueError) as exc:
+            raise FixtureValidationError(
+                f"fixture {fixture_name!r}: scenario_state.tension must be a "
+                f"number, got {type(tension_raw).__name__}"
+            ) from exc
+
+    # ``discovered_clues`` is a set in the ScenarioState model (AC#2), so the
+    # DAG check must validate against the FINAL declared set rather than the
+    # intermediate state of a per-clue replay. Walking through
+    # ``ScenarioState.discover_clue`` in YAML order would reject DAG-valid
+    # fixtures listed in non-topological order — for instance
+    # ``[clue_b, clue_a]`` (Reviewer [HIGH-1] regression). Validate
+    # set-membership instead, then assign the validated set directly.
+    declared = set(discovered_ids)
+    node_by_id = {n.id: n for n in clue_graph.nodes}
+    for clue_id in declared:
+        node = node_by_id.get(clue_id)
+        if node is None:
+            # Preserves ``ScenarioState.discover_clue``'s empty-graph
+            # idempotency: clues absent from the graph pass through unchanged.
+            continue
+        missing = [r for r in node.requires if r not in declared]
+        if missing:
+            raise FixtureValidationError(
+                f"fixture {fixture_name!r}: scenario_state.discovered_clues: "
+                f"cannot pre-discover clue {clue_id!r} — missing "
+                f"prerequisites {missing!r}"
+            )
+
+    return ScenarioState(
+        clue_graph=clue_graph,
+        discovered_clues=declared,
+        npc_roles=npc_roles,
+        guilty_npc=guilty_npc,
+        tension=tension,
+    )
