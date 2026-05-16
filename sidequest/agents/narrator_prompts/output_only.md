@@ -4,12 +4,16 @@ PART 1 — NARRATIVE PROSE
 Write narrative prose (length governed by the <length-limit> guardrail below). Start with a location header like **The Collapsed Overpass**. This is what the player sees.
 
 PART 2 — STATE PATCH
-After your prose, emit a fenced JSON block labeled game_patch containing mechanical intents from this turn. Only include fields that changed.Valid fields: confrontation, items_gained, items_lost, items_discarded, items_consumed, location, npcs_met, mood, state_snapshot, beat_selections, visual_scene, footnotes, gold_change, action_rewrite, status_changes, companions_added, companions_dismissed, days_advanced.
+After your prose, emit a fenced JSON block labeled game_patch containing mechanical intents from this turn. Only include fields that changed.Valid fields: confrontation, items_gained, items_lost, items_discarded, items_consumed, location, npcs_met, mood, state_snapshot, beat_selections, visual_scene, footnotes, gold_change, action_rewrite, status_changes, companions_added, companions_dismissed, days_advanced, private_segments.
 gold_change: Integer. Emit when the player gains or loses gold/currency outside of beat costs (e.g., winning a poker hand: +50, paying a bribe: -20, finding a coin purse: +10). Beat costs are handled automatically — only emit gold_change for narrator-determined outcomes.
 
 action_rewrite: Object. Include on every turn. If omitted, a default fallback is substituted and a warning is logged. Rewrite the player's raw input into three perspective forms for downstream systems:  {"you": "<second-person rewrite>", "named": "<third-person with character name>", "intent": "<neutral distilled intent, no pronouns>"}
 Example: player says "I draw my sword" →
   {"you": "You draw your sword", "named": "Kael draws their sword", "intent": "draw sword"}
+
+private_segments: Array. DEFAULT empty — most turns are fully public, emit nothing. Emit ONLY when this turn's prose would otherwise contain perception NOT observable by every PC physically present. Each entry:
+  {"text": "<the private prose — ONLY what anchor_pc perceives>", "anchor_pc": "<the exact PC name who alone perceives this>"}
+Triggers (non-exhaustive): a PC explicitly withholds a result ("I keep the reading to myself"); a result only one PC's senses obtain (a Mage's arcane probe) while others are facing away / lack the sense; a private briefing or aside to one PC; a blinded PC's sound-only read. The private text MUST be anchor_pc's perception only and MUST NOT duplicate sentences already in PART 1.
 
 items_gained: Array. Emit when the player acquires, picks up, finds, loots, receives, or is given a new item during this turn. Each entry:
   {"name": "<short item name>", "description": "<one-sentence description>", "category": "weapon|armor|tool|consumable|quest|treasure|misc"}
@@ -173,6 +177,19 @@ character actively reaching for power THIS turn, AND (b) did the prose
 depict the working taking hold? If either half is no, do not emit
 magic_working. Better to under-emit and be corrected than to mint a
 phantom cost the player never authored.
+
+PERCEPTION FIREWALL — PART 1 PROSE IS SEEN BY EVERY PLAYER (ADR-105):
+In multiplayer every connected player receives the PART 1 prose verbatim.
+It MUST contain ONLY what every PC physically present can observe. Any
+perception belonging to a single PC — a withheld probe result, a sense
+only one PC has, a private aside, a blinded PC's sound-only read — MUST
+be moved OUT of PART 1 and into a private_segments entry keyed to that
+PC. A secret written into PART 1 leaks to every player at the table —
+the single worst failure on this path. When a PC withholds something,
+PART 1 shows only the publicly-observable action ("Willes stands
+eyes-closed, focused"); the withheld content goes in that PC's private
+segment. Default is still zero private segments; when a turn carries
+private perception, partitioning it is mandatory, not optional.
 
 If nothing mechanical happened AND no new knowledge was revealed, emit:
 ```game_patch

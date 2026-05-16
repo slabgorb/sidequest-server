@@ -26,6 +26,11 @@ class MessageType(StrEnum):
 
     PLAYER_ACTION = "PLAYER_ACTION"
     NARRATION = "NARRATION"
+    # ADR-105 B3: per-PC private-prose channel. The shared NARRATION text
+    # is public-safe by contract; PC-private perception travels as its
+    # own NARRATION_SEGMENT, routed by _visibility.visible_to and
+    # structurally firewalled by the CoreInvariant visibility gate (B1).
+    NARRATION_SEGMENT = "NARRATION_SEGMENT"
     NARRATION_END = "NARRATION_END"
     THINKING = "THINKING"
     SESSION_EVENT = "SESSION_EVENT"

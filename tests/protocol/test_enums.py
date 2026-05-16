@@ -189,8 +189,13 @@ def test_message_type_tactical_grid_wire_string() -> None:
     assert MessageType.TACTICAL_GRID == "TACTICAL_GRID"
 
 
+def test_message_type_narration_segment_wire_string() -> None:
+    """ADR-105 B3 — per-PC private-prose channel."""
+    assert MessageType.NARRATION_SEGMENT == "NARRATION_SEGMENT"
+
+
 def test_message_type_complete_count() -> None:
-    """All 45 GameMessage variants must be represented.
+    """All 46 GameMessage variants must be represented.
 
     Group G Task 6 added SECRET_NOTE (structural hiding); bumped 37 → 38.
     Group D Task 7 reserved DISPATCH_PACKAGE, NARRATOR_DIRECTIVE_USED,
@@ -202,10 +207,12 @@ def test_message_type_complete_count() -> None:
     bumped 43 → 44.
     ADR-096 Task 20b added TACTICAL_GRID (cavern renderer revival);
     bumped 44 → 45.
+    ADR-105 B3 added NARRATION_SEGMENT (per-PC private-prose channel —
+    the broadcast-layer perception firewall); bumped 45 → 46.
     When new variants land, update this count and the individual wire-string
     test above so the contract test keeps catching silent drift.
     """
-    assert len(MessageType) == 45
+    assert len(MessageType) == 46
 
 
 # ===========================================================================
