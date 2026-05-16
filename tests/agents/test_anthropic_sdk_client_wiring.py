@@ -112,7 +112,7 @@ async def test_combat_shaped_turn_wiring(
             ),
         ]
     )
-    client = AnthropicSdkClient(sdk=sdk, cache_ttl="1h")
+    client = AnthropicSdkClient(sdk=sdk)
 
     deltas: list[str] = []
 
@@ -161,10 +161,10 @@ async def test_combat_shaped_turn_wiring(
     # 4. Streaming callback got the final-turn text.
     assert deltas == ["The strike lands; the bandit reels."]
 
-    # 5. Cache_control with 1h TTL flows into the SDK call.
+    # 5. Cache_control on the 5m (default) path has no ttl key — ephemeral only.
     first_call = sdk.messages.received[0]
     sys_array = first_call["system"]
-    assert sys_array[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert sys_array[0]["cache_control"] == {"type": "ephemeral"}
 
     # 6. Two llm.request spans emitted (one per iteration).
     spans = [s for s in otel_capture.get_finished_spans() if s.name == "llm.request"]

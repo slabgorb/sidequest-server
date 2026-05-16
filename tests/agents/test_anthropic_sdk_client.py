@@ -55,11 +55,13 @@ def test_default_cache_ttl_is_5_minutes(monkeypatch: pytest.MonkeyPatch) -> None
     assert client.cache_ttl == "5m"
 
 
-def test_opt_into_1_hour_cache_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_1_hour_cache_ttl_now_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """1h was removed: the extended-cache-ttl beta header was never sent, so the
+    API rejected it at call time. 1h is now treated like any other invalid TTL."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-1")
     monkeypatch.setenv("SIDEQUEST_ANTHROPIC_CACHE_TTL", "1h")
-    client = AnthropicSdkClient()
-    assert client.cache_ttl == "1h"
+    with pytest.raises(AnthropicSdkConfigError):
+        AnthropicSdkClient()
 
 
 def test_invalid_cache_ttl_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

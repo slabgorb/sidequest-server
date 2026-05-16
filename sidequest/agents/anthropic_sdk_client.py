@@ -32,8 +32,8 @@ class AnthropicSdkLoopExceeded(AnthropicSdkClientError):
     """The tool-use loop did not converge within max_iterations."""
 
 
-CacheTtl = Literal["5m", "1h"]
-_VALID_TTLS: frozenset[str] = frozenset({"5m", "1h"})
+CacheTtl = Literal["5m"]
+_VALID_TTLS: frozenset[str] = frozenset({"5m"})
 
 
 class AnthropicSdkClient:
@@ -208,10 +208,7 @@ class AnthropicSdkClient:
         for block in system_blocks:
             entry: dict[str, Any] = {"type": "text", "text": block.text}
             if block.cache:
-                cache_control: dict[str, Any] = {"type": "ephemeral"}
-                if self.cache_ttl == "1h":
-                    cache_control["ttl"] = "1h"
-                entry["cache_control"] = cache_control
+                entry["cache_control"] = {"type": "ephemeral"}
             out.append(entry)
         return out
 
