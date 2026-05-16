@@ -251,7 +251,11 @@ def test_mutation_overlay_append_only_ordered_and_survives_reload() -> None:
     assert DungeonMutation.from_dict(muts[1].to_dict()) == muts[1]
 
 
-from sidequest.dungeon.persistence import ComplicationThread, NotFoundError  # noqa: E402
+from sidequest.dungeon.persistence import (  # noqa: E402
+    ComplicationThread,
+    NotFoundError,
+    PersistError,
+)
 
 
 def test_complication_ledger_open_resolve_and_accumulation() -> None:
@@ -297,3 +301,37 @@ def test_resolve_unknown_thread_fails_loud() -> None:
 
     with pytest.raises(NotFoundError):
         store.resolve_thread("does-not-exist")
+
+
+def test_frozen_region_untouched_after_generator_version_bump() -> None:
+    g = _seed_graph()
+    exp = _generate_and_attach(g, campaign_seed=3, expansion_id=1, attach_ids=["entrance"])
+
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    _commit_seed(store, g)
+    store.commit_expansion(exp, g, generator_version="plan5.v1")
+    conn.commit()
+
+    before = conn.execute(
+        "SELECT region_id, payload, generator_version FROM dungeon_map "
+        "ORDER BY region_id"
+    ).fetchall()
+    before_snap = [(r["region_id"], r["payload"], r["generator_version"]) for r in before]
+
+    # generator version changes mid-campaign; re-committing the SAME
+    # frozen expansion must fail loud, never silently rewrite.
+    import pytest
+
+    with pytest.raises(PersistError):
+        store.commit_expansion(exp, g, generator_version="plan5.v2")
+    conn.rollback()
+
+    after = conn.execute(
+        "SELECT region_id, payload, generator_version FROM dungeon_map "
+        "ORDER BY region_id"
+    ).fetchall()
+    after_snap = [(r["region_id"], r["payload"], r["generator_version"]) for r in after]
+
+    assert after_snap == before_snap  # bytes + version unchanged (frozen)
