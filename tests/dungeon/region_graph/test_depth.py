@@ -179,3 +179,28 @@ def test_assign_raises_when_region_unreachable_on_ordinary_graph():
     g.add_edge(RegionEdge(a="e", b="b", kind="secret", hidden=True))
     with pytest.raises(ValueError, match="not reachable on the ordinary route"):
         assign_depth_scores(g, campaign_seed=1, config=DepthConfig())
+
+
+def test_depth_report_as_dict_is_stable_span_contract():
+    g, cfg, report = _scored_chain()
+    d = report.as_dict()
+    # exact key-set is the OTEL span contract Plan 7 consumes — pin it
+    assert set(d) == {
+        "regions_scored",
+        "depth_min",
+        "depth_max",
+        "depth_mean",
+    }
+    assert d["regions_scored"] == 3  # e, a, b
+    assert d["depth_min"] == 0.0     # entrance
+    assert d["depth_max"] == report.depth_max
+
+
+def test_depth_report_empty_when_nothing_to_score():
+    g, cfg, _ = _scored_chain()
+    rep = assign_depth_scores(g, campaign_seed=42, config=cfg)  # all scored
+    assert rep.regions_scored == 0
+    assert rep.as_dict()["regions_scored"] == 0
+    assert rep.as_dict()["depth_min"] == 0.0
+    assert rep.as_dict()["depth_max"] == 0.0
+    assert rep.as_dict()["depth_mean"] == 0.0

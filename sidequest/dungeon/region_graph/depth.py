@@ -54,10 +54,22 @@ class DepthConfig:
 
 @dataclass
 class DepthReport:
+    """Span-ready contract — Plan 7's materializer turns this into
+    `dungeon.materialize.attach` OTEL attributes (mirrors
+    GenerationReport.as_dict() from invariants.py)."""
+
     regions_scored: int = 0
     depth_min: float = 0.0
     depth_max: float = 0.0
     depth_mean: float = 0.0
+
+    def as_dict(self) -> dict:
+        return {
+            "regions_scored": self.regions_scored,
+            "depth_min": self.depth_min,
+            "depth_max": self.depth_max,
+            "depth_mean": self.depth_mean,
+        }
 
 
 def ordinary_route_dist(graph: RegionGraph) -> dict[str, int]:
