@@ -324,11 +324,11 @@ def load_theme_palette(pack_dir: Path) -> ThemePalette:
 
     themes: dict[str, DungeonTheme] = {}
     for path in yaml_files:
-        with path.open("r", encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh)
         try:
+            with path.open("r", encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh)
             theme = DungeonTheme.model_validate(raw)
-        except Exception as e:  # pydantic ValidationError et al.
+        except Exception as e:  # yaml.YAMLError, pydantic ValidationError, et al.
             raise ValueError(f"{path.name}: {e}") from e
         if theme.id in themes:
             raise ValueError(
