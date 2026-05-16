@@ -20,6 +20,23 @@ class RegionNode:
     theme: str
     depth_score: float | None = None  # assigned at attach (Plan 3), frozen into save
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "expansion_id": self.expansion_id,
+            "theme": self.theme,
+            "depth_score": self.depth_score,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionNode:
+        return cls(
+            id=d["id"],
+            expansion_id=d["expansion_id"],
+            theme=d["theme"],
+            depth_score=d["depth_score"],
+        )
+
 
 @dataclass(frozen=True)
 class RegionEdge:
@@ -31,6 +48,25 @@ class RegionEdge:
 
     def endpoints(self) -> frozenset[str]:
         return frozenset((self.a, self.b))
+
+    def to_dict(self) -> dict:
+        return {
+            "a": self.a,
+            "b": self.b,
+            "kind": self.kind,
+            "hidden": self.hidden,
+            "shortcut": self.shortcut,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionEdge:
+        return cls(
+            a=d["a"],
+            b=d["b"],
+            kind=d["kind"],
+            hidden=d["hidden"],
+            shortcut=d["shortcut"],
+        )
 
 
 @dataclass
