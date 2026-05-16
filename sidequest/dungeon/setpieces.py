@@ -25,7 +25,7 @@ scaffold.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _nonblank(v: str) -> str:
@@ -105,3 +105,83 @@ class QuestComponent(BaseModel):
     @classmethod
     def _v_id(cls, v: str) -> str:
         return _nonblank(v)
+
+
+class DepthBand(BaseModel):
+    """Raw depth_score eligibility window (Plan 3 units, depth_per_hop=10).
+
+    NOT player-facing level buckets — depth_score is the authoritative
+    gradient; "level" is never an authoritative key (spec §5). `max=None`
+    means unbounded-deep (eligible arbitrarily far down)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min: float = 0.0
+    max: float | None = None
+
+    @field_validator("min")
+    @classmethod
+    def _v_min(cls, v: float) -> float:
+        if v < 0.0:
+            raise ValueError("depth_band.min must be >= 0")
+        return v
+
+    @model_validator(mode="after")
+    def _v_band(self) -> DepthBand:
+        if self.max is not None and self.max < self.min:
+            raise ValueError("depth_band.max must be >= depth_band min")
+        return self
+
+
+class SaveOrDie(BaseModel):
+    """INERT reference data for ADR-074's existing dice protocol — Plan 6
+    feeds this to the player-facing roll. Spec §4: no new mechanics
+    engine; nothing here resolves anything."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    save: str
+    dc: int
+
+    @field_validator("save")
+    @classmethod
+    def _v_save(cls, v: str) -> str:
+        return _nonblank(v)
+
+    @field_validator("dc")
+    @classmethod
+    def _v_dc(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("dc must be > 0")
+        return v
+
+
+class SetPiece(BaseModel):
+    """An authored, telegraphed, lethal set-piece TEMPLATE (Tomb of
+    Horrors, spec §4). Plan 4 = schema; Plan 6 rolls slots / starts trope
+    & quest components / writes the ledger."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    telegraph: str
+    outcome: str
+    depth_band: DepthBand = Field(default_factory=DepthBand)
+    save_or_die: SaveOrDie | None = None
+    slots: list[ComponentSlot] = Field(default_factory=list)
+    trope_components: list[TropeComponent] = Field(default_factory=list)
+    quest_components: list[QuestComponent] = Field(default_factory=list)
+
+    @field_validator("id", "name", "telegraph", "outcome")
+    @classmethod
+    def _v_text(cls, v: str) -> str:
+        return _nonblank(v)
+
+    @model_validator(mode="after")
+    def _v_unique_slots(self) -> SetPiece:
+        names = [s.name for s in self.slots]
+        dupes = {n for n in names if names.count(n) > 1}
+        if dupes:
+            raise ValueError(f"duplicate component slot name(s): {sorted(dupes)}")
+        return self
