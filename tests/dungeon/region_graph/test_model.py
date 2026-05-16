@@ -91,3 +91,21 @@ def test_expansion_is_a_plain_node_edge_bundle():
         new_edges=[RegionEdge(a="surface", b="exp003.r0", kind="stairs", hidden=True)],
     )
     assert exp.new_region_ids() == {"exp003.r0"}
+
+
+def test_bfs_dist_unknown_source_raises_loudly():
+    g = _entrance_graph()
+    with pytest.raises(ValueError, match="bfs_dist source 'ghost' is not a known region"):
+        g.bfs_dist("ghost")
+
+
+def test_neighbors_unknown_region_raises_loudly():
+    g = _entrance_graph()
+    with pytest.raises(ValueError, match="region 'ghost' is not in this graph"):
+        g.neighbors("ghost")
+
+
+def test_degree_unknown_region_raises_loudly():
+    g = _entrance_graph()
+    with pytest.raises(ValueError, match="region 'ghost' is not in this graph"):
+        g.degree("ghost")

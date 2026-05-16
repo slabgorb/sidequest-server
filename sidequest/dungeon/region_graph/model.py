@@ -35,7 +35,12 @@ class RegionEdge:
 @dataclass
 class Expansion:
     """A candidate batch of new regions + edges (edges may reference
-    already-explored region ids for stitch/shortcut connections)."""
+    already-explored region ids for stitch/shortcut connections).
+
+    Edges in ``new_edges`` may reference region ids from the parent graph;
+    add ``new_nodes`` to that graph before calling ``add_edge`` for
+    ``new_edges``.
+    """
 
     expansion_id: int
     new_nodes: list[RegionNode]
@@ -65,6 +70,8 @@ class RegionGraph:
         self.edges.append(edge)
 
     def neighbors(self, region_id: str) -> list[str]:
+        if region_id not in self.nodes:
+            raise ValueError(f"region {region_id!r} is not in this graph")
         out: list[str] = []
         for e in self.edges:
             if e.a == region_id:
@@ -74,6 +81,8 @@ class RegionGraph:
         return out
 
     def degree(self, region_id: str) -> int:
+        if region_id not in self.nodes:
+            raise ValueError(f"region {region_id!r} is not in this graph")
         return sum(1 for e in self.edges if region_id in (e.a, e.b))
 
     def bfs_dist(
@@ -83,6 +92,8 @@ class RegionGraph:
         blocked_node: str | None = None,
         skip_edges: set[int] | None = None,
     ) -> dict[str, int]:
+        if source not in self.nodes:
+            raise ValueError(f"bfs_dist source {source!r} is not a known region")
         skip = skip_edges or set()
         adj: dict[str, list[str]] = {n: [] for n in self.nodes}
         for i, e in enumerate(self.edges):
@@ -121,5 +132,6 @@ class RegionGraph:
         return comps
 
     def cyclomatic_number(self) -> int:
-        """|E| - |V| + components. 0 == forest; >=1 == has loops."""
+        """|E| - |V| + components. 0 == acyclic (forest, possibly
+        disconnected); >=1 means at least one cycle."""
         return len(self.edges) - len(self.nodes) + self._component_count()
