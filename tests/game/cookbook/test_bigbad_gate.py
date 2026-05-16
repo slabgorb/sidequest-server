@@ -22,7 +22,9 @@ def test_first_entry_into_gated_band_forces_capstone(bundle) -> None:
         rng=region_rng("c", "e"),
     )
     assert bb is not None
-    assert bb["name"] in {"Mummy Lord"}  # min_band mid ≤ mid; Lich is deep-only
+    # undead.yaml (authoritative): Wight is the min_band=mid capstone;
+    # Mummy Lord & Lich are min_band=deep (ordinal-excluded at mid).
+    assert bb["name"] == "Wight"
 
 
 def test_shallow_band_never_capstones(bundle) -> None:
