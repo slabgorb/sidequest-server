@@ -25,11 +25,7 @@ import yaml
 _SIZES = "Tiny|Small|Medium|Large|Huge|Gargantuan"
 _STATLINE = re.compile(rf"^({_SIZES})\s+([A-Za-z][A-Za-z ]*?)(?:\s*\(([^)]+)\))?,\s*(.+)$")
 _CHALLENGE = re.compile(r"Challenge\s*([0-9/]+)\s*\(([\d,]+)\s*XP\)")
-_ITEM_DESC = re.compile(
-    r"^\*?\s*([A-Za-z ,+/-]+?)\s*\(?\s*"
-    r"(common|uncommon|rare|very rare|legendary|artifact)\)?",
-    re.IGNORECASE,
-)
+_ITEM_RARITY = re.compile(r"\b(very rare|rare|uncommon|common|legendary|artifact)\b", re.IGNORECASE)
 
 
 def parse_cr(raw: str) -> float:
@@ -123,6 +119,30 @@ def walk_monsters(docs: list[Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def parse_item_desc(desc: str) -> tuple[str, str] | None:
+    """'<Type>[ (detail)], <rarity>[ (notes)]' → (Type, Rarity).
+
+    Real SRD 5.1 forms (verified against the vendored source): 'Wondrous
+    item, rare (requires attunement)', 'Armor (medium or heavy, but not
+    hide), uncommon', 'Weapon (any ammunition), uncommon (+1), rare
+    (+2), or very rare (+3)', 'Rod, uncommon'. The item type is the head
+    before the first '(' or ',' — the parenthetical is a subtype detail,
+    NOT part of the category that loot_bias keys on. Rarity is the first
+    rarity word ('very rare' before 'rare', longest-match). Returns None
+    when no rarity word is present (not a graded magic item — skipped,
+    consistent with the prior contract; no silent type-mangling).
+    """
+    m = _ITEM_RARITY.search(desc)
+    if not m:
+        return None
+    head = desc[: m.start()]
+    delims = [i for i in (head.find("("), head.find(",")) if i != -1]
+    item_type = head[: min(delims) if delims else len(head)].strip()
+    if not item_type:
+        return None
+    return item_type, m.group(1)
+
+
 def walk_items(item_doc: Any) -> list[dict[str, Any]]:
     """Magic-items doc → spec §4.1 item rows. The italic descriptor line
     carries item_type + rarity + attunement; Task documents samples."""
@@ -135,10 +155,10 @@ def walk_items(item_doc: Any) -> list[dict[str, Any]]:
         if not (isinstance(content, list) and content and isinstance(content[0], str)):
             continue
         desc = _strip_md(content[0])
-        m = _ITEM_DESC.match(desc)
-        if not m:
+        parsed = parse_item_desc(desc)
+        if parsed is None:
             continue
-        item_type, rarity = m.group(1).strip(), m.group(2).strip()
+        item_type, rarity = parsed
         attune = "attunement" in " ".join(x for x in content if isinstance(x, str)).lower()
         rows.append(
             {

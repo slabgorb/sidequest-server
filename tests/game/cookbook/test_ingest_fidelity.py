@@ -11,6 +11,7 @@ import pytest
 from sidequest.cli.cookbook_ingest.ingest import (
     iter_statblock_leaves,
     parse_cr,
+    parse_item_desc,
     parse_statline,
     walk_monsters,
 )
@@ -44,6 +45,38 @@ def test_statline_strips_inline_markdown() -> None:
 def test_statline_extracts_tags() -> None:
     size, typ, tags, align = parse_statline("*Small humanoid (goblinoid), neutral evil*")
     assert typ == "Humanoid" and tags == ["goblinoid"]
+
+
+def test_item_desc_type_is_clean_no_trailing_comma() -> None:
+    # Regression: the type must NOT carry the ', rarity' separator.
+    # loot_bias.category_weight keys on the bare category.
+    assert parse_item_desc("Wondrous item, rare (requires attunement)") == (
+        "Wondrous item",
+        "rare",
+    )
+    assert parse_item_desc("Rod, uncommon") == ("Rod", "uncommon")
+    assert parse_item_desc("Potion, rare") == ("Potion", "rare")
+
+
+def test_item_desc_parenthetical_subtype_not_in_type() -> None:
+    # 'Armor (...)' / 'Weapon (...)' must resolve to the bare category,
+    # not get dropped (the old regex silently dropped all of these).
+    assert parse_item_desc("Armor (medium or heavy, but not hide), uncommon") == (
+        "Armor",
+        "uncommon",
+    )
+    typ, rar = parse_item_desc(
+        "Weapon (any ammunition), uncommon (+1), rare (+2), or very rare (+3)"
+    )
+    assert typ == "Weapon" and rar == "uncommon"  # first rarity wins
+
+
+def test_item_desc_very_rare_beats_rare() -> None:
+    assert parse_item_desc("Wondrous item, very rare") == ("Wondrous item", "very rare")
+
+
+def test_item_desc_no_rarity_returns_none() -> None:
+    assert parse_item_desc("Some flavor line with no grade") is None
 
 
 @pytest.mark.skipif(not (SRC / "monsters.json").exists(), reason="Prereq 0 not vendored")
