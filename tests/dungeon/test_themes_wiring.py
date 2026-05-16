@@ -21,13 +21,28 @@ def palette(content_dir) -> ThemePalette:
     return load_theme_palette(pack)
 
 
-def test_scaffold_loads_and_covers_every_generator_class(palette: ThemePalette):
+def test_scaffold_covers_exactly_the_four_generator_classes(palette: ThemePalette):
     classes = {t.generator_class for t in palette.themes.values()}
+    # DELIBERATE completeness contract (Plan 4 scaffold acceptance criterion),
+    # NOT latent fragility: every generator_class the engine supports must
+    # have >=1 authored theme — a class with no content path is a silent gap
+    # (CLAUDE.md No Silent Fallbacks). If a later plan adds a generator_class
+    # to themes._CLASS_ALGORITHM, this MUST fail until a matching theme is
+    # authored (or this gate is consciously relaxed). It is not an interiors
+    # regression — it is this contract doing its job.
     assert classes == {"organic", "labyrinthine", "structured", "built"}
 
 
-def test_scaffold_exercises_every_real_interior_algorithm(palette: ThemePalette):
+def test_scaffold_exercises_exactly_every_interior_algorithm(palette: ThemePalette):
     used = {t.interior.algorithm for t in palette.themes.values()}
+    # DELIBERATE completeness contract (Plan 4 scaffold acceptance criterion),
+    # NOT latent fragility: the scaffold must exercise EVERY generator in the
+    # real interiors.ALGORITHMS registry — a registered generator with no
+    # authored theme is a silent dead path (CLAUDE.md No Silent Fallbacks). If
+    # a later plan adds an algorithm to interiors.ALGORITHMS, this MUST fail
+    # until a matching theme is authored (or this gate is consciously relaxed).
+    # A failure here is NOT an interiors-module regression — it is this
+    # cross-repo content-coverage contract doing its job; add a theme.
     assert used == set(ALGORITHMS)  # cellular, depthfirst, prim, roomcorridor
 
 
