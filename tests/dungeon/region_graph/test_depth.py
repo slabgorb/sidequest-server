@@ -1,8 +1,11 @@
 """Unit tests for sidequest.dungeon.region_graph.depth."""
 
+import dataclasses
+
 import pytest
 
 from sidequest.dungeon.region_graph.depth import DepthConfig
+from sidequest.dungeon.region_graph.model import RegionNode
 
 
 def test_depth_config_defaults():
@@ -34,3 +37,16 @@ def test_depth_config_bucket_equal_to_hop_is_valid():
 
 def test_depth_config_zero_jitter_is_valid():
     DepthConfig(jitter_max=0.0).validate()  # jitter is optional (spec §5)
+
+
+def test_region_node_depth_score_defaults_none():
+    n = RegionNode(id="r0", expansion_id=0, theme="crypt")
+    assert n.depth_score is None  # unassigned until attach (real default, not a stub)
+
+
+def test_region_node_depth_score_set_via_replace():
+    n = RegionNode(id="r0", expansion_id=0, theme="crypt")
+    scored = dataclasses.replace(n, depth_score=42.0)
+    assert scored.depth_score == 42.0
+    assert scored.id == "r0" and scored.theme == "crypt"
+    assert n.depth_score is None  # original frozen instance untouched

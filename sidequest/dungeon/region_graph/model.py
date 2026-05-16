@@ -18,6 +18,7 @@ class RegionNode:
     id: str
     expansion_id: int
     theme: str
+    depth_score: float | None = None  # assigned at attach (Plan 3), frozen into save
 
 
 @dataclass(frozen=True)
