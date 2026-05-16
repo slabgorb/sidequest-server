@@ -136,3 +136,35 @@ def build_loot_table(
     weights = [rarity_weights[it.rarity] * cat_bias.get(it.item_type, 1.0) for it in pool]
     picks = rng.choices(pool, weights=weights, k=rolls)
     return [{"name": p.name, "item_type": p.item_type, "rarity": p.rarity} for p in picks]
+
+
+def roll_big_bad(
+    bundle: CookbookBundle,
+    race: RaceDef,
+    band: CrBand,
+    *,
+    is_first_band_entry: bool,
+    rng: random.Random,
+) -> dict | None:
+    """Spec §4.2/§4.3 capstone gate.
+
+    Fires iff (a) this band is in big_bad_gate.on_first_band_entry AND
+    is_first_band_entry, OR (b) the band's recurring_chance roll hits.
+    The capstone is drawn from race.big_bads whose min_band ≤ this band
+    (ordinal per §4.2). Returns None when the gate does not fire or no
+    eligible big_bad exists. is_first_band_entry is oq-1-supplied (see
+    plan Seam Clarification).
+    """
+    gate = bundle.affinities.big_bad_gate
+    order = bundle.affinities.band_order()
+    fires = (is_first_band_entry and band.id in gate.on_first_band_entry) or (
+        rng.random() < gate.recurring_chance.get(band.id, 0.0)
+    )
+    if not fires:
+        return None
+    here = order[band.id]
+    eligible = [bb for bb in race.big_bads if order.get(bb.min_band, 1_000) <= here]
+    if not eligible:
+        return None
+    chosen = rng.choice(eligible)
+    return {"name": chosen.name, "min_band": chosen.min_band}
