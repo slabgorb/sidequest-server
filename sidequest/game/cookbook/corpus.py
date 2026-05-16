@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 
-from sidequest.game.cookbook.models import CorpusMonster, FilterClause
+from sidequest.game.cookbook.models import CorpusMonster, FilterClause, RaceDef
 
 
 def name_matches(name: str, glob: str) -> bool:
@@ -28,3 +28,34 @@ def clause_matches(mon: CorpusMonster, clause: FilterClause) -> bool:
 def any_of_matches(mon: CorpusMonster, clauses: list[FilterClause]) -> bool:
     """OR across clauses (spec §4.2 RACE filter.any_of)."""
     return any(clause_matches(mon, c) for c in clauses)
+
+
+def resolve_race(
+    corpus: list[CorpusMonster],
+    race: RaceDef,
+    *,
+    cr_min: float | None = None,
+    cr_max: float | None = None,
+) -> list[CorpusMonster]:
+    """RACE roll-space: corpus ∩ race.filter − race.deny, optional CR slice.
+
+    Curation (world_register) is applied UPSTREAM of this — callers pass
+    an already-curated corpus (spec §5: register runs before any RACE
+    roll).
+    """
+    deny_types = set(race.deny.types)
+    deny_tags = set(race.deny.tags)
+    out: list[CorpusMonster] = []
+    for mon in corpus:
+        if not any_of_matches(mon, race.filter.any_of):
+            continue
+        if mon.type in deny_types or (deny_tags & set(mon.tags)):
+            continue
+        if any(name_matches(mon.name, g) for g in race.deny.name_glob):
+            continue
+        if cr_min is not None and mon.cr < cr_min:
+            continue
+        if cr_max is not None and mon.cr > cr_max:
+            continue
+        out.append(mon)
+    return out
