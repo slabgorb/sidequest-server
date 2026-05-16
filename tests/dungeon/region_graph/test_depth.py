@@ -4,7 +4,12 @@ import dataclasses
 
 import pytest
 
-from sidequest.dungeon.region_graph.depth import DepthConfig, depth_jitter, ordinary_route_dist
+from sidequest.dungeon.region_graph.depth import (
+    DepthConfig,
+    assign_depth_scores,
+    depth_jitter,
+    ordinary_route_dist,
+)
 from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
 
 
@@ -129,3 +134,48 @@ def test_depth_jitter_seed_24301_is_not_degenerate():
         for i in range(40)
     }
     assert len(vals) > 1
+
+
+def _scored_chain():
+    # e -corridor- a -corridor- b ; e -shortcut- b
+    g = _chain_graph()
+    cfg = DepthConfig(depth_per_hop=10.0, jitter_max=3.0)
+    report = assign_depth_scores(g, campaign_seed=42, config=cfg)
+    return g, cfg, report
+
+
+def test_assign_scores_all_regions_and_entrance_is_zero():
+    g, cfg, _ = _scored_chain()
+    assert g.nodes["e"].depth_score == 0.0  # entrance is the origin, exactly 0
+    for rid in ("a", "b"):
+        assert g.nodes[rid].depth_score is not None
+
+
+def test_assign_score_is_base_plus_bounded_jitter():
+    g, cfg, _ = _scored_chain()
+    # b is 2 ordinary hops deep (shortcut excluded) -> base 20.0 +/- 3.0
+    assert abs(g.nodes["b"].depth_score - 20.0) <= cfg.jitter_max
+    assert abs(g.nodes["a"].depth_score - 10.0) <= cfg.jitter_max
+
+
+def test_assign_is_frozen_second_call_is_noop_on_scored_regions():
+    g, cfg, _ = _scored_chain()
+    snapshot = {rid: n.depth_score for rid, n in g.nodes.items()}
+    # add a new unscored region off 'b', re-assign: old scores MUST NOT move
+    g.add_node(RegionNode(id="c", expansion_id=1, theme="t"))
+    g.add_edge(RegionEdge(a="b", b="c", kind="corridor"))
+    g.add_edge(RegionEdge(a="a", b="c", kind="corridor"))  # 2nd ordinary entry
+    rep2 = assign_depth_scores(g, campaign_seed=42, config=cfg)
+    for rid, old in snapshot.items():
+        assert g.nodes[rid].depth_score == old  # frozen — save is source of truth
+    assert g.nodes["c"].depth_score is not None
+    assert rep2.regions_scored == 1  # only the new one
+
+
+def test_assign_raises_when_region_unreachable_on_ordinary_graph():
+    g = RegionGraph(entrance_id="e")
+    for rid in ("e", "b"):
+        g.add_node(RegionNode(id=rid, expansion_id=0, theme="t"))
+    g.add_edge(RegionEdge(a="e", b="b", kind="secret", hidden=True))
+    with pytest.raises(ValueError, match="not reachable on the ordinary route"):
+        assign_depth_scores(g, campaign_seed=1, config=DepthConfig())

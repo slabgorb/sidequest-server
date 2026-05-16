@@ -21,6 +21,7 @@ region_graph: see __init__.py docstring "later plans (3/4/5/7)").
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from dataclasses import dataclass
 
@@ -49,6 +50,14 @@ class DepthConfig:
                 "'level' must be coarser than a single hop, else it is a "
                 "floor index — the explicitly-rejected concept)"
             )
+
+
+@dataclass
+class DepthReport:
+    regions_scored: int = 0
+    depth_min: float = 0.0
+    depth_max: float = 0.0
+    depth_mean: float = 0.0
 
 
 def ordinary_route_dist(graph: RegionGraph) -> dict[str, int]:
@@ -93,3 +102,58 @@ def depth_jitter(*, campaign_seed: int, region_id: str, jitter_max: float) -> fl
     # to 2**64 in IEEE 754 double, so both extremes are reachable.)
     frac = int.from_bytes(digest, "big") / float(1 << 64)
     return (frac * 2.0 - 1.0) * jitter_max
+
+
+def assign_depth_scores(
+    graph: RegionGraph,
+    *,
+    campaign_seed: int,
+    config: DepthConfig | None = None,
+) -> DepthReport:
+    """Assign depth_score to every region that does not yet have one,
+    then FREEZE it (already-scored regions are never recomputed — the
+    save is the source of truth, spec §7).
+
+    Score = ordinary-route hops from the entrance * depth_per_hop +
+    deterministic bounded jitter. The entrance is the origin: exactly
+    0.0, no jitter. Mutates graph.nodes in place (replacing frozen
+    RegionNode instances) and returns the same graph's DepthReport —
+    mirrors attach_expansion's "returns the (mutated) graph" contract
+    and GenerationReport's span-ready report precedent.
+
+    Raises loudly if a to-be-scored region is unreachable on the
+    ordinary-route graph (CLAUDE.md: No Silent Fallbacks).
+    """
+    cfg = config or DepthConfig()
+    cfg.validate()
+
+    to_score = [
+        rid for rid, n in graph.nodes.items() if n.depth_score is None
+    ]
+    if not to_score:
+        return DepthReport(regions_scored=0)
+
+    dist = ordinary_route_dist(graph)  # raises if any region unreachable
+
+    scored_values: list[float] = []
+    for rid in to_score:
+        if rid == graph.entrance_id:
+            score = 0.0
+        else:
+            base = dist[rid] * cfg.depth_per_hop
+            score = base + depth_jitter(
+                campaign_seed=campaign_seed,
+                region_id=rid,
+                jitter_max=cfg.jitter_max,
+            )
+        graph.nodes[rid] = dataclasses.replace(
+            graph.nodes[rid], depth_score=score
+        )
+        scored_values.append(score)
+
+    return DepthReport(
+        regions_scored=len(scored_values),
+        depth_min=min(scored_values),
+        depth_max=max(scored_values),
+        depth_mean=sum(scored_values) / len(scored_values),
+    )
