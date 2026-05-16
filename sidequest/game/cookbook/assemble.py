@@ -168,3 +168,35 @@ def roll_big_bad(
         return None
     chosen = rng.choice(eligible)
     return {"name": chosen.name, "min_band": chosen.min_band}
+
+
+def pick_specials(
+    bundle: CookbookBundle,
+    band: CrBand,
+    *,
+    budget: int,
+    rng: random.Random,
+) -> list[dict]:
+    """Up to `budget` special rooms whose min_band ≤ this band (ordinal).
+
+    Spec §4.2: feeds oq-1's set-piece slot; we only describe + gate.
+    """
+    if budget <= 0:
+        return []
+    order = bundle.affinities.band_order()
+    here = order[band.id]
+    eligible = [s for s in bundle.specials if order.get(s.min_band, 1_000) <= here]
+    if not eligible:
+        return []
+    rng.shuffle(eligible)
+    return [
+        {
+            "id": s.id,
+            "telegraph": s.telegraph,
+            "mechanic": s.mechanic,
+            "outcome": s.outcome,
+            "min_band": s.min_band,
+            "feeds_setpiece_slot": s.feeds_setpiece_slot,
+        }
+        for s in eligible[:budget]
+    ]
