@@ -1,5 +1,8 @@
 """Unit tests for sidequest.dungeon.themes (schema + loader — Plan 4)."""
 
+import textwrap
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,6 +15,9 @@ from sidequest.dungeon.themes import (
     InteriorSpec,
     LootEntry,
     NarratorFlavor,
+    ThemePalette,
+    ThemePaletteMissingError,
+    load_theme_palette,
 )
 
 
@@ -145,3 +151,116 @@ def test_creature_and_loot_entries_require_positive_weight_and_ref():
 def test_theme_blank_id_rejected():
     with pytest.raises(ValidationError):
         _theme(id="  ")
+
+
+_GOOD_A = """
+id: drowned_cavern
+display_name: The Drowned Cavern
+generator_class: organic
+interior:
+  algorithm: cellular
+  braid_ratio: 0.0
+depth_band: {min: 0.0, max: 50.0}
+narrator:
+  register: grave
+  flavor: Black water, no echo, the cold of deep stone.
+  motifs: [flood, silence]
+adjacency:
+  prefers: [drowned_cavern]
+  avoids: [bone_crypt]
+creature_table:
+  - {ref: blind_eel, weight: 1.0}
+loot_table:
+  - {ref: silt_pearl, weight: 1.0}
+set_pieces:
+  - id: siphon
+    name: The Siphon
+    telegraph: A steady suck of current pulls toward a black slot in the floor.
+    outcome: The current takes the careless under the rock and does not give them back.
+    depth_band: {min: 0.0, max: 50.0}
+    save_or_die: {save: reflex, dc: 14}
+    slots:
+      - name: layout
+        options: [{value: funnel_chamber, weight: 1.0}]
+"""
+
+_GOOD_B = """
+id: bone_crypt
+display_name: The Bone Crypt
+generator_class: structured
+interior: {algorithm: prim, braid_ratio: 0.3}
+depth_band: {min: 30.0, max: 120.0}
+narrator:
+  register: grave
+  flavor: Dust that remembers names.
+  motifs: [ossuary]
+adjacency:
+  prefers: []
+  avoids: [drowned_cavern]
+set_pieces:
+  - id: false_floor
+    name: The False Floor
+    telegraph: Newer mortar rings hollow underfoot.
+    outcome: The slab drops onto upturned stakes.
+"""
+
+
+def _write(d: Path, name: str, body: str) -> None:
+    (d / name).write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
+
+
+def test_load_palette_happy_path(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    _write(td, "drowned_cavern.yaml", _GOOD_A)
+    _write(td, "bone_crypt.yaml", _GOOD_B)
+    pal = load_theme_palette(tmp_path)
+    assert isinstance(pal, ThemePalette)
+    assert set(pal.themes) == {"drowned_cavern", "bone_crypt"}
+    assert pal.get("drowned_cavern").interior.algorithm == "cellular"
+
+
+def test_load_palette_missing_dir_raises(tmp_path: Path):
+    with pytest.raises(ThemePaletteMissingError):
+        load_theme_palette(tmp_path)
+
+
+def test_load_palette_empty_dir_raises(tmp_path: Path):
+    (tmp_path / "themes").mkdir()
+    with pytest.raises(ValueError, match="no theme files"):
+        load_theme_palette(tmp_path)
+
+
+def test_load_palette_duplicate_id_raises(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    _write(td, "a.yaml", _GOOD_A)
+    _write(td, "a_copy.yaml", _GOOD_A)  # same id inside
+    with pytest.raises(ValueError, match="duplicate theme id"):
+        load_theme_palette(tmp_path)
+
+
+def test_load_palette_dangling_affinity_raises(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    _write(td, "drowned_cavern.yaml", _GOOD_A)  # avoids bone_crypt — absent
+    with pytest.raises(ValueError, match="unknown theme id"):
+        load_theme_palette(tmp_path)
+
+
+def test_load_palette_self_avoidance_raises(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    bad = _GOOD_B.replace("avoids: [drowned_cavern]", "avoids: [bone_crypt]")
+    _write(td, "bone_crypt.yaml", bad)
+    with pytest.raises(ValueError, match="cannot avoid itself"):
+        load_theme_palette(tmp_path)
+
+
+def test_load_palette_schema_violation_is_loud(tmp_path: Path):
+    td = tmp_path / "themes"
+    td.mkdir()
+    broken = _GOOD_A.replace("algorithm: cellular", "algorithm: voronoi")
+    _write(td, "drowned_cavern.yaml", broken)
+    with pytest.raises(ValueError, match="drowned_cavern.yaml"):
+        load_theme_palette(tmp_path)
