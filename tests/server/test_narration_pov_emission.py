@@ -407,3 +407,96 @@ def test_anchor_swap_uses_recipient_pc_pronouns(
     assert "Katia braces herself" in carl_text, (
         f"emitter (Carl) is not the anchor and must see 3rd-person; got: {carl_text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. ADR-105 B3+B4 — NARRATION_SEGMENT firewall + per-segment POV through
+#    the REAL emit pipeline (ComposedFilter + queues). This is the test
+#    that would have caught the 2026-05-16 caverns_sunden leak.
+# ---------------------------------------------------------------------------
+
+
+def test_narration_segment_firewalled_and_pov_swapped_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A private segment owned by Carl, emitted with author=Carl through
+    the production ``_emit_event`` + the owner-socket forward:
+
+      - Donut & Katia (non-owners) receive NOTHING — the visibility-gated
+        CoreInvariant (B1) excludes them at fan-out. This is the firewall:
+        the withheld perception never reaches the other tabs.
+      - Carl (owner) receives the segment rewritten to 2nd-person (B4
+        per-segment POV) via the owner-socket forward — emit_event's peer
+        fan-out never delivers to the emitter, so the handler must push
+        the returned frame to the owner's live socket.
+    """
+    handler = _make_handler_three_pcs(tmp_path)
+    queues = _attach_queues(handler._room)
+
+    from sidequest.server import session_handler as handler_module
+    from sidequest.server import views as views_module
+
+    class _FakeMsg:
+        def __init__(self, payload):
+            self.payload = payload
+
+    monkeypatch.setitem(
+        handler_module._KIND_TO_MESSAGE_CLS, "NARRATION_SEGMENT", _FakeMsg
+    )
+    monkeypatch.setattr(views_module, "status_effects_by_player", lambda _h: {})
+
+    # Carl (he/him) privately senses something the others cannot. In a
+    # pre-B3 world this prose would have ridden the shared NARRATION blob
+    # to every tab — the exact leak ADR-105 closes.
+    payload = {
+        "text": "Carl feels the cold draft the others miss, and tastes iron on it.",
+        "anchor_pc": "Carl",
+        "turn_id": "t-seg-1",
+        "_visibility": {
+            "visible_to": ["p_carl"],
+            "fidelity": {},
+            "anchor_pc": "Carl",
+            "pov_strategy": "pc_anchored",
+        },
+    }
+
+    # Production sequence (websocket_session_handler.py): emit with
+    # author=owner, then forward the returned owner frame to the owner's
+    # live socket (emit_event's peer fan-out never delivers to the emitter).
+    out = handler._emit_event(
+        "NARRATION_SEGMENT", payload, author_player_id="p_carl"
+    )
+    room = handler._room
+    assert room is not None
+    _sock = room.socket_for_player("p_carl")
+    _q = room.queue_for_socket(_sock) if _sock is not None else None
+    assert _q is not None
+    _q.put_nowait(out)
+
+    # FIREWALL: non-owners receive NOTHING. This is the load-bearing
+    # assertion — Donut/Katia are the 2026-05-16 leak victims.
+    assert queues["p_donut"].qsize() == 0, (
+        "FIREWALL BREACH: non-owner Donut received a private segment"
+    )
+    assert queues["p_katia"].qsize() == 0, (
+        "FIREWALL BREACH: non-owner Katia received a private segment"
+    )
+
+    # B4 PER-SEGMENT POV: the owner reads 2nd-person, never their own
+    # name in 3rd-person.
+    assert out is not None
+    owner_text = out.payload["text"]
+    assert "you" in owner_text.lower(), (
+        f"owner (Carl) must see 2nd-person private prose; got: {owner_text!r}"
+    )
+    assert "Carl feels" not in owner_text, (
+        f"owner must NOT see their own name 3rd-person; got: {owner_text!r}"
+    )
+
+    # OWNER DELIVERY: the forwarded frame is on Carl's live socket queue.
+    assert queues["p_carl"].qsize() == 1, (
+        "owner must receive their own private segment via the owner-socket "
+        f"forward; got {queues['p_carl'].qsize()} frame(s)"
+    )
+    delivered = queues["p_carl"].get_nowait()
+    assert "you" in delivered.payload["text"].lower()
