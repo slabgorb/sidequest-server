@@ -1,3 +1,5 @@
+import pytest
+
 from sidequest.dungeon.interiors.cellular import gen_cave
 from sidequest.dungeon.interiors.grid import FLOOR, WALL
 
@@ -42,3 +44,8 @@ def test_single_connected_floor_component():
                 seen.add((nx, ny))
                 stack.append((nx, ny))
     assert len(seen) == sum(1 for r in g for c in r if c == FLOOR)
+
+
+def test_rejects_too_small():
+    with pytest.raises(ValueError, match="width>=3 and height>=3"):
+        gen_cave(width=2, height=2, seed=0)
