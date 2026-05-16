@@ -11,9 +11,16 @@ test, not stubbed).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
+from sidequest.dungeon.region_graph.model import (
+    Expansion,
+    RegionEdge,
+    RegionGraph,
+    RegionNode,
+)
 from sidequest.game.persistence import (
     DatabaseError,
     NotFoundError,
@@ -128,3 +135,83 @@ class DungeonStore:
             self._conn.executescript(DUNGEON_SCHEMA_SQL)
         except sqlite3.Error as exc:  # fail loud — no silent fallback
             raise DatabaseError(f"dungeon schema creation failed: {exc}") from exc
+
+    def commit_expansion(
+        self,
+        expansion: Expansion,
+        graph: RegionGraph,
+        *,
+        generator_version: str = GENERATOR_VERSION,
+    ) -> None:
+        """Persist one expansion's regions + edges WITHIN the caller's
+        transaction (no autocommit — Plan 7 owns the txn boundary,
+        spec §7.5). Regions are read from `graph` (depth-scored); edge
+        ownership is taken from `expansion`.
+        """
+        try:
+            for node in expansion.new_nodes:
+                live = graph.nodes.get(node.id)
+                if live is None:
+                    raise NotFoundError(
+                        f"expansion region {node.id!r} is not in the graph "
+                        f"(commit must run after attach_expansion)"
+                    )
+                self._conn.execute(
+                    "INSERT INTO dungeon_map "
+                    "(region_id, expansion_id, depth_score, generator_version, payload) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        live.id,
+                        live.expansion_id,
+                        live.depth_score,
+                        generator_version,
+                        json.dumps(live.to_dict()),
+                    ),
+                )
+            for edge in expansion.new_edges:
+                self._conn.execute(
+                    "INSERT INTO dungeon_edge "
+                    "(expansion_id, a, b, kind, hidden, shortcut, payload) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        expansion.expansion_id,
+                        edge.a,
+                        edge.b,
+                        edge.kind,
+                        int(edge.hidden),
+                        int(edge.shortcut),
+                        json.dumps(edge.to_dict()),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            # A region_id already committed = a re-commit of a frozen
+            # expansion. Fail loud (spec §7: frozen regions never rewritten).
+            raise PersistError(
+                f"dungeon expansion {expansion.expansion_id} re-commit "
+                f"violates the freeze contract: {exc}"
+            ) from exc
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"commit_expansion failed: {exc}") from exc
+
+    def load_map(self, *, entrance_id: str) -> RegionGraph:
+        """Rebuild the full RegionGraph from dungeon_map + dungeon_edge.
+        Nodes first (RegionGraph.add_edge validates endpoints loudly)."""
+        try:
+            node_rows = self._conn.execute(
+                "SELECT payload FROM dungeon_map"
+            ).fetchall()
+            edge_rows = self._conn.execute(
+                "SELECT payload FROM dungeon_edge ORDER BY edge_id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"load_map query failed: {exc}") from exc
+
+        g = RegionGraph(entrance_id=entrance_id)
+        try:
+            for r in node_rows:
+                g.add_node(RegionNode.from_dict(json.loads(r["payload"])))
+            for r in edge_rows:
+                g.add_edge(RegionEdge.from_dict(json.loads(r["payload"])))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise SerializationError(f"corrupt dungeon payload: {exc}") from exc
+        return g

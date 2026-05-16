@@ -115,3 +115,89 @@ def test_no_floor_indexed_keys_anywhere() -> None:
     for row in objects:
         assert not floor.search(row["name"]), f"floor in object name: {row['name']}"
         assert not floor.search(row["sql"] or ""), f"floor in DDL: {row['sql']}"
+
+
+import tempfile  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+from sidequest.dungeon.region_graph.depth import assign_depth_scores  # noqa: E402
+from sidequest.dungeon.region_graph.generator import (  # noqa: E402
+    attach_expansion,
+    generate_expansion,
+)
+from sidequest.dungeon.region_graph.model import Expansion  # noqa: E402
+
+
+def _seed_graph() -> RegionGraph:
+    g = RegionGraph(entrance_id="entrance")
+    g.add_node(RegionNode(id="entrance", expansion_id=0, theme="threshold"))
+    return g
+
+
+def _commit_seed(store: DungeonStore, g: RegionGraph) -> None:
+    """Persist the entrance as its own expansion 0 (it belongs to no
+    generated expansion's new_nodes). commit_expansion re-reads the
+    live depth-scored node from g, so call after depth scores exist."""
+    entrance = g.nodes[g.entrance_id]
+    store.commit_expansion(Expansion(expansion_id=0, new_nodes=[entrance], new_edges=[]), g)
+
+
+def _generate_and_attach(
+    g: RegionGraph, *, campaign_seed: int, expansion_id: int, attach_ids: list[str]
+) -> Expansion:
+    exp, _ = generate_expansion(
+        graph=g,
+        campaign_seed=campaign_seed,
+        expansion_id=expansion_id,
+        attach_region_ids=attach_ids,
+        theme_pool=["crypt", "catacomb", "flooded"],
+    )
+    attach_expansion(g, exp)
+    assign_depth_scores(g, campaign_seed=campaign_seed)
+    return exp
+
+
+def _file_conn(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def test_commit_then_load_map_roundtrips_graph_in_memory() -> None:
+    g = _seed_graph()
+    exp = _generate_and_attach(g, campaign_seed=7, expansion_id=1, attach_ids=["entrance"])
+
+    conn = _mem_conn()
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    _commit_seed(store, g)
+    store.commit_expansion(exp, g)
+    conn.commit()
+
+    reloaded = store.load_map(entrance_id="entrance")
+    assert reloaded.nodes == g.nodes
+    assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
+
+
+def test_commit_then_load_map_roundtrips_over_wal_file() -> None:
+    g = _seed_graph()
+    exp = _generate_and_attach(g, campaign_seed=11, expansion_id=1, attach_ids=["entrance"])
+
+    with tempfile.TemporaryDirectory() as d:
+        db = str(_Path(d) / "save.db")
+        c1 = _file_conn(db)
+        s1 = DungeonStore(c1)
+        s1.ensure_schema()
+        _commit_seed(s1, g)
+        s1.commit_expansion(exp, g)
+        c1.commit()
+        c1.close()
+
+        c2 = _file_conn(db)
+        reloaded = DungeonStore(c2).load_map(entrance_id="entrance")
+        c2.close()
+
+    assert reloaded.nodes == g.nodes
+    assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
