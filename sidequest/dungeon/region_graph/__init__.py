@@ -15,6 +15,8 @@ from sidequest.dungeon.region_graph.depth import (
     DepthConfig,
     DepthReport,
     assign_depth_scores,
+    level_bucket,
+    level_phrase,
 )
 from sidequest.dungeon.region_graph.errors import ExpansionGenerationError
 from sidequest.dungeon.region_graph.generator import (
@@ -37,6 +39,8 @@ __all__ = [
     "DepthConfig",
     "DepthReport",
     "assign_depth_scores",
+    "level_bucket",
+    "level_phrase",
     "ExpansionGenerationError",
     "GenerationReport",
     "Expansion",

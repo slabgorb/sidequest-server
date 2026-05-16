@@ -8,6 +8,8 @@ from sidequest.dungeon.region_graph.depth import (
     DepthConfig,
     assign_depth_scores,
     depth_jitter,
+    level_bucket,
+    level_phrase,
     ordinary_route_dist,
 )
 from sidequest.dungeon.region_graph.model import RegionEdge, RegionGraph, RegionNode
@@ -204,3 +206,47 @@ def test_depth_report_empty_when_nothing_to_score():
     assert rep.as_dict()["depth_min"] == 0.0
     assert rep.as_dict()["depth_max"] == 0.0
     assert rep.as_dict()["depth_mean"] == 0.0
+
+
+def test_level_bucket_zero_at_and_below_entrance():
+    cfg = DepthConfig()  # bucket_size 30.0
+    assert level_bucket(0.0, cfg) == 0
+    assert level_bucket(29.9, cfg) == 0
+    assert level_bucket(30.0, cfg) == 1
+    assert level_bucket(95.0, cfg) == 3
+
+
+def test_level_bucket_is_monotonic_non_decreasing():
+    cfg = DepthConfig()
+    last = -1
+    for s in range(0, 400, 5):
+        b = level_bucket(float(s), cfg)
+        assert b >= last
+        last = b
+
+
+def test_level_bucket_stable_for_same_score():
+    cfg = DepthConfig()
+    assert level_bucket(57.3, cfg) == level_bucket(57.3, cfg)
+
+
+def test_level_phrase_surface_and_depth_and_boundary_fuzz():
+    cfg = DepthConfig()  # bucket_size 30, jitter_max 3
+    assert "surface" in level_phrase(0.0, cfg).lower()
+    # mid-bucket -> confident "about N"
+    mid = level_phrase(45.0, cfg).lower()
+    assert "about" in mid and "1" in mid  # 45/30 -> bucket 1
+    # near a bucket boundary (within jitter_max of a multiple of 30) ->
+    # fuzzy "N, maybe N+1" (spec §5: "four, maybe five levels down")
+    fuzzy = level_phrase(89.0, cfg).lower()  # 89 ~ boundary 90 (bucket 2|3)
+    assert "maybe" in fuzzy
+
+
+def test_level_phrase_lower_edge_points_shallower():
+    cfg = DepthConfig()  # bucket_size 30, jitter_max 3
+    # depth 30.1: bucket 1, but only 0.1 into it -> honest fuzz is "0, maybe 1"
+    lower = level_phrase(30.1, cfg).lower()
+    assert "0, maybe 1" in lower
+    assert "1 level down" in lower and "1 levels down" not in lower  # singular grammar
+    # bucket-0 lower edge must NOT degenerate to "0, maybe 0"
+    assert "maybe 0" not in level_phrase(2.0, cfg).lower()

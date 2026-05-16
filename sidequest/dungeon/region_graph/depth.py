@@ -169,3 +169,40 @@ def assign_depth_scores(
         depth_max=max(scored_values),
         depth_mean=sum(scored_values) / len(scored_values),
     )
+
+
+def level_bucket(depth_score: float, config: DepthConfig | None = None) -> int:
+    """Coarse player-facing 'level' bucket (spec §5, §12 decision).
+
+    APPROXIMATION ONLY — never an authoritative coordinate, key, or
+    container (spec decision rows 1, 2). 0 == at/just inside the surface
+    threshold; each bucket spans `bucket_size` (default 3 ordinary hops).
+    """
+    cfg = config or DepthConfig()
+    cfg.validate()
+    if depth_score <= 0.0:
+        return 0
+    return int(depth_score // cfg.bucket_size)
+
+
+def level_phrase(depth_score: float, config: DepthConfig | None = None) -> str:
+    """Fuzzy player-facing shorthand (spec §5 example: 'you reckon you're
+    four, maybe five levels down'). Deliberately approximate; this is the
+    coarse mechanical label only — narrator/curation handles prose."""
+    cfg = config or DepthConfig()
+    cfg.validate()
+    if depth_score <= 0.0:
+        return "at the surface, just inside the threshold"
+    b = int(depth_score // cfg.bucket_size)
+    pos = depth_score % cfg.bucket_size
+    if cfg.bucket_size - pos <= cfg.jitter_max:
+        # near the UPPER edge: about to cross into b+1
+        deeper = b + 1
+        unit = "level" if deeper == 1 else "levels"
+        return f"you reckon you're {b}, maybe {deeper} {unit} down"
+    if b >= 1 and pos <= cfg.jitter_max:
+        # near the LOWER edge: might still read as b-1 (never below 0)
+        unit = "level" if b == 1 else "levels"
+        return f"you reckon you're {b - 1}, maybe {b} {unit} down"
+    unit = "level" if b == 1 else "levels"
+    return f"about {b} {unit} down"
