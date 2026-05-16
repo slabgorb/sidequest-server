@@ -172,3 +172,19 @@ class RegionGraph:
         """|E| - |V| + components. 0 == acyclic (forest, possibly
         disconnected); >=1 means at least one cycle."""
         return len(self.edges) - len(self.nodes) + self._component_count()
+
+    def to_dict(self) -> dict:
+        return {
+            "entrance_id": self.entrance_id,
+            "nodes": [n.to_dict() for n in self.nodes.values()],
+            "edges": [e.to_dict() for e in self.edges],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionGraph:
+        g = cls(entrance_id=d["entrance_id"])
+        for nd in d["nodes"]:
+            g.add_node(RegionNode.from_dict(nd))
+        for ed in d["edges"]:
+            g.add_edge(RegionEdge.from_dict(ed))
+        return g
