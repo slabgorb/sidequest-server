@@ -82,6 +82,8 @@ async def test_happy_path_returns_fatal_error_not_phantom_data() -> None:
     assert r.payload is None
     assert r.message is not None
     assert len(r.message) > 0
+    # Guard the anti-confabulation directive itself, not just message presence.
+    assert "Do not narrate" in r.message
 
 
 async def test_otel_attrs_set_on_happy_path() -> None:

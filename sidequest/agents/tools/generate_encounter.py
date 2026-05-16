@@ -98,8 +98,9 @@ class GenerateEncounterArgs(BaseModel):
 async def generate_encounter(args: GenerateEncounterArgs, ctx: ToolContext) -> ToolResult:
     # sidequest.cli.encountergen.encountergen exists with generate_enemy(...)
     # but its internals require RNG, paths, and culture data not threaded
-    # through the tool boundary in v1. Record the narrator's request and
-    # return an empty seed. Phase E may wire the real generator.
+    # through the tool boundary in v1. Record the narrator's intent in OTEL,
+    # then return a fatal error so the narrator cannot confabulate phantom
+    # combatants. Phase E may wire the real encountergen.
     ctx.otel_span.set_attribute("tool.encgen.genre", args.genre)
     ctx.otel_span.set_attribute("tool.encgen.difficulty", args.difficulty)
     ctx.otel_span.set_attribute("tool.encgen.terrain", args.terrain or "")

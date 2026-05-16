@@ -84,8 +84,9 @@ class GenerateLoadoutArgs(BaseModel):
 )
 async def generate_loadout(args: GenerateLoadoutArgs, ctx: ToolContext) -> ToolResult:
     # sidequest.cli.loadoutgen is a placeholder per ADR-082 — the Python
-    # port hasn't ported the Rust prototype's loadoutgen CLI. v1 records
-    # the request and returns an empty loadout. Phase D/E may implement.
+    # port hasn't ported the Rust prototype's loadoutgen CLI. Record the
+    # narrator's intent in OTEL, then return a fatal error so the narrator
+    # cannot confabulate phantom items. Phase D/E may wire loadoutgen.
     ctx.otel_span.set_attribute("tool.loadout.archetype", args.archetype)
     ctx.otel_span.set_attribute("tool.loadout.tier", args.tier)
     ctx.otel_span.set_attribute("tool.loadout.genre", args.genre or "")
