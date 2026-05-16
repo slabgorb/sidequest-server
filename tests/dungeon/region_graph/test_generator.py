@@ -325,3 +325,28 @@ def test_attach_rejects_unknown_stitch_endpoint_loudly():
     )
     with pytest.raises(ValueError, match="not a known region"):
         attach_expansion(g, bad)
+
+
+def test_attach_rejects_less_loopful_expansion_loudly(monkeypatch):
+    g = _explored()  # pre_cyc=1, pre_node_count=5, is_first=False, floor=1
+    exp, _ = generate_expansion(
+        graph=g,
+        campaign_seed=3,
+        expansion_id=2,
+        attach_region_ids=["e2", "e3"],
+        theme_pool=THEMES,
+        config=JaquaysConfig(),
+    )
+    calls = {"n": 0}
+    real = g.cyclomatic_number  # capture the real bound method BEFORE patching
+
+    def stubbed() -> int:
+        calls["n"] += 1
+        # 1st call = pre_cyclomatic capture (real); 2nd = post-attach check.
+        if calls["n"] <= 1:
+            return real()
+        return 0  # simulate an impossible cyclomatic decrease
+
+    monkeypatch.setattr(g, "cyclomatic_number", stubbed)
+    with pytest.raises(ValueError, match="attach made the map less loopful"):
+        attach_expansion(g, exp)

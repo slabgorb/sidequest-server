@@ -236,6 +236,9 @@ def attach_expansion(graph: RegionGraph, exp: Expansion) -> RegionGraph:
             f"regions reachable from {graph.entrance_id!r}"
         )
     cyc = graph.cyclomatic_number()
+    # is_first: seed-graph case; floor=0 only when the expansion is also
+    # empty (a degenerate no-op an external caller could construct;
+    # generate_expansion cannot — JaquaysConfig.validate enforces lo>=1).
     is_first = pre_node_count <= 1
     floor = 1 if (not is_first or exp.new_nodes) else 0
     if cyc < max(floor, pre_cyclomatic):
