@@ -223,3 +223,29 @@ def test_frontier_roundtrip() -> None:
     loaded = store.load_frontier()
     assert loaded == [fe]
     assert FrontierEdge.from_dict(fe.to_dict()) == fe
+
+
+from sidequest.dungeon.persistence import DungeonMutation  # noqa: E402
+
+
+def test_mutation_overlay_append_only_ordered_and_survives_reload() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        db = str(_Path(d) / "save.db")
+        c1 = _file_conn(db)
+        s1 = DungeonStore(c1)
+        s1.ensure_schema()
+        s1.record_mutation("exp001.r0", "trap_sprung", {"trap": "scything_blade"})
+        s1.record_mutation("exp001.r0", "looted", {"item": "ring"})
+        s1.record_mutation("exp001.r1", "collapsed", {})
+        c1.commit()
+        c1.close()
+
+        c2 = _file_conn(db)
+        muts = DungeonStore(c2).load_mutations()
+        c2.close()
+
+    # append-only + deterministic replay order (mutation_id ascending)
+    assert [m.kind for m in muts] == ["trap_sprung", "looted", "collapsed"]
+    assert muts[0].region_id == "exp001.r0"
+    assert muts[0].payload == {"trap": "scything_blade"}
+    assert DungeonMutation.from_dict(muts[1].to_dict()) == muts[1]

@@ -30,6 +30,7 @@ from sidequest.game.persistence import (
 )
 
 __all__ = [
+    "DungeonMutation",
     "DungeonStore",
     "FrontierEdge",
     "PersistError",
@@ -70,6 +71,24 @@ class FrontierEdge:
             heading=d["heading"],
             spawn_depth_score=d["spawn_depth_score"],
         )
+
+
+@dataclass(frozen=True)
+class DungeonMutation:
+    """One append-only mutation fact (sprung trap, looted room,
+    collapse, resolved set-piece). Never updated or deleted; load
+    replays in mutation_id order over the base map."""
+
+    region_id: str
+    kind: str
+    payload: dict
+
+    def to_dict(self) -> dict:
+        return {"region_id": self.region_id, "kind": self.kind, "payload": self.payload}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> DungeonMutation:
+        return cls(region_id=d["region_id"], kind=d["kind"], payload=d["payload"])
 
 
 DUNGEON_SCHEMA_SQL = """
@@ -274,3 +293,32 @@ class DungeonStore:
             raise DatabaseError(f"load_frontier failed: {exc}") from exc
         except (json.JSONDecodeError, KeyError) as exc:
             raise SerializationError(f"corrupt frontier payload: {exc}") from exc
+
+    def record_mutation(self, region_id: str, kind: str, payload: dict) -> None:
+        try:
+            self._conn.execute(
+                "INSERT INTO dungeon_mutation_overlay (region_id, kind, payload) "
+                "VALUES (?, ?, ?)",
+                (region_id, kind, json.dumps(payload)),
+            )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"record_mutation failed: {exc}") from exc
+
+    def load_mutations(self) -> list[DungeonMutation]:
+        try:
+            rows = self._conn.execute(
+                "SELECT region_id, kind, payload FROM dungeon_mutation_overlay "
+                "ORDER BY mutation_id"
+            ).fetchall()
+            return [
+                DungeonMutation(
+                    region_id=r["region_id"],
+                    kind=r["kind"],
+                    payload=json.loads(r["payload"]),
+                )
+                for r in rows
+            ]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"load_mutations failed: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise SerializationError(f"corrupt mutation payload: {exc}") from exc
