@@ -59,7 +59,7 @@ def test_single_stitch_fails_two_independent_entries_and_loop():
     ]
     rep = check_invariants(_explored(), exp, JaquaysConfig())
     assert rep.invariants_passed["two_independent_entries"] is False
-    assert rep.invariants_passed["loop_into_explored"] is False
+    assert rep.invariants_passed["loops_into_explored"] is False
     assert not rep.all_passed()
 
 
@@ -68,13 +68,15 @@ def test_no_hidden_edge_fails_mixed_kinds_with_hidden():
     exp.new_edges = [e for e in exp.new_edges if not e.hidden]
     exp.new_edges.append(RegionEdge(a="e1", b="x.r2", kind="corridor"))
     rep = check_invariants(_explored(), exp, JaquaysConfig())
+    # shortcut_collapses_distance also fails here under default config;
+    # only mixed_kinds_with_hidden is asserted, which is correct
     assert rep.invariants_passed["mixed_kinds_with_hidden"] is False
 
 
 def test_missing_shortcut_fails_shortcut_invariant():
     exp = _good_expansion()
     exp.new_edges = [
-        e if not e.shortcut else RegionEdge(a=e.a, b=e.b, kind="corridor") for e in exp.new_edges
+        e if not e.shortcut else RegionEdge(a=e.a, b=e.b, kind="shaft") for e in exp.new_edges
     ]
     rep = check_invariants(_explored(), exp, JaquaysConfig())
     assert rep.invariants_passed["shortcut_collapses_distance"] is False
@@ -121,12 +123,13 @@ def test_seed_expansion_waives_distinct_explored_rule():
 
 
 def test_report_is_serialisable_dict_for_otel_handoff():
+    # dict-shape only, not pass-state — see test_good_expansion_passes_all_invariants for pass coverage
     rep = check_invariants(_explored(), _good_expansion(), JaquaysConfig())
     d = rep.as_dict()
     assert d["expansion_id"] == 2
     assert set(d["invariants_passed"]) == {
         "two_independent_entries",
-        "loop_into_explored",
+        "loops_into_explored",
         "mixed_kinds_with_hidden",
         "shortcut_collapses_distance",
         "no_single_entrance",

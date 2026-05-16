@@ -33,7 +33,7 @@ from sidequest.dungeon.region_graph.model import Expansion, RegionGraph
 
 _INVARIANTS = (
     "two_independent_entries",
-    "loop_into_explored",
+    "loops_into_explored",
     "mixed_kinds_with_hidden",
     "shortcut_collapses_distance",
     "no_single_entrance",
@@ -135,7 +135,7 @@ def check_invariants(
     rep.invariants_passed["two_independent_entries"] = enough_stitch and enough_new and explored_ok
 
     # 2. loop tying back into explored (exact, see module docstring)
-    rep.invariants_passed["loop_into_explored"] = (
+    rep.invariants_passed["loops_into_explored"] = (
         rep.loops_into_explored >= config.min_loops_into_explored
     )
 
@@ -176,4 +176,10 @@ def check_invariants(
             break
     rep.invariants_passed["no_single_chokepoint"] = chokepoint_free
 
+    produced = set(rep.invariants_passed)
+    if produced != set(_INVARIANTS):
+        raise RuntimeError(
+            f"invariant key-set mismatch: expected {sorted(_INVARIANTS)}, "
+            f"produced {sorted(produced)}"
+        )
     return rep
