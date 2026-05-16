@@ -8,6 +8,7 @@ Protocol — because the caller already unpacks those fields.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import TYPE_CHECKING
@@ -31,7 +32,9 @@ from sidequest.protocol.messages import (
     ChapterMarkerPayload,
     ConfrontationMessage,
     ConfrontationPayload,
+    Footnote,
     GameResumedMessage,
+    NarrationMessage,
     SeatConfirmedMessage,
     SeatConfirmedPayload,
     SessionEventMessage,
@@ -66,6 +69,70 @@ if TYPE_CHECKING:
 from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
+
+
+def _mint_replay_footnote_fact_ids(msg: object) -> tuple[object, int]:
+    """ADR-100 Seam C, replay/backfill path.
+
+    Pre-fix saves persisted NARRATION footnotes with ``fact_id=None``. The
+    client (``useStateMirror.ts``) drops any footnote lacking a ``fact_id``
+    by design, so every resume of an old save silently loses those
+    KnownFacts (sq-playtest 2026-05-16: the 5 Agna-ledger scene facts gone
+    on every rehydration). Carried fix #4 added a defensive mint to the
+    *live* footnote-forwarding loop only; the replay/tail-backfill path
+    replays persisted footnotes verbatim and never runs them through it.
+
+    Mirror the live mint here. The digest MUST stay byte-identical to the
+    canonical algorithm in
+    ``server/websocket_session_handler.py`` (search ``digest_input =``,
+    ~2943): a replayed pre-fix fact and its later live re-narration have to
+    collide on the same id so the client's ``seenFactIds`` dedupe — and the
+    journal — treat them as one fact. Narrator-supplied ``fact_id``s are
+    preserved untouched (scenario clue_intake Seam A matches them against
+    genre-authored ``ClueNode.id``). Non-NARRATION messages and footnote-
+    free narrations are returned unchanged.
+
+    Returns ``(msg_or_rebuilt_copy, count_of_ids_minted)``.
+
+    Only NARRATION carries footnotes, and all three replay emission sites
+    (cached-rows loop, legacy live-filter fallback, and the tail-backfill
+    via ``views.backfill_last_narration_block``) construct their messages
+    through the one ``_build_message_for_kind`` factory, so an
+    ``isinstance(NarrationMessage)`` guard is exact at every site — and
+    gives the type checker full narrowing instead of stringly ``getattr``.
+
+    NOTE (forward / Sprint-3 cleanup): the digest lives in two places now
+    (live loop + this helper). A shared ``mint_footnote_fact_id(footnote)``
+    consumed by both paths is the drift-proof design — deferred here to
+    avoid editing the not-yet-fully-verified carried-#4 live path mid-
+    playtest. If you touch either copy, change BOTH or dedupe breaks.
+    """
+    if not isinstance(msg, NarrationMessage):
+        return msg, 0
+    footnotes = msg.payload.footnotes
+    if not footnotes:
+        return msg, 0
+    minted = 0
+    rebuilt: list[Footnote] = []
+    for fn in footnotes:
+        if fn.fact_id is None:
+            cat_str = (
+                fn.category.value if hasattr(fn.category, "value") else str(fn.category)
+            )
+            digest_input = f"{fn.summary}|{cat_str}|{fn.is_new}"
+            digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+            rebuilt.append(fn.model_copy(update={"fact_id": f"fn-{digest[:16]}"}))
+            minted += 1
+        else:
+            rebuilt.append(fn)
+    if minted == 0:
+        return msg, 0
+    return (
+        msg.model_copy(
+            update={"payload": msg.payload.model_copy(update={"footnotes": rebuilt})}
+        ),
+        minted,
+    )
 
 
 def _backfill_magic_state_on_resume(
@@ -915,6 +982,7 @@ class ConnectHandler:
             _replay_kind_lookup_miss = 0
             _replay_skipped_internal = 0
             _replay_kinds: dict[str, int] = {}
+            _replay_footnote_fact_ids_minted = 0
 
             # Playtest 2026-05-02 [OBS] "Scrapbook state lost on reload":
             # SCRAPBOOK_ENTRY events were emitted with image_url=None at
@@ -981,6 +1049,8 @@ class ConnectHandler:
                                     "payload": _built.payload.model_copy(update={"image_url": _url})
                                 }
                             )
+                    _built, _fn_minted = _mint_replay_footnote_fact_ids(_built)
+                    _replay_footnote_fact_ids_minted += _fn_minted
                     _replay_kinds[_kind] = _replay_kinds.get(_kind, 0) + 1
                     replay_msgs.append(_built)
             else:
@@ -1021,6 +1091,8 @@ class ConnectHandler:
                                     "payload": _built.payload.model_copy(update={"image_url": _url})
                                 }
                             )
+                    _built, _fn_minted = _mint_replay_footnote_fact_ids(_built)
+                    _replay_footnote_fact_ids_minted += _fn_minted
                     _replay_kinds[event_row.kind] = _replay_kinds.get(event_row.kind, 0) + 1
                     replay_msgs.append(_built)
 
@@ -1042,6 +1114,12 @@ class ConnectHandler:
                     player_id=session._current_player_id,
                 )
                 if tail_msgs:
+                    _minted_tail: list[object] = []
+                    for _tm in tail_msgs:
+                        _tm, _fn_minted = _mint_replay_footnote_fact_ids(_tm)
+                        _replay_footnote_fact_ids_minted += _fn_minted
+                        _minted_tail.append(_tm)
+                    tail_msgs = _minted_tail
                     replay_msgs.extend(tail_msgs)
                     tail_backfill_count = len(tail_msgs)
                     for msg in tail_msgs:
@@ -1069,6 +1147,33 @@ class ConnectHandler:
                 "slug_connect.replay.tail_backfill_count", tail_backfill_count
             )
             _replay_span.set_attribute("slug_connect.replay.last_seen_seq", session._last_seen_seq)
+            _replay_span.set_attribute(
+                "slug_connect.replay.footnote_fact_ids_minted",
+                _replay_footnote_fact_ids_minted,
+            )
+            # ADR-100 Seam C visibility — mirror the live path's
+            # ``state.footnote_fact_id_minted`` watcher event so the GM panel
+            # sees replay/backfill mints too. Same event name, distinct
+            # ``reason`` so the dashboard can split live-narration omissions
+            # from old-save backfill. Zero on post-fix saves (footnotes
+            # already carry fact_id); non-zero only when resuming a pre-fix
+            # save — a quiet, expected backfill, not a regression signal.
+            if _replay_footnote_fact_ids_minted > 0:
+                _watcher_publish(
+                    "state.footnote_fact_id_minted",
+                    {
+                        "count": _replay_footnote_fact_ids_minted,
+                        "player_id": session._current_player_id,
+                        "reason": "replay_backfill",
+                    },
+                    component="footnotes",
+                )
+                logger.info(
+                    "state.footnote_fact_id_minted count=%d player_id=%s reason=replay_backfill slug=%s",
+                    _replay_footnote_fact_ids_minted,
+                    session._current_player_id,
+                    slug,
+                )
             logger.info(
                 "slug_connect.replay cache_rows=%d excluded=%d skipped_internal=%d "
                 "emitted=%d narration=%d tail_backfill=%d last_seen_seq=%d "
