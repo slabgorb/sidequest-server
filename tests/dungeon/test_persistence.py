@@ -426,3 +426,43 @@ def test_serde_exact_inverse_over_seed_sweep(campaign_seed: int) -> None:
         reloaded.nodes[rid].depth_score == g.nodes[rid].depth_score
         for rid in g.nodes
     )
+
+
+def test_wiring_contract_runs_on_real_save_db_connection() -> None:
+    """Plan-7 deferral contract: DungeonStore must work on a connection
+    configured exactly like the real save DB. We reuse the production
+    _configure_connection so a PRAGMA drift in game/persistence.py
+    breaks THIS test — proving Plan 7 can pass it the live connection.
+    """
+    from sidequest.game.persistence import _configure_connection
+
+    with tempfile.TemporaryDirectory() as d:
+        db = str(_Path(d) / "caverns_beneath_sunden.db")
+        conn = sqlite3.connect(db)
+        _configure_connection(conn)  # the REAL save-DB PRAGMA contract
+
+        g = _seed_graph()
+        exp = _generate_and_attach(
+            g, campaign_seed=42, expansion_id=1, attach_ids=["entrance"]
+        )
+        store = DungeonStore(conn)
+        store.ensure_schema()
+        _commit_seed(store, g)
+        store.commit_expansion(exp, g)
+        conn.commit()
+
+        reloaded = store.load_map(entrance_id="entrance")
+        conn.close()
+
+    assert reloaded.nodes == g.nodes
+    assert sorted(reloaded.edges, key=repr) == sorted(g.edges, key=repr)
+
+
+def test_dungeonstore_refuses_to_open_its_own_db() -> None:
+    """Spec Decision 3: the store never owns the connection. A Path
+    argument must fail loud, not silently open a private DB (that would
+    break Plan 7's one-transaction guarantee, spec §7.5)."""
+    import pytest
+
+    with pytest.raises(PersistError):
+        DungeonStore(_Path("/tmp/should-not-be-opened.db"))
