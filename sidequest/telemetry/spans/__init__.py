@@ -47,6 +47,7 @@ from .course import *  # noqa: F401, F403
 from .dice import *  # noqa: F401, F403
 from .disposition import *  # noqa: F401, F403
 from .dogfight import *  # noqa: F401, F403
+from .dungeon_attach import *  # noqa: F401, F403
 from .dungeon_materialize import *  # noqa: F401, F403
 from .dungeon_persist import *  # noqa: F401, F403
 from .dungeon_setpiece import *  # noqa: F401, F403
