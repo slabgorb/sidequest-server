@@ -32,6 +32,7 @@ from sidequest.dungeon.seed_bootstrap import (
 )
 from sidequest.dungeon.themes import load_theme_palette
 from sidequest.game.cookbook.loader import load_cookbook
+from sidequest.telemetry.spans import dungeon_attach_span
 
 __all__ = [
     "attach_dungeon_to_session",
@@ -94,70 +95,92 @@ async def attach_dungeon_to_session(
     """Register the look-ahead worker for this session; bootstrap the
     seed on a fresh campaign. Returns the handle (held by the session for
     teardown), or ``None`` for any non-beneath_sunden session (clean
-    no-op — the gate lives here so the call site is unconditional)."""
-    if genre_slug != _GENRE or world_slug != _WORLD:
-        return None
+    no-op — the gate lives here so the call site is unconditional).
 
-    conn = store.connection()
-    save_key = _save_key(conn)
-    if save_key in _ATTACHED_SAVES:
-        raise RuntimeError(
-            f"a look-ahead worker is already attached for save {save_key!r} "
-            "— concurrent sessions on one save would double-register and "
-            "double-materialize the dungeon. This is a contract violation, "
-            "not an upsert (No Silent Fallbacks); the playgroup runs one "
-            "shared session per save. detach the prior session first."
+    Every path emits exactly one routed ``dungeon.attach`` event so the
+    GM panel can tell a legitimate skip from a misfire — the formerly
+    silent ``return None`` here is what produced the 2026-05-17 playtest
+    misdiagnosis (a live, fully-materialized dungeon read as "the gate
+    skipped / dungeon never bootstrapped")."""
+    with dungeon_attach_span(
+        genre_slug=genre_slug, world_slug=world_slug
+    ) as _span:
+        if genre_slug != _GENRE or world_slug != _WORLD:
+            _span.set_attribute("outcome", "skipped_other_world")
+            _span.set_attribute(
+                "reason",
+                f"not this dungeon's world (saw genre={genre_slug!r} "
+                f"world={world_slug!r}; this dungeon is {_GENRE}/{_WORLD})",
+            )
+            return None
+
+        conn = store.connection()
+        save_key = _save_key(conn)
+        if save_key in _ATTACHED_SAVES:
+            raise RuntimeError(
+                f"a look-ahead worker is already attached for save {save_key!r} "
+                "— concurrent sessions on one save would double-register and "
+                "double-materialize the dungeon. This is a contract violation, "
+                "not an upsert (No Silent Fallbacks); the playgroup runs one "
+                "shared session per save. detach the prior session first."
+            )
+        persistence = DungeonStore(conn)
+        persistence.ensure_schema()  # outside any txn (executescript implicit COMMIT)
+
+        bundle = load_cookbook(world_dir)
+        palette = load_theme_palette(_theme_pack_root(world_dir))
+        claude_client = build_llm_client()
+
+        # Save-is-truth: reuse a frozen seed; only generate+persist on a
+        # genuinely fresh save (a prior failed bootstrap left the seed but
+        # no map → reuse it so the retry is deterministic).
+        campaign_seed = persistence.get_campaign_seed()
+        if campaign_seed is None:
+            campaign_seed = secrets.randbits(_SEED_BITS)
+            persistence.set_campaign_seed(campaign_seed)
+            conn.commit()
+
+        already_seeded = bool(persistence.load_map(entrance_id="entrance").nodes)
+        if not already_seeded:
+            entrance_theme = select_entrance_theme_id(palette)
+            seed_graph = build_entrance_seed_graph(entrance_theme)
+            request = build_expansion_one_request(campaign_seed=campaign_seed)
+            # The merged commit stage seeds Expansion 0 (entrance) before
+            # expansion 1 and rolls back on PersistError (Seed=Expansion-0,
+            # spec §6). A bootstrap failure raises loudly here — the
+            # connect handler must not start a beneath_sunden session with
+            # a broken dungeon (No Silent Fallbacks, spec §9).
+            await materialize(
+                request,
+                graph=seed_graph,
+                bundle=bundle,
+                palette=palette,
+                persistence=persistence,
+                snapshot=snapshot,
+                pack_tropes=genre_pack,
+                claude_client=claude_client,
+            )
+            _span.set_attribute("outcome", "bootstrapped")
+        else:
+            _span.set_attribute("outcome", "already_seeded")
+        _span.set_attribute(
+            "regions",
+            len(persistence.load_map(entrance_id="entrance").nodes),
         )
-    persistence = DungeonStore(conn)
-    persistence.ensure_schema()  # outside any txn (executescript implicit COMMIT)
 
-    bundle = load_cookbook(world_dir)
-    palette = load_theme_palette(_theme_pack_root(world_dir))
-    claude_client = build_llm_client()
-
-    # Save-is-truth: reuse a frozen seed; only generate+persist on a
-    # genuinely fresh save (a prior failed bootstrap left the seed but no
-    # map → reuse it so the retry is deterministic).
-    campaign_seed = persistence.get_campaign_seed()
-    if campaign_seed is None:
-        campaign_seed = secrets.randbits(_SEED_BITS)
-        persistence.set_campaign_seed(campaign_seed)
-        conn.commit()
-
-    already_seeded = bool(persistence.load_map(entrance_id="entrance").nodes)
-    if not already_seeded:
-        entrance_theme = select_entrance_theme_id(palette)
-        seed_graph = build_entrance_seed_graph(entrance_theme)
-        request = build_expansion_one_request(campaign_seed=campaign_seed)
-        # The merged commit stage seeds Expansion 0 (entrance) before
-        # expansion 1 and rolls back on PersistError (Seed=Expansion-0,
-        # spec §6). A bootstrap failure raises loudly here — the connect
-        # handler must not start a beneath_sunden session with a broken
-        # dungeon (No Silent Fallbacks, spec §9).
-        await materialize(
-            request,
-            graph=seed_graph,
+        handle = register_lookahead_worker(
+            persistence=persistence,
             bundle=bundle,
             palette=palette,
-            persistence=persistence,
-            snapshot=snapshot,
             pack_tropes=genre_pack,
             claude_client=claude_client,
+            campaign_seed=campaign_seed,
         )
-
-    handle = register_lookahead_worker(
-        persistence=persistence,
-        bundle=bundle,
-        palette=palette,
-        pack_tropes=genre_pack,
-        claude_client=claude_client,
-        campaign_seed=campaign_seed,
-    )
-    # Claim the save AFTER a successful register: a bootstrap/register
-    # failure must leave no key behind (a later retry must be able to
-    # attach). save-is-truth.
-    _ATTACHED_SAVES[save_key] = handle
-    return handle
+        # Claim the save AFTER a successful register: a bootstrap/register
+        # failure must leave no key behind (a later retry must be able to
+        # attach). save-is-truth.
+        _ATTACHED_SAVES[save_key] = handle
+        return handle
 
 
 async def detach_dungeon_from_session(
