@@ -34,6 +34,7 @@ SPAN_DUNGEON_MATERIALIZE_CURATE = "dungeon.materialize.curate"
 SPAN_DUNGEON_MATERIALIZE_ATTACH = "dungeon.materialize.attach"
 SPAN_DUNGEON_MATERIALIZE_COMMIT = "dungeon.materialize.commit"
 SPAN_FRONTIER_EXPAND = "frontier.expand"
+SPAN_FRONTIER_REGION_TRANSITION = "frontier.region_transition"
 
 # ---------------------------------------------------------------------------
 # Routing registrations
@@ -160,22 +161,64 @@ SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_ATTACH] = SpanRoute(
 SPAN_ROUTES[SPAN_DUNGEON_MATERIALIZE_COMMIT] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # Plan 7 Task 6 real attribute surface (NOT the Task-1 placeholder).
+    # On success _stage_commit writes the seed/regions/edges/rolled/
+    # frontier-edges summary + the generator_version actually stamped
+    # (lie-detector: proves the Seed=Expansion-0 commit ran and which
+    # version froze this expansion). error/reason are the routed failure
+    # markers: they read None on the success path (graceful-get idiom —
+    # harmless) and surface a PersistError (commit re-commit-freeze /
+    # mid-write rollback) on the GM panel on the failure path (the Task-2
+    # lesson: a set-but-not-routed marker is a defect — route it).
     extract=lambda s: {
         "field": "dungeon_map",
         "op": "materialize.commit",
         "expansion_id": _attr("expansion_id")(s),
         "stage": "commit",
+        "seeded_entrance": _attr("seeded_entrance")(s),
+        "regions_committed": _attr("regions_committed")(s),
+        "edges_committed": _attr("edges_committed")(s),
+        "rolled_persisted": _attr("rolled_persisted")(s),
+        "frontier_edges_added": _attr("frontier_edges_added")(s),
+        "generator_version": _attr("generator_version")(s),
+        "error": _attr("error")(s),
+        "reason": _attr("reason")(s),
     },
 )
 
 SPAN_ROUTES[SPAN_FRONTIER_EXPAND] = SpanRoute(
     event_type="state_transition",
     component="dungeon",
+    # Plan 7 Task 6 real attribute surface (NOT the Task-1 placeholder):
+    # one span per new unexpanded frontier edge the commit put_frontier'd.
+    # from_region_id/heading/spawn_depth_score are the derived edge's real
+    # fields so the GM panel sees exactly where + at what depth the next
+    # expansion would spawn (lie-detector: the frontier actually grew).
     extract=lambda s: {
         "field": "dungeon_frontier",
         "op": "frontier_expand",
         "expansion_id": _attr("expansion_id")(s),
         "frontier_edge_id": _attr("frontier_edge_id")(s),
+        "from_region_id": _attr("from_region_id")(s),
+        "heading": _attr("heading")(s),
+        "spawn_depth_score": _attr("spawn_depth_score")(s),
+    },
+)
+
+SPAN_ROUTES[SPAN_FRONTIER_REGION_TRANSITION] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    # The real production region-transition seam fired (Plan 7 Task 6
+    # wiring). `observers` is the count of registered frontier-approach
+    # observers (Task 7's worker) — the GM panel can tell the seam is
+    # wired-but-unconsumed (observers == 0, honest-deferral) from
+    # wired-and-live (observers >= 1) rather than guessing.
+    extract=lambda s: {
+        "field": "current_region",
+        "op": "frontier_region_transition",
+        "from_region": _attr("from_region")(s),
+        "to_region": _attr("to_region")(s),
+        "observers": _attr("observers")(s),
     },
 )
 
@@ -324,6 +367,30 @@ def frontier_expand_span(
         yield span
 
 
+@contextmanager
+def frontier_region_transition_span(
+    *,
+    from_region: str,
+    to_region: str,
+    observers: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Open the ``frontier.region_transition`` span for one real
+    production region transition (Plan 7 Task 6 wiring seam)."""
+    with Span.open(
+        SPAN_FRONTIER_REGION_TRANSITION,
+        {
+            "from_region": from_region,
+            "to_region": to_region,
+            "observers": observers,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
 __all__ = [
     "SPAN_DUNGEON_MATERIALIZE",
     "SPAN_DUNGEON_MATERIALIZE_ATTACH",
@@ -332,6 +399,7 @@ __all__ = [
     "SPAN_DUNGEON_MATERIALIZE_DESIGN",
     "SPAN_DUNGEON_MATERIALIZE_FILL",
     "SPAN_FRONTIER_EXPAND",
+    "SPAN_FRONTIER_REGION_TRANSITION",
     "dungeon_materialize_attach_span",
     "dungeon_materialize_commit_span",
     "dungeon_materialize_curate_span",
@@ -339,4 +407,5 @@ __all__ = [
     "dungeon_materialize_fill_span",
     "dungeon_materialize_span",
     "frontier_expand_span",
+    "frontier_region_transition_span",
 ]

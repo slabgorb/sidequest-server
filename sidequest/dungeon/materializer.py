@@ -56,6 +56,7 @@ from sidequest.telemetry.spans.dungeon_materialize import (
     dungeon_materialize_design_span,
     dungeon_materialize_fill_span,
     dungeon_materialize_span,
+    frontier_expand_span,
 )
 
 __all__ = [
@@ -1107,9 +1108,286 @@ def _stage_attach(
     )
 
 
-def _stage_commit(request: MaterializationRequest, **kwargs: Any) -> Any:
-    """Plan 7 Task 6: commit stage — persistence + frontier update."""
-    raise NotImplementedError("_stage_commit not implemented until Plan 7 Task 6")
+def _frontier_edge_id(campaign_seed: int, expansion_id: int, region_id: str) -> str:
+    """Deterministic, collision-safe frontier-edge id.
+
+    Mirrors ``setpiece_attach._thread_id_seed`` /
+    ``region_graph.generator._subseed`` exactly: a pipe-delimited UTF-8
+    string → ``blake2b(digest_size=8)`` → hex. NOT a uuid (a frontier
+    re-derived from the same attached expansion must produce the SAME id
+    so ``put_frontier``'s ``INSERT OR REPLACE`` is idempotent rather than
+    duplicating rows). The house mixer; we do not invent a new scheme.
+    """
+    digest = hashlib.blake2b(
+        f"frontier|{campaign_seed}|{expansion_id}|{region_id}".encode(),
+        digest_size=8,
+    ).digest()
+    return f"fe_{digest.hex()}"
+
+
+def _new_frontier_edges(
+    request: MaterializationRequest,
+    *,
+    expansion: Expansion,
+    graph: RegionGraph,
+) -> list[FrontierEdge]:
+    """Derive the new unexpanded frontier edges from the just-attached
+    expansion (spec §7: "frontier — the set of unexpanded edges and the
+    heading/depth_score an expansion there would spawn at").
+
+    Each region node introduced by this expansion is a boundary from
+    which a *future* expansion can be pushed outward — so each becomes a
+    new unexpanded frontier edge:
+
+    - ``from_region_id`` = the new region's id (the push-off point),
+    - ``heading``        = the party's push heading (``request.heading``;
+      the only directional signal the pipeline carries — spec §6's
+      look-ahead "single approaching edge along the party's current
+      heading"),
+    - ``spawn_depth_score`` = that region's frozen ``depth_score`` after
+      ``assign_depth_scores`` (the depth the *next* expansion off this
+      region begins at — the gradient continues outward from here).
+
+    No arbitrary edges are invented: every returned edge is anchored to a
+    real ``expansion.new_nodes`` region whose depth_score the attach stage
+    already froze onto ``graph.nodes`` (REQUIRED — a node with no
+    depth_score is a loud reconcile failure, never a silent 0.0).
+    """
+    edges: list[FrontierEdge] = []
+    for node in expansion.new_nodes:
+        live = graph.nodes.get(node.id)
+        if live is None:
+            raise PersistError(
+                f"new frontier edge derivation: region {node.id!r} is not in "
+                f"the attached graph — commit must run after attach_expansion "
+                f"(No Silent Fallbacks)"
+            )
+        if live.depth_score is None:
+            raise PersistError(
+                f"new frontier edge derivation: region {node.id!r} has no "
+                f"depth_score after assign_depth_scores — cannot derive the "
+                f"spawn_depth_score for the next expansion (No Silent "
+                f"Fallbacks; never default to 0.0)"
+            )
+        edges.append(
+            FrontierEdge(
+                frontier_edge_id=_frontier_edge_id(
+                    request.campaign_seed, request.expansion_id, node.id
+                ),
+                from_region_id=node.id,
+                heading=request.heading,
+                spawn_depth_score=live.depth_score,
+            )
+        )
+    return edges
+
+
+def _stage_commit(
+    request: MaterializationRequest,
+    *,
+    graph: RegionGraph | None,
+    expansion: Expansion | None,
+    attach_result: AttachResult | None,
+    persistence: DungeonStore | None,
+    span: _otel_trace.Span,
+) -> None:
+    """Plan 7 Task 6: commit stage — one transaction, caller-owned
+    boundary, seed-as-Expansion-0, rollback on PersistError.
+
+    The whole materialized expansion **plus its started threads** is
+    written to the live save in ONE Plan 5 transaction and is
+    *immediately live* on success (spec §7.5). The caller (this stage)
+    owns the transaction boundary — ``DungeonStore`` never autocommits.
+
+    Sequence (all on ``persistence``'s connection, ONE txn):
+
+    1. **Seed = Expansion 0** (loud fresh-save detection): production
+       ``commit_expansion`` persists ONLY ``expansion.new_nodes``; the
+       surface entrance has ``expansion_id == 0`` and belongs to NO
+       generated ``Expansion.new_nodes``, so it is never persisted by a
+       generated commit. On a *fresh* save (``load_map`` empty AND
+       ``load_frontier`` empty — introspected loudly, never assumed) the
+       entrance is committed first as
+       ``Expansion(expansion_id=0, new_nodes=[entrance], new_edges=[])``
+       (entrance ``depth_score`` is the frozen root ``0.0``). On a
+       non-fresh save the entrance is already frozen — re-committing it
+       would (correctly) raise the freeze ``PersistError``; so the seed
+       commit runs ONLY when the save is genuinely fresh.
+    2. ``commit_expansion(expansion, graph)`` — persists this expansion's
+       ``new_nodes``/``new_edges`` (depth-scored nodes read from
+       ``graph``). A re-commit of an already-frozen region raises
+       ``PersistError`` (spec §7 freeze — frozen regions never rewritten).
+    3. RECONCILE SEAM A — the spec §7 FREEZE TARGET ``AttachReport.rolled``
+       (a ``RolledSetPiece``) is persisted-as-is via the real Plan 5
+       append-only primitive ``record_mutation(region_id,
+       kind="setpiece_state", payload=...)`` within this SAME txn.
+       ``commit_expansion``'s node payload (``RegionNode.to_dict()``) has
+       NO setpiece-state slot and the ``mask BLOB`` column is unwritten by
+       Plan 5's API, so ``record_mutation`` is the faithful Plan-5 carrier.
+       ``.rolled`` is persisted EXACTLY as the attach stage produced it
+       and is NEVER recomputed here (save-is-truth).
+    4. New unexpanded frontier edges (derived from the attached expansion
+       — :func:`_new_frontier_edges`, no invented edges) are
+       ``put_frontier``'d within the same txn.
+    5. The complication-ledger rows are ALREADY in this uncommitted
+       connection: Task 5's ``_stage_attach`` called
+       ``attach_set_piece`` → ``store.open_thread`` on the same
+       connection. Task 6 does NOT re-open threads; the txn it commits
+       already contains them.
+
+    On success the connection is committed (``conn.commit()``) → the
+    expansion is immediately live. On ``PersistError`` (``commit_expansion``
+    can write region A before region B's ``IntegrityError``; **SQLite does
+    NOT auto-rollback**) the connection is rolled back
+    (``conn.rollback()``) so NO half-attached expansion / NO orphan ledger
+    rows survive — then the error re-raises loudly (No Silent Fallbacks).
+    Either way a routed marker is set on the commit span (lie-detector
+    visibility — the Task-2 lesson) and ``frontier.expand`` is emitted
+    when the frontier is updated.
+
+    Invariants (No Silent Fallbacks):
+    - ``graph``/``expansion``/``attach_result``/``persistence`` must be
+      real objects — ``None`` is rejected loudly.
+    - Fresh-save detection is loud introspection, never an assumption.
+    - ``PersistError`` → rollback + routed failure marker + re-raise; a
+      partial/half-committed expansion is NEVER shipped.
+    - ``AttachReport.rolled`` is persisted-as-is, NEVER recomputed.
+    """
+    if graph is None:
+        raise ValueError(
+            "_stage_commit requires a real RegionGraph — "
+            "graph=None is not valid (No Silent Fallbacks)"
+        )
+    if expansion is None:
+        raise ValueError(
+            "_stage_commit requires a real Expansion — "
+            "expansion=None is not valid (No Silent Fallbacks)"
+        )
+    if attach_result is None:
+        raise ValueError(
+            "_stage_commit requires the attach stage result — "
+            "attach_result=None is not valid (No Silent Fallbacks); the "
+            "AttachReport.rolled freeze targets must be threaded by identity"
+        )
+    if persistence is None:
+        raise ValueError(
+            "_stage_commit requires a real DungeonStore — "
+            "persistence=None is not valid (No Silent Fallbacks)"
+        )
+
+    # RECONCILE NOTE (Plan-5-API vs spec prose): the merged Plan 5
+    # DungeonStore exposes NO public commit()/rollback() — by deliberate
+    # design the CALLER owns the connection + transaction boundary (spec
+    # §7.5; persistence.py docstring; the Plan 5 test precedent calls
+    # conn.commit()/conn.rollback() directly on the supplied connection,
+    # test_persistence.py:173/340). The store stores exactly the
+    # caller-supplied connection as ``_conn``. Task 6 is that caller, so it
+    # drives the txn boundary on that same connection. There is no public
+    # accessor to reach instead — this single private read IS the
+    # documented caller-owned-boundary seam, not an encapsulation break.
+    conn = persistence._conn
+
+    # Loud fresh-save detection (introspection, NOT an assumption): a
+    # save is fresh iff the dungeon map AND frontier are both empty. On a
+    # fresh save the surface entrance has never been persisted (it belongs
+    # to no generated Expansion.new_nodes) so we must seed it as
+    # Expansion 0 before the first generated expansion is committed.
+    existing_map = persistence.load_map(entrance_id=graph.entrance_id)
+    existing_frontier = persistence.load_frontier()
+    is_fresh_save = not existing_map.nodes and not existing_frontier
+
+    new_frontier = _new_frontier_edges(
+        request, expansion=expansion, graph=graph
+    )
+
+    # Resolve the generator version at COMMIT time, not at import time.
+    # commit_expansion's `generator_version=GENERATOR_VERSION` default is
+    # bound once at def-time; passing the current module global explicitly
+    # honours a mid-campaign version bump so a genuinely never-materialized
+    # expansion uses the new code while frozen regions stay frozen (spec
+    # §7 "only never-materialized expansions use new code"). Read the live
+    # module attribute (lazy-import idiom — the session.py watcher_hub
+    # precedent — so a mid-campaign bump is observed, not the def-time
+    # binding).
+    from sidequest.dungeon import persistence as _live_persistence
+
+    generator_version = _live_persistence.GENERATOR_VERSION
+
+    try:
+        if is_fresh_save:
+            entrance = graph.nodes.get(graph.entrance_id)
+            if entrance is None:
+                raise PersistError(
+                    f"Seed=Expansion-0: entrance {graph.entrance_id!r} is not "
+                    f"in the graph — cannot seed a fresh save (No Silent "
+                    f"Fallbacks)"
+                )
+            persistence.commit_expansion(
+                Expansion(
+                    expansion_id=0, new_nodes=[entrance], new_edges=[]
+                ),
+                graph,
+                generator_version=generator_version,
+            )
+
+        persistence.commit_expansion(
+            expansion, graph, generator_version=generator_version
+        )
+
+        # RECONCILE SEAM A: persist the spec §7 freeze target
+        # AttachReport.rolled EXACTLY as attach produced it (never
+        # recomputed) via the real Plan 5 append-only primitive. One
+        # mutation row per (region, set-piece) attach report.
+        rolled_persisted = 0
+        for report in attach_result.attach_reports:
+            persistence.record_mutation(
+                report.region_id,
+                "setpiece_state",
+                {
+                    "setpiece_id": report.setpiece_id,
+                    "region_id": report.region_id,
+                    "rolled": dict(report.rolled.slots),
+                },
+            )
+            rolled_persisted += 1
+
+        for fe in new_frontier:
+            persistence.put_frontier(fe)
+
+        conn.commit()
+    except PersistError as exc:
+        # SQLite does NOT auto-rollback a mid-write IntegrityError:
+        # commit_expansion can write region A before region B's
+        # IntegrityError. Roll back the WHOLE txn so no half-attached
+        # expansion / orphan ledger row survives, then re-raise loudly.
+        conn.rollback()
+        span.set_attribute("error", str(exc))
+        span.set_attribute("reason", f"commit: {exc}")
+        raise
+
+    # Lie-detector success summary on the commit span (the design/attach
+    # precedent: a real success summary, not just the pre-baked stage).
+    span.set_attribute("expansion_id", request.expansion_id)
+    span.set_attribute("seeded_entrance", is_fresh_save)
+    span.set_attribute("regions_committed", len(expansion.new_nodes))
+    span.set_attribute("edges_committed", len(expansion.new_edges))
+    span.set_attribute("rolled_persisted", rolled_persisted)
+    span.set_attribute("frontier_edges_added", len(new_frontier))
+    span.set_attribute("generator_version", generator_version)
+
+    # Plan 7 owns frontier.expand: emit one per new unexpanded frontier
+    # edge so the GM panel sees the dungeon's frontier actually grew (the
+    # OTEL Observability Principle — the frontier update must be
+    # observable, not just asserted by narration).
+    for fe in new_frontier:
+        with frontier_expand_span(
+            expansion_id=request.expansion_id,
+            frontier_edge_id=fe.frontier_edge_id,
+            from_region_id=fe.from_region_id,
+            heading=fe.heading,
+            spawn_depth_score=fe.spawn_depth_score,
+        ):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1237,16 +1515,22 @@ async def materialize(
                 span=attach_span,
             )
 
-        with dungeon_materialize_commit_span(expansion_id=request.expansion_id):
+        with dungeon_materialize_commit_span(
+            expansion_id=request.expansion_id
+        ) as commit_span:
             # Thread the attach stage's AttachResult into commit: its
             # ``attach_reports[].rolled`` is the spec §7 freeze target Task
-            # 6 must PERSIST and NEVER recompute (save-is-truth). Discarding
-            # it here would force Task 6 to re-roll. ``_stage_commit`` is
-            # still the deferred NotImplementedError seam with ``**kwargs``,
-            # so ``attach_result=`` is accepted but never read until Task 6.
+            # 6 PERSISTS and NEVER recomputes (save-is-truth). Discarding
+            # it here would force Task 6 to re-roll. ``expansion``/``graph``
+            # carry the depth-scored attached topology commit_expansion +
+            # new-frontier-edge derivation read. ``_stage_commit`` is SYNC
+            # (commit_expansion/put_frontier are sync) — a plain call inside
+            # this async coordinator, never awaited.
             _stage_commit(
                 request,
                 graph=graph,
-                persistence=persistence,
+                expansion=expansion,
                 attach_result=attach_result,
+                persistence=persistence,
+                span=commit_span,
             )

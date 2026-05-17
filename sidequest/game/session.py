@@ -1046,7 +1046,29 @@ class GameSnapshot(BaseModel):
         if patch.notes is not None:
             self.notes = patch.notes
         if patch.current_region is not None:
+            # The REAL production region-transition point (ADR-011
+            # WorldStatePatch apply — the only code that mutates
+            # current_region mid-session). Beneath Sünden Plan 7 Task 6
+            # hooks the frontier-crossing / frontier-approach seam here
+            # (extending this point + ADR-055 region_init dedup-append,
+            # NOT a parallel nav path). Fire only on a genuine region
+            # change (different, non-empty target) so the look-ahead is
+            # never spuriously enqueued (No Silent Fallbacks). Lazy import
+            # — sidequest.dungeon depends on game models, so a top-level
+            # import would invert the dependency (the watcher_hub
+            # lazy-import precedent two methods up).
+            _prev_region = self.current_region
             self.current_region = patch.current_region
+            if patch.current_region and patch.current_region != _prev_region:
+                from sidequest.dungeon.frontier_hook import (
+                    notify_region_transition,
+                )
+
+                notify_region_transition(
+                    self,
+                    from_region=_prev_region or None,
+                    to_region=patch.current_region,
+                )
         if patch.discovered_regions is not None:
             # Stories 45-16 + 45-17: validate, then canonicalize-dedup.
             # 45-16 rejected non-room shapes (brackets, multiline);
