@@ -256,7 +256,7 @@ class TestMaterializePipelineSpans:
                 persistence=store,
                 snapshot=_fresh_snapshot(),
                 pack_tropes=_attach_pack("cave_in"),
-                claude_client=_reflecting_claude_client(),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
@@ -295,7 +295,7 @@ class TestMaterializePipelineSpans:
                 persistence=store,
                 snapshot=_fresh_snapshot(),
                 pack_tropes=_attach_pack("cave_in"),
-                claude_client=_reflecting_claude_client(),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
@@ -371,11 +371,12 @@ class TestMaterializePipelineSpans:
         _mat_module._stage_commit = _noop  # type: ignore[assignment]
         try:
             req = self._build_request()
-            # snapshot/pack_tropes are required materialize() params (Task
-            # 5); the attach stage is monkeypatched to a no-op here so the
-            # values are never read — passing real-shaped placeholders keeps
-            # the signature satisfied while the test asserts ONLY span
-            # nesting/order (unchanged Task-1 contract).
+            # snapshot/pack_tropes/claude_client are required materialize()
+            # params (Task 5 / Task 4 SDK); the curate+attach stages are
+            # monkeypatched to no-ops here so the values are never read —
+            # passing real-shaped placeholders keeps the signature
+            # satisfied while the test asserts ONLY span nesting/order
+            # (unchanged Task-1 contract).
             await materialize(
                 req,
                 graph=None,
@@ -384,6 +385,7 @@ class TestMaterializePipelineSpans:
                 persistence=store,
                 snapshot=_fresh_snapshot(),
                 pack_tropes=_attach_pack("cave_in"),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _mat_module._stage_design = original_design  # type: ignore[assignment]
@@ -595,7 +597,6 @@ class TestStageDesign:
     def test_design_stage_returns_expansion_and_report(self) -> None:
         """_stage_design returns (Expansion, GenerationReport); the design span's
         attributes equal report.as_dict() exactly (key-set pinned)."""
-        import json
 
         import sidequest.dungeon.materializer as _mat_module
         from sidequest.dungeon.region_graph.invariants import GenerationReport
@@ -659,7 +660,6 @@ class TestStageDesign:
         raw span attributes are not what the GM panel renders; the typed
         state_transition event built by the route's extract is. The lie-detector
         is only honest if the route propagates the failure markers."""
-        import json
 
         import sidequest.dungeon.materializer as _mat_module
         from sidequest.dungeon.region_graph import ExpansionGenerationError
@@ -915,7 +915,6 @@ class TestStageFill:
     def test_each_generator_class_maps_to_its_spec_generator(self) -> None:
         """A region per generator_class fills with its §5.2 algorithm; the
         routed span payload records the algorithm actually used per region."""
-        import json
 
         import sidequest.dungeon.materializer as _mat_module
         from sidequest.dungeon.themes import ThemePalette
@@ -1055,7 +1054,6 @@ class TestStageFill:
         """A labyrinth-trap theme (braid_ratio=0.0) fills pristine; a non-trap
         maze theme fills with its palette braid_ratio (0.3). The span records
         the ACTUALLY-applied ratio per region (lie detector: not a default)."""
-        import json
 
         import sidequest.dungeon.materializer as _mat_module
         from sidequest.dungeon.themes import ThemePalette
@@ -1218,7 +1216,7 @@ class TestStageFill:
                 persistence=store,
                 snapshot=_fresh_snapshot(),
                 pack_tropes=_attach_pack("cave_in"),
-                claude_client=_reflecting_claude_client(),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
@@ -1248,94 +1246,66 @@ def _real_cookbook_bundle() -> Any:
     return load_cookbook(_BENEATH_SUNDEN_WORLD)
 
 
-class _FakeProc:
-    """Minimal asyncio.subprocess.Process stand-in (mirrors
-    tests/agents/test_claude_client.py:FakeProcess) — the ONLY mocked
-    seam: the claude -p subprocess. Real content, real cookbook, real
-    EdgePool everywhere else."""
+def _reflecting_sdk_client() -> Any:
+    """ToolingLlmClient-shaped fake: parses the curation prompt's
+    ``INPUT:\\n<json>`` and echoes a well-formed per-region verdict as
+    ToolingResult.text. The shared Plan-7 curate-success fake — NEVER a
+    real network call (the only mocked seam)."""
+    import json as _json
 
-    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
-        self._stdout = stdout
-        self._stderr = stderr
-        self.returncode = returncode
+    from sidequest.agents.tooling_protocol import ToolingResult
 
-    async def communicate(self) -> tuple[bytes, bytes]:
-        return self._stdout, self._stderr
-
-    def kill(self) -> None:
-        pass
-
-    async def wait(self) -> int:
-        return self.returncode
-
-
-def _curation_ok_payload(manifests: dict[str, Any]) -> bytes:
-    """A well-formed curated payload: the claude -p JSON envelope whose
-    `result` is the curator's per-region JSON verdict (keeps every
-    wandering row + big_bad, lightly refining telegraphs). Mirrors the
-    real --output-format json envelope (_parse_json_envelope reads
-    `result`) AND the curate stage's contract that the verdict is keyed
-    by region_id."""
-    verdict = {
-        region_id: {
-            "race": m.race,
-            "cr_band": m.cr_band,
-            "wandering_table": [
-                {**row, "telegraph": (row.get("telegraph") or "It is here.")}
-                for row in m.wandering_table
-            ],
-            "big_bad": m.big_bad,
-        }
-        for region_id, m in manifests.items()
-    }
-    envelope = {"result": json.dumps(verdict), "usage": {"output_tokens": 10}}
-    return json.dumps(envelope).encode()
-
-
-def _fake_claude_client(spawn_proc: _FakeProc) -> Any:
-    """A real ClaudeClient with the subprocess spawner injected (DI) so
-    no real `claude` binary is ever launched (prompt: mock ONLY the
-    subprocess)."""
-    from sidequest.agents.claude_client import ClaudeClient
-
-    async def _spawn(*_a: object, **_k: object) -> _FakeProc:
-        return spawn_proc
-
-    return ClaudeClient(timeout=5.0, spawn_fn=_spawn)
-
-
-def _reflecting_claude_client() -> Any:
-    """A real ClaudeClient whose injected spawner parses the curation
-    prompt's ``INPUT:`` JSON (which the curate stage builds with the
-    ACTUAL generated region ids + manifests) and echoes a well-formed
-    per-region verdict back. Used by the wiring test where region ids are
-    generated by the real design stage and not known in advance — still
-    NEVER launches a real subprocess."""
-    from sidequest.agents.claude_client import ClaudeClient
-
-    async def _spawn(command: str, *args: object, **_k: object) -> _FakeProc:
-        # claude_client builds args as [..., "-p", <prompt>, "--output-format", "json"]
-        arglist = list(args)
-        prompt = arglist[arglist.index("-p") + 1]
-        assert isinstance(prompt, str)
-        _, _, input_blob = prompt.partition("INPUT:\n")
-        payload = json.loads(input_blob)
-        verdict = {
-            region_id: {
-                "race": region["race"],
-                "cr_band": region["cr_band"],
-                "wandering_table": [
-                    {**row, "telegraph": (row.get("telegraph") or "It is here.")}
-                    for row in region["wandering_table"]
-                ],
-                "big_bad": region["big_bad"],
+    class _ReflectingSdk:
+        async def complete_with_tools(
+            self,
+            system_blocks: Any,
+            messages: Any,
+            tools: Any,
+            tool_dispatch: Any = None,
+            *,
+            model: str,
+            max_iterations: int = 8,
+            on_text_delta: Any = None,
+        ) -> ToolingResult:
+            prompt = messages[0].content
+            _, _, input_blob = prompt.partition("INPUT:\n")
+            payload = _json.loads(input_blob)
+            verdict = {
+                region_id: {
+                    "race": region["race"],
+                    "cr_band": region["cr_band"],
+                    "wandering_table": [
+                        {**row, "telegraph": (row.get("telegraph") or "It is here.")}
+                        for row in region["wandering_table"]
+                    ],
+                    "big_bad": region["big_bad"],
+                }
+                for region_id, region in payload.items()
             }
-            for region_id, region in payload.items()
-        }
-        envelope = {"result": json.dumps(verdict), "usage": {"output_tokens": 7}}
-        return _FakeProc(json.dumps(envelope).encode())
+            return ToolingResult(
+                text=_json.dumps(verdict),
+                stop_reason="end_turn",
+                input_tokens=1,
+                output_tokens=7,
+                cached_input_read_tokens=0,
+                cached_input_write_tokens=0,
+                model=model,
+            )
 
-    return ClaudeClient(timeout=5.0, spawn_fn=_spawn)
+    return _ReflectingSdk()
+
+
+def _failing_sdk_client() -> Any:
+    """ToolingLlmClient-shaped fake whose call fails with an
+    LlmClientError subclass (SDK analog of a curation subprocess
+    failure)."""
+    from sidequest.agents.anthropic_sdk_client import AnthropicSdkClientError
+
+    class _FailingSdk:
+        async def complete_with_tools(self, *a: Any, **k: Any) -> Any:
+            raise AnthropicSdkClientError("forced curation failure (test)")
+
+    return _FailingSdk()
 
 
 def _theme_bound_to_look(theme_id: str, algorithm: str) -> Any:
@@ -1458,18 +1428,9 @@ class TestStageCurate:
         _mat.assemble_region = _spy  # type: ignore[assignment]
         try:
             with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
-                # Capture the pre-curation manifest the stage assembled so
-                # the determinism assertion is up-to-the-seam.
-                m0 = original(
-                    bundle,
-                    campaign_seed=str(request.campaign_seed),
-                    expansion_id=str(request.expansion_id),
-                    depth_score=0.5,
-                    burst_magnitude=request.burst_magnitude,
-                    look=look,
-                    is_first_band_entry=True,
-                )
-                proc = _FakeProc(_curation_ok_payload({rid0: m0}))
+                # _reflecting_sdk_client echoes the stage's actual curation
+                # prompt INPUT (== the manifest _spy/assemble_region built)
+                # — a success curation that returns the manifest unchanged.
                 result = await _mat._stage_curate(
                     request,
                     bundle=bundle,
@@ -1477,7 +1438,7 @@ class TestStageCurate:
                     expansion=expansion,
                     fill_result=fill_result,
                     is_first_band_entry=True,
-                    claude_client=_fake_claude_client(proc),
+                    claude_client=_reflecting_sdk_client(),
                     span=span,
                 )
         finally:
@@ -1541,8 +1502,8 @@ class TestStageCurate:
         bundle = _real_cookbook_bundle()
         request, palette, expansion, fill_result, _look = _curate_inputs()
 
-        # Non-zero exit, empty stdout — a hard subprocess failure.
-        proc = _FakeProc(b"", b"boom", returncode=1)
+        # The curation LLM call fails (LlmClientError) — a hard
+        # one-shot SDK failure (SDK analog of the prior subprocess fail).
 
         exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
@@ -1559,7 +1520,7 @@ class TestStageCurate:
                     expansion=expansion,
                     fill_result=fill_result,
                     is_first_band_entry=True,
-                    claude_client=_fake_claude_client(proc),
+                    claude_client=_failing_sdk_client(),
                     span=span,
                 )
         finally:
@@ -1620,11 +1581,12 @@ class TestStageCurate:
             "exercised (fixture/affinities contract)"
         )
 
-        proc = _FakeProc(_curation_ok_payload({rid0: m0}))
-
         _exporter, original_tracer_fn, _spans_mod = _setup_otel_task3()
         try:
             with dungeon_materialize_curate_span(expansion_id=request.expansion_id) as span:
+                # _reflecting_sdk_client echoes the curation prompt INPUT
+                # (== the m0 manifest the stage assembles) unchanged — a
+                # success curation exercising the full CR→Edge seam.
                 result = await _mat._stage_curate(
                     request,
                     bundle=bundle,
@@ -1632,7 +1594,7 @@ class TestStageCurate:
                     expansion=expansion,
                     fill_result=fill_result,
                     is_first_band_entry=True,
-                    claude_client=_fake_claude_client(proc),
+                    claude_client=_reflecting_sdk_client(),
                     span=span,
                 )
         finally:
@@ -1693,10 +1655,10 @@ class TestStageCurate:
         graph.nodes["entrance"] = RegionNode(id="entrance", expansion_id=0, theme=theme_id)
 
         # The REAL _stage_design generates region ids dynamically, so the
-        # curation verdict cannot be precomputed. The reflecting client
+        # curation verdict cannot be precomputed. The reflecting SDK client
         # parses the curate stage's actual prompt and echoes a well-formed
-        # per-region verdict — still never launching a real subprocess.
-        reflecting = _reflecting_claude_client()
+        # per-region verdict — still never a real network call.
+        reflecting = _reflecting_sdk_client()
 
         conn = _mem_conn()
         store = DungeonStore(conn)
@@ -2311,7 +2273,7 @@ class TestStageAttach:
                 persistence=store,
                 snapshot=snapshot,
                 pack_tropes=pack,
-                claude_client=_reflecting_claude_client(),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _mat_module._stage_attach = real_stage_attach  # type: ignore[assignment]
@@ -2431,7 +2393,7 @@ async def _materialize_full(
             persistence=store,
             snapshot=snapshot,
             pack_tropes=pack,
-            claude_client=_reflecting_claude_client(),
+            claude_client=_reflecting_sdk_client(),
         )
     finally:
         _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
@@ -2548,7 +2510,7 @@ class TestStageCommit:
                     persistence=store,
                     snapshot=snapshot,
                     pack_tropes=pack,
-                    claude_client=_reflecting_claude_client(),
+                    claude_client=_reflecting_sdk_client(),
                 )
         finally:
             store.put_frontier = real_put_frontier  # type: ignore[method-assign]
@@ -2767,7 +2729,7 @@ class TestStageCommit:
                 persistence=store,
                 snapshot=_fresh_snapshot(),
                 pack_tropes=_attach_pack("cave_in"),
-                claude_client=_reflecting_claude_client(),
+                claude_client=_reflecting_sdk_client(),
             )
         finally:
             _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]

@@ -235,7 +235,7 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
     from tests.dungeon.test_materializer import (
         _attach_pack,
         _real_cookbook_bundle,
-        _reflecting_claude_client,
+        _reflecting_sdk_client,
     )
 
     # --- Teeth half: worker NOT registered → no look-ahead expansion. ---
@@ -273,7 +273,7 @@ async def test_lookahead_worker_materializes_from_real_region_transition() -> No
         bundle=_real_cookbook_bundle(),
         palette=palette_b,
         pack_tropes=_attach_pack("cave_in"),
-        claude_client=_reflecting_claude_client(),
+        claude_client=_reflecting_sdk_client(),
         campaign_seed=7,
         lookahead_breadth=1,
     )
