@@ -1235,3 +1235,469 @@ def test_quest_seed_manifest_parameter_accepted_but_never_resolved_against() -> 
     # seed_quest_components did not iterate / index / truthiness-check the
     # manifest tables. ref-resolution is Plan 7's (Architect decision).
     assert result.quests_seeded == 1
+
+
+# ===========================================================================
+# Task 4: Ledger add — every started thread persisted (Plan 5 seam)
+#
+# Three checkbox tests:
+#   1. N started threads → N ledger entries, each with origin region + open
+#      status; the count equals trope.start + quest.seed spans (lie detector).
+#   2. ledger add is part of the materialization transaction — if Plan 7's
+#      commit aborts, no orphan ledger rows (caller-owns-txn contract).
+#   3. AttachReport.as_dict() is a byte-pinned span contract — key-set locked
+#      so Plan 7's attach span and the GM panel stay stable.
+# ===========================================================================
+
+
+def _otel_in_memory() -> tuple[Any, Any, Any]:
+    """Return (exporter, provider, real_tracer) for in-memory OTEL tests."""
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: PLC0415
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    real_tracer = provider.get_tracer("test")
+    return exporter, provider, real_tracer
+
+
+def _store_with_schema() -> tuple[Any, Any]:
+    """Return (conn, store) with schema applied, using :memory: SQLite."""
+    import sqlite3  # noqa: PLC0415
+
+    from sidequest.dungeon.persistence import DungeonStore  # noqa: PLC0415
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = DungeonStore(conn)
+    store.ensure_schema()
+    return conn, store
+
+
+# ---------------------------------------------------------------------------
+# Task 4 Checkbox 1: N started threads → N ledger entries, each with origin
+# region + open status; the count equals trope.start + quest.seed spans.
+# (lie detector cross-check)
+# ---------------------------------------------------------------------------
+
+
+def test_attach_set_piece_n_threads_produce_n_ledger_entries_lie_detector() -> None:
+    """attach_set_piece with 2 tropes + 1 quest (budget=10) produces 3 open
+    ledger entries, one per pending thread. The count of persisted open rows
+    matches the count of trope.start + quest.seed spans emitted (lie detector
+    — the cross-check guards against span theater where spans are emitted but
+    no ledger rows are written, or vice versa)."""
+    import sidequest.telemetry.spans as _spans_module  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_QUEST_SEED,
+        SPAN_TROPE_START,
+    )
+
+    exporter, _provider, real_tracer = _otel_in_memory()
+    conn, store = _store_with_schema()
+
+    pack = _make_pack(
+        _make_trope_def("cave_in"),
+        _make_trope_def("dripping_water"),
+    )
+    snapshot = _fresh_snapshot()
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+    trope_components = _make_components("cave_in", "dripping_water")
+    quest_components = _make_quest_components("deny_the_altar")
+
+    original_tracer_fn = _spans_module.tracer
+    _spans_module.tracer = lambda: real_tracer  # type: ignore[method-assign]
+    try:
+        report = attach_set_piece(
+            campaign_seed=42,
+            expansion_id=1,
+            region_id="exp001.r5",
+            setpiece_id="the_altar",
+            set_piece=set_piece,
+            trope_components=trope_components,
+            quest_components=quest_components,
+            pack_tropes=pack,
+            snapshot=snapshot,
+            manifest=_FakeManifest(),
+            store=store,
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+            started_at_depth_score=25.0,
+        )
+    finally:
+        _spans_module.tracer = original_tracer_fn  # type: ignore[method-assign]
+
+    # Ledger: 3 open threads (2 tropes + 1 quest)
+    open_threads = store.open_threads()
+    assert len(open_threads) == 3, f"expected 3 open ledger entries, got {len(open_threads)}"
+    for thread in open_threads:
+        assert thread.status == "open"
+        assert thread.origin_region_id == "exp001.r5"
+        assert thread.started_at_depth_score == 25.0
+        assert thread.kind in ("trope", "quest")
+
+    # LIE DETECTOR: count must equal trope.start + quest.seed spans
+    finished = exporter.get_finished_spans()
+    trope_spans = [s for s in finished if s.name == SPAN_TROPE_START]
+    quest_spans = [s for s in finished if s.name == SPAN_QUEST_SEED]
+    span_total = len(trope_spans) + len(quest_spans)
+    # trope.start emits per started component; quest.seed emits per seeded.
+    # Lie detector: ledger rows == span count (not span theater).
+    assert len(open_threads) == span_total, (
+        f"ledger entries ({len(open_threads)}) != trope.start+quest.seed spans "
+        f"({span_total}); possible span theater"
+    )
+
+    # setpiece.attach span emitted exactly once
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_ATTACH,
+    )
+
+    attach_spans = [s for s in finished if s.name == SPAN_SETPIECE_ATTACH]
+    assert len(attach_spans) == 1, (
+        f"expected exactly one setpiece.attach span, got {len(attach_spans)}"
+    )
+
+    # Report matches persisted counts
+    assert report.tropes_started == 2
+    assert report.quests_seeded == 1
+    assert report.threads_written == 3
+    assert report.setpiece_id == "the_altar"
+    assert report.region_id == "exp001.r5"
+
+
+# ---------------------------------------------------------------------------
+# Task 4 Checkbox 2: ledger add is part of the materialization transaction —
+# if Plan 7's commit aborts, no orphan ledger rows (caller-owns-txn).
+# ---------------------------------------------------------------------------
+
+
+def test_attach_set_piece_no_orphan_rows_on_caller_rollback() -> None:
+    """Simulates Plan 7 aborting its transaction after attach_set_piece runs.
+    conn.rollback() must leave zero open ledger rows — attach_set_piece does
+    NOT commit (caller owns the transaction boundary, spec §7.5)."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    conn, store = _store_with_schema()
+
+    pack = _make_pack(_make_trope_def("ghost_light"))
+    snapshot = _fresh_snapshot()
+    set_piece = _make_set_piece(
+        [{"name": "layout", "options": [{"value": "corridor", "weight": 1.0}]}]
+    )
+
+    attach_set_piece(
+        campaign_seed=7,
+        expansion_id=2,
+        region_id="exp002.r1",
+        setpiece_id="haunted_alcove",
+        set_piece=set_piece,
+        trope_components=_make_components("ghost_light"),
+        quest_components=[],
+        pack_tropes=pack,
+        snapshot=snapshot,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=10.0,
+    )
+
+    # At this point (before commit) we should see the pending row in-txn
+    in_txn_rows = store.open_threads()
+    assert len(in_txn_rows) == 1, "expected 1 in-transaction ledger row before rollback"
+
+    # Simulate Plan 7 aborting — rollback the whole transaction
+    conn.rollback()
+
+    # After rollback: zero rows (no orphan state)
+    post_rollback_rows = store.open_threads()
+    assert post_rollback_rows == [], (
+        f"orphan ledger rows after rollback: {post_rollback_rows}; "
+        "attach_set_piece must not autocommit (caller owns the txn boundary)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4 Checkbox 3: AttachReport.as_dict() byte-pinned — key-set locked.
+# ---------------------------------------------------------------------------
+
+
+def test_attach_report_as_dict_key_set_locked() -> None:
+    """AttachReport.as_dict() must return EXACTLY the locked key set —
+    neither more nor fewer keys. Adding or removing a field silently breaks
+    Plan 7's attach span and the GM panel. The key set is locked here so
+    any drift breaks this test loudly (mirrors DepthReport.as_dict() and
+    GenerationReport.as_dict() shape contracts)."""
+    from sidequest.dungeon.setpiece_attach import AttachReport  # noqa: PLC0415
+
+    LOCKED_KEYS = {"setpiece_id", "region_id", "tropes_started", "quests_seeded", "threads_written"}
+
+    report = AttachReport(
+        setpiece_id="test_piece",
+        region_id="exp001.r0",
+        tropes_started=2,
+        quests_seeded=1,
+        threads_written=3,
+    )
+    d = report.as_dict()
+    assert set(d.keys()) == LOCKED_KEYS, (
+        f"AttachReport.as_dict() key set drifted from locked contract "
+        f"{LOCKED_KEYS}; got {set(d.keys())}"
+    )
+    # Byte-pin exact values for fixed inputs
+    assert d["setpiece_id"] == "test_piece"
+    assert d["region_id"] == "exp001.r0"
+    assert d["tropes_started"] == 2
+    assert d["quests_seeded"] == 1
+    assert d["threads_written"] == 3
+
+
+def test_attach_report_as_dict_matches_fields() -> None:
+    """as_dict() returns EXACTLY the dataclass fields — no hidden values,
+    no omissions (spec §7.1 'fully legible, no hidden counters')."""
+    import dataclasses  # noqa: PLC0415
+
+    from sidequest.dungeon.setpiece_attach import AttachReport  # noqa: PLC0415
+
+    report = AttachReport(
+        setpiece_id="sp1",
+        region_id="r1",
+        tropes_started=0,
+        quests_seeded=0,
+        threads_written=0,
+    )
+    field_names = {f.name for f in dataclasses.fields(report)}
+    assert set(report.as_dict().keys()) == field_names, (
+        "as_dict() keys do not match dataclass field names"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Additional coverage tests
+# ---------------------------------------------------------------------------
+
+
+def test_attach_set_piece_thread_ids_are_deterministic() -> None:
+    """attach_set_piece produces the same thread_ids on repeated calls with
+    identical inputs — frozen-into-save contract (Decision H)."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("ceiling_crack"))
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+
+    conn_a, store_a = _store_with_schema()
+    snap_a = _fresh_snapshot()
+    attach_set_piece(
+        campaign_seed=55,
+        expansion_id=3,
+        region_id="exp003.r1",
+        setpiece_id="collapse",
+        set_piece=set_piece,
+        trope_components=_make_components("ceiling_crack"),
+        quest_components=_make_quest_components("find_the_exit"),
+        pack_tropes=pack,
+        snapshot=snap_a,
+        manifest=_FakeManifest(),
+        store=store_a,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=15.0,
+    )
+    conn_a.commit()
+    ids_a = {t.thread_id for t in store_a.open_threads()}
+
+    conn_b, store_b = _store_with_schema()
+    snap_b = _fresh_snapshot()
+    attach_set_piece(
+        campaign_seed=55,
+        expansion_id=3,
+        region_id="exp003.r1",
+        setpiece_id="collapse",
+        set_piece=set_piece,
+        trope_components=_make_components("ceiling_crack"),
+        quest_components=_make_quest_components("find_the_exit"),
+        pack_tropes=pack,
+        snapshot=snap_b,
+        manifest=_FakeManifest(),
+        store=store_b,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=15.0,
+    )
+    conn_b.commit()
+    ids_b = {t.thread_id for t in store_b.open_threads()}
+
+    assert ids_a == ids_b, (
+        "thread_ids are non-deterministic across identical inputs — "
+        "frozen-into-save contract violated (Decision H)"
+    )
+
+
+def test_attach_set_piece_duplicate_trope_id_produces_distinct_thread_ids() -> None:
+    """Two TropeComponents with the same trope_id in one set-piece must produce
+    two DISTINCT thread_ids — Decision H (per-component discriminator prevents
+    collision with Plan 5's open_thread duplicate-thread_id loud raise)."""
+    from sidequest.dungeon.persistence import PersistError  # noqa: PLC0415
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("twin_trap"))
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+    conn, store = _store_with_schema()
+    snapshot = _fresh_snapshot()
+
+    # Should NOT raise PersistError — two distinct thread_ids for same trope_id
+    try:
+        report = attach_set_piece(
+            campaign_seed=8,
+            expansion_id=2,
+            region_id="exp002.r3",
+            setpiece_id="double_trouble",
+            set_piece=set_piece,
+            trope_components=_make_components("twin_trap", "twin_trap"),
+            quest_components=[],
+            pack_tropes=pack,
+            snapshot=snapshot,
+            manifest=_FakeManifest(),
+            store=store,
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+            started_at_depth_score=5.0,
+        )
+    except PersistError as exc:
+        raise AssertionError(
+            f"Duplicate trope_id caused thread_id collision: {exc}; "
+            "Decision H requires a per-component discriminator (component_index)"
+        ) from exc
+
+    open_threads = store.open_threads()
+    assert len(open_threads) == 2
+    thread_ids = [t.thread_id for t in open_threads]
+    assert len(set(thread_ids)) == 2, (
+        "Both threads have the same thread_id — per-component discriminator missing"
+    )
+    assert report.tropes_started == 2
+    assert report.threads_written == 2
+
+
+def test_attach_set_piece_tropes_consume_budget_before_quests() -> None:
+    """Tropes consume the shared expansion budget first; quests get the
+    remainder. With budget=2, 2 tropes started, 0 quests seeded (Decision C)."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("t0"), _make_trope_def("t1"))
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+    conn, store = _store_with_schema()
+    snapshot = _fresh_snapshot()
+
+    report = attach_set_piece(
+        campaign_seed=10,
+        expansion_id=1,
+        region_id="exp001.r0",
+        setpiece_id="budget_shared",
+        set_piece=set_piece,
+        trope_components=_make_components("t0", "t1"),
+        quest_components=_make_quest_components("q0", "q1"),
+        pack_tropes=pack,
+        snapshot=snapshot,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=2,
+        threads_already_lit=0,
+        started_at_depth_score=20.0,
+    )
+
+    assert report.tropes_started == 2
+    assert report.quests_seeded == 0
+    assert report.threads_written == 2
+
+    open_threads = store.open_threads()
+    assert len(open_threads) == 2
+    assert all(t.kind == "trope" for t in open_threads)
+
+
+def test_attach_set_piece_payload_is_legible() -> None:
+    """ComplicationThread.payload carries setpiece_id, component_index,
+    ref_id (trope_id or quest_id), and params — spec §7.1 'fully legible,
+    no hidden counters' (Decision L)."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    pack = _make_pack(_make_trope_def("poison_spores"))
+    set_piece = _make_set_piece(
+        [{"name": "layout", "options": [{"value": "corridor", "weight": 1.0}]}]
+    )
+    conn, store = _store_with_schema()
+    snapshot = _fresh_snapshot()
+    trope_comps = [TropeComponent(trope_id="poison_spores", params={"dmg": 2})]
+
+    attach_set_piece(
+        campaign_seed=1,
+        expansion_id=1,
+        region_id="exp001.r1",
+        setpiece_id="the_cloud",
+        set_piece=set_piece,
+        trope_components=trope_comps,
+        quest_components=[],
+        pack_tropes=pack,
+        snapshot=snapshot,
+        manifest=_FakeManifest(),
+        store=store,
+        threads_lit_per_expansion=10,
+        threads_already_lit=0,
+        started_at_depth_score=8.0,
+    )
+
+    threads = store.open_threads()
+    assert len(threads) == 1
+    payload = threads[0].payload
+    assert "setpiece_id" in payload and payload["setpiece_id"] == "the_cloud"
+    assert "component_index" in payload
+    assert "ref_id" in payload and payload["ref_id"] == "poison_spores"
+    assert "params" in payload and payload["params"] == {"dmg": 2}
+
+
+def test_attach_set_piece_started_at_depth_score_required_no_default() -> None:
+    """started_at_depth_score has no default — omitting it raises TypeError
+    (No Silent Fallbacks, Decision I)."""
+    from sidequest.dungeon.setpiece_attach import attach_set_piece  # noqa: PLC0415
+
+    _conn, store = _store_with_schema()
+    pack = _make_pack()
+    snapshot = _fresh_snapshot()
+    set_piece = _make_set_piece([{"name": "layout", "options": [{"value": "pit", "weight": 1.0}]}])
+
+    with pytest.raises(TypeError):
+        attach_set_piece(  # type: ignore[call-arg]
+            campaign_seed=1,
+            expansion_id=1,
+            region_id="r0",
+            setpiece_id="p0",
+            set_piece=set_piece,
+            trope_components=[],
+            quest_components=[],
+            pack_tropes=pack,
+            snapshot=snapshot,
+            manifest=_FakeManifest(),
+            store=store,
+            threads_lit_per_expansion=10,
+            threads_already_lit=0,
+            # started_at_depth_score intentionally omitted
+        )
+
+
+def test_attach_set_piece_setpiece_attach_span_routed() -> None:
+    """setpiece.attach span must be in SPAN_ROUTES — routing-completeness
+    contract (mirrors the quest.seed and trope.start routing tests)."""
+    from sidequest.telemetry.spans import SPAN_ROUTES  # noqa: PLC0415
+    from sidequest.telemetry.spans.dungeon_setpiece import (  # noqa: PLC0415
+        SPAN_SETPIECE_ATTACH,
+    )
+
+    assert SPAN_SETPIECE_ATTACH in SPAN_ROUTES, (
+        "setpiece.attach has no SPAN_ROUTES entry — GM panel would miss it"
+    )

@@ -1,6 +1,6 @@
 """Dungeon set-piece attach spans (Beneath Sünden Plan 6 §6).
 
-Two spans live here, each with a real caller in setpiece_attach.py:
+Three spans live here, each with a real caller in setpiece_attach.py:
 - ``trope.start`` — start_trope_components (Task 2). Has a failure path:
   the span emits failed=True BEFORE re-raising on an unknown trope_id so
   the GM panel sees the content authoring bug rather than silence.
@@ -12,9 +12,11 @@ Two spans live here, each with a real caller in setpiece_attach.py:
   Post-Implementation Corrections). A fabricated ``failed`` attribute
   would be testing theater (the inverse of stubbing), so quest.seed opens
   and closes clean per seeded component — no ``failed`` attribute exists.
-
-``setpiece.attach`` is still deferred — added when Task 4 ships its
-caller; no stub here (CLAUDE.md: No Stubbing).
+- ``setpiece.attach`` — attach_set_piece (Task 4). One span per set-piece
+  attach, emitted after all thread writes complete. Carries AttachReport
+  fields as attributes (the same way DepthReport feeds
+  ``dungeon.materialize.attach``). The single coalescence span Plan 7 uses
+  as its attach-stage lie detector.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from .span import Span
 
 SPAN_TROPE_START = "trope.start"
 SPAN_QUEST_SEED = "quest.seed"
+SPAN_SETPIECE_ATTACH = "setpiece.attach"
 
 
 def _attr(field: str):
@@ -132,9 +135,65 @@ def quest_seed_span(
         yield span
 
 
+# setpiece.attach — one span per set-piece attach coalescence (Task 4).
+# Carries AttachReport fields as attributes (mirrors DepthReport feeding
+# dungeon.materialize.attach). Plan 7's attach stage is the consumer.
+SPAN_ROUTES[SPAN_SETPIECE_ATTACH] = SpanRoute(
+    event_type="state_transition",
+    component="dungeon",
+    extract=lambda s: {
+        "field": "complication_ledger",
+        "op": "setpiece_attach",
+        "setpiece_id": _attr("setpiece_id")(s),
+        "region_id": _attr("region_id")(s),
+        "tropes_started": _attr("tropes_started")(s),
+        "quests_seeded": _attr("quests_seeded")(s),
+        "threads_written": _attr("threads_written")(s),
+    },
+)
+
+
+@contextmanager
+def setpiece_attach_span(
+    *,
+    setpiece_id: str,
+    region_id: str,
+    tropes_started: int,
+    quests_seeded: int,
+    threads_written: int,
+    _tracer: trace.Tracer | None = None,
+    **attrs: Any,
+) -> Iterator[trace.Span]:
+    """Open a setpiece.attach span carrying the AttachReport contract fields.
+
+    One span per set-piece coalescence (emitted by attach_set_piece after all
+    ComplicationThread writes complete). Carries the locked AttachReport.as_dict()
+    key set as attributes so Plan 7's attach-stage OTEL and the GM panel can
+    verify the attach completed and how many threads were written.
+
+    The span attributes mirror AttachReport.as_dict() exactly (Decision K):
+    setpiece_id, region_id, tropes_started, quests_seeded, threads_written.
+    """
+    with Span.open(
+        SPAN_SETPIECE_ATTACH,
+        {
+            "setpiece_id": setpiece_id,
+            "region_id": region_id,
+            "tropes_started": tropes_started,
+            "quests_seeded": quests_seeded,
+            "threads_written": threads_written,
+            **attrs,
+        },
+        tracer_override=_tracer,
+    ) as span:
+        yield span
+
+
 __all__ = [
     "SPAN_QUEST_SEED",
+    "SPAN_SETPIECE_ATTACH",
     "SPAN_TROPE_START",
     "quest_seed_span",
+    "setpiece_attach_span",
     "trope_start_span",
 ]

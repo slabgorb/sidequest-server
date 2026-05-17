@@ -1,4 +1,4 @@
-"""Set-piece attach — Plan 6, Tasks 1, 2 & 3.
+"""Set-piece attach — Plan 6, Tasks 1, 2, 3 & 4.
 
 Public surface (grows across Plan 6 Tasks 1–5, exactly like Plan 3's
 DepthReport precedent; NOT a stub):
@@ -18,6 +18,14 @@ DepthReport precedent; NOT a stub):
         components, manifest,
         threads_lit_per_expansion, threads_already_lit
     ) -> QuestSeedResult
+
+    attach_set_piece(
+        *, campaign_seed, expansion_id, region_id, setpiece_id,
+        set_piece, trope_components, quest_components,
+        pack_tropes, snapshot, manifest, store,
+        threads_lit_per_expansion, threads_already_lit,
+        started_at_depth_score
+    ) -> AttachReport
 
 Determinism contract
 --------------------
@@ -76,9 +84,42 @@ it. Consequently reduced Task 3 has NO content-bug failure path — a
 fabricated failure would be testing theater (the inverse of stubbing). See
 the plan's Post-Implementation Corrections for the full decision record.
 
+Task 4 architecture (Plan 6, 2026-05-16)
+-----------------------------------------
+Decision G: attach_set_piece is the single public entry point (the
+  coalescence). It composes, in order: (1) roll_set_piece; (2)
+  start_trope_components; (3) seed_quest_components with
+  threads_already_lit = <incoming> + trope_result.tropes_started
+  (tropes consume the shared budget first, quests get the remainder);
+  (4) for every pending trope AND quest, build a ComplicationThread and
+  call store.open_thread(thread) — Plan 5's open_thread emits ledger.add
+  internally; Plan 6 does NOT emit ledger.add; (5) emit ONE
+  setpiece.attach span carrying the AttachReport; (6) return AttachReport.
+  This is the Plan-7 contract (Task 5 adds the mandatory wiring test).
+
+Decision H: collision-safe, frozen-into-save thread_id. Derived
+  deterministically from (campaign_seed, expansion_id, region_id,
+  setpiece_id, kind, component_index) where component_index is the
+  component's stable position in the deterministically-ordered pending
+  list. Uses the _slot_seed/blake2b family over the pipe-delimited
+  discriminator string. Never random, never XOR.
+
+Decision I: started_at_depth_score is a REQUIRED parameter (no default —
+  No Silent Fallbacks). Plan 7 owns the region/depth context and threads
+  this value into attach_set_piece.
+
+Decision J: Transaction boundary is the CALLER's (spec §7.5). attach_set_piece
+  takes a store: DungeonStore parameter and calls open_thread() within
+  whatever transaction Plan 7 opened. It does NOT commit and does NOT
+  roll back.
+
+Decision K: AttachReport.as_dict() is byte-pinned with a locked key set:
+  {setpiece_id, region_id, tropes_started, quests_seeded, threads_written}.
+
+Decision L: ComplicationThread.payload is the legible linkage:
+  {"setpiece_id": ..., "component_index": ..., "ref_id": ..., "params": ...}.
+
 Plan 6 later tasks extend this module:
-  Task 4 — ledger-add (consumes TropeStartResult.pending +
-           QuestSeedResult.pending)
   Task 5 — resolution wiring
 """
 
@@ -89,6 +130,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
+from sidequest.dungeon.persistence import ComplicationThread, DungeonStore
 from sidequest.dungeon.setpieces import QuestComponent, SetPiece, TropeComponent
 from sidequest.game.session import GameSnapshot, TropeState
 
@@ -514,3 +556,262 @@ def seed_quest_components(
             seeded += 1
 
     return QuestSeedResult(quests_seeded=seeded, pending=pending)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Ledger add — every started thread persisted (Plan 5 seam)
+#
+# CRITICAL SUPERSESSION (Architect Task-0 reconciliation):
+# Plan 5's DungeonStore.open_thread() ALREADY emits ledger.add internally.
+# Plan 6 does NOT emit ledger.add. Task 4 emits ONLY setpiece.attach and
+# calls open_thread() (which emits ledger.add itself).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AttachReport:
+    """Span-ready contract — Plan 7's materializer turns this into
+    ``setpiece.attach`` OTEL attributes (mirrors GenerationReport.as_dict()
+    from invariants.py and DepthReport.as_dict() from depth.py).
+
+    Key-set LOCKED (Decision K): any addition or removal breaks Plan 7's
+    attach span and the GM panel. Pinned by
+    test_attach_report_as_dict_key_set_locked.
+    """
+
+    setpiece_id: str
+    region_id: str
+    tropes_started: int
+    quests_seeded: int
+    threads_written: int  # = tropes_started + quests_seeded
+
+    def as_dict(self) -> dict:
+        return {
+            "setpiece_id": self.setpiece_id,
+            "region_id": self.region_id,
+            "tropes_started": self.tropes_started,
+            "quests_seeded": self.quests_seeded,
+            "threads_written": self.threads_written,
+        }
+
+
+def _thread_id_seed(
+    campaign_seed: int,
+    expansion_id: int,
+    region_id: str,
+    setpiece_id: str,
+    kind: str,
+    component_index: int,
+) -> str:
+    """Deterministic, collision-safe thread_id for one pending component.
+
+    Decision H: derived from (campaign_seed, expansion_id, region_id,
+    setpiece_id, kind, component_index) using the _slot_seed/blake2b family
+    over a pipe-delimited UTF-8 string. component_index is the component's
+    stable position in the deterministically-ordered pending list — unique
+    even across duplicate trope_id/quest_id values within one set-piece
+    (Decision H). Never random, never XOR.
+
+    A genuine re-attach of the same set-piece with the same component_index
+    produces the SAME thread_id — correctly tripping Plan 5's open_thread
+    duplicate-thread_id loud raise (the desired freeze-violation signal).
+    """
+    digest = hashlib.blake2b(
+        f"{campaign_seed}|{expansion_id}|{region_id}|{setpiece_id}|{kind}|{component_index}".encode(),
+        digest_size=8,
+    ).digest()
+    hex_val = digest.hex()
+    return f"thread|{kind}|{campaign_seed}|{expansion_id}|{region_id}|{setpiece_id}|{component_index}|{hex_val}"
+
+
+def attach_set_piece(
+    *,
+    campaign_seed: int,
+    expansion_id: int,
+    region_id: str,
+    setpiece_id: str,
+    set_piece: SetPiece,
+    trope_components: list[TropeComponent],
+    quest_components: list[QuestComponent],
+    pack_tropes: Any,
+    snapshot: GameSnapshot,
+    manifest: Any,
+    store: DungeonStore,
+    threads_lit_per_expansion: int,
+    threads_already_lit: int,
+    started_at_depth_score: float,
+) -> AttachReport:
+    """The single public coalescence entry point for Plan 7's attach stage.
+
+    Composes, in order (Decision G):
+      1. roll_set_piece — roll all component slots.
+      2. start_trope_components — start trope components up to budget.
+      3. seed_quest_components — seed quest components from remaining budget
+         (threads_already_lit = incoming + trope_result.tropes_started so
+         tropes consume the shared expansion budget first).
+      4. For every pending trope AND every pending quest, build a
+         ComplicationThread and call store.open_thread(thread). Plan 5's
+         open_thread emits ledger.add internally — Plan 6 does NOT emit
+         ledger.add directly (critical supersession, Architect Task-0).
+      5. Emit ONE setpiece.attach span carrying AttachReport fields.
+      6. Return an AttachReport.
+
+    Args:
+        campaign_seed:             Campaign-level integer seed.
+        expansion_id:              Expansion id (matches RegionNode.expansion_id).
+        region_id:                 Origin region id.
+        setpiece_id:               Set-piece template id.
+        set_piece:                 Validated SetPiece template.
+        trope_components:          TropeComponent list from the set-piece template.
+                                   ORDER IS LOAD-BEARING (see start_trope_components).
+        quest_components:          QuestComponent list from the set-piece template.
+                                   ORDER IS LOAD-BEARING (see seed_quest_components).
+        pack_tropes:               Duck-typed pack object with .tropes attribute.
+        snapshot:                  Mutable GameSnapshot — active_tropes mutated.
+        manifest:                  RegionContentManifest (Plan 7 supplies the real
+                                   one; reduced Task 3 does NOT resolve refs against
+                                   it — the creature/loot join is Plan 7's).
+        store:                     Real DungeonStore bound to the caller's connection
+                                   (Plan 7 owns the connection; spec §7.5). NOT
+                                   duck-typed as Any — concrete Plan 5 dependency
+                                   (Decision J). attach_set_piece does NOT commit
+                                   and does NOT roll back; caller owns the txn.
+        threads_lit_per_expansion: Required expansion-level thread budget. No
+                                   silent default (No Silent Fallbacks, Decision B).
+        threads_already_lit:       Count already consumed this expansion before
+                                   this set-piece. attach_set_piece adds
+                                   trope_result.tropes_started to this before
+                                   passing to seed_quest_components (Decision C).
+        started_at_depth_score:    Depth score of the region this set-piece
+                                   attaches at. REQUIRED — no default (No Silent
+                                   Fallbacks, Decision I). Plan 7 owns the
+                                   region/depth context and threads this value.
+
+    Returns:
+        AttachReport with locked key set (Decision K):
+        setpiece_id, region_id, tropes_started, quests_seeded, threads_written.
+
+    Raises:
+        ValueError: if any TropeComponent.trope_id is not in pack_tropes
+                    (content authoring bug — start_trope_components raises
+                    loudly with a trope.start(failed=True) span).
+        PersistError: if a duplicate thread_id is written (genuine re-attach
+                      of the same set-piece — freeze-violation signal from
+                      Plan 5's open_thread; do NOT swallow).
+
+    This is the Plan-7 contract. Task 5 adds the mandatory wiring test
+    binding to this signature.
+    """
+    from sidequest.telemetry.spans.dungeon_setpiece import setpiece_attach_span  # noqa: PLC0415
+
+    # Step 1: Roll all component slots.
+    roll_set_piece(
+        campaign_seed=campaign_seed,
+        expansion_id=expansion_id,
+        region_id=region_id,
+        setpiece_id=setpiece_id,
+        set_piece=set_piece,
+    )
+
+    # Step 2: Start trope components (validates all trope_ids first — atomic).
+    trope_result = start_trope_components(
+        campaign_seed=campaign_seed,
+        expansion_id=expansion_id,
+        region_id=region_id,
+        setpiece_id=setpiece_id,
+        components=trope_components,
+        pack_tropes=pack_tropes,
+        snapshot=snapshot,
+        threads_lit_per_expansion=threads_lit_per_expansion,
+        threads_already_lit=threads_already_lit,
+    )
+
+    # Step 3: Seed quest components — tropes consumed the budget first.
+    quest_result = seed_quest_components(
+        campaign_seed=campaign_seed,
+        expansion_id=expansion_id,
+        region_id=region_id,
+        setpiece_id=setpiece_id,
+        components=quest_components,
+        manifest=manifest,
+        threads_lit_per_expansion=threads_lit_per_expansion,
+        threads_already_lit=threads_already_lit + trope_result.tropes_started,
+    )
+
+    # Step 4: Write one ComplicationThread per pending entry into the ledger
+    # (within the caller's transaction — no autocommit, Decision J).
+    # thread_id uses a per-component discriminator from the pending list
+    # position (component_index) for collision-safety (Decision H).
+    # Plan 5's open_thread() emits ledger.add internally — Plan 6 does NOT
+    # emit ledger.add (critical supersession, Architect Task-0 reconciliation).
+    threads_written = 0
+
+    for component_index, (component, origin_region_id) in enumerate(trope_result.pending):
+        thread_id = _thread_id_seed(
+            campaign_seed,
+            expansion_id,
+            region_id,
+            setpiece_id,
+            "trope",
+            component_index,
+        )
+        thread = ComplicationThread(
+            thread_id=thread_id,
+            origin_region_id=origin_region_id,
+            kind="trope",
+            status="open",
+            started_at_depth_score=started_at_depth_score,
+            payload={
+                "setpiece_id": setpiece_id,
+                "component_index": component_index,
+                "ref_id": component.trope_id,
+                "params": component.params,
+            },
+        )
+        store.open_thread(thread)
+        threads_written += 1
+
+    # Quest pending: component_index is offset past the trope count so that
+    # a trope and a quest at the same list position within their respective
+    # lists get distinct thread_ids (the discriminator is also prefixed by
+    # kind="quest" vs "trope", so this is belt-and-braces).
+    for component_index, (component, origin_region_id) in enumerate(quest_result.pending):
+        thread_id = _thread_id_seed(
+            campaign_seed,
+            expansion_id,
+            region_id,
+            setpiece_id,
+            "quest",
+            component_index,
+        )
+        thread = ComplicationThread(
+            thread_id=thread_id,
+            origin_region_id=origin_region_id,
+            kind="quest",
+            status="open",
+            started_at_depth_score=started_at_depth_score,
+            payload={
+                "setpiece_id": setpiece_id,
+                "component_index": component_index,
+                "ref_id": component.quest_id,
+                "params": component.params,
+            },
+        )
+        store.open_thread(thread)
+        threads_written += 1
+
+    # Step 5: Emit ONE setpiece.attach span carrying the AttachReport contract
+    # fields. This is the single lie-detector span Plan 7 reads from the GM
+    # panel to confirm the attach completed and how many threads were written.
+    report = AttachReport(
+        setpiece_id=setpiece_id,
+        region_id=region_id,
+        tropes_started=trope_result.tropes_started,
+        quests_seeded=quest_result.quests_seeded,
+        threads_written=threads_written,
+    )
+    with setpiece_attach_span(**report.as_dict()):
+        pass
+
+    # Step 6: Return the AttachReport (Plan 7's attach-stage contract).
+    return report
