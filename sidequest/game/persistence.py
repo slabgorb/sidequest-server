@@ -627,6 +627,15 @@ class SqliteStore:
         """Close the database connection."""
         self._conn.close()
 
+    def connection(self) -> sqlite3.Connection:
+        """Return the live sqlite3 connection.
+
+        Plan 7 (spec §7.5): DungeonStore wraps this exact connection so
+        game-save + dungeon-save share one transaction. Never hands out a
+        copy — callers must observe each other's writes.
+        """
+        return self._conn
+
 
 # ---------------------------------------------------------------------------
 # Helpers
