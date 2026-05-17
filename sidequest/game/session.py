@@ -20,9 +20,8 @@ from sidequest.game.character import Character
 from sidequest.game.chassis import ChassisInstance
 from sidequest.game.creature_core import (
     CreatureCore,
-    EdgePool,
     Inventory,
-    RecoveryTrigger,
+    creature_edge_pool_from_hp,
     placeholder_edge_pool,
 )
 from sidequest.game.disposition import Disposition
@@ -276,30 +275,13 @@ class PartyPeer(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _creature_edge_pool_from_hp(hp: int) -> EdgePool:
-    """Translate a B/X-shaped creature HP value into an :class:`EdgePool`.
-
-    Per ADR-078, runtime entities carry an ``EdgePool`` instead of raw HP.
-    ``creatures.yaml`` is authored against the B/X content schema (an ``hp``
-    integer per creature, e.g. ``1`` for a chalk_moth, ``30`` for a Patient
-    Butcher), so the Monster Manual seeder ships the HP as-authored and the
-    materializer translates it here. The pool is seeded full
-    (``current == max == base_max``) with the same ``OnResolution`` recovery
-    trigger ``placeholder_edge_pool`` uses; thresholds stay empty pending
-    advancement-side wiring (ADR-081 deferred).
-
-    Clamped at 1 because EdgePool requires a positive ceiling — a creature
-    authored with ``hp: 0`` would otherwise be unrepresentable as a
-    materialized actor.
-    """
-    seed = max(1, hp)
-    return EdgePool(
-        current=seed,
-        max=seed,
-        base_max=seed,
-        recovery_triggers=[RecoveryTrigger.OnResolution],
-        thresholds=[],
-    )
+# Canonical HP→EdgePool translator promoted to
+# ``sidequest.game.creature_core.creature_edge_pool_from_hp`` (Beneath
+# Sünden Plan 7 Task 4) so the NPC-patch path here and the dungeon
+# materializer's CR→Edge seam share ONE implementation. This module-level
+# alias preserves the historical ``session._creature_edge_pool_from_hp``
+# import (existing call sites + tests) without a second copy of the body.
+_creature_edge_pool_from_hp = creature_edge_pool_from_hp
 
 
 class NpcPatch(BaseModel):
@@ -1064,7 +1046,29 @@ class GameSnapshot(BaseModel):
         if patch.notes is not None:
             self.notes = patch.notes
         if patch.current_region is not None:
+            # The REAL production region-transition point (ADR-011
+            # WorldStatePatch apply — the only code that mutates
+            # current_region mid-session). Beneath Sünden Plan 7 Task 6
+            # hooks the frontier-crossing / frontier-approach seam here
+            # (extending this point + ADR-055 region_init dedup-append,
+            # NOT a parallel nav path). Fire only on a genuine region
+            # change (different, non-empty target) so the look-ahead is
+            # never spuriously enqueued (No Silent Fallbacks). Lazy import
+            # — sidequest.dungeon depends on game models, so a top-level
+            # import would invert the dependency (the watcher_hub
+            # lazy-import precedent two methods up).
+            _prev_region = self.current_region
             self.current_region = patch.current_region
+            if patch.current_region and patch.current_region != _prev_region:
+                from sidequest.dungeon.frontier_hook import (
+                    notify_region_transition,
+                )
+
+                notify_region_transition(
+                    self,
+                    from_region=_prev_region or None,
+                    to_region=patch.current_region,
+                )
         if patch.discovered_regions is not None:
             # Stories 45-16 + 45-17: validate, then canonicalize-dedup.
             # 45-16 rejected non-room shapes (brackets, multiline);
