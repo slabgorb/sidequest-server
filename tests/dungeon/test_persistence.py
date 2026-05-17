@@ -367,34 +367,47 @@ def test_commit_and_ledger_emit_spans() -> None:
             captured.extend(s.name for s in spans)
             return super().export(spans)
 
-    from tests.dungeon.conftest import reset_otel_provider
+    from tests.dungeon.conftest import (
+        capture_otel_provider_state,
+        reset_otel_provider,
+        restore_otel_provider_state,
+    )
 
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(_Capture()))
     # OTEL 1.x gates set_tracer_provider behind a once-only guard. In a
     # full-suite run an earlier conftest's init_tracer() already won that
     # guard, so this set_tracer_provider() would be a silent no-op and the
-    # _Capture exporter never installs. Reset the guard first (test-infra
+    # _Capture exporter never installs. HERMETIC isolation (Plan 6 Task 6):
+    # capture the prior global provider + guard, reset so our install is
+    # effective, then ALWAYS restore in finally so this test's _Capture
+    # provider never leaks into later otel_capture-using tests. Test-infra
     # only — production init_tracer() is the single legitimate runtime
-    # caller). See tests/dungeon/conftest.py for the full rationale.
-    reset_otel_provider()
-    trace.set_tracer_provider(provider)
+    # caller. See tests/dungeon/conftest.py for the full rationale.
+    _otel_state = capture_otel_provider_state()
+    try:
+        reset_otel_provider()
+        trace.set_tracer_provider(provider)
 
-    g = _seed_graph()
-    exp = _generate_and_attach(g, campaign_seed=5, expansion_id=1, attach_ids=["entrance"])
-    conn = _mem_conn()
-    store = DungeonStore(conn)
-    store.ensure_schema()
-    store.commit_expansion(exp, g)
-    store.open_thread(ComplicationThread(
-        thread_id="t1", origin_region_id="exp001.r0", kind="trope",
-        status="open", started_at_depth_score=10.0, payload={},
-    ))
-    store.resolve_thread("t1")
+        g = _seed_graph()
+        exp = _generate_and_attach(
+            g, campaign_seed=5, expansion_id=1, attach_ids=["entrance"]
+        )
+        conn = _mem_conn()
+        store = DungeonStore(conn)
+        store.ensure_schema()
+        store.commit_expansion(exp, g)
+        store.open_thread(ComplicationThread(
+            thread_id="t1", origin_region_id="exp001.r0", kind="trope",
+            status="open", started_at_depth_score=10.0, payload={},
+        ))
+        store.resolve_thread("t1")
 
-    assert "dungeon.persist.commit" in captured
-    assert "ledger.add" in captured
-    assert "ledger.resolve" in captured
+        assert "dungeon.persist.commit" in captured
+        assert "ledger.add" in captured
+        assert "ledger.resolve" in captured
+    finally:
+        restore_otel_provider_state(_otel_state)
 
 
 import pytest  # noqa: E402
