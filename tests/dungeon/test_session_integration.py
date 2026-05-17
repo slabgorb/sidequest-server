@@ -39,20 +39,24 @@ def _snapshot() -> Any:
     return GameSnapshot(genre_slug="caverns_and_claudes", world_slug="beneath_sunden")
 
 
-def _pack() -> Any:
-    """Pack-shaped object carrying .tropes (duck type, dossier _attach_pack).
+def _real_pack() -> Any:
+    """The REAL loaded caverns_and_claudes GenrePack — NOT _attach_pack.
 
-    The real shallowest depth-0 beneath_sunden entrance theme is
-    ``drowned_cavern`` (the only theme whose depth_band covers 0.0;
-    select_entrance_theme_id picks the sorted-min id). Its sole set-piece
-    ``the_siphon`` declares one trope_component
-    (``the_thing_that_followed_you_down``) and NO quest_components. We
-    supply exactly that real id so materialize's attach stage resolves
-    against a faithful pack — NOT a stub.
+    Spec §14.C: the keystone must prove a real session grows the dungeon.
+    The materializer resolves set-piece trope_id against this pack's
+    genre-level .tropes (verified: handlers/connect.py:~400 loads
+    genre_pack -> session_integration.py:106/114 passes it as
+    pack_tropes -> setpiece_attach.py:411-413 resolves trope_id).
+    After Plan 7 §14.A the 4 set-piece tropes
+    are authored in genre_packs/caverns_and_claudes/tropes.yaml, so the
+    real pack resolves them with no fabrication.
     """
-    from tests.dungeon.test_materializer import _attach_pack
+    from sidequest.genre.loader import (
+        DEFAULT_GENRE_PACK_SEARCH_PATHS,
+        GenreLoader,
+    )
 
-    return _attach_pack("the_thing_that_followed_you_down")
+    return GenreLoader(DEFAULT_GENRE_PACK_SEARCH_PATHS).load("caverns_and_claudes")
 
 
 async def test_non_beneath_sunden_is_a_clean_noop() -> None:
@@ -92,7 +96,7 @@ async def test_attach_seeds_and_registers_then_detach_unregisters(
     handle = await session_integration.attach_dungeon_to_session(
         store=store,
         snapshot=snap,
-        genre_pack=_pack(),
+        genre_pack=_real_pack(),
         genre_slug="caverns_and_claudes",
         world_slug="beneath_sunden",
         world_dir=_beneath_sunden_world_dir(),
@@ -124,7 +128,7 @@ async def test_attach_is_idempotent_reuses_persisted_seed(
     kw = dict(
         store=store,
         snapshot=_snapshot(),
-        genre_pack=_pack(),
+        genre_pack=_real_pack(),
         genre_slug="caverns_and_claudes",
         world_slug="beneath_sunden",
         world_dir=_beneath_sunden_world_dir(),
