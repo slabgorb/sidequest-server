@@ -294,9 +294,7 @@ class DungeonStore:
         """Rebuild the full RegionGraph from dungeon_map + dungeon_edge.
         Nodes first (RegionGraph.add_edge validates endpoints loudly)."""
         try:
-            node_rows = self._conn.execute(
-                "SELECT payload FROM dungeon_map"
-            ).fetchall()
+            node_rows = self._conn.execute("SELECT payload FROM dungeon_map").fetchall()
             edge_rows = self._conn.execute(
                 "SELECT payload FROM dungeon_edge ORDER BY edge_id"
             ).fetchall()
@@ -344,8 +342,7 @@ class DungeonStore:
     def record_mutation(self, region_id: str, kind: str, payload: dict) -> None:
         try:
             self._conn.execute(
-                "INSERT INTO dungeon_mutation_overlay (region_id, kind, payload) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO dungeon_mutation_overlay (region_id, kind, payload) VALUES (?, ?, ?)",
                 (region_id, kind, json.dumps(payload)),
             )
         except sqlite3.Error as exc:
@@ -354,8 +351,7 @@ class DungeonStore:
     def load_mutations(self) -> list[DungeonMutation]:
         try:
             rows = self._conn.execute(
-                "SELECT region_id, kind, payload FROM dungeon_mutation_overlay "
-                "ORDER BY mutation_id"
+                "SELECT region_id, kind, payload FROM dungeon_mutation_overlay ORDER BY mutation_id"
             ).fetchall()
             return [
                 DungeonMutation(
@@ -391,9 +387,7 @@ class DungeonStore:
                     ),
                 )
             except sqlite3.IntegrityError as exc:
-                raise PersistError(
-                    f"thread {thread.thread_id!r} already open: {exc}"
-                ) from exc
+                raise PersistError(f"thread {thread.thread_id!r} already open: {exc}") from exc
             except sqlite3.Error as exc:
                 raise DatabaseError(f"open_thread failed: {exc}") from exc
 
@@ -424,9 +418,7 @@ class DungeonStore:
                 (thread_id,),
             )
             if cur.rowcount == 0:
-                raise NotFoundError(
-                    f"cannot resolve unknown complication thread {thread_id!r}"
-                )
+                raise NotFoundError(f"cannot resolve unknown complication thread {thread_id!r}")
 
     def open_threads(self) -> list[ComplicationThread]:
         rows = self._conn.execute(
